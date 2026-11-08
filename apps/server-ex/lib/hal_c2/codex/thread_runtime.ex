@@ -26,7 +26,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   import HalC2.Orchestration.TurnWriter
 
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.Orchestration.{Entities, TurnWatch, Unrecorded}
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
 
@@ -269,6 +269,9 @@ defmodule HalC2.Codex.ThreadRuntime do
        # last turn (a subagent starting under it is interrupted at once).
        interrupting: nil,
        stopped: false,
+       # A turn Codex did not end when asked to stop (`{:interrupt_deadline, _}`), so may
+       # still be running: `%{turn:, thread:, provider_turn:}`. The next turn stops it first.
+       leftover: nil,
        # A usage-limit failure whose reset Codex had not named when the turn
        # stopped: `%{item: failure item id}` while its reset is still unknown.
        usage_failure: nil
@@ -344,9 +347,13 @@ defmodule HalC2.Codex.ThreadRuntime do
         usage_failure: nil
       })
 
-    case begin_turn(state, turn) do
+    case state |> stop_leftover() |> begin_turn(turn) do
       {:ok, state} ->
         {:reply, :ok, state}
+
+      {:error, {:leftover, message}, state} ->
+        finish(state, "failed", message)
+        {:reply, :ok, %{state | turn: nil}}
 
       {:error, %{"message" => "Codex App Server process exited" <> _} = exit, state} ->
         Logger.warning("codex turn failed to start: the app-server exited\n#{exit["stderr"]}")
@@ -729,6 +736,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
     state = %{state | conn: nil}
 
+    # A turn left running went with the app-server.
+    state =
+      if HalC2.Orchestration.Recovery.stopping?(),
+        do: state,
+        else: leftover_ended(state, "interrupted")
+
     # A stream the MC itself ends while shutting down is not the provider failing the
     # turn: the run stays as it is for the next boot's recovery to settle. With no
     # turn active, subagents an earlier turn left running still end with the stream:
@@ -755,7 +768,24 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, %{state | conn: nil, native_thread_id: nil}}
   end
 
+  # Codex may go on running the turn: the next one stops it first (`stop_leftover/1`),
+  # and a turn the store failed leaves its provider turn reading as running until then.
   def handle_info({:interrupt_deadline, turn_id}, %{turn: %{native_turn_id: turn_id}} = state) do
+    leftover = %{
+      turn: turn_id,
+      thread: state.native_thread_id,
+      provider_turn: state.turn.ids[:provider_turn]
+    }
+
+    state =
+      case Map.put(state, :leftover, leftover) do
+        %{unrecorded: %{} = unrecorded} = state ->
+          %{state | unrecorded: %{unrecorded | provider_turn: "running"}}
+
+        state ->
+          state
+      end
+
     {:noreply, end_turn(state, "interrupted", nil)}
   end
 
@@ -784,6 +814,13 @@ defmodule HalC2.Codex.ThreadRuntime do
     do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2
+
+  @impl true
+  def handle_info(message, state),
+    do: Unrecorded.handle_info(__MODULE__, message, state, fn m, s -> super(m, s) end)
 
   # The app-server, and the terminals it runs, stop with this process: released when
   # idle, or stopped with its thread. Its writes may fail when the MC itself is
@@ -833,6 +870,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:interrupting, nil)
      |> Map.put_new(:stopped, false)
      |> Map.put_new(:usage_failure, nil)
+     |> Map.put_new(:leftover, nil)
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
@@ -914,6 +952,8 @@ defmodule HalC2.Codex.ThreadRuntime do
          state}
     end
   end
+
+  defp begin_turn({:leftover, message, state}, _turn), do: {:error, {:leftover, message}, state}
 
   defp begin_turn(state, turn) do
     with {:ok, state} <- version_gate(state, turn),
@@ -1915,6 +1955,17 @@ defmodule HalC2.Codex.ThreadRuntime do
       else: subagent_states(state, item)
   end
 
+  # A turn Codex kept running past its stop ends on its own: its provider turn reads
+  # as it ended.
+  defp notification(
+         "turn/completed",
+         %{"turn" => %{"id" => id} = turn},
+         %{leftover: %{turn: id}} = state
+       ) do
+    status = if turn["status"] in ["completed", "failed"], do: turn["status"], else: "interrupted"
+    leftover_ended(state, status)
+  end
+
   # Between turns, everything above (background commands, memory threads,
   # subagents) still lands; a turn's own notifications need its turn.
   defp notification(_method, _params, %{turn: nil} = state), do: state
@@ -2312,6 +2363,50 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     state
   end
+
+  # A turn an earlier stop left running (`state.leftover`) is stopped before the
+  # next one starts, so Codex never runs two turns of the thread at once. One that
+  # cannot be stopped (the app-server does not answer) keeps the new turn from starting.
+  defp stop_leftover(%{leftover: %{turn: turn_id, thread: thread}, conn: conn} = state)
+       when conn != nil do
+    reply =
+      try do
+        Connection.call(
+          conn,
+          "turn/interrupt",
+          %{"threadId" => thread, "turnId" => turn_id},
+          5_000
+        )
+      catch
+        :exit, reason -> {:error, reason}
+      end
+
+    case reply do
+      {:error, reason} when not is_map(reason) ->
+        Logger.warning("codex left-over turn #{turn_id} did not stop: #{inspect(reason)}")
+        {:leftover, "The previous turn is still running. Wait for it to finish.", state}
+
+      _ ->
+        leftover_ended(state, "interrupted")
+    end
+  end
+
+  defp stop_leftover(state), do: %{state | leftover: nil}
+
+  defp leftover_ended(%{leftover: %{provider_turn: id}} = state, status) do
+    if is_binary(id) do
+      try do
+        HalC2.Orchestration.TurnWriter.provider_turn_ended(state.thread_id, id, status)
+      rescue
+        error in HalC2.Streams.Unrecorded ->
+          Logger.warning("codex left-over turn #{id} ended unrecorded: #{error.message}")
+      end
+    end
+
+    %{state | leftover: nil}
+  end
+
+  defp leftover_ended(state, _status), do: state
 
   # `stream` is `:ended` when the turn ends because its app-server (and with
   # it the event stream) is gone, not because Codex reported the turn's end.

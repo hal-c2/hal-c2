@@ -634,11 +634,25 @@ defmodule HalC2.Orchestration.TurnWriter do
     # repeat must not capture over it.
     run_id = state.turn && get_in(state.turn, [Access.key(:ids), Access.key(:run)])
 
-    if run_id && not active?(HalC2.Streams.state(state.thread_id), run_id) do
-      TurnWatch.release(run_id)
-      :ok
-    else
-      finish_active(state, status, failure, at)
+    cond do
+      # A turn whose events the store could not record fails, recorded apart, with
+      # how its provider turn ended (`HalC2.Orchestration.Unrecorded`).
+      (unrecorded = Map.get(state, :unrecorded)) && run_id ->
+        # A provider turn the runtime could not stop is still running (`"running"`).
+        provider_turn =
+          if unrecorded.provider_turn == :pending, do: status, else: unrecorded.provider_turn
+
+        TurnWatch.unrecorded(state.thread_id, run_id, %{unrecorded | provider_turn: provider_turn})
+
+        TurnWatch.release(run_id)
+        :ok
+
+      run_id && not active?(HalC2.Streams.state(state.thread_id), run_id) ->
+        TurnWatch.release(run_id)
+        :ok
+
+      true ->
+        finish_active(state, status, failure, at)
     end
   end
 
@@ -705,8 +719,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   defp queue_starts?(stream, thread_id),
     do: (StreamState.get(stream, "thread")[thread_id] || %{})["archivedAt"] == nil
 
-  # The changes that end the run.
-  defp ended(stream, ids, status, failure, checkpoint, at) do
+  # The changes that end the run. `provider_turn`, when given, is how the provider turn
+  # ended apart from the run (a run the store failed): `"running"` leaves it running.
+  defp ended(stream, ids, status, failure, checkpoint, at, provider_turn \\ nil) do
     failure =
       stream
       |> queued_start_failure(ids, status, failure)
@@ -731,7 +746,8 @@ defmodule HalC2.Orchestration.TurnWriter do
     end
 
     [
-      Map.has_key?(ids, :provider_turn) && settle.("provider-turn", ids.provider_turn, done),
+      Map.has_key?(ids, :provider_turn) && provider_turn != "running" &&
+        settle.("provider-turn", ids.provider_turn, %{done | "status" => provider_turn || status}),
       settle.("run-attempt", ids.attempt, done),
       settle.("run", ids.run, run_done),
       settle.("node", ids.root_node, done),
@@ -895,10 +911,11 @@ defmodule HalC2.Orchestration.TurnWriter do
   Ends run `run_id` of `thread_id` with `status` when nothing drives it any more: its
   runtime crashed, or stopped without ending it. What the run left open ends with it,
   from what the thread recorded, in the same transaction as the run, so of two
-  callers racing (a crash and a stop) only the first ends it.
+  callers racing (a crash and a stop) only the first ends it. `at:` is when it ended
+  (now if omitted), and `provider_turn:` how its provider turn did, if not as the run.
   """
-  def abandon(thread_id, run_id, status, failure) do
-    at = Entities.now()
+  def abandon(thread_id, run_id, status, failure, opts \\ []) do
+    at = opts[:at] || Entities.now()
     failure = UserFacingErrors.sanitize_failure(failure)
     {scope_id, checkpoint, cwd} = stopped_checkpoint(thread_id, run_id, status, at)
 
@@ -914,7 +931,15 @@ defmodule HalC2.Orchestration.TurnWriter do
               baseline_changes(stream, baselines) ++
                 checkpoint_changes(stream, turn, checkpoint, at) ++
                 left_open(stream, run, status, at) ++
-                ended(stream, state.turn.ids, status, failure, checkpoint, at)
+                ended(
+                  stream,
+                  state.turn.ids,
+                  status,
+                  failure,
+                  checkpoint,
+                  at,
+                  opts[:provider_turn]
+                )
 
             {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
 
@@ -935,6 +960,24 @@ defmodule HalC2.Orchestration.TurnWriter do
         HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", run_id)
         finished(state, status, failure, queue?)
     end
+  end
+
+  @doc """
+  Records how provider turn `id` of `thread_id` ended after its run did: one the
+  provider kept running when asked to stop (still `"running"` here), and that it stopped
+  or ended later. One already settled keeps how it ended.
+  """
+  def provider_turn_ended(thread_id, id, status) do
+    HalC2.Streams.transact(thread_id, :thread, fn stream ->
+      case StreamState.get(stream, "provider-turn")[id] do
+        %{"status" => "running"} ->
+          done = %{"status" => status, "completedAt" => Entities.now()}
+          {[Orchestration.upsert(stream, "provider-turn", id, &Map.merge(&1, done))], :ok}
+
+        _ ->
+          {[], :ok}
+      end
+    end)
   end
 
   @doc """

@@ -13,6 +13,7 @@ defmodule HalC2.TurnsProofTest do
   @changes "builds a transaction's changes; each transaction is one step"
   @preparing "a run that waits on its worktree, then starts through begin_turn/2 as a message does"
   @steer "adds a message to the turn the runtime drives; here a message queues behind an active run"
+  @unrecorded "a turn the store cannot record, and its end held until the store takes it: unrecorded_turns.maude, whose store never fails here"
 
   use HalC2.Proof,
     model: "turns.maude",
@@ -58,7 +59,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.started/1" => "started",
       "HalC2.Orchestration.TurnWriter.commit_active/3" => "started",
       "HalC2.Orchestration.TurnWriter.finish/3" => "finish",
-      "HalC2.Orchestration.TurnWriter.abandon/4" => "abandon",
+      "HalC2.Orchestration.TurnWriter.abandon/5" => "abandon",
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take started refused),
       "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _}" =>
         ~w(interrupted stale-pin no-turn stop-work),
@@ -141,6 +142,15 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.close_open_items/2" => @items,
       "HalC2.Orchestration.TurnWriter.message_request?/1" => @items,
       "HalC2.Orchestration.TurnWriter.start_failure/2" => "the message a failed start ends with",
+      "HalC2.Orchestration.TurnWriter.provider_turn_ended/3" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch.unrecorded/3" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch.attempted/2" =>
+        "for tests: waits on TurnWatch's next try at an unrecorded end; changes nothing",
+      "HalC2.Orchestration.TurnWatch handle_cast {:unrecorded, _, _, _}" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch handle_call {:attempted, _}" =>
+        "for tests: answers when a try at an unrecorded end fails or records; changes nothing",
+      "HalC2.Orchestration.TurnWatch handle_info {:retry, _}" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch handle_info {:attempted, _, _}" => @unrecorded,
       "HalC2.Codex.ThreadRuntime handle_call {:steer, _, _}" => @steer,
       "HalC2.Codex.ThreadRuntime handle_call {:respond, _, _}" => @items,
       "HalC2.Codex.ThreadRuntime handle_call {:rollback, _}" =>
@@ -156,7 +166,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, _}" =>
         "drops what an app-server it stopped for another instance sent; the model has one",
       "HalC2.Codex.ThreadRuntime handle_info :flush" => @items,
-      "HalC2.Codex.ThreadRuntime handle_info _" => "ignores what it does not know",
+      "HalC2.Codex.ThreadRuntime handle_info _" =>
+        "ignores what it does not know, and hands every message to Unrecorded.handle_info/4, which only acts when the store fails (#{@unrecorded})",
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Orchestration.IdleSessions.start_link/1" => "starts the timer the idle rules run on",

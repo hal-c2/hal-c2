@@ -1,0 +1,372 @@
+sload model-checker
+
+--- A thread's turn whose events the store cannot record (a full disk), and the
+--- follow-up after it: the provider runtime that drives the turn and goes on without
+--- writing once the store refuses it (HalC2.Orchestration.Unrecorded), the provider
+--- turn it stops, TurnWatch holding the run's end in memory until the store takes it,
+--- a stop from the user, the next message, and boot recovery, through every
+--- interleaving of the store failing and recovering, the provider ending its turn,
+--- ignoring a stop, the runtime crashing and the MC restarting. Each stream
+--- transaction is one step. proof/hal_c2/unrecorded_turns_proof_test.exs maps it to
+--- the code and checks it.
+---
+--- The time is a clock that moves when the store recovers and when the MC restarts, so
+--- an end recorded with the time it is written, not the time it failed, reads late.
+--- Codex stands for every runtime: it is the one whose stop can time out and leave
+--- its provider turn running; the others stop theirs, or the process running it.
+
+mod UNRECORDED-TURNS is
+  protecting BOOL .
+  protecting NAT .
+
+  sorts Rid St Rpt Pv Pt Rs Slot Sw Item Conf Sys .
+  subsort St < Rpt .
+  subsort Rpt < Pv .
+  subsort Item < Conf .
+
+  --- The run whose turn the store fails, and the next message's.
+  ops r1 r2 : -> Rid [ctor] .
+
+  --- How a turn ended.
+  ops completed failed interrupted : -> St [ctor] .
+
+  --- A provider turn as recorded: not yet, running, or how it ended.
+  ops absent running : -> Rpt [ctor] .
+
+  --- How TurnWatch's held end says the provider turn ended (`provider_turn`): not yet
+  --- known (`:pending`), as the run (nil), still running (`"running"`), or a status.
+  ops pending asrun : -> Pv [ctor] .
+
+  --- The provider turn itself: not started, running, or ended.
+  ops nopt live gone : -> Pt [ctor] .
+
+  --- A run as recorded: not started, active, or ended with a status at a time.
+  ops unstarted active : -> Rs [ctor] .
+  op over : St Nat -> Rs [ctor] .
+
+  --- The provider runtime: no process, idle, driving a run's turn, or driving it
+  --- without writing (`state.unrecorded`) since the store failed it at a time.
+  ops down idle : -> Slot [ctor] .
+  op drive : Rid -> Slot [ctor] .
+  op dry : Rid Nat -> Slot [ctor] .
+
+  --- Parts of the fix switched off, one at a time, so a proof shows each is needed:
+  --- TurnWatch's retry, the original time, the provider's own ending, the follow-up's
+  --- stop of a left-over turn, the stop of a turn the store failed, the run TurnWatch
+  --- holds counting as driven, and abandon/5's check that the run is still active.
+  ops noRetry nowTime overwrite noLeftoverStop noInterrupt notDriven noActiveCheck : -> Sw [ctor] .
+  op off : Sw -> Item [ctor] .
+
+  op store : Bool -> Item [ctor] .
+  op clock : Nat -> Item [ctor] .
+  op faults : Nat -> Item [ctor] .
+
+  --- The store's records: a run and how many times its end was written, and its
+  --- provider turn.
+  op run : Rid Rs -> Item [ctor] .
+  op ends : Rid Nat -> Item [ctor] .
+  op rpt : Rid Rpt -> Item [ctor] .
+
+  --- Ghosts: when the run first failed, that the store failed its turn, that TurnWatch
+  --- recorded its end, that an MC restart lost what TurnWatch held of it or boot
+  --- recovery ended it, and how its provider turn ended as the runtime heard it before
+  --- the run's end was recorded.
+  op noticed : Rid Nat -> Item [ctor] .
+  op unrec : Rid -> Item [ctor] .
+  op watched : Rid -> Item [ctor] .
+  op forgot : Rid -> Item [ctor] .
+  op heard : Rid St -> Item [ctor] .
+
+  --- The provider: its turn, a stop on its way to it, a stop it ignored (the runtime's
+  --- deadline is out), and the end of its turn on its way to the runtime.
+  op pt : Rid Pt -> Item [ctor] .
+  op asked : Rid -> Item [ctor] .
+  op late : Rid -> Item [ctor] .
+  op endmsg : Rid St -> Item [ctor] .
+
+  --- The runtime and the turn it left running (`state.leftover`).
+  op rt : Slot -> Item [ctor] .
+  op lo : Rid -> Item [ctor] .
+
+  --- TurnWatch: a run's end held until the store takes it (time, provider turn, and
+  --- whether a try has failed), and a runtime's `:DOWN` it has yet to act on.
+  op pend : Rid Nat Pv Bool -> Item [ctor] .
+  op downed : Rid -> Item [ctor] .
+
+  --- Boot recovery still to run; the next message, sent and dispatched; a user's stop.
+  op settling : -> Item [ctor] .
+  op client : Rid -> Item [ctor] .
+  op start : Rid -> Item [ctor] .
+  op ustop : Rid -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars R R' : Rid .
+  vars S S' : St .
+  var X : Rpt .
+  var P : Pv .
+  var Q : Pt .
+  var Z : Rs .
+  vars N T M K F : Nat .
+  vars B B' : Bool .
+  var Y : Slot .
+  var W : Sw .
+  var C : Conf .
+
+  --- Whether a part of the fix is off.
+  op has : Conf Sw -> Bool .
+  eq has(off(W) C, W) = true .
+  eq has(C, W) = false [owise] .
+
+  --- The first time a run failed stands.
+  op stamp : Conf Rid Nat -> Conf .
+  eq stamp(noticed(R, T) C, R, N) = noticed(R, T) C .
+  eq stamp(C, R, N) = noticed(R, N) C [owise] .
+
+  --- A runtime's app-server goes with it, and the turns it ran; so do its messages.
+  op killed : Conf -> Conf .
+  eq killed(pt(R, live) C) = pt(R, gone) killed(C) .
+  eq killed(asked(R) C) = killed(C) .
+  eq killed(late(R) C) = killed(C) .
+  eq killed(endmsg(R, S) C) = killed(C) .
+  eq killed(lo(R) C) = killed(C) .
+  eq killed(C) = C [owise] .
+
+  --- An MC that stops loses what it held in memory, TurnWatch's ends included: the run
+  --- reads as interrupted from then on, ended by boot recovery or a stop that comes
+  --- first, and when it failed and why are gone (TurnWatch's moduledoc).
+  op wiped : Conf -> Conf .
+  eq wiped(pend(R, T, P, B) C) = forgot(R) wiped(C) .
+  eq wiped(downed(R) C) = wiped(C) .
+  eq wiped(settling C) = wiped(C) .
+  eq wiped(rt(Y) C) = rt(down) wiped(C) .
+  eq wiped(C) = killed(C) [owise] .
+
+  --- Recovery.run/0: every run left active is interrupted, at boot.
+  op settled : Conf Nat -> Conf .
+  eq settled(run(R, active) ends(R, K) rpt(R, X) C, N) =
+    run(R, over(interrupted, N)) ends(R, s K) rpt(R, (if X == running then interrupted else X fi))
+    forgot(R) settled(C, N) .
+  eq settled(C, N) = C [owise] .
+
+  --- start_turn/1's stop_leftover/1: the turn an earlier stop left running is stopped,
+  --- as Codex acknowledges, and its provider turn reads as interrupted.
+  op stopped : Conf -> Conf .
+  eq stopped(lo(R) pt(R, Q) rpt(R, X) C) =
+    pt(R, gone) rpt(R, (if X == running then interrupted else X fi)) C .
+  eq stopped(C) = C [owise] .
+
+  --- How TurnWatch records the provider turn (TurnWriter.ended/7).
+  op written : Bool Pv Rpt -> Rpt .
+  eq written(true, P, X) = failed .
+  eq written(false, running, X) = X .
+  eq written(false, asrun, X) = failed .
+  eq written(false, S, X) = S .
+
+  --- What drives a run, for TurnWatch.driven?/1 (`pending`: whether a held end counts).
+  op driven : Conf Rid Bool -> Bool .
+  eq driven(rt(drive(R)) C, R, B) = true .
+  eq driven(rt(dry(R, T)) C, R, B) = true .
+  eq driven(pend(R, T, P, B') C, R, true) = true .
+  eq driven(C, R, B) = false [owise] .
+
+  --- Whether the runtime drives the turn, and whether it takes the turn's end: it drives
+  --- the turn, or the turn is left over.
+  ops drives hears : Conf Rid -> Bool .
+  eq drives(rt(drive(R)) C, R) = true .
+  eq drives(rt(dry(R, T)) C, R) = true .
+  eq drives(C, R) = false [owise] .
+  eq hears(lo(R) C, R) = true .
+  eq hears(C, R) = drives(C, R) [owise] .
+
+  op pends : Conf Rid -> Bool .
+  eq pends(pend(R, T, P, B) C, R) = true .
+  eq pends(C, R) = false [owise] .
+
+  op booting : Conf -> Bool .
+  eq booting(settling C) = true .
+  eq booting(C) = false [owise] .
+
+  --- r1 is running; a client sends r2, and perhaps stops r1. `F` bounds the faults.
+  op init : Nat Bool Conf -> Sys .
+  eq init(F, B, C) =
+    { store(true) clock(0) faults(F) run(r1, active) ends(r1, 0) pt(r1, live) rpt(r1, running)
+      rt(drive(r1)) run(r2, unstarted) ends(r2, 0) pt(r2, nopt) rpt(r2, absent) client(r2)
+      (if B then ustop(r1) else empty fi) C } .
+
+  --- The environment: the store fails and recovers, the provider ends its turn on its
+  --- own, stops it when asked or ignores the stop, the runtime crashes, the MC restarts.
+  rl [fail] : { store(true) faults(s F) C } => { store(false) faults(F) C } .
+  rl [recover] : { store(false) clock(N) C } => { store(true) clock(s N) C } .
+  rl [own-end] : { pt(R, live) C } => { pt(R, gone) endmsg(R, completed) C } .
+  rl [own-end] : { pt(R, live) C } => { pt(R, gone) endmsg(R, failed) C } .
+  rl [stop] : { asked(R) pt(R, live) C } => { pt(R, gone) endmsg(R, interrupted) C } .
+  rl [stop] : { asked(R) pt(R, gone) C } => { pt(R, gone) C } .
+  rl [ignore] : { asked(R) pt(R, live) C } => { pt(R, live) late(R) C } .
+  rl [crash] : { faults(s F) rt(drive(R)) C } => { faults(F) rt(down) downed(R) killed(C) } .
+  rl [crash] : { faults(s F) rt(dry(R, T)) C } => { faults(F) rt(down) downed(R) killed(C) } .
+  rl [restart] : { faults(s F) clock(N) C } => { faults(F) clock(s N) settling wiped(C) } .
+
+  --- Unrecorded.handle_info/4: what the runtime writes for its turn the store refuses.
+  --- The run fails now, TurnWatch holds that at once, and the runtime goes on dry: an
+  --- event of a running turn stops the turn; the turn's end hands it over; the stop's
+  --- deadline (Codex) leaves the provider turn running. With the stop switched off,
+  --- the run's end is handed over at once as interrupted and the turn runs on.
+  crl [unrecorded] : { store(false) clock(N) rt(drive(R)) pt(R, live) C }
+    => { store(false) clock(N) rt(dry(R, N)) pt(R, live) asked(R) pend(R, N, pending, false)
+         unrec(R) stamp(C, R, N) }
+    if not has(C, noInterrupt) .
+  crl [unrecorded] : { store(false) clock(N) rt(drive(R)) pt(R, live) C }
+    => { store(false) clock(N) rt(idle) pt(R, live) pend(R, N, interrupted, false) unrec(R)
+         stamp(C, R, N) }
+    if has(C, noInterrupt) .
+  rl [unrecorded] : { store(false) clock(N) rt(drive(R)) endmsg(R, S) C }
+    => { store(false) clock(N) rt(idle) heard(R, S) pend(R, N, S, false) unrec(R) stamp(C, R, N) } .
+  rl [unrecorded] : { store(false) clock(N) rt(drive(R)) late(R) C }
+    => { store(false) clock(N) rt(idle) lo(R) pend(R, N, running, false) unrec(R) stamp(C, R, N) } .
+
+  --- TurnWriter.finish/3: the turn's end, written with the run's.
+  rl [finish] : { store(true) clock(N) rt(drive(R)) endmsg(R, S) run(R, active) ends(R, K) rpt(R, X) C }
+    => { store(true) clock(N) rt(idle) heard(R, S) run(R, over(S, N)) ends(R, s K) rpt(R, S) C } .
+
+  --- TurnWriter.finish/3 of a dry runtime: the turn's end goes to TurnWatch.
+  rl [hand-over] : { rt(dry(R, T)) endmsg(R, S) pend(R, M, pending, B) C }
+    => { rt(idle) heard(R, S) pend(R, M, S, B) C } .
+
+  --- {:interrupt_deadline, _}: Codex did not stop the turn; it ends as interrupted and
+  --- is left over. A dry runtime hands it over as still running.
+  rl [deadline] : { late(R) store(true) clock(N) rt(drive(R)) run(R, active) ends(R, K) rpt(R, X) C }
+    => { store(true) clock(N) rt(idle) lo(R) run(R, over(interrupted, N)) ends(R, s K)
+         rpt(R, interrupted) C } .
+  rl [deadline] : { late(R) rt(dry(R, T)) pend(R, M, pending, B) C }
+    => { rt(idle) lo(R) pend(R, M, running, B) C } .
+  crl [deadline] : { late(R) C } => { C } if not drives(C, R) .
+
+  --- A left-over turn ending on its own reads as it ended; one the store refuses
+  --- reads as running still (leftover_ended/2 rescues the write).
+  rl [leftover-end] : { lo(R) endmsg(R, S) store(B) rpt(R, X) C }
+    => { store(B) rpt(R, (if B and X == running then S else X fi)) C } .
+
+  --- An end no turn of the runtime's takes is dropped (`notification/3`, no turn).
+  crl [ignored-end] : { endmsg(R, S) C } => { C } if not hears(C, R) .
+
+  --- TurnWatch's try at a held end, once the provider turn's end is known, in
+  --- try_record/2 and TurnWriter.abandon/5: the run fails at the time it failed, its
+  --- provider turn as it ended. A run already ended is left as it is.
+  crl [record] : { store(true) clock(N) pend(R, T, P, B) run(R, active) ends(R, K) rpt(R, X) C }
+    => { store(true) clock(N) run(R, over(failed, (if has(C, nowTime) then N else T fi)))
+         ends(R, s K) rpt(R, written(has(C, overwrite), P, X)) watched(R) C }
+    if P =/= pending .
+  crl [record] : { store(true) pend(R, T, P, B) run(R, over(S, M)) ends(R, K) C }
+    => { store(true) run(R, over(failed, T)) ends(R, s K) watched(R) C }
+    if P =/= pending /\ has(C, noActiveCheck) .
+  crl [record] : { store(true) pend(R, T, P, B) run(R, over(S, M)) C }
+    => { store(true) run(R, over(S, M)) C }
+    if P =/= pending /\ not has(C, noActiveCheck) .
+
+  --- {:attempted, _, {:error, _}}: the store refused the try; it is retried.
+  crl [attempt-failed] : { store(false) pend(R, T, P, false) C }
+    => { store(false) (if has(C, noRetry) then empty else pend(R, T, P, true) fi) C }
+    if P =/= pending .
+
+  --- TurnWatch's `:DOWN` of a crashed runtime: the end it held keeps its time, or the
+  --- run fails now; the provider turn went with the runtime.
+  rl [gone] : { downed(R) pend(R, T, P, B) C }
+    => { pend(R, T, (if P == pending then asrun else P fi), B) C } .
+  crl [gone] : { downed(R) clock(N) C } => { clock(N) pend(R, N, asrun, false) stamp(C, R, N) }
+    if not pends(C, R) .
+
+  --- Recovery.run/0 once the store takes it.
+  rl [settle] : { settling store(true) clock(N) C } => { store(true) clock(N) settled(C, N) } .
+
+  --- The next message starts once the earlier run ended (dispatch/1 queues it before).
+  crl [dispatch] : { client(r2) store(true) run(r1, over(S, M)) C }
+    => { start(r2) store(true) run(r1, over(S, M)) C }
+    if not booting(C) .
+
+  --- start_turn: a left-over turn is stopped first; the new one runs. A message on its
+  --- way when the MC stopped starts after boot recovery (Recovery requeues it).
+  crl [take] : { start(r2) store(true) rt(Y) run(r2, unstarted) pt(r2, nopt) rpt(r2, absent) C }
+    => { store(true) rt(drive(r2)) run(r2, active) pt(r2, live) rpt(r2, running)
+         (if has(C, noLeftoverStop) then C else stopped(C) fi) }
+    if (Y == idle or Y == down) and not booting(C) .
+
+  --- start_turn when Codex does not answer the left-over turn's stop: the new run fails.
+  crl [refuse-start] : { start(r2) store(true) clock(N) rt(idle) lo(r1) run(r2, unstarted) ends(r2, K) C }
+    => { store(true) clock(N) rt(idle) lo(r1) run(r2, over(failed, N)) ends(r2, s K) C }
+    if not has(C, noLeftoverStop) and not booting(C) .
+
+  --- A user's stop: the runtime that drives the run stops it (one dry has already);
+  --- a run nothing drives is ended as interrupted (interrupt_undriven/2); a run that
+  --- ended has nothing to stop.
+  rl [interrupt-driven] : { ustop(R) rt(drive(R)) C } => { rt(drive(R)) asked(R) C } .
+  crl [interrupt-driven] : { ustop(R) rt(Y) C } => { rt(Y) C }
+    if Y =/= drive(R) /\ driven(rt(Y) C, R, not has(C, notDriven)) .
+  crl [interrupt-undriven] : { ustop(R) store(true) clock(N) run(R, active) ends(R, K) rpt(R, X) C }
+    => { store(true) clock(N) run(R, over(interrupted, N)) ends(R, s K)
+         rpt(R, (if X == running then interrupted else X fi)) C }
+    if not driven(C, R, not has(C, notDriven)) .
+  crl [interrupt-undriven] : { ustop(R) run(R, Z) C } => { run(R, Z) C } if Z =/= active .
+
+  --- An end written twice; a run TurnWatch recorded at another time than it failed; a
+  --- provider turn the runtime heard end recorded otherwise; a run the store failed
+  --- recorded as anything but failed (both but for a run an MC restart forgot); two
+  --- provider turns of the thread running at once; an active run nothing will end.
+  ops twice late overwritten lost twoTurns orphan quiet : Sys -> Bool .
+  eq twice({ ends(R, s s K) C }) = true .
+  eq twice({ C }) = false [owise] .
+  ceq late({ watched(R) noticed(R, T) run(R, over(S, M)) C }) = true if M =/= T .
+  eq late({ C }) = false [owise] .
+  ceq overwritten({ heard(R, S) rpt(R, S') C }) = true if S =/= S' /\ not forgotten(C, R) .
+  eq overwritten({ C }) = false [owise] .
+  ceq lost({ unrec(R) run(R, over(S, M)) C }) = true if S =/= failed /\ not forgotten(C, R) .
+  eq lost({ C }) = false [owise] .
+  eq twoTurns({ pt(r1, live) pt(r2, live) C }) = true .
+  eq twoTurns({ C }) = false [owise] .
+  ceq orphan({ run(R, active) C }) = true if not keeps(C, R) .
+  eq orphan({ C }) = false [owise] .
+
+  op forgotten : Conf Rid -> Bool .
+  eq forgotten(forgot(R) C, R) = true .
+  eq forgotten(C, R) = false [owise] .
+
+  --- What will end an active run: its runtime, TurnWatch, or boot recovery.
+  op keeps : Conf Rid -> Bool .
+  eq keeps(rt(drive(R)) C, R) = true .
+  eq keeps(rt(dry(R, T)) C, R) = true .
+  eq keeps(pend(R, T, P, B) C, R) = true .
+  eq keeps(downed(R) C, R) = true .
+  eq keeps(settling C, R) = true .
+  eq keeps(C, R) = false [owise] .
+
+  --- Nothing left to do: no message, end, stop or held end on its way, no run active.
+  eq quiet({ client(R) C }) = false .
+  eq quiet({ start(R) C }) = false .
+  eq quiet({ pend(R, T, P, B) C }) = false .
+  eq quiet({ downed(R) C }) = false .
+  eq quiet({ settling C }) = false .
+  eq quiet({ endmsg(R, S) C }) = false .
+  eq quiet({ asked(R) C }) = false .
+  eq quiet({ late(R) C }) = false .
+  eq quiet({ ustop(R) C }) = false .
+  eq quiet({ run(R, active) C }) = false .
+  eq quiet({ C }) = true [owise] .
+endm
+
+mod UNRECORDED-TURNS-PROPS is
+  including UNRECORDED-TURNS .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  --- Run R is active; the store failed R's turn.
+  ops unended failing : Rid -> Prop [ctor] .
+  var R : Rid .
+  var Z : Rs .
+  var C : Conf .
+  eq { run(R, active) C } |= unended(R) = true .
+  eq { C } |= unended(R) = false [owise] .
+  eq { unrec(R) C } |= failing(R) = true .
+  eq { C } |= failing(R) = false [owise] .
+endm

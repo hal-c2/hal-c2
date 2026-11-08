@@ -406,6 +406,16 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2
+
+  @impl true
+  def handle_info(message, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_info(__MODULE__, message, state, fn m, s ->
+        super(m, s)
+      end)
+
   # Anything Muse says about this run's turn means it has started it.
   defp started(%{native: native} = state, params) when native != nil do
     if native in [params["turnId"], get_in(params, ["item", "turnId"])],

@@ -920,6 +920,16 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2
+
+  @impl true
+  def handle_info(message, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_info(__MODULE__, message, state, fn m, s ->
+        super(m, s)
+      end)
+
   # One of the turn's prompts answered. A steer OpenCode took into the running loop
   # answers with it; one that landed as the loop ended runs a loop of its own, which
   # answers after the turn's prompt. So the last answer is the last loop's, success or

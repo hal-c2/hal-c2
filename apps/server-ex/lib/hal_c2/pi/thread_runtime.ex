@@ -408,6 +408,16 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2
+
+  @impl true
+  def handle_info(message, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_info(__MODULE__, message, state, fn m, s ->
+        super(m, s)
+      end)
+
   @impl true
   def terminate(_reason, state) do
     Durable.leaving(state, &flush(&1, :timer))

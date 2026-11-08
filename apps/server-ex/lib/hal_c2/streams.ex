@@ -105,9 +105,37 @@ defmodule HalC2.Streams do
   @doc "See `HalC2.Streams.Server.unsubscribe/3`."
   defdelegate unsubscribe(stream_id, pid, tag \\ nil), to: Server
 
-  @doc "See `HalC2.Streams.Server.transact/3`."
-  def transact(stream_id, stream_kind, fun),
-    do: with_server(stream_id, &Server.transact(&1, stream_kind, fun))
+  @doc """
+  See `HalC2.Streams.Server.transact/3`. Inside `unrecorded/2` for the stream, `fun`
+  decides against the stream as it stands and its changes are dropped.
+  """
+  def transact(stream_id, stream_kind, fun) do
+    if unrecorded?(stream_id) do
+      {_changes, reply} = fun.(state(stream_id))
+      reply
+    else
+      with_server(stream_id, &Server.transact(&1, stream_kind, fun))
+    end
+  end
+
+  @doc """
+  Runs `fun` with this process's commits to `stream_id` dropped, not recorded: for a
+  provider runtime whose turn the store failed to record (`HalC2.Orchestration.Unrecorded`),
+  which goes on driving the turn to its end while what ends it is recorded apart.
+  """
+  def unrecorded(stream_id, fun) do
+    previous = Process.put(:hal_c2_unrecorded_stream, stream_id)
+
+    try do
+      fun.()
+    after
+      if previous,
+        do: Process.put(:hal_c2_unrecorded_stream, previous),
+        else: Process.delete(:hal_c2_unrecorded_stream)
+    end
+  end
+
+  defp unrecorded?(stream_id), do: Process.get(:hal_c2_unrecorded_stream) == stream_id
 
   @doc """
   The stream's current state, started if needed. What walks its cold rows (a whole
@@ -136,6 +164,9 @@ defmodule HalC2.Streams do
   @doc "Commits changes to a stream and fans them out to its subscribers."
   @spec commit(String.t(), HalC2.Store.stream_kind(), [HalC2.Store.change()]) ::
           {:ok, non_neg_integer}
-  def commit(stream_id, stream_kind, changes),
-    do: with_server(stream_id, &Server.commit(&1, stream_kind, changes))
+  def commit(stream_id, stream_kind, changes) do
+    if unrecorded?(stream_id),
+      do: {:ok, sequence(stream_id)},
+      else: with_server(stream_id, &Server.commit(&1, stream_kind, changes))
+  end
 end

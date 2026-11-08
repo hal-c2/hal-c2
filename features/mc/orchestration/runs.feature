@@ -254,7 +254,7 @@ Feature: Runs and turns
 
   # Upstream #23169: a full disk or a database error failed the run while the provider kept
   # working, and every follow-up failed because the old provider turn was still running.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A run whose events cannot be recorded stops its provider turn
     Given "t1" has a running turn
     When the MC fails to record the turn's events
@@ -262,7 +262,7 @@ Feature: Runs and turns
     And "t1" can take its next message in the same provider conversation
 
   # Upstream #19646: a run whose failure could not be written stayed running after storage recovered.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A run failure that could not be recorded is recorded once storage recovers
     Given "t1" has a running turn
     When the MC fails to record the turn's events and then fails to record the run's failure
@@ -271,7 +271,7 @@ Feature: Runs and turns
     And "t1" no longer shows a running turn
 
   # Upstream #23169: a follow-up first stops the provider turn an earlier failed run left running.
-  @backlog @mc
+  @mc
   Scenario: A follow-up first stops a provider turn an earlier failed run left running
     Given an earlier run of "t1" failed while its provider turn kept running
     When the user sends "t1" another message
@@ -280,7 +280,7 @@ Feature: Runs and turns
 
   # Upstream #22846: the failure path wrote a turn that had already completed or failed as
   # interrupted, and wrote it even when the interrupt itself failed.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A run whose events cannot be recorded keeps how its provider turn ended
     Given the provider turn of "t1" <state>
     When the MC fails to record the turn's events and interrupts the provider turn

@@ -2102,4 +2102,201 @@ defmodule HalC2.Steps.Orchestration.Runs do
     :erlang.trace(watch, false, [:receive])
     runtime
   end
+
+  # --- a turn the store cannot record (`HalC2.Orchestration.Unrecorded`) ------------
+
+  # The thread's next `n` changes are refused inside the store's append transaction,
+  # as a full disk refuses them (`:store_hook`); `:until_recovered` refuses them all
+  # until "the database recovers".
+  def refuse_writes(left, id, :append_change, id) do
+    if self() == Process.whereis(HalC2.Store) and :counters.get(left, 1) > 0 do
+      :counters.sub(left, 1, 1)
+      raise "the disk is full"
+    end
+
+    :ok
+  end
+
+  def refuse_writes(_left, _id, _stage, _stream_id), do: :ok
+
+  step "the MC fails to record the turn's events", context do
+    context |> refuse(1) |> deliver(:item) |> await_unrecorded_end()
+  end
+
+  step "the MC fails to record the turn's events and then fails to record the run's failure",
+       context do
+    World.put_app_env(:unrecorded_retry_ms, 20)
+    HalC2.Test.Machines.refuse_changes(World.thread_id(context, context.thread))
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Test.Machines.refuse_changes(nil) end)
+    deliver(context, :item)
+
+    # The run's end waited for the provider turn's, then the store refused it.
+    assert {:unrecorded, at} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+    assert [%{"status" => "running"}] = World.entities(context, context.thread, "run")
+    Map.put(context, :failed_at, at)
+  end
+
+  step "the database recovers", context do
+    HalC2.Test.Machines.refuse_changes(nil)
+    Map.put(context, :recovered_at, HalC2.Orchestration.Entities.now())
+  end
+
+  step "the run is recorded as failed at the time it failed", context do
+    context = await_unrecorded_end(context)
+    run = unrecorded_run(context)
+    assert run["completedAt"] == context.failed_at
+    assert run["completedAt"] <= context.recovered_at
+    context
+  end
+
+  step "{string} no longer shows a running turn", %{args: [thread]} = context do
+    World.await_latest_run(context, thread, "failed")
+    assert Enum.all?(World.entities(context, thread, "run"), &(&1["status"] == "failed"))
+
+    assert Enum.all?(
+             World.entities(context, thread, "provider-turn"),
+             &(&1["status"] != "running")
+           )
+
+    context
+  end
+
+  step "the run is failed and the provider turn is interrupted together", context do
+    run = unrecorded_run(context)
+    assert run["failure"] =~ "The turn could not be saved"
+    assert %{"status" => "interrupted"} = turn = provider_turn(context)
+    assert turn["completedAt"] == run["completedAt"]
+    context
+  end
+
+  step "{string} can take its next message in the same provider conversation",
+       %{args: [thread]} = context do
+    context |> next_message(thread) |> same_conversation()
+  end
+
+  step "an earlier run of {string} failed while its provider turn kept running",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    context = context |> unstoppable() |> refuse(1) |> deliver(:item) |> await_unrecorded_end()
+    assert %{"status" => "running"} = provider_turn(context)
+    context
+  end
+
+  step "the user sends {string} another message", %{args: [thread]} = context do
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    next_message(context, thread)
+  end
+
+  step "the left-over provider turn is interrupted first", context do
+    assert ["turn/interrupt" | _] = context.methods_since
+    assert "turn/start" in context.methods_since
+    assert %{"status" => "interrupted"} = provider_turn(context, context.leftover)
+    context
+  end
+
+  step "the new turn runs in the same provider conversation", context do
+    same_conversation(context)
+  end
+
+  step "the provider turn of {string} had already completed", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> Map.put(:ending, {:turn, "completed"})
+  end
+
+  step "the provider turn of {string} had already failed", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> Map.put(:ending, {:turn, "failed"})
+  end
+
+  step "the provider turn of {string} was still running", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> Map.put(:ending, :item)
+  end
+
+  step "the provider turn of {string} could not be interrupted", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> unstoppable() |> Map.put(:ending, :item)
+  end
+
+  step "the MC fails to record the turn's events and interrupts the provider turn", context do
+    context |> refuse(1) |> deliver(context.ending) |> await_unrecorded_end()
+  end
+
+  step "the provider turn reads as {word}", %{args: [status]} = context do
+    assert %{"status" => ^status} = provider_turn(context)
+    context
+  end
+
+  step "the provider turn reads as running, so the next message stops it first", context do
+    assert %{"status" => "running"} = provider_turn(context)
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    context = next_message(context, context.thread)
+    assert ["turn/interrupt" | _] = context.methods_since
+    assert %{"status" => "interrupted"} = provider_turn(context, context.leftover)
+    context
+  end
+
+  defp refuse(context, n) do
+    left = :counters.new(1, [])
+    :counters.put(left, 1, n)
+    id = World.thread_id(context, context.thread)
+    World.put_app_env(:store_hook, {__MODULE__, :refuse_writes, [left, id]})
+    context
+  end
+
+  # Codex acknowledges a stop and goes on with the turn; the MC's wait for it is short.
+  defp unstoppable(context) do
+    World.put_app_env(:codex_interrupt_deadline_ms, 100)
+    File.write!(Path.join(context.mc.home, "ignore-interrupt"), "")
+    context
+  end
+
+  # What the provider says next, which the store then fails to record: an item of
+  # the running turn, or the turn's own end.
+  defp deliver(context, :item) do
+    context
+    |> notify("item/started", item("agentMessage", "msg-unrecorded"))
+    |> notify("item/agentMessage/delta", delta("msg-unrecorded", "Working on it."))
+  end
+
+  defp deliver(context, {:turn, status}) do
+    error = if status == "failed", do: %{"message" => "rate limited"}
+    turn = %{"id" => native_turn(context), "status" => status, "error" => error}
+    notify(context, "turn/completed", %{"turn" => turn})
+  end
+
+  # The run's end, once TurnWatch recorded it, with the provider turn it ran.
+  defp await_unrecorded_end(context) do
+    World.await_runs(context, context.thread, ["failed"])
+    [turn] = World.entities(context, context.thread, "provider-turn")
+
+    context
+    |> Map.put(:leftover, turn["id"])
+    |> Map.put(:methods_before, length(World.codex_methods(context)))
+  end
+
+  defp unrecorded_run(context),
+    do: Enum.find(World.entities(context, context.thread, "run"), &(&1["id"] == context.running))
+
+  defp provider_turn(context, id \\ nil) do
+    id = id || context.leftover
+    Enum.find(World.entities(context, context.thread, "provider-turn"), &(&1["id"] == id))
+  end
+
+  defp next_message(context, thread) do
+    context = World.dispatch_message(context, thread, "Next")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_runs(context, thread, ["failed", "completed"])
+
+    Map.put(
+      context,
+      :methods_since,
+      Enum.drop(World.codex_methods(context), context.methods_before)
+    )
+  end
+
+  # One provider conversation: started once, never resumed or started again.
+  defp same_conversation(context) do
+    methods = World.codex_methods(context)
+    assert Enum.count(methods, &(&1 == "thread/start")) == 1
+    refute "thread/resume" in methods
+    assert Enum.count(methods, &(&1 == "turn/start")) == 2
+    context
+  end
 end

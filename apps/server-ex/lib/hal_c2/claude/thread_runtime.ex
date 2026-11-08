@@ -878,6 +878,16 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2
+
+  @impl true
+  def handle_info(message, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_info(__MODULE__, message, state, fn m, s ->
+        super(m, s)
+      end)
+
   defp cancelled_decision({:permission, _id, _tool, _suggestions}), do: "cancel"
   defp cancelled_decision({:elicitation, _id, _params}), do: "cancel"
   defp cancelled_decision(_request), do: %{"dismissed" => true}
