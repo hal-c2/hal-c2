@@ -530,4 +530,26 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
     round = state |> Prune.dump() |> JSON.encode!() |> JSON.decode!()
     assert Prune.new("tool", round) == Map.drop(state, [])
   end
+
+  test "a saved file of the wrong shape is read as far as it has the right one" do
+    saved = %{
+      "streaks" => %{"Workflow" => 3, "CronCreate" => %{"sessions" => 2, "prompts" => "x"}},
+      "liveStreaks" => ["Workflow"],
+      "loadedSessions" => %{"Workflow" => "two", "CronList" => -4},
+      "seededThreads" => %{"a" => 7},
+      "sessions" => -1,
+      "pending" => %{"items" => "Workflow"}
+    }
+
+    state = Prune.new("tool", saved)
+    assert state["streaks"] == %{"CronCreate" => %{"sessions" => 2, "prompts" => 0}}
+    assert state["liveStreaks"] == %{}
+    assert state["loadedSessions"] == %{"Workflow" => 0, "CronList" => 0}
+    assert state["sessions"] == 0
+    assert state["pending"] == %{"items" => ["Workflow"], "since" => 0}
+
+    # And it folds like any other.
+    state = Prune.fold_segment(state, ["Workflow"], [], 3, cfg(), @now, thread: "a")
+    assert state["streaks"]["Workflow"] == %{"sessions" => 1, "prompts" => 3}
+  end
 end

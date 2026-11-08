@@ -192,14 +192,16 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   @doc "The state as its JSON file keeps it (it already is that shape)."
   def dump(state), do: state
 
+  # What the file had is read as far as it has the right shape, and the rest left
+  # out: a file edited by hand, or by an older version, never stops the plugin.
   defp strings(list), do: list |> List.wrap() |> Enum.filter(&is_binary/1) |> Enum.uniq()
-  defp count(n) when is_number(n), do: trunc(n)
+  defp count(n) when is_number(n), do: max(trunc(n), 0)
   defp count(_), do: 0
 
   defp streaks(map) when is_map(map) do
-    Map.new(map, fn {tool, streak} ->
+    for {tool, %{} = streak} <- map, into: %{} do
       {tool, %{"sessions" => count(streak["sessions"]), "prompts" => count(streak["prompts"])}}
-    end)
+    end
   end
 
   defp streaks(_), do: %{}

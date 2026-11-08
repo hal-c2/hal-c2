@@ -65,6 +65,46 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
     end
   end
 
+  # What a hand-edited or older file may hold under the keys the evidence reads.
+  @fields ~w(used kept off demoted streaks liveStreaks loadedSessions seededThreads
+             countedThreads liveThreads sessions prompts importedSessions pending
+             lastActivity items since)
+
+  property "any saved file reads as evidence of the right shape, and reads back the same",
+    numtests: HalC2.Prop.numtests(200) do
+    forall {unit, saved} <- {elements(["tool", "capability"]), map(elements(@fields), json())} do
+      state = Prune.new(unit, saved)
+      round = state |> Prune.dump() |> JSON.encode!() |> JSON.decode!()
+
+      # Shaped as the folds read it: what folds in next folds like any other.
+      folded =
+        Prune.fold_segment(
+          state,
+          Prune.candidate_tools(unit),
+          ["Workflow"],
+          2,
+          Prune.config(%{}),
+          0,
+          thread: "t1"
+        )
+
+      Prune.new(unit, round) == state and Enum.all?(Map.values(folded["streaks"]), &is_map/1)
+    end
+  end
+
+  defp json, do: sized(size, json(min(size, 6)))
+
+  defp json(0),
+    do: oneof([exactly(nil), boolean(), integer(), float(), elements(@names), elements(@fields)])
+
+  defp json(n) do
+    frequency([
+      {3, json(0)},
+      {1, resize(3, list(json(div(n, 2))))},
+      {1, resize(3, map(oneof([elements(@names), elements(@fields)]), json(div(n, 2))))}
+    ])
+  end
+
   # The evidence as the plugin runs it, with close thresholds so cases reach
   # proposals: 3 prompts over at least 2 sessions, or 3 sessions; no quiet wait.
   defp start(unit, mode) do
