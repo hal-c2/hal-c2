@@ -996,7 +996,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   # Fails the running fake's waiting prompt with `error` (see fake_acp.py).
-  # The signal needs the fake's pid, which it notes in `.waiting` right after
+  # The signal needs the fake's pid, which it notes in `.waiting` before
   # sending the running command's update: that update on the thread's stream
   # is the receipt that the pid is there (the run can read running sooner).
   defp fail_waiting(context, error) do
