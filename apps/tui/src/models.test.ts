@@ -3,11 +3,17 @@ import { describe, expect, it } from "bun:test";
 import { ProviderInstanceId, type ServerProvider } from "@hal-c2/contracts";
 import {
   currentModelIndex,
+  defaultModelSlug,
+  fallbackModelSlug,
   flattenModelOptions,
   modelSelectionForOption,
+  promptEffort,
+  providerReady,
   reasoningChoicesFor,
   reasoningChoicesForSelection,
   resolveModelSelection,
+  steppedEffort,
+  ultrathinkInWords,
   withModelSelectionOption,
 } from "./models.ts";
 
@@ -24,7 +30,7 @@ const provider = (
   }) as unknown as ServerProvider;
 
 describe("flattenModelOptions", () => {
-  it("Given providers with models, then it flattens them with labels", () => {
+  it("Given providers with models, then it flattens them with their full and short names", () => {
     const options = flattenModelOptions([
       provider("codex", "Codex", [{ slug: "gpt-5", name: "GPT-5", shortName: "5" }]),
       provider("claude", "Claude", [{ slug: "opus", name: "Opus 4" }]),
@@ -33,7 +39,8 @@ describe("flattenModelOptions", () => {
       {
         instanceId: "codex",
         model: "gpt-5",
-        label: "5",
+        label: "GPT-5",
+        buttonLabel: "5",
         providerLabel: "Codex",
         capabilities: null,
       },
@@ -41,6 +48,7 @@ describe("flattenModelOptions", () => {
         instanceId: "claude",
         model: "opus",
         label: "Opus 4",
+        buttonLabel: "Opus 4",
         providerLabel: "Claude",
         capabilities: null,
       },
@@ -188,5 +196,103 @@ describe("model selection parity with the web composer", () => {
       { id: "fastMode", value: true },
       { id: "reasoningEffort", value: "high" },
     ]);
+  });
+});
+
+describe("steppedEffort", () => {
+  const effortModel = (currentValue?: string) => ({
+    instanceId: ProviderInstanceId.make("claude"),
+    model: "opus",
+    label: "Opus",
+    providerLabel: "Claude",
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          options: ["low", "medium", "high", "ultrathink"].map((id) => ({
+            id,
+            label: id,
+            ...(id === "medium" ? { isDefault: true } : {}),
+          })),
+          promptInjectedValues: ["ultrathink"],
+          ...(currentValue ? { currentValue } : {}),
+        },
+      ],
+    },
+  });
+  const at = (value: string | undefined, direction: 1 | -1, currentValue?: string) =>
+    steppedEffort(
+      [effortModel(currentValue)],
+      {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "opus",
+        ...(value ? { options: [{ id: "effort", value }] } : {}),
+      },
+      direction,
+    )?.value;
+
+  it("steps one level and wraps past the ends, never onto a level the prompt carries", () => {
+    expect(at("medium", 1)).toBe("high");
+    expect(at("high", 1)).toBe("low");
+    expect(at("low", -1)).toBe("high");
+  });
+
+  it("steps from the model's default when the current level is not one it lists", () => {
+    expect(at(undefined, 1, "default")).toBe("high");
+    expect(at(undefined, -1, "default")).toBe("low");
+  });
+
+  it("reads Ultrathink, locked, only while the prompt says it in its own words", () => {
+    const selection = { instanceId: ProviderInstanceId.make("claude"), model: "opus" };
+    const read = (text: string) => promptEffort([effortModel()], selection, text);
+    expect(read("please ultrathink about it")).toEqual({ value: "ultrathink", locked: true });
+    expect(read("Ultrathink: design the cache")).toEqual({ value: "ultrathink", locked: false });
+    expect(read("design the cache")).toBeNull();
+    expect(ultrathinkInWords("Ultrathink: ultrathinking")).toBe(false);
+  });
+});
+
+describe("fallback accounts", () => {
+  const codex = (models: ReadonlyArray<Record<string, unknown>>, extra = {}) =>
+    ({
+      instanceId: "codex_work",
+      driver: "codex",
+      enabled: true,
+      status: "ready",
+      models: models.map((model) => ({ isCustom: false, capabilities: null, ...model })),
+      ...extra,
+    }) as unknown as ServerProvider;
+  const builtIn = { slug: "gpt-5.4", name: "GPT-5.4", aliases: ["5.4"] };
+  const custom = { slug: "my-5.4", name: "5.4", isCustom: true };
+
+  it("finds the model by its slug, else a built-in it names or is an alias of", () => {
+    expect(fallbackModelSlug(codex([builtIn]), "gpt-5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([builtIn]), "5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([builtIn]), "GPT-5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([builtIn]), "gpt-6")).toBeNull();
+  });
+
+  it("never takes a custom model that only shares the name", () => {
+    expect(fallbackModelSlug(codex([custom, builtIn]), "5.4")).toBe("gpt-5.4");
+    expect(fallbackModelSlug(codex([custom]), "5.4")).toBeNull();
+    expect(fallbackModelSlug(codex([custom]), "my-5.4")).toBe("my-5.4");
+  });
+
+  it("starts on the account's default, else its first built-in model", () => {
+    expect(
+      defaultModelSlug(codex([custom, builtIn, { slug: "b", name: "B", isDefault: true }])),
+    ).toBe("b");
+    expect(defaultModelSlug(codex([custom, builtIn]))).toBe("gpt-5.4");
+    expect(defaultModelSlug(codex([custom]))).toBe("my-5.4");
+    expect(defaultModelSlug(codex([]))).toBeNull();
+  });
+
+  it("runs only on an account that is on and whose last check passed", () => {
+    expect(providerReady(codex([builtIn]))).toBe(true);
+    expect(providerReady(codex([builtIn], { enabled: false }))).toBe(false);
+    expect(providerReady(codex([builtIn], { status: "error" }))).toBe(false);
+    expect(providerReady(codex([builtIn], { availability: "unavailable" }))).toBe(false);
   });
 });

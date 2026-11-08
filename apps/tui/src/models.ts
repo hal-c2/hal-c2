@@ -13,6 +13,8 @@ import {
   getProviderOptionDescriptors,
 } from "@hal-c2/shared/model";
 
+import { modelButtonName, modelFullName } from "./modelNames.ts";
+
 // Flatten the server config's providers into a flat, selectable model list for the
 // picker, at the level the TUI needs: provider + model slug + display labels. Pure.
 
@@ -20,7 +22,10 @@ export interface ModelOption {
   readonly instanceId: ServerProvider["instanceId"];
   /** The provider-specific model slug sent back as the selection. */
   readonly model: string;
+  /** The full name, as the picker lists it. */
   readonly label: string;
+  /** The name the user would say, as the composer's model control shows it. */
+  readonly buttonLabel?: string;
   readonly providerLabel: string;
   readonly capabilities: ModelCapabilities | null;
   /** The provider cannot change models once a conversation has started. */
@@ -36,7 +41,8 @@ export function flattenModelOptions(providers: ReadonlyArray<ServerProvider>): M
       options.push({
         instanceId: provider.instanceId,
         model: model.slug,
-        label: model.shortName ?? model.name ?? model.slug,
+        label: modelFullName(model),
+        buttonLabel: modelButtonName(model, provider.driver),
         providerLabel,
         capabilities: model.capabilities,
         ...(provider.requiresNewThreadForModelChange === true
@@ -213,4 +219,113 @@ export function modelOptionStates(
         ? descriptor.options.map((choice) => ({ id: choice.id, label: choice.label }))
         : [],
   }));
+}
+
+/** The select a model's effort is (the named reasoning select, else the first). */
+function effortDescriptor(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection,
+): Extract<ProviderOptionDescriptor, { type: "select" }> | null {
+  const model = options.find(
+    (option) => option.instanceId === selection.instanceId && option.model === selection.model,
+  );
+  const selects = (
+    model?.capabilities
+      ? getProviderOptionDescriptors({ caps: model.capabilities, selections: selection.options })
+      : []
+  ).filter((descriptor) => descriptor.type === "select");
+  return (
+    selects.find((descriptor) => REASONING_DESCRIPTOR_IDS.has(descriptor.id)) ?? selects[0] ?? null
+  );
+}
+
+/**
+ * The effort one level up (1) or down (-1) from the selection's, wrapping, as
+ * composer.increaseEffort / decreaseEffort set it (the desktop's steppedChoice).
+ * A level the prompt carries (Ultrathink) is typed, never stepped to, and a
+ * current level the model does not list steps from the model's default. Null
+ * when there is nothing to step between.
+ */
+export function steppedEffort(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection,
+  direction: 1 | -1,
+): { readonly descriptorId: string; readonly value: string } | null {
+  const descriptor = effortDescriptor(options, selection);
+  if (!descriptor) return null;
+  const injected = descriptor.promptInjectedValues ?? [];
+  const choices = descriptor.options.filter((choice) => !injected.includes(choice.id));
+  if (choices.length < 2) return null;
+  const ids = choices.map((choice) => choice.id);
+  const current = getProviderOptionCurrentValue(descriptor);
+  let at = typeof current === "string" ? ids.indexOf(current) : -1;
+  if (at < 0) at = choices.findIndex((choice) => choice.isDefault === true);
+  const value =
+    at < 0
+      ? direction > 0
+        ? ids[0]!
+        : ids.at(-1)!
+      : ids[(((at + direction) % ids.length) + ids.length) % ids.length]!;
+  return { descriptorId: descriptor.id, value };
+}
+
+/** "please ultrathink about it": the prompt asks for Ultrathink in its own words, past any prefix. */
+export function ultrathinkInWords(text: string): boolean {
+  return /\bultrathink\b/i.test(text.replace(/^\s*Ultrathink:\s*/i, ""));
+}
+
+/**
+ * The level the prompt itself asks for (Ultrathink, by its prefix or in its
+ * own words), which is the effort shown; `locked` when only editing the
+ * prompt's words can change it. Null when the prompt asks for none.
+ */
+export function promptEffort(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection | null | undefined,
+  text: string,
+): { readonly value: string; readonly locked: boolean } | null {
+  if (!selection) return null;
+  const injected = effortDescriptor(options, selection)?.promptInjectedValues?.[0];
+  if (injected === undefined) return null;
+  const locked = ultrathinkInWords(text);
+  return locked || /^\s*Ultrathink:/.test(text) ? { value: injected, locked } : null;
+}
+
+// ── Fallback accounts (upstream #23957, #27859, #29789) ─────────────────────
+
+/** The account can run a turn: enabled, installed, and its last check passed. */
+export function providerReady(provider: ServerProvider): boolean {
+  return (
+    provider.enabled !== false &&
+    isProviderAvailable(provider) &&
+    provider.status !== "error" &&
+    provider.status !== "disabled"
+  );
+}
+
+/** The model a thread starts on with this account: its default, else its first built-in. */
+export function defaultModelSlug(provider: ServerProvider): string | null {
+  const builtIn = provider.models.filter((model) => !model.isCustom);
+  return (
+    (builtIn.find((model) => model.isDefault === true) ?? builtIn[0] ?? provider.models[0])?.slug ??
+    null
+  );
+}
+
+/**
+ * The slug another account lists `model` under: the same slug, else a built-in
+ * model it names or is an alias of. Never a custom model that only shares the
+ * name, so "5.4" finds GPT-5.4 and not a custom model called "5.4". Null when
+ * the account has no such model.
+ */
+export function fallbackModelSlug(provider: ServerProvider, model: string): string | null {
+  if (provider.models.some((entry) => entry.slug === model)) return model;
+  const wanted = model.toLowerCase();
+  return (
+    provider.models.find(
+      (entry) =>
+        !entry.isCustom &&
+        (entry.name.toLowerCase() === wanted || (entry.aliases ?? []).includes(model)),
+    )?.slug ?? null
+  );
 }

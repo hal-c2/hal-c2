@@ -17,6 +17,7 @@ import {
   type VcsRef,
 } from "@hal-c2/contracts";
 import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
+import { createModelSelection } from "@hal-c2/shared/model";
 import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
 import {
   collectLimitAccounts,
@@ -61,10 +62,15 @@ import {
 import { placeNewThread } from "../loadBalancing.ts";
 import {
   currentModelIndex,
+  defaultModelSlug,
+  fallbackModelSlug,
   modelOptionStates,
   modelSelectionForOption,
+  promptEffort,
+  providerReady,
   reasoningChoicesForSelection,
   resolveModelSelection,
+  steppedEffort,
   withModelSelectionOption,
   type ModelOption,
   type ModelOptionState,
@@ -245,6 +251,11 @@ export interface TuiComposerState {
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeLabel: string;
   readonly runtimeModes: ReadonlyArray<{ value: string; label: string; description: string }>;
+  /**
+   * The footer names the permissions: always for a new thread's first
+   * message, otherwise only when they differ from the project's default.
+   */
+  readonly namesAccess: boolean;
   /** The footer shows only the model and the primary action. */
   readonly compact: boolean;
   /** The composer box's width, centred in the conversation column. */
@@ -496,8 +507,16 @@ export function createComposer(options: ComposerOptions): Composer {
   >();
   /** The model last sent with, per provider instance, newest last (this session). */
   const lastUsedModels = new Map<string, ModelSelection>();
+  /** The options last given to each account's model (`instance\nmodel`), this session. */
+  const keptOptions = new Map<string, NonNullable<ModelSelection["options"]>>();
+  const keepOptions = (selection: ModelSelection) => {
+    if (selection.options)
+      keptOptions.set(`${selection.instanceId}\n${selection.model}`, selection.options);
+  };
+  const keptFor = (instanceId: string, model: string) => keptOptions.get(`${instanceId}\n${model}`);
   const rememberModel = (selection: ModelSelection | null | undefined) => {
     if (!selection) return;
+    keepOptions(selection);
     lastUsedModels.delete(selection.instanceId);
     lastUsedModels.set(selection.instanceId, selection);
   };
@@ -647,14 +666,53 @@ export function createComposer(options: ComposerOptions): Composer {
   };
   const threadInteraction = (detail: OrchestrationThread) =>
     interactionOverrides.get(detail.id) ?? detail.interactionMode;
+  /**
+   * What a turn runs on when the chosen account cannot run one (upstream #23957):
+   * a ready account of the same driver that lists the model takes over, with the
+   * options last given to the model there, else the ones picked here. Failing
+   * that a thread keeps its own, and a draft or a page's ask takes the first
+   * ready account's default model.
+   */
+  const runnable = (selection: ModelSelection | null, isThread: boolean): ModelSelection | null => {
+    const chosen = selection
+      ? providers.find((provider) => provider.instanceId === selection.instanceId)
+      : undefined;
+    // An account the config has not named (or not yet loaded) is taken at its word.
+    if (selection && (!chosen || providerReady(chosen))) return selection;
+    const on = (instanceId: ModelSelection["instanceId"], model: string, picked?: ModelSelection) =>
+      resolveModelSelection(
+        modelOptions,
+        createModelSelection(instanceId, model, keptFor(instanceId, model) ?? picked?.options),
+      );
+    if (selection && chosen) {
+      for (const candidate of providers) {
+        if (!providerReady(candidate) || candidate.driver !== chosen.driver) continue;
+        if (candidate.instanceId === chosen.instanceId) continue;
+        const slug = fallbackModelSlug(candidate, selection.model);
+        if (slug !== null) return on(candidate.instanceId, slug, selection);
+      }
+    }
+    if (isThread) return selection;
+    for (const candidate of providers) {
+      const slug = providerReady(candidate) ? defaultModelSlug(candidate) : null;
+      if (slug !== null) return on(candidate.instanceId, slug);
+    }
+    return selection;
+  };
   const threadModel = (detail: OrchestrationThread): ModelSelection | null =>
-    modelOverrides.get(detail.id) ??
-    resolveModelSelection(modelOptions, detail.modelSelection) ??
-    detail.modelSelection ??
-    null;
+    runnable(
+      modelOverrides.get(detail.id) ??
+        resolveModelSelection(modelOptions, detail.modelSelection) ??
+        detail.modelSelection ??
+        null,
+      true,
+    );
   const newModel = (): ModelSelection | null =>
     newDraft
-      ? (resolveModelSelection(modelOptions, newDraft.modelSelection) ?? newDraft.modelSelection)
+      ? runnable(
+          resolveModelSelection(modelOptions, newDraft.modelSelection) ?? newDraft.modelSelection,
+          false,
+        )
       : null;
   // A page's ask runs where the user picked, else where the MC says; on the model a new
   // thread there would start on (openNewThread's order), with that project's defaults.
@@ -666,20 +724,37 @@ export function createComposer(options: ComposerOptions): Composer {
   };
   const pageDefaults = (page: ComposerPage) =>
     resolveProjectSettings(settings, pageProjectId(page) as never, pageProject(page)).settings;
+  /**
+   * The model new threads in a project start on: the project's own, even on an
+   * account that is off (`runnable` falls back from it, keeping its options,
+   * upstream #23957), else the environment's.
+   */
+  const newThreadModel = (
+    projectId: string | null,
+    project: Parameters<typeof resolveProjectSettings>[2],
+  ) => {
+    const resolved = resolveProjectSettings(settings, projectId as never, project);
+    return (
+      resolved.overrides.defaultModelSelection ?? resolved.settings.defaultModelSelection ?? null
+    );
+  };
   const pageModel = (page: ComposerPage): ModelSelection | null => {
     const chosen = pageChoices.get(page.key)?.modelSelection;
-    if (chosen) return resolveModelSelection(modelOptions, chosen) ?? chosen;
+    if (chosen) return runnable(resolveModelSelection(modelOptions, chosen) ?? chosen, false);
     const projectId = pageProjectId(page);
     const latest = (store.getState().shell?.threads ?? [])
       .filter((thread) => thread.projectId === projectId && !thread.archivedAt)
       .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     const carried = latest ? (modelOverrides.get(latest.id) ?? latest.modelSelection) : null;
     const selection =
-      pageDefaults(page).defaultModelSelection ??
+      newThreadModel(projectId, pageProject(page)) ??
       carried ??
       [...lastUsedModels.values()].at(-1) ??
       null;
-    return selection ? (resolveModelSelection(modelOptions, selection) ?? selection) : null;
+    return runnable(
+      selection ? (resolveModelSelection(modelOptions, selection) ?? selection) : null,
+      false,
+    );
   };
   const pageRuntime = (page: ComposerPage): RuntimeMode =>
     pageChoices.get(page.key)?.runtimeMode ?? pageDefaults(page).defaultRuntimeMode;
@@ -738,7 +813,11 @@ export function createComposer(options: ComposerOptions): Composer {
     const pendingUserInputCount = detail ? derivePendingUserInputs(detail.activities).length : 0;
     const pendingApprovalCount = detail ? derivePendingApprovals(detail.activities).length : 0;
     const model = activeModel();
-    const effort = reasoningChoicesForSelection(modelOptions, model)?.selectedId ?? null;
+    // An effort the prompt asks for (Ultrathink) is the one shown.
+    const effort =
+      promptEffort(modelOptions, model, draft.text)?.value ??
+      reasoningChoicesForSelection(modelOptions, model)?.selectedId ??
+      null;
     const interactionMode: ProviderInteractionMode = newDraft
       ? newDraft.interactionMode
       : page
@@ -751,6 +830,13 @@ export function createComposer(options: ComposerOptions): Composer {
       : page
         ? pageRuntime(page)
         : (detail?.runtimeMode ?? "full-access");
+    const defaultRuntimeMode = page
+      ? pageDefaults(page).defaultRuntimeMode
+      : resolveProjectSettings(
+          settings,
+          (detail?.projectId ?? null) as never,
+          projects().find((candidate) => candidate.id === detail?.projectId),
+        ).settings.defaultRuntimeMode;
     const project = newProject();
     const placeholder = newDraft
       ? project
@@ -872,6 +958,7 @@ export function createComposer(options: ComposerOptions): Composer {
         label: RUNTIME_MODE_META[mode].label,
         description: RUNTIME_MODE_META[mode].description,
       })),
+      namesAccess: !!newDraft || runtimeMode !== defaultRuntimeMode,
       compact,
       rows: rowsOverride ?? autoRows(draft.text),
       surfaceWidth,
@@ -890,7 +977,7 @@ export function createComposer(options: ComposerOptions): Composer {
       visibleAttachments: attachments.slice(0, visibleCount),
       moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
       footer: {
-        model: footerChip("model", model?.model ?? "—", { muted: !model, dropdown: true }),
+        model: footerChip("model", modelButtonLabel(model), { muted: !model, dropdown: true }),
         effort: footerChip("effort", effort ?? "—", { muted: !effort, dropdown: true }),
         access: footerChip("^O", runtimeModeLabel(runtimeMode), { dropdown: true }),
         mode: footerChip("^B", interactionModeLabel(interactionMode), {
@@ -898,7 +985,7 @@ export function createComposer(options: ComposerOptions): Composer {
         }),
         compactModel: styled(
           chunk("model ", { fg: palette.dim }),
-          chunk(clip(model?.model ?? "—", Math.max(1, footerWidth - (showOptions ? 18 : 8))), {
+          chunk(clip(modelButtonLabel(model), Math.max(1, footerWidth - (showOptions ? 18 : 8))), {
             fg: model ? palette.text : palette.dim,
           }),
           chunk(" ▾", { fg: palette.dim }),
@@ -922,6 +1009,15 @@ export function createComposer(options: ComposerOptions): Composer {
       limitLines,
       chromeRows,
     };
+  };
+
+  /** The name the model control shows: the one the user would say, else the slug. */
+  const modelButtonLabel = (model: ModelSelection | null): string => {
+    if (!model) return "—";
+    const option = modelOptions.find(
+      (candidate) => candidate.instanceId === model.instanceId && candidate.model === model.model,
+    );
+    return option?.buttonLabel ?? option?.label ?? model.model;
   };
 
   /** Why the selected model's provider cannot run a turn right now, and how to fix it. */
@@ -1527,7 +1623,14 @@ export function createComposer(options: ComposerOptions): Composer {
       (candidate) => candidate.instanceId === instanceId && candidate.model === model,
     );
     if (!option) return;
-    const selection = modelSelectionForOption(option);
+    // Options belong to the model they were picked with: this model's own come back.
+    const kept = keptFor(instanceId, model);
+    const selection = kept
+      ? (resolveModelSelection(
+          modelOptions,
+          createModelSelection(option.instanceId, model, kept),
+        ) ?? modelSelectionForOption(option))
+      : modelSelectionForOption(option);
     const page = openPage();
     if (newDraft) newDraft = { ...newDraft, modelSelection: selection };
     else if (page) choosePage(page, { modelSelection: selection });
@@ -1567,6 +1670,7 @@ export function createComposer(options: ComposerOptions): Composer {
       return;
     }
     const next = withModelSelectionOption(selection, id, value);
+    keepOptions(next);
     const page = openPage();
     if (newDraft) newDraft = { ...newDraft, modelSelection: next };
     else if (page) choosePage(page, { modelSelection: next });
@@ -1584,6 +1688,35 @@ export function createComposer(options: ComposerOptions): Composer {
       "success",
     );
     publish();
+  };
+
+  /**
+   * The effort one level up or down without opening its picker
+   * (composer.increaseEffort / decreaseEffort). It stands down while
+   * something else owns the composer: an approval or a question waiting, no
+   * ready provider, or the prompt's own ultrathink. The TUI has no editing of
+   * queued messages, so that case of the desktop's never arises here.
+   */
+  const stepEffort = (direction: 1 | -1) => {
+    const selection = activeModel();
+    if (!selection) return;
+    // Ready: the MC lists its models, its last check did not fail and its
+    // config has nothing to fix first.
+    if (!modelOptions.some((option) => option.instanceId === selection.instanceId)) return;
+    const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+    if (provider?.status === "error" || provider?.status === "disabled") return;
+    if (providerNotice(selection) !== null) return;
+    const detail = newDraft || openPage() ? null : selectedDetail();
+    if (
+      detail &&
+      (derivePendingApprovals(detail.activities).length > 0 ||
+        derivePendingUserInputs(detail.activities).length > 0)
+    ) {
+      return;
+    }
+    if (promptEffort(modelOptions, selection, draftFor(target()).text)?.locked) return;
+    const next = steppedEffort(modelOptions, selection, direction);
+    if (next) setOption(next.descriptorId, next.value);
   };
 
   /**
@@ -1849,7 +1982,10 @@ export function createComposer(options: ComposerOptions): Composer {
     ).settings;
     const carried = thread ? (modelOverrides.get(thread.id) ?? thread.modelSelection) : null;
     const modelSelection =
-      defaults.defaultModelSelection ?? carried ?? [...lastUsedModels.values()].at(-1) ?? null;
+      newThreadModel(project?.id ?? null, project) ??
+      carried ??
+      [...lastUsedModels.values()].at(-1) ??
+      null;
     draftCount += 1;
     newDraft = {
       draftId: `draft-${draftCount}`,
@@ -2740,6 +2876,12 @@ export function createComposer(options: ComposerOptions): Composer {
         return true;
       case "composer.optionsPicker.toggle":
         openOptionsPicker();
+        return true;
+      case "composer.increaseEffort":
+        stepEffort(1);
+        return true;
+      case "composer.decreaseEffort":
+        stepEffort(-1);
         return true;
       case "composer.providers.reload":
         void loadModels().catch(() => {});

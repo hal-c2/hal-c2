@@ -79,6 +79,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25511: a second instance showed the default instance's draft model, whose slug its
   # own catalog lacks, so its effort control vanished and sending asked for a model it had disabled.
+  # The TUI's picker chooses an instance and its model together, so it cannot switch only the instance.
   @shared @backlog-mobile @backlog-tui
   Scenario: A second instance with no draft model of its own uses its own default
     Given the draft picked "Kimi K3.1 Pro" on the default OpenCode instance
@@ -93,6 +94,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #24205: the model button repeated what the provider icon says ("Claude Opus 5.5" beside
   # the Claude icon), and aggregator catalogs added a vendor ("NVIDIA: Nemotron 3 Super").
+  # The TUI's model control reads the short name and its picker the full one, but it has no tooltips.
   @shared @backlog-mobile @backlog-tui
   Scenario Outline: The model button shows the name the user would say
     When the user chooses the <provider> model "<full>"
@@ -110,7 +112,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # here said "5.5", which upstream never did.
 
   # Upstream #24205
-  @shared @backlog-mobile @backlog-tui @priority-low
+  @shared @backlog-mobile @priority-low
   Scenario: A short name the model manifest gives wins over the worked-out one
     Given the model manifest names "Claude Opus 5.5" "Opus" for short
     When the user chooses "Claude Opus 5.5"
@@ -655,7 +657,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25869: the composer names the permissions only when they are not the user's
   # default; they change from the effort menu or the permissions key.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: The composer names the permissions only when they differ from the default
     Given the default permissions are Supervised
     And the open thread runs in Supervised
@@ -678,7 +680,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Upstream #25869: a new thread always says which permissions its first message will use,
   # and choosing them there opens the permissions as the permissions key does.
   # Upstream #30275: choosing them opens the permissions menu directly, not the model list first.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A new thread says which permissions its first message uses
     Given the default permissions are Full access
     When the user starts a new thread
@@ -778,7 +780,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
 
   # Upstream #19928: two commands step the composer's effort one level without opening the picker.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: The user steps the effort from the keyboard without leaving the prompt
     Given the thread runs on a model whose efforts are low, medium and high
     And the effort is <from> and the user is typing a draft
@@ -831,7 +833,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the draft reads "/review the cache"
 
   # Upstream #19928: writing "ultrathink" in the prompt locks effort for the step as for the picker.
-  @desktop @tui @backlog-tui @priority-low
+  @desktop @tui @priority-low
   Scenario: Stepping the effort does nothing while the prompt says ultrathink in its own words
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -840,7 +842,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #19928: a level the provider reports outside the model's list (OpenCode's "default")
   # steps from the model's default instead of doing nothing.
-  @desktop @tui @backlog-tui @priority-low
+  @desktop @tui @priority-low
   Scenario: An effort outside the model's levels steps from the model's default
     Given the provider reports an effort the model does not list
     And the model's default effort is medium
@@ -856,6 +858,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn runs without Fast mode
 
   # Upstream #19928: the step stands down whenever something else owns the composer.
+  # The TUI stands down on every row but cannot edit a queued message, so that row cannot run there.
   @desktop @tui @backlog-tui
   Scenario Outline: Stepping the effort does nothing while the composer is taken
     Given <situation>
@@ -905,7 +908,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it reads "High Fast" with the reasoning icon, and Fast off still shows the icon
 
   # Upstream #23957: a fallback to another instance of the same provider dropped the picked effort.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A composer that falls back to another account keeps the effort picked for the model
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and the account "Claude Team" is ready
@@ -914,7 +917,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the first turn is sent at extra high effort
 
   # Upstream #23957: options belong to the model they were picked with.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: A fallback account takes no options that were not picked for what it shows
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and <fallback> is ready
@@ -928,7 +931,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
   # composer fell back to another account.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario: A fallback keeps the effort of a model saved under an alias
     Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
     And "Codex Personal" is turned off and the account "Codex Work" is ready
@@ -938,7 +941,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #29789: picking a custom model whose name matched a built-in Codex alias stored the
   # built-in model, and its effort was saved under the built-in model too.
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-mobile @priority-high
   Scenario: A custom model named like a Codex alias stays the model the user picked
     Given the Codex account "Codex Proxy" has the custom model "gpt-5-codex"
     When the user picks "gpt-5-codex" on "Codex Proxy" at high effort and sends a message
