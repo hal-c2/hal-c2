@@ -214,7 +214,7 @@ Feature: Browsing pull requests
 
   # Upstream #26877: only GitHub rows carried a review decision, so GitLab merge requests showed no
   # approval and the approved filter found none.
-  @backlog @mc
+  @mc
   Scenario Outline: A GitLab merge request shows its approval
     Given a merge request on GitLab <edition> that <approval>
     When the user lists merge requests
@@ -242,7 +242,7 @@ Feature: Browsing pull requests
       | nothing         | approved             |
 
   # Upstream #26877
-  @backlog @mc @priority-low
+  @mc
   Scenario: A GitLab list whose approvals cannot be read still loads
     Given GitLab refuses to say which merge requests are approved
     When the user lists merge requests
@@ -1876,7 +1876,7 @@ Feature: Browsing pull requests
     When the user lists open pull requests
     Then the open pull requests of "acme/shop" are listed the long way
 
-  @backlog @mc
+  @mc
   Scenario: A list read the long way grows its page instead of carrying on
     Given GitHub's search answers nothing at all for "acme/shop"
     And "acme/shop" has 300 open pull requests
@@ -1929,19 +1929,19 @@ Feature: Browsing pull requests
       | Azure DevOps | the author "alice" |
       | Bitbucket    | review required   |
 
-  @backlog @mc
+  @mc
   Scenario: A remote spelled as an SSH alias is identified by its host
     Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and "work-gitlab" is an SSH alias of a GitLab server
     When the user lists open pull requests
     Then the open change requests of "infra" are listed
 
-  @backlog @mc
+  @mc
   Scenario: Pull requests carry the stacks they belong to
     Given pull request 42 on github.com is the second layer of a stack
     When the user lists open pull requests
     Then pull request 42 is listed with its place in the stack
 
-  @backlog @mc
+  @mc
   Scenario: A failing stack lookup does not break the list
     Given GitHub cannot answer which stacks the listed pull requests belong to
     When the user lists open pull requests
@@ -1954,7 +1954,7 @@ Feature: Browsing pull requests
     Then the host is searched for at most 100 repositories per request
     And the batches are read concurrently
 
-  @backlog @mc
+  @mc
   Scenario: A batch the host cannot answer is read one repository at a time
     Given the host cannot answer one search across twelve repositories
     When the user lists open pull requests
@@ -1996,13 +1996,33 @@ Feature: Browsing pull requests
 
   # Upstream #23635: Bitbucket times are finer than a millisecond, so a pull request updated later
   # in a page's last millisecond was skipped for good.
-  @backlog @mc
+  @mc
   Scenario: A Bitbucket pull request updated in the same millisecond as a page's last is not skipped
     Given two Bitbucket pull requests were updated within one millisecond
     And a page of the list ends between them
     When the user loads more pull requests
     Then the other one is listed on the next page
     And no pull request is listed twice
+
+  @mc
+  Scenario: Update times written with shorter fractions are not skipped between pages
+    Given Bitbucket stamps its update times with fractions of different lengths
+    When the user loads more change requests until none are left
+    Then all 150 change requests are listed exactly once
+
+  @mc
+  Scenario: A continuation too deep to reach says so instead of ending the list
+    Given a Bitbucket project with 2600 open pull requests
+    When the user carries the list on from fifty pages deep
+    Then the list says the project could not be read instead of ending
+
+  @mc
+  Scenario: An Azure pull request merged long after it was opened is not passed over
+    Given an Azure project with 650 merged pull requests, the oldest of them merged last
+    When the user lists merged pull requests
+    And the user loads more merged pull requests until none are left
+    Then the pull request merged last is listed first
+    And every change request is listed exactly once
 
   @mc
   Scenario Outline: A host that cannot search text lists without narrowing
@@ -2113,13 +2133,13 @@ Feature: Browsing pull requests
     When the MC reads it
     Then GitHub is asked once and all three clients get the answer
 
-  @backlog @mc
+  @mc
   Scenario: Many summaries are asked for in one batch
     Given a client asks for the summaries of 30 pull requests in quick succession
     When the MC reads them
     Then GitHub is asked in batches of at most 25 pull requests
 
-  @backlog @mc
+  @mc
   Scenario: A pull request GitHub cannot find fails only its own lookup
     Given a client asks for the summaries of pull requests 41, 42 and 43
     And GitHub cannot find pull request 42

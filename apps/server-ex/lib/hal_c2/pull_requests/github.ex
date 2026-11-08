@@ -453,14 +453,65 @@ defmodule HalC2.PullRequests.GitHub do
   is the usual one.
   """
   def list(ctx, opts) do
-    case list_read(ctx, opts, true) do
-      {:ok, %{items: []}} = empty ->
-        if opts.cursor == nil and String.trim(opts.query || "") == "",
-          do: unindexed(ctx, opts, empty),
-          else: empty
+    read =
+      case list_read(ctx, opts, true) do
+        {:ok, %{items: []}} = empty ->
+          if opts.cursor == nil and String.trim(opts.query || "") == "",
+            do: unindexed(ctx, opts, empty),
+            else: empty
+
+        other ->
+          other
+      end
+
+    # Rows carry the stack they belong to, where GitHub can say; a stack read
+    # that fails leaves the rows as they are rather than failing the list.
+    case read do
+      {:ok, %{items: [_ | _]} = page} ->
+        memberships = stack_memberships(ctx)
+
+        items =
+          Enum.map(page.items, fn item ->
+            case memberships[item["number"]] do
+              nil -> item
+              stack -> Map.put(item, "stack", stack)
+            end
+          end)
+
+        {:ok, %{page | items: items}}
 
       other ->
         other
+    end
+  end
+
+  # Every stack of the repository as `{pull request number => membership}`: its
+  # stack's number, its one-based place in it, its size and its base. Any
+  # failure (a host without stacks, a read refused) is no memberships.
+  defp stack_memberships(ctx) do
+    case rest(ctx, "stacks") do
+      {:ok, stacks} when is_list(stacks) ->
+        Map.new(
+          for stack <- stacks,
+              is_map(stack),
+              is_integer(stack["number"]),
+              layers = stack["pull_requests"] || [],
+              {layer, index} <- Enum.with_index(layers),
+              is_integer(layer["number"]) do
+            base = if is_map(stack["base"]), do: stack["base"]["ref"], else: stack["base"]
+
+            {layer["number"],
+             %{
+               "number" => stack["number"],
+               "position" => index + 1,
+               "size" => length(layers),
+               "base" => base
+             }}
+          end
+        )
+
+      _ ->
+        %{}
     end
   end
 

@@ -151,7 +151,79 @@ defmodule HalC2.PullRequests.Hosts do
     fetch = fn page -> glab_json_list(project.root, path.(page)) end
 
     with {:ok, items, more} <- collect(fetch, &gitlab_item/1, 100, opts[:before]) do
-      {:ok, %{items: by_update(items), more: more}}
+      {:ok, %{items: items |> gitlab_approvals(project) |> by_update(), more: more}}
+    end
+  end
+
+  # The list read carries no approval, so GitLab is asked once per hundred
+  # merge requests whether each has every approval its rules require, which
+  # answers for a lone approver and an approval rule the same way. A host that
+  # will not say leaves the rows without a review decision, still listed.
+  defp gitlab_approvals([], _project), do: []
+
+  defp gitlab_approvals(items, project) do
+    approved =
+      items
+      |> Enum.chunk_every(100)
+      |> Enum.reduce_while(%{}, fn chunk, acc ->
+        case gitlab_approved_chunk(project, chunk) do
+          {:ok, found} -> {:cont, Map.merge(acc, found)}
+          :error -> {:halt, :error}
+        end
+      end)
+
+    case approved do
+      :error ->
+        items
+
+      found ->
+        Enum.map(items, fn item ->
+          decision =
+            cond do
+              found[item["number"]] == true ->
+                "approved"
+
+              found[item["number"]] == false and item["reviewRequestLogins"] != [] ->
+                "review-required"
+
+              true ->
+                nil
+            end
+
+          %{item | "reviewDecision" => decision}
+        end)
+    end
+  end
+
+  defp gitlab_approved_chunk(project, chunk) do
+    iids = Enum.map_join(chunk, ", ", &~s("#{&1["number"]}"))
+
+    query =
+      "query { project(fullPath: #{JSON.encode!(project.repository)}) " <>
+        "{ mergeRequests(iids: [#{iids}], first: 100) { nodes { iid approved } } } }"
+
+    case Cli.run("glab", ["api", "graphql", "-f", "query=" <> query],
+           cd: project.root,
+           timeout: @timeout
+         ) do
+      {:ok, out, _} ->
+        case JSON.decode(String.trim(out)) do
+          {:ok, %{"data" => %{"project" => %{"mergeRequests" => %{"nodes" => nodes}}}}}
+          when is_list(nodes) ->
+            {:ok,
+             Map.new(nodes, fn node ->
+               case Integer.parse(to_string(node["iid"])) do
+                 {iid, ""} -> {iid, node["approved"] == true}
+                 _ -> {0, false}
+               end
+             end)}
+
+          _ ->
+            :error
+        end
+
+      _ ->
+        :error
     end
   end
 
@@ -389,7 +461,12 @@ defmodule HalC2.PullRequests.Hosts do
       end
     end
 
-    with {:ok, items, more} <- collect(fetch, &azure_item/1, 100, opts[:before]) do
+    # `az` pages in creation order, but a merged or closed row's place in the
+    # list is its closing time, so those lists are read whole before they
+    # are sorted and sliced; an open row's time is its creation, which the
+    # paging already follows.
+    with {:ok, items, more} <-
+           collect(fetch, &azure_item/1, 100, opts[:before], opts.state != "open") do
       {:ok, %{items: by_update(items), more: more}}
     end
   end
@@ -666,18 +743,34 @@ defmodule HalC2.PullRequests.Hosts do
 
   # Bitbucket and Forgejo stamp times with an offset; the listing sorts every
   # host's rows against each other as text (and a continuation's boundary is
-  # compared the same way), so they are written the way the others are.
+  # compared the same way), so they are written the way the others are. The
+  # fraction is always written to microseconds: hosts that drop trailing
+  # zeros (Azure) or the whole fraction at zero microseconds (Bitbucket)
+  # would otherwise sort a `.7` after `.74` as text, and a boundary check
+  # could drop or repeat rows.
   defp iso_utc(text) do
     case DateTime.from_iso8601(text) do
-      {:ok, at, _offset} -> DateTime.to_iso8601(at)
+      {:ok, at, _offset} -> fixed_micros(at)
       _ -> text
     end
   end
 
+  defp fixed_micros(at),
+    do: at |> Map.put(:microsecond, {elem(at.microsecond, 0), 6}) |> DateTime.to_iso8601()
+
   defp just_after(boundary) do
     case DateTime.from_iso8601(boundary) do
-      {:ok, at, _offset} -> at |> DateTime.add(1, :second) |> DateTime.to_iso8601()
+      {:ok, at, _offset} -> at |> DateTime.add(1, :second) |> fixed_micros()
       _ -> boundary
+    end
+  end
+
+  # Whether `text` names an instant no newer than `boundary`, compared as
+  # instants so a boundary written with another precision still lines up.
+  defp no_newer?(text, boundary) do
+    case {DateTime.from_iso8601(text), DateTime.from_iso8601(boundary)} do
+      {{:ok, at, _}, {:ok, limit, _}} -> DateTime.compare(at, limit) != :gt
+      _ -> text <= boundary
     end
   end
 
@@ -709,25 +802,43 @@ defmodule HalC2.PullRequests.Hosts do
   # `{:ok, items, more?}`. With a continuation boundary, only items no newer
   # than it are kept and the walk scans on (to `@max_walk` pages) until it
   # holds five pages of them, so rows past the first five host pages are
-  # still reached; without one it stops after five pages as before.
-  defp collect(fetch, mapper, size, before), do: collect(fetch, mapper, size, before, 1, [])
+  # still reached; without one it stops after five pages as before. A walk
+  # that gives up at `@max_walk` without reaching its boundary is an error,
+  # never an ended list: the host still has the older rows. An `exhaustive`
+  # walk (Azure's merged, closed and all lists, whose pages are in creation
+  # order while their rows are ordered by closing time) reads every page
+  # before the caller slices, so no row is passed over unseen.
+  defp collect(fetch, mapper, size, before, exhaustive \\ false),
+    do: collect(fetch, mapper, size, before, exhaustive, 1, [])
 
-  defp collect(fetch, mapper, size, before, page, acc) do
+  defp collect(fetch, mapper, size, before, exhaustive, page, acc) do
     case fetch.(page) do
       {:ok, rows} ->
         kept =
           rows
           |> Enum.flat_map(mapper)
-          |> Enum.filter(&(before == nil or &1["updatedAt"] <= before))
+          |> Enum.filter(&(before == nil or no_newer?(&1["updatedAt"], before)))
 
         acc = acc ++ kept
 
         cond do
-          length(rows) < size -> {:ok, acc, false}
-          length(acc) >= @pages * size -> {:ok, acc, true}
-          before == nil and page >= @pages -> {:ok, acc, true}
-          page >= @max_walk -> {:ok, acc, true}
-          true -> collect(fetch, mapper, size, before, page + 1, acc)
+          length(rows) < size ->
+            {:ok, acc, false}
+
+          page >= @max_walk ->
+            if exhaustive or acc == [],
+              do:
+                {:error, {:failed, "There are too many change requests to carry this list on."}},
+              else: {:ok, acc, true}
+
+          not exhaustive and length(acc) >= @pages * size ->
+            {:ok, acc, true}
+
+          not exhaustive and before == nil and page >= @pages ->
+            {:ok, acc, true}
+
+          true ->
+            collect(fetch, mapper, size, before, exhaustive, page + 1, acc)
         end
 
       error ->

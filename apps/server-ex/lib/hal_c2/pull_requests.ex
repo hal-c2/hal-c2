@@ -315,14 +315,17 @@ defmodule HalC2.PullRequests do
               do: item
 
         fetched =
-          if cursor, do: Enum.filter(kept, &(&1["updatedAt"] <= cursor.boundary)), else: kept
+          if cursor,
+            do: Enum.filter(kept, &no_newer?(&1["updatedAt"], cursor.boundary)),
+            else: kept
 
         after_seen =
           if cursor,
             do:
               Enum.reject(
                 fetched,
-                &(&1["updatedAt"] == cursor.boundary and &1["number"] in cursor.seen)
+                &(same_instant?(&1["updatedAt"], cursor.boundary) and
+                    &1["number"] in cursor.seen)
               ),
             else: fetched
 
@@ -433,7 +436,8 @@ defmodule HalC2.PullRequests do
             do:
               Enum.reject(
                 page.items,
-                &(&1["updatedAt"] == cursor.boundary and &1["number"] in cursor.seen)
+                &(same_instant?(&1["updatedAt"], cursor.boundary) and
+                    &1["number"] in cursor.seen)
               ),
             else: page.items
 
@@ -585,6 +589,7 @@ defmodule HalC2.PullRequests do
     |> put_present("headSha", item["headSha"])
     |> put_present("reviewDecision", item["reviewDecision"])
     |> put_present("checksState", item["checksState"])
+    |> put_present("stack", item["stack"])
   end
 
   # A continuation is `<instant>|<rows delivered>|<numbers already sent at it>`: the
@@ -613,6 +618,50 @@ defmodule HalC2.PullRequests do
     end)
   end
 
+  # Instants are compared as instants, not as text: hosts write fractions
+  # of a second at different precisions (and a cursor may carry another
+  # host's spelling), where text order and time order disagree.
+  defp instant(text) do
+    case DateTime.from_iso8601(text) do
+      {:ok, at, _offset} -> at
+      _ -> nil
+    end
+  end
+
+  defp same_instant?(left, right) do
+    case {instant(left), instant(right)} do
+      {%DateTime{} = at, %DateTime{} = other} -> DateTime.compare(at, other) == :eq
+      _ -> left == right
+    end
+  end
+
+  defp no_newer?(text, boundary) do
+    case {instant(text), instant(boundary)} do
+      {%DateTime{} = at, %DateTime{} = limit} -> DateTime.compare(at, limit) != :gt
+      _ -> text <= boundary
+    end
+  end
+
+  defp older?(text, boundary) do
+    case {instant(text), instant(boundary)} do
+      {%DateTime{} = at, %DateTime{} = limit} -> DateTime.compare(at, limit) == :lt
+      _ -> text < boundary
+    end
+  end
+
+  defp oldest(items),
+    do:
+      items
+      |> Enum.min_by(&{instant_key(&1["updatedAt"]), &1["updatedAt"]})
+      |> Map.get("updatedAt")
+
+  defp instant_key(text) do
+    case instant(text) do
+      %DateTime{} = at -> DateTime.to_unix(at, :microsecond)
+      nil -> 0
+    end
+  end
+
   # Whether a cursor built from `items` would move past `previous`: an older
   # boundary, or the same one with a number at it that was not already sent.
   defp advances?(nil, items), do: items != []
@@ -620,22 +669,29 @@ defmodule HalC2.PullRequests do
   defp advances?(_previous, []), do: false
 
   defp advances?(previous, items) do
-    boundary = items |> Enum.map(& &1["updatedAt"]) |> Enum.min()
+    boundary = oldest(items)
 
-    boundary < previous.boundary or
-      (boundary == previous.boundary and
+    older?(boundary, previous.boundary) or
+      (same_instant?(boundary, previous.boundary) and
          Enum.any?(
            items,
-           &(&1["updatedAt"] == boundary and &1["number"] not in previous.seen)
+           &(same_instant?(&1["updatedAt"], boundary) and
+               &1["number"] not in previous.seen)
          ))
   end
 
   defp next_cursor(_previous, [], _count), do: nil
 
   defp next_cursor(previous, fetched, count) do
-    boundary = fetched |> Enum.map(& &1["updatedAt"]) |> Enum.min()
-    kept = if previous && previous.boundary == boundary, do: previous.seen, else: []
-    seen = kept ++ for(item <- fetched, item["updatedAt"] == boundary, do: item["number"])
+    boundary = oldest(fetched)
+
+    kept =
+      if previous && same_instant?(previous.boundary, boundary), do: previous.seen, else: []
+
+    seen =
+      kept ++
+        for(item <- fetched, same_instant?(item["updatedAt"], boundary), do: item["number"])
+
     "#{boundary}|#{((previous && previous.delivered) || 0) + count}|#{Enum.join(seen, ",")}"
   end
 
@@ -1331,7 +1387,61 @@ defmodule HalC2.PullRequests do
              do: {name, url}
            ),
          {_, url} <- List.keyfind(remotes, "origin", 0) || List.first(remotes) do
-      parse_remote(url)
+      url |> parse_remote() |> resolve_ssh_alias()
+    else
+      _ -> nil
+    end
+  end
+
+  # A remote spelled as an SSH alias (`git@work-gitlab:acme/infra.git`) names no
+  # host the kind rules know; the alias's `HostName` in `~/.ssh/config` does, so
+  # the project is read as that host's kind. An alias that resolves to nothing
+  # recognisable stays unknown.
+  defp resolve_ssh_alias(%{kind: "unknown", host: host} = remote) do
+    case ssh_hostname(host) do
+      nil -> remote
+      hostname -> %{remote | host: hostname, kind: kind(hostname)}
+    end
+  end
+
+  defp resolve_ssh_alias(remote), do: remote
+
+  # Reads only the one config `ssh` itself reads, under the MC's own home.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp ssh_hostname(alias_name) do
+    # `ssh` reads the config under `$HOME`, which the account's home only
+    # names when the variable is unset.
+    path = Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
+
+    with {:ok, text} <- File.read(path) do
+      text
+      |> String.split(~r/\r?\n/)
+      |> Enum.chunk_while(
+        nil,
+        fn line, block ->
+          if line =~ ~r/^\s*Host\s+/i,
+            do: {:cont, block, [line]},
+            else: {:cont, (block || []) ++ [line]}
+        end,
+        fn block -> {:cont, block, nil} end
+      )
+      |> Enum.find_value(fn
+        [head | rest] ->
+          names =
+            head |> String.trim() |> String.split(~r/\s+/) |> tl() |> Enum.map(&String.downcase/1)
+
+          if alias_name in names do
+            Enum.find_value(rest, fn line ->
+              case Regex.run(~r/^\s*HostName\s+(\S+)/i, line) do
+                [_, hostname] -> String.downcase(hostname)
+                _ -> nil
+              end
+            end)
+          end
+
+        _ ->
+          nil
+      end)
     else
       _ -> nil
     end
