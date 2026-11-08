@@ -590,6 +590,201 @@ struct Drop : Command {
   void show(std::ostream& os) const override { os << "Drop"; }
 };
 
+// One queue action at a time: Remove, and Send now (a steer into the running
+// turn, or on a stopped thread its own turn), each asks the MC once, and while
+// one is unanswered the thread's queue asks nothing more. The MC answers at
+// once, late or by refusing, the turn starts and stops, and the connection
+// drops with an action outstanding, which frees the queue again.
+namespace acts {
+
+struct Action {
+  QString type;
+  int run = 0;
+  bool refused = false;
+};
+
+struct Model {
+  QList<int> queued;  // the open thread's queued runs, in order
+  bool running = false;
+  bool holding = false;
+  bool refusing = false;
+  std::optional<Action> pending;
+  QList<QPair<QString, int>> sent;
+  int runs = 0;  // the runs queued so far, numbered from 1 as the MC's are
+
+  // What an accepted action did: the run left the queue, and one sent now runs.
+  void take(const Action& action) {
+    queued.removeOne(action.run);
+    if (action.type == QLatin1String("queued-run.start")) running = true;
+  }
+};
+
+const QString kThread = QStringLiteral("t1");
+
+void setRunning(Sut& sut, const std::optional<QString>& run) {
+  QJsonObject row = sut.mc.threads.value(kThread);
+  for (const QString field : {QStringLiteral("activeRunId"), QStringLiteral("latestRunId")}) {
+    if (run) {
+      row.insert(field, *run);
+    } else {
+      row.remove(field);
+    }
+  }
+  sut.mc.threads.insert(kThread, row);
+  sut.mc.sendRow(kThread, row);
+}
+
+// The MC's side of the queue actions it accepts.
+void install(Sut& sut) {
+  sut.mc.effects.append([&sut](const QJsonObject& command) {
+    const QString type = command.value(QLatin1String("type")).toString();
+    QString run;
+    if (type == QLatin1String("queued-run.cancel") || type == QLatin1String("queued-run.start")) {
+      run = command.value(QLatin1String("runId")).toString();
+    } else if (type == QLatin1String("queued-message.promote-to-steer")) {
+      run = command.value(QLatin1String("queuedRunId")).toString();
+    } else {
+      return;
+    }
+    for (QJsonObject& queued : sut.runs[kThread]) {
+      if (queued.value(QLatin1String("id")).toString() != run) continue;
+      queued.insert(QStringLiteral("status"), type == QLatin1String("queued-run.start") ? QStringLiteral("running") : QStringLiteral("cancelled"));
+      sut.publish(kThread, QStringLiteral("run"), queued);
+    }
+    if (type == QLatin1String("queued-run.start")) setRunning(sut, run);
+  });
+}
+
+void verify(const Model& m, Sut& sut) {
+  sut.barrier();
+  QList<QPair<QString, int>> sent;
+  for (const QJsonObject& command : sut.mc.commands) {
+    const QString type = command.value(QLatin1String("type")).toString();
+    if (type == QLatin1String("queued-run.cancel") || type == QLatin1String("queued-run.start")) {
+      sent.append({type, command.value(QLatin1String("runId")).toString().mid(4).toInt()});
+    } else if (type == QLatin1String("queued-message.promote-to-steer")) {
+      sent.append({type, command.value(QLatin1String("queuedRunId")).toString().mid(4).toInt()});
+    }
+  }
+  RC_ASSERT(sent == m.sent);
+  sut.settle(kThread);
+  RC_ASSERT(prop::until([&] {
+    const auto row = sut.native->store()->thread(keyOf(kThread));
+    return row && row->activeRunId.has_value() == m.running;
+  }));
+  const QVariantMap turn = sut.turn();
+  RC_ASSERT(turn.value(QStringLiteral("queueBusy")).toBool() == m.pending.has_value());
+  QList<int> queued;
+  for (const QVariant& entry : turn.value(QStringLiteral("queue")).toList()) {
+    queued.append(entry.toMap().value(QStringLiteral("runId")).toString().mid(4).toInt());
+  }
+  RC_ASSERT(queued == m.queued);
+}
+
+using Command = rc::state::Command<Model, Sut>;
+
+struct Enqueue : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.queued.size() < 3); }
+  void apply(Model& m) const override { m.queued.append(++m.runs); }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.enqueue(kThread, false);
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Enqueue"; }
+};
+
+// Remove or Send now on one queued message.
+struct Act : Command {
+  bool remove = *rc::gen::arbitrary<bool>();
+  int index = *rc::gen::inRange(0, 3);
+  void checkPreconditions(const Model& m) const override { RC_PRE(index < m.queued.size()); }
+  void apply(Model& m) const override {
+    if (m.pending) return;
+    const Action action{remove ? QStringLiteral("queued-run.cancel")
+                        : m.running ? QStringLiteral("queued-message.promote-to-steer")
+                                    : QStringLiteral("queued-run.start"),
+                        m.queued.at(index), m.refusing};
+    m.sent.append({action.type, action.run});
+    if (m.holding) {
+      m.pending = action;
+    } else if (!m.refusing) {
+      m.take(action);
+    }
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.bridge->dispatch(remove ? QStringLiteral("composer.queue.remove") : QStringLiteral("composer.queue.steer"),
+                         QVariantMap{{QStringLiteral("runId"), QStringLiteral("run-%1").arg(m0.queued.at(index))}});
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << (remove ? "Remove(" : "SendNow(") << index << ")"; }
+};
+
+struct SetRunning : Command {
+  void apply(Model& m) const override { m.running = !m.running; }
+  void run(const Model& m0, Sut& sut) const override {
+    setRunning(sut, m0.running ? std::nullopt : std::optional<QString>(QStringLiteral("run-active")));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "SetRunning"; }
+};
+
+struct Hold : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.holding); }
+  void apply(Model& m) const override { m.holding = true; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.hold(QStringLiteral("answers"));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Hold"; }
+};
+
+struct Refuse : Command {
+  void apply(Model& m) const override { m.refusing = !m.refusing; }
+  void run(const Model& m0, Sut& sut) const override {
+    for (const QString type : {QStringLiteral("queued-run.cancel"), QStringLiteral("queued-run.start"), QStringLiteral("queued-message.promote-to-steer")}) {
+      if (m0.refusing) {
+        sut.mc.refusals.remove(type);
+      } else {
+        sut.mc.refusals.insert(type, QStringLiteral("The run already started."));
+      }
+    }
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Refuse"; }
+};
+
+struct AnswerHeld : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.holding); }
+  void apply(Model& m) const override {
+    m.holding = false;
+    if (m.pending && !m.pending->refused) m.take(*m.pending);
+    m.pending.reset();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.answerHeld();
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "AnswerHeld"; }
+};
+
+// The connection drops with the action unanswered: it never reached the MC.
+struct Drop : Command {
+  void apply(Model& m) const override {
+    m.holding = false;
+    m.pending.reset();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.dropHeld();
+    sut.mc.drop();
+    RC_ASSERT(prop::until([&] { return !sut.native->client()->isReady(); }));
+    RC_ASSERT(prop::until([&] { return sut.online(); }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Drop"; }
+};
+
+}  // namespace acts
+
 }  // namespace
 
 class ComposerQueueProp : public QObject {
@@ -605,6 +800,19 @@ private slots:
           0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Open, Enqueue, Enqueue, EnqueueRun, MessageLands, HoldQueue, HoldQueue, Leave,
                                                                                  Resume, Resume, Resume, OpenSecond, Hold, Refuse, AnswerHeld, Drop, CloseSecond,
                                                                                  Reconnect, CatchUp>()));
+      rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  void oneActionAtATime() {
+    QVERIFY(rc::check("a thread's queue takes one action at a time", [] {
+      Sut sut;
+      acts::install(sut);
+      acts::Model model;
+      acts::verify(model, sut);
+      const auto commands = *rc::gen::scale(
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<acts::Enqueue, acts::Enqueue, acts::Act, acts::Act, acts::Act,
+                                                                                 acts::SetRunning, acts::Hold, acts::Refuse, acts::AnswerHeld, acts::Drop>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
