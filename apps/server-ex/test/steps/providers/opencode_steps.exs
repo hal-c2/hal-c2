@@ -996,28 +996,22 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   # Fails the running fake's waiting prompt with `error` (see fake_acp.py).
+  # The signal needs the fake's pid, which it notes in `.waiting` right after
+  # sending the running command's update: that update on the thread's stream
+  # is the receipt that the pid is there (the run can read running sooner).
   defp fail_waiting(context, error) do
+    World.await_stream(context.running.thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(match?(%{"type" => "command_execution", "status" => "running"}, &1) and
+            String.trim(&1["output"] || "") == "a.txt")
+      )
+    end)
+
     trace = context.fakes.logs["acp"]
     File.write!(trace <> ".stop", JSON.encode!(error))
-    # The fake notes its pid once the prompt is waiting; that note is the
-    # receipt this signal needs, and it can land after the run reads running.
-    await_waiting_pid(trace <> ".waiting")
     {_, 0} = System.cmd("kill", ["-USR1", File.read!(trace <> ".waiting")])
     context
-  end
-
-  defp await_waiting_pid(path, left \\ 500) do
-    cond do
-      File.exists?(path) ->
-        :ok
-
-      left <= 0 ->
-        flunk("the fake agent never noted a waiting prompt")
-
-      true ->
-        Process.sleep(10)
-        await_waiting_pid(path, left - 1)
-    end
   end
 
   defp limited(context) do
@@ -2680,7 +2674,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   step "OpenCode says its CLI version probe timed out", context do
     opencode = FakeAcp.find(context.providers, "opencode")
     assert opencode["status"] == "error"
-    assert opencode["message"] == "OpenCode did not answer in time."
+    assert opencode["message"] == "OpenCode CLI version probe timed out."
     context
   end
 

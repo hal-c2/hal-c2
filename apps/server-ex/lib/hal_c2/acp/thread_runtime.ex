@@ -55,9 +55,6 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Agents that ask HAL-C2 about every tool: HAL-C2 applies the access mode for them.
   @gated ~w(opencode pi)
 
-  # The most plain text a prompt carries inline instead of by path (`acp_prompt/3`).
-  @max_embedded_text_bytes 256 * 1024
-
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
@@ -3480,16 +3477,17 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         # Plain text rides as embedded context for OpenCode, whose model APIs
         # refuse other text files (a page, a sheet, a stylesheet): those stay
-        # the path the prompt names. So does a plain file past the cap, which
-        # the agent can still read selectively by path instead of taking it
-        # all into its context at once. Other agents keep path-only text.
+        # the path the prompt names. So does a plain file past the bytes a
+        # thread keeps of text (`CommandTail.kept/0`), which the agent can
+        # still read selectively by path instead of taking it all into its
+        # context at once. Other agents keep path-only text.
         embedded =
           if HalC2.Acp.driver(Entities.instance(turn.ids)) == "opencode" and
                get_in(capabilities || %{}, ["promptCapabilities", "embeddedContext"]) == true do
             for %{mime_type: "text/plain", path: path} <- attachments,
                 is_binary(path),
                 {:ok, body} <- [File.read(path)],
-                byte_size(body) <= @max_embedded_text_bytes,
+                byte_size(body) <= HalC2.Orchestration.CommandTail.kept(),
                 String.valid?(body) do
               %{
                 "type" => "resource",

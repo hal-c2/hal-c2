@@ -512,6 +512,26 @@ defmodule HalC2.AcpTest do
     assert :persistent_term.get({HalC2.Acp, "gone", :models}, :none) == :none
   end
 
+  test "an instance's commands and skills are its own and are forgotten with it" do
+    HalC2.Acp.put_commands("opencode", [
+      %{"name" => "review", "description" => "Review"},
+      %{"name" => "$deploy", "description" => "Deploy"}
+    ])
+
+    on_exit(fn -> HalC2.Acp.forget("opencode") end)
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}) ==
+             [%{"name" => "review", "description" => "Review"}]
+
+    assert [%{"name" => "deploy"}] = :persistent_term.get({HalC2.Acp, "opencode", :skills})
+    assert :persistent_term.get({HalC2.Acp, "grok", :commands}, :none) == :none
+
+    HalC2.Acp.forget("opencode")
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}, :none) == :none
+    assert :persistent_term.get({HalC2.Acp, "opencode", :skills}, :none) == :none
+  end
+
   # Other services broadcast `providers_changed` too. The read's own broadcast follows
   # the removal of its probe directory, which follows its publication, so the first
   # broadcast seen once that directory is gone means the read is done.

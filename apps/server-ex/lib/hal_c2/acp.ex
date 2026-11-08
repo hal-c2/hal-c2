@@ -556,6 +556,7 @@ defmodule HalC2.Acp do
     dir = HalC2.Scratch.dir("hal-c2-acp")
 
     Process.put(staged_key(id), [])
+    Process.put(read_stage_key(id), :probe)
     Process.put(:antigravity_disk_check, mode == :disk)
 
     try do
@@ -566,11 +567,17 @@ defmodule HalC2.Acp do
       locked(id, fn -> publish(id, generation, result, error) end)
     catch
       # The agent never answered at all: say so, instead of leaving the
-      # instance unchecked until something forgets it.
+      # instance unchecked until something forgets it. Only a timeout before
+      # the session work began is the probe's own; a held session is not.
       :exit, {:timeout, _} ->
-        error = error_message(id, {:error, :probe_timeout})
+        reason =
+          if Process.get(read_stage_key(id)) == :session,
+            do: :read_timeout,
+            else: :probe_timeout
+
+        error = error_message(id, {:error, reason})
         Logger.warning("reading #{label(id)} (#{id}) failed: #{error}")
-        locked(id, fn -> publish(id, generation, {:error, :probe_timeout}, error) end)
+        locked(id, fn -> publish(id, generation, {:error, reason}, error) end)
         :ok
 
       _, _ ->
@@ -586,6 +593,7 @@ defmodule HalC2.Acp do
         :ok
     after
       Process.delete(staged_key(id))
+      Process.delete(read_stage_key(id))
       File.rm_rf(dir)
       HalC2.Settings.notify_providers()
     end
@@ -597,9 +605,10 @@ defmodule HalC2.Acp do
   defp error_message(_id, {:error, :antigravity_health_failed}),
     do: "Antigravity could not complete its local health check."
 
-  # Any of the read's waits can be the one that timed out (the version run,
-  # `initialize`, a held `session/new`); the message does not name one.
   defp error_message(id, {:error, :probe_timeout}),
+    do: "#{label(id)} CLI version probe timed out."
+
+  defp error_message(id, {:error, :read_timeout}),
     do: "#{label(id)} did not answer in time."
 
   defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
@@ -614,6 +623,9 @@ defmodule HalC2.Acp do
       case result do
         :ok ->
           :persistent_term.erase({__MODULE__, id, :error})
+          # A started agent ends the failure streak: the next failed read
+          # diagnoses its binary afresh instead of reusing the last answer.
+          :persistent_term.erase({__MODULE__, :start_diagnosis, id})
 
         {:error, :unauthenticated} ->
           :persistent_term.put({__MODULE__, id, :error}, error)
@@ -637,6 +649,15 @@ defmodule HalC2.Acp do
     do: :persistent_term.put({__MODULE__, id, key}, value)
 
   defp staged_key(id), do: {__MODULE__, :staged, id}
+
+  # How far a read got, for naming a timeout: `:probe` until the agent has
+  # answered and session work begins (`read_stage/2`), then `:session`.
+  defp read_stage_key(id), do: {__MODULE__, :read_stage, id}
+
+  defp read_stage(id, stage) do
+    Process.put(read_stage_key(id), stage)
+    :ok
+  end
 
   # What a read learned, kept until `load/1` publishes it. Returns `:ok` like the
   # `:persistent_term.put/2` it replaces, so a read ending in `stage/3` still
@@ -761,7 +782,8 @@ defmodule HalC2.Acp do
   # offers "Pi default"; refused launch arguments are the provider's error.
   defp read_agent(id, dir, "pi", entry) do
     with :ok <- check_version(id, "pi", entry),
-         {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")) do
+         {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")),
+         :ok <- read_stage(id, :session) do
       stage(id, :capabilities, %{})
 
       case HalC2.Pi.discover(id, dir) do
@@ -789,6 +811,7 @@ defmodule HalC2.Acp do
   # protocol says nothing of sign-in: an empty catalog is the only sign.
   defp read_agent(id, dir, "muse", entry) do
     with :ok <- check_version(id, "muse", entry),
+         :ok <- read_stage(id, :session),
          {:ok, models} <- HalC2.Muse.discover(id, dir) do
       stage(id, :models, models)
       stage(id, :muse_signed_out, models == [])
@@ -809,6 +832,8 @@ defmodule HalC2.Acp do
              stage(id, :capabilities, init["agentCapabilities"] || %{})
              stage(id, :auth_methods, length(init["authMethods"] || []))
              stage(id, :meta, init["_meta"] || %{})
+
+             read_stage(id, :session)
 
              # Antigravity's models come from its sign-in and sessions
              # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
@@ -884,8 +909,9 @@ defmodule HalC2.Acp do
 
   defp started?(_reason), do: true
 
-  # The answer is kept for that binary as last modified, so a health-interval
-  # read does not run it again while the binary stands unchanged.
+  # The answer is kept for that binary as last modified, so one failure
+  # streak runs it once, on its first failed read, not on every interval;
+  # a successful read ends the streak (`publish/4`).
   defp diagnose_start(id, reason) do
     with {:ok, [executable | _], _env} <- command(id),
          path when is_binary(path) <- System.find_executable(executable) do
@@ -1627,6 +1653,7 @@ defmodule HalC2.Acp do
     # never equals a read's ref, and a forgotten (or deleted) instance leaves
     # no generation entry behind.
     :persistent_term.erase({__MODULE__, id, :generation})
+    :persistent_term.erase({__MODULE__, :start_diagnosis, id})
     :ok
   end
 
