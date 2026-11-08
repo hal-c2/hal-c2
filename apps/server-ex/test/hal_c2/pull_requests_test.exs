@@ -93,6 +93,47 @@ defmodule HalC2.PullRequestsTest do
              }
            ]
 
+    # A run still going outranks a finished run of the same check, in either order.
+    for raw <- [
+          [
+            %{
+              "name" => "build",
+              "status" => "COMPLETED",
+              "conclusion" => "SUCCESS",
+              "completedAt" => "2026-01-02T00:00:00Z"
+            },
+            %{"name" => "build", "status" => "IN_PROGRESS", "startedAt" => "2026-01-01T00:00:00Z"}
+          ],
+          [
+            %{"name" => "build", "status" => "QUEUED"},
+            %{
+              "name" => "build",
+              "status" => "COMPLETED",
+              "conclusion" => "SUCCESS",
+              "completedAt" => "2026-01-02T00:00:00Z"
+            }
+          ]
+        ] do
+      assert [%{"name" => "build", "status" => "pending"}] = GitHub.checks(raw)
+    end
+
+    # The newest run wins however its time is spelled (".500Z" sorts before "Z").
+    assert [%{"name" => "build", "status" => "failure"}] =
+             GitHub.checks([
+               %{
+                 "name" => "build",
+                 "status" => "COMPLETED",
+                 "conclusion" => "SUCCESS",
+                 "completedAt" => "2026-10-16T12:00:00Z"
+               },
+               %{
+                 "name" => "build",
+                 "status" => "COMPLETED",
+                 "conclusion" => "FAILURE",
+                 "completedAt" => "2026-10-16T12:00:00.500Z"
+               }
+             ])
+
     assert %{kind: "github", host: "github.example.com", repository: "acme/widgets"} =
              PullRequests.parse_remote("git@github.example.com:acme/widgets.git")
 

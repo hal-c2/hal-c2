@@ -81,7 +81,7 @@ defmodule HalC2.PullRequests.GitHub do
         viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
         baseRef { compare(headRef: $headRef) { behindBy } }
         reviewRequests(first: 100) {
-          nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
+          nodes { requestedReviewer { ... on User { login name avatarUrl } ... on Bot { login avatarUrl } ... on Team { slug name avatarUrl organization { login } } } }
         }
         labels(first: 100) { nodes { name color } }
         commits(last: 1) {
@@ -1068,9 +1068,9 @@ defmodule HalC2.PullRequests.GitHub do
           "mergedAt" => trimmed(pr["mergedAt"]),
           "closedAt" => trimmed(pr["closedAt"]),
           "reviewers" =>
-            for(
-              l <- item["reviewRequestLogins"],
-              do: %{"login" => l, "name" => nil, "avatarUrl" => nil}
+            Enum.flat_map(
+              nodes(pr, ["reviewRequests", "nodes"], "requestedReviewer"),
+              &reviewer_actor/1
             ),
           "checks" => checks,
           "mergeCapabilities" => merge_capabilities(repo),
@@ -1695,10 +1695,10 @@ defmodule HalC2.PullRequests.GitHub do
 
     cond do
       commit != nil and not sha?(commit) ->
-        {:error, {:failed, "The commit is not one this change can name."}}
+        {:error, {:failed, "The named commit was not a commit sha."}}
 
       cursor != nil and not is_integer(page) ->
-        {:error, {:failed, "The diff cannot be carried on from that cursor."}}
+        {:error, {:failed, "The diff cursor was not one this pull request handed out."}}
 
       cursor != nil or commit != nil ->
         files_page(ctx, page || 1, commit)
@@ -1854,7 +1854,8 @@ defmodule HalC2.PullRequests.GitHub do
          [base, head] <- out |> String.trim_trailing() |> String.split("\t"),
          true <-
            sha?(head) and
-             (sha?(base) or (commit != nil and input["changeType"] == "new" and base == "")) do
+             (sha?(base) or (commit != nil and input["changeType"] == "new" and base == "")),
+         :ok <- changed_file(ctx, commit, input) do
       [old, new] =
         Task.await_many(
           [
@@ -1876,8 +1877,58 @@ defmodule HalC2.PullRequests.GitHub do
            {:ok, new} <- new,
            do: {:ok, %{"oldContents" => old, "newContents" => new}}
     else
-      {:error, _} = error -> error
-      _ -> {:error, {:failed, "The revisions of this change could not be read."}}
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error,
+         {:failed, "Pull request ##{ctx.number} reported no usable base and head revisions."}}
+    end
+  end
+
+  # Only a file this change (or the named commit of it) actually changes may be
+  # expanded: the paths a client names are checked against the host's own list
+  # of changed files, so contents of any other file of the repository at the
+  # base or head are never handed out through a pull request.
+  defp changed_file(ctx, commit, input, page \\ 1) do
+    wanted =
+      MapSet.new(Enum.reject([trimmed(input["oldPath"]), trimmed(input["newPath"])], &is_nil/1))
+
+    {owner, name} = split(ctx.repository)
+    paging = "per_page=#{@files_page}&page=#{page}"
+
+    args =
+      if commit,
+        do: ["repos/#{owner}/#{name}/commits/#{commit}?#{paging}", "--jq", ".files // []"],
+        else: ["repos/#{owner}/#{name}/pulls/#{ctx.number}/files?#{paging}"]
+
+    case gh(ctx.cwd, ["api", "--hostname", ctx.host | args],
+           timeout: @diff_timeout,
+           max_bytes: @diff_max_bytes
+         ) do
+      {:ok, out} ->
+        case JSON.decode(out) do
+          {:ok, files} when is_list(files) ->
+            found =
+              Enum.any?(files, fn file ->
+                Enum.any?([file["filename"], file["previous_filename"]], fn path ->
+                  path = trimmed(path)
+                  path != nil and MapSet.member?(wanted, path)
+                end)
+              end)
+
+            cond do
+              found -> :ok
+              length(files) < @files_page -> {:error, {:not_found, "The file was not found."}}
+              true -> changed_file(ctx, commit, input, page + 1)
+            end
+
+          _ ->
+            decoded(:error)
+        end
+
+      error ->
+        error
     end
   end
 
@@ -1899,10 +1950,10 @@ defmodule HalC2.PullRequests.GitHub do
     with {:ok, out} <- gh(ctx.cwd, args, timeout: 60_000) do
       cond do
         byte_size(out) > 1024 * 1024 ->
-          {:error, {:failed, "#{path} is too large to show."}}
+          {:error, {:failed, "The diff file '#{path}' exceeds the 1 MB expansion limit."}}
 
         String.contains?(out, <<0>>) or not String.valid?(out) ->
-          {:error, {:failed, "#{path} is a binary file."}}
+          {:error, {:failed, "The diff file '#{path}' is binary."}}
 
         true ->
           {:ok, out}
@@ -2237,9 +2288,44 @@ defmodule HalC2.PullRequests.GitHub do
   defp done(error), do: error
 
   defp not_found(ctx), do: {:error, {:not_found, "Pull request ##{ctx.number} was not found."}}
-  defp out_of_scope, do: {:error, {:failed, "That remark does not belong to this pull request."}}
+
+  defp out_of_scope,
+    do: {:error, {:failed, "The named subject did not belong to the named pull request."}}
 
   # --- JSON ----------------------------------------------------------------------------
+
+  # A requested reviewer as an actor: a person by their login, a team by the
+  # `organisation/slug` it is asked as, each with the name and picture the host
+  # gave. A team is its own reviewer, never the member whose login is its slug.
+  defp reviewer_actor(raw) do
+    slug = raw && trimmed(raw["slug"])
+    login = raw && trimmed(raw["login"])
+
+    cond do
+      slug ->
+        org = trimmed(get_in(raw, ["organization", "login"]))
+
+        [
+          %{
+            "login" => if(org, do: "#{org}/#{slug}", else: slug),
+            "name" => trimmed(raw["name"]),
+            "avatarUrl" => trimmed(raw["avatarUrl"])
+          }
+        ]
+
+      login ->
+        [
+          %{
+            "login" => login,
+            "name" => trimmed(raw["name"]),
+            "avatarUrl" => trimmed(raw["avatarUrl"])
+          }
+        ]
+
+      true ->
+        []
+    end
+  end
 
   @doc "A `PullRequestActor`, or nil for anyone with no login."
   def actor(nil), do: nil
@@ -2365,12 +2451,15 @@ defmodule HalC2.PullRequests.GitHub do
       end
 
     {order, newest} =
-      Enum.reduce(entries, {[], %{}}, fn {check, workflow, at} = entry, {order, newest} ->
+      Enum.reduce(entries, {[], %{}}, fn entry, {order, newest} ->
+        {check, workflow, _at} = entry
         key = {workflow, check["name"]}
 
         case newest do
-          %{^key => {_, _, kept}} ->
-            if newer?(at, kept), do: {order, Map.put(newest, key, entry)}, else: {order, newest}
+          %{^key => kept} ->
+            if better?(entry, kept),
+              do: {order, Map.put(newest, key, entry)},
+              else: {order, newest}
 
           _ ->
             {[key | order], Map.put(newest, key, entry)}
@@ -2387,13 +2476,36 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  # One run of a check still going means the check is pending, however an
+  # earlier finished run of it ended: a workflow run on both push and
+  # pull_request leaves a passing run beside the one still running, and
+  # calling that passing wakes readers with news that is not true yet.
+  defp better?({check, _workflow, at}, {kept, _kept_workflow, kept_at}) do
+    cond do
+      check["status"] == "pending" and kept["status"] != "pending" -> true
+      kept["status"] == "pending" and check["status"] != "pending" -> false
+      true -> newer?(at, kept_at)
+    end
+  end
+
   defp newer?(nil, kept), do: kept == nil
   defp newer?(at, kept), do: kept == nil or at >= kept
 
+  # An instant, however the host spelled it: "12:00:00.500Z" is after
+  # "12:00:00Z", which comparing the spellings would miss.
   defp timestamp(value) do
     case trimmed(value) do
-      "0001-01-01T00:00:00Z" -> nil
-      at -> at
+      "0001-01-01T00:00:00Z" ->
+        nil
+
+      at when is_binary(at) ->
+        case DateTime.from_iso8601(at) do
+          {:ok, instant, _offset} -> DateTime.to_unix(instant, :microsecond)
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 
