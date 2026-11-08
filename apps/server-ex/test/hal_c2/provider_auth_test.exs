@@ -117,7 +117,9 @@ defmodule HalC2.ProviderAuthTest do
         "response" => %{"type" => "browser", "action" => "decline"}
       })
 
-    assert await_phase("failed")["message"] == "The ACP agent could not complete sign-in."
+    # The agent's own reason follows the MC's message (upstream #30295).
+    assert await_phase("failed")["message"] ==
+             "The ACP agent could not complete sign-in. declined."
 
     {:ok, %{"flowId" => flow}} =
       HalC2.ProviderAuth.start(%{"instanceId" => "opencode", "methodId" => "cli"})
