@@ -2044,6 +2044,16 @@ defmodule HalC2.Codex.ThreadRuntime do
       else: state
   end
 
+  # A usage report naming its turn lands on that turn, running or not: it can come
+  # after `turn/completed`, between a goal's turns, or before the next run starts.
+  defp notification(
+         "thread/tokenUsage/updated",
+         %{"turnId" => native, "tokenUsage" => %{"last" => %{"totalTokens" => used}}} = params,
+         state
+       )
+       when is_binary(native) and is_integer(used),
+       do: record_usage(state, params, "provider-turn:codex:#{native}")
+
   # Between a goal's turns, Codex's reports of the turn that ended are not the next one's.
   defp notification(_method, _params, %{turn: %{native_turn_id: nil}, goal_hold: hold} = state)
        when hold != nil,
@@ -2234,53 +2244,14 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
 
-  # How full the conversation's context is, for the context meter. It belongs to the
-  # provider thread, so it outlives the run, and a model change, until Codex says more.
+  # A usage report naming no turn is the running turn's.
   defp notification(
          "thread/tokenUsage/updated",
-         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage} = params,
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used}}} = params,
          state
        )
-       when is_integer(used) do
-    counts =
-      for {key, field} <- [
-            {"inputTokens", "inputTokens"},
-            {"cachedInputTokens", "cachedInputTokens"},
-            {"outputTokens", "outputTokens"},
-            {"reasoningOutputTokens", "reasoningOutputTokens"}
-          ],
-          is_integer(last[field]),
-          into: %{"usedTokens" => max(used, 0)},
-          do: {key, max(last[field], 0)}
-
-    window = usage["modelContextWindow"]
-
-    snapshot =
-      if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
-
-    commit(state, fn stream ->
-      [
-        Orchestration.upsert(
-          stream,
-          "provider-thread",
-          state.turn.ids.provider_thread,
-          &Map.put(&1, "contextUsage", snapshot)
-        ),
-        # Its turn keeps it too, which says which run it counts
-        # (`HalC2.Orchestration.Handoff.room/3`): the turn Codex names, as a report
-        # can come after its turn ended and the next began.
-        (turn = reported_turn(params, state)) &&
-          Orchestration.upsert(
-            stream,
-            "provider-turn",
-            turn,
-            &(&1 && Map.put(&1, "tokenUsage", Map.put(snapshot, "updatedAt", Entities.now())))
-          )
-      ]
-    end)
-
-    state
-  end
+       when is_integer(used),
+       do: record_usage(state, params, Map.get(state.turn.ids, :provider_turn))
 
   defp notification("error", %{"error" => error} = params, state) do
     cond do
@@ -2356,11 +2327,54 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp notification(_method, _params, state), do: state
 
-  # The provider turn a usage report is of: the one Codex names, or the running one.
-  defp reported_turn(%{"turnId" => native}, _state) when is_binary(native),
-    do: "provider-turn:codex:#{native}"
+  # How full the conversation's context is, for the context meter. It belongs to the
+  # provider thread, so it outlives the run, and a model change, until Codex says more.
+  # Provider turn `turn` keeps it too, which says which run it counts
+  # (`HalC2.Orchestration.Handoff.room/3`); the provider thread is the one that turn ran
+  # on, or the running turn's.
+  defp record_usage(state, %{"tokenUsage" => %{"last" => last} = usage}, turn) do
+    counts =
+      for {key, field} <- [
+            {"inputTokens", "inputTokens"},
+            {"cachedInputTokens", "cachedInputTokens"},
+            {"outputTokens", "outputTokens"},
+            {"reasoningOutputTokens", "reasoningOutputTokens"}
+          ],
+          is_integer(last[field]),
+          into: %{"usedTokens" => max(last["totalTokens"], 0)},
+          do: {key, max(last[field], 0)}
 
-  defp reported_turn(_params, state), do: Map.get(state.turn.ids, :provider_turn)
+    window = usage["modelContextWindow"]
+
+    snapshot =
+      if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
+
+    commit(state, fn stream ->
+      stored = turn && HalC2.StreamState.fetch(stream, "provider-turn", turn)
+
+      provider_thread =
+        (stored && stored["providerThreadId"]) || (state.turn && state.turn.ids.provider_thread)
+
+      [
+        provider_thread &&
+          Orchestration.upsert(
+            stream,
+            "provider-thread",
+            provider_thread,
+            &Map.put(&1, "contextUsage", snapshot)
+          ),
+        stored &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            turn,
+            &Map.put(&1, "tokenUsage", Map.put(snapshot, "updatedAt", Entities.now()))
+          )
+      ]
+    end)
+
+    state
+  end
 
   # The instance quota is published under, resolved once: a turn's own
   # instance when settings here know it, or the driver when they do not (a

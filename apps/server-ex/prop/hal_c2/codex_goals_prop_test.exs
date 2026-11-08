@@ -5,7 +5,9 @@ defmodule HalC2.CodexGoalsPropTest do
   there Codex starts turns of its own for it, changes the goal (completes it, pauses
   it, runs out of budget), or does not go on before the grace runs out; the user may
   press Stop; the app-server may exit; and once the run has ended Codex may still
-  start a turn for the goal, or a grace armed before it ended may still fire.
+  start a turn for the goal, or a grace armed before it ended may still fire. At any
+  point Codex may report the usage of one of the goal's turns, the running one or one
+  that ended, a run that ended included.
 
   The promise: the goal's turns are one run, running until the goal stops being
   active between turns, the grace runs out, or the user stops it, and each turn
@@ -13,7 +15,9 @@ defmodule HalC2.CodexGoalsPropTest do
   still active (the grace, or Stop) pauses it, and a turn Codex starts for it after
   that is stopped; a goal Codex itself took out of active is left as it is, and so
   are its later turns. A run whose app-server exits fails, and a grace that fires
-  after leaves the thread's runtime and its run as they were.
+  after leaves the thread's runtime and its run as they were. A usage report lands on
+  the provider turn it names, whether a turn is running or not
+  (`HalC2.Orchestration.Handoff.room/3` counts it there), and fills the context meter.
 
   The goal runs on the fake app-server in `test/support/fake_codex.py` with
   FAKE_CODEX_GOAL_STALL set, so Codex never goes on by itself: the test plays its
@@ -131,6 +135,9 @@ defmodule HalC2.CodexGoalsPropTest do
       "the goal's first turn never ended"
     )
 
+    # The provider turn the goal's first turn ran as, named by its native id.
+    [first] = StreamState.list(current(@tid), "provider-turn")
+    Process.put(:native_turns, [String.replace_prefix(first["id"], "provider-turn:codex:", "")])
     Process.put(:goal_turns, 0)
     Process.delete(:late)
     Process.delete(:stale_hold)
@@ -142,32 +149,50 @@ defmodule HalC2.CodexGoalsPropTest do
   # Codex started for the goal is running), :ended (the run ended) or :exited (the
   # app-server exited, so nothing more comes from Codex). turns: the
   # run's provider turns. stops: whether a turn Codex starts after the run is stopped.
+  # usage: the tokens each provider turn (by its index) last reported.
   def initial_state,
-    do: %{phase: :held, run: "running", goal: "active", turns: 1, stops: false, late: nil}
+    do: %{
+      phase: :held,
+      run: "running",
+      goal: "active",
+      turns: 1,
+      stops: false,
+      late: nil,
+      usage: %{},
+      meter: nil
+    }
 
-  def command(%{phase: :held}) do
+  def command(%{phase: :held} = state) do
     frequency([
       {4, {:call, __MODULE__, :continue_goal, []}},
       {2, {:call, __MODULE__, :grace, []}},
       {2, {:call, __MODULE__, :goal_update, [oneof(Map.keys(@shown))]}},
       {1, {:call, __MODULE__, :stop, []}},
-      {1, {:call, __MODULE__, :exit_app_server, []}}
+      {1, {:call, __MODULE__, :exit_app_server, []}},
+      {2, report_usage(state)}
     ])
   end
 
-  def command(%{phase: :turn}) do
+  def command(%{phase: :turn} = state) do
     frequency([
       {4, {:call, __MODULE__, :finish_turn, []}},
       {2, {:call, __MODULE__, :goal_update, [oneof(Map.keys(@shown))]}},
       {1, {:call, __MODULE__, :stop, []}},
-      {1, {:call, __MODULE__, :exit_app_server, []}}
+      {1, {:call, __MODULE__, :exit_app_server, []}},
+      {2, report_usage(state)}
     ])
   end
 
-  def command(%{phase: :ended}), do: {:call, __MODULE__, :late_turn, []}
+  def command(%{phase: :ended} = state),
+    do: oneof([{:call, __MODULE__, :late_turn, []}, report_usage(state)])
+
   def command(%{phase: :exited}), do: {:call, __MODULE__, :stale_grace, []}
 
   def precondition(state, {:call, _, :late_turn, []}), do: state.phase == :ended
+
+  def precondition(state, {:call, _, :report_usage, [turn, _used]}),
+    do: state.phase in [:held, :turn, :ended] and turn < state.turns
+
   def precondition(state, {:call, _, :stale_grace, []}), do: state.phase == :exited
   def precondition(state, {:call, _, :continue_goal, []}), do: state.phase == :held
   def precondition(state, {:call, _, :grace, []}), do: state.phase == :held
@@ -203,6 +228,10 @@ defmodule HalC2.CodexGoalsPropTest do
     do: %{state | phase: :exited, run: "failed", late: nil}
 
   def next_state(state, _result, {:call, _, :late_turn, []}), do: %{state | late: state.stops}
+
+  def next_state(state, _result, {:call, _, :report_usage, [turn, used]}),
+    do: %{state | usage: Map.put(state.usage, turn, used), meter: used}
+
   def next_state(state, _result, _call), do: state
 
   defp ended(state, run, goal, stops),
@@ -219,9 +248,15 @@ defmodule HalC2.CodexGoalsPropTest do
       run: expected.run,
       goal: expected.goal,
       turns: expected.turns,
-      late: expected.late
+      late: expected.late,
+      usage: expected.usage,
+      meter: expected.meter
     }
   end
+
+  # Codex reports the usage of one of the run's provider turns so far.
+  defp report_usage(state),
+    do: {:call, __MODULE__, :report_usage, [integer(0, state.turns - 1), integer(1, 150_000)]}
 
   # --- commands ------------------------------------------------------------------
 
@@ -230,6 +265,7 @@ defmodule HalC2.CodexGoalsPropTest do
     n = Process.get(:goal_turns) + 1
     Process.put(:goal_turns, n)
     Process.put(:native_turn, "goal-turn-#{n}")
+    Process.put(:native_turns, Process.get(:native_turns) ++ ["goal-turn-#{n}"])
     notify("turn/started", %{"turn" => %{"id" => "goal-turn-#{n}", "status" => "inProgress"}})
     settle_runtime()
     # The runtime does not wait on Codex's answer to a stop; a call of our own through
@@ -288,6 +324,20 @@ defmodule HalC2.CodexGoalsPropTest do
     # the same app-server, after it, is answered once the fake has read the stop.
     {_, runtime} = runtime()
     HalC2.JsonRpc.Connection.call(runtime.conn, "test/ping", %{})
+    observed()
+  end
+
+  # Codex reports `used` tokens for the run's `turn`th provider turn, named by its id.
+  def report_usage(turn, used) do
+    notify("thread/tokenUsage/updated", %{
+      "turnId" => Enum.at(Process.get(:native_turns), turn),
+      "tokenUsage" => %{
+        "last" => %{"totalTokens" => used, "inputTokens" => used},
+        "modelContextWindow" => 200_000
+      }
+    })
+
+    settle_runtime()
     observed()
   end
 
@@ -355,13 +405,22 @@ defmodule HalC2.CodexGoalsPropTest do
     state = current(@tid)
     runs = StreamState.list(state, "run")
     thread = state |> StreamState.list("provider-thread") |> List.first()
+    turns = StreamState.get(state, "provider-turn")
+
+    usage =
+      for {native, index} <- Enum.with_index(Process.get(:native_turns, [])),
+          used = get_in(turns, ["provider-turn:codex:#{native}", "tokenUsage", "usedTokens"]),
+          into: %{},
+          do: {index, used}
 
     %{
       runs: length(runs),
       run: runs |> List.first() |> Map.get("status"),
       goal: get_in(thread, ["goal", "status"]),
-      turns: length(StreamState.list(state, "provider-turn")),
-      late: late_stopped()
+      turns: map_size(turns),
+      late: late_stopped(),
+      usage: usage,
+      meter: get_in(thread, ["contextUsage", "usedTokens"])
     }
   end
 

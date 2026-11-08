@@ -541,6 +541,38 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     end_turn(context, context.thread)
   end
 
+  step "Codex reports that turn's usage before the next run of {string} starts",
+       %{args: [thread]} = context do
+    {_pid, runtime} = World.codex_runtime(context, thread)
+    # Nothing runs: the report finds its turn with no turn of the runtime's own.
+    assert runtime.turn == nil
+    %{native: native, provider_turn: provider_turn} = context.late_turn
+    context = report_usage(context, 150_000, native)
+
+    World.await_state(
+      context,
+      thread,
+      &match?(
+        %{"usedTokens" => 150_000},
+        &1.entities["provider-turn"][provider_turn]["tokenUsage"]
+      )
+    )
+
+    context
+  end
+
+  step "the usage counts for the turn it came from, and the meter shows it", context do
+    state = World.state(context, context.thread)
+    turn = state.entities["provider-turn"][context.late_turn.provider_turn]
+
+    assert %{"usedTokens" => 150_000} = turn["tokenUsage"]
+
+    assert %{"usedTokens" => 150_000} =
+             state.entities["provider-thread"][turn["providerThreadId"]]["contextUsage"]
+
+    context
+  end
+
   # --- a failed turn -------------------------------------------------------------------
 
   # A real Codex turn that ran a command, began its answer and then failed; Codex's

@@ -135,6 +135,14 @@ Feature: Changing model and provider mid-thread
     When Codex reports that turn's usage while the next turn of "t1" runs
     Then the usage counts for the turn it came from, and not the running one
 
+  # One that came after its turn ended and before the next run started was dropped, as
+  # nothing ran, and the handoff room kept charging that turn's prompt (#1363 review).
+  @mc
+  Scenario: A usage report between runs counts for the turn it came from
+    Given a Codex turn of "t1" ended before its usage report came
+    When Codex reports that turn's usage before the next run of "t1" starts
+    Then the usage counts for the turn it came from, and the meter shows it
+
   @mc
   Scenario: Switching provider records the new instance
     When the user switches "t1" to "claudeAgent" with model "claude-x"
