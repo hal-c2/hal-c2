@@ -686,8 +686,12 @@ defmodule HalC2.Orchestration.TurnWriter do
     |> tap(&if(&1 == :ok, do: observe_started(state)))
   end
 
-  # Plugins that hear turns (`HalC2.Plugins.observe/1`) hear this one start.
-  defp observe_started(%{turn: turn} = state) do
+  @doc """
+  Tells plugins that hear turns (`HalC2.Plugins.observe/1`) that `state`'s turn has
+  started. `started/1` does; a runtime that marks its turns running itself calls it
+  once it has.
+  """
+  def observe_started(%{turn: turn} = state) do
     if HalC2.Plugins.observing?() do
       HalC2.Plugins.observe(%{
         "type" => "turn.started",
