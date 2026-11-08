@@ -110,6 +110,56 @@ defmodule HalC2.Steps.Preview.Automation do
     act(context, "click a button")
   end
 
+  # Both desktops, the first focused, so only what the second reports about
+  # the asked-about tab can send a new session to it.
+  step "the first desktop has its window focused", context do
+    context |> connect_desktop("desktop-1") |> connect_desktop("desktop-2") |> focus("desktop-1")
+  end
+
+  step "the second desktop is showing the tab the agent is asked about", context do
+    report_tabs(context, "desktop-2", %{"visibleTabIds" => ["tab-asked"]})
+  end
+
+  step "the second desktop has a live copy of the tab the agent is asked about", context do
+    report_tabs(context, "desktop-2", %{"liveTabIds" => ["tab-asked"]})
+  end
+
+  step "the second desktop has only a snapshot of its browser", context do
+    report_tabs(context, "desktop-2", %{"snapshotOnly" => true})
+  end
+
+  step "an agent takes its first browser action on that tab", context do
+    act(context, "click a button", %{"tabId" => "tab-asked"})
+  end
+
+  step "the action goes to the first desktop", context do
+    assert [{"desktop-1", _}] = requests(context, "click")
+    context
+  end
+
+  step "the action goes to the second desktop", context do
+    assert [{"desktop-2", _}] = requests(context, "click")
+    context
+  end
+
+  # What its browser holds, reported the way focus is, keeping its focus.
+  defp report_tabs(context, name, fields) do
+    desktop = context.desktops[name]
+    focused = broker().clients[desktop.client_id].focused
+
+    payload =
+      Map.merge(fields, %{
+        "clientId" => desktop.client_id,
+        "connectionId" => desktop.connection_id,
+        "focused" => focused
+      })
+
+    {nil, client} =
+      Mc.call!(desktop.client, context.mc.environment, "previewAutomation.focusHost", payload)
+
+    put_in(context, [:desktops, name, :client], client)
+  end
+
   step "the action goes to the desktop that can do the most, preferring the focused one",
        context do
     assert [{"desktop-1", _}] = requests(context, "click")
@@ -221,6 +271,67 @@ defmodule HalC2.Steps.Preview.Automation do
     context = act(context, "click a button")
     assert {:ok, _} = context.result
     assert [{"desktop-1", _}] = requests(context, "click")
+    context
+  end
+
+  # The browser's timeout answer says whether the click's target is on the page.
+  step ~r/^the agent clicks (?<target>.+) and the click times out$/,
+       %{args: [target]} = context do
+    {args, named, matched} =
+      case target do
+        "the selector \".definitely-no-such-target\"" ->
+          {%{"selector" => ".definitely-no-such-target"}, ".definitely-no-such-target", false}
+
+        "a locator for a button behind an open dialog" ->
+          {%{"locator" => "role=button[name='Behind the dialog']"},
+           "role=button[name='Behind the dialog']", true}
+      end
+
+    timed_out = %{
+      "_tag" => "PreviewAutomationTimeoutError",
+      "message" => "Preview automation click timed out after 15000ms.",
+      "detail" => %{"matched" => matched}
+    }
+
+    context
+    |> Map.put(:click_target, named)
+    |> answer("click", fn _request, _context -> {:error, timed_out} end)
+    |> tool("preview_click", args)
+  end
+
+  step ~r/^the tool fails naming that target and saying it (?<matches>.+)$/,
+       %{args: [matches]} = context do
+    assert {:error, "PreviewAutomationTimeoutError", message} = context.result
+    assert message =~ "timed out after 15000ms"
+    assert message =~ context.click_target
+    assert message =~ matches
+    context
+  end
+
+  step "it warns that the click may still have happened", context do
+    assert {:error, _tag, message} = context.result
+    assert message =~ "The click may still have happened."
+    context
+  end
+
+  step "the page an agent opens takes 20 seconds to answer", context do
+    answer(context, "open", fn _request, _context ->
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationNavigationTimeoutError",
+         "message" => "Preview navigation did not reach load readiness in time."
+       }}
+    end)
+  end
+
+  step "the agent opens it with preview_open", context do
+    tool(context, "preview_open", %{"url" => @page})
+  end
+
+  step "the tool fails saying the navigation timed out after 15000ms", context do
+    assert {:error, "PreviewAutomationNavigationTimeoutError",
+            "Preview automation navigation timed out after 15000ms."} = context.result
+
     context
   end
 
@@ -957,12 +1068,124 @@ defmodule HalC2.Steps.Preview.Automation do
     {{:ok, _}, watcher} =
       Mc.call(watcher, context.mc.environment, "preview.list", %{"threadId" => "none"})
 
+    # The agent's own open of it, which is what makes the tab its to close.
+    context = tool(context, "preview_open", %{"tabId" => tab["tabId"]})
+    assert {:ok, %{"tabId" => _}} = context.result
+
     context
     |> Map.put(:tab, tab["tabId"])
     |> World.put_client("watcher", watcher)
   end
 
-  step "the agent closes that tab", context do
+  step "a tab the user opened", context do
+    context = agent_thread(context)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => caller(context).thread_id,
+        "url" => @page
+      })
+
+    Map.put(context, :tab, tab["tabId"])
+  end
+
+  step "the tab stays open and the agent is told it did not open it", context do
+    assert {:error, "preview_tab_not_opened_by_agent", message} = context.result
+    assert message =~ "You did not open that preview tab"
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert Enum.map(listed["sessions"], & &1["tabId"]) == [context.tab]
+    context
+  end
+
+  # The other session is the same thread under another provider instance; its
+  # open lands on the tab, which is what makes the tab its own.
+  step "another agent session opened the browser tab {string}",
+       %{args: [name]} = context do
+    context = agent_thread(context)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => caller(context).thread_id,
+        "url" => @page
+      })
+
+    context =
+      context
+      |> Map.put(:agent_instance, "claude")
+      |> tool("preview_open", %{"tabId" => tab["tabId"]})
+      |> Map.delete(:agent_instance)
+
+    assert {:ok, %{"tabId" => _}} = context.result
+    Map.put(context, :named_tabs, %{name => tab["tabId"]})
+  end
+
+  step "an agent asks to close {string}", %{args: [name]} = context do
+    result =
+      HalC2.Mcp.Tools.call(
+        "hal_c2_preview_close",
+        %{"tabId" => context.named_tabs[name]},
+        caller(context)
+      )
+
+    Map.put(context, :result, result)
+  end
+
+  step "the agent is told the tab belongs to another agent session", context do
+    assert {:error, "preview_tab_other_agent", message} = context.result
+    assert message =~ "belongs to another agent session"
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert Enum.map(listed["sessions"], & &1["tabId"]) == Map.values(context.named_tabs)
+    context
+  end
+
+  step "an agent opens a tab that the desktop shows", context do
+    context = agent_thread(context)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => caller(context).thread_id,
+        "url" => @page
+      })
+
+    Map.put(context, :tab, tab["tabId"])
+  end
+
+  # The desktop reports the finished load before any automation host acts on
+  # the tab, so only the MC's own tab record can know it loaded.
+  step "the page finishes loading before the MC is attached to it", context do
+    input = %{
+      "threadId" => caller(context).thread_id,
+      "tabId" => context.tab,
+      "navStatus" => %{"_tag" => "Success", "url" => @page, "title" => "Shop"},
+      "canGoBack" => false,
+      "canGoForward" => false
+    }
+
+    {_reply, context} = World.call!(context, "preview.reportStatus", input)
+    context
+  end
+
+  step "the agent lists the thread's tabs", context do
+    Map.put(context, :result, HalC2.Mcp.Tools.call("hal_c2_preview_list", %{}, caller(context)))
+  end
+
+  step "the tab is listed with the page's title and as loaded", context do
+    assert {:ok, %{"sessions" => [session]}} = context.result
+    assert session["tabId"] == context.tab
+    assert session["navStatus"] == %{"_tag" => "Success", "url" => @page, "title" => "Shop"}
+    Map.put(context, :listed_session, session)
+  end
+
+  step "the list agrees with the tab's own status", context do
+    context = tool(context, "preview_status", %{"tabId" => context.tab})
+    assert {:ok, %{"url" => url, "title" => title}} = context.result
+    assert {url, title} == {@page, "Shop"}
+    assert context.listed_session["navStatus"]["url"] == url
+    assert context.listed_session["navStatus"]["title"] == title
+    context
+  end
+
+  step ~r/^(?:the|an) agent closes that tab$/, context do
     result =
       HalC2.Mcp.Tools.call("hal_c2_preview_close", %{"tabId" => context.tab}, caller(context))
 
@@ -1135,7 +1358,11 @@ defmodule HalC2.Steps.Preview.Automation do
 
   # --- the agent -------------------------------------------------------------------------------
 
-  defp caller(context), do: %{thread_id: context[:agent_thread] || "th-agent", instance: "codex"}
+  defp caller(context),
+    do: %{
+      thread_id: context[:agent_thread] || "th-agent",
+      instance: context[:agent_instance] || "codex"
+    }
 
   # The agent's thread as a real thread, for tools that read its row.
   defp agent_thread(context) do

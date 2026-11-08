@@ -5,11 +5,14 @@ defmodule HalC2.PreviewAutomation do
 
   A desktop registers as a host with the `previewAutomation` shape (`connect/2`),
   which streams it requests; it answers each with `previewAutomation.respond`
-  (`respond/1`) and says when its window has focus (`focus_host/1`). An agent's
-  call (`invoke/4`) goes to the host its provider session last used, so a
-  multi-step interaction stays in one browser, or else to the most capable,
-  focused, most recently focused host. The tab a session last touched is its
-  current tab.
+  (`respond/1`) and says when its window has focus and which tabs it is showing
+  or has live pages for (`focus_host/1`). An agent's call (`invoke/4`) goes to
+  the host its provider session last used, so a multi-step interaction stays in
+  one browser, or else to the host showing — failing that, with a live page
+  for — the tab asked about, then the most capable, focused, most recently
+  focused host. A host that holds only a browser snapshot is never offered to
+  a new session. The tab a session last touched is its current tab, and the
+  tabs its `open` calls landed on are the ones it opened (`tab_ownership/2`).
 
   A request unanswered within its timeout drops that host's connection, whose
   stream then ends so the desktop registers again; actions are never replayed.
@@ -36,6 +39,20 @@ defmodule HalC2.PreviewAutomation do
 
   def focus_host(host), do: GenServer.cast(__MODULE__, {:focus, host})
   def respond(response), do: GenServer.cast(__MODULE__, {:respond, response})
+
+  @doc """
+  Who opened `tab_id` through an agent's `open`: `:own` (this scope),
+  `:other_agent` (another scope), or `:not_agent` (no agent did — the user's
+  tab, or one no host ever reported opening).
+  """
+  def tab_ownership(scope, tab_id) do
+    GenServer.call(__MODULE__, {:tab_ownership, scope, tab_id})
+  catch
+    :exit, {:noproc, _} -> :not_agent
+  end
+
+  @doc "Forgets that `scope` opened `tab_id`, as when it closed the tab."
+  def forget_tab(scope, tab_id), do: GenServer.cast(__MODULE__, {:forget_tab, scope, tab_id})
 
   @doc """
   Runs `operation` for the agent of `scope` (`%{thread_id, instance}`) on a host:
@@ -69,6 +86,9 @@ defmodule HalC2.PreviewAutomation do
 
       "PreviewAutomationTimeoutError" ->
         "Preview automation #{op} timed out after #{error["timeoutMs"]}ms."
+
+      "PreviewAutomationNavigationTimeoutError" ->
+        "Preview automation navigation timed out after #{error["timeoutMs"]}ms."
 
       "PreviewAutomationClientDisconnectedError" ->
         "Preview automation client #{client} disconnected during #{op}."
@@ -107,7 +127,10 @@ defmodule HalC2.PreviewAutomation do
       monitor: Process.monitor(pid),
       operations: MapSet.new(host["supportedOperations"] || @v1_operations),
       focused: false,
-      focus_order: focus_seq
+      focus_order: focus_seq,
+      visible_tabs: MapSet.new(host["visibleTabIds"] || []),
+      live_tabs: MapSet.new(host["liveTabIds"] || []),
+      snapshot_only: host["snapshotOnly"] == true
     }
 
     send(pid, {:hal_c2_preview_automation, node(), client_id, connected(connection_id)})
@@ -127,9 +150,14 @@ defmodule HalC2.PreviewAutomation do
 
         nil ->
           state.clients
-          |> Enum.filter(fn {_id, client} -> MapSet.member?(client.operations, operation) end)
+          |> Enum.filter(fn {_id, client} ->
+            MapSet.member?(client.operations, operation) and
+              Map.get(client, :snapshot_only) != true
+          end)
           |> Enum.max_by(
-            fn {_id, c} -> {MapSet.size(c.operations), c.focused, c.focus_order} end,
+            fn {_id, c} ->
+              {tab_tier(c, opts[:tab_id]), MapSet.size(c.operations), c.focused, c.focus_order}
+            end,
             fn -> nil end
           )
       end
@@ -199,7 +227,8 @@ defmodule HalC2.PreviewAutomation do
           client_id: client_id,
           connection_id: client.connection_id,
           tab_id: tab,
-          tab_seq: (assigned && elem(assigned, 2)[:tab_seq]) || -1
+          tab_seq: (assigned && elem(assigned, 2)[:tab_seq]) || -1,
+          opened: (assigned && elem(assigned, 2)[:opened]) || MapSet.new()
         }
 
         {:noreply,
@@ -212,7 +241,38 @@ defmodule HalC2.PreviewAutomation do
     end
   end
 
+  def handle_call({:tab_ownership, scope, tab_id}, _from, state) do
+    key = {scope.thread_id, scope.instance}
+
+    owners =
+      for {owner, %{opened: opened}} <- state.assignments,
+          MapSet.member?(opened, tab_id),
+          do: owner
+
+    ownership =
+      cond do
+        key in owners -> :own
+        owners != [] -> :other_agent
+        true -> :not_agent
+      end
+
+    {:reply, ownership, state}
+  end
+
   @impl true
+  def handle_cast({:forget_tab, scope, tab_id}, state) do
+    key = {scope.thread_id, scope.instance}
+
+    case state.assignments[key] do
+      %{opened: opened} = assignment ->
+        assignment = %{assignment | opened: MapSet.delete(opened, tab_id)}
+        {:noreply, %{state | assignments: Map.put(state.assignments, key, assignment)}}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_cast({:disconnect, client_id, pid}, state) do
     case state.clients[client_id] do
       %{pid: ^pid} -> {:noreply, drop_connection(state, client_id, :closed)}
@@ -229,7 +289,14 @@ defmodule HalC2.PreviewAutomation do
         client = %{
           client
           | focused: focused,
-            focus_order: if(focused, do: focus_seq, else: client.focus_order)
+            focus_order: if(focused, do: focus_seq, else: client.focus_order),
+            visible_tabs: tab_set(host, "visibleTabIds", Map.get(client, :visible_tabs)),
+            live_tabs: tab_set(host, "liveTabIds", Map.get(client, :live_tabs)),
+            snapshot_only:
+              if(is_boolean(host["snapshotOnly"]),
+                do: host["snapshotOnly"],
+                else: Map.get(client, :snapshot_only, false)
+              )
         }
 
         {:noreply,
@@ -362,14 +429,38 @@ defmodule HalC2.PreviewAutomation do
     with {:ok, tab} <- tab,
          %{connection_id: ^connection_id, tab_seq: seq} = assignment when seq <= pending.seq <-
            state.assignments[pending.key] do
-      assignment = %{assignment | tab_id: tab, tab_seq: pending.seq}
+      # A tab an `open` lands on is one this session opened; acting on a tab
+      # someone else opened never makes it the agent's to close.
+      opened =
+        if pending.context["operation"] == "open",
+          do: MapSet.put(Map.get(assignment, :opened) || MapSet.new(), tab),
+          else: Map.get(assignment, :opened) || MapSet.new()
+
+      assignment = %{assignment | tab_id: tab, tab_seq: pending.seq, opened: opened}
       %{state | assignments: Map.put(state.assignments, pending.key, assignment)}
     else
       _ -> state
     end
   end
 
-  @passthrough ~w(PreviewAutomationRecordingDesktopUpdateRequiredError PreviewAutomationRecordingTooLargeError PreviewAutomationRecordingDeadlineExpiredError PreviewAutomationRecordingTransferError PreviewAutomationNoAvailableHostError PreviewAutomationUnsupportedClientError PreviewAutomationTabNotFoundError PreviewAutomationTimeoutError PreviewAutomationControlInterruptedError PreviewAutomationInvalidSelectorError PreviewAutomationTargetNotEditableError PreviewAutomationResultTooLargeError)
+  # How well a host serves the tab a new session asks about: showing it beats
+  # holding a live page for it beats neither. Map.get throughout, so a host
+  # registered by older code still routes during an upgrade.
+  defp tab_tier(_client, nil), do: 0
+
+  defp tab_tier(client, tab) do
+    cond do
+      MapSet.member?(Map.get(client, :visible_tabs) || MapSet.new(), tab) -> 2
+      MapSet.member?(Map.get(client, :live_tabs) || MapSet.new(), tab) -> 1
+      true -> 0
+    end
+  end
+
+  defp tab_set(host, key, current) do
+    if is_list(host[key]), do: MapSet.new(host[key]), else: current || MapSet.new()
+  end
+
+  @passthrough ~w(PreviewAutomationRecordingDesktopUpdateRequiredError PreviewAutomationRecordingTooLargeError PreviewAutomationRecordingDeadlineExpiredError PreviewAutomationRecordingTransferError PreviewAutomationNoAvailableHostError PreviewAutomationUnsupportedClientError PreviewAutomationTabNotFoundError PreviewAutomationTimeoutError PreviewAutomationNavigationTimeoutError PreviewAutomationControlInterruptedError PreviewAutomationInvalidSelectorError PreviewAutomationTargetNotEditableError PreviewAutomationResultTooLargeError)
 
   defp remote_error(context, %{"_tag" => tag} = error) do
     tag =
@@ -382,6 +473,7 @@ defmodule HalC2.PreviewAutomation do
     context
     |> Map.merge(%{"remoteTag" => error["_tag"], "remoteMessage" => error["message"]})
     |> put_present("maximumBytes", get_in(error, ["detail", "maximumBytes"]))
+    |> put_present("targetMatched", get_in(error, ["detail", "matched"]))
     |> then(&tagged(tag, &1))
   end
 

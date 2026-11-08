@@ -589,6 +589,12 @@ export const PreviewAutomationHost = Schema.Struct({
    * a newer server safely coexist with an older desktop during rollout.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
+  /** Tabs this host is showing now; missing means it reports none. */
+  visibleTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  /** Tabs this host holds a live page for, shown or not. */
+  liveTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  /** This host holds only a snapshot of its browser, so no new agent session starts on it. */
+  snapshotOnly: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
@@ -596,6 +602,10 @@ export const PreviewAutomationHostFocus = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   connectionId: PreviewAutomationConnectionId,
   focused: Schema.Boolean,
+  /** Updated tab sets, as in PreviewAutomationHost, when they changed with the focus. */
+  visibleTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  liveTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  snapshotOnly: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 
@@ -761,6 +771,18 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
     return summary;
+  }
+}
+
+export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedError<PreviewAutomationNavigationTimeoutError>()(
+  "PreviewAutomationNavigationTimeoutError",
+  {
+    ...PreviewAutomationRequestErrorFields,
+    ...PreviewAutomationOptionalRemoteDiagnosticFields,
+  },
+) {
+  override get message(): string {
+    return `Preview automation navigation timed out after ${this.timeoutMs}ms.`;
   }
 }
 
@@ -930,6 +952,7 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationUnsupportedClientError,
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTimeoutError,
+  PreviewAutomationNavigationTimeoutError,
   PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,

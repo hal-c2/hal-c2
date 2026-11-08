@@ -191,6 +191,38 @@ defmodule HalC2.Mcp.Preview do
     end
   end
 
+  # A click that timed out names its target and, when the browser could say,
+  # whether it is on the page — and warns the click may still have landed.
+  defp error_message(
+         %{
+           "_tag" => "PreviewAutomationTimeoutError",
+           "operation" => "click",
+           "targetMatched" => matched
+         } = error,
+         input
+       )
+       when is_boolean(matched) do
+    target =
+      cond do
+        is_map(input) and is_binary(input["selector"]) ->
+          "the selector \"#{input["selector"]}\""
+
+        is_map(input) and is_binary(input["locator"]) ->
+          "the locator \"#{input["locator"]}\""
+
+        true ->
+          "its target"
+      end
+
+    presence =
+      if matched,
+        do: "matches an element on the page",
+        else: "matches no element on the page"
+
+    "Preview automation click timed out after #{error["timeoutMs"]}ms. " <>
+      "The click's target, #{target}, #{presence}. The click may still have happened."
+  end
+
   # A rejected target says what the tool accepts instead, in the terms of the
   # target the agent actually sent.
   defp error_message(%{"_tag" => "PreviewAutomationInvalidSelectorError"} = error, input) do

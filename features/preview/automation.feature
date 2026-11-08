@@ -90,21 +90,21 @@ Feature: Agents drive the preview browser
       When an agent takes its first browser action
       Then the action goes to the desktop that can do the most, preferring the focused one
 
-    @backlog @mc @desktop
+    @mc @desktop @backlog-desktop
     Scenario: A new agent session goes to the desktop showing the tab it is asked about
       Given the first desktop has its window focused
       And the second desktop is showing the tab the agent is asked about
       When an agent takes its first browser action on that tab
       Then the action goes to the second desktop
 
-    @backlog @mc @desktop
+    @mc @desktop @backlog-desktop
     Scenario: A new agent session goes to a desktop with a live copy of the tab before the focused one
       Given the first desktop has its window focused
       And the second desktop has a live copy of the tab the agent is asked about
       When an agent takes its first browser action on that tab
       Then the action goes to the second desktop
 
-    @backlog @mc @desktop
+    @mc @desktop @backlog-desktop
     Scenario: A desktop that only has a snapshot of a browser is not offered for a new agent session
       Given the first desktop has its window focused
       And the second desktop has only a snapshot of its browser
@@ -143,7 +143,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #23489: a click that timed out said only that it timed out, even when its selector
     # matched nothing.
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: A click that times out names its target and whether it is on the page
       Given an agent is working in a desktop browser
       When the agent clicks <target> and the click times out
@@ -156,7 +156,7 @@ Feature: Agents drive the preview browser
         | a locator for a button behind an open dialog | matches an element on the page |
 
     # Upstream #24356: preview_open named the 660000ms request budget when navigation stopped at 15000ms.
-    @backlog @mc @priority-low
+    @mc
     Scenario: A page that does not load in time names the wait that ran out
       Given the page an agent opens takes 20 seconds to answer
       When the agent opens it with preview_open
@@ -280,7 +280,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #27456: a desktop tab whose page loaded before the server attached stayed
     # "Loading" with no title in the tab list, while its status said it had loaded.
-    @backlog @mc @desktop
+    @mc @desktop @backlog-desktop
     Scenario: A desktop tab that loaded before the MC attached is listed as loaded
       Given an agent opens a tab that the desktop shows
       And the page finishes loading before the MC is attached to it
@@ -330,14 +330,14 @@ Feature: Agents drive the preview browser
         | the user opened and is using             | the tool fails saying a person is in control of the tab      |
         | another agent session opened             | the tool fails saying the tab belongs to another agent       |
 
-    @backlog @mc @priority-low
+    @mc
     Scenario: Only the agent session that opened a tab can close it
       Given a tab the user opened
       When an agent closes that tab
       Then the tab stays open and the agent is told it did not open it
 
     # Upstream #17429: closing another session's tab says why it was refused.
-    @backlog @mc
+    @mc
     Scenario: An agent refused a tab it did not open is told whose it is
       Given another agent session opened the browser tab "Checkout"
       When an agent asks to close "Checkout"
