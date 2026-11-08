@@ -224,4 +224,21 @@ TestCase {
         // Another preset of the same size is another pick.
         compare(BrowserJs.ratioAnswered({ viewport: phone, ratio: 1, before: 0 }, Object.assign({}, phone, { presetId: "other" })), 0);
     }
+
+    function test_aTypedSideKeepsTheLockedRatio() {
+        compare(BrowserJs.typedAtRatio("width", 300, 0.5), { width: 300, height: 600 });
+        compare(BrowserJs.typedAtRatio("height", 600, 0.5), { width: 300, height: 600 });
+        // Not held to the bounds: the pair fails instead of passing at another ratio.
+        const wide = BrowserJs.typedAtRatio("width", 2000, 0.5);
+        compare(wide, { width: 2000, height: 4000 });
+        verify(!BrowserJs.sizeAllowed(wide.width, wide.height));
+        const narrow = BrowserJs.typedAtRatio("width", 120, 0.5);
+        verify(!BrowserJs.sizeAllowed(narrow.width, narrow.height));
+    }
+
+    function test_aPresetPickedRelocksTheRatio() {
+        const phone = BrowserJs.preset("iphone-se");
+        compare(BrowserJs.presetRatio(phone, 0.5), phone.width / phone.height);
+        compare(BrowserJs.presetRatio(phone, 0), 0);
+    }
 }

@@ -458,7 +458,7 @@ Rectangle {
 
     // Shows the device toolbar: the page keeps the room it has, less the toolbar's.
     function showDeviceToolbar() {
-        page.setViewport(BrowserJs.viewportOf("freeform", pageArea.width - 32, pageArea.height - 24 - 32 - deviceToolbar.implicitHeight * root.appZoom));
+        deviceToolbar.apply(BrowserJs.viewportOf("freeform", pageArea.width - 32, pageArea.height - 24 - 32 - deviceToolbar.implicitHeight * root.appZoom), 0);
     }
 
     ShellMenu {
@@ -468,7 +468,7 @@ Rectangle {
             text: qsTr("Fill the panel")
             iconName: "monitor"
             current: !root.framed
-            onTriggered: page.setViewport(BrowserJs.viewportOf("fill"))
+            onTriggered: deviceToolbar.pick("fill")
         }
 
         ShellMenuSeparator {}
@@ -484,7 +484,7 @@ Rectangle {
                 detail: modelData.width + " × " + modelData.height
                 iconName: modelData.kind === "tablet" ? "tablet" : "smartphone"
                 current: root.viewport.presetId === modelData.id
-                onTriggered: page.setViewport(BrowserJs.viewportOf(modelData.id))
+                onTriggered: deviceToolbar.pick(modelData.id)
             }
         }
 
@@ -495,7 +495,7 @@ Rectangle {
             detail: BrowserJs.desktop.width + " × " + BrowserJs.desktop.height
             iconName: "monitor"
             current: root.viewport._tag === "freeform" && root.viewport.width === BrowserJs.desktop.width && root.viewport.height === BrowserJs.desktop.height
-            onTriggered: page.setViewport(BrowserJs.viewportOf("desktop"))
+            onTriggered: deviceToolbar.pick("desktop")
         }
     }
 

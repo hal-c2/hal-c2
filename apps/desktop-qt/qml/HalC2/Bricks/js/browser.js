@@ -276,6 +276,18 @@ function sizeAtRatio(desired, ratio, axis) {
     return byWidth ? { width: lead, height: follow } : { width: follow, height: lead };
 }
 
+// The size when `value` is typed for `axis` ("width" or "height") with the
+// ratio (width over height) locked: the other side follows, not held to the
+// bounds, so a pair outside them fails `sizeAllowed`.
+function typedAtRatio(axis, value, ratio) {
+    return axis === "width" ? { width: value, height: Math.round(value / ratio) } : { width: Math.round(value * ratio), height: value };
+}
+
+// The locked ratio after picking `preset` while `ratio` (0 when unlocked) was held.
+function presetRatio(preset, ratio) {
+    return ratio > 0 ? preset.width / preset.height : 0;
+}
+
 // `start` ({width, height}) grown by `dx` and `dy` CSS pixels, held to the
 // bounds. With a `ratio` the axis that moved leads and the other follows.
 function resized(start, dx, dy, ratio) {

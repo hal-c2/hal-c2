@@ -23,6 +23,8 @@ Rectangle {
     property var draft: null
     // The size picked and the ratio it changed from and to, until the MC answers.
     property var picking: null
+    // What the other controls of the row take, spacing included.
+    readonly property real restWidth: widthField.width + times.implicitWidth + heightField.width + aspectButton.width + rotateButton.width + 5 * controls.spacing
     readonly property bool busy: page ? page.resizing : false
     readonly property int typedWidth: Number(draft ? draft.width : viewport.width)
     readonly property int typedHeight: Number(draft ? draft.height : viewport.height)
@@ -60,15 +62,16 @@ Rectangle {
     }
 
     // The user typed `text` for `axis`: with the ratio locked, the other side
-    // follows a side that can be used, and the typed one stays as typed.
+    // follows the typed one as typed (never held to the bounds, so a pair that
+    // cannot be rendered is not `usable` and is not applied).
     function edit(axis, text) {
         const next = {
             width: axis === "width" ? text : (draft ? draft.width : String(viewport.width)),
             height: axis === "height" ? text : (draft ? draft.height : String(viewport.height))
         };
         const value = Number(text);
-        if (ratio > 0 && Number.isInteger(value) && value >= BrowserJs.minSide && value <= BrowserJs.maxSide) {
-            const size = BrowserJs.resized(viewport, axis === "width" ? value - viewport.width : 0, axis === "height" ? value - viewport.height : 0, ratio);
+        if (ratio > 0 && Number.isInteger(value) && value > 0) {
+            const size = BrowserJs.typedAtRatio(axis, value, ratio);
             if (axis === "width")
                 next.height = String(size.height);
             else
@@ -77,14 +80,20 @@ Rectangle {
         draft = next;
     }
 
+    // Every entry point to a device size (this toolbar's menu, the tab's
+    // Device size menu) comes through here, so the locked ratio follows it.
     function pick(id) {
+        if (id === "fill") {
+            apply({ _tag: "fill" }, 0);
+            return;
+        }
         if (id === "responsive") {
             if (viewport._tag !== "freeform")
                 apply({ _tag: "freeform", width: viewport.width, height: viewport.height }, ratio);
             return;
         }
         const preset = BrowserJs.preset(id);
-        apply(BrowserJs.viewportOf(id), ratio > 0 ? preset.width / preset.height : 0);
+        apply(BrowserJs.viewportOf(id), BrowserJs.presetRatio(preset, ratio));
     }
 
     function rotate() {
@@ -111,6 +120,8 @@ Rectangle {
     Component.onCompleted: refill()
 
     Row {
+        id: controls
+
         anchors.left: parent.left
         anchors.leftMargin: Theme.space.sm
         anchors.verticalCenter: parent.verticalCenter
@@ -122,6 +133,8 @@ Rectangle {
             objectName: "browserToolbarPreset"
             subtle: true
             enabled: !toolbar.busy
+            // A long label gives way, so the controls never reach the Close button.
+            width: Math.max(Theme.control.md, Math.min(implicitWidth, toolbar.width - 2 * Theme.space.sm - closeButton.width - Theme.space.sm - toolbar.restWidth))
             text: toolbar.viewport._tag === "preset" ? (BrowserJs.preset(toolbar.viewport.presetId)?.label ?? qsTr("Responsive")) : qsTr("Responsive")
             iconName: "chevron-down"
             Accessible.name: qsTr("Device preset")
@@ -147,6 +160,8 @@ Rectangle {
         }
 
         Text {
+            id: times
+
             anchors.verticalCenter: parent.verticalCenter
             text: "×"
             color: Theme.palette.color("textMuted", "#8b8b93")
@@ -172,6 +187,8 @@ Rectangle {
         }
 
         ShellButton {
+            id: aspectButton
+
             objectName: "browserToolbarAspect"
             subtle: true
             checked: toolbar.ratio > 0
@@ -183,6 +200,8 @@ Rectangle {
         }
 
         ShellButton {
+            id: rotateButton
+
             objectName: "browserToolbarRotate"
             subtle: true
             enabled: !toolbar.busy
@@ -194,6 +213,8 @@ Rectangle {
     }
 
     ShellButton {
+        id: closeButton
+
         objectName: "browserToolbarClose"
         anchors.right: parent.right
         anchors.rightMargin: Theme.space.sm
