@@ -199,7 +199,8 @@ defmodule HalC2.CodexTurnEndPropTest do
       :leftover ->
         oneof([
           {:call, __MODULE__, :observe, []},
-          {:call, __MODULE__, :end_turn, [oneof([:completed, :failed, :interrupted, :stream])]}
+          {:call, __MODULE__, :end_turn,
+           [oneof([:completed, :failed, :interrupted, :stream, :deaf, :mute])]}
         ])
 
       :reported ->
@@ -242,9 +243,9 @@ defmodule HalC2.CodexTurnEndPropTest do
   end
 
   # A left-over provider turn ends late: as Codex says, or interrupted with its
-  # app-server. The run stays as it was recorded.
+  # app-server, however that dies. The run stays as it was recorded.
   def next_state(%{phase: :leftover} = state, _result, {:call, _, :end_turn, [kind]}) do
-    pt = if kind == :stream, do: "interrupted", else: Atom.to_string(kind)
+    pt = if kind in [:stream, :deaf, :mute], do: "interrupted", else: Atom.to_string(kind)
     %{state | phase: :ended, pt: pt}
   end
 
@@ -345,7 +346,12 @@ defmodule HalC2.CodexTurnEndPropTest do
     {_, runtime} = runtime()
     {:ok, _} = HalC2.JsonRpc.Connection.call(runtime.conn, "test/deaf", %{})
     HalC2.JsonRpc.Connection.notify(runtime.conn, "test/ping", nil)
-    await_until(fn -> observed().run != "running" end, "the run never ended")
+
+    await_until(
+      fn -> observed().run != "running" and observed().pt != "running" end,
+      "the run never ended"
+    )
+
     settle_runtime()
     observed()
   end
@@ -354,7 +360,12 @@ defmodule HalC2.CodexTurnEndPropTest do
   def end_turn(:mute) do
     {_, runtime} = runtime()
     HalC2.JsonRpc.Connection.notify(runtime.conn, "test/mute", nil)
-    await_until(fn -> observed().run != "running" end, "the run never ended")
+
+    await_until(
+      fn -> observed().run != "running" and observed().pt != "running" end,
+      "the run never ended"
+    )
+
     settle_runtime()
     observed()
   end
