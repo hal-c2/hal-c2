@@ -1890,7 +1890,7 @@ Rectangle {
                             id: hostPicker
                             objectName: "hostPicker"
 
-                            visible: contextStrip.wsReady && contextStrip.ws.environments.length > 1
+                            visible: contextStrip.wsReady && (contextStrip.ws.environmentShown ?? false)
                             implicitHeight: Theme.control.sm
                             iconSize: Theme.icon.sm
                             chevronSize: Theme.icon.sm
@@ -1900,12 +1900,16 @@ Rectangle {
                             iconName: "monitor"
                             enabled: contextStrip.wsReady && contextStrip.ws.environmentChangeable
                             model: contextStrip.wsReady ? contextStrip.ws.environments.map(env => env.label) : []
-                            currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.environmentId === contextStrip.ws.activeEnvironmentId) : -1
+                            currentIndex: contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.current) : -1
                             Accessible.name: qsTr("Environment")
-                            onActivated: index => Shell.dispatch("workspace.environment.set", {
+                            onActivated: index => {
+                                Shell.dispatch("workspace.environment.set", {
                                     environmentId: contextStrip.ws.environments[index].environmentId,
                                     key: contextStrip.ws.environments[index].key
-                                })
+                                });
+                                // A refused choice (Auto balance with files attached) leaves the machine shown.
+                                currentIndex = Qt.binding(() => contextStrip.wsReady ? contextStrip.ws.environments.findIndex(env => env.current) : -1);
+                            }
                         }
 
                         ShellComboBox {
