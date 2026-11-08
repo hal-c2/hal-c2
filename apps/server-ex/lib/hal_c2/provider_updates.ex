@@ -289,16 +289,18 @@ defmodule HalC2.ProviderUpdates do
     offered = :persistent_term.get({__MODULE__, instance, :offered}, nil)
     path = executable(driver, instance)
     command = path && update_command(driver, path)
+    # Read once: the release checked below is the one the installer would fetch.
+    latest = command && target == nil && fresh_latest(driver, path, command, instance)
 
     cond do
       command == nil or (offered != nil and offered != command) ->
         failed(driver, instance, started, "Provider installation changed. Refresh and try again.")
 
-      refusal = refusal(driver, instance, path, command, target) ->
+      refusal = refusal(driver, instance, path, command, target, latest) ->
         failed(driver, instance, started, refusal)
 
       # Upstream #24763: a provider a fresh probe finds current needs no installer.
-      target == nil and current?(driver, instance, path, command) ->
+      target == nil and current?(driver, instance, path, latest) ->
         put_state(instance, "succeeded", started, "Already up to date.")
         {:ok, %{"providers" => HalC2.Environment.providers()}}
 
@@ -331,8 +333,8 @@ defmodule HalC2.ProviderUpdates do
   # chosen version must still be the one the provider's compatibility policy
   # recommends, and supported; the latest must not be broken or unsupported. The
   # policy may have changed since the user was offered the update.
-  defp refusal(driver, instance, path, command, target) do
-    candidate = target || latest_for(driver, path, command, instance)
+  defp refusal(driver, instance, path, command, target, latest) do
+    candidate = target || latest || latest_for(driver, path, command, instance)
     advisory = candidate && HalC2.ProviderCompatibility.for_version(driver, candidate)
 
     cond do
@@ -349,17 +351,20 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
+  # The latest release read now rather than from the hour's cache. With version
+  # checks off, only what is already known.
+  defp fresh_latest(driver, path, command, instance) do
+    if Application.get_env(:hal_c2, :provider_update_checks, true),
+      do: reread_latest(driver, path, command, instance),
+      else: latest_for(driver, path, command, instance)
+  end
+
   # Whether the instance is installed at the latest release, both read afresh: the
   # version it runs, and the latest from its source (a latest that cannot be read is
   # not proof the provider is current). With version checks off, the latest is only
   # what is already known.
-  defp current?(driver, instance, path, command) do
+  defp current?(driver, instance, path, latest) do
     forget_version(driver, instance, path)
-
-    latest =
-      if Application.get_env(:hal_c2, :provider_update_checks, true),
-        do: reread_latest(driver, path, command, instance),
-        else: latest_for(driver, path, command, instance)
 
     with true <- is_binary(latest),
          %{} = entry <- Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance)) do

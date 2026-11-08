@@ -415,6 +415,15 @@ Feature: Provider setup, updates and sign-in
     Then the update finishes with "Already up to date."
     And Claude's installer is not run
 
+  # Upstream #24763: the version an update is checked against is the one the installer would fetch,
+  # not the hour's cached read of it.
+  Scenario: An update to a latest release that turned broken since the cached read is refused
+    Given a read within the hour found Claude behind a supported latest version
+    And the latest version has since been marked broken for this HAL-C2 release
+    When the user updates Claude
+    Then the update fails saying Claude's latest version is incompatible with this HAL-C2 release
+    And Claude's installer is not run
+
   # Upstream #27992: an older provider list could be published after the update's final state,
   # and open clients stayed on "Updating Claude" until reloaded.
   @backlog @mc @shared

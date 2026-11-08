@@ -1244,10 +1244,18 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
   # and npm now says 1.1.0 is the latest (1.2.0 was pulled): only a reread of the
   # latest finds Claude current.
   step "a fresh check finds Claude installed at its latest version", context do
+    ctx = claude_cached_at(context, "1.2.0", "1.1.0")
+    File.write!(Path.join(ctx.mc.home, "homebrew/claude-code.version"), "1.1.0")
+    ctx
+  end
+
+  # Claude 1.0.0 from Homebrew; the hour's cache says `cached` is the latest, while
+  # npm now says `fresh` is.
+  defp claude_cached_at(context, cached, fresh) do
     ctx = Acp.ready(context)
     homebrew(ctx, "claude-code", :claude_command, "fake_claude.py", "%s (Claude Code)", "1.0.0")
     key = {HalC2.ProviderUpdates, "claudeAgent"}
-    :persistent_term.put(key, {"1.2.0", System.monotonic_time(:millisecond)})
+    :persistent_term.put(key, {cached, System.monotonic_time(:millisecond)})
     ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase(key) end)
     assert Acp.provider("claudeAgent")["versionAdvisory"]["status"] == "behind_latest"
 
@@ -1259,13 +1267,43 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
       String.replace(
         script,
         "#!/bin/sh\n",
-        ~s(#!/bin/sh\nif [ "$1" = view ]; then echo '"1.1.0"'; exit 0; fi\n)
+        ~s(#!/bin/sh\nif [ "$1" = view ]; then echo '"#{fresh}"'; exit 0; fi\n)
       )
     )
 
     World.put_app_env(:provider_update_checks, true)
-    File.write!(Path.join(ctx.mc.home, "homebrew/claude-code.version"), "1.1.0")
     ctx
+  end
+
+  # The cache says 1.2.0, which the policy supports; the source now says 1.3.0, which
+  # it marks broken. Only a reread of the latest sees that.
+  step "a read within the hour found Claude behind a supported latest version", context do
+    claude_cached_at(context, "1.2.0", "1.3.0")
+  end
+
+  step "the latest version has since been marked broken for this HAL-C2 release", context do
+    World.put_app_env(:provider_compatibility, [
+      %{
+        "driver" => "claudeAgent",
+        "halC2Range" => ">=0",
+        "recommendedRange" => "<1.3",
+        "ranges" => [
+          %{"range" => "<1.3", "status" => "supported"},
+          %{"range" => ">=1.3", "status" => "broken"}
+        ]
+      }
+    ])
+
+    context
+  end
+
+  step "the update fails saying Claude's latest version is incompatible with this HAL-C2 release",
+       context do
+    message =
+      "The latest provider version is incompatible with this HAL-C2 release. Review provider settings."
+
+    assert {:error, ^message, _} = context.reply
+    context
   end
 
   step "the update finishes with {string}", %{args: [message]} = context do
