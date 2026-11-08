@@ -3666,6 +3666,8 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.Claude.Provider, :models},
           {HalC2.Claude.Provider, :capabilities},
           {HalC2.Claude.Provider, :health},
+          {HalC2.ProviderUpdates, :claude_channel, "latest"},
+          {HalC2.ProviderUpdates, :claude_channel, "stable"},
           {HalC2.ProviderUpdates, "codex"},
           {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.
@@ -3675,6 +3677,10 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.ProviderUpdates, "claudeAgent", :state}
         ],
         do: :persistent_term.erase(key)
+
+    # Claude's sign-in reads live in their ETS table, emptied with the rest.
+    if :ets.whereis(:hal_c2_claude_auth) != :undefined,
+      do: :ets.delete_all_objects(:hal_c2_claude_auth)
 
     :ok
   end

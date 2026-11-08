@@ -14,7 +14,9 @@
 # run: CMD" runs a subagent that asks permission for CMD and returns "ran CMD" when
 # allowed, "was not allowed to run CMD" otherwise. Rules a
 # permission answer adds for the session (updatedPermissions) let later matching
-# commands run without asking. Each turn's message text is appended to
+# commands run without asking; "call a skill" calls the demo skill twice, with
+# and without arguments; "edit a file" writes edited.txt through a Write call.
+# Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
 import json, os, re, sys, time, uuid
 
@@ -113,8 +115,25 @@ try:
         ACCOUNT_EMAIL = json.load(f)["oauthAccount"]["emailAddress"]
 except (OSError, ValueError, KeyError):
     pass
+# `claude auth status` prints its sign-in as JSON and exits, before any session.
+# FAKE_CLAUDE_AUTH_STATUS is that JSON, or "unknown" for a CLI too old to have the
+# command (as FAKE_CLAUDE_NO_ACCOUNT's is: it reports no sign-in anywhere).
+if sys.argv[1:] == ["auth", "status"]:
+    spec = os.environ.get("FAKE_CLAUDE_AUTH_STATUS")
+    if spec == "unknown" or (not spec and os.environ.get("FAKE_CLAUDE_NO_ACCOUNT")):
+        sys.stderr.write("error: unknown command 'auth'\n")
+        sys.exit(1)
+    if spec:
+        print(spec)
+        sys.exit(0 if json.loads(spec).get("loggedIn") else 1)
+    if os.environ.get("FAKE_CLAUDE_SIGNED_OUT"):
+        print(json.dumps({"loggedIn": False, "authMethod": "none"}))
+        sys.exit(1)
+    print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty",
+                      "email": ACCOUNT_EMAIL}))
+    sys.exit(0)
 # The start also traces where it was pointed: its config directory, its account and any router.
-trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME")}})
+trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL")}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -162,6 +181,9 @@ for line in sys.stdin:
                     "five_hour": {"utilization": 30, "resets_at": "2026-09-24T15:00:00.123456+00:00"},
                     "seven_day": {"utilization": 55.5, "resets_at": None},
                     "model_scoped": [{"display_name": "Fable 1", "utilization": 12, "resets_at": "2026-09-30T00:00:00Z"}]}}
+            # FAKE_CLAUDE_MONTHLY=<percent>: the account's monthly spending limit, that used.
+            if os.environ.get("FAKE_CLAUDE_MONTHLY") and isinstance(usage.get("rate_limits"), dict) and usage["rate_limits"]:
+                usage["rate_limits"]["extra_usage"] = {"is_enabled": True, "utilization": float(os.environ["FAKE_CLAUDE_MONTHLY"]), "resets_at": "2026-10-01T00:00:00Z"}
             send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": usage}})
             continue
         # The account a signed-in Claude Code reports when it starts.
@@ -173,7 +195,7 @@ for line in sys.stdin:
         if sub == "initialize":
             dialogs = msg["request"].get("supportedDialogKinds", [])
         # FAKE_CLAUDE_COMMANDS is a JSON list of the slash command names it reports.
-        reply = {"account": {"email": ACCOUNT_EMAIL, "subscriptionType": "max", "tokenSource": "claude.ai"},
+        reply = {"account": {"email": ACCOUNT_EMAIL, "subscriptionType": os.environ.get("FAKE_CLAUDE_SUBSCRIPTION", "max"), "tokenSource": os.environ.get("FAKE_CLAUDE_TOKEN_SOURCE", "claude.ai")},
                  "commands": [{"name": n, "description": "", "argumentHint": ""} for n in json.loads(os.environ.get("FAKE_CLAUDE_COMMANDS", "[]"))]} if sub == "initialize" else {}
         # FAKE_CLAUDE_MODELS is the JSON list of models it reports (ModelInfo: value,
         # resolvedModel, displayName, description, supportedEffortLevels, ...). Unset, the
@@ -430,6 +452,22 @@ for line in sys.stdin:
         continue
     if "where are we" in text:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "edit a file": a Write tool call, and the file really is written.
+    if text == "edit a file":
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "tool_use", "id": f"write-{turn}", "name": "Write", "input": {"file_path": "edited.txt", "content": "edited by the turn\n"}}]}})
+        with open("edited.txt", "w") as f:
+            f.write("edited by the turn\n")
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"write-{turn}", "content": "File created", "is_error": False}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "call a skill": two Skill calls, one with arguments and one without.
+    if text == "call a skill":
+        for tool, extra in [(f"skill-args-{turn}", {"args": "with care"}), (f"skill-bare-{turn}", {})]:
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}{tool}", "role": "assistant", "content": [{"type": "tool_use", "id": tool, "name": "Skill", "input": {"skill": "demo", **extra}}]}})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool, "content": "skill ran", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "Ran the demo skill"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text and mode == "auto":
