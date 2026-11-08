@@ -234,7 +234,6 @@ function viewportOf(id, width, height) {
     return { _tag: "freeform", width: w, height: h };
 }
 
-// A start page suggestion's label: the server's process, else the host.
 // Whether two PreviewViewportSettings are the same size.
 function sameViewport(a, b) {
     if (!a || !b || a._tag !== b._tag)
@@ -249,6 +248,7 @@ function ratioAnswered(pick, shown) {
     return sameViewport(pick.viewport, shown) ? pick.ratio : pick.before;
 }
 
+// A start page suggestion's label: the server's process, else the host.
 function suggestionLabel(suggestion) {
     if (suggestion.label)
         return suggestion.label;
