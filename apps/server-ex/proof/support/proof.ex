@@ -17,7 +17,7 @@ defmodule HalC2.Proof do
   `check` the one with its states and propositions (`module` if omitted), whose whole
   states are of sort `state` ("Sys" if omitted). The proof gets the test "the model
   covers the code", and its own tests get the loaded model as `%{proof: proof}` for
-  `refute_reachable/4`, `refute_deadlock/4` and `assert_ltl/4`.
+  `refute_reachable/4`, `refute_deadlock/4`, `assert_ltl/4` and `assert_reachable/4`.
 
   `code` lists what to read of the code, as facts:
 
@@ -47,7 +47,14 @@ defmodule HalC2.Proof do
       use ExUnit.Case, async: true
       # Maude gives up first, so a slow check fails rather than leave Maude busy.
       @moduletag timeout: Keyword.get(unquote(opts), :timeout, 300_000) + 30_000
-      import HalC2.Proof, only: [refute_reachable: 4, refute_deadlock: 4, assert_ltl: 4]
+      import HalC2.Proof,
+        only: [
+          refute_reachable: 4,
+          refute_deadlock: 4,
+          assert_ltl: 4,
+          assert_reachable: 3,
+          assert_reachable: 4
+        ]
 
       # A Maude of each test's own. Maude keeps the memory a search took and every later
       # search in it pays for that (a check of 130k states takes ten times as long after
@@ -117,6 +124,22 @@ defmodule HalC2.Proof do
     s = "S:#{proof.state}"
     search = "search #{bound} in #{proof.check} : #{init} =>* #{s} such that #{bad}(#{s}) ."
     found(proof, maude(proof, search), "#{bad} is reachable from #{init}")
+  end
+
+  @doc """
+  Fails unless a state for which `bad` holds is reachable from `init`: a design switch
+  of the model turned off finds the flaw it is there to close. `depth: n` bounds the
+  search.
+  """
+  def assert_reachable(proof, init, bad, opts \\ []) do
+    bound = if opts[:depth], do: "[1, #{opts[:depth]}]", else: "[1]"
+    s = "S:#{proof.state}"
+    search = "search #{bound} in #{proof.check} : #{init} =>* #{s} such that #{bad}(#{s}) ."
+
+    unless maude(proof, search) =~ ~r/Solution 1 \(state \d+\)/,
+      do: flunk("#{bad} is not reachable from #{init}")
+
+    :ok
   end
 
   @doc """

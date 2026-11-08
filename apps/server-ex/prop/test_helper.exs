@@ -3,6 +3,8 @@
 #
 # PROPCHECK_NUMTESTS raises or lowers the number of cases every property runs, such
 # as 1000 before a release or 20 while writing a model.
+HalC2.Test.StopSignal.fail_run()
+
 ExUnit.start(exclude: [:slow])
 
 # Keep the MC's git include, if we run inside one, out of the tests.

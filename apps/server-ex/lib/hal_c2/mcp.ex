@@ -154,13 +154,7 @@ defmodule HalC2.Mcp do
     if Process.whereis(HalC2.Settings) == nil do
       MapSet.new()
     else
-      project =
-        case HalC2.Shell.row(node(), thread_id) do
-          {"thread", row} -> row["projectId"]
-          _ -> nil
-        end
-
-      settings = HalC2.Settings.for_project(project)
+      settings = HalC2.Settings.for_project(project(thread_id))
 
       MapSet.new(
         Enum.reject(
@@ -177,6 +171,16 @@ defmodule HalC2.Mcp do
     _ -> MapSet.new()
   catch
     :exit, _ -> MapSet.new()
+  end
+
+  # The thread's own stream names its project. Its sidebar row is a projection that
+  # can trail a new thread's first turn, which would then read the environment's
+  # settings over the project's, and its next turn would relaunch the session.
+  defp project(thread_id) do
+    case HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] do
+      %{"projectId" => project} -> project
+      _ -> nil
+    end
   end
 
   @doc """

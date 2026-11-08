@@ -180,7 +180,10 @@ defmodule HalC2.Steps.Providers.Capabilities do
       |> Enum.map_join(& &1["text"])
 
     assert prompt =~ "<conversation_history>"
-    assert prompt =~ "User: hello\n\nAssistant: Hello from acp\n\nUser: hello again"
+
+    assert prompt =~
+             ~r/## Run 1 \(\w+\)\n\nUser: hello\n\nAssistant: Hello from acp\n\n## Run 2 \(\w+\)\n\nUser: hello again\n/
+
     refute prompt =~ "one more"
     assert String.ends_with?(prompt, "where are we")
     context
@@ -201,11 +204,20 @@ defmodule HalC2.Steps.Providers.Capabilities do
     switch_to_claude(context, "where are we")
   end
 
-  step "the transcript keeps the newest history and drops the oldest", context do
+  # Each turn's answer repeats its request, so the two answers cannot both go whole.
+  step "the transcript keeps every request whole, the newest work first, and condenses the older",
+       context do
     text = claude_prompt(context, "where are we")
-    assert text =~ "[earlier messages omitted"
-    assert text =~ "new-marker"
-    refute text =~ "old-marker"
+    assert text =~ "[This history is condensed to fit."
+
+    for marker <- [
+          "old-marker " <> String.duplicate("a", 20_000),
+          "new-marker " <> String.duplicate("b", 20_000)
+        ],
+        do: assert(text =~ "User: repeat " <> marker)
+
+    assert text =~ ~r/## Run \d+ \(codex\): condensed\n\nUser: repeat old-marker/
+    assert text =~ ~r/## Run \d+ \(codex\): newest steps only\n\nUser: repeat new-marker/
     context
   end
 

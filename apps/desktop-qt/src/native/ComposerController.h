@@ -485,8 +485,6 @@ private:
   // text only: back from an empty draft,
   // forward past the newest to an empty one. An edited recall is a draft.
   void stepHistory(const QString& target, bool backward);
-  // Why the prompt cannot be sent as it is, or nothing: its length.
-  static QString promptProblem(const QString& text);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);

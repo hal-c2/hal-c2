@@ -204,6 +204,91 @@ defmodule HalC2.Attachments do
     end
   end
 
+  # What of a message too long to send whole stays in its text (`fold_long_text/3`).
+  @long_text_chars 120_000
+  @long_text_start 8_000
+  @long_text_end 2_000
+
+  @doc """
+  A message too long to send whole, folded as a client folds a long paste: past
+  120,000 characters its text becomes its start and end around a mark saying what was
+  cut, and the whole of it a text file attached to the message (a `pasted-text` file,
+  which providers are given as a path). The thread shows what the agent was sent, and
+  the file goes wherever the thread does. Shorter text passes through.
+  """
+  def fold_long_text(thread_id, text, attachments) when is_binary(text) do
+    chars = String.length(text)
+
+    cond do
+      chars <= @long_text_chars ->
+        {:ok, text, attachments}
+
+      byte_size(text) > @max_file_bytes ->
+        {:error,
+         "The message is too long to send, even as a file: at most #{div(@max_file_bytes, 1024 * 1024)} MB."}
+
+      true ->
+        id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+        name = free_name(attachments, "message")
+        File.mkdir_p!(dir())
+
+        case File.write(Path.join(dir(), id <> ".txt"), text) do
+          :ok ->
+            cut = chars - @long_text_start - @long_text_end
+
+            folded =
+              String.slice(text, 0, @long_text_start) <>
+                "\n\n[... #{cut} characters cut here; the whole message is in the attached #{name} ...]\n\n" <>
+                String.slice(text, chars - @long_text_end, @long_text_end)
+
+            file = %{
+              "type" => "file",
+              "id" => id,
+              "name" => name,
+              "mimeType" => "text/plain",
+              "sizeBytes" => byte_size(text),
+              "source" => %{"_tag" => "pasted-text"}
+            }
+
+            {:ok, folded, attachments ++ [file]}
+
+          {:error, reason} ->
+            {:error,
+             "The message is too long to send whole, and saving it as a file failed: #{:file.format_error(reason)}."}
+        end
+    end
+  end
+
+  def fold_long_text(_thread_id, text, attachments), do: {:ok, text, attachments}
+
+  # `message.txt`, or `message-2.txt` and on when the message already has one.
+  defp free_name(attachments, base) do
+    taken = MapSet.new(attachments, & &1["name"])
+
+    Stream.iterate(1, &(&1 + 1))
+    |> Stream.map(&if(&1 == 1, do: "#{base}.txt", else: "#{base}-#{&1}.txt"))
+    |> Enum.find(&(not MapSet.member?(taken, &1)))
+  end
+
+  @doc """
+  A thread's own copies of attachments another thread's messages name (a fork copies
+  its source's), under ids of its own, so they stay when that thread and its files are
+  deleted. Each is a hard link where the disk allows one. An attachment whose file is
+  not on this MC, or goes while it is copied, passes through.
+  """
+  def copy_into(thread_id, attachments) when is_list(attachments) do
+    Enum.map(attachments, fn attachment ->
+      with source when is_binary(source) <- match?(%{"id" => _}, attachment) && path(attachment),
+           id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}",
+           target = Path.join(dir(), id <> Path.extname(source)),
+           :ok <- with({:error, _} <- File.ln(source, target), do: File.cp(source, target)) do
+        Map.put(attachment, "id", id)
+      else
+        _ -> attachment
+      end
+    end)
+  end
+
   @doc "The file of an attachment on this MC, or `nil`."
   def path(%{"id" => id}),
     do: if(safe_id?(id), do: List.first(Path.wildcard(Path.join(dir(), id <> ".*"))))

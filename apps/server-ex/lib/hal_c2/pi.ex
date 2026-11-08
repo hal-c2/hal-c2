@@ -326,6 +326,26 @@ defmodule HalC2.Pi do
   end
 
   @doc """
+  The message Pi is sent for what the user wrote, with `history` handed over ahead of
+  it (`HalC2.Orchestration.Handoff.ahead/2`, `nil` when none was). Pi runs `/skill:`
+  commands only from the start of a message, so the history follows the commands the
+  message leads with, as the rest of their words (#1342). Only the user's words are
+  read for `$skill`s: read in the history, they would run a skill an earlier message
+  named and flatten the history onto one line.
+  """
+  def message(text, nil, skills), do: expand_skills(text, skills)
+
+  def message(text, history, skills) do
+    said = text |> String.replace_prefix(history <> "\n\n", "") |> expand_skills(skills)
+
+    case Regex.run(~r{\A((?:/skill:\S+\s+)*/skill:\S+)\s*(.*)\z}s, said) do
+      [_, commands, ""] -> commands <> " " <> history
+      [_, commands, words] -> commands <> " " <> history <> "\n\n" <> words
+      nil -> history <> "\n\n" <> said
+    end
+  end
+
+  @doc """
   Pi expands skills only from leading `/skill:name` commands; HAL-C2 writes skills as
   `$name`. Every known `$name` moves to the front as Pi's command.
   """

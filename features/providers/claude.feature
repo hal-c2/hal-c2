@@ -1764,14 +1764,24 @@ Feature: Claude
     When the user sends the next message to Claude
     Then Claude starts a new conversation and the turn completes
 
-  # Upstream #19637: before resuming a Claude session that is not live, its transcript is
-  # checked for a saved message; one with none is replaced by a new conversation.
-  @backlog
-  Scenario: A Claude session that never saved a message is replaced, not resumed
-    Given the MC restarted after sending Claude a prompt and before Claude saved it
+  # Upstream #19637: Claude cannot resume a session it never saved a message to, as when
+  # it went down after the MC sent it a prompt and before writing it. Before resuming a
+  # Claude session that is not live, its transcript is checked for a saved message; one
+  # with none is replaced by a new conversation handed the whole thread. A transcript not
+  # found where the instance keeps them is Claude's to judge: when Claude ends before
+  # answering, the session is replaced the same way.
+  @mc
+  Scenario Outline: A Claude session that never saved a message is replaced, not resumed
+    Given Claude went down before saving the prompt the MC sent it, leaving its transcript <transcript>
     When the user sends the next message in the thread
     Then Claude starts a new conversation and the turn completes
+    And Claude is handed the whole thread
     And later messages in the thread do not fail with "No conversation found"
+
+    Examples:
+      | transcript     |
+      | without it     |
+      | nowhere at all |
 
   @mc
   Scenario: A Claude instance with its own config directory still finds its saved login on macOS

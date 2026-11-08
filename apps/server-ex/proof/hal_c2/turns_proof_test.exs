@@ -129,6 +129,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.split_ready/1" => @items,
       "HalC2.Orchestration.TurnWriter.item_id/2" => @items,
       "HalC2.Orchestration.TurnWriter.ensure_item/4" => @items,
+      "HalC2.Orchestration.TurnWriter.confirmed/2" => @items,
       "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,

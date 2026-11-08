@@ -908,25 +908,50 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "Claude starts a monitor in the thread", context do
+    # The MC's services run from the start, as they do in the MC: one first started by
+    # the next message (`World.send_turn/3`) would change that turn's launch, and the
+    # new process would end the monitor.
     context =
       context
       |> World.fake_providers()
+      |> World.providers()
       |> World.launch_on(@thread, "claudeAgent", "start a monitor")
 
     World.await_runs(context, @thread, ["completed"])
     Map.put(context, :thread, @thread)
   end
 
+  # The sidebar row lists background work once the thread's runs have settled
+  # (`HalC2.Projection.BackgroundWork`); while a later run is active, the clients' Agents
+  # list shows the monitor from its own item, still live under the run that started it.
   step "the thread lists the monitor as background work", context do
     id = World.thread_id(context, @thread)
+    state = World.stream(context, @thread)
 
-    World.await_row(
-      id,
-      &match?(
-        [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
-        &1["pendingBackgroundTasks"]
+    active =
+      for %{"status" => s} = run <- StreamState.list(state, "run"),
+          s in ~w(preparing starting running),
+          do: run["id"]
+
+    if active == [] do
+      World.await_row(
+        id,
+        &match?(
+          [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
+          &1["pendingBackgroundTasks"]
+        )
       )
-    )
+    else
+      assert [monitor] =
+               for(
+                 %{"type" => "dynamic_tool", "toolName" => "Monitor"} = item <-
+                   StreamState.list(state, "turn-item"),
+                 do: item
+               )
+
+      assert monitor["status"] in ~w(pending running waiting)
+      refute monitor["runId"] in active
+    end
 
     context
   end
@@ -4348,6 +4373,72 @@ defmodule HalC2.Steps.Providers.Claude do
     refute "--resume" in List.last(starts)
     assert "Hello from claude" in World.replies(context, @thread)
     context
+  end
+
+  # The first turn's session is let go of, as when the MC restarts, and its transcript
+  # is left as it is when Claude went down before saving the prompt: without it, or
+  # never written at all.
+  step ~r/^Claude went down before saving the prompt the MC sent it, leaving its transcript (?<transcript>without it|nowhere at all)$/,
+       %{args: [transcript]} = context do
+    World.put_os_env("CLAUDE_CONFIG_DIR", Mc.tmp_dir(context.mc, "claude-unsaved"))
+    World.put_os_env("FAKE_SESSIONS", "1")
+    context = World.fake_providers(context) |> World.launch_on(@thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    release_claude(context)
+    [path] = Path.wildcard(Path.join(System.get_env("CLAUDE_CONFIG_DIR"), "projects/*/*.jsonl"))
+
+    case transcript do
+      "without it" ->
+        kept = path |> File.stream!() |> Enum.reject(&(JSON.decode!(&1)["type"] == "user"))
+        File.write!(path, kept)
+
+      "nowhere at all" ->
+        File.rm!(path)
+    end
+
+    Map.put(context, :unsaved, native_session(context))
+  end
+
+  step "the user sends the next message in the thread", context do
+    context = World.post_message(context, @thread, "hello from claude")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "Claude is handed the whole thread", context do
+    prompts =
+      for %{"in" => %{"type" => "user", "message" => %{"content" => content}}} <-
+            World.provider_log(context, "claude"),
+          do: inspect(content)
+
+    assert List.last(prompts) =~ "<conversation_history>"
+    assert List.last(prompts) =~ "hello"
+    context
+  end
+
+  # The next session after the new one resumes it, not the one Claude never saved.
+  step "later messages in the thread do not fail with {string}", %{args: [_]} = context do
+    fresh = native_session(context)
+    assert fresh != context.unsaved
+    release_claude(context)
+    context = World.post_message(context, @thread, "and again")
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    starts = for %{"argv" => argv} <- World.provider_log(context, "claude"), do: argv
+    assert ["--resume", fresh] in pairs(List.last(starts))
+    context
+  end
+
+  defp release_claude(context) do
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    ref = Process.monitor(runtime)
+    :ok = GenServer.call(runtime, :release)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+  end
+
+  defp native_session(context) do
+    World.stream(context, @thread)
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(&get_in(&1, ["nativeThreadRef", "nativeId"]))
   end
 
   step "a Claude instance with its own config directory was signed in from a terminal",

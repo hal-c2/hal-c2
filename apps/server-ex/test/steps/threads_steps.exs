@@ -1860,25 +1860,68 @@ defmodule HalC2.Steps.Threads do
     Map.merge(context, %{where: reply, fork_state: state})
   end
 
-  step "the first request and the newest messages are kept whole", context do
+  step "the first request and the newest work are kept whole", context do
     assert context.where =~ "history True"
 
     assert [%{"summaryText" => summary}] =
              HalC2.StreamState.list(context.fork_state, "context-handoff")
 
-    assert ["[earlier messages omitted" <> _, kept] = String.split(summary, "\n\n", parts: 2)
+    assert "[This history is condensed to fit." <> _ = summary
+    assert String.length(summary) <= 60_000
+    assert summary =~ ~r/^## Run 1[^\n]*\n\nUser: hello\n/m
 
-    assert kept =~ ~r/\AUser: hello\n\n/
-
-    assert kept =~
+    assert summary =~
              ~r/User: newest work\n\n(Command: [^\n]+\n[^\n]+\n[^\n]+\n\n)?Assistant: [^\n]+\z/
 
-    Map.put(context, :kept, kept)
+    Map.put(context, :kept, summary)
   end
 
-  step "the message that does not fit is left out", context do
-    refute context.kept =~ "User: oldest"
-    assert String.length(context.kept) < 1_000
+  step "the request that does not fit is cut in its middle where it says so", context do
+    assert [request] =
+             for(
+               block <- String.split(context.kept, "\n\n"),
+               block =~ ~r/\AUser: oldest /,
+               do: block
+             )
+
+    assert_kept_or_cut(request, "User: oldest " <> String.duplicate("x", 70_000))
+    assert request =~ "characters cut here"
+    context
+  end
+
+  step "the first message of {string} has the file {string} attached",
+       %{args: [title, name]} = context do
+    [message | _] = messages(context, title)
+
+    id =
+      "#{HalC2.Attachments.thread_segment(World.thread_id(context, title))}-#{HalC2.Environment.uuid4()}"
+
+    File.mkdir_p!(HalC2.Attachments.dir())
+    File.write!(Path.join(HalC2.Attachments.dir(), id <> Path.extname(name)), "the notes")
+
+    file = %{
+      "type" => "file",
+      "id" => id,
+      "name" => name,
+      "mimeType" => "text/plain",
+      "sizeBytes" => 9
+    }
+
+    World.put_entity(context, title, "message", message["id"], %{
+      "s" => %{"attachments" => [file]}
+    })
+  end
+
+  step "{string} in {string} still holds what was attached", %{args: [name, fork]} = context do
+    assert [file] =
+             for(
+               message <- messages(context, fork),
+               file <- message["attachments"] || [],
+               do: file
+             )
+
+    assert file["name"] == name
+    assert File.read!(HalC2.Attachments.path(file)) == "the notes"
     context
   end
 
@@ -2960,12 +3003,17 @@ defmodule HalC2.Steps.Threads do
       VALUES ('thread', ?1, 'message.sent', ?2, '2026-09-01T12:00:00.000Z', 2)
       """)
 
+    # One transaction: thousands of commits, each synced to disk, outlast the test on a
+    # busy disk.
+    :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
+
     for k <- 1..n do
       payload = if k == n, do: "{", else: JSON.encode!(t3_more_message(id, k))
       :ok = Exqlite.Sqlite3.bind(stmt, [id, payload])
       :done = Exqlite.Sqlite3.step(db, stmt)
     end
 
+    :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
     :ok = Exqlite.Sqlite3.release(db, stmt)
     :ok = Exqlite.Sqlite3.close(db)
     Map.put(context, :t3_more, n)
@@ -3488,7 +3536,7 @@ defmodule HalC2.Steps.Threads do
   step "Claude receives the whole conversation ahead of the message", context do
     prompt = List.last(World.claude_prompts(context))
     assert prompt =~ ~r/^<conversation_history>\n/
-    refute prompt =~ "[earlier messages omitted"
+    refute prompt =~ "[This history is condensed"
 
     for line <- ["User: sum the cart totals", "User: now add the discount", "Assistant: "],
         do: assert(prompt =~ line)
@@ -3545,7 +3593,7 @@ defmodule HalC2.Steps.Threads do
 
   step "the new agent receives each command with its exit code and output", context do
     assert handed_history(context) =~
-             ~r/\AUser: check this screenshot\n\nCommand: ls\nExit code: 0\na\.txt\n\nAssistant: [^\n]+\z/
+             ~r/\A## Run 1 \(codex\)\n\nUser: check this screenshot\n\nCommand: ls\nExit code: 0\na\.txt\n\nAssistant: [^\n]+\z/
 
     context
   end
@@ -3557,7 +3605,7 @@ defmodule HalC2.Steps.Threads do
     for block <- String.split(history, "\n\n"),
         do:
           assert(
-            String.starts_with?(block, ["User: ", "Assistant: ", "Command: "]),
+            String.starts_with?(block, ["## Run ", "User: ", "Assistant: ", "Command: "]),
             "neither a message nor a command: #{block}"
           )
 
@@ -3574,20 +3622,29 @@ defmodule HalC2.Steps.Threads do
     |> World.finished_turns(title, ["the original request"] ++ texts ++ ["the newest request"])
   end
 
-  # Parts 2 and 3 fit beside the original request and the newest turn; part 1 does not.
-  # The fake Codex names its answer and its command the same in every turn, so only the
-  # newest turn has them.
-  step "Claude receives the original request, the recent turns and command outcomes", context do
-    assert ["[earlier messages omitted" <> _, kept] =
-             String.split(handed_history(context), "\n\n", parts: 2)
+  # The three parts alone are over the budget, so each is cut in its middle; every
+  # request is still there, and the newest turn is whole.
+  step "Claude receives every request, the long ones cut in their middle, and the newest turn whole",
+       context do
+    history = handed_history(context)
+    assert "[This history is condensed to fit." <> _ = history
+    assert String.length(history) <= 60_000
+    assert history =~ ~r/^User: the original request$/m
 
-    assert String.length(kept) <= 60_000
+    for n <- 1..3 do
+      assert [request] =
+               for(
+                 block <- String.split(history, "\n\n"),
+                 block =~ ~r/\AUser: part #{n} /,
+                 do: block
+               )
 
-    assert ["User: the original request", "User: part 2 " <> _, "User: part 3 " <> _ | newest] =
-             String.split(kept, "\n\n")
+      assert_kept_or_cut(request, long_part(n))
+      assert request =~ "characters cut here"
+    end
 
-    assert ["User: the newest request", "Command: ls\nExit code: 0\na.txt", "Assistant: " <> _] =
-             newest
+    assert history =~
+             ~r/User: the newest request\n\nCommand: ls\nExit code: 0\na\.txt\n\nAssistant: [^\n]+\z/
 
     context
   end
@@ -3611,31 +3668,29 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the agent receives at most 60,000 characters of history", context do
-    assert ["[earlier messages omitted" <> _, kept] =
-             String.split(handed_history(context), "\n\n", parts: 2)
+    history = handed_history(context)
+    assert "[This history is condensed to fit." <> _ = history
+    assert String.length(history) in 50_000..60_000
 
-    assert String.length(kept) in 50_000..60_000
-
-    assert kept =~
+    assert history =~
              ~r/User: the newest request\n\nCommand: ls\n[^\n]+\n[^\n]+\n\nAssistant: [^\n]+\z/
 
-    Map.put(context, :kept, kept)
+    Map.put(context, :kept, history)
   end
 
-  # The first request and the newest long one, with the one between them left out.
-  step "every message it receives is whole", context do
+  # Every part is there, each its own start and end around a mark saying how much of
+  # its middle was cut.
+  step "every request it receives is whole or says where it is cut", context do
     requests = for "User: part " <> _ = block <- String.split(context.kept, "\n\n"), do: block
+    assert length(requests) == 3
 
-    assert requests ==
-             for(
-               n <- [1, 3],
-               do: String.trim("User: part #{n} " <> String.duplicate("cart ", 5_000))
-             )
+    for {request, n} <- Enum.with_index(requests, 1),
+        do: assert_kept_or_cut(request, long_part(n))
 
     context
   end
 
-  step "parts of the conversation did not fit in the handoff", context do
+  step "parts of the conversation were cut to fit the handoff", context do
     texts = for n <- 1..3, do: "part #{n} " <> String.duplicate("cart ", 5_000)
 
     context =
@@ -3644,17 +3699,20 @@ defmodule HalC2.Steps.Threads do
       |> World.finished_turns("Alpha", texts ++ ["the newest request"])
       |> switch_and_ask("Alpha")
 
-    # The first request and the newest two fit; the one between them does not.
-    assert ["[earlier messages omitted" <> _, kept] =
-             String.split(handed_history(context), "\n\n", parts: 2)
+    # The three parts alone are over the budget, so each is cut in its middle.
+    assert [part] =
+             for(
+               block <- String.split(handed_history(context), "\n\n"),
+               block =~ ~r/\AUser: part 2 /,
+               do: block
+             )
 
-    assert kept =~ "part 1 "
-    refute kept =~ "part 2 "
+    assert part =~ "characters cut here"
     Map.put(context, :left_out, Enum.at(texts, 1))
   end
 
   # Claude, now the thread's agent, pages to the thread's second request with the MC's tool.
-  step "the agent needs one of the left-out parts", context do
+  step "the agent needs the whole of a cut part", context do
     read =
       World.mcp_tool(
         context,
@@ -3756,6 +3814,22 @@ defmodule HalC2.Steps.Threads do
   end
 
   # The history block of the prompt the last Claude turn was sent.
+  # `block` is `whole`, or its start and end around a mark counting what was cut between.
+  defp assert_kept_or_cut(block, whole) do
+    case Regex.run(~r/\A(.*)\n\[\.\.\. (\d+) characters cut here \.\.\.\]\n(.*)\z/s, block) do
+      nil ->
+        assert block == whole
+
+      [_, start, cut, ending] ->
+        assert String.starts_with?(whole, start) and String.ends_with?(whole, ending)
+
+        assert String.length(start) + String.to_integer(cut) + String.length(ending) ==
+                 String.length(whole)
+    end
+  end
+
+  defp long_part(n), do: String.trim("User: part #{n} " <> String.duplicate("cart ", 5_000))
+
   defp handed_history(context) do
     prompt = List.last(World.claude_prompts(context))
 

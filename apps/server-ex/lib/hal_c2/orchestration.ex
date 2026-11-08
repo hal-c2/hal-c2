@@ -238,7 +238,11 @@ defmodule HalC2.Orchestration do
       sent =
         with {:ok, attachments} <-
                HalC2.Attachments.claim(thread_id, command["attachments"] || []),
-             do: dispatch_message(thread_id, claimed(command, attachments))
+             {:ok, command} <- claimed(thread_id, command, attachments) do
+          sent = dispatch_message(thread_id, command)
+          drop_unnamed(thread_id, command["messageId"], command["attachments"] -- attachments)
+          sent
+        end
 
       # A message refused for good gives its plan back. One refused only for now (a
       # map: the same message is still being sent) leaves it with the send under way.
@@ -456,21 +460,26 @@ defmodule HalC2.Orchestration do
 
     with :ok <- users_run(state, run_id, "edited"),
          :ok <- not_emptied(state, run_id, command),
-         {:ok, command} <- edit_claims(thread_id, command) do
+         {:ok, command, folded} <- edit_claims(thread_id, state, run_id, command) do
       edited =
         %{"text" => command["text"] || "", "updatedAt" => Entities.now()}
         |> Map.merge(Map.take(command, ["attachments"]))
         |> then(&if(command["context"], do: Map.put(&1, "context", command["context"]), else: &1))
 
-      queue_change(thread_id, fn state ->
-        case StreamState.get(state, "run")[run_id] do
-          %{"status" => "queued", "userMessageId" => message_id} ->
-            [upsert(state, "message", message_id, &Map.merge(&1, edited))]
+      result =
+        queue_change(thread_id, fn state ->
+          case StreamState.get(state, "run")[run_id] do
+            %{"status" => "queued", "userMessageId" => message_id} ->
+              [upsert(state, "message", message_id, &Map.merge(&1, edited))]
 
-          _ ->
-            []
-        end
-      end)
+            _ ->
+              []
+          end
+        end)
+
+      message_id = StreamState.get(state, "run")[run_id]["userMessageId"]
+      drop_unnamed(thread_id, message_id, folded)
+      result
     end
   end
 
@@ -1376,9 +1385,16 @@ defmodule HalC2.Orchestration do
     :ok
   end
 
+  # A run the handoff refused fails before it reaches the provider; one that starts a
+  # new conversation first stops the provider's idle session, which would go on in the
+  # conversation it holds.
+  defp begin_turn_now(thread_id, %{refusal: %{} = refusal} = turn),
+    do: HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", refusal)
+
   defp begin_turn_now(thread_id, turn) do
     restore_worktree(thread_id)
     :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
+    :ok = leave_conversation(thread_id, turn)
     :ok = start_turn(thread_id, turn)
   catch
     kind, reason ->
@@ -1410,6 +1426,39 @@ defmodule HalC2.Orchestration do
 
   defp start_failure(_turn, _kind, _reason),
     do: HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
+
+  # The built-in runtimes keep their conversation for as long as they run; a provider
+  # plugin starts a new one for a turn with `new_conversation: true`. The session is
+  # idle (the handoff found no background work in it), so it stops; one that is busy
+  # after all keeps its work, and the run fails.
+  defp leave_conversation(thread_id, %{new_conversation: true} = turn) do
+    case session_registry(runtime(turn.ids.instance)) do
+      nil ->
+        :ok
+
+      registry ->
+        kept =
+          for registry <- [registry],
+              Process.whereis(registry) != nil,
+              {pid, _} <- Registry.lookup(registry, thread_id),
+              release(pid) == :busy,
+              do: pid
+
+        if kept == [], do: :ok, else: {:error, "the provider's session is busy"}
+    end
+  end
+
+  defp leave_conversation(_thread_id, _turn), do: :ok
+
+  # The bundled Codex and Claude plugins drive the built-in runtimes.
+  defp session_registry(HalC2.Plugins.Bundled.Codex), do: HalC2.Codex.Registry
+  defp session_registry(HalC2.Plugins.Bundled.Claude), do: HalC2.Claude.Registry
+  defp session_registry(HalC2.Codex.ThreadRuntime), do: HalC2.Codex.Registry
+  defp session_registry(HalC2.Claude.ThreadRuntime), do: HalC2.Claude.Registry
+  defp session_registry(HalC2.Acp.ThreadRuntime), do: HalC2.Acp.Registry
+  defp session_registry(HalC2.Pi.ThreadRuntime), do: HalC2.Pi.Registry
+  defp session_registry(HalC2.Muse.ThreadRuntime), do: HalC2.Muse.Registry
+  defp session_registry(_plugin), do: nil
 
   # A runtime that released itself as idle just before this run began stops with the
   # call unanswered (or is gone by the call); a new one takes the turn.
@@ -1808,13 +1857,9 @@ defmodule HalC2.Orchestration do
       end
 
     with %{"workspaceRoot" => _} <- project || {:error, "The project is not on this MC."},
-         {:ok, attachments} <- HalC2.Attachments.claim(thread_id, command["attachments"] || []) do
-      command =
-        command
-        |> claimed(attachments)
-        |> Map.put("dispatchMode", %{"type" => "defer_start"})
-
-      {:ok, project, command}
+         {:ok, attachments} <- HalC2.Attachments.claim(thread_id, command["attachments"] || []),
+         {:ok, command} <- claimed(thread_id, command, attachments) do
+      {:ok, project, Map.put(command, "dispatchMode", %{"type" => "defer_start"})}
     end
   end
 
@@ -2843,13 +2888,49 @@ defmodule HalC2.Orchestration do
         do: upsert(state, "run", id, &Map.put(&1, "queuePosition", position))
   end
 
-  defp edit_claims(thread_id, %{"attachments" => attachments} = command)
-       when is_list(attachments) do
-    with {:ok, claimed} <- HalC2.Attachments.claim(thread_id, attachments),
-         do: {:ok, claimed(command, claimed)}
+  # An edit that names no attachments keeps the message's, which a text too long to send
+  # whole is folded beside. With the file it was folded into, if any.
+  defp edit_claims(thread_id, state, run_id, command) do
+    case command["attachments"] do
+      attachments when is_list(attachments) ->
+        with {:ok, claimed} <- HalC2.Attachments.claim(thread_id, attachments),
+             {:ok, command} <- claimed(thread_id, command, claimed),
+             do: {:ok, command, command["attachments"] -- claimed}
+
+      _ ->
+        message_id = StreamState.get(state, "run")[run_id]["userMessageId"]
+        kept = (StreamState.get(state, "message")[message_id] || %{})["attachments"] || []
+
+        case HalC2.Attachments.fold_long_text(thread_id, command["text"], kept) do
+          {:ok, _text, ^kept} ->
+            {:ok, command, []}
+
+          {:ok, text, attachments} ->
+            {:ok, %{command | "text" => text} |> Map.put("attachments", attachments),
+             attachments -- kept}
+
+          error ->
+            error
+        end
+    end
   end
 
-  defp edit_claims(_thread_id, command), do: {:ok, command}
+  # The file a long message was folded into (`claimed/3`), once its send or edit is
+  # over: removed unless the message names it. Then the thread refused it, or had the
+  # message already (a resend folds again), and nothing else names the file.
+  defp drop_unnamed(_thread_id, _message_id, []), do: :ok
+
+  defp drop_unnamed(thread_id, message_id, files) do
+    message = StreamState.fetch(HalC2.Streams.state(thread_id), "message", message_id) || %{}
+    named = for %{"id" => id} <- List.wrap(message["attachments"]), do: id
+
+    for %{"id" => id} = file <- files,
+        id not in named,
+        path = HalC2.Attachments.path(file),
+        do: File.rm(path)
+
+    :ok
+  end
 
   # What a message and its timeline item both carry: its composer context records
   # (`HalC2.ComposerContext`), the scheduled task that sent it, and the thread whose
@@ -2872,18 +2953,21 @@ defmodule HalC2.Orchestration do
     |> Map.merge(Map.take(command, ["delegatedCompletion", "providerWake", "notification"]))
   end
 
-  # Uploads claimed into the thread, with the context records that name them.
-  defp claimed(command, attachments) do
-    command
-    |> Map.put("attachments", attachments)
-    |> Map.put(
-      "context",
+  # Uploads claimed into the thread, with the context records that name them, and a
+  # text too long to send whole folded into a file (`HalC2.Attachments.fold_long_text/3`).
+  defp claimed(thread_id, command, attachments) do
+    context =
       HalC2.ComposerContext.remap_attachments(
         command["context"],
         command["attachments"] || [],
         attachments
       )
-    )
+
+    with {:ok, text, attachments} <-
+           HalC2.Attachments.fold_long_text(thread_id, command["text"], attachments) do
+      command = Map.merge(command, %{"attachments" => attachments, "context" => context})
+      {:ok, if(is_binary(text), do: Map.put(command, "text", text), else: command)}
+    end
   end
 
   # A message for another provider cannot join the old provider's turn: it waits for
@@ -3084,6 +3168,7 @@ defmodule HalC2.Orchestration do
         id: attachment["id"],
         name: attachment["name"],
         mime_type: attachment["mimeType"],
+        size_bytes: attachment["sizeBytes"],
         source: attachment["source"],
         path: HalC2.Attachments.path(attachment)
       }
@@ -4107,6 +4192,24 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # Text a runtime runs as the provider's own command (`/compact` with or without
+  # instructions, `/logout`) rather than sending it as a prompt. An ACP agent reads any
+  # slash command only at the start of its prompt, and Pi a prompt template, so there
+  # every such command is one. Claude takes history in a block ahead of a command
+  # (`HalC2.Claude.ThreadRuntime`), Pi after its `/skill:`s (`HalC2.Pi.message/3`),
+  # and Codex drives no slash commands but these.
+  defp provider_command?(text, instance) do
+    text = String.trim(text)
+
+    Regex.match?(~r{^/(compact(\s|$)|logout$)}, text) or
+      (String.starts_with?(text, "/") and
+         case runtime(instance) do
+           HalC2.Acp.ThreadRuntime -> true
+           HalC2.Pi.ThreadRuntime -> not String.starts_with?(text, "/skill:")
+           _ -> false
+         end)
+  end
+
   defp maintenance(message) do
     text = String.downcase(String.trim(message["text"] || ""))
     if (message["attachments"] || []) == [] and text in ~w(/compact /logout), do: text
@@ -4553,9 +4656,88 @@ defmodule HalC2.Orchestration do
           create("provider-session", session_id, fresh_session)
       end
 
+    # A first run on an instance that shares another's Claude home continues
+    # that instance's native thread (see `carried_native_ref/4`).
+    carried_ref =
+      if provider_thread == nil,
+        do: carried_native_ref(state, driver, instance, cwd)
+
+    planned_thread =
+      provider_thread ||
+        if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
+
+    text = command["text"] || ""
+    provider_text = HalC2.ComposerContext.for_provider(text, command["context"])
+    attachments = provider_attachments(command["attachments"])
+    # A wake sends the provider nothing (see `wake` below), and `/compact` or `/logout`
+    # (or, on an ACP agent, any slash command) is a command the provider runs on its
+    # conversation, not words for it: history put before one would hide the command. So neither hands anything over or is refused
+    # anything: what the provider missed is still to be sent, by the next run that
+    # sends it something, and the conversation goes on where the provider took it.
+    # A command that creates its provider thread opens a conversation that holds none of
+    # the thread, which the new provider thread says (`lastRunOrdinal` 0) so the next
+    # run hands it all over. One whose provider thread lost its conversation would open
+    # one that holds none of that provider thread's own runs, which no later handoff
+    # sends: that run is handed the thread, command or not.
+    wake? = command["providerWake"] == true
+
+    quiet? =
+      wake? or
+        (provider_command?(provider_text, instance) and
+           (get_in(provider_thread, ["nativeThreadRef", "nativeId"]) != nil or
+              (provider_thread == nil and not foreign)))
+
+    handoff =
+      if quiet?,
+        do: %{
+          fork: nil,
+          # A conversation the runtime finds gone leaves nothing to run the command on,
+          # and the new one is handed the thread (`Handoff.fresh_start/2`).
+          fallback: %{thread: ids.thread, ordinal: ordinal, merged: nil, moved: nil, restart: nil},
+          context: nil,
+          new_conversation: false,
+          refusal: nil,
+          sent_tokens: 0,
+          changes: []
+        },
+        else:
+          HalC2.Orchestration.Handoff.plan(state, planned_thread, ids, ordinal, at, %{
+            text: provider_text,
+            attachments: attachments
+          })
+
     # Its earlier runs' native turns are in the native thread it no longer has
     # (`HalC2.Orchestration.Fork`), and what that thread's session could do is not
-    # known of the new one until it opens.
+    # known of the new one until it opens. So with a new conversation the plan
+    # starts in its place: how full the old one was says nothing of it.
+    replaced = %{
+      "nativeThreadRef" => nil,
+      "canSwitchModel" => nil,
+      "nativeSinceRunOrdinal" => ordinal,
+      "contextUsage" => nil
+    }
+
+    # A run that hands over history marks it unconfirmed until the provider answers
+    # the run (`HalC2.Orchestration.TurnWriter`): while it is, the next run hands it
+    # over again, in a new conversation, or into this one what came after the run
+    # through which it is known to hold the thread (`unconfirmedSince`). A wake's
+    # answer, or a command's, says nothing of whether the history reached the provider.
+    marked = fn record ->
+      cond do
+        quiet? ->
+          record
+
+        handoff.context && !handoff.refusal ->
+          Map.merge(record, %{
+            "unconfirmedRunId" => ids.run,
+            "unconfirmedSince" => handoff.unconfirmed_since
+          })
+
+        true ->
+          Map.drop(record, ["unconfirmedRunId", "unconfirmedSince"])
+      end
+    end
+
     taken_over =
       if foreign,
         do: %{
@@ -4567,47 +4749,59 @@ defmodule HalC2.Orchestration do
         else: %{}
 
     provider_changes =
-      if provider_thread || foreign do
-        [
-          session_change,
-          upsert(
-            state,
-            "provider-thread",
-            provider_thread_id,
-            # A rolled-back head is where this run resumes the conversation.
-            &(&1
-              |> Map.merge(%{
-                "lastRunOrdinal" => ordinal,
-                "providerSessionId" => session_id,
-                "nativeConversationHeadRef" => nil
-              })
-              |> Map.merge(taken_over)
-              |> Map.drop(if(foreign, do: ["carriedSession"], else: [])))
-          )
-        ]
-      else
-        [
-          session_change,
-          create(
-            "provider-thread",
-            provider_thread_id,
-            Entities.provider_thread(
+      cond do
+        # A refused run leaves the provider thread as it was, or still to be made:
+        # nothing reached it.
+        handoff.refusal ->
+          [session_change]
+
+        provider_thread || foreign ->
+          [
+            session_change,
+            upsert(
+              state,
+              "provider-thread",
               provider_thread_id,
-              thread_id,
-              session_id,
-              ordinal,
-              at,
-              driver,
-              instance
+              # A rolled-back head is where this run resumes the conversation.
+              # The runs it missed are those after the last it was sent.
+              &(&1
+                |> Map.merge(%{
+                  "providerSessionId" => session_id,
+                  "nativeConversationHeadRef" => nil
+                })
+                |> Map.merge(if(quiet?, do: %{}, else: %{"lastRunOrdinal" => ordinal}))
+                |> Map.merge(taken_over)
+                |> Map.merge(if(handoff.new_conversation, do: replaced, else: %{}))
+                |> marked.()
+                |> Map.drop(if(foreign, do: ["carriedSession"], else: [])))
             )
-            |> then(fn record ->
-              case carried_native_ref(state, driver, instance, cwd) do
-                nil -> record
-                ref -> Map.put(record, "nativeThreadRef", ref)
-              end
-            end)
-          )
-        ]
+          ]
+
+        true ->
+          [
+            session_change,
+            create(
+              "provider-thread",
+              provider_thread_id,
+              Entities.provider_thread(
+                provider_thread_id,
+                thread_id,
+                session_id,
+                ordinal,
+                at,
+                driver,
+                instance
+              )
+              |> Map.merge(if(quiet?, do: %{"lastRunOrdinal" => 0}, else: %{}))
+              |> then(fn record ->
+                case carried_ref do
+                  nil -> record
+                  ref -> Map.put(record, "nativeThreadRef", ref)
+                end
+              end)
+              |> marked.()
+            )
+          ]
       end
 
     # A run on another provider takes the thread over, as `provider.switch` would: a
@@ -4628,7 +4822,13 @@ defmodule HalC2.Orchestration do
             )
           )
 
-    text = command["text"] || ""
+    # What the run sends, which the provider's conversation holds until it reports
+    # its usage (`HalC2.Orchestration.Handoff.room/3`). A refused run sends nothing, and
+    # no handoff tells of it.
+    sent_tokens =
+      if handoff.refusal,
+        do: %{"refused" => true},
+        else: %{"sentTokens" => handoff.sent_tokens}
 
     changes =
       Enum.reject(legacy_changes ++ provider_changes ++ [scope_change, switch_change], &is_nil/1)
@@ -4649,9 +4849,15 @@ defmodule HalC2.Orchestration do
                   Entities.run(ids, ordinal, selection, at)
                   |> Map.drop(["requestedAt"])
                   |> Map.put("queueHeld", false)
+                  |> Map.merge(sent_tokens)
                 )
               ),
-            else: create("run", ids.run, Entities.run(ids, ordinal, selection, at))
+            else:
+              create(
+                "run",
+                ids.run,
+                Map.merge(Entities.run(ids, ordinal, selection, at), sent_tokens)
+              )
           ),
           create("run-attempt", ids.attempt, Entities.attempt(ids)),
           create(
@@ -4693,28 +4899,13 @@ defmodule HalC2.Orchestration do
         |> Enum.reject(&is_nil/1)
       )
 
-    # A first run on an instance that shares another's Claude home continues
-    # that instance's native thread (see `carried_native_ref/4`).
-    carried_ref =
-      if provider_thread == nil,
-        do: carried_native_ref(state, driver, instance, cwd)
-
-    provider_thread =
-      provider_thread ||
-        if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
-
-    handoff =
-      HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
-
-    provider_text = HalC2.ComposerContext.for_provider(text, command["context"])
-
     turn = %{
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
-      text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),
+      text: provider_text,
       # What a new provider conversation gets when the one to resume is gone
       # (`HalC2.Orchestration.Handoff.opened/2`).
       fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),
@@ -4737,18 +4928,32 @@ defmodule HalC2.Orchestration do
       streaming_mode:
         HalC2.Settings.for_project(thread["projectId"])["responseStreamingMode"] || "paragraph",
       interaction_mode: thread["interactionMode"] || "default",
-      attachments: provider_attachments(command["attachments"]),
+      attachments: attachments,
       # A turn the provider started by itself, whose output its runtime already has
       # (a Claude wake, `HalC2.Claude.ThreadRuntime`): the message is not sent to it.
-      wake: command["providerWake"] == true,
+      wake: wake?,
       # A run confined to reading the workspace, which providers that can
       # confine a run (Claude's `--tools`) honour.
       read_only: command["readOnly"] == true,
-      native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
-      head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
+      native_thread_id:
+        unless(handoff.new_conversation,
+          do: get_in(planned_thread || %{}, ["nativeThreadRef", "nativeId"])
+        ),
+      head:
+        unless(handoff.new_conversation,
+          do: get_in(planned_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
+        ),
+      # The provider's live session leaves the conversation it holds for a new one
+      # (`begin_turn_now/2`).
+      new_conversation: handoff.new_conversation,
+      # Why the run fails before it reaches the provider (`begin_turn_now/2`).
+      refusal: handoff.refusal
     }
 
-    {changes ++ handoff.changes, {:ok, turn}}
+    turn = HalC2.Orchestration.Handoff.ahead(turn, handoff.context)
+
+    # A refused run consumes nothing it would have handed over.
+    {changes ++ if(handoff.refusal, do: [], else: handoff.changes), {:ok, turn}}
   end
 
   # Runs are numbered in the order they leave the queue, which is what checkpoints (ref

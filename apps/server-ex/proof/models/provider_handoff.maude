@@ -1,0 +1,376 @@
+sload model-checker
+
+--- One thread whose runs alternate between two providers, each keeping its own native
+--- conversation. The MC plans a run inside the stream: it resumes the provider's
+--- conversation with what other providers did since that provider last ran, or starts a
+--- new one with the whole thread. The provider holds the truth: which runs its
+--- conversation knows and how full it is. Prompts, confirmations and usage reports cross
+--- between them and may be lost, arrive late, or be cut off by a failed or crashed run.
+--- proof/hal_c2/provider_handoff_proof_test.exs maps it to the code and checks it.
+---
+--- cfg(Mark, Room, Fresh, Keyed, Quiet, Busy, Since) switches each part of the design on,
+--- so that the design before them can be shown to fail (see the test's moduledoc for the
+--- counterexamples):
+---   Mark  - a run that carried history leaves an unconfirmed mark until the provider
+---           confirms the turn, and a set mark makes the next run start afresh (#1233).
+---   Room  - the MC estimates what it sent, checks the resumed conversation has room for
+---           the handoff and the reserve, and trims a fresh start to the window (#1232).
+---   Fresh - a live runtime opens a new conversation when the MC asks for one: the MC
+---           lets go of the runtime for a run that starts afresh, whether a mark is set
+---           or it knows no conversation (one it never learnt may hold a lost prompt).
+---   Keyed - a confirmation clears only the mark of the run it confirms.
+---   Quiet - a wake (or a command such as /compact) hands nothing over and leaves the
+---           provider's place where it was: the next run that sends words brings what
+---           it missed.
+---   Busy  - a conversation with background work running is never replaced: an
+---           unconfirmed handoff goes into it again, and one without room is refused.
+---   Since - what goes again is everything after the run through which the conversation
+---           was known to hold the thread when the mark was set.
+
+mod PROVIDER-HANDOFF is
+  protecting NAT .
+
+  sorts Prov Runs Item Conf Sys .
+  subsort Nat < Runs .
+  subsort Item < Conf .
+
+  ops a b : -> Prov [ctor] .
+
+  --- Sets of run ordinals.
+  op noRuns : -> Runs [ctor] .
+  op _;_ : Runs Runs -> Runs [ctor assoc comm id: noRuns] .
+
+  --- The MC: the next ordinal, the run in progress (or idle), runs waiting with the size
+  --- of their message, finished runs with the size they add to the history, and per
+  --- provider thread its conversation (0 when the next run must open one), the last run
+  --- it took part in, the unconfirmed run (0 when none), the run that started its
+  --- conversation, and the run through which the conversation held the thread when the
+  --- mark was set. Each provider turn records what its prompt sent, and keeps the
+  --- occupancy the provider reported during it, late or not. A provider thread knows
+  --- whether background work runs in its conversation, and which runs were its own
+  --- wakes. A wake waits for its provider thread, as a run waits for any.
+  op next : Nat -> Item [ctor] .
+  op idle : -> Item [ctor] .
+  op active : Nat Prov Nat -> Item [ctor] .
+  op todo : Nat Nat -> Item [ctor] .
+  op hist : Nat Nat -> Item [ctor] .
+  op mc : Prov Nat Nat Nat Nat Nat -> Item [ctor] .
+  op pturn : Nat Prov Nat -> Item [ctor] .
+  op report : Nat Nat -> Item [ctor] .
+  op bg : Prov Bool -> Item [ctor] .
+  op poke : Nat Prov -> Item [ctor] .
+  --- A run whose message was sent to one provider; without it either may take the run.
+  op on : Nat Prov -> Item [ctor] .
+  op woke : Nat Prov -> Item [ctor] .
+
+  --- The provider: its conversations with the runs each knows and its occupancy, the one
+  --- its live runtime holds (0 when no runtime runs), the turn it is answering, and the
+  --- next conversation id.
+  op conv : Prov Nat Runs Nat -> Item [ctor] .
+  op live : Prov Nat -> Item [ctor] .
+  op working : Nat Prov Nat -> Item [ctor] .
+  op ids : Nat -> Item [ctor] .
+
+  --- In flight: a run's prompt to a conversation (0 and true for a new one) with the runs
+  --- it covers and its size, the confirmation that the turn started in a conversation, and
+  --- the finished turn with the occupancy the provider reports.
+  op prompt : Nat Prov Nat Bool Runs Nat -> Item [ctor] .
+  op ack : Nat Prov Nat -> Item [ctor] .
+  op reply : Nat Prov Nat Nat -> Item [ctor] .
+  --- A wake to a conversation: it carries nothing.
+  op nudge : Nat Prov Nat -> Item [ctor] .
+
+  --- A delivered prompt: whether its conversation then held every earlier finished run,
+  --- and whether the history it handed over overfilled the conversation.
+  op seen : Nat Bool -> Item [ctor] .
+  op over : Nat Bool -> Item [ctor] .
+  --- A run replaced a conversation while background work ran in it.
+  op orphan : Nat -> Item [ctor] .
+
+  op cfg : Bool Bool Bool Bool Bool Bool Bool -> Item [ctor] .
+  op win : Nat -> Item [ctor] .
+  op faults : Nat -> Item [ctor] .
+  --- How many times a turn may start background work.
+  op bgs : Nat -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars N N' Q M E G K I L U Z S W F B : Nat .
+  vars MK RM FR KY QU BS SI NEW BG : Bool .
+  vars P P' : Prov .
+  vars KN CV R : Runs .
+  var C : Conf .
+
+  eq N ; N = N .
+
+  op _in_ : Nat Runs -> Bool .
+  eq N in (N ; R) = true .
+  eq N in R = false [owise] .
+
+  op within : Runs Runs -> Bool .
+  eq within(noRuns, R) = true .
+  eq within(N ; KN, R) = N in R and within(KN, R) .
+
+  --- Finished runs: all of them, those after an ordinal a provider has not seen (its own
+  --- wakes it has), those before one.
+  ops done : Conf -> Runs .
+  eq done(hist(N, Z) C) = N ; done(C) .
+  eq done(C) = noRuns [owise] .
+  op after : Prov Nat Conf -> Runs .
+  ceq after(P, Q, hist(N, Z) C) = (if own(N, P, C) then noRuns else N fi) ; after(P, Q, C)
+    if N > Q .
+  eq after(P, Q, C) = noRuns [owise] .
+  op own : Nat Prov Conf -> Bool .
+  eq own(N, P, woke(N, P) C) = true .
+  eq own(N, P, C) = false [owise] .
+  op before : Nat Conf -> Runs .
+  ceq before(Q, hist(N, Z) C) = N ; before(Q, C) if N < Q .
+  eq before(Q, C) = noRuns [owise] .
+
+  --- What a set of finished runs adds to a prompt.
+  op size : Runs Conf -> Nat .
+  eq size(noRuns, C) = 0 .
+  eq size(N ; R, hist(N, Z) C) = Z + size(R, hist(N, Z) C) .
+
+  --- The finished runs up to an ordinal that fit a budget, newest first. The rest are
+  --- covered by the note that earlier messages were left out.
+  op fit : Nat Nat Conf -> Runs .
+  eq fit(B, 0, C) = noRuns .
+  ceq fit(B, s N, hist(s N, Z) C) = (s N) ; fit(sd(B, Z), N, hist(s N, Z) C) if Z <= B .
+  eq fit(B, s N, C) = fit(B, N, C) [owise] .
+
+  --- The reserve kept free for the agent's own work; the model's answers fill exactly it.
+  op reserve : -> Nat .
+  eq reserve = 1 .
+
+  --- The occupancy the MC assumes for a provider's conversation that started at run Q,
+  --- from the turns before run N: the newest report, and what each later turn sent with
+  --- the reserve for its answer.
+  op occ : Prov Nat Nat Conf -> Nat .
+  op reported : Nat Conf -> Bool .
+  eq reported(N, report(N, U) C) = true .
+  eq reported(N, C) = false [owise] .
+  ceq occ(P, Q, N, C) = 0 if N <= Q .
+  ceq occ(P, Q, s N, pturn(N, P, Z) report(N, U) C) = U if Q <= N .
+  ceq occ(P, Q, s N, pturn(N, P, Z) C) = Z + reserve + occ(P, Q, N, pturn(N, P, Z) C)
+    if Q <= N /\ not reported(N, C) .
+  eq occ(P, Q, s N, C) = occ(P, Q, N, C) [owise] .
+
+  --- Whether what a provider has not seen since Q, with the message, overfills its
+  --- conversation (Room on).
+  op overfull : Bool Prov Nat Nat Nat Nat Nat Conf -> Bool .
+  eq overfull(RM, P, Q, E, N, S, W, C) =
+    RM and after(P, Q, C) =/= noRuns and occ(P, E, N, C) + size(after(P, Q, C), C) + S + reserve > W .
+
+  op fresh? : Bool Nat Nat -> Bool .
+  eq fresh?(MK, K, M) = K == 0 or (MK and M =/= 0) .
+
+  op mark : Bool Runs Nat -> Nat .
+  eq mark(MK, R, N) = if MK and R =/= noRuns then N else 0 fi .
+
+  op clear : Nat Nat -> Nat .
+  eq clear(M, N) = if M == N then 0 else M fi .
+
+  op running : Nat Conf -> Bool .
+  eq running(N, active(N, P, S) C) = true .
+  eq running(N, C) = false [owise] .
+
+  op inflight : Nat Conf -> Bool .
+  eq inflight(N, prompt(N, P, K, NEW, CV, Z) C) = true .
+  eq inflight(N, nudge(N, P, K) C) = true .
+  eq inflight(N, C) = false [owise] .
+
+  op takes : Nat Prov Conf -> Bool .
+  eq takes(N, P, on(N, P') C) = P == P' .
+  eq takes(N, P, C) = true [owise] .
+
+  op busy : Prov Conf -> Bool .
+  eq busy(P, working(N, P, K) C) = true .
+  eq busy(P, C) = false [owise] .
+
+  op stop : Prov Conf -> Conf .
+  eq stop(P, working(N, P, K) C) = stop(P, C) .
+  eq stop(P, C) = C [owise] .
+
+  --- The run resumes the provider's conversation with what it has not seen. With nothing
+  --- to hand over the provider makes room itself (it compacts), so only a handoff needs it.
+  crl [resume] : { next(N) idle todo(N, S) mc(P, K, Q, M, E, G) cfg(MK, RM, FR, KY, QU, BS, SI)
+                  win(W) C }
+    => { next(N) active(N, P, S) cfg(MK, RM, FR, KY, QU, BS, SI) win(W) C
+         mc(P, K, N, mark(MK, CV, N), E, Q) pturn(N, P, Z) prompt(N, P, K, false, CV, Z) }
+    if takes(N, P, C) /\ not fresh?(MK, K, M)
+    /\ CV := after(P, Q, C)
+    /\ Z := size(CV, C) + S
+    /\ (not RM or S + reserve <= W)
+    /\ (not RM or CV == noRuns or occ(P, E, N, C) + Z + reserve <= W) .
+
+  --- The run starts a new conversation with the whole thread, trimmed to the window.
+  crl [restart] : { next(N) idle todo(N, S) mc(P, K, Q, M, E, G) bg(P, BG)
+                   cfg(MK, RM, FR, KY, QU, BS, SI) win(W) C }
+    => { next(N) active(N, P, S) bg(P, BG) cfg(MK, RM, FR, KY, QU, BS, SI) win(W) C
+         (if BG then orphan(N) else empty fi)
+         mc(P, 0, N, mark(MK, R, N), N, 0) pturn(N, P, Z) prompt(N, P, 0, true, R, Z) }
+    if takes(N, P, C) /\ (fresh?(MK, K, M) or overfull(RM, P, Q, E, N, S, W, C))
+    /\ not (BS and BG and K =/= 0)
+    /\ (not RM or S + reserve <= W)
+    /\ R := done(C)
+    /\ Z := size(if RM then fit(sd(W, S + reserve), N, C) else R fi, C) + S .
+
+  --- With background work running, an unconfirmed handoff goes into the conversation
+  --- again: what came after the run through which it held the thread.
+  crl [resend] : { next(N) idle todo(N, S) mc(P, K, Q, M, E, G) bg(P, true)
+                  cfg(true, RM, FR, KY, QU, true, SI) win(W) C }
+    => { next(N) active(N, P, S) bg(P, true) cfg(true, RM, FR, KY, QU, true, SI) win(W) C
+         mc(P, K, N, mark(true, CV, N), E, G) pturn(N, P, Z) prompt(N, P, K, false, CV, Z) }
+    if takes(N, P, C) /\ K =/= 0 /\ M =/= 0
+    /\ CV := after(P, if SI then G else Q fi, C)
+    /\ Z := size(CV, C) + S
+    /\ (not RM or S + reserve <= W)
+    /\ (not RM or CV == noRuns or occ(P, E, N, C) + Z + reserve <= W) .
+
+  --- A handoff that does not fit a conversation with background work running is refused;
+  --- nothing changes.
+  crl [busy] : { next(N) idle todo(N, S) mc(P, K, Q, M, E, G) bg(P, true)
+                cfg(MK, true, FR, KY, QU, true, SI) win(W) C }
+    => { next(s N) idle mc(P, K, Q, M, E, G) bg(P, true) cfg(MK, true, FR, KY, QU, true, SI)
+         win(W) C }
+    if takes(N, P, C) /\ K =/= 0 /\ S + reserve <= W
+    /\ (if MK and M =/= 0 then overfull(true, P, if SI then G else Q fi, E, N, S, W, C)
+        else overfull(true, P, Q, E, N, S, W, C) fi) .
+
+  --- A message too big for even a new conversation fails its run; nothing is replaced.
+  --- The MC refuses only by the message's text, in a window the provider named: the
+  --- model's window is always one it named.
+  crl [refuse] : { next(N) idle todo(N, S) cfg(MK, true, FR, KY, QU, BS, SI) win(W) C }
+    => { next(s N) idle cfg(MK, true, FR, KY, QU, BS, SI) win(W) C }
+    if S + reserve > W .
+
+  --- A wake sends its conversation nothing. Quiet, it leaves the provider's place and
+  --- mark as they were; otherwise it is planned as a run, and takes what it was handed
+  --- as given. One for a provider thread with no conversation to wake, or (not Quiet)
+  --- one that would start a new one, sends nothing at all. A /compact that is its
+  --- provider's first run in the thread opens a conversation holding none of the thread
+  --- and leaves the place at 0 (`lastRunOrdinal` 0), so the next run hands everything
+  --- over; the model takes that as sending nothing.
+  crl [wake] : { next(N) idle poke(N, P) mc(P, K, Q, M, E, G) cfg(MK, RM, FR, KY, QU, BS, SI) C }
+    => { next(N) active(N, P, 0) cfg(MK, RM, FR, KY, QU, BS, SI) C woke(N, P)
+         pturn(N, P, 0) nudge(N, P, K)
+         mc(P, K, if QU then Q else N fi, if QU then M else mark(MK, after(P, Q, C), N) fi, E,
+            if QU then G else Q fi) }
+    if K =/= 0 /\ (QU or not fresh?(MK, K, M)) .
+  crl [wake-none] : { next(N) idle poke(N, P) mc(P, K, Q, M, E, G)
+                     cfg(MK, RM, FR, KY, QU, BS, SI) C }
+    => { next(s N) idle mc(P, K, Q, M, E, G) cfg(MK, RM, FR, KY, QU, BS, SI) C }
+    if K == 0 or not (QU or not fresh?(MK, K, M)) .
+
+  --- The provider takes the prompt into the conversation it names, or opens a new one,
+  --- once it has answered the turn before: a runtime answers one turn at a time.
+  crl [deliver] : { prompt(N, P, K, false, CV, Z) conv(P, K, KN, U) live(P, L) win(W) C }
+    => { conv(P, K, KN ; CV ; N, U + Z) live(P, K) working(N, P, K) ack(N, P, K)
+         seen(N, within(before(N, C), KN ; CV)) over(N, CV =/= noRuns and U + Z > W) win(W) C }
+    if not busy(P, C) .
+
+  crl [open] : { prompt(N, P, 0, true, CV, Z) live(P, L) ids(I) cfg(MK, RM, FR, KY, QU, BS, SI)
+                win(W) C }
+    => { conv(P, s I, CV ; N, Z) live(P, s I) ids(s I) working(N, P, s I) ack(N, P, s I)
+         seen(N, within(before(N, C), CV)) over(N, CV =/= noRuns and Z > W)
+         cfg(MK, RM, FR, KY, QU, BS, SI) win(W) C }
+    if (FR or L == 0) and not busy(P, C) .
+
+  --- Without the Fresh switch, a live runtime keeps the conversation it holds.
+  crl [reuse] : { prompt(N, P, 0, true, CV, Z) live(P, L) conv(P, L, KN, U)
+                 cfg(MK, RM, false, KY, QU, BS, SI) win(W) C }
+    => { conv(P, L, KN ; CV ; N, U + Z) live(P, L) working(N, P, L) ack(N, P, L)
+         seen(N, within(before(N, C), KN ; CV)) over(N, CV =/= noRuns and U + Z > W)
+         cfg(MK, RM, false, KY, QU, BS, SI) win(W) C }
+    if L =/= 0 and not busy(P, C) .
+
+  --- The provider takes a wake into its conversation: it adds nothing to it.
+  crl [wake-in] : { nudge(N, P, K) conv(P, K, KN, U) live(P, L) C }
+    => { conv(P, K, KN ; N, U) live(P, K) working(N, P, K) ack(N, P, K) C }
+    if not busy(P, C) .
+
+  --- The provider starts background work in the turn, and says so: the MC learns the
+  --- conversation, as a confirmation tells it. The work ends some time later.
+  rl [background] : active(N, P, S) working(N, P, I) mc(P, K, Q, M, E, G) bg(P, BG) bgs(s F)
+    => active(N, P, S) working(N, P, I) mc(P, I, Q, clear(M, N), E, G) bg(P, true) bgs(F) .
+  rl [settle] : bg(P, true) => bg(P, false) .
+
+  rl [answer] : working(N, P, K) conv(P, K, KN, U) => conv(P, K, KN, s U) reply(N, P, K, s U) .
+
+  --- The provider confirmed the turn: the MC learns the conversation, and the run's mark
+  --- is cleared. A confirmation of a run that has ended clears only that run's own mark,
+  --- leaving the conversation the MC knows as it is; with Keyed off it clears whichever
+  --- mark the provider thread has.
+  rl [confirm] : active(N, P, S) mc(P, K, Q, M, E, G) ack(N, P, I)
+    => active(N, P, S) mc(P, I, Q, clear(M, N), E, G) .
+  crl [late-ack] : { ack(N, P, I) mc(P, K, Q, M, E, G) cfg(MK, RM, FR, KY, QU, BS, SI) C }
+    => { mc(P, K, Q, if KY then clear(M, N) else 0 fi, E, G) cfg(MK, RM, FR, KY, QU, BS, SI) C }
+    if not running(N, C) .
+
+  --- The finished turn confirms it too, and reports the occupancy. A report that comes
+  --- after its run ended still lands on its own turn.
+  rl [complete] : { next(N) active(N, P, S) mc(P, K, Q, M, E, G) reply(N, P, I, U) C }
+    => { next(s N) idle mc(P, I, Q, clear(M, N), E, G) hist(N, s S) report(N, U) C } .
+  crl [late-reply] : { reply(N, P, I, U) C } => { report(N, U) C } if not running(N, C) .
+
+  --- A prompt is lost on the way, or a confirmation is.
+  rl [drop] : { prompt(N, P, K, NEW, CV, Z) faults(s F) C } => { faults(F) C } .
+  rl [drop] : { nudge(N, P, K) faults(s F) C } => { faults(F) C } .
+  rl [lose-ack] : { ack(N, P, I) faults(s F) C } => { faults(F) C } .
+
+  --- A run fails or is stopped with its runtime alive, or its runtime crashes. A prompt
+  --- is delivered or lost before either: the runtime's pipe keeps its order.
+  crl [fail] : { next(N) active(N, P, S) C } => { next(s N) idle C } if not inflight(N, C) .
+  crl [crash] : { next(N) active(N, P, S) live(P, L) C }
+    => { next(s N) idle live(P, 0) stop(P, C) }
+    if not inflight(N, C) .
+
+  --- Runs 1 to 4 with these message sizes, either provider taking each unless the run
+  --- names one, or a wake for one provider; a window, faults, and how often background work may start.
+  op start : Bool Bool Bool Bool Bool Bool Bool Nat Nat Nat Conf -> Sys .
+  eq start(MK, RM, FR, KY, QU, BS, SI, W, F, B, C) =
+    { next(1) idle C mc(a, 0, 0, 0, 0, 0) mc(b, 0, 0, 0, 0, 0) live(a, 0) live(b, 0) ids(0)
+      bg(a, false) bg(b, false) bgs(B) cfg(MK, RM, FR, KY, QU, BS, SI) win(W) faults(F) } .
+  op script : -> Conf .
+  eq script = todo(1, 1) todo(2, 2) todo(3, 1) todo(4, 2) .
+
+  --- A delivered prompt left its conversation without an earlier finished run.
+  op lost : Sys -> Bool .
+  eq lost({ seen(N, false) C }) = true .
+  eq lost({ C }) = false [owise] .
+
+  op overflow : Sys -> Bool .
+  eq overflow({ over(N, true) C }) = true .
+  eq overflow({ C }) = false [owise] .
+
+  op orphaned : Sys -> Bool .
+  eq orphaned({ orphan(N) C }) = true .
+  eq orphaned({ C }) = false [owise] .
+
+  op unsafe : Sys -> Bool .
+  eq unsafe(T:Sys) = lost(T:Sys) or overflow(T:Sys) or orphaned(T:Sys) .
+
+  op waiting : Conf -> Bool .
+  eq waiting(todo(N, S) C) = true .
+  eq waiting(poke(N, P) C) = true .
+  eq waiting(C) = false [owise] .
+
+  op settled : Sys -> Bool .
+  eq settled({ idle C }) = not waiting(C) .
+  eq settled({ C }) = false [owise] .
+endm
+
+mod PROVIDER-HANDOFF-PROPS is
+  including PROVIDER-HANDOFF .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  vars N S : Nat .
+  var C : Conf .
+
+  op finished : -> Prop [ctor] .
+  eq { C } |= finished = settled({ C }) .
+endm

@@ -1149,8 +1149,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       turn = %{turn | fork: nil}
       {%{state | turn: turn}, turn}
     else
-      text = HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
-      turn = %{turn | fork: nil, text: text}
+      turn = HalC2.Orchestration.Handoff.ahead(%{turn | fork: nil}, fork[:fallback])
       {%{state | turn: turn}, turn}
     end
   end
@@ -1740,6 +1739,14 @@ defmodule HalC2.Acp.ThreadRuntime do
           "provider-thread",
           ids.provider_thread,
           &Map.put(&1, "contextUsage", usage)
+        ),
+        # Its turn keeps it too, which says which run it counts
+        # (`HalC2.Orchestration.Handoff.room/3`).
+        Orchestration.upsert(
+          stream,
+          "provider-turn",
+          ids.provider_turn,
+          &(&1 && Map.put(&1, "tokenUsage", Map.put(usage, "updatedAt", Entities.now())))
         )
       ]
     end)

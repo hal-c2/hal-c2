@@ -918,7 +918,9 @@ defmodule HalC2.Codex.ThreadRuntime do
             "thread",
             ids.thread,
             &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
-          )
+          ),
+          # Codex answering `turn/start` took the prompt.
+          confirmed(stream, ids)
         ]
       end)
       |> case do
@@ -1151,11 +1153,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         {:ok, state, turn}
 
       {:error, reason, state} ->
-        turn = %{
-          turn
-          | fork: nil,
-            text: HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
-        }
+        turn = HalC2.Orchestration.Handoff.ahead(%{turn | fork: nil}, fork[:fallback])
 
         with {:ok, state} <- ensure_native_thread(state, turn) do
           not_carried(state, turn, rpc_message(reason))
@@ -1805,7 +1803,16 @@ defmodule HalC2.Codex.ThreadRuntime do
           "provider-thread",
           state.turn.ids.provider_thread,
           &Map.put(&1, "contextUsage", snapshot)
-        )
+        ),
+        # Its turn keeps it too, which says which run it counts
+        # (`HalC2.Orchestration.Handoff.room/3`).
+        (turn = Map.get(state.turn.ids, :provider_turn)) &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            turn,
+            &(&1 && Map.put(&1, "tokenUsage", Map.put(snapshot, "updatedAt", Entities.now())))
+          )
       ]
     end)
 

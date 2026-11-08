@@ -56,16 +56,30 @@ defmodule HalC2.Orchestration.Fork do
       transfer =
         transfer(command, "fork", source_id, target_id, point(source, run), nil, run, at)
 
+      hook(:reading, source_id)
+      history = HalC2.Streams.read(source_id, &history(&1, run["ordinal"], target_id, at))
+      hook(:copied, source_id)
+
       changes =
         [create("thread", target_id, target)] ++
-          HalC2.Streams.read(source_id, &history(&1, run["ordinal"], target_id, at)) ++
-          [create("context-transfer", transfer["id"], transfer)]
+          history ++ [create("context-transfer", transfer["id"], transfer)]
 
-      HalC2.Streams.transact(target_id, :thread, fn state ->
-        if StreamState.get(state, "thread")[target_id],
-          do: {[], {:error, "Thread #{target_id} already exists."}},
-          else: {changes, :ok}
-      end)
+      # A delete of the source after it was read may have removed files before they
+      # were copied. Its files go only once the delete is written, so a source still
+      # live after the copies had every file while they were made.
+      result =
+        if live(state(source_id), source_id) do
+          HalC2.Streams.transact(target_id, :thread, fn state ->
+            if StreamState.get(state, "thread")[target_id],
+              do: {[], {:error, "Thread #{target_id} already exists."}},
+              else: {changes, :ok}
+          end)
+        else
+          {:error, "Thread #{source_id} was deleted."}
+        end
+
+      unless result == :ok, do: Enum.each(copies(history, target_id), &File.rm/1)
+      result
     end
   end
 
@@ -293,6 +307,10 @@ defmodule HalC2.Orchestration.Fork do
               "completedAt" => entity["completedAt"] || at
             })
 
+          # Its files are copied, so the fork keeps them when the source is deleted.
+          kind == "message" and is_list(entity["attachments"]) and entity["attachments"] != [] ->
+            own_files(entity, target_id)
+
           true ->
             entity
         end
@@ -301,5 +319,32 @@ defmodule HalC2.Orchestration.Fork do
     end
   end
 
+  defp own_files(%{"attachments" => attachments} = message, target_id) do
+    copied = HalC2.Attachments.copy_into(target_id, attachments)
+    context = HalC2.ComposerContext.remap_attachments(message["context"], attachments, copied)
+    message = Map.put(message, "attachments", copied)
+    if context, do: Map.put(message, "context", context), else: message
+  end
+
+  # The files `own_files/2` made for the target's messages: theirs by name.
+  defp copies(history, target_id) do
+    prefix = HalC2.Attachments.thread_segment(target_id) <> "-"
+
+    for {"message", _, %{"s" => message}} <- history,
+        %{"id" => id} = attachment <- List.wrap(message["attachments"]),
+        String.starts_with?(id, prefix),
+        path = HalC2.Attachments.path(attachment),
+        do: path
+  end
+
   defp create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}
+
+  # Tests act at a stage of a fork: `{module, function, args}`, called with the stage and
+  # the source thread's id.
+  defp hook(stage, id) do
+    case Application.get_env(:hal_c2, :fork_hook) do
+      {m, f, a} -> apply(m, f, a ++ [stage, id])
+      nil -> :ok
+    end
+  end
 end

@@ -172,8 +172,6 @@ QString newestUserMessage(const QHash<QString, QJsonObject>& messages, const QSe
 
 // How many prompts the stash keeps.
 constexpr qsizetype kMaxStashEntries = 20;
-// packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
-constexpr qsizetype kMaxPromptChars = 120000;
 // What Claude's ultrathink choice puts at the start of a prompt.
 const QString kUltrathinkPrefix = QStringLiteral("Ultrathink:\n");
 
@@ -596,15 +594,6 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
   setText(target, entries.at(next).second, int(entries.at(next).second.size()));
 }
 
-// Why a prompt cannot be sent for its length, else empty.
-QString ComposerController::promptProblem(const QString& text) {
-  const qsizetype excess = text.trimmed().size() - kMaxPromptChars;
-  if (excess <= 0) return {};
-  const QLocale english(QLocale::English, QLocale::UnitedStates);
-  return QStringLiteral("Prompt is %1 %2 over the %3-character limit. Shorten or split it before sending.")
-      .arg(english.toString(excess), excess == 1 ? QStringLiteral("character") : QStringLiteral("characters"), english.toString(kMaxPromptChars));
-}
-
 // The draft goes to the stash and the composer
 // empties; an empty draft brings back the only entry, or opens the list.
 // Nothing while an approval waits; a question waiting opens the list instead.
@@ -747,10 +736,6 @@ bool ComposerController::submit(const QVariantMap& payload) {
   // The submit is the brick's newest edit, so it takes the cleared (or
   // restored) text as the answer to it.
   setText(target, text, int(text.size()), payload.value(QStringLiteral("edit")));
-  if (const QString problem = promptProblem(text); !problem.isEmpty()) {
-    toast(QStringLiteral("Message not sent"), problem);
-    return true;
-  }
   if (onPage()) return submitPage(target, text);
   if (onImages()) return submitImages(target, text);
   if (m_queuedEdit && m_queuedEdit->thread == target) return saveQueuedEdit(target, text);

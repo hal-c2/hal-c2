@@ -79,17 +79,24 @@ Feature: Forking threads and merging work back
     Then Claude receives a transcript of the history ahead of the message
 
   @mc
-  Scenario: A long history leaves out the message that does not fit
+  Scenario: A long history cuts the request that does not fit in its middle
     Given "Plan billing" has more history than fits in a handoff
     When the user sends the first message in a fork on another agent
-    Then the first request and the newest messages are kept whole
-    And the message that does not fit is left out
+    Then the first request and the newest work are kept whole
+    And the request that does not fit is cut in its middle where it says so
 
   @mc
   Scenario: A fork outlives the thread it came from
     Given "Try Stripe" is a fork of "Plan billing"
     When "Plan billing" is deleted
     Then "Try Stripe" still holds its history
+
+  @mc
+  Scenario: A fork keeps the files its messages carry when the thread it came from is deleted
+    Given the first message of "Plan billing" has the file "notes.txt" attached
+    And "Try Stripe" is a fork of "Plan billing"
+    When "Plan billing" is deleted
+    Then "notes.txt" in "Try Stripe" still holds what was attached
 
   @mc
   Scenario: Merging a fork back

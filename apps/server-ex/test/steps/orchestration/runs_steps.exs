@@ -682,22 +682,32 @@ defmodule HalC2.Steps.Orchestration.Runs do
     :erlang.trace(runtime, true, [:receive])
     failure = HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
     HalC2.Orchestration.TurnWriter.abandon(id, first["id"], "failed", failure)
-    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
+    # The second run waits on the first's session to let go of it: the conversation
+    # that session opened may hold the first prompt, under an id the MC never learnt.
+    assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, :release}}, 5_000
     :erlang.trace(runtime, false, [:receive])
     Map.merge(context, %{thread: thread, runtime: runtime, watch: watch})
   end
 
   step "the provider starts the first turn anyway", context do
+    ref = Process.monitor(context.runtime)
     :ok = :sys.resume(context.watch)
-    context
+    Map.put(context, :released, ref)
   end
 
   step "the first run of {string} stays failed and the second runs alone",
        %{args: [thread]} = context do
     World.await_runs(context, thread, ["failed", "running"])
-    # The first turn's end, which Codex sends as the runtime lets go of it, is not the second's.
-    :ok = GenServer.call(context.runtime, :settle)
+    # The first turn's session stops once it lets go of the turn; what it ends as it
+    # stops is not the second's.
+    ref = context.released
+    assert_receive {:DOWN, ^ref, :process, _, {:shutdown, :released}}, 5_000
     World.await_runs(context, thread, ["failed", "running"])
+    context
+  end
+
+  step "the second run starts a new Codex conversation", context do
+    assert [_, _] = World.codex_requests(context, "thread/start")
     context
   end
 

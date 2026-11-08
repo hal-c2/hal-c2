@@ -250,6 +250,41 @@ defmodule HalC2.MuseTest do
     assert subagent["result"] in [nil, ""]
   end
 
+  # #1233: Muse answers `turn/start` for a turn it only queued; `turn/started` says it
+  # took the prompt, and the history the run handed over with it.
+  @tag :tmp_dir
+  test "Muse starting the run's turn confirms its handoff", %{tmp_dir: dir} do
+    start_streams(dir)
+    provider_thread = "provider-thread:muse:thread-1"
+
+    {:ok, _} =
+      HalC2.Streams.commit("thread-1", :thread, [
+        {"provider-thread", provider_thread,
+         %{"s" => %{"id" => provider_thread, "unconfirmedRunId" => "run-1"}}}
+      ])
+
+    mark = fn ->
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+      StreamState.get(stream, "provider-thread")[provider_thread]["unconfirmedRunId"]
+    end
+
+    started = fn state, turn ->
+      params = %{"sessionId" => "session-1", "turnId" => turn}
+
+      ThreadRuntime.handle_info(
+        {:json_rpc, self(), {:notification, "turn/started", params}},
+        state
+      )
+    end
+
+    # A turn Muse started by itself, as a workflow ends, is not the run's.
+    {:noreply, state} = started.(runtime_state(), "turn-of-its-own")
+    assert mark.() == "run-1"
+
+    {:noreply, _state} = started.(state, "turn-1")
+    assert mark.() == nil
+  end
+
   defp start_streams(dir) do
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)

@@ -54,6 +54,13 @@ defmodule HalC2.Plugins.ProviderAdapter do
   adapter's job: an adapter must replace a process serving a thread on one instance
   when a turn names another (the bundled adapters do).
 
+  A turn with `new_conversation: true` carries the thread in `turn.text` for a new
+  native conversation; the adapter must not add it to one its live process holds,
+  which already has part of the thread and may not have room for the rest. A turn the
+  provider took confirms its handoff as `TurnWriter.confirmed/2` says: an adapter
+  whose provider says it started the turn commits that, so a turn stopped before its
+  first output still goes on in its conversation.
+
   The manifest's `provider:` map declares the rest (atom keys, all optional):
 
     * `driver`: the driver instances name (default: the plugin id).
@@ -80,7 +87,7 @@ defmodule HalC2.Plugins.ProviderAdapter do
       there, and answers `{:ok, native_id}`. The thread's next run there gets
       `fork: %{thread: native_id, carried: true, fallback: context}` and branches a
       new session from the copy; when it cannot open it, it starts a new one with
-      `HalC2.Orchestration.Handoff.prompt(fallback, turn.text)`.
+      `HalC2.Orchestration.Handoff.ahead(turn, fallback)`.
 
   A turn that names a `native_thread_id` the provider no longer has, and so goes on
   in a new native conversation, is handed the whole thread first

@@ -13,6 +13,12 @@ MAUDE_PATH=/opt/maude/maude mix proof             # a Maude of your own
 `mix proof` installs Maude into `_build/maude` the first time, unless `MAUDE_PATH`
 names one. `mise run proof [files]` does the same from anywhere in the repository.
 
+Some searches are large: `provider_handoff_proof_test.exs` peaks above 7 GB. Under a
+memory cap below what a search needs, the kernel kills Maude and its test fails. A run
+stopped by SIGTERM (a `timeout`, or a systemd scope stopped once something in it was
+killed) ends with status 143 and no summary (`HalC2.Test.StopSignal`). Without that
+trap it ended 0 and read as passed.
+
 ## What a proof is for
 
 A property test (`prop/`) runs the real code on sequences of calls PropEr samples, so it

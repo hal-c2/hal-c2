@@ -153,12 +153,21 @@ Feature: Drafting and sending a message
     When the user types "second"
     Then the draft reads "second" after the send completes
 
-  @desktop @mobile @backlog-mobile @priority-high
+  # The limit was the upstream server's, on what one turn could carry. The MC sends a
+  # message that long as a file instead (mc/orchestration/composer-context.feature),
+  # so the composer no longer refuses it.
+  @desktop @mobile @dropped @priority-high
   Scenario: A message over the character limit is refused before sending
     Given the user has typed a prompt 10 characters over the 120,000-character limit
     When the user tries to send it
     Then the message is not sent
     And the user is told the prompt is 10 characters over the limit and to shorten or split it
+
+  @desktop @mobile @backlog-mobile @priority-high
+  Scenario: A message over 120,000 characters is sent whole
+    Given the user has typed a prompt 10 characters over the 120,000-character limit
+    When the user tries to send it
+    Then the whole prompt is sent to the MC
 
   @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: Sending while disconnected keeps the draft

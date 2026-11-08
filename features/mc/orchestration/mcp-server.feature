@@ -116,6 +116,15 @@ Feature: The HAL-C2 MCP server agents receive
     When a run of "caller" starts
     Then the agent is given no "hal-c2" server
 
+  # The sidebar lists a new thread a moment after it is made, and its first run can start
+  # before then. The project still decides: the run read the environment's settings
+  # once, and the next run, reading the project's, opened a new session.
+  @mc
+  Scenario: A new thread's first run follows its project's agent access
+    Given project "demo" turns agent access to HAL-C2 off
+    When a new thread in "demo" starts its first run before the sidebar lists it
+    Then the agent is given no "hal-c2" server
+
   @mc
   Scenario: Initializing reports the server and the instructions for agents
     When the agent of "caller" initializes the MCP session

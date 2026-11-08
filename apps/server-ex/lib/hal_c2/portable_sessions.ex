@@ -633,6 +633,12 @@ defmodule HalC2.PortableSessions do
     end
   end
 
+  @doc """
+  The transcript of the Claude Code session `id` an instance keeps, looked for in the
+  folder of sessions run in `cwd` and then in any project's; nil when there is none.
+  """
+  def claude_transcript(instance, id, cwd), do: locate("claudeAgent", instance, id, cwd)
+
   @doc "Claude Code's folder for sessions run in `cwd`."
   def claude_folder(cwd), do: String.replace(cwd, ~r/[^A-Za-z0-9]/, "-")
 

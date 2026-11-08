@@ -136,6 +136,33 @@ defmodule HalC2.McpTest do
     assert HalC2.Mcp.prepared?(thread_id, "codex")
   end
 
+  # A new thread's first turn can prepare its session before the sidebar lists the
+  # thread. It read the environment's settings then, so its agent got the tools its
+  # project withholds, and the next turn, reading the project's, relaunched the session
+  # and ended its background work.
+  test "a thread's first turn follows its project's access settings" do
+    start_supervised!(HalC2.Settings)
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        Map.put(settings, "projectSettingsOverrides", %{
+          @project => %{"enableAgentBrowserAccess" => false}
+        }),
+        version
+      )
+
+    # The sidebar is held, so the thread has no row yet.
+    shell = Process.whereis(HalC2.Shell)
+    :sys.suspend(shell)
+    thread_id = launch("hello")
+    assert HalC2.Shell.row(node(), thread_id) == nil
+
+    assert HalC2.Mcp.agent_access(thread_id) == MapSet.new()
+    assert HalC2.Mcp.for_agent(thread_id, "codex") == nil
+    :sys.resume(shell)
+  end
+
   # New code loaded over a running server (a release upgrade) migrates it through
   # code_change, never init. A server started before MCP sessions were kept
   # has no sessions table; its initialize raised, the endpoint answered 500,

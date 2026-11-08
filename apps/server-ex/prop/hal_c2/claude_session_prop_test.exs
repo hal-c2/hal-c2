@@ -5,7 +5,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   with fast mode on, off or unset, that say hello, leave a subagent and a command
   running in the background, put Claude's own session in plan mode (EnterPlanMode), or
   ask which mode the session runs in, or that Claude acknowledges without ever starting
-  a turn for; and the user stopping the thread between turns.
+  a turn for; the user stopping the thread between turns; the MC letting go of the
+  thread's runtime, as on a restart; and, with no Claude process up, Claude losing
+  what the session's transcript held (its messages, or the whole file), as when it went
+  down before saving a prompt.
 
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
@@ -13,6 +16,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   survives it. Stopping between turns ends the background work with its process. Plan
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
   prompt Claude acknowledges but never starts a turn for fails, and keeps the process.
+  A new process resumes the thread's session, unless that session lost its transcript
+  or its last prompt handed the thread over unconfirmed: then it starts a new one,
+  handed the whole thread, which the next process resumes.
   """
 
   use ExUnit.Case, async: false
@@ -44,6 +50,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :claude_command)
+        Enum.each(~w(FAKE_SESSIONS CLAUDE_CONFIG_DIR FAKE_CLAUDE_TRACE), &System.delete_env/1)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -58,6 +65,10 @@ defmodule HalC2.ClaudeSessionPropTest do
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
+    # The fake keeps transcripts as Claude does, in the scratch home.
+    System.put_env("FAKE_SESSIONS", "1")
+    System.put_env("CLAUDE_CONFIG_DIR", Path.join(home, "claude"))
+    System.put_env("FAKE_CLAUDE_TRACE", Path.join(home, "claude-trace.jsonl"))
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -99,17 +110,28 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   # launch: the selection the thread's Claude process runs ({model, fast mode on}), or
   #   nil before the first turn; session: whether that process is up; background:
-  #   whether work it left running in the background still runs; n: a counter.
-  def initial_state, do: %{launch: nil, session: false, background: false, n: 1}
+  #   whether work it left running in the background still runs; lost: whether the
+  #   session's transcript lost what it held; marked: whether the last prompt handed the
+  #   thread over and Claude never started it; n: a counter.
+  def initial_state,
+    do: %{launch: nil, session: false, background: false, lost: false, marked: false, n: 1}
 
   def command(%{n: n}) do
     frequency([
       {6,
        {:call, __MODULE__, :turn,
         [n, oneof(@models), oneof([:unset, false, true]), oneof(Map.keys(@texts))]}},
-      {1, {:call, __MODULE__, :stop, []}}
+      {1, {:call, __MODULE__, :stop, []}},
+      {2, {:call, __MODULE__, :release, []}},
+      {2, {:call, __MODULE__, :lose, [oneof([:messages, :file])]}}
     ])
   end
+
+  # The MC lets go of an idle runtime only; a transcript is lost with no process up.
+  def precondition(state, {:call, _, :release, []}), do: state.session and not state.background
+
+  def precondition(state, {:call, _, :lose, [_]}),
+    do: state.launch != nil and not state.session and not state.lost
 
   def precondition(_state, _call), do: true
 
@@ -122,9 +144,14 @@ defmodule HalC2.ClaudeSessionPropTest do
         state
         | launch: {model, fast == true},
           session: true,
-          background: state.background or text == :background
+          background: state.background or text == :background,
+          lost: false,
+          marked: handed?(state) and text == :never_start
       }
   end
+
+  def next_state(state, _result, {:call, _, :release, []}), do: %{state | session: false}
+  def next_state(state, _result, {:call, _, :lose, [_]}), do: %{state | lost: true}
 
   def next_state(%{background: true} = state, _result, {:call, _, :stop, []}),
     do: %{state | session: false, background: false}
@@ -134,26 +161,56 @@ defmodule HalC2.ClaudeSessionPropTest do
   defp refused?(state, model, fast),
     do: state.background and state.launch != {model, fast == true}
 
+  # Whether a turn's Claude starts a new session rather than resume one.
+  defp fresh?(state),
+    do: state.launch == nil or state.marked or (state.lost and not state.session)
+
+  # Whether it is handed the thread: a new session after earlier turns.
+  defp handed?(state), do: fresh?(state) and state.launch != nil
+
   def postcondition(state, {:call, _, :turn, [_n, model, fast, text]}, seen) do
     cond do
       refused?(state, model, fast) ->
         seen.status == "failed" and seen.reused and seen.background
 
       text == :never_start ->
-        seen.status == "failed" and
-          seen.reused == (state.session and state.launch == {model, fast == true}) and
+        seen.status == "failed" and started?(state, model, fast, seen) and
           seen.background == state.background
 
       true ->
-        seen.status == "completed" and
-          seen.reused == (state.session and state.launch == {model, fast == true}) and
+        seen.status == "completed" and started?(state, model, fast, seen) and
           seen.background == (state.background or text == :background) and
           (text != :which_mode or seen.reply == "mode bypassPermissions")
     end
   end
 
+  def postcondition(_state, {:call, _, :release, []}, seen), do: seen == :ok
+  def postcondition(_state, {:call, _, :lose, [_]}, _seen), do: true
+
   def postcondition(state, {:call, _, :stop, []}, seen),
     do: seen == %{stopped: state.background, background: false}
+
+  # The turn runs on the same process when its selection is, and no handoff went
+  # unconfirmed; a new process starts a new session when `fresh?/1`, else resumes the
+  # thread's own; and only a new session after earlier turns is handed the thread.
+  defp started?(state, model, fast, seen) do
+    reused = state.session and state.launch == {model, fast == true} and not state.marked
+
+    seen.reused == reused and seen.handed == handed?(state) and
+      if reused,
+        do: seen.starts == [],
+        else:
+          seen.starts != [] and
+            resumed(List.last(seen.starts)) ==
+              if(fresh?(state), do: nil, else: seen.native)
+  end
+
+  defp resumed(argv) do
+    case Enum.drop_while(argv, &(&1 != "--resume")) do
+      ["--resume", id | _] -> id
+      _ -> nil
+    end
+  end
 
   # --- commands -------------------------------------------------------------------
 
@@ -161,7 +218,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   # the thread's Claude process is the one before, whether background work runs, and
   # what Claude said.
   def turn(n, model, fast, text) do
+    traced = length(trace())
     before = current(@tid)
+    native = native(before)
     runs = MapSet.new(StreamState.list(before, "run"), & &1["id"])
     session = session()
     options = if fast == :unset, do: [], else: [%{"id" => "fastMode", "value" => fast}]
@@ -190,12 +249,49 @@ defmodule HalC2.ClaudeSessionPropTest do
           item["runId"] == run["id"],
           do: item["text"]
 
+    new = Enum.drop(trace(), traced)
+
+    prompt =
+      for(%{"in" => %{"type" => "user", "message" => %{"content" => c}}} <- new, do: inspect(c))
+      |> List.last()
+
     %{
       status: run["status"],
       reused: session != nil and session() == session,
       background: background?(),
-      reply: List.last(reply)
+      reply: List.last(reply),
+      starts: for(%{"argv" => argv} <- new, do: argv),
+      handed: prompt != nil and prompt =~ "<conversation_history>",
+      native: native
     }
+  end
+
+  # The MC lets go of the thread's idle runtime, as IdleSessions or a restart does.
+  def release do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, @tid)
+    ref = Process.monitor(pid)
+    :ok = GenServer.call(pid, :release)
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      @wait_ms -> raise "the runtime was not let go of"
+    end
+  end
+
+  # Claude loses what the thread's session saved: its messages, or the transcript.
+  def lose(what) do
+    work = Path.join(Path.dirname(System.fetch_env!("CLAUDE_CONFIG_DIR")), "work")
+    path = HalC2.PortableSessions.claude_transcript("claudeAgent", native(current(@tid)), work)
+
+    case what do
+      :file ->
+        File.rm!(path)
+
+      :messages ->
+        kept = path |> File.stream!() |> Enum.reject(&(JSON.decode!(&1)["type"] == "user"))
+        File.write!(path, kept)
+    end
   end
 
   # The user stops the thread between turns.
@@ -250,4 +346,18 @@ defmodule HalC2.ClaudeSessionPropTest do
   end
 
   defp current(tid), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(tid))
+
+  defp native(state) do
+    state
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(&get_in(&1, ["nativeThreadRef", "nativeId"]))
+  end
+
+  # What the fake was started with and sent, oldest first.
+  defp trace do
+    case File.read(System.fetch_env!("FAKE_CLAUDE_TRACE")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:error, :enoent} -> []
+    end
+  end
 end

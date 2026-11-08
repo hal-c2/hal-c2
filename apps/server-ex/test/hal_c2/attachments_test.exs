@@ -332,4 +332,69 @@ defmodule HalC2.AttachmentsTest do
                "attachments" => [%{"name" => "x", "dataUrl" => "nope"}]
              })
   end
+
+  describe "fold_long_text/3" do
+    test "text of 120,000 characters or fewer passes through" do
+      text = String.duplicate("é", 120_000)
+      assert Attachments.fold_long_text("t1", text, []) == {:ok, text, []}
+      assert Attachments.fold_long_text("t1", nil, []) == {:ok, nil, []}
+    end
+
+    test "longer text keeps its start and end, and the whole of it is a pasted-text file" do
+      # Counted in characters, not bytes: "é" is two bytes.
+      text =
+        String.duplicate("a", 8_000) <>
+          String.duplicate("é", 110_001) <> String.duplicate("z", 2_000)
+
+      {:ok, folded, [file]} = Attachments.fold_long_text("t1", text, [])
+
+      assert folded ==
+               String.duplicate("a", 8_000) <>
+                 "\n\n[... 110001 characters cut here; the whole message is in the attached message.txt ...]\n\n" <>
+                 String.duplicate("z", 2_000)
+
+      assert %{"type" => "file", "name" => "message.txt", "mimeType" => "text/plain"} = file
+      assert file["source"] == %{"_tag" => "pasted-text"}
+      assert file["sizeBytes"] == byte_size(text)
+      assert String.starts_with?(file["id"], Attachments.thread_segment("t1") <> "-")
+      assert File.read!(Attachments.path(file)) == text
+    end
+
+    test "a name the message's attachments already use is not reused" do
+      text = String.duplicate("x", 120_001)
+
+      kept = [
+        %{"type" => "file", "id" => "f1", "name" => "message.txt"},
+        %{"type" => "file", "id" => "f2", "name" => "message-2.txt"}
+      ]
+
+      {:ok, folded, attachments} = Attachments.fold_long_text("t1", text, kept)
+
+      assert Enum.take(attachments, 2) == kept
+      assert List.last(attachments)["name"] == "message-3.txt"
+      assert folded =~ "in the attached message-3.txt"
+    end
+  end
+
+  describe "copy_into/2" do
+    test "a thread gets its own copy of another thread's file, which outlives that thread's" do
+      {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      [copy] = Attachments.copy_into("t2", [file])
+
+      assert Map.delete(copy, "id") == Map.delete(file, "id")
+      assert String.starts_with?(copy["id"], "t2-")
+      :ok = Attachments.delete_thread("t1")
+      assert Attachments.path(file) == nil
+      assert File.read!(Attachments.path(copy)) == String.duplicate("x", 120_001)
+    end
+
+    test "an attachment whose file is not here passes through" do
+      gone = %{"type" => "file", "id" => "t1-gone", "name" => "a.txt"}
+
+      assert Attachments.copy_into("t2", [gone, %{"name" => "no id"}]) == [
+               gone,
+               %{"name" => "no id"}
+             ]
+    end
+  end
 end

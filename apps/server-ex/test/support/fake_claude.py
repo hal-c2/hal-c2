@@ -202,6 +202,8 @@ for line in sys.stdin:
             f.write(json.dumps(text) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
     record("user", text)
+    # What the fake does is the user's message, not the history handed over before it.
+    full, text = text, text.rsplit("</conversation_history>\n\n", 1)[-1]
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
         resets = int(text.rsplit(" ", 1)[1])
@@ -216,6 +218,9 @@ for line in sys.stdin:
     # A handoff's earlier conversation is history, not a directive, and so is a
     # delegated task's worker preamble (it asks the worker to finish its own waiting).
     if "wait" in text.split("</conversation_history>")[-1].split("\nTask:\n")[-1]:
+        # "start and wait": Claude says it started the prompt, and says nothing more.
+        if "start and wait" in text and msg.get("uuid"):
+            send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": "started"})
         continue
     # "never start a turn": Claude finishes the prompt without running a turn for it, as
     # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
@@ -324,7 +329,7 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key · Please run /login", "session_id": session})
         continue
     if "where are we" in text:
-        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in full}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text and mode == "auto":

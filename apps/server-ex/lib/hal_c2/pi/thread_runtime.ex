@@ -602,7 +602,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       nil ->
         message =
           turn.text
-          |> HalC2.Pi.expand_skills(state.skills)
+          |> HalC2.Pi.message(Map.get(turn, :history), state.skills)
           |> HalC2.Attachments.prompt_text(Map.get(turn, :attachments, []))
 
         Connection.notify(state.conn, "prompt", %{"message" => message})

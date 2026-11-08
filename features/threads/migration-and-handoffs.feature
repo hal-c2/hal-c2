@@ -270,13 +270,13 @@ Feature: Carrying threads and context across servers and agents
   Scenario: A long conversation keeps what matters most
     Given the thread "Alpha" has a conversation longer than the handoff budget
     When the user switches "Alpha" to Claude and sends a message
-    Then Claude receives the original request, the recent turns and command outcomes
+    Then Claude receives every request, the long ones cut in their middle, and the newest turn whole
     And the new message is never shortened
 
   @mc
-  Scenario: Left-out history can be looked up
-    Given parts of the conversation did not fit in the handoff
-    When the agent needs one of the left-out parts
+  Scenario: History cut from a handoff can be looked up
+    Given parts of the conversation were cut to fit the handoff
+    When the agent needs the whole of a cut part
     Then the agent can read it through the thread-reading tool
 
   @backlog @mc
@@ -314,7 +314,7 @@ Feature: Carrying threads and context across servers and agents
     Given the thread "Alpha" has more than 60,000 characters of history
     When the user switches "Alpha" to another agent and sends a message
     Then the agent receives at most 60,000 characters of history
-    And every message it receives is whole
+    And every request it receives is whole or says where it is cut
 
   # Dropped: upstream's V2 desktop imported stashed prompts and drafts from the V1 Chromium
   # profile's local storage; HAL-C2 has no web client or Chromium profile to import from.
