@@ -142,7 +142,8 @@ Rectangle {
                 item.choices.forEach((label, index) => {
                     const row = overflowItemComponent.createObject(null, {
                         text: label,
-                        current: index === item.currentIndex
+                        current: index === item.currentIndex,
+                        enabled: !(item.disabledRows ?? []).includes(index)
                     });
                     row.triggered.connect(() => item.activated(index));
                     menu.built.push(row);
@@ -1483,10 +1484,16 @@ Rectangle {
                                     currentIndex: composer.effortOption ? composer.effortOption.choices.findIndex(choice => choice.id === composer.effortOption.value) : -1
                                     displayText: composer.selectedLabel(composer.effortOption)
                                     Accessible.name: composer.effortOption ? composer.effortOption.label : ""
-                                    onActivated: index => Shell.dispatch("composer.option.set", {
+                                    // The prompt says ultrathink in its own words: the effort is its.
+                                    readonly property bool locked: (composer.effortOption?.lockedReason ?? "").length > 0
+                                    note: locked ? composer.effortOption.lockedReason : ""
+                                    disabledRows: locked ? composer.effortOption.choices.map((_, index) => index) : []
+                                    onActivated: index => {
+                                        if (!locked) Shell.dispatch("composer.option.set", {
                                             id: composer.effortOption.id,
                                             value: composer.effortOption.choices[index].id
-                                        })
+                                        });
+                                    }
                                 }
 
                                 // By count, so a value picked here updates its control rather

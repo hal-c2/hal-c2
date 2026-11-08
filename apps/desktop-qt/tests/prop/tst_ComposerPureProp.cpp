@@ -1,8 +1,9 @@
 // The composer's pure parts: what the text before the caret asks for
 // (composer::trigger), starring models (composer::toggleFavorite), what waits
 // behind the running turn (composer::queued) and the rich text drawing
-// (ComposerHighlighter), and whose limits "/usage-limits" shows
-// (composer::usageLimitsReport).
+// (ComposerHighlighter), whose limits "/usage-limits" shows
+// (composer::usageLimitsReport), and stepping the effort from the keyboard
+// (composer::steppedChoice).
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -140,8 +141,11 @@ private slots:
       RC_ASSERT(0 <= found->start);
       RC_ASSERT(found->start < found->end);
       RC_ASSERT(found->end == cursor);
-      // The marker, then the query.
-      RC_ASSERT(text.mid(found->start + 1, found->end - found->start - 1) == found->query);
+      // The marker, then the query; a line's command takes the spaces before
+      // its slash along.
+      QString span = text.mid(found->start, found->end - found->start);
+      while (!span.isEmpty() && span.front().isSpace()) span.remove(0, 1);
+      RC_ASSERT(span.mid(1) == found->query);
     }));
   }
 
@@ -324,6 +328,45 @@ private slots:
         // Either windows or the reason there are none.
         RC_ASSERT(account.value(QStringLiteral("windows")).toList().isEmpty() != account.value(QStringLiteral("notice")).toString().isEmpty());
         RC_ASSERT(account.value(QStringLiteral("sensitive")).toBool() == account.value(QStringLiteral("label")).toString().contains(u'@'));
+      }
+    }));
+  }
+  void effortStepsAroundTheModelsLevels() {
+    QVERIFY(rc::check("stepping the effort lands on a level the model lists, one along, and back undoes it", [] {
+      const std::vector<QString> pool{QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"), QStringLiteral("xhigh"),
+                                      QStringLiteral("ultrathink")};
+      std::vector<QString> ids;
+      for (const QString& id : pool)
+        if (*rc::gen::arbitrary<bool>()) ids.push_back(id);
+      const bool injects = *rc::gen::arbitrary<bool>();
+      const auto isDefault = *rc::gen::container<std::vector<bool>>(ids.size(), rc::gen::arbitrary<bool>());
+      QJsonArray options;
+      QStringList levels;
+      for (size_t i = 0; i < ids.size(); ++i) {
+        options.append(QJsonObject{{QStringLiteral("id"), ids[i]}, {QStringLiteral("label"), ids[i]}, {QStringLiteral("isDefault"), isDefault[i]}});
+        if (!(injects && ids[i] == QLatin1String("ultrathink"))) levels.append(ids[i]);
+      }
+      const QString current = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("low"), QStringLiteral("high"), QStringLiteral("ultrathink"),
+                                                                         QStringLiteral("default")});
+      QJsonObject descriptor{{QStringLiteral("id"), QStringLiteral("effort")}, {QStringLiteral("type"), QStringLiteral("select")},
+                             {QStringLiteral("options"), options}, {QStringLiteral("currentValue"), current}};
+      if (injects) descriptor.insert(QStringLiteral("promptInjectedValues"), QJsonArray{QStringLiteral("ultrathink")});
+      const int direction = *rc::gen::element(1, -1);
+      RC_ASSERT(!composer::steppedChoice(descriptor, 0));
+
+      const std::optional<QString> stepped = composer::steppedChoice(descriptor, direction);
+      if (levels.size() < 2) {
+        RC_ASSERT(!stepped);
+        return;
+      }
+      RC_ASSERT(stepped.has_value());
+      RC_ASSERT(levels.contains(*stepped));
+      const qsizetype n = levels.size();
+      if (const qsizetype at = levels.indexOf(current); at >= 0) {
+        RC_ASSERT(levels.indexOf(*stepped) == ((at + direction) % n + n) % n);
+        // From a listed level, the other way comes back.
+        descriptor.insert(QStringLiteral("currentValue"), *stepped);
+        RC_ASSERT(composer::steppedChoice(descriptor, -direction) == current);
       }
     }));
   }

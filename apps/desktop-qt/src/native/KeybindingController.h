@@ -151,6 +151,7 @@ protected:
 private:
   QTimer m_jumpHintDelay;
   void setRules(const QJsonArray& rules);
+  bool cycles(const QString& sequence) const;
   void refreshShortcuts();
   bool refreshRows();
   keybindings::Context context(const QVariantMap& focus) const;

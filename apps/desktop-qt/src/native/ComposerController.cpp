@@ -457,6 +457,10 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (!target.isEmpty()) setOption(target, map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("value")));
     return true;
   }
+  if (action == QLatin1String("composer.effort.step")) {
+    if (!target.isEmpty()) stepEffort(target, map.value(QStringLiteral("direction")).toInt());
+    return true;
+  }
   if (action == QLatin1String("composer.runtimeMode.set")) {
     if (target.isEmpty()) return true;
     const QString mode = map.value(QStringLiteral("mode")).toString();
@@ -3898,6 +3902,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
     const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
     if (str(descriptor, QLatin1String("id")) != id || injected.isEmpty()) continue;
     const QString text = draft(target).trimmed();
+    if (effortLocked(descriptor, text)) return false;
     if (injected.contains(QJsonValue::fromVariant(value))) {
       if (!text.startsWith(kUltrathinkPrefix.trimmed()) && !slashCommand.match(text).hasMatch()) {
         const QString next = kUltrathinkPrefix + text;
@@ -3921,6 +3926,37 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   save();
   publish();
   return true;
+}
+
+// The effort one level up or down, as the picker would set it, without
+// opening it (composer.increaseEffort / decreaseEffort). It stands down
+// while something else owns the composer: an approval or question waiting,
+// a queued message being edited, or the prompt's own ultrathink.
+bool ComposerController::stepEffort(const QString& target, int direction) {
+  const QJsonObject chosen = selection(target);
+  const composer::Instance* instance = instanceOf(chosen);
+  if (!instance || !instance->ready()) return false;
+  if (m_queuedEdit && m_queuedEdit->thread == target) return false;
+  if (target == m_thread) {
+    const QVariantMap turn = turnState();
+    if (!turn.value(QStringLiteral("approvals")).toList().isEmpty() || !turn.value(QStringLiteral("questions")).toList().isEmpty()) return false;
+  }
+  const QJsonArray descriptors =
+      composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
+                            chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
+  const auto effort = std::find_if(descriptors.begin(), descriptors.end(), [](const QJsonValue& entry) {
+    return str(entry.toObject(), QLatin1String("type")) == QLatin1String("select");
+  });
+  if (effort == descriptors.end()) return false;
+  const QJsonObject descriptor = effort->toObject();
+  if (effortLocked(descriptor, draft(target))) return false;
+  const std::optional<QString> next = composer::steppedChoice(descriptor, direction);
+  return next && setOption(target, str(descriptor, QLatin1String("id")), *next);
+}
+
+// An effort the prompt asks for in its own words is the prompt's to change.
+bool ComposerController::effortLocked(const QJsonObject& descriptor, const QString& text) {
+  return !descriptor.value(QLatin1String("promptInjectedValues")).toArray().isEmpty() && composer::ultrathinkInWords(text);
 }
 
 // Puts the suggestion in the trigger's place; the composer's own commands act instead.
@@ -4323,15 +4359,20 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       instance ? composer::shellOptions(composer::descriptors(composer::findModel(*instance, selectedModel),
                                                               chosen.value(QLatin1String("options")).toArray(), planOn))
                : QVariantList();
-  // An effort the prompt asks for (Ultrathink) is the one shown.
+  // An effort the prompt asks for (Ultrathink) is the one shown; asked for in
+  // the prompt's own words, it cannot be changed until they go.
   QVariantList shownOptions = options;
-  if (instance && text.trimmed().startsWith(kUltrathinkPrefix.trimmed())) {
+  const bool prefixed = text.trimmed().startsWith(kUltrathinkPrefix.trimmed());
+  if (instance && (prefixed || composer::ultrathinkInWords(text))) {
     const QJsonArray described = composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn);
     for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
       const QJsonArray injected = described.at(i).toObject().value(QLatin1String("promptInjectedValues")).toArray();
       if (injected.isEmpty()) continue;
       QVariantMap option = shownOptions.at(i).toMap();
       option.insert(QStringLiteral("value"), injected.first().toVariant());
+      if (effortLocked(described.at(i).toObject(), text)) {
+        option.insert(QStringLiteral("lockedReason"), QStringLiteral("Your prompt contains \"ultrathink\" in the text. Remove it to change this option."));
+      }
       shownOptions[i] = option;
     }
   }
