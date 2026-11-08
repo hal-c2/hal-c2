@@ -1172,7 +1172,6 @@ Feature: Codex
     Then the thread shows both messages
 
   # Upstream #19066: images Codex generated were saved but never shown in the reply.
-  @backlog @priority-high
   Scenario: An image Codex generates is shown under its reply
     Given Codex generates an image with its image tool during a turn
     When the turn finishes
@@ -1180,14 +1179,13 @@ Feature: Codex
     And an image the reply already shows is not shown twice
 
   # Upstream #19066: an image that finished after the turn ended was lost.
-  @backlog
   Scenario: An image Codex finishes after its last message still joins the reply
     Given Codex is still generating an image when it sends its final reply
     When the image is saved
     Then the image is shown under that reply
 
   # Upstream #19066: images saved on a Windows host did not load on other devices.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A Codex image saved on a Windows MC loads on every client
     Given the MC runs on Windows
     And Codex saved a generated image at "<path>"
@@ -1200,7 +1198,7 @@ Feature: Codex
       | \\fileserver\share\images\fox.png     |
 
   # Upstream #23284: an image a Codex tool returned as a data address was saved but not shown.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An image a Codex tool returns is shown with the tool call
     Given a Codex tool call returns an image as embedded image data
     When the user expands the tool call
@@ -1208,14 +1206,12 @@ Feature: Codex
     And no image data text is shown
 
   # Upstream #23388: newer Codex builds send partial answers, which were dropped.
-  @backlog
   Scenario: A partial answer from Codex is kept apart from its final answer
     When Codex sends a partial answer and then a final answer with the same text in one turn
     Then the thread keeps the partial answer
     And the final answer is shown once
 
   # Upstream #23388: a Codex history holding a partial answer could not be read.
-  @backlog @priority-high
   Scenario Outline: The user <action> a Codex thread whose history holds a partial answer
     Given a Codex thread's history holds a partial answer
     When the user <action> the thread

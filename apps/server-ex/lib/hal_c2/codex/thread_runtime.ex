@@ -25,6 +25,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   import HalC2.Orchestration.TurnWriter
 
+  alias HalC2.Codex.GeneratedImages
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.JsonRpc.Connection
@@ -271,7 +272,10 @@ defmodule HalC2.Codex.ThreadRuntime do
        stopped: false,
        # A usage-limit failure whose reset Codex had not named when the turn
        # stopped: `%{item: failure item id}` while its reset is still unknown.
-       usage_failure: nil
+       usage_failure: nil,
+       # Images Codex generates, per native turn, until they join its reply
+       # (`HalC2.Codex.GeneratedImages`); kept past the turn for late ones.
+       images: %{}
      }}
   end
 
@@ -759,7 +763,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         else: end_background(state, "failed")
 
     # The native thread was loaded in that app-server; the next one resumes it.
-    {:noreply, %{state | conn: nil, native_thread_id: nil}}
+    {:noreply, %{GeneratedImages.forget(state) | conn: nil, native_thread_id: nil}}
   end
 
   def handle_info({:interrupt_deadline, turn_id}, %{turn: %{native_turn_id: turn_id}} = state) do
@@ -784,7 +788,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         do: end_turn(state, "failed", "Codex sent output that is not a protocol message", :ended),
         else: finish_subagents(state, "failed")
 
-    {:noreply, end_background(state, "failed")}
+    {:noreply, state |> end_background("failed") |> GeneratedImages.forget()}
   end
 
   def handle_info(:flush, state),
@@ -840,6 +844,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:interrupting, nil)
      |> Map.put_new(:stopped, false)
      |> Map.put_new(:usage_failure, nil)
+     |> Map.put_new(:images, %{})
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
@@ -1751,7 +1756,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # turn resumes the thread Codex no longer has loaded.
   defp notification("thread/closed", %{"threadId" => thread}, %{native_thread_id: thread} = state)
        when is_binary(thread) do
-    %{end_background(state, "interrupted") | native_thread_id: nil}
+    state = state |> end_background("interrupted") |> GeneratedImages.forget()
+    %{state | native_thread_id: nil}
   end
 
   # Codex settling a request itself (its own timeout, say) frees the MC's wait
@@ -1922,8 +1928,26 @@ defmodule HalC2.Codex.ThreadRuntime do
       else: subagent_states(state, item)
   end
 
+  # An image Codex generates joins its turn's reply, also one it finishes after
+  # the turn ended (`HalC2.Codex.GeneratedImages`).
+  defp notification(
+         "item/" <> event,
+         %{"turnId" => turn_id, "item" => %{"type" => "imageGeneration"} = item} = params,
+         state
+       )
+       when event in ["started", "completed"] and is_binary(turn_id) do
+    if params["threadId"] in [nil, state.native_thread_id] do
+      case event do
+        "started" -> GeneratedImages.started(state, turn_id, item["id"])
+        "completed" -> GeneratedImages.completed(flush(state), turn_id, item)
+      end
+    else
+      state
+    end
+  end
+
   # Between turns, everything above (background commands, memory threads,
-  # subagents) still lands; a turn's own notifications need its turn.
+  # subagents and images) still lands; a turn's own notifications need its turn.
   defp notification(_method, _params, %{turn: nil} = state), do: state
 
   # Another turn's item that is not running any more (a command stopped with its
@@ -2103,6 +2127,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     restore_context(state)
     complete_item(flush(state), item)
   end
+
+  # A final reply is the one the turn's generated images join.
+  defp notification("item/completed", %{"item" => %{"type" => "agentMessage"} = item}, state),
+    do: state |> flush() |> complete_item(item) |> GeneratedImages.answered(item)
 
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
@@ -2381,6 +2409,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           state
       end
 
+    state = GeneratedImages.turn_ended(state, status, stream)
     state = close_open_items(state, status)
     finish(state, status, failure)
 
@@ -2836,7 +2865,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp complete_item(state, %{"type" => type, "id" => native} = item)
        when type in ["mcpToolCall", "dynamicToolCall"] do
-    fields = tool_fields(item)
+    fields = item |> tool_fields() |> HalC2.Codex.ToolImages.store(state.thread_id)
     status = if item["status"] == "failed", do: "failed", else: "completed"
 
     state
