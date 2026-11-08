@@ -665,7 +665,8 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  # The latest release as last read, starting a read when it is missing or stale.
+  # The latest release as last read, starting a read when it is missing or stale. A
+  # read that found nothing counts as a read: it is tried again once it is stale too.
   defp latest(driver, update) do
     case :persistent_term.get({__MODULE__, driver}, nil) do
       {version, read_at} ->
@@ -690,18 +691,26 @@ defmodule HalC2.ProviderUpdates do
 
       Task.start(fn ->
         try do
-          if version = lookup_latest(package, update) do
-            :persistent_term.put(
-              {__MODULE__, driver},
-              {version, System.monotonic_time(:millisecond)}
-            )
+          now = System.monotonic_time(:millisecond)
 
-            :persistent_term.put(
-              {__MODULE__, driver, :checked_at},
-              HalC2.Orchestration.Entities.now()
-            )
+          case lookup_latest(package, update) do
+            failed when failed in [nil, :npm_failed] ->
+              # Keeps what an earlier read found, and when this one tried.
+              {last, _} = :persistent_term.get({__MODULE__, driver}, {nil, now})
+              :persistent_term.put({__MODULE__, driver}, {last, now})
 
-            HalC2.Settings.notify_providers()
+              if failed == :npm_failed,
+                do: Logger.warning("Configured npm version lookup failed for #{package}")
+
+            version ->
+              :persistent_term.put({__MODULE__, driver}, {version, now})
+
+              :persistent_term.put(
+                {__MODULE__, driver, :checked_at},
+                HalC2.Orchestration.Entities.now()
+              )
+
+              HalC2.Settings.notify_providers()
           end
         after
           :persistent_term.put(key, false)
@@ -731,14 +740,10 @@ defmodule HalC2.ProviderUpdates do
     args = ["view", "--global"] ++ prefix ++ ["--json", package <> "@latest", "version"]
     task = Task.async(fn -> npm_view([npm | args]) end)
 
-    version =
-      case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
-        {:ok, version} -> version
-        _ -> nil
-      end
-
-    if version == nil, do: Logger.warning("Configured npm version lookup failed for #{package}")
-    version
+    case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, version} when is_binary(version) -> version
+      _ -> :npm_failed
+    end
   end
 
   # `npm view --json` prints the version as a JSON string, or a list of one.
