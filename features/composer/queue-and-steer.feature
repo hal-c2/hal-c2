@@ -266,7 +266,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25169: starting or ending an edit let a second save go out while the first was
   # still on its way, and the older one could land last.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A second save of a queued message waits for the first
     Given "fix typo" is queued
     And the user saved "fix all typos" over it and the MC has not answered yet
@@ -383,7 +383,7 @@ Feature: Follow-ups while the agent is working
     Then the edit has ended
 
   # Upstream #25593: editing a queued message is unavailable while the agent's question is open.
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A queued message cannot be edited while a question is open
     Given "fix typo" is queued
     And the agent has asked the user a question
@@ -398,7 +398,7 @@ Feature: Follow-ups while the agent is working
     And the user answers it
     Then the user is editing the queued "fix typo" again
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: The send control says what sending will do
     Given the draft reads "tweak"
     And <situation>
@@ -441,14 +441,14 @@ Feature: Follow-ups while the agent is working
     When the user types "tweak" into the composer
     Then the send control is back
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The queue can be folded away and says how much it holds
     Given "a" and "b" are queued
     Then the queue is headed "Queued" with the count 2
     When the user folds the queue away
     Then "a" and "b" are hidden and the count is still shown
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A queued message is listed before the MC confirms it
     Given the MC has not yet confirmed a message the user queued
     Then the message is listed in the queue as being saved
@@ -465,7 +465,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #25846: a queued message offers Send now first, then edit and remove; no position
   # numbers and no way to reorder it.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A queued message offers to send it now, edit it or remove it
     Given "a" and "b" are queued
     When the user looks at "b" in the queue
@@ -533,7 +533,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #22790: a stopped thread offers Send now on a held queued message instead of a
   # disabled Steer; a running thread keeps Steer.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A queued message on a stopped thread is offered to send now
     Given "a", "b" and "c" are queued and held, and the turn is no longer running
     When the user looks at "b" in the queue
@@ -566,13 +566,13 @@ Feature: Follow-ups while the agent is working
     When the user presses the shortcut that steers the queued message
     Then a turn starts with "b"
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: One queue action at a time
     Given "a" and "b" are queued
     When the user removes "a" and the MC has not answered yet
     Then "b" cannot be edited, steered or removed until it has
 
-  @backlog @desktop
+  @desktop
   Scenario: A queued message being edited is marked in the queue
     Given "fix typo" is queued with an image
     When the user starts editing it in the composer

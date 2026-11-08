@@ -343,14 +343,14 @@ Item {
 
             Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), { canSend: true, text: "hi" }), workspace: null };
             tryVerify(() => send.enabled && send.sendable);
-            compare(send.Accessible.name, "Send");
+            compare(send.Accessible.name, "Submit message");
             verify(Qt.colorEqual(send.background.color, accent));
 
             Shell.state = { composer: Object.assign({}, Shell.defaultComposer(), { canSend: false, text: "", isRunning: true }), workspace: null };
             tryVerify(() => send.stopMode);
             const input = findChild(composer, "input");
             input.text = "";
-            compare(send.Accessible.name, "Stop");
+            compare(send.Accessible.name, "Stop generation");
             verify(send.enabled);
             verify(findChild(send, "stopGlyph").visible);
             verify(!Qt.colorEqual(send.background.color, accent), "Stop is not the accent");
@@ -475,14 +475,14 @@ Item {
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, { isRunning: true, followUpBehavior: "queue" })
             });
-            compare(primary.Accessible.name, "Stop");
+            compare(primary.Accessible.name, "Stop generation");
 
             input.text = "Also check the tests";
-            compare(primary.Accessible.name, "Queue");
+            compare(primary.Accessible.name, "Queue message");
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, { followUpBehavior: "steer" })
             });
-            compare(primary.Accessible.name, "Steer");
+            compare(primary.Accessible.name, "Steer message");
 
             mouseClick(primary);
             const sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];

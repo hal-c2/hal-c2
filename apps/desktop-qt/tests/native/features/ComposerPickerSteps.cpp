@@ -579,6 +579,29 @@ const Steps steps([] {
     world.waitFor([&] { return !action->property("stopMode").toBool() && action->property("sendable").toBool(); }, QStringLiteral("the composer to offer Send again"));
   });
 
+  // What a screen reader calls it: its QML Accessible.name, on the attached
+  // object QML parents to the item.
+  const auto accessibleName = [](const QQuickItem* item) {
+    for (const QObject* each : item->children()) {
+      if (qstrcmp(each->metaObject()->className(), "QQuickAccessibleAttached") == 0) return each->property("name").toString();
+    }
+    return QString();
+  };
+  step(QStringLiteral("the send control is named %1").arg(kQuoted), [primary, accessibleName](World& world, const Captures& c, const Table&) {
+    QQuickItem* action = primary(world);
+    world.waitFor([&] { return accessibleName(action) == c[0]; }, [&] { return QStringLiteral("the send control is named \"%1\"").arg(accessibleName(action)); });
+  });
+  step(QStringLiteral("the running turn has finished"), [](World& world, const Captures&, const Table&) {
+    settleRun(world, QStringLiteral("completed"), 30);
+    QJsonObject& row = world.mc.threads[kThread];
+    row.insert(QStringLiteral("activeRunId"), QJsonValue::Null);
+    world.mc.sendRow(kThread, row);
+    world.sync();
+  });
+  step(QStringLiteral("a turn is running and the follow-up behaviour is %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.native().controller<SettingsController>()->writeDevice(QStringLiteral("followUpBehavior"), c[0]);
+  });
+
   // Search order, older models, new marks and the setup offer.
   const auto quotedList = [](const QString& text) {
     QStringList names;

@@ -1672,14 +1672,20 @@ Rectangle {
                             Accessible.role: Accessible.Button
                             // With a plan offered, sending implements it, or refines it with what was typed.
                             readonly property string planAction: composer.model?.planAction ?? ""
-                            // What the button does, which is also its accessible name.
+                            // What the button does, in a word (the phone shows it).
                             readonly property string label: stopMode ? qsTr("Stop")
                                 : editing ? qsTr("Update queued message")
                                 // With no connection the message waits on this device to be sent.
                                 : composer.model?.waitsForConnection === true ? qsTr("Queue")
                                 : followUp === "steer" ? qsTr("Steer") : followUp === "queue" ? qsTr("Queue")
                                 : planAction === "refine" ? qsTr("Refine") : planAction === "implement" ? qsTr("Implement") : qsTr("Send")
-                            Accessible.name: label
+                            // Its accessible name, upstream's: what sending will do to the message.
+                            readonly property string name: stopMode ? qsTr("Stop generation")
+                                : editing ? qsTr("Update queued message")
+                                : composer.model?.waitsForConnection === true || followUp === "queue" ? qsTr("Queue message")
+                                : followUp === "steer" ? qsTr("Steer message")
+                                : planAction.length > 0 ? label : qsTr("Submit message")
+                            Accessible.name: name
                             ToolTip.visible: hovered && followUp.length > 0
                             ToolTip.delay: 400
                             ToolTip.text: followUp === "steer"

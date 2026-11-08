@@ -601,8 +601,12 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
   if (action == QLatin1String("composer.queue.steer")) {
     // Without a run, the first queued one (the steer key).
     QString runId = map.value(QStringLiteral("runId")).toString();
-    const QVariantList queue = turnState().value(QStringLiteral("queue")).toList();
-    if (runId.isEmpty() && !queue.isEmpty()) runId = queue.constFirst().toMap().value(QStringLiteral("runId")).toString();
+    if (runId.isEmpty()) {
+      for (const QVariant& entry : turnState().value(QStringLiteral("queue")).toList()) {
+        runId = entry.toMap().value(QStringLiteral("runId")).toString();
+        if (!runId.isEmpty()) break;
+      }
+    }
     return queueCommand(QStringLiteral("queued-message.promote-to-steer"), runId);
   }
   return false;
@@ -2725,24 +2729,35 @@ bool ComposerController::respond(const QString& requestId, const QJsonObject& fi
   return true;
 }
 
-// Removes a queued message, or makes it steer the running turn.
+// Removes a queued message, or sends it now: a steer of the running turn, or
+// on a stopped thread its own turn, ahead of the rest (`queued-run.start`).
+// One queue action at a time per thread: the queue's buttons wait for the
+// MC's answer (`turn.queueBusy`), as an edit does.
 bool ComposerController::queueCommand(const QString& type, const QString& runId) {
   const auto thread = m_store->thread(m_thread);
-  if (!thread || runId.isEmpty()) return true;
+  if (!thread || runId.isEmpty() || m_queueBusy.contains(m_thread)) return true;
   QJsonObject command{{QStringLiteral("type"), type}, {QStringLiteral("threadId"), thread->id}};
+  QString failure = QStringLiteral("Failed to remove the queued message.");
   if (type == QLatin1String("queued-run.cancel")) {
     command.insert(QStringLiteral("runId"), runId);
-  } else {
-    if (!thread->activeRunId) return true;
+  } else if (thread->activeRunId) {
     command.insert(QStringLiteral("queuedRunId"), runId);
     command.insert(QStringLiteral("targetRunId"), *thread->activeRunId);
+    failure = QStringLiteral("Failed to steer with the queued message.");
+  } else {
+    command.insert(QStringLiteral("type"), QStringLiteral("queued-run.start"));
+    command.insert(QStringLiteral("runId"), runId);
+    failure = QStringLiteral("Failed to send the queued message.");
   }
-  const QString failure = type == QLatin1String("queued-run.cancel") ? QStringLiteral("Failed to remove the queued message.")
-                                                                      : QStringLiteral("Failed to steer with the queued message.");
+  const QString key = m_thread;
+  m_queueBusy.insert(key);
   m_client->dispatchCommand(this, thread->environmentId, command,
-                            [this, failure](const QJsonValue&, const std::optional<QString>& error) {
+                            [this, key, failure](const QJsonValue&, const std::optional<QString>& error) {
+                              m_queueBusy.remove(key);
                               if (error) toast(failure, *error);
+                              publish();
                             });
+  publish();
   return true;
 }
 
@@ -2810,10 +2825,16 @@ void ComposerController::publishEverywhere(NativeShell* shell) {
 }
 
 bool ComposerController::editQueued(const QString& target, QString runId) {
-  if (target.isEmpty() || !m_draftId.isEmpty() || (m_queuedEdit && m_queuedEdit->saving)) return true;
-  const QVariantList queue = turnState().value(QStringLiteral("queue")).toList();
-  if (queue.isEmpty()) return true;
-  if (runId.isEmpty()) runId = queue.constLast().toMap().value(QStringLiteral("runId")).toString();
+  if (target.isEmpty() || !m_draftId.isEmpty() || (m_queuedEdit && m_queuedEdit->saving) || m_queueBusy.contains(target)) return true;
+  const QVariantMap turn = turnState();
+  // The question takes the composer: the queue cannot have it too.
+  if (!turn.value(QStringLiteral("queueEditBlocked")).toString().isEmpty()) return true;
+  const QVariantList queue = turn.value(QStringLiteral("queue")).toList();
+  // The newest the MC has: one still being saved has no run to edit.
+  if (runId.isEmpty()) {
+    for (auto it = queue.crbegin(); it != queue.crend() && runId.isEmpty(); ++it) runId = it->toMap().value(QStringLiteral("runId")).toString();
+  }
+  if (runId.isEmpty()) return true;
   const auto entry = std::find_if(queue.cbegin(), queue.cend(), [&](const QVariant& item) {
     return item.toMap().value(QStringLiteral("runId")) == runId;
   });
@@ -2847,7 +2868,13 @@ bool ComposerController::editQueued(const QString& target, QString runId) {
 
 bool ComposerController::saveQueuedEdit(const QString& target, const QString& text) {
   const auto thread = m_store->thread(target);
-  if (!thread || m_queuedEdit->saving) return true;
+  if (!thread) return true;
+  // The MC applies saves in the order they come: a second waits for the
+  // first's answer rather than racing it, and the newest one is what goes.
+  if (m_queuedEdit->saving) {
+    m_queuedEdit->next = text;
+    return true;
+  }
   const QList<Attachment> added = m_drafts.value(target).attachments;
   // The MC refuses a message left with nothing in it.
   if (text.trimmed().isEmpty() && m_queuedEdit->sent.isEmpty() && added.isEmpty()) {
@@ -2865,17 +2892,31 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
   for (const Attachment& attachment : added) addedIds.append(attachment.id);
   const auto dispatch = [this, target, runId, addedIds, environmentId = thread->environmentId](const QJsonObject& command) {
     m_client->dispatchCommand(this, environmentId, command,
-                              [this, target, runId, addedIds](const QJsonValue&, const std::optional<QString>& error) {
+                              [this, target, runId, addedIds, command](const QJsonValue&, const std::optional<QString>& error) {
                                 if (!m_queuedEdit || m_queuedEdit->runId != runId) return;
                                 m_queuedEdit->saving = false;
+                                const std::optional<QString> next = std::exchange(m_queuedEdit->next, std::nullopt);
                                 if (error) {
                                   toast(QStringLiteral("Could not save the edited queued message."), *error);
-                                  publish();
+                                } else {
+                                  // What went with the message is the message's now.
+                                  m_drafts[target].attachments.removeIf([&](const Attachment& a) { return addedIds.contains(a.id); });
+                                  if (!next) {
+                                    endQueuedEdit();
+                                    return;
+                                  }
+                                  // The next save starts from what this one saved.
+                                  m_queuedEdit->original = str(command, QLatin1String("text"));
+                                  if (command.contains(QLatin1String("attachments"))) {
+                                    m_queuedEdit->sent = command.value(QLatin1String("attachments")).toArray();
+                                    m_queuedEdit->sentChanged = false;
+                                  }
+                                }
+                                if (next) {
+                                  saveQueuedEdit(target, *next);
                                   return;
                                 }
-                                // What went with the message is the message's now.
-                                m_drafts[target].attachments.removeIf([&](const Attachment& a) { return addedIds.contains(a.id); });
-                                endQueuedEdit();
+                                publish();
                               });
   };
   // Text alone keeps the attachments the message has.
@@ -2926,6 +2967,10 @@ bool ComposerController::saveQueuedEdit(const QString& target, const QString& te
                    if (error) {
                      m_queuedEdit->saving = false;
                      toast(QStringLiteral("Could not save the edited queued message."), *error);
+                     if (const std::optional<QString> next = std::exchange(m_queuedEdit->next, std::nullopt)) {
+                       saveQueuedEdit(m_queuedEdit->thread, *next);
+                       return;
+                     }
                      publish();
                      return;
                    }
@@ -3574,9 +3619,38 @@ QVariantMap ComposerController::turnState() const {
       attachments.append(shown);
     }
     entry.insert(QStringLiteral("attachments"), attachments);
+    entry.insert(QStringLiteral("pending"), false);
     queue.append(entry);
   }
+  // A follow-up on its way to the MC is listed at the end as being saved,
+  // with nothing to do to it until the MC has it.
+  const QHash<QString, QJsonObject> messages = m_timeline->entities(QStringLiteral("message"));
+  for (const Send& send : m_queues.value(m_thread)) {
+    for (const QJsonObject& command : send.commands) {
+      if (str(command, QLatin1String("type")) != QLatin1String("message.dispatch") ||
+          str(command.value(QLatin1String("dispatchMode")).toObject(), QLatin1String("type")) != QLatin1String("queue_after_active") ||
+          messages.contains(str(command, QLatin1String("messageId")))) {
+        continue;
+      }
+      QVariantList attachments;
+      for (const Attachment& attachment : send.attachments) {
+        attachments.append(QVariantMap{{QStringLiteral("id"), attachment.id},
+                                       {QStringLiteral("name"), attachment.name},
+                                       {QStringLiteral("mimeType"), attachment.mimeType},
+                                       {QStringLiteral("kind"), attachment.file ? QStringLiteral("file") : QStringLiteral("image")}});
+      }
+      queue.append(QVariantMap{{QStringLiteral("runId"), QString()},
+                               {QStringLiteral("messageId"), str(command, QLatin1String("messageId"))},
+                               {QStringLiteral("text"), str(command, QLatin1String("text"))},
+                               {QStringLiteral("attachments"), attachments},
+                               {QStringLiteral("pending"), true}});
+    }
+  }
   state.insert(QStringLiteral("queue"), queue);
+  // A queue action waits for the MC's answer before another can be taken.
+  state.insert(QStringLiteral("queueBusy"), m_queueBusy.contains(m_thread));
+  // Why the queued messages cannot be edited now, empty when they can.
+  state.insert(QStringLiteral("queueEditBlocked"), questions.isEmpty() ? QString() : QStringLiteral("Answer the question to edit queued messages"));
   state.insert(QStringLiteral("waiting"), queued.waiting);
   // Held with nothing listed shows no card, so it offers no resume either. A queued run
   // comes with its message in the one transaction that queues it (the MC's `queue_run`),

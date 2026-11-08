@@ -4,6 +4,7 @@
 // publishes, and the commands the MC receives). The thread's stream is
 // Stream.h's.
 
+#include <QFont>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -1242,6 +1243,227 @@ const Steps steps([] {
     for (const QVariant& queued : listed(world, QStringLiteral("queue"))) texts.append(queued.toMap().value(QStringLiteral("text")).toString());
     expect(texts.contains(c[0]) && commandsOf(world, QStringLiteral("queued-run.edit")).isEmpty(),
            QStringLiteral("the queue is [%1] and the MC has %2").arg(texts.join(QStringLiteral(", ")), world.describeCommands()));
+  });
+
+  // A queued row's controls (TurnRequests): Send now, then Edit and Remove.
+  const auto rowPart = [requestsBrick](World& world, const QString& part, const QString& text) -> QQuickItem* {
+    Brick& brick = requestsBrick(world);
+    const QString name = part + QStringLiteral("-run-queued-") + text;
+    world.waitFor([&] { return brick.find(name) && brick.find(name)->isVisible(); },
+                  [&] { return QStringLiteral("%1 on the queue; the turn is %2").arg(name, show(turn(world))); });
+    return brick.item(name);
+  };
+  const auto queuedAndHeld = [](World& world, const QStringList& texts) {
+    for (const QString& text : texts) queueMessage(world, text);
+    for (const QString& text : texts) set(world, QStringLiteral("run"), QStringLiteral("run-queued-") + text, {{QStringLiteral("queueHeld"), true}});
+    finishTurn(world);
+  };
+  step(QStringLiteral("%1, %1 and %1 are queued and held, and the turn is no longer running").arg(q),
+       [queuedAndHeld](World& world, const Captures& c, const Table&) { queuedAndHeld(world, {c[0], c[1], c[2]}); });
+  step(QStringLiteral("%1 and %1 are queued and held, and the turn is no longer running").arg(q),
+       [queuedAndHeld](World& world, const Captures& c, const Table&) { queuedAndHeld(world, {c[0], c[1]}); });
+  step(QStringLiteral("the user looks at %1 in the queue").arg(q), [rowPart](World& world, const Captures& c, const Table&) {
+    rowPart(world, QStringLiteral("queueText"), c[0]);
+  });
+  step(QStringLiteral("the user is offered to send %1 now, to edit it and to remove it").arg(q), [rowPart](World& world, const Captures& c, const Table&) {
+    QStringList offered;
+    for (const QString& part : {QStringLiteral("queueSendNow"), QStringLiteral("queueEdit"), QStringLiteral("queueRemove")}) {
+      if (rowPart(world, part, c[0])->isEnabled()) offered.append(part);
+    }
+    expect(offered.size() == 3 && rowPart(world, QStringLiteral("queueSendNow"), c[0])->property("text") == QLatin1String("Send now"),
+           QStringLiteral("the row offers %1").arg(offered.join(u", ")));
+    // Send now comes first, as upstream's row has it.
+    expect(rowPart(world, QStringLiteral("queueSendNow"), c[0])->x() < rowPart(world, QStringLiteral("queueEdit"), c[0])->x(),
+           QStringLiteral("Send now is not first"));
+  });
+  step(QStringLiteral("the user is not offered to move %1 in the queue").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    QStringList moves;
+    const std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+      // Remove is not a move.
+      static const QRegularExpression move(QStringLiteral("(?<![Rr]e)[Mm]ove|[Hh]andle|[Dd]rag|[Rr]eorder|[Pp]osition"));
+      if (item->isVisible() && move.match(item->objectName()).hasMatch()) moves.append(item->objectName());
+      for (QQuickItem* child : item->childItems()) walk(child);
+    };
+    walk(requestsBrick(world).item(QStringLiteral("queueRow-run-queued-") + c[0]));
+    expect(moves.isEmpty(), QStringLiteral("the row offers %1").arg(moves.join(u", ")));
+  });
+  step(QStringLiteral("the user is offered to send %1 now instead of steering it").arg(q), [requestsBrick, rowPart](World& world, const Captures& c, const Table&) {
+    QQuickItem* send = rowPart(world, QStringLiteral("queueSendNow"), c[0]);
+    expect(send->isEnabled() && send->property("text") == QLatin1String("Send now"), QStringLiteral("Send now cannot be used"));
+    requestsBrick(world).click(send->objectName());
+    world.sync();
+    const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.start"));
+    expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && commandsOf(world, QStringLiteral("queued-message.promote-to-steer")).isEmpty(),
+           QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the user removes %1 and the MC has not answered yet").arg(q), [requestsBrick, rowPart](World& world, const Captures& c, const Table&) {
+    world.mc.hold(QStringLiteral("answers"));
+    requestsBrick(world).click(rowPart(world, QStringLiteral("queueRemove"), c[0])->objectName());
+    world.sync();
+    expect(commandsOf(world, QStringLiteral("queued-run.cancel")).size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  const auto controls = [rowPart](World& world, const QString& text) {
+    QStringList usable;
+    for (const QString& part : {QStringLiteral("queueSendNow"), QStringLiteral("queueEdit"), QStringLiteral("queueRemove")}) {
+      if (rowPart(world, part, text)->isEnabled()) usable.append(part);
+    }
+    return usable;
+  };
+  step(QStringLiteral("%1 cannot be edited, steered or removed until it has").arg(q), [controls](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return controls(world, c[0]).isEmpty(); }, [&] { return QStringLiteral("the row still offers %1").arg(controls(world, c[0]).join(u", ")); });
+    // Nor by its actions or keys.
+    const QVariantMap run{{QStringLiteral("runId"), QStringLiteral("run-queued-") + c[0]}};
+    world.bridge().dispatch(QStringLiteral("composer.queue.steer"), run);
+    world.bridge().dispatch(QStringLiteral("composer.queue.remove"), run);
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), run);
+    world.sync();
+    expect(commandsOf(world, QStringLiteral("queued-run.cancel")).size() == 1 && commandsOf(world, QStringLiteral("queued-message.promote-to-steer")).isEmpty() &&
+               world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("editingQueuedRunId")).isNull(),
+           QStringLiteral("the MC has %1").arg(world.describeCommands()));
+    world.mc.answerHeld();
+    world.sync();
+    world.waitFor([&] { return controls(world, c[0]).size() == 3; }, [&] { return QStringLiteral("the row offers only %1").arg(controls(world, c[0]).join(u", ")); });
+  });
+
+  // A follow-up on its way to the MC.
+  step(QStringLiteral("the MC has not yet confirmed a message the user queued"), [](World& world, const Captures&, const Table&) {
+    world.native().controller<SettingsController>()->writeDevice(QStringLiteral("followUpBehavior"), QStringLiteral("queue"));
+    world.mc.hold(QStringLiteral("answers"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), QStringLiteral("tweak")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+  });
+  const auto pendingEntry = [](World& world) {
+    for (const QVariant& entry : listed(world, QStringLiteral("queue"))) {
+      if (entry.toMap().value(QStringLiteral("pending")).toBool()) return entry.toMap();
+    }
+    return QVariantMap();
+  };
+  step(QStringLiteral("the message is listed in the queue as being saved"), [requestsBrick, pendingEntry](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return pendingEntry(world).value(QStringLiteral("text")) == QLatin1String("tweak"); },
+                  [&] { return QStringLiteral("a queued message being saved; the turn is %1").arg(show(turn(world))); });
+    Brick& brick = requestsBrick(world);
+    const QString id = pendingEntry(world).value(QStringLiteral("messageId")).toString();
+    world.waitFor([&] { return brick.find(QStringLiteral("queueSaving-") + id) && brick.find(QStringLiteral("queueSaving-") + id)->isVisible(); },
+                  QStringLiteral("the row's saving mark"));
+    expect(brick.item(QStringLiteral("queueText-") + id)->property("text") == QLatin1String("tweak"), QStringLiteral("the row reads otherwise"));
+  });
+  step(QStringLiteral("it cannot be edited, reordered, steered or removed until the MC confirms it"), [requestsBrick, pendingEntry](World& world, const Captures&, const Table&) {
+    Brick& brick = requestsBrick(world);
+    QStringList offered;
+    const std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+      if (item->isVisible() && item->property("checkable").isValid() && !item->objectName().isEmpty()) offered.append(item->objectName());
+      for (QQuickItem* child : item->childItems()) walk(child);
+    };
+    const QString id = pendingEntry(world).value(QStringLiteral("messageId")).toString();
+    walk(brick.item(QStringLiteral("queueRow-") + id));
+    expect(offered.isEmpty(), QStringLiteral("the row being saved offers %1").arg(offered.join(u", ")));
+    // The edit-latest key passes it over: it has no run to edit yet.
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), QVariantMap());
+    world.sync();
+    expect(world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("editingQueuedRunId")).isNull(), QStringLiteral("an edit opened"));
+    // The MC has it: the message and its queued run arrive, and the row is a queued one.
+    world.mc.answerHeld();
+    queueMessage(world, QStringLiteral("tweak"));
+    world.waitFor([&] { return pendingEntry(world).isEmpty(); }, [&] { return QStringLiteral("the row to be confirmed; the turn is %1").arg(show(turn(world))); });
+  });
+
+  // A queued message while a question is open.
+  step(QStringLiteral("the agent has asked the user a question"), [](World& world, const Captures&, const Table&) {
+    question(world, QStringLiteral("Which database?"), {QStringLiteral("Postgres"), QStringLiteral("SQLite")});
+    world.waitFor([&] { return !listed(world, QStringLiteral("questions")).isEmpty(); }, QStringLiteral("the question"));
+  });
+  step(QStringLiteral("editing %1 is unavailable, saying %1").arg(q), [rowPart](World& world, const Captures& c, const Table&) {
+    QQuickItem* edit = rowPart(world, QStringLiteral("queueEdit"), c[0]);
+    world.waitFor([&] { return !edit->isEnabled(); }, QStringLiteral("Edit to be unavailable"));
+    expect(edit->property("toolTip") == c[1] && turn(world).value(QStringLiteral("queueEditBlocked")) == c[1],
+           QStringLiteral("Edit says \"%1\"").arg(edit->property("toolTip").toString()));
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), QVariantMap{{QStringLiteral("runId"), QStringLiteral("run-queued-") + c[0]}});
+    world.sync();
+    expect(world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("editingQueuedRunId")).isNull(), QStringLiteral("an edit opened"));
+  });
+  step(QStringLiteral("the edit-latest shortcut does nothing"), [](World& world, const Captures&, const Table&) {
+    const QString before = openDraft(world);
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), QVariantMap());
+    world.sync();
+    expect(world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("editingQueuedRunId")).isNull() && openDraft(world) == before,
+           QStringLiteral("the composer is %1").arg(show(world.state(QStringLiteral("composer")))));
+  });
+
+  // The row of the message being edited.
+  step(QStringLiteral("%1 is queued with an image").arg(q), [](World& world, const Captures& c, const Table&) {
+    queueMessage(world, c[0]);
+    set(world, QStringLiteral("message"), QStringLiteral("message-") + c[0],
+        {{QStringLiteral("attachments"), QJsonArray{QJsonObject{{QStringLiteral("type"), QStringLiteral("image")},
+                                                                {QStringLiteral("id"), QStringLiteral("image-") + c[0]},
+                                                                {QStringLiteral("name"), QStringLiteral("shot.png")},
+                                                                {QStringLiteral("mimeType"), QStringLiteral("image/png")},
+                                                                {QStringLiteral("sizeBytes"), 12}}}}});
+  });
+  step(QStringLiteral("the user starts editing it in the composer"), [requestsBrick](World& world, const Captures&, const Table&) {
+    const QString run = listed(world, QStringLiteral("queue")).constLast().toMap().value(QStringLiteral("runId")).toString();
+    Brick& brick = requestsBrick(world);
+    world.waitFor([&] { return brick.find(QStringLiteral("queueEdit-") + run) && brick.find(QStringLiteral("queueEdit-") + run)->isVisible(); },
+                  QStringLiteral("the row's Edit"));
+    brick.click(QStringLiteral("queueEdit-") + run);
+    world.sync();
+  });
+  step(QStringLiteral("the queue marks %1 as being edited and offers to cancel the edit").arg(q), [requestsBrick, rowPart](World& world, const Captures& c, const Table&) {
+    QQuickItem* cancel = rowPart(world, QStringLiteral("queueEditCancel"), c[0]);
+    Brick& brick = requestsBrick(world);
+    QQuickItem* text = brick.item(QStringLiteral("queueText-run-queued-") + c[0]);
+    expect(text->property("font").value<QFont>().italic(), QStringLiteral("the row is not marked"));
+    for (const QString& part : {QStringLiteral("queueSendNow"), QStringLiteral("queueEdit"), QStringLiteral("queueRemove")}) {
+      QQuickItem* item = brick.find(part + QStringLiteral("-run-queued-") + c[0]);
+      expect(!item || !item->isVisible(), QStringLiteral("the row being edited offers %1").arg(part));
+    }
+    brick.click(cancel->objectName());
+    world.sync();
+    world.waitFor([&] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("editingQueuedRunId")).isNull(); },
+                  QStringLiteral("the edit to end"));
+  });
+
+  // Saves of a queued edit, one at a time.
+  step(QStringLiteral("the user saved %1 over it and the MC has not answered yet").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), QVariantMap());
+    world.sync();
+    world.mc.hold(QStringLiteral("answers"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), c[0]}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+    expect(commandsOf(world, QStringLiteral("queued-run.edit")).size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the user edits it again and saves %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    typeInto(world, c[0]);
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), c[0]}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+  });
+  step(QStringLiteral("%1 is sent only after the MC answered the first save").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(commandsOf(world, QStringLiteral("queued-run.edit")).size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));
+    world.mc.answerHeld();
+    world.waitFor([&] { return commandsOf(world, QStringLiteral("queued-run.edit")).size() == 2; }, [&] { return QStringLiteral("the MC has %1").arg(world.describeCommands()); });
+    const QJsonObject second = lastCommand(world, QStringLiteral("queued-run.edit"));
+    expect(second.value(QLatin1String("text")) == c[0], QStringLiteral("the MC was told %1").arg(show(second.toVariantMap())));
+  });
+  step(QStringLiteral("the queued message ends as %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("editingQueuedRunId")).isNull(); },
+                  QStringLiteral("the edit to end"));
+    const QList<QJsonObject> saves = commandsOf(world, QStringLiteral("queued-run.edit"));
+    expect(saves.size() == 2 && saves.last().value(QLatin1String("text")) == c[0], QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+
+  // The queue folds to its header.
+  step(QStringLiteral("the queue is headed %1 with the count (\\d+)").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    Brick& brick = requestsBrick(world);
+    world.waitFor([&] { return brick.shows(c[0]) && brick.item(QStringLiteral("queueCount"))->property("text").toString() == c[1]; },
+                  [&] { return QStringLiteral("the queue's header; the turn is %1").arg(show(turn(world))); });
+  });
+  step(QStringLiteral("the user folds the queue away"), [requestsBrick](World& world, const Captures&, const Table&) {
+    requestsBrick(world).click(QStringLiteral("queueToggle"));
+  });
+  step(QStringLiteral("%1 and %1 are hidden and the count is still shown").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    Brick& brick = requestsBrick(world);
+    world.waitFor([&] { return !brick.shows(c[0]) && !brick.shows(c[1]); }, QStringLiteral("the queued messages to be hidden"));
+    QQuickItem* count = brick.item(QStringLiteral("queueCount"));
+    expect(count->isVisible() && count->property("text").toString() == QString::number(2), QStringLiteral("the count is gone"));
   });
 
   // Answers in flight.

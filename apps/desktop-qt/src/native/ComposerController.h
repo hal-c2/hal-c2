@@ -58,8 +58,13 @@ class TimelineModel;
 //      [{label, description}], multiSelect, allowCustomAnswer}], canRespond,
 //      responding, problem}],
 //    plan: {id, title, markdown} | null,  // offered while the thread is idle
-//    queue: [{runId, text}], waiting: [{runId, summary, outcome}],
-//    queueHeld, queueResuming}  // the MC keeps the queue until it is resumed
+//    queue: [{runId, messageId, text, pending}], waiting: [{runId, summary,
+//      outcome}],
+//    queueHeld, queueResuming,  // the MC keeps the queue until it is resumed
+//    queueBusy,  // a remove or send-now the MC has not answered: one at a time
+//    queueEditBlocked}  // why queued messages cannot be edited now, or ""
+// A `pending` queue entry is a send the MC has not confirmed yet: listed, but
+// with nothing to act on.
 // `problem` says why a request cannot be answered, when it cannot. On a new
 // thread's draft route the turn is {threadKey: draftId, kind: "draft",
 // sending} with nothing pending; `sending` while its first send
@@ -114,7 +119,8 @@ class TimelineModel;
 // composer.approval.respond {requestId, decision},
 // composer.question.answer {requestId, answers}, composer.question.dismiss
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
-// composer.queue.steer {runId?} (the first queued without one),
+// composer.queue.steer {runId?} (the first queued without one; on a stopped
+// thread it sends the message now, `queued-run.start`),
 // composer.queue.edit {runId?} (the last queued without one),
 // composer.queue.edit.cancel, composer.queue.resume (a held queue),
 // composer.stash, composer.stash.restore {id},
@@ -147,7 +153,9 @@ class TimelineModel;
 // composer (`composer.editingQueuedRunId`; the message's attachments are
 // listed with `sent`) and sets the thread's own draft, attachments included,
 // aside; a send saves the edit (`queued-run.edit`, its text and, when they
-// changed, its attachments) and cancelling gives the draft back. A run that leaves the queue mid-edit ends it: a changed edit
+// changed, its attachments) and cancelling gives the draft back. Saves go
+// one at a time: one made while another is unanswered waits for it, and only
+// the newest waits. A run that leaves the queue mid-edit ends it: a changed edit
 // stays in the composer when the set-aside draft was empty, and is dropped
 // with a toast otherwise.
 class ComposerController : public QObject, public NativeController {
@@ -722,8 +730,12 @@ private:
     // the MC refused reuses them rather than storing them again.
     QHash<QString, QJsonObject> stored;
     bool saving = false;
+    // A save made while one is on its way, sent once it is answered.
+    std::optional<QString> next;
   };
   std::optional<QueuedEdit> m_queuedEdit;
+  // Threads with a queue action (remove, send now) the MC has not answered.
+  QSet<QString> m_queueBusy;
   // The sent prompt the composer is showing again: its message and text.
   struct Recall {
     QString target;
