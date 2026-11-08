@@ -82,6 +82,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("connections/connection-health.feature:An expiring credential does not close*"),
     QStringLiteral("connections/connection-health.feature:A failed renewal affects only its request*"),
     QStringLiteral("mobile/home-and-thread-list.feature"),
+    QStringLiteral("mobile/review-and-diffs.feature"),
     QStringLiteral("mobile/composer.feature"),
     QStringLiteral("mobile/navigation-and-deep-links.feature"),
     QStringLiteral("mobile/offline-and-lifecycle.feature"),

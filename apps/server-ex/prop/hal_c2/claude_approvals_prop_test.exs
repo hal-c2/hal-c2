@@ -15,7 +15,8 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     for a request that is not pending is an error.
   - The resume head a turn records (its provider turn's `nativeTurnRef`, where a
     rollback to that turn resumes). A `/compact` turn has no assistant message,
-    so its compact boundary is its head; a turn Claude compacts in before
+    so its compact boundary is its head (a thread's first `/compact` has no
+    conversation to compact, so it fails and records nothing); a turn Claude compacts in before
     answering ("grow the conversation") records the later assistant message,
     which moves the head past the boundary; a plain turn records its answer.
   """
@@ -113,10 +114,11 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   # phase: :idle (no turn), :pending (an approval is open), :withdrawn (Claude
   #   withdrew it; the turn still runs). status/decision: what the request the
   #   fake keeps opening as perm-1 shows now, or nil before the first ask.
-  #   msgs: user messages sent, which the fake numbers its uuid- and compact-
-  #   ids by. head: the resume head the last finished turn recorded.
+  #   msgs: user messages that reached the fake, which numbers its uuid- and
+  #   compact- ids by. head: the resume head the last finished turn recorded.
+  #   talked: a turn has reached Claude, so the thread has a conversation.
   def initial_state,
-    do: %{phase: :idle, status: nil, decision: nil, msgs: 0, n: 1, head: nil}
+    do: %{phase: :idle, status: nil, decision: nil, msgs: 0, n: 1, head: nil, talked: false}
 
   def command(%{phase: :idle, n: n}) do
     frequency([
@@ -159,7 +161,11 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   def next_state(state, _result, {:call, _, :plain, [_n]}),
     do: %{sent(state) | head: "uuid-#{state.msgs + 1}"}
 
-  # No assistant message follows the boundary, so the boundary is the head.
+  # No assistant message follows the boundary, so the boundary is the head. With
+  # no conversation yet the MC refuses it before Claude sees it: the run fails.
+  def next_state(%{talked: false} = state, _result, {:call, _, :compact_only, [_n]}),
+    do: %{state | n: state.n + 1}
+
   def next_state(state, _result, {:call, _, :compact_only, [_n]}),
     do: %{sent(state) | head: "compact-#{state.msgs + 1}"}
 
@@ -193,15 +199,24 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   def next_state(state, _result, {:call, _, :stop, []}), do: %{state | phase: :idle}
 
-  defp sent(state), do: %{state | msgs: state.msgs + 1, n: state.n + 1}
+  defp sent(state), do: %{state | msgs: state.msgs + 1, n: state.n + 1, talked: true}
 
   def postcondition(state, {:call, _, fun, args}, seen) do
     next = next_state(state, seen, {:call, nil, fun, args})
 
     seen.status == next.status and
       (next.status == "pending" or seen.decision == next.decision) and
-      seen.head == next.head and respond_ok?(state, fun, args, seen)
+      seen.head == next.head and respond_ok?(state, fun, args, seen) and
+      ended_ok?(state, fun, seen)
   end
+
+  # A turn that asks nothing completes, but a first `/compact` is refused.
+  defp ended_ok?(%{talked: false}, :compact_only, seen), do: seen.ended == "failed"
+
+  defp ended_ok?(_state, fun, seen) when fun in [:plain, :compact_only, :grow],
+    do: seen.ended == "completed"
+
+  defp ended_ok?(_state, _fun, _seen), do: true
 
   # Answering is :ok only while the request is pending.
   defp respond_ok?(%{phase: :pending}, :answer, _args, seen), do: seen.respond == :ok
@@ -227,8 +242,8 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   defp turn(n, text) do
     run = send_message(n, text)
-    await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
-    snapshot()
+    ended = await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
+    Map.put(snapshot(), :ended, ended["status"])
   end
 
   # The user's answer. An accepted/declined turn finishes on the fake's reply;
