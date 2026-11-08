@@ -332,6 +332,22 @@ defmodule HalC2.Subprocess do
 
   def exit_status(_sub, _message), do: :error
 
+  @doc """
+  An owned program's exit status if it exits within `timeout`, else `:running`. For a
+  program the MC keeps across its own stop, `:unknown`: its output is a file, whose end
+  says the program has ended.
+  """
+  @spec exited(t, timeout) :: {:ok, non_neg_integer} | :running | :unknown
+  def exited(%__MODULE__{durable: nil, proc: %Proc{exit_ref: ref}}, timeout) do
+    receive do
+      {^ref, {:ok, status}} -> {:ok, status}
+    after
+      timeout -> :running
+    end
+  end
+
+  def exited(_sub, _timeout), do: :unknown
+
   @doc "Closes stdin and waits for the program to exit, escalating to signals after `timeout`."
   @spec stop(t, timeout) :: {:ok, non_neg_integer} | term
   def stop(sub, timeout \\ 2_000)
@@ -521,25 +537,26 @@ defmodule HalC2.Subprocess do
   end
 
   @doc """
-  The last lines a program started with `:stderr_tail` wrote to stderr, without colour
-  codes or blank lines: "" when there are none or it was not kept. Asked once the
+  The last `lines` (or all of the last 4,096 bytes) a program started with
+  `:stderr_tail` wrote to stderr, without colour codes or blank lines: "" when there
+  are none or it was not kept. Asked once the
   program has ended (its output has); a program still running is waited on for at most
   `timeout`.
   """
-  @spec stderr_tail(t, timeout) :: String.t()
-  def stderr_tail(sub, timeout \\ 1_000)
+  @spec stderr_tail(t, timeout, pos_integer | :all) :: String.t()
+  def stderr_tail(sub, timeout \\ 1_000, lines \\ @tail_lines)
 
-  def stderr_tail(%__MODULE__{durable: %{dir: dir}}, _timeout),
-    do: dir |> Durable.stderr_tail(@tail_bytes) |> last_lines()
+  def stderr_tail(%__MODULE__{durable: %{dir: dir}}, _timeout, lines),
+    do: dir |> Durable.stderr_tail(@tail_bytes) |> last_lines(lines)
 
-  def stderr_tail(%__MODULE__{errors: errors}, timeout) when is_pid(errors) do
+  def stderr_tail(%__MODULE__{errors: errors}, timeout, lines) when is_pid(errors) do
     ref = Process.monitor(errors)
     send(errors, {:stderr_tail, self(), ref})
 
     receive do
       {^ref, tail} ->
         Process.demonitor(ref, [:flush])
-        last_lines(tail)
+        last_lines(tail, lines)
 
       {:DOWN, ^ref, :process, _, _} ->
         ""
@@ -550,17 +567,17 @@ defmodule HalC2.Subprocess do
     end
   end
 
-  def stderr_tail(_sub, _timeout), do: ""
+  def stderr_tail(_sub, _timeout, _lines), do: ""
 
   @doc false
-  def last_lines(text) do
+  def last_lines(text, lines \\ @tail_lines) do
     text
     |> String.replace(~r/\e\[[0-9;?]*[A-Za-z]/, "")
     |> String.replace_invalid()
     |> String.split(~r/\r?\n/)
     |> Enum.map(&String.trim_trailing/1)
     |> Enum.reject(&(&1 == ""))
-    |> Enum.take(-@tail_lines)
+    |> then(&if lines == :all, do: &1, else: Enum.take(&1, -lines))
     |> Enum.join("\n")
   end
 

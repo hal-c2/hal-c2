@@ -97,6 +97,17 @@ defmodule HalC2.ProviderUsageLimits do
   def remember_account(instance, account),
     do: GenServer.cast(__MODULE__, {:account, instance, account})
 
+  @doc """
+  The sign-in status a probe last recorded for `instance`
+  (`"unauthenticated"` for a signed-out account), or nil when none has.
+  """
+  def account_status(instance) do
+    case lookup({:account, instance}) do
+      %{"status" => status} -> status
+      _ -> nil
+    end
+  end
+
   defp lookup(key) do
     case :ets.lookup(__MODULE__, key) do
       [{_, value}] -> value

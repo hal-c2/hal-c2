@@ -89,6 +89,7 @@ const QList<Row>& rows() {
       {"environmentIdentificationMode", true, QStringLiteral("artwork")},
       {"diffColorScheme", true, QStringLiteral("red-green")},
       {"persistComposerContextStrip", true, false},
+      {"effortDisplay", true, QStringLiteral("label")},
       {"panelAnimationDurationMs", true, 0},
       {"reduceMotion", true, false},
       {"fontSizeInterface", true, 16},

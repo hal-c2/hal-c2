@@ -52,6 +52,9 @@ public:
     // "Run on" another machine's checkout; empty keeps the draft's own.
     QString environmentId;
     QString projectId;
+    // The user picked the machine, their own included: balancing leaves the
+    // thread there (Launch::tied).
+    bool manual = false;
   };
   // Where the route's thread is and what its terminals start in.
   struct Place {
@@ -96,7 +99,8 @@ public:
   // `orchestration.launchThread` ({type: "root" | "existing_worktree" |
   // "worktree", ...}), or `problem` when it cannot start yet. `tied` when the
   // user chose where it runs (a machine, a branch or a worktree), so it is
-  // not placed on another machine (ComposerController::place).
+  // not placed on another machine (ComposerController::place); an untied
+  // draft is what the machine picker calls "Auto balance" while balancing is on.
   struct Launch {
     QString environmentId;
     QString projectId;
@@ -169,6 +173,8 @@ private:
   QString envMode() const;
   bool envModeChangeable() const;
   bool eachModelGetsWorktree() const;
+  // The checkout is a Git repository, as far as is known.
+  bool repository() const;
   QString currentBranch() const;
   // Neither the thread's machine nor the shell's MC is the one the user sits at:
   // no folder here holds its files, and an editor opens them only over SSH.
@@ -180,7 +186,18 @@ private:
   QString noSshRoute() const;
   QJsonArray editors() const;
   QString preferredEditor(const QJsonArray& editors) const;
-  QVariantList environmentChoices() const;
+  // `severalMachines`, when given, hears whether the project is on more than one.
+  QVariantList environmentChoices(bool* severalMachines = nullptr) const;
+  // A machine as its owner knows it (BranchToolbar.logic resolveEnvironmentOptionLabel).
+  QString machineLabel(const QString& environmentId) const;
+  // The draft can be left to load balancing: it is on and more than one
+  // machine is connected.
+  bool autoBalanceOffered() const;
+  // The draft is left to it: offered, no file is attached, and the user chose
+  // no machine, branch or worktree.
+  bool autoBalanced() const;
+  // "Auto balance": the draft goes back to its own project, untied.
+  void autoBalance();
 
   void rename(const QString& title);
   void openInEditor(const QString& editorId);

@@ -446,8 +446,16 @@ void PreviewAutomationHost::finish(const RequestPtr& request, bool ok, const QJs
       {QStringLiteral("requestId"), request->requestId},
       {QStringLiteral("ok"), ok},
   };
-  if (ok) response.insert(QStringLiteral("result"), result);
-  else response.insert(QStringLiteral("error"), error);
+  if (ok) {
+    response.insert(QStringLiteral("result"), result);
+  } else {
+    // A failed open names the tab it reached, so the MC can close one it made.
+    QJsonObject failure = error;
+    if (request->operation == QLatin1String("open") && !request->tabId.isEmpty() &&
+        !failure.contains(QLatin1String("tabId")))
+      failure.insert(QStringLiteral("tabId"), request->tabId);
+    response.insert(QStringLiteral("error"), failure);
+  }
   m_client->call(this, request->environmentId, QStringLiteral("previewAutomation.respond"), response,
                  [](const QJsonValue&, const std::optional<QString>&) {});
   emit answered(request->requestId, ok);

@@ -137,7 +137,7 @@ Feature: Acting on a pull request
     Then GitHub will merge pull request 42 once it is ready
 
   # Upstream #19947: auto-merge was offered where GitHub would merge at once or had it switched off.
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: Auto-merge is offered only when GitHub would wait
     Given <state>
     Then enabling auto-merge on pull request 42 is not offered
@@ -167,7 +167,7 @@ Feature: Acting on a pull request
     When the user approves its workflows
     Then the workflows start
   # Upstream #25588: the author of a fork's pull request can allow or stop maintainer edits from its actions.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: The author lets maintainers edit their pull request's branch, or stops them
     Given the user opened pull request 42 from their fork of "acme/shop"
     And maintainer edits are <before>
@@ -181,11 +181,24 @@ Feature: Acting on a pull request
       | on      | stops  | can no longer |
 
   # Upstream #25588: the choice is hidden where GitHub does not offer it.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Maintainer edits are not offered where GitHub does not allow them
     Given pull request 42 comes from a branch of "acme/shop" itself
     When the user looks at its actions
     Then allowing edits from maintainers is not offered
+
+  # Upstream #25588: the choice offered follows the state now; a stale page is told what holds.
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
+  Scenario Outline: A maintainer-edit change that already holds is answered with the state
+    Given the user opened pull request 42 from their fork of "acme/shop"
+    And maintainer edits are <state>
+    When the user <action> edits from maintainers
+    Then the user is told "<message>"
+
+    Examples:
+      | state | action | message                                |
+      | on    | allows | Maintainers can already edit this branch.  |
+      | off   | stops  | Maintainers already can't edit this branch. |
 
   # Upstream #30518: GitLab merge requests from forks can allow or stop maintainer edits.
   @backlog @mc @shared @priority-low
@@ -217,7 +230,7 @@ Feature: Acting on a pull request
       | the fork or the target project is private             |
 
   # Upstream #25588: a failed save puts the previous choice back.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A failed change to maintainer edits keeps the previous choice
     Given maintainer edits are off for pull request 42
     And GitHub refuses the change
@@ -914,7 +927,7 @@ Feature: Acting on a pull request
 
   # Upstream #15000: a pull request from another GitHub host could check out a same-named
   # repository on the checkout's host, with the wrong commit and remote.
-  @backlog @mc @priority-high
+  @mc
   Scenario Outline: A pull request from another host is checked out from that host
     Given the checkout's "acme/web" is on github.com
     And pull request 42 of "acme/web" is on <host>
@@ -928,8 +941,21 @@ Feature: Acting on a pull request
       | github.acme.dev           | in a separate worktree |
       | a Forgejo at git.acme.dev | in this repository     |
 
+  # Review of #1307: an `ssh_config` alias is not another host; ssh says which host it reaches,
+  # whether the remote names the user (`git@github-work:`) or ssh_config does (`github-work:`).
+  @mc
+  Scenario Outline: A remote reached through an ssh alias is the checkout's own host
+    Given the checkout's "acme/shop" is reached as the <remote> ssh alias "github-work" for github.com
+    When the user checks out pull request 42 by its github.com URL in this repository
+    Then it is checked out through the checkout's own remote
+
+    Examples:
+      | remote     |
+      | user-named |
+      | userless   |
+
   # Upstream #15036: Check out here could throw away local edits and commits and still say it worked.
-  @backlog @mc @desktop @priority-high
+  @mc @desktop @backlog-desktop @priority-high
   Scenario Outline: Checking out here never discards the user's work
     Given the repository <state>
     When the user checks out pull request 42 in this repository from its review
@@ -940,6 +966,7 @@ Feature: Acting on a pull request
       | has uncommitted changes to tracked files                    | the checkout is refused and the changes are kept                           |
       | has the pull request's branch with commits not yet pushed   | the commits are kept and the user is told it is not on the latest commits |
       | has the pull request's branch behind the pull request       | the branch moves forward to the pull request's latest commit               |
+      | has the pull request's branch with commits of its own and the pull request has moved on | the checkout is refused and the branch is left as it was |
 
   @backlog @desktop
   Scenario: The checkout says it is working
@@ -1225,7 +1252,7 @@ Feature: Acting on a pull request
     Then the user sees an "error" toast "Could not post the comment"
     And pull request 42 is still open
 
-  @backlog @mc
+  @mc
   Scenario Outline: A reader who did not open the pull request cannot change its state
     Given the user has only read access to "acme/shop"
     And pull request 42 was opened by someone else
@@ -1240,7 +1267,7 @@ Feature: Acting on a pull request
       | reopen pull request 42                | You need write access on this repository, or to have opened this change request, to reopen it.                |
       | update the branch of pull request 42  | You need write access on this repository, or to have opened this change request, to update its branch.        |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Stopping auto-merge and approving fork workflows need write access
     Given the user has only read access to "acme/shop"
     When the user tries to <action>
@@ -1251,21 +1278,21 @@ Feature: Acting on a pull request
       | stop auto-merge on pull request 42              | You need write access on this repository to stop it being merged for you once it is ready. |
       | approve the workflows of fork pull request 42   | You need write access on this repository to approve workflows from a fork pull request.   |
 
-  @backlog @mc
+  @mc
   Scenario: The author of a pull request may change its state with read access only
     Given the user opened pull request 42 and has only read access to "acme/shop"
     When the user looks at its actions
     Then closing, reopening, marking ready and returning to draft are offered
     But merging, auto-merge, reverting and approving workflows are not offered
 
-  @backlog @mc
+  @mc
   Scenario: Updating a branch is offered only where the host says the user may
     Given pull request 42 is behind its base
     And GitHub does not say the user may update its branch
     When the user looks at its actions
     Then updating the branch is offered to nobody
 
-  @backlog @mc
+  @mc
   Scenario: Access withdrawn after the page loaded refuses the action
     Given the page offered merging pull request 42
     And the user's write access to "acme/shop" has since been withdrawn

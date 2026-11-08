@@ -256,7 +256,7 @@ function modelRow(instance, model) {
 }
 
 // The list's rows for a rail entry and search: model rows, plus the
-// collapsible "Legacy models" row inside a provider. The first nine models
+// "Show more" row that ends a provider's list when it has older models. The first nine models
 // that can be chosen carry their jump index.
 function rows(instances, view, query, expandedLegacy) {
     var result = [];
@@ -305,7 +305,11 @@ function rows(instances, view, query, expandedLegacy) {
             });
             result = current;
             if (legacy.length > 0) {
+                // The toggle trails the list, so opening it shows the older
+                // models above it, in place.
                 var expanded = expandedLegacy[instance.instanceId] === true;
+                if (expanded)
+                    result = result.concat(legacy);
                 result.push({
                     kind: "legacy",
                     key: "legacy\u0000" + instance.instanceId,
@@ -313,8 +317,6 @@ function rows(instances, view, query, expandedLegacy) {
                     count: legacy.length,
                     expanded: expanded
                 });
-                if (expanded)
-                    result = result.concat(legacy);
             }
         }
     }

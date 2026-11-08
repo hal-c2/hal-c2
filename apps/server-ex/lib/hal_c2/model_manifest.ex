@@ -35,8 +35,65 @@ defmodule HalC2.ModelManifest do
     end
   end
 
-  @doc "The model catalog of `driver` (`defaults`, `profiles`, `models`), or nil."
-  def catalog(driver), do: get_in(current(), ["providers", driver])
+  @new_badge_ms 7 * 24 * 60 * 60 * 1000
+
+  @doc """
+  The model catalog of `driver` (`defaults`, `profiles`, `models`), or nil. Each current
+  model is marked `"badge" => "new"` while `now_ms` is within seven days after its
+  `releasedAt` (see `badged/2`); the mark is derived on every read, so a cached
+  manifest's badges still expire.
+  """
+  def catalog(driver, now_ms \\ now_ms()),
+    do: current() |> get_in(["providers", driver]) |> badged(now_ms)
+
+  @doc """
+  `catalog` with the new-model badges derived: a current model whose `releasedAt` (a
+  date or an ISO timestamp) is at or before `now_ms` and less than seven days before
+  it gets `"badge" => "new"`. A missing, invalid or future `releasedAt` gives none.
+  """
+  def badged(catalog, now_ms \\ now_ms())
+
+  def badged(%{"models" => models} = catalog, now_ms) when is_list(models) do
+    models =
+      for model <- models do
+        if new?(model, now_ms),
+          do: Map.put(model, "badge", "new"),
+          else: Map.delete(model, "badge")
+      end
+
+    %{catalog | "models" => models}
+  end
+
+  def badged(catalog, _now_ms), do: catalog
+
+  defp new?(%{"status" => "current", "releasedAt" => at}, now_ms) when is_binary(at) do
+    case released_ms(at) do
+      nil -> false
+      released -> now_ms >= released and now_ms - released < @new_badge_ms
+    end
+  end
+
+  defp new?(_model, _now_ms), do: false
+
+  defp released_ms(at) do
+    case DateTime.from_iso8601(at) do
+      {:ok, time, _} ->
+        DateTime.to_unix(time, :millisecond)
+
+      _ ->
+        case Date.from_iso8601(at) do
+          {:ok, date} ->
+            date |> DateTime.new!(~T[00:00:00], "Etc/UTC") |> DateTime.to_unix(:millisecond)
+
+          _ ->
+            nil
+        end
+    end
+  end
+
+  # Tests set `:model_manifest_now_ms` to move the clock.
+  defp now_ms,
+    do: Application.get_env(:hal_c2, :model_manifest_now_ms) || System.system_time(:millisecond)
 
   @doc """
   The compatibility policies, the manifest in use first: a fetched policy replaces
