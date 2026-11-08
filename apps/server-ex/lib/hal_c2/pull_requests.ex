@@ -53,7 +53,11 @@ defmodule HalC2.PullRequests do
       "You need write access on this repository to stop it being merged for you once it is ready.",
     "revert" => "You need write access on this repository to open a revert pull request.",
     "approve-workflows" =>
-      "You need write access on this repository to approve workflows from a fork pull request."
+      "You need write access on this repository to approve workflows from a fork pull request.",
+    "allow-maintainer-edits" =>
+      "Only the author of a pull request from a fork can let maintainers edit its branch.",
+    "stop-maintainer-edits" =>
+      "Only the author of a pull request from a fork can stop maintainers editing its branch."
   }
 
   @auto_merge_refusal "Auto-merge is not available here: this repository has it switched off, " <>
@@ -1071,7 +1075,11 @@ defmodule HalC2.PullRequests do
           # update-branch button on this one.
           stack_rebase = input["stackNumber"] != nil and action == "update-branch"
 
-          with {:ok, viewer} <- GitHub.viewer_permissions(ctx, action == "update-branch") do
+          with {:ok, viewer} <-
+                 GitHub.viewer_permissions(
+                   ctx,
+                   action in ["update-branch", "allow-maintainer-edits", "stop-maintainer-edits"]
+                 ) do
             cond do
               if(stack_rebase,
                 do: viewer["stackRebase"] != true,

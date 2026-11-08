@@ -167,7 +167,7 @@ Feature: Acting on a pull request
     When the user approves its workflows
     Then the workflows start
   # Upstream #25588: the author of a fork's pull request can allow or stop maintainer edits from its actions.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: The author lets maintainers edit their pull request's branch, or stops them
     Given the user opened pull request 42 from their fork of "acme/shop"
     And maintainer edits are <before>
@@ -181,7 +181,7 @@ Feature: Acting on a pull request
       | on      | stops  | can no longer |
 
   # Upstream #25588: the choice is hidden where GitHub does not offer it.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Maintainer edits are not offered where GitHub does not allow them
     Given pull request 42 comes from a branch of "acme/shop" itself
     When the user looks at its actions
@@ -217,7 +217,7 @@ Feature: Acting on a pull request
       | the fork or the target project is private             |
 
   # Upstream #25588: a failed save puts the previous choice back.
-  @backlog @mc @shared
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A failed change to maintainer edits keeps the previous choice
     Given maintainer edits are off for pull request 42
     And GitHub refuses the change

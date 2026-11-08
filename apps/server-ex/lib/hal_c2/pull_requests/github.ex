@@ -27,7 +27,7 @@ defmodule HalC2.PullRequests.GitHub do
   @detail_fields @list_fields <>
                    ",body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest"
 
-  @actions ~w(merge ready draft close reopen update-branch enable-auto-merge disable-auto-merge revert approve-workflows)
+  @actions ~w(merge ready draft close reopen update-branch enable-auto-merge disable-auto-merge revert approve-workflows allow-maintainer-edits stop-maintainer-edits)
   @verdicts ~w(comment approve request-changes)
 
   @doc "What GitHub can do, as `PullRequestCapabilities`. Stack actions are not served."
@@ -74,7 +74,7 @@ defmodule HalC2.PullRequests.GitHub do
       pullRequest(number: $number) {
         number title url body state isDraft mergeable mergeStateStatus reviewDecision
         additions deletions changedFiles createdAt updatedAt mergedAt closedAt
-        headRefName baseRefName headRefOid isCrossRepository
+        headRefName baseRefName headRefOid isCrossRepository maintainerCanModify
         headRepositoryOwner { login }
         author { login avatarUrl ... on User { id name } }
         autoMergeRequest { mergeMethod }
@@ -311,6 +311,14 @@ defmodule HalC2.PullRequests.GitHub do
     updatePullRequest(input: { pullRequestId: $pullRequestId, title: $title, body: $body }) { pullRequest { id } }
   }
   """
+
+  @maintainer_mutation """
+  mutation($pullRequestId: ID!, $allow: Boolean!) {
+    updatePullRequest(input: { pullRequestId: $pullRequestId, maintainerCanModify: $allow }) { pullRequest { id } }
+  }
+  """
+
+  @maintainer_notice "Letting maintainers edit the branch also gives the branch's workflows access to the repository's secrets."
 
   @revert_mutation """
   mutation($pullRequestId: ID!) {
@@ -1140,6 +1148,7 @@ defmodule HalC2.PullRequests.GitHub do
         |> access(pr["viewerCanUpdate"], pr["viewerDidAuthor"])
         |> Map.put(:can_update_branch, comparison != nil and pr["viewerCanUpdateBranch"] == true)
         |> Map.put(:auto_merge_waits, auto_merge_waits?(repo, pr))
+        |> Map.put(:maintainer_edits, maintainer_edits(pr))
 
       method = merge_method(get_in(pr, ["autoMergeRequest", "mergeMethod"]))
       {checks, approvals} = with_approvals(ctx, pr, checks(raw_checks))
@@ -1175,6 +1184,12 @@ defmodule HalC2.PullRequests.GitHub do
         |> put_present("behindBy", comparison)
         |> put_present("autoMergeMethod", method)
         |> put_present("workflowApprovalsRequired", approvals)
+        |> put_present(
+          "maintainerEdits",
+          if(access.maintainer_edits != nil,
+            do: %{"allowed" => access.maintainer_edits, "notice" => @maintainer_notice}
+          )
+        )
 
       {:ok, detail, pr}
     else
@@ -1310,6 +1325,14 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  # Whether maintainers may edit the branch, known only to the author of an open pull
+  # request from a fork, where GitHub offers the choice; nil elsewhere.
+  defp maintainer_edits(pr) do
+    if pr["isCrossRepository"] == true and pr["viewerDidAuthor"] == true and
+         pr["state"] == "OPEN" and is_boolean(pr["maintainerCanModify"]),
+       do: pr["maintainerCanModify"]
+  end
+
   defp access(repo, can_update, did_author) do
     permission = up(repo["viewerPermission"])
     can_write = permission in ~w(ADMIN MAINTAIN WRITE)
@@ -1319,7 +1342,8 @@ defmodule HalC2.PullRequests.GitHub do
       can_triage: can_write or permission == "TRIAGE",
       can_update: can_update != false,
       did_author: did_author == true,
-      can_update_branch: false
+      can_update_branch: false,
+      maintainer_edits: nil
     }
   end
 
@@ -1354,7 +1378,12 @@ defmodule HalC2.PullRequests.GitHub do
           else: []
         ) ++
           if(access.can_update, do: ~w(ready draft close reopen), else: []) ++
-          if(access.can_update_branch, do: ["update-branch"], else: []),
+          if(access.can_update_branch, do: ["update-branch"], else: []) ++
+          case access.maintainer_edits do
+            nil -> []
+            true -> ["stop-maintainer-edits"]
+            false -> ["allow-maintainer-edits"]
+          end,
       "comment" => true,
       "resolve" => access.can_write or access.did_author,
       "verdicts" => if(access.did_author, do: ["comment"], else: @verdicts),
@@ -2148,6 +2177,9 @@ defmodule HalC2.PullRequests.GitHub do
          do: done(graphql(ctx, @revert_mutation, %{"pullRequestId" => id}))
   end
 
+  def action(ctx, "allow-maintainer-edits", _merge, _update), do: maintainer_edits(ctx, true)
+  def action(ctx, "stop-maintainer-edits", _merge, _update), do: maintainer_edits(ctx, false)
+
   def action(ctx, "approve-workflows", _merge, _update) do
     with {:ok, _detail, pr} <- detail(ctx) do
       cond do
@@ -2181,6 +2213,11 @@ defmodule HalC2.PullRequests.GitHub do
       end
 
     done(gh(ctx.cwd, ["pr", sub, "#{ctx.number}"] ++ repo_args(ctx) ++ flags))
+  end
+
+  defp maintainer_edits(ctx, allow) do
+    with {:ok, id} <- node_id(ctx),
+         do: done(graphql(ctx, @maintainer_mutation, %{"pullRequestId" => id, "allow" => allow}))
   end
 
   def comment(ctx, body),
