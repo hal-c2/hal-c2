@@ -401,6 +401,17 @@ def run_turn(text):
                            id="ui-%s" % uuid.uuid4().hex[:8])
             log({"ui": request})
             send(request)
+        elif "ui" in step and step.get("deaf"):
+            # Pi stops reading before it asks: the answer cannot reach it. It stays
+            # up (its output open), so the MC keeps the session and the question.
+            os.close(0)
+            fields = {k: v for k, v in step["ui"].items() if k != "method"}
+            request = dict(fields, type="extension_ui_request",
+                           id="ui-%s" % uuid.uuid4().hex[:8], method=step["ui"]["method"])
+            log({"ui": request})
+            send(request)
+            while True:
+                time.sleep(60)
         elif "ui" in step:
             fields = {k: v for k, v in step["ui"].items() if k != "method"}
             answer = dialog(step["ui"]["method"], fields)

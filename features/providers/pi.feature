@@ -647,8 +647,9 @@ Feature: Pi
     When a Pi extension asks for a line of text titled "Branch" with the placeholder "feature/…"
     Then the question's header is "Branch"
 
-  # Upstream #17206: Pi editor dialogs prefill the answer composer
-  @backlog
+  # Upstream #17206: Pi editor dialogs prefill the answer composer. The MC sends the whole text
+  # as the question's initialAnswer; the clients still have to start the composer from it.
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Pi extension's text edit starts the answer from what is there now
     When a Pi extension asks the user to edit a text that already has content
     Then the whole text fills the answer composer, ready to edit
@@ -664,7 +665,6 @@ Feature: Pi
     When the user dismisses the request
     Then the extension is told the dialog was cancelled
 
-  @backlog
   Scenario: An answer that could not reach Pi can be sent again
     Given a Pi extension asked the user a question
     When the user's answer cannot be delivered to Pi

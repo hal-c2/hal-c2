@@ -1966,6 +1966,70 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi stopped reading before it asked (the fake's `deaf` dialog), so no answer reaches it.
+  step "a Pi extension asked the user a question", context do
+    ui = %{"method" => "input", "title" => "Your words"}
+    context = dialog_thread(context, %{"ui" => ui, "deaf" => true}, "ask me something")
+    request = FakeAcp.await_request(context)
+    [question] = await_question(context)["questions"]
+    Map.merge(context, %{pending_request: request, question: question})
+  end
+
+  defp answer_pending(context, value) do
+    HalC2.Orchestration.dispatch(%{
+      "type" => "runtime-request.respond",
+      "commandId" => "cmd-#{System.unique_integer([:positive])}",
+      "threadId" => World.thread_id(context, context.thread),
+      "requestId" => context.pending_request["id"],
+      "answers" => %{context.question["id"] => value}
+    })
+  end
+
+  step "the user's answer cannot be delivered to Pi", context do
+    assert {:error, message} = answer_pending(context, "nap")
+    assert message =~ "Pi did not get the answer"
+    context
+  end
+
+  # Still waiting in the thread, and a second answer is tried rather than refused.
+  step "the question stays open for another answer", context do
+    item = await_question(context)
+    assert item["requestId"] == context.pending_request["id"]
+    assert {:error, message} = answer_pending(context, "nap again")
+    refute message =~ "No pending"
+    context
+  end
+
+  @editor_prefill "  def run do\n    :ok\n  end\n\n" <> String.duplicate("# note\n", 400)
+
+  step "a Pi extension asks the user to edit a text that already has content", context do
+    ui = %{"method" => "editor", "title" => "Edit it", "prefill" => @editor_prefill}
+    context = dialog_thread(context, %{"ui" => ui, "say" => "Got: "}, "ask me something")
+    Map.put(context, :pending_request, FakeAcp.await_request(context))
+  end
+
+  # Longer than the 2,000 characters quoted in the question: the composer gets it all.
+  step "the whole text fills the answer composer, ready to edit", context do
+    [question] = await_question(context)["questions"]
+    assert String.length(@editor_prefill) > 2_000
+    assert question["initialAnswer"] == @editor_prefill
+    Map.put(context, :question, question)
+  end
+
+  step "the answer goes back to the extension with its spaces and line breaks as typed",
+       context do
+    typed = "  def run do\n    :edited\n  end\n\n"
+
+    context =
+      FakeAcp.respond(context, context.pending_request["id"], %{
+        "answers" => %{context.question["id"] => typed}
+      })
+
+    FakeAcp.await_run(context, "completed")
+    assert [%{"value" => ^typed}] = for(%{"ui_answer" => a} <- FakeAcp.log(context), do: a)
+    context
+  end
+
   step ~r/^a Pi extension (?<asks>asks the user to pick from a list|asks the user to edit a text|asks for a line of text with no placeholder) titled "(?<title>[^"]+)" with nothing else to say$/,
        %{args: [asks, title]} = context do
     ui =

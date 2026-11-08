@@ -933,6 +933,8 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
   required: Schema.optional(Schema.Boolean),
+  /** The text a free answer starts from (a Pi editor dialog's current value), kept exactly. */
+  initialAnswer: Schema.optional(Schema.String),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
 

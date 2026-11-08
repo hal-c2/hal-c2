@@ -412,15 +412,17 @@ defmodule HalC2.Pi.ThreadRuntime do
             _ -> %{"cancelled" => true}
           end
 
-        ui_reply(state, ui_id, reply)
+        with :ok <- deliver_ui(state, ui_id, reply) do
+          allowed =
+            if decision in ["acceptForSession", "acceptAlways"],
+              do: MapSet.put(state.allowed, key),
+              else: state.allowed
 
-        allowed =
-          if decision in ["acceptForSession", "acceptAlways"],
-            do: MapSet.put(state.allowed, key),
-            else: state.allowed
-
-        state = %{state | requests: requests, allowed: allowed}
-        {:reply, :ok, resolve_request(state, request_id, decision)}
+          state = %{state | requests: requests, allowed: allowed}
+          {:reply, :ok, resolve_request(state, request_id, decision)}
+        else
+          error -> {:reply, error, state}
+        end
 
       {{:question, ui_id, native}, requests} ->
         value = if is_map(response["answers"]), do: answer(response["answers"][native])
@@ -430,9 +432,12 @@ defmodule HalC2.Pi.ThreadRuntime do
             do: {%{"cancelled" => true}, "cancelled"},
             else: {%{"value" => value}, "resolved"}
 
-        ui_reply(state, ui_id, reply)
-        state = %{state | requests: requests}
-        {:reply, :ok, resolve_request(state, request_id, response, status)}
+        with :ok <- deliver_ui(state, ui_id, reply) do
+          state = %{state | requests: requests}
+          {:reply, :ok, resolve_request(state, request_id, response, status)}
+        else
+          error -> {:reply, error, state}
+        end
     end
   end
 
@@ -1619,16 +1624,23 @@ defmodule HalC2.Pi.ThreadRuntime do
         true -> {"Question", title}
       end
 
-    # An editor dialog's current text is surfaced with the question, cut to
-    # 2,000 characters, so the user edits what is there rather than blind.
-    prefill = if method == "editor", do: nonblank(request["prefill"])
+    # An editor dialog's current text is the answer's starting point, whole and
+    # exactly as Pi sent it (`initialAnswer`). It is also quoted with the question,
+    # cut to 2,000 characters, for a client that does not prefill its composer.
+    prefill = if method == "editor", do: request["prefill"]
+    shown = nonblank(prefill)
 
     text =
-      if prefill,
-        do: text <> "\n\nCurrent value:\n" <> String.slice(prefill, 0, 2_000),
+      if shown,
+        do: text <> "\n\nCurrent value:\n" <> String.slice(shown, 0, 2_000),
         else: text
 
     question = %{"id" => native, "header" => header, "question" => text, "options" => options}
+
+    question =
+      if method == "editor",
+        do: Map.put(question, "initialAnswer", if(is_binary(prefill), do: prefill, else: "")),
+        else: question
 
     {state, request_id} = open_question(flush(state), native, [question])
     %{state | requests: Map.put(state.requests, request_id, {:question, ui_id, native})}
@@ -1638,6 +1650,15 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp ui_reply(state, ui_id, reply),
     do: Connection.notify(state.conn, "extension_ui_response", Map.put(reply, "id", ui_id))
+
+  # A user's answer: one Pi did not get leaves its request open to be sent again.
+  defp deliver_ui(state, ui_id, reply) do
+    case state.conn &&
+           Connection.deliver(state.conn, "extension_ui_response", Map.put(reply, "id", ui_id)) do
+      :ok -> :ok
+      _ -> {:error, "Pi did not get the answer. Send it again."}
+    end
+  end
 
   defp answer([value | _]), do: answer(value)
   defp answer(value) when is_binary(value), do: value
