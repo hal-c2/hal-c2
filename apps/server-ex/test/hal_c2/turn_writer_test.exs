@@ -110,6 +110,45 @@ defmodule HalC2.Orchestration.TurnWriterTest do
       assert CommandTail.get("t1", "i9") == nil
     end
 
+    test "a retry item left open is retitled by how the turn ended" do
+      retry = %{"attempt" => 1, "maxAttempts" => 5, "retryDelayMs" => nil}
+
+      {:ok, _} =
+        HalC2.Streams.commit("t1", :thread, [
+          {"turn-item", "i3",
+           %{
+             "s" => %{
+               "id" => "i3",
+               "status" => "running",
+               "title" => "Provider retry",
+               "retry" => retry
+             }
+           }},
+          {"node", "n3", %{"s" => %{"id" => "n3", "status" => "running"}}}
+        ])
+
+      state = %{
+        state("paragraph")
+        | items: %{"r" => %{id: "i3", node: "n3", message: nil, kind: :error}}
+      }
+
+      for {status, title} <- [
+            {"completed", "Provider recovered"},
+            {"failed", "Provider error"},
+            {"interrupted", "Provider retry stopped"}
+          ] do
+        {:ok, _} =
+          HalC2.Streams.commit("t1", :thread, [
+            {"turn-item", "i3", %{"s" => %{"status" => "running", "title" => "Provider retry"}}}
+          ])
+
+        _ = TurnWriter.close_open_items(state, status)
+        assert text("i3")["title"] == title
+        assert text("i3")["status"] == status
+        assert text("i3")["retry"] == retry
+      end
+    end
+
     test "turn mode writes assistant text only at a boundary" do
       state =
         state("turn") |> TurnWriter.buffer("a", "text", "One\n\nTwo") |> TurnWriter.flush(:timer)

@@ -234,7 +234,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #29842: capabilities offered providers turned off for the caller's project, which
   # delegate_task then refused.
-  @backlog @mc
+  @mc
   Scenario: The orchestrator's capabilities mark a provider turned off for the caller's project
     Given "opencode" is turned off for the project of "parent" and on in another project
     When the agent in "parent" asks for the orchestrator's capabilities
@@ -515,9 +515,9 @@ Feature: Delegating tasks to subagents
     Then the task summary is the last one
 
   @mc
-  Scenario: A task that ends without an answer says so
+  Scenario: A task that fails without an answer says why it failed
     When the subagent fails without an assistant message
-    Then the delivered result says there was no answer
+    Then the delivered result says why it failed
 
   @mc
   Scenario: Checking a task's status
@@ -653,7 +653,7 @@ Feature: Delegating tasks to subagents
       | completed its checkpoint       | accepts         | completed |
 
   # Upstream #25662: a wake-policy change planned from a stale read put a checkpointed run back to running.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Changing a task's wake policy leaves a settled run settled
     Given the agent in "parent" delegated a task and is waiting
     And the run of "parent" completed its checkpoint just before the wake policy is changed to always
@@ -662,7 +662,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #23456: settling a finished Codex parent unloaded a subagent a client had open, so
   # the subagent's next reply never showed and its run never ended.
-  @backlog @mc @plugin-codex @priority-high
+  @mc @plugin-codex @priority-high
   Scenario: A subagent open in a client keeps its replies after its parent settles
     Given a delegated Codex subagent of "parent" is open in a client
     When the user settles "parent"
@@ -928,12 +928,12 @@ Feature: Delegating tasks to subagents
 
   # Upstream #22579: a completion that waited in the queue started on the model the thread had
   # when it was queued, and put the thread back on it.
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A queued completion starts on the model the thread has now
     Given the completion of "one" is queued for "parent" while it works on "gpt-5.4"
     When the user switches "parent" to "gpt-5.5" before the completion is delivered
     Then the wake for "one" runs on "gpt-5.5"
-    And "parent" stays on "gpt-5.5"
+    And the thread "parent" stays on "gpt-5.5"
     But a message the user queued keeps the model it was queued with
 
   @mc
@@ -1156,7 +1156,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #27468: a monitor the subagent left running, though it said it was not waiting on it,
   # kept the task from finishing until the user next spoke in the parent.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A task finishes while its subagent leaves running a monitor it does not wait on
     Given the agent in "parent" delegated a task
     And the subagent answered "Done" with a monitor running that it marked as not waited on
@@ -1227,11 +1227,27 @@ Feature: Delegating tasks to subagents
   # Upstream #30390: an untitled subagent's title cut from its prompt could keep half of an
   # emoji, shown where its workflow group has no name of its own.
   # Upstream #29906: a subagent's title cut from a long task title or prompt kept half of an emoji.
-  @backlog @mc @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A subagent titled from its prompt does not end in a broken character
     When the provider of "parent" starts a subagent with no title and a prompt with an emoji where the cut falls
     Then the subagent's title is cut before the emoji, not through it, and followed by "..."
     And the agents list shows that title without a replacement character
+
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
+  Scenario: A subagent titled from its prompt does not end in a joiner
+    When the provider of "parent" starts a subagent with no title and a prompt with a joined emoji where the cut falls
+    Then the subagent's title is cut before the joined emoji, and is followed by "..."
+
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
+  Scenario Outline: A subagent titled from its prompt is cut on a character boundary
+    When the provider of "parent" starts a subagent with no title and a prompt of <letters> letters and the emoji "<emoji>"
+    Then the subagent's title is <kept> letters and the emoji "<kept_emoji>" followed by "..."
+
+    Examples:
+      | letters | emoji    | kept | kept_emoji |
+      | 67      | 🇮🇸      | 67   | none       |
+      | 67      | ❤️       | 67   | ❤️         |
+      | 64      | 👨‍❤️‍👨 | 64   | none       |
 
   @mc
   Scenario: A subagent starts awake whatever state its parent is in
@@ -1288,7 +1304,7 @@ Feature: Delegating tasks to subagents
 
   # Upstream #19801: delegated children no longer watch pull requests (refusing their watch is
   # source-control/pull-request-threads.feature); they hand the pull request back to the caller.
-  @backlog @mc
+  @mc
   Scenario: A subagent's result names the pull request for its caller to watch
     Given the subagent of "parent" opened pull request 42 and its checks are still running
     When the subagent finishes its task

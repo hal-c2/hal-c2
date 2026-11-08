@@ -699,6 +699,7 @@ defmodule HalC2.Orchestration do
       if type == "thread.delete" do
         HalC2.WorktreeSetup.superseded(thread_id)
         stop_runtimes(thread_id)
+        HalC2.Orchestration.NativeSubagent.settle_children(thread_id, "cancelled")
         # Work the thread still had waiting dies with it; cleaning up its
         # terminals and attached files is recorded work that outlives a
         # restart (`HalC2.Orchestration.Effects`).
@@ -1542,12 +1543,35 @@ defmodule HalC2.Orchestration do
   # workspace, a restart), so a provider turned off after its message was accepted
   # starts no turn: the run fails and says why.
   defp begin_turn_now(thread_id, turn) do
-    case HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance) do
-      nil ->
-        start_turn_now(thread_id, turn)
-
-      reason ->
+    cond do
+      reason = HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", off(reason))
+
+      # A bare `/compact` with nothing to compact (`new_run/5`) never reaches
+      # the provider.
+      refusal = Map.get(turn, :compact_refusal) ->
+        HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", refusal)
+
+      true ->
+        start_turn_now(thread_id, turn)
+    end
+  end
+
+  # The failure of a bare `/compact` on a thread with no conversation yet: no
+  # provider conversation to compact, no fork to continue and no history handed
+  # over. Its error item is titled from the code (`TurnWriter`).
+  defp compact_refusal(command, provider_thread, handoff) do
+    fresh =
+      provider_thread == nil or get_in(provider_thread, ["nativeThreadRef", "nativeId"]) == nil
+
+    if maintenance(command) == "/compact" and fresh and handoff.fork == nil and
+         handoff.context in [nil, ""] do
+      %{
+        "class" => "provider_error",
+        "code" => "compact_empty_thread",
+        "message" => "Start a conversation before compacting this thread.",
+        "retryable" => false
+      }
     end
   end
 
@@ -3188,7 +3212,10 @@ defmodule HalC2.Orchestration do
             at,
             %{
               "title" => "Interrupt requested",
-              "message" => command["reason"] || "Interrupt requested"
+              "message" => command["reason"] || "Interrupt requested",
+              # An agent's stop (`hal_c2_thread_interrupt`, `task_cancel`, a page
+              # agent's stop) names itself, so the outcome does not credit the user.
+              "stoppedBy" => if(command["requestedBy"] == "agent", do: "agent", else: "user")
             }
           )
         )
@@ -4091,7 +4118,33 @@ defmodule HalC2.Orchestration do
               &Map.merge(&1, %{"status" => "cancelled", "resolvedAt" => at})
             )
 
-    runs ++ attempts ++ requests
+    # The active runs' work ends with them: their running items, and the provider
+    # subagents they left open (their child threads' work is settled after this,
+    # `NativeSubagent.settle_children/2`).
+    items =
+      for item <- StreamState.list(state, "turn-item"),
+          item["runId"] in active and item["status"] == "running",
+          do:
+            upsert(state, "turn-item", item["id"], fn item ->
+              item
+              |> done.()
+              |> then(
+                &if(Map.has_key?(&1, "streaming"), do: Map.put(&1, "streaming", false), else: &1)
+              )
+            end)
+
+    subagents =
+      for subagent <- StreamState.list(state, "subagent"),
+          subagent["origin"] == "provider_native" and
+            subagent["status"] not in ~w(completed failed interrupted cancelled),
+          change <- [
+            upsert(state, "subagent", subagent["id"], done),
+            upsert(state, "node", subagent["id"], done),
+            upsert(state, "turn-item", "turn-item:subagent:#{subagent["id"]}", done)
+          ],
+          do: change
+
+    runs ++ attempts ++ requests ++ items ++ subagents
   end
 
   # Settling also dismisses the questions the agent asked in the background, unanswered
@@ -5295,6 +5348,9 @@ defmodule HalC2.Orchestration do
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
+      # A bare `/compact` with nothing to compact fails before the provider
+      # starts (`begin_turn_now/2`).
+      compact_refusal: compact_refusal(command, provider_thread, handoff),
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),

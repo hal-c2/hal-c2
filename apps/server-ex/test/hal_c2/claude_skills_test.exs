@@ -149,5 +149,22 @@ defmodule HalC2.ClaudeSkillsTest do
       File.write!(local, ~s({"permissions": {"disableBypassPermissionsMode": "disable"}}))
       assert Skills.bypass_permissions(config, project) == :disabled
     end
+
+    test "a permissions value that is not a map turns nothing off" do
+      for settings <- [
+            %{"permissions" => "x"},
+            %{"permissions" => []},
+            %{"permissions" => 5},
+            %{"permissions" => %{"disableBypassPermissionsMode" => false}},
+            %{},
+            nil
+          ] do
+        refute Skills.bypass_disabled_in?(settings), inspect(settings)
+      end
+
+      assert Skills.bypass_disabled_in?(%{
+               "permissions" => %{"disableBypassPermissionsMode" => "disable"}
+             })
+    end
   end
 end

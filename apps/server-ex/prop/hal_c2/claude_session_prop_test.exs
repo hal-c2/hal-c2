@@ -16,7 +16,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   mode Claude entered itself lasts one turn: the next one runs in the thread's mode. A
   prompt Claude acknowledges but never starts a turn for fails, and keeps the process.
   A turn Claude runs by itself never ends the user's: each turn ends on its own result,
-  and `/compact` once its compaction is in.
+  and `/compact` once its compaction is in. A `/compact` before any turn has started
+  Claude's session has nothing to compact, and is refused without starting Claude.
   """
 
   use ExUnit.Case, async: false
@@ -123,7 +124,7 @@ defmodule HalC2.ClaudeSessionPropTest do
   def next_state(state, _result, {:call, _, :turn, [_n, model, fast, text]}) do
     state = %{state | n: state.n + 1}
 
-    if refused?(state, model, fast),
+    if refused?(state, model, fast) or empty_compact?(state, text),
       do: state,
       else: %{
         state
@@ -141,10 +142,16 @@ defmodule HalC2.ClaudeSessionPropTest do
   defp refused?(state, model, fast),
     do: state.background and state.launch != {model, fast == true}
 
+  # No turn has started Claude's session yet, so it has no conversation to compact.
+  defp empty_compact?(state, text), do: text == :compact and state.launch == nil
+
   def postcondition(state, {:call, _, :turn, [_n, model, fast, text]}, seen) do
     cond do
       refused?(state, model, fast) ->
         seen.status == "failed" and seen.reused and seen.background
+
+      empty_compact?(state, text) ->
+        seen.status == "failed" and not seen.background and seen.compactions == 0
 
       text == :never_start ->
         seen.status == "failed" and
