@@ -146,7 +146,6 @@ Feature: Pi
     And the first thread lets Pi handle its startup prompt
 
   # Upstream #15529: Pi model discovery waits up to 30 seconds for slow extensions
-  @backlog
   Scenario: Pi's extension models are found when its extensions load slowly
     Given Pi takes 20 seconds to load its extensions
     When the user refreshes provider status

@@ -200,10 +200,12 @@ defmodule HalC2.Pi do
       try do
         # Discovery waits up to 30 seconds per read: Pi's extensions can load
         # slowly, and their models are part of what discovery finds.
-        with {:ok, state} <- Connection.call(conn, "get_state", %{}, 30_000),
-             {:ok, available} <- Connection.call(conn, "get_available_models", %{}, 30_000) do
+        wait = Application.get_env(:hal_c2, :pi_discover_ms, 30_000)
+
+        with {:ok, state} <- Connection.call(conn, "get_state", %{}, wait),
+             {:ok, available} <- Connection.call(conn, "get_available_models", %{}, wait) do
           commands =
-            case Connection.call(conn, "get_commands", %{}, 30_000) do
+            case Connection.call(conn, "get_commands", %{}, wait) do
               {:ok, data} -> data
               {:error, _} -> nil
             end

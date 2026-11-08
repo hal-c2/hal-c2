@@ -1369,6 +1369,35 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Discovery's 30 seconds scaled down 20 times: Pi's extensions take a second.
+  step "Pi takes 20 seconds to load its extensions", context do
+    Application.put_env(:hal_c2, :pi_discover_ms, 1_500)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :pi_discover_ms) end)
+
+    install(context, %{
+      "models" => [
+        %{"provider" => "fake", "id" => "base", "name" => "Base", "reasoning" => false},
+        %{"provider" => "extension", "id" => "added", "name" => "Added", "reasoning" => false}
+      ],
+      "commandDelays" => %{"get_available_models" => 1.0}
+    })
+  end
+
+  step "the models Pi's extensions add are offered", context do
+    assert Enum.any?(pi(context)["models"], &(&1["slug"] == "extension/added"))
+    context
+  end
+
+  step "discovery that takes longer than 30 seconds falls back to {string}",
+       %{args: [fallback]} = context do
+    # A first discovery, with no earlier list for this Pi to keep.
+    :persistent_term.erase({HalC2.Acp, "pi", :pi_last_models})
+
+    FakeAcp.configure(context, &put_in(&1, ["commandDelays"], %{"get_available_models" => 2.0}))
+    assert Enum.map(FakeAcp.probe("pi")["models"], & &1["name"]) == [fallback]
+    context
+  end
+
   step "Pi discovery of its models and commands fails", context do
     install(context, %{"discoveryError" => true})
   end
