@@ -47,14 +47,29 @@ Rectangle {
     // to show the line's own button (the phone's).
     property bool touchLines: false
     // A line held down starts a comment range (-1: none): tapping another
-    // line of the same file and side comments on the range, tapping a line
-    // of another file comments on that line alone and lets the mark go.
+    // line of the same file and side comments on the range, tapping the
+    // marked line comments on it alone, and tapping a line of another file
+    // comments on that line alone. Every tap lets the mark go, and holding
+    // the marked line again drops it without a comment.
     property string rangePath: ""
     property string rangeSide: "new"
     property int rangeLine: -1
-    // The mark was just made by holding this line: the tap its release may
-    // also report is not a second tap on it.
-    property bool rangeFresh: false
+
+    // Drops the range mark. It names a line of the diff as shown, so it must
+    // not outlive a change of shown diff: the triggers below call this when
+    // the source, the model, the selection or the patch changes (a thread
+    // change clears the model and restores that thread's selection, so both
+    // of those fire for it too).
+    function clearRange() {
+        rangeLine = -1;
+        rangePath = "";
+    }
+    onSourceChanged: clearRange()
+    onModelChanged: clearRange()
+    // The selection shown, for dropping the mark when it changes; a source
+    // without one (a pull request's code) always reads 0.
+    readonly property int shownSelection: source?.selection ?? 0
+    onShownSelectionChanged: clearRange()
     // Review comments waiting in the thread's draft, counted in the header.
     readonly property int draftComments: canComment ? (Shell.state.composer?.reviewComments ?? []).length : 0
     // The branch is what is reviewed, against `source.comparedBase`.
@@ -68,6 +83,7 @@ Rectangle {
     Connections {
         target: root.model
         function onPatchChanged() {
+            root.clearRange();
             root.treeRevision++;
         }
         function onTreeChanged() {
@@ -887,28 +903,30 @@ Rectangle {
             TapHandler {
                 enabled: root.touchLines && root.canComment && stackedRow.row.sign !== "\\"
                 longPressThreshold: 0.4
+                // No `tapped` follows a long press (TapHandler reports the
+                // hold instead), so the mark is just set or dropped here and
+                // the next tap is always a deliberate one.
                 onLongPressed: {
+                    // Holding the marked line again drops the mark.
+                    if (stackedRow.rangeMarked) {
+                        root.clearRange();
+                        return;
+                    }
                     root.rangePath = stackedRow.linePath;
                     root.rangeSide = stackedRow.lineSide;
                     root.rangeLine = stackedRow.lineNumber;
-                    root.rangeFresh = true;
                 }
                 onTapped: {
-                    if (root.rangeFresh && stackedRow.rangeMarked) {
-                        root.rangeFresh = false;
-                        return;
-                    }
-                    root.rangeFresh = false;
                     if (root.rangeLine >= 0 && root.rangePath === stackedRow.linePath && root.rangeSide === stackedRow.lineSide) {
                         const first = Math.min(root.rangeLine, stackedRow.lineNumber);
                         const last = Math.max(root.rangeLine, stackedRow.lineNumber);
-                        root.rangeLine = -1;
-                        root.rangePath = "";
+                        root.clearRange();
+                        // A tap on the marked line itself has first === last:
+                        // a comment on that one line.
                         commentPopup.ask(stackedRow.linePath, stackedRow.lineSide, first, last);
                         return;
                     }
-                    root.rangeLine = -1;
-                    root.rangePath = "";
+                    root.clearRange();
                     commentPopup.ask(stackedRow.linePath, stackedRow.lineSide, stackedRow.lineNumber);
                 }
             }

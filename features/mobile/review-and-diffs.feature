@@ -168,6 +168,24 @@ Feature: Reviewing changes on a phone
     Then a comment on line 3 of "src/price.ts" is started
     And line 10 of "src/cart.ts" is no longer marked
 
+  @mobile
+  Scenario: Changing the diff source drops a held range start
+    Given the user is reviewing "src/cart.ts"
+    When the user touches and holds line 10
+    Then line 10 is marked as the start of a range
+    When the user switches to the working tree
+    And the user taps line 14
+    Then a comment on line 14 is started
+    And line 10 of "src/cart.ts" is no longer marked
+
+  @mobile
+  Scenario: Tapping the held line comments on that line alone
+    Given the user is reviewing "src/cart.ts"
+    When the user touches and holds line 10
+    And the user taps line 10
+    Then a comment on line 10 is started
+    And line 10 of "src/cart.ts" is no longer marked
+
   @backlog @mobile
   Scenario: The user adds an image to a review comment
     Given the user is writing a review comment

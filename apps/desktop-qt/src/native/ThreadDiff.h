@@ -91,11 +91,11 @@ class ThreadDiff : public QObject {
   Q_PROPERTY(bool ignoreWhitespace READ ignoreWhitespace WRITE setIgnoreWhitespace NOTIFY optionsChanged)
   Q_PROPERTY(bool wrap READ wrap WRITE setWrap NOTIFY optionsChanged)
   // A turn can be reverted to: the thread is not working and has a checkpoint.
+  Q_PROPERTY(bool canRevert READ canRevert NOTIFY revertChanged)
   // The files of the selection shown the user has marked viewed, remembered
   // per thread and diff source for as long as the app runs. A viewed file is
   // collapsed; unmarking it expands it again (the panel's Viewed box).
   Q_PROPERTY(QStringList viewedPaths READ viewedPaths NOTIFY viewedChanged)
-  Q_PROPERTY(bool canRevert READ canRevert NOTIFY revertChanged)
   // The turn the user is asked to confirm reverting to, or 0.
   Q_PROPERTY(int revertTurn READ revertTurn NOTIFY revertChanged)
   Q_PROPERTY(bool reverting READ reverting NOTIFY revertChanged)
