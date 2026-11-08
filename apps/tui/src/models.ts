@@ -214,3 +214,73 @@ export function modelOptionStates(
         : [],
   }));
 }
+
+/** The select a model's effort is (the named reasoning select, else the first). */
+function effortDescriptor(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection,
+): Extract<ProviderOptionDescriptor, { type: "select" }> | null {
+  const model = options.find(
+    (option) => option.instanceId === selection.instanceId && option.model === selection.model,
+  );
+  const selects = (
+    model?.capabilities
+      ? getProviderOptionDescriptors({ caps: model.capabilities, selections: selection.options })
+      : []
+  ).filter((descriptor) => descriptor.type === "select");
+  return (
+    selects.find((descriptor) => REASONING_DESCRIPTOR_IDS.has(descriptor.id)) ?? selects[0] ?? null
+  );
+}
+
+/**
+ * The effort one level up (1) or down (-1) from the selection's, wrapping, as
+ * composer.increaseEffort / decreaseEffort set it (the desktop's steppedChoice).
+ * A level the prompt carries (Ultrathink) is typed, never stepped to, and a
+ * current level the model does not list steps from the model's default. Null
+ * when there is nothing to step between.
+ */
+export function steppedEffort(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection,
+  direction: 1 | -1,
+): { readonly descriptorId: string; readonly value: string } | null {
+  const descriptor = effortDescriptor(options, selection);
+  if (!descriptor) return null;
+  const injected = descriptor.promptInjectedValues ?? [];
+  const choices = descriptor.options.filter((choice) => !injected.includes(choice.id));
+  if (choices.length < 2) return null;
+  const ids = choices.map((choice) => choice.id);
+  const current = getProviderOptionCurrentValue(descriptor);
+  let at = typeof current === "string" ? ids.indexOf(current) : -1;
+  if (at < 0) at = choices.findIndex((choice) => choice.isDefault === true);
+  const value =
+    at < 0
+      ? direction > 0
+        ? ids[0]!
+        : ids.at(-1)!
+      : ids[(((at + direction) % ids.length) + ids.length) % ids.length]!;
+  return { descriptorId: descriptor.id, value };
+}
+
+/** "please ultrathink about it": the prompt asks for Ultrathink in its own words, past any prefix. */
+export function ultrathinkInWords(text: string): boolean {
+  return /\bultrathink\b/i.test(text.replace(/^\s*Ultrathink:\s*/i, ""));
+}
+
+/**
+ * The level the prompt itself asks for (Ultrathink, by its prefix or in its
+ * own words), which is the effort shown; `locked` when only editing the
+ * prompt's words can change it. Null when the prompt asks for none.
+ */
+export function promptEffort(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection | null | undefined,
+  text: string,
+): { readonly value: string; readonly locked: boolean } | null {
+  if (!selection) return null;
+  const injected = effortDescriptor(options, selection)?.promptInjectedValues?.[0];
+  if (injected === undefined) return null;
+  const locked = ultrathinkInWords(text);
+  return locked || /^\s*Ultrathink:/.test(text) ? { value: injected, locked } : null;
+}

@@ -778,7 +778,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the user is told "Your prompt contains "ultrathink" in the text. Remove it to change this option."
 
   # Upstream #19928: two commands step the composer's effort one level without opening the picker.
-  @desktop @tui @backlog-tui
+  @desktop @tui
   Scenario Outline: The user steps the effort from the keyboard without leaving the prompt
     Given the thread runs on a model whose efforts are low, medium and high
     And the effort is <from> and the user is typing a draft
@@ -816,7 +816,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the draft reads "/review the cache"
 
   # Upstream #19928: writing "ultrathink" in the prompt locks effort for the step as for the picker.
-  @desktop @tui @backlog-tui @priority-low
+  @desktop @tui @priority-low
   Scenario: Stepping the effort does nothing while the prompt says ultrathink in its own words
     Given the thread runs on Claude
     And the user has typed "please ultrathink about the cache"
@@ -825,7 +825,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #19928: a level the provider reports outside the model's list (OpenCode's "default")
   # steps from the model's default instead of doing nothing.
-  @desktop @tui @backlog-tui @priority-low
+  @desktop @tui @priority-low
   Scenario: An effort outside the model's levels steps from the model's default
     Given the provider reports an effort the model does not list
     And the model's default effort is medium
@@ -841,6 +841,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the next turn runs without Fast mode
 
   # Upstream #19928: the step stands down whenever something else owns the composer.
+  # The TUI stands down on every row but cannot edit a queued message, so that row cannot run there.
   @desktop @tui @backlog-tui
   Scenario Outline: Stepping the effort does nothing while the composer is taken
     Given <situation>

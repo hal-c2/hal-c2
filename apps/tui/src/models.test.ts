@@ -5,9 +5,12 @@ import {
   currentModelIndex,
   flattenModelOptions,
   modelSelectionForOption,
+  promptEffort,
   reasoningChoicesFor,
   reasoningChoicesForSelection,
   resolveModelSelection,
+  steppedEffort,
+  ultrathinkInWords,
   withModelSelectionOption,
 } from "./models.ts";
 
@@ -188,5 +191,60 @@ describe("model selection parity with the web composer", () => {
       { id: "fastMode", value: true },
       { id: "reasoningEffort", value: "high" },
     ]);
+  });
+});
+
+describe("steppedEffort", () => {
+  const effortModel = (currentValue?: string) => ({
+    instanceId: ProviderInstanceId.make("claude"),
+    model: "opus",
+    label: "Opus",
+    providerLabel: "Claude",
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          options: ["low", "medium", "high", "ultrathink"].map((id) => ({
+            id,
+            label: id,
+            ...(id === "medium" ? { isDefault: true } : {}),
+          })),
+          promptInjectedValues: ["ultrathink"],
+          ...(currentValue ? { currentValue } : {}),
+        },
+      ],
+    },
+  });
+  const at = (value: string | undefined, direction: 1 | -1, currentValue?: string) =>
+    steppedEffort(
+      [effortModel(currentValue)],
+      {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "opus",
+        ...(value ? { options: [{ id: "effort", value }] } : {}),
+      },
+      direction,
+    )?.value;
+
+  it("steps one level and wraps past the ends, never onto a level the prompt carries", () => {
+    expect(at("medium", 1)).toBe("high");
+    expect(at("high", 1)).toBe("low");
+    expect(at("low", -1)).toBe("high");
+  });
+
+  it("steps from the model's default when the current level is not one it lists", () => {
+    expect(at(undefined, 1, "default")).toBe("high");
+    expect(at(undefined, -1, "default")).toBe("low");
+  });
+
+  it("reads Ultrathink, locked, only while the prompt says it in its own words", () => {
+    const selection = { instanceId: ProviderInstanceId.make("claude"), model: "opus" };
+    const read = (text: string) => promptEffort([effortModel()], selection, text);
+    expect(read("please ultrathink about it")).toEqual({ value: "ultrathink", locked: true });
+    expect(read("Ultrathink: design the cache")).toEqual({ value: "ultrathink", locked: false });
+    expect(read("design the cache")).toBeNull();
+    expect(ultrathinkInWords("Ultrathink: ultrathinking")).toBe(false);
   });
 });

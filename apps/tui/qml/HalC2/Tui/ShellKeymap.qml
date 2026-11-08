@@ -20,6 +20,8 @@ Item {
         // A held Esc repeats: the press closes the picker or page, and a repeat
         // landing on the prompt must not go on to clear the draft or stop the turn.
         if (event.isAutoRepeat && event.key === "escape") return
+        // A held step key steps once: holding it must not spin the effort round.
+        if (event.isAutoRepeat && (action === "composer.increaseEffort" || action === "composer.decreaseEffort")) return
         if (Shell.dispatch(action) !== true) event.accepted = false
     }
 

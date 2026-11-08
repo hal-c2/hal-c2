@@ -63,8 +63,10 @@ import {
   currentModelIndex,
   modelOptionStates,
   modelSelectionForOption,
+  promptEffort,
   reasoningChoicesForSelection,
   resolveModelSelection,
+  steppedEffort,
   withModelSelectionOption,
   type ModelOption,
   type ModelOptionState,
@@ -738,7 +740,11 @@ export function createComposer(options: ComposerOptions): Composer {
     const pendingUserInputCount = detail ? derivePendingUserInputs(detail.activities).length : 0;
     const pendingApprovalCount = detail ? derivePendingApprovals(detail.activities).length : 0;
     const model = activeModel();
-    const effort = reasoningChoicesForSelection(modelOptions, model)?.selectedId ?? null;
+    // An effort the prompt asks for (Ultrathink) is the one shown.
+    const effort =
+      promptEffort(modelOptions, model, draft.text)?.value ??
+      reasoningChoicesForSelection(modelOptions, model)?.selectedId ??
+      null;
     const interactionMode: ProviderInteractionMode = newDraft
       ? newDraft.interactionMode
       : page
@@ -1584,6 +1590,35 @@ export function createComposer(options: ComposerOptions): Composer {
       "success",
     );
     publish();
+  };
+
+  /**
+   * The effort one level up or down without opening its picker
+   * (composer.increaseEffort / decreaseEffort). It stands down while
+   * something else owns the composer: an approval or a question waiting, no
+   * ready provider, or the prompt's own ultrathink. The TUI has no editing of
+   * queued messages, so that case of the desktop's never arises here.
+   */
+  const stepEffort = (direction: 1 | -1) => {
+    const selection = activeModel();
+    if (!selection) return;
+    // Ready: the MC lists its models, its last check did not fail and its
+    // config has nothing to fix first.
+    if (!modelOptions.some((option) => option.instanceId === selection.instanceId)) return;
+    const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+    if (provider?.status === "error" || provider?.status === "disabled") return;
+    if (providerNotice(selection) !== null) return;
+    const detail = newDraft || openPage() ? null : selectedDetail();
+    if (
+      detail &&
+      (derivePendingApprovals(detail.activities).length > 0 ||
+        derivePendingUserInputs(detail.activities).length > 0)
+    ) {
+      return;
+    }
+    if (promptEffort(modelOptions, selection, draftFor(target()).text)?.locked) return;
+    const next = steppedEffort(modelOptions, selection, direction);
+    if (next) setOption(next.descriptorId, next.value);
   };
 
   /**
@@ -2740,6 +2775,12 @@ export function createComposer(options: ComposerOptions): Composer {
         return true;
       case "composer.optionsPicker.toggle":
         openOptionsPicker();
+        return true;
+      case "composer.increaseEffort":
+        stepEffort(1);
+        return true;
+      case "composer.decreaseEffort":
+        stepEffort(-1);
         return true;
       case "composer.providers.reload":
         void loadModels().catch(() => {});

@@ -125,6 +125,19 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
         keywords: "effort thinking",
         action: "composer.effortPicker.toggle",
       },
+      // Unbound by default, as on the desktop: keymap.json gives them keys.
+      {
+        id: "effort-up",
+        title: "Increase reasoning effort",
+        keywords: "effort thinking step composer.increaseEffort",
+        action: "composer.increaseEffort",
+      },
+      {
+        id: "effort-down",
+        title: "Decrease reasoning effort",
+        keywords: "effort thinking step composer.decreaseEffort",
+        action: "composer.decreaseEffort",
+      },
       {
         id: "options",
         title: "Change model options",

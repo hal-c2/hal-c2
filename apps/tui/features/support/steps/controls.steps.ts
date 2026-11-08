@@ -173,6 +173,8 @@ step("the rest are reachable from the command palette", async (ctx: World) => {
   expect(titles).toEqual(
     expect.arrayContaining([
       "Change reasoning effort",
+      "Increase reasoning effort",
+      "Decrease reasoning effort",
       "Switch to plan mode",
       "Change runtime access",
     ]),
