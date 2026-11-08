@@ -255,10 +255,14 @@ defmodule HalC2.Orchestration.Handoff do
   attachments take and `text` what its text alone does. A conversation is as full as the provider's newest report from
   it says, plus what each turn sent since, with the reserve for its answer, until a
   report covers it: a report can arrive late or never, and taking an older one as
-  current would overfill the conversation. Text counts four characters to a token.
+  current would overfill the conversation. A run can take several provider turns (a
+  Codex goal goes on by itself), and each answers: the newest report is the latest
+  turn's of the latest run that reported, and each later turn keeps a reserve. Text
+  counts four characters to a token.
   """
   def room(state, provider_thread, message) do
-    {from, used, reported} = newest_report(state, provider_thread)
+    turns = own_turns(state, provider_thread)
+    {from, used, reported, later} = newest_report(provider_thread, turns)
     window = reported || @assumed_window
     reserve = max(div(window, 4), min(16_000, div(window, 2)))
 
@@ -269,51 +273,65 @@ defmodule HalC2.Orchestration.Handoff do
           is_integer(run["sentTokens"]),
           # A run that ended before its turn began sent nothing.
           run["startedAt"] != nil or run["status"] not in @finished,
-          (run["ordinal"] || 0) > from,
+          (ordinal = run["ordinal"] || 0) > from,
           reduce: 0,
-          do: (sum -> sum + run["sentTokens"] + reserve)
+          do: (sum -> sum + run["sentTokens"] + reserve * max(1, length(turns[ordinal] || [])))
 
     %{
       window: window,
       reserve: reserve,
-      held: used + unreported,
+      held: used + later * reserve + unreported,
       message: tokens(message.text) + Enum.sum_by(List.wrap(message.attachments), &attached/1),
       text: tokens(message.text),
       reported: reported != nil
     }
   end
 
-  # The newest usage the provider reported from the provider thread's conversation, as
-  # `{run_ordinal, used, window}`; before its runs' turns kept their own, the provider
-  # thread's as of its last run. Not every report names the window (Claude's count
-  # after compacting does not), and the window is the model's, not the conversation's:
-  # it is the newest one any report from the provider thread named.
-  defp newest_report(_state, nil), do: {0, 0, nil}
+  # The provider thread's provider turns by run ordinal, each run's in the order they
+  # started (`startedAt`, which `HalC2.Orchestration.Entities.now/0` writes for every
+  # turn, so it sorts as text).
+  defp own_turns(_state, nil), do: %{}
 
-  defp newest_report(state, provider_thread) do
-    own = provider_thread["id"]
+  defp own_turns(state, provider_thread) do
+    state
+    |> StreamState.list("provider-turn")
+    |> Enum.filter(&(&1["providerThreadId"] == provider_thread["id"]))
+    |> Enum.sort_by(&{&1["startedAt"] || "", get_in(&1, ["tokenUsage", "updatedAt"]) || ""})
+    |> Enum.group_by(&(&1["ordinal"] || 0))
+  end
+
+  # The newest usage the provider reported from the provider thread's conversation, as
+  # `{run_ordinal, used, window, later}`, where `later` counts the run's turns after
+  # the one that reported; before its runs' turns kept their own, the provider thread's
+  # as of its last run. Not every report names the window (Claude's count after
+  # compacting does not), and the window is the model's, not the conversation's: it is
+  # the newest one any report from the provider thread named.
+  defp newest_report(nil, _turns), do: {0, 0, nil, 0}
+
+  defp newest_report(provider_thread, turns) do
     since = provider_thread["nativeSinceRunOrdinal"] || 0
 
+    # Oldest first: by run, then by turn within it.
     reports =
-      for turn <- StreamState.list(state, "provider-turn"),
-          turn["providerThreadId"] == own,
+      for {ordinal, run_turns} <- Enum.sort(turns),
+          {turn, index} <- Enum.with_index(run_turns, 1),
           %{"usedTokens" => used} = usage <- [turn["tokenUsage"]],
           is_integer(used),
-          do: {turn["ordinal"] || 0, used, window(usage["maxTokens"])}
+          do: {ordinal, used, window(usage["maxTokens"]), length(run_turns) - index}
 
     legacy =
       case provider_thread["contextUsage"] do
         %{"usedTokens" => used} = usage when is_integer(used) ->
-          [{provider_thread["lastRunOrdinal"] || since, used, window(usage["maxTokens"])}]
+          [{provider_thread["lastRunOrdinal"] || since, used, window(usage["maxTokens"]), 0}]
 
         _ ->
           []
       end
 
     window =
-      case for({ordinal, _used, window} <- reports ++ legacy, window, do: {ordinal, window}) do
+      case for({_, _, window, _} = report <- legacy ++ reports, window, do: report) do
         [] -> nil
-        windows -> windows |> Enum.max_by(&elem(&1, 0)) |> elem(1)
+        named -> named |> newest() |> elem(2)
       end
 
     case Enum.filter(reports, &(elem(&1, 0) >= since)) do
@@ -321,9 +339,15 @@ defmodule HalC2.Orchestration.Handoff do
       current -> current
     end
     |> case do
-      [] -> {since - 1, 0, window}
-      found -> found |> Enum.max_by(&elem(&1, 0)) |> put_elem(2, window)
+      [] -> {since - 1, 0, window, 0}
+      found -> found |> newest() |> put_elem(2, window)
     end
+  end
+
+  # The last report of the newest run: `reports` go oldest first.
+  defp newest(reports) do
+    newest = reports |> Enum.map(&elem(&1, 0)) |> Enum.max()
+    reports |> Enum.filter(&(elem(&1, 0) == newest)) |> List.last()
   end
 
   defp window(tokens) when is_integer(tokens) and tokens > 0, do: tokens

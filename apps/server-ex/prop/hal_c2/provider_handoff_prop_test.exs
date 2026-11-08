@@ -7,12 +7,14 @@ defmodule HalC2.ProviderHandoffPropTest do
   A thread's runs alternate between a provider thread and another one. The provider
   thread's conversation was replaced once (`nativeSinceRunOrdinal`): the runs before
   that are in an old conversation whose usage reports say nothing of the new one. Each
-  run in the new conversation sends some tokens and gets an answer no bigger than the
-  reserve, and its usage report reaches the MC or is lost; a report that arrives late
-  is in the stream the same as one on time. The conversation then holds what each of
+  run in the new conversation sends some tokens and takes one or more provider turns
+  (a Codex goal goes on by itself), each answered with no more than the reserve and
+  its usage report reaching the MC or lost; a report that arrives late is in the
+  stream the same as one on time, and the turns are listed in whatever order their ids
+  give, not the order they started in. The conversation then holds what each of
   its runs sent and was answered, and `held` is never less than that. A run that ended
   before its turn began sent nothing, and takes nothing from the room. When the newest
-  run's report is in, `held` is exactly that report, so the check refuses no handoff
+  run's last turn reported, `held` is exactly that report, so the check refuses no handoff
   that fits; and what the message takes is its text, a fixed share per image, and for a
   file a token per 4 bytes up to a cap (the cap when its size is not known). Only the
   text is the message's own (`text`): what the attachments take is an estimate.
@@ -219,11 +221,15 @@ defmodule HalC2.ProviderHandoffPropTest do
   # and whether the report named the window.
   defp old_run, do: {integer(0, 50_000), oneof([nil, integer(0, 300_000)]), boolean()}
 
-  # A run of the new conversation's own provider thread, one of it that ended before its
-  # turn began (it sent nothing), or one of the other provider thread.
+  # A run of the new conversation's own provider thread with its turns (what each
+  # answered as a share of the reserve, whether it reported and whether its report
+  # named the window) and whether their ids sort against the order they started in, one
+  # of it that ended before its turn began (it sent nothing), or one of the other
+  # provider thread.
   defp current_run do
     oneof([
-      {:own, integer(0, 40_000), integer(0, 100), boolean(), boolean()},
+      {:own, integer(0, 40_000), non_empty(list({integer(0, 100), boolean(), boolean()})),
+       boolean()},
       {:unsent, integer(0, 40_000), oneof(["failed", "interrupted"])},
       {:other, integer(0, 40_000)}
     ])
@@ -275,17 +281,23 @@ defmodule HalC2.ProviderHandoffPropTest do
           {entities ++ [run(ordinal, @other, sent), turn(ordinal, @other, 999_999, 1_000_000)],
            occupancy, newest, ordinal + 1, named?}
 
-        {:own, sent, percent, reported?, names?},
-        {entities, occupancy, _newest, ordinal, named?} ->
-          occupancy = occupancy + sent + div(answer_cap * percent, 100)
+        {:own, sent, turns, reversed?}, {entities, occupancy, _newest, ordinal, named?} ->
+          {reports, {occupancy, newest, named?}} =
+            turns
+            |> Enum.with_index(1)
+            |> Enum.map_reduce({occupancy + sent, :unreported, named?}, fn
+              {{percent, reported?, names?}, step}, {occupancy, _newest, named?} ->
+                occupancy = occupancy + div(answer_cap * percent, 100)
+                id = if reversed?, do: length(turns) + 1 - step, else: step
+                used = if reported?, do: occupancy
+                newest = if reported?, do: {:reported, occupancy}, else: :unreported
 
-          report =
-            if reported?, do: [turn(ordinal, @own, occupancy, max_tokens.(names?))], else: []
+                {turn(ordinal, @own, used, max_tokens.(names?), step, id),
+                 {occupancy, newest, named? or (reported? and names?)}}
+            end)
 
-          newest = if reported?, do: {:reported, occupancy}, else: :unreported
-
-          {entities ++ [run(ordinal, @own, sent) | report], occupancy, newest, ordinal + 1,
-           named? or (reported? and names?)}
+          {entities ++ [run(ordinal, @own, sent) | reports], occupancy, newest, ordinal + 1,
+           named?}
       end)
 
     # A provider thread whose first conversation is its only one may not say where it
@@ -334,13 +346,18 @@ defmodule HalC2.ProviderHandoffPropTest do
      }}
   end
 
-  defp turn(ordinal, provider_thread, used, max_tokens) do
+  # A provider turn, the `step`th of its run, that reported `used` tokens (nil when its
+  # report was lost).
+  defp turn(ordinal, provider_thread, used, max_tokens, step \\ 1, id \\ 1) do
+    pad = &String.pad_leading("#{&1}", 3, "0")
+
     {"provider-turn",
      %{
-       "id" => "pturn-#{ordinal}",
+       "id" => "pturn-#{ordinal}-#{pad.(id)}",
        "ordinal" => ordinal,
        "providerThreadId" => provider_thread,
-       "tokenUsage" => %{"usedTokens" => used, "maxTokens" => max_tokens}
+       "startedAt" => "2026-10-01T10:00:00.#{pad.(step)}Z",
+       "tokenUsage" => used && %{"usedTokens" => used, "maxTokens" => max_tokens}
      }}
   end
 end

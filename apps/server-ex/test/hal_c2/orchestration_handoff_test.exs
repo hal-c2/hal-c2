@@ -697,6 +697,49 @@ defmodule HalC2.Orchestration.HandoffTest do
       assert %{"code" => "conversation_busy"} = plan.refusal
     end
 
+    # A Codex goal goes on in turns of the same run, the conversation fuller at each:
+    # the later turn's report is the newest, whichever order the turns are listed in.
+    defp goal_turn(id, started, usage) do
+      {"provider-turn",
+       %{
+         "id" => id,
+         "ordinal" => 2,
+         "providerThreadId" => "pt",
+         "startedAt" => started,
+         "tokenUsage" => usage && %{"usedTokens" => usage, "maxTokens" => 128_000}
+       }}
+    end
+
+    test "a goal's later turn is its run's newest report" do
+      for ids <- [~w(pturn-a pturn-b), ~w(pturn-b pturn-a)] do
+        [first, second] = ids
+
+        turns = [
+          goal_turn(first, "2026-10-01T10:02:00.000Z", 1_000),
+          goal_turn(second, "2026-10-01T10:03:00.000Z", 100_000)
+        ]
+
+        state = unconfirmed(turns)
+        pt = HalC2.StreamState.get(state, "provider-thread")["pt"]
+        # Run 4 ended before its turn began: it sent nothing.
+        assert Handoff.room(state, pt, %{text: "", attachments: []}).held == 100_000
+        assert %{"code" => "conversation_busy"} = plan_run(state, 5).refusal
+      end
+    end
+
+    test "a goal's turns after its run's newest report each keep the reserve" do
+      turns = [
+        goal_turn("pturn-a", "2026-10-01T10:02:00.000Z", 1_000),
+        goal_turn("pturn-b", "2026-10-01T10:03:00.000Z", nil),
+        goal_turn("pturn-c", "2026-10-01T10:04:00.000Z", nil)
+      ]
+
+      state = unconfirmed(turns)
+      pt = HalC2.StreamState.get(state, "provider-thread")["pt"]
+
+      assert Handoff.room(state, pt, %{text: "", attachments: []}).held == 1_000 + 2 * 32_000
+    end
+
     test "an unconfirmed handoff with no background work starts a new conversation" do
       state =
         unconfirmed([])
