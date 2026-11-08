@@ -1129,6 +1129,18 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     World.patch_thread(context, title, %{"plugin" => mark})
   end
 
+  step "{string} was started by the plugin {string}, which keeps its threads on the machine",
+       %{args: [title, plugin]} = context do
+    mark = %{"id" => plugin, "kind" => "review", "listed" => false, "stays" => true}
+    World.patch_thread(context, title, %{"plugin" => mark})
+  end
+
+  step "the user asks which machines {string} could move to", %{args: [title]} = context do
+    result = HalC2.ThreadMove.destinations(World.thread_id(context, title))
+    assert {:error, %{"code" => "thread_not_movable", "message" => message}} = result
+    Map.put(context, :told, [message])
+  end
+
   step "{string} on {string} is an ordinary thread, in the thread list",
        %{args: [title, machine]} = context do
     moved!(context)
@@ -1576,7 +1588,11 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
        %{args: [fork, machine, title]} = context do
     assert Machines.machine(context, machine) == :local
     assert %{"status" => "completed"} = World.finish_turn(context, title, "write run-1.txt")
-    World.fork(context, title, 1, fork)
+    :ok = HalC2.Shell.subscribe(self())
+    context = World.fork(context, title, 1, fork)
+    # The sidebar lists the fork once the shell has it, which a move looks it up in.
+    World.await_row(World.thread_id(context, fork), & &1)
+    context
   end
 
   step "{string} still names {string} as its parent", %{args: [fork, title]} = context do
@@ -2848,11 +2864,13 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     before = if Map.has_key?(context[:threads] || %{}, title), do: World.state(context, title)
     path = export_path(context, file)
 
-    Map.merge(context, %{
-      thread_file: path,
-      before: before,
-      exported: Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path | args])
-    })
+    exported = Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path | args])
+    context = Map.merge(context, %{thread_file: path, before: before, exported: exported})
+
+    case exported do
+      {:error, message} -> Map.put(context, :told, [message])
+      _ -> context
+    end
   end
 
   # One folder of exports a scenario, so a file named twice is the same file.

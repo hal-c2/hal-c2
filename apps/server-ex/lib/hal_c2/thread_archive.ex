@@ -92,9 +92,13 @@ defmodule HalC2.ThreadArchive do
 
   @doc """
   What an archive says of a thread itself (its `"thread"`), from the thread's entity.
-  A thread that has moved away has none.
+  A thread that has moved away has none, nor has one whose plugin keeps it on this
+  machine (`stays/1`), so no way of taking a thread off the machine (a move, an
+  export) gets as far as reading it.
   """
   def describe(%{"movedTo" => %{}} = thread), do: {:error, moved_message(thread)}
+
+  def describe(%{"plugin" => %{"stays" => true}} = thread), do: stays(thread)
 
   def describe(%{"id" => id} = thread) do
     project = project(thread["projectId"]) || %{}
@@ -115,6 +119,18 @@ defmodule HalC2.ThreadArchive do
        "machine" => label()
      }}
   end
+
+  @doc """
+  The refusal for a thread its plugin keeps on this machine
+  (`HalC2.Plugins.Host.launch_thread/4` with `stays: true`), which no client moves,
+  exports or is offered a destination for: what such a plugin keeps around the thread
+  (a sandbox, a credential, a checkout) does not travel, so the thread would arrive
+  unprotected. A fork of the thread carries the mark, so it stays too.
+  """
+  def stays(%{"plugin" => %{"stays" => true, "id" => owner}} = thread),
+    do: {:error, "#{thread["title"]} was started by #{owner}, which keeps it on this machine."}
+
+  def stays(_thread), do: :ok
 
   @doc """
   Writes a thread's archive to a new file at `path`, readable only by the user; a file

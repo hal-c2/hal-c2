@@ -187,9 +187,10 @@ defmodule HalC2.Prop.ThreadMoveCluster do
 
   @doc """
   A thread the plugin started (`HalC2.Plugins.Host.launch_thread/4`, unlisted, as a
-  review plugin starts its threads), with the history of `create_thread/3`.
+  review plugin starts its threads), with the history of `create_thread/3`. `stays: true`
+  is a thread its plugin keeps on the machine.
   """
-  def create_plugin_thread(id, project, title) do
+  def create_plugin_thread(id, project, title, opts \\ []) do
     {:ok, _} =
       HalC2.Plugins.Host.launch_thread(
         @plugin,
@@ -200,7 +201,7 @@ defmodule HalC2.Prop.ThreadMoveCluster do
           "title" => title,
           "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
         },
-        listed: false
+        [listed: false] ++ opts
       )
 
     history(id, title)

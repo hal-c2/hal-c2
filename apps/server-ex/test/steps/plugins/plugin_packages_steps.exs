@@ -170,7 +170,10 @@ defmodule HalC2.Steps.Plugins.Packages do
         do: {:ok, JSON.decode!(File.read!(Path.join(Host.data_dir(@id), "note.json")))}
 
       def call("threads.start", input, _context) do
-        with {:ok, _} <- Host.launch_thread(@id, input["kind"], input["thread"], listed: input["listed"]),
+        with {:ok, _} <- Host.launch_thread(@id, input["kind"], input["thread"],
+                 listed: input["listed"],
+                 stays: input["stays"] == true
+               ),
              do: {:ok, %{"threadId" => input["thread"]["threadId"]}}
       end
 
@@ -1090,6 +1093,22 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, false)
   end
 
+  step "{string} starts a {string} thread that stays on its machine",
+       %{args: [id, kind]} = context do
+    context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, true, stays: true)
+  end
+
+  step "the thread is marked as staying on its machine", context do
+    assert %{"plugin" => %{"stays" => true}} = thread(context.plugin_thread)
+    context
+  end
+
+  step "the user is told the thread stays on this machine", context do
+    assert {:error, message, _} = context.reply
+    assert message == "Review #12 was started by code-review, which keeps it on this machine."
+    context
+  end
+
   step "{string} started a {string} thread", %{args: [id, kind]} = context do
     context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, true)
   end
@@ -1157,6 +1176,15 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     assert message ==
              "Review #12 was started by #{id} and stays on this machine while #{id} runs."
 
+    context
+  end
+
+  step "once {string} is removed, the move is still refused", %{args: [id]} = context do
+    File.rm_rf!(Packages.dir(context, id))
+    context = Fixtures.rescan(context)
+    {reply, context} = move(context)
+    assert {:error, message, _} = reply
+    assert message =~ "keeps it on this machine"
     context
   end
 
@@ -1275,11 +1303,16 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     }
   end
 
-  defp start_thread(context, id, kind, listed) do
+  defp start_thread(context, id, kind, listed, extra \\ []) do
     context =
       if context[:projects] in [nil, %{}], do: World.create_project(context, "api"), else: context
 
-    input = thread_input(context) |> Map.put("kind", kind) |> Map.put("listed", listed)
+    input =
+      thread_input(context)
+      |> Map.put("kind", kind)
+      |> Map.put("listed", listed)
+      |> Map.put("stays", extra[:stays] == true)
+
     {{:ok, %{"threadId" => thread_id}}, context} = call(context, id, "threads.start", input)
     World.await_row(thread_id, & &1)
     Map.put(context, :plugin_thread, thread_id)

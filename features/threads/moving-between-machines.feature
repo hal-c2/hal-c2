@@ -175,9 +175,11 @@ Feature: Moving a thread and its agent to another machine
         | its unread state                                   |
         | a pending merge-back from one of its forks         |
 
+    # A plugin that keeps its threads where they are (the next rule) is never moved; this is
+    # every other plugin's thread, which holds nothing of it once the plugin has stopped.
     @mc
     Scenario: A thread a plugin started arrives as an ordinary thread
-      Given "Alpha" was started by the plugin "code-review", which no longer runs on "laptop"
+      Given "Alpha" was started by the plugin "tracker", which no longer runs on "laptop"
       When "Alpha" moves to "desktop"
       Then "Alpha" on "desktop" is an ordinary thread, in the thread list
 
@@ -450,6 +452,49 @@ Feature: Moving a thread and its agent to another machine
       When the user writes a message in "Alpha"
       Then the message is kept as a draft
       And it can be sent once "Alpha" has arrived on "desktop"
+
+    # A plugin declares that its threads stay when it launches them
+    # (apps/server-ex/lib/hal_c2/plugins/host.ex launch_thread, `stays: true`), and "code-review"
+    # does: its sandbox, credential and checkout of untrusted code do not travel, so a review
+    # thread that arrived elsewhere would run without them. The refusal comes before anything is
+    # read or copied, and it is the MC's own message, which desktop and the TUI show as they
+    # show a thread that is running (the phone has no move yet). A fork of such a thread
+    # carries the mark, so it is kept on the machine too; forking never leaves the machine.
+    @mc
+    Scenario: A thread its plugin keeps on the machine is not moved
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And "Alpha" stays on "laptop" as it was
+      And nothing of "Alpha" is left on "desktop"
+
+    @mc
+    Scenario: A thread its plugin keeps on the machine is refused while it is idle or running
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      And the agent is working in "Alpha"
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And "Alpha" stays on "laptop" and keeps running
+
+    @mc
+    Scenario: A thread its plugin keeps on the machine is offered no destination
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      When the user asks which machines "Alpha" could move to
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+
+    @mc
+    Scenario: A thread its plugin keeps on the machine is not exported either
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+
+    @mc
+    Scenario: A fork of a thread its plugin keeps is kept too
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      And "Beta" on "laptop" is a fork of "Alpha"
+      When the user moves "Beta" to "desktop"
+      Then the user is told "Alpha fork was started by code-review, which keeps it on this machine."
 
     @mc
     Scenario Outline: A move the destination cannot take is refused before anything is copied
