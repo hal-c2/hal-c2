@@ -717,8 +717,8 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And Escape or a click outside closes it
 
   # Upstream #28076: "Legacy models" became a "Show more" row at the end of the list. Replaces
-  # "A provider's older models are folded away until asked for" once the clients carry it.
-  @backlog @shared @priority-low
+  # "A provider's older models are folded away until asked for".
+  @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A provider's older models are shown in place from the end of the list
     Given Codex lists two current models and three it calls legacy
     When the user chooses "Show more" at the end of Codex's models

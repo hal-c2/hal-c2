@@ -32,6 +32,11 @@ struct Expected {
   QString slug;
 };
 
+// The picker's height before a scenario opens a provider's older models.
+struct PickerHeight {
+  qreal height = 0;
+};
+
 QVariant plain(const QVariant& value) {
   return value.userType() == qMetaTypeId<QJSValue>() ? value.value<QJSValue>().toVariant() : value;
 }
@@ -612,6 +617,51 @@ const Steps steps([] {
       models.append(legacy);
       entry.insert(QStringLiteral("models"), models);
     });
+  });
+  // Codex's own list, two current models then three older ones, with the
+  // picker's height and the "Show more" row it ends on.
+  step(QStringLiteral("Codex lists two current models and three it calls legacy"), [](World& world, const Captures&, const Table&) {
+    // The thread's own model stays current, so the picker opens with the
+    // older models folded.
+    const QVariantMap chosen = composer(world);
+    const QString first = chosen.value(QStringLiteral("selectedInstanceId")) == QLatin1String("codex") ? chosen.value(QStringLiteral("selectedModel")).toString() : QStringLiteral("gpt-6");
+    changeProvider(world, QStringLiteral("codex"), [&first](QJsonObject& entry) {
+      QJsonArray models{model(first, QStringLiteral("GPT-6")), model(QStringLiteral("gpt-6-mini"), QStringLiteral("GPT-6 Mini"))};
+      for (const QString& slug : {QStringLiteral("gpt-4.1"), QStringLiteral("gpt-4o"), QStringLiteral("o3")}) {
+        QJsonObject legacy = model(slug, slug.toUpper());
+        legacy.insert(QStringLiteral("isLegacy"), true);
+        models.append(legacy);
+      }
+      entry.insert(QStringLiteral("models"), models);
+    });
+  });
+  step(QStringLiteral("the user chooses %1 at the end of Codex's models").arg(q), [](World& world, const Captures& c, const Table&) {
+    openPicker(world);
+    click(world, part(world, QStringLiteral("modelPickerProvider:codex")));
+    world.waitFor([&] { return listed(world) == QStringList{QStringLiteral("GPT-6"), QStringLiteral("GPT-6 Mini"), QString()}; },
+                  [&] { return QStringLiteral("Codex's two current models and then a row; the picker lists %1").arg(show(rows(world))); });
+    expect(rows(world).last().toMap().value(QStringLiteral("kind")) == QLatin1String("legacy"), QStringLiteral("Codex's list ends on %1").arg(show(rows(world).last())));
+    QQuickItem* more = part(world, QStringLiteral("modelPickerLegacy:codex"));
+    expect(more->property("text") == c[0], QStringLiteral("the row reads %1, not %2").arg(more->property("text").toString(), c[0]));
+    world.mc.part<PickerHeight>().height = popupOf(picker(world))->property("height").toReal();
+    click(world, more);
+  });
+  step(QStringLiteral("the three older models are listed in place and the row reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList expected{QStringLiteral("GPT-6"), QStringLiteral("GPT-6 Mini"), QStringLiteral("GPT-4.1"), QStringLiteral("GPT-4O"), QStringLiteral("O3"), QString()};
+    world.waitFor([&] { return listed(world) == expected; }, [&] { return QStringLiteral("the older models above the row; the picker lists %1").arg(show(rows(world))); });
+    QQuickItem* less = part(world, QStringLiteral("modelPickerLegacy:codex"));
+    expect(less->property("text") == c[0], QStringLiteral("the row reads %1, not %2").arg(less->property("text").toString(), c[0]));
+    expect(pickerOpen(world), QStringLiteral("the picker closed"));
+  });
+  step(QStringLiteral("the list scrolls inside the picker"), [](World& world, const Captures&, const Table&) {
+    const qreal before = world.mc.part<PickerHeight>().height;
+    const qreal after = popupOf(picker(world))->property("height").toReal();
+    expect(before > 0 && qFuzzyCompare(before, after), QStringLiteral("the picker was %1 tall and is %2").arg(before).arg(after));
+    QQuickItem* row = part(world, QStringLiteral("modelPickerLegacy:codex"));
+    QQuickItem* list = row->parentItem();
+    while (list && !list->inherits("QQuickListView")) list = list->parentItem();
+    expect(list != nullptr, QStringLiteral("the rows are not in a list"));
+    expect(list->clip() && list->property("interactive").toBool(), QStringLiteral("the list does not scroll in place"));
   });
   step(QStringLiteral("%1 is listed without choosing %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return listed(world).contains(c[0]); }, [&] { return QStringLiteral("%1 to be listed; the picker lists %2").arg(c[0], listed(world).join(u", ")); });

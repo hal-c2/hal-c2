@@ -961,18 +961,22 @@ AbstractButton {
     Component {
         id: legacyRow
 
+        // The end of a provider's list when it has older models: "Show more"
+        // lists them above it, "Show less" folds them away again.
         Rectangle {
             id: legacy
 
             readonly property var entry: (parent as RowSlot)?.modelData ?? null
             readonly property int rowIndex: (parent as RowSlot)?.index ?? -1
+            readonly property bool active: control.highlightedIndex === rowIndex || legacyHover.hovered
+            readonly property string text: legacy.entry && legacy.entry.expanded ? qsTr("Show less") : qsTr("Show more")
 
             objectName: entry ? "modelPickerLegacy:" + entry.instanceId : ""
             implicitHeight: 46
             radius: Theme.radiusXs
-            color: control.highlightedIndex === rowIndex || legacyHover.hovered ? control.highlight : "transparent"
+            color: active ? control.highlight : "transparent"
             Accessible.role: Accessible.Button
-            Accessible.name: qsTr("Legacy models")
+            Accessible.name: legacy.text
             Accessible.onPressAction: if (legacy.entry)
                 control.toggleLegacy(legacy.entry.instanceId)
 
@@ -984,45 +988,14 @@ AbstractButton {
                 onTapped: control.toggleLegacy(legacy.entry.instanceId)
             }
 
-            RowLayout {
-                anchors.fill: parent
+            Text {
+                anchors.left: parent.left
                 anchors.leftMargin: 8
-                anchors.rightMargin: 8
-                spacing: Theme.space.sm
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-
-                    Text {
-                        text: qsTr("Legacy models")
-                        color: control.foreground
-                        font.family: control.fontFamily
-                        font.pixelSize: Theme.type.meta.size
-                        font.weight: Font.Medium
-                    }
-
-                    Text {
-                        text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
-                        color: control.muted
-                        font.family: control.fontFamily
-                        font.pixelSize: Theme.type.meta.size
-                    }
-                }
-
-                ShellChevron {
-                    direction: "right"
-                    size: Theme.icon.md
-                    color: control.muted
-                    rotation: legacy.entry && legacy.entry.expanded ? 90 : 0
-
-                    Behavior on rotation {
-                        NumberAnimation {
-                            duration: 150
-                            easing.type: Easing.OutCubic
-                        }
-                    }
-                }
+                anchors.verticalCenter: parent.verticalCenter
+                text: legacy.text
+                color: legacy.active ? control.foreground : control.muted
+                font.family: control.fontFamily
+                font.pixelSize: Theme.type.body.size
             }
         }
     }
