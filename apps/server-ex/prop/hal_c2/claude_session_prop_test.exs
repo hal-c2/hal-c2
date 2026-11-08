@@ -265,10 +265,9 @@ defmodule HalC2.ClaudeSessionPropTest do
       state
       | launch: {model, fast == true},
         session: true,
-        # The fake reads "never start a turn" before "in the background".
-        background:
-          state.background or text == :background or
-            (text != :never_start and carries?(state, :background, text)),
+        # A refused turn's message reaches Claude as history, context and not a request,
+        # so only the turn's own text starts work.
+        background: state.background or text == :background,
         tools: if(reused?(state, model, fast), do: state.tools, else: not state.refusing),
         missed: missed(state, text),
         lost: false,
@@ -315,9 +314,6 @@ defmodule HalC2.ClaudeSessionPropTest do
     do: %{state | session: false, background: false}
 
   def next_state(state, _result, {:call, _, :stop, []}), do: state
-
-  # Whether this turn hands Claude the refused message `missed` along with its own.
-  defp carries?(state, missed, text), do: text != :compact and missed in state.missed
 
   # A turn runs on the same process when its selection is, and no handoff went
   # unconfirmed, or background work keeps the conversation it went to.

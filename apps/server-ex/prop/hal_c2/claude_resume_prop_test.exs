@@ -4,7 +4,7 @@ defmodule HalC2.ClaudeResumePropTest do
   its conversation, on the fake CLI in `test/support/fake_claude.py`: turns Claude
   answers ("where are we", which says the message its process resumed at), turns the
   user stops after Claude wrote part of its answer ("answer halfway") or before it
-  wrote anything ("wait"), turns Claude cannot be started for, turns whose run ended
+  wrote anything ("start and wait"), turns Claude cannot be started for, turns whose run ended
   while Claude started for them (and the next turn that started meanwhile), rewinds to a message an earlier turn ended at (or to
   the thread's start, or to a message Claude cannot resume at, which ends its process
   at startup as a subagent's message does), and the idle sweep letting go of the
@@ -44,6 +44,7 @@ defmodule HalC2.ClaudeResumePropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :claude_command)
+        System.delete_env("FAKE_CLAUDE_USAGE")
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -58,6 +59,10 @@ defmodule HalC2.ClaudeResumePropTest do
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
+    # Each result reports its usage, as Claude's do: without, the handoff's room counts
+    # every turn's reserve as spent, and the message an unstarted turn leaves to hand
+    # over soon no longer fits the conversation, which the run then replaces.
+    System.put_env("FAKE_CLAUDE_USAGE", "1")
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -240,15 +245,16 @@ defmodule HalC2.ClaudeResumePropTest do
 
   # A turn the user stops, after Claude wrote part of its answer or before it wrote anything.
   def stopped(n, how) do
-    text = if how == :halfway, do: "answer halfway", else: "wait for me"
+    text = if how == :halfway, do: "answer halfway", else: "start and wait for me"
     run = send_message(n, text)
 
     # Stopped once Claude has the message, and has written in it when it is to.
     await_run(run, fn seen ->
       case runtime() do
         %{turn: %{ids: %{run: id}} = turn} when id == run ->
-          # `:resumed_at` goes once Claude writes.
-          how == :silent or not Map.has_key?(turn, :resumed_at)
+          # Claude says it started the prompt, which confirms what the run handed over
+          # (`unconfirmedRunId`), and `:resumed_at` goes once Claude writes.
+          not unconfirmed?(run) and (how == :silent or not Map.has_key?(turn, :resumed_at))
 
         _ ->
           if seen["status"] in ["completed", "failed", "interrupted"],
@@ -402,6 +408,12 @@ defmodule HalC2.ClaudeResumePropTest do
         if not MapSet.member?(runs, run["id"]), do: run["id"]
       end)
     end)
+  end
+
+  defp unconfirmed?(run) do
+    current()
+    |> StreamState.list("provider-thread")
+    |> Enum.any?(&(&1["unconfirmedRunId"] == run))
   end
 
   defp runtime do

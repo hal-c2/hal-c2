@@ -35,11 +35,12 @@ def trace(entry):
 
 # A held MCP answer is sent from its own thread (answer_mcp_servers).
 sending = threading.Lock()
-# With FAKE_CLAUDE_USAGE set, every successful result reports token usage, as Claude's do.
+# With FAKE_CLAUDE_USAGE set, every result reports token usage, as Claude's do, a
+# stopped or failed turn's too.
 USAGE = os.environ.get("FAKE_CLAUDE_USAGE")
 
 def send(msg):
-    if USAGE and msg.get("type") == "result" and msg.get("subtype") == "success" and "usage" not in msg:
+    if USAGE and msg.get("type") == "result" and "usage" not in msg:
         msg = {**msg, "usage": {"input_tokens": 1000, "output_tokens": 50}}
     with sending:
         sys.stdout.write(json.dumps(msg) + "\n")
@@ -461,8 +462,9 @@ for line in sys.stdin:
               "payload": {"sessionAgeMinutes": 135, "estimatedTokens": 182400}}})
         continue
     # "answer halfway": Claude writes part of its answer (message half-uuid-N) and stays open,
-    # as a turn the user stops mid-answer.
+    # as a turn the user stops mid-answer. Claude says it started the prompt first.
     if "answer halfway" in text.split("</conversation_history>")[-1]:
+        lifecycle("started")
         send({"type": "assistant", "session_id": session, "uuid": f"half-uuid-{turn}", "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "text", "text": "Half an answer"}]}})
         continue
     # "leave a tool pending": Claude calls Bash (tool-pending-N) and the call runs on, so
