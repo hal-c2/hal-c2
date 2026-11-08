@@ -633,10 +633,14 @@ defmodule HalC2.Orchestration.Handoff do
         (Enum.reject(first, &is_nil/1) ++ newest)
         |> Enum.reduce({%{}, max_chars - @omitted_note, 0}, fn {{_role, original}, index},
                                                                {kept, left, cut} ->
-          text = if index in latest, do: tail_to_fit(original, left - reserve), else: original
+          # A newest message must also fit beside the reserve; one that cannot be
+          # cut to that comes back from `tail_to_fit` whole, over the limit, and is
+          # left out rather than using up the first request's room.
+          limit = if index in latest, do: left - reserve, else: left
+          text = if index in latest, do: tail_to_fit(original, limit), else: original
           cost = String.length(text) + 2
 
-          if Map.has_key?(kept, index) or cost > left,
+          if Map.has_key?(kept, index) or cost > limit,
             do: {kept, left, cut},
             else:
               {Map.put(kept, index, text), left - cost,

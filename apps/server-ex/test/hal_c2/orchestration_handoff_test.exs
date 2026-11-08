@@ -345,6 +345,20 @@ defmodule HalC2.Orchestration.HandoffTest do
     assert transcript =~ "User: second request"
   end
 
+  test "a short newest answer does not take the room held for the first request" do
+    state =
+      state(
+        turn(1, String.duplicate("f", 4_000), "ok") ++
+          turn(2, String.duplicate("q", 10_000), String.duplicate("a", 1_000))
+      )
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ String.duplicate("f", 4_000)
+    assert transcript =~ "User: ... "
+  end
+
   # A thread a restart left a note on, about the background work its last turn left.
   defp noted do
     state([
