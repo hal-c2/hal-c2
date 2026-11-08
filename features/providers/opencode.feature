@@ -1302,7 +1302,7 @@ Feature: OpenCode
 
   # Upstream #21460: background work an OpenCode 2 subagent queued while the root turn ended was
   # lost behind the session's newer idle state.
-  @backlog @priority-high
+  @priority-high
   Scenario: A subagent's queued background continuation still runs after the root turn ends
     Given an OpenCode 2 subagent queued a background continuation of its nested work
     When the root turn ends

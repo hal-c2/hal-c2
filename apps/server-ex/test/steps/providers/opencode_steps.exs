@@ -4509,4 +4509,108 @@ defmodule HalC2.Steps.Providers.Opencode do
 
     context
   end
+
+  # --- background subagents of OpenCode 2 ---------------------------------------------------------------------------
+
+  # OpenCode 2 runs a subagent in the background and acknowledges the spawn in the
+  # turn; the subagent's session keeps streaming under its own id after the root
+  # turn ended, and the root session reports its end.
+  defp child_says(text, session \\ @child) do
+    %{
+      "sessionId" => session,
+      "update" => %{
+        "sessionUpdate" => "agent_message_chunk",
+        "messageId" => "child-late",
+        "content" => %{"type" => "text", "text" => text}
+      }
+    }
+  end
+
+  defp report(session, how \\ "completed successfully") do
+    %{
+      "update" => %{
+        "sessionUpdate" => "user_message_chunk",
+        "content" => %{
+          "type" => "text",
+          "text" => ~s[Background subagent "#{session}" (type: "general") #{how}.]
+        }
+      }
+    }
+  end
+
+  defp background_thread(context, steps) do
+    turn = %{"match" => "work in the background", "steps" => steps ++ [%{"text" => "Started."}]}
+
+    context
+    |> FakeAcp.install("opencode", %{"version" => "2.2.0", "turns" => [turn | FakeAcp.turns()]},
+      enabled: true
+    )
+    |> FakeAcp.thread(@thread)
+    |> Map.put(:thread, @thread)
+    |> FakeAcp.send_message("work in the background")
+  end
+
+  defp runtime_pid(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, @thread))
+    pid
+  end
+
+  # A frame the agent sends after its turn, as the agent's connection delivers it.
+  defp says(context, params) do
+    pid = runtime_pid(context)
+    send(pid, {:json_rpc, :sys.get_state(pid).conn, {:notification, "session/update", params}})
+    context
+  end
+
+  defp root_session(context), do: :sys.get_state(runtime_pid(context)).session_id
+
+  defp background_subagents(row),
+    do: for(%{"taskType" => "subagent"} = task <- row["runningBackgroundTasks"] || [], do: task)
+
+  step "an OpenCode 2 subagent queued a background continuation of its nested work", context do
+    nested = %{
+      "sessionId" => @child,
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "nested-1",
+        "title" => "task",
+        "kind" => "other",
+        "status" => "in_progress",
+        "rawInput" => %{"description" => "Deeper", "prompt" => "go deeper"}
+      }
+    }
+
+    background_thread(
+      context,
+      task_call("task-1", "Subagent started in background.\nsubagent_id: #{@child}") ++
+        [%{"update" => nested["update"], "sessionId" => @child}]
+    )
+  end
+
+  step "the root turn ends", context do
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "the thread still shows an agent working in the background", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(length(background_subagents(&1)) == 1)
+    )
+
+    context
+  end
+
+  step "the continuation runs and its result reaches the subagent's caller", context do
+    context
+    |> says(child_says("The nested work is done."))
+    |> says(%{"sessionId" => root_session(context)} |> Map.merge(report(@child)))
+
+    World.await_row(World.thread_id(context, @thread), &(background_subagents(&1) == []))
+
+    assert [%{"status" => "completed", "result" => "The nested work is done."}] =
+             subagents(context)
+
+    context
+  end
 end
