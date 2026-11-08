@@ -39,6 +39,11 @@ defmodule HalC2.Test.AcpFixtures do
   def ready(%{acp: _} = ctx), do: ctx
 
   def ready(ctx) do
+    # The scenario's own $HOME from the start, so provider code that reads the
+    # user's folders (a Cursor legacy login under ~/.cursor, skills, settings)
+    # can never reach the developer's real ones.
+    _scratch_home = HalC2.Test.Mc.Host.home(ctx)
+
     dir = Path.join(ctx.mc.home, "agents")
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "control.json"), "{}")
@@ -420,7 +425,11 @@ defmodule HalC2.Test.AcpFixtures do
         "threadId" => thread_id,
         "projectId" => project.id,
         "title" => title,
-        "modelSelection" => %{"instanceId" => instance, "model" => opts[:model] || "default"},
+        "modelSelection" =>
+          %{"instanceId" => instance, "model" => opts[:model] || "default"}
+          |> then(fn selection ->
+            if opts[:options], do: Map.put(selection, "options", opts[:options]), else: selection
+          end),
         "runtimeMode" => opts[:mode] || "full-access",
         "interactionMode" => opts[:interaction] || "default",
         "workspaceStrategy" =>
