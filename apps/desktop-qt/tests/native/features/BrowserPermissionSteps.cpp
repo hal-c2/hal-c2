@@ -366,6 +366,35 @@ const Steps steps([] {
     expect(world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("slack://channel?team=T3"))},
            QStringLiteral("the system opened %1").arg(opened(world)));
   });
+  // A tab that is not shown.
+  step(QStringLiteral("the question is withdrawn and the link does not open"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([] { return question().isEmpty(); }, [] { return QStringLiteral("the question to go; it asks about %1").arg(question().value(QStringLiteral("url")).toString()); });
+    settle(world);
+    expect(world.openedUrls.isEmpty(), QStringLiteral("the system opened %1").arg(opened(world)));
+  });
+  step(QStringLiteral("the page in the hidden tab follows the link %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* view = world.brick->item(QStringLiteral("browserView"));
+    expect(!view->isVisible(), QStringLiteral("the browser tab still shows"));
+    // No click reaches a hidden page: its script moves it.
+    webtab::evaluate(world, QStringLiteral("window.followed = false; setTimeout(function () { window.followed = true; location.href = '%1'; }, 0); true").arg(c[0]));
+    webtab::waitForEngine(world, [&] { return webtab::evaluate(world, QStringLiteral("window.followed")).toBool(); },
+                          [] { return QStringLiteral("the hidden page to follow the link"); });
+  });
+  step(QStringLiteral("the user is not asked about it and the system is not asked to open it"), [](World& world, const Captures&, const Table&) {
+    settle(world);
+    expect(question().isEmpty(), QStringLiteral("the user is asked about %1").arg(question().value(QStringLiteral("url")).toString()));
+    expect(world.openedUrls.isEmpty(), QStringLiteral("the system opened %1").arg(opened(world)));
+  });
+  step(QStringLiteral("the user switches back to the browser tab"), [](World& world, const Captures&, const Table&) {
+    QString browser;
+    for (const QVariant& tab : at(world.state(QStringLiteral("panel")), QStringLiteral("tabs")).toList()) {
+      if (at(tab, QStringLiteral("id")).toString().startsWith(QLatin1String("browser:"))) browser = at(tab, QStringLiteral("id")).toString();
+    }
+    expect(!browser.isEmpty(), QStringLiteral("no browser tab in the panel"));
+    world.bridge().dispatch(QStringLiteral("rightPanel.activate"), QVariantMap{{QStringLiteral("id"), browser}});
+    QQuickItem* view = world.brick->item(QStringLiteral("browserView"));
+    world.waitFor([&] { return view->isVisible(); }, QStringLiteral("the browser tab to show"));
+  });
   step(QStringLiteral("a page in a browser tab follows a link with the scheme %1 to another app").arg(q), [](World& world, const Captures& c, const Table&) {
     static const QHash<QString, QString> links{
         {QStringLiteral("file"), QStringLiteral("location.href = 'file:///etc/hosts';")},

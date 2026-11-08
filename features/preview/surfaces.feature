@@ -1251,6 +1251,19 @@ Feature: In-app preview browser
       And the link opens in the system only if the user agrees
       And a second such link waits until the first question is answered
 
+    # A tab kept while another shows still runs its page; a question from it
+    # would wait where nobody sees it and hold up every other.
+    @desktop
+    Scenario: A browser tab that is not shown puts no question to the user
+      Given a page asks to open an outside link
+      When the user switches to the Diff tab
+      Then the question is withdrawn and the link does not open
+      When the page in the hidden tab follows the link "slack://channel?team=T4"
+      Then the user is not asked about it and the system is not asked to open it
+      When the user switches back to the browser tab
+      And a page from "https://example.com" asks to read the clipboard
+      Then the user is asked whether "https://example.com" may see what was copied
+
     @desktop
     Scenario Outline: A page's link to a local or inline scheme is never handed to the system
       When a page in a browser tab follows a link with the scheme "<scheme>" to another app

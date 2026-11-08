@@ -72,8 +72,11 @@ Rectangle {
 
         onLoadRequested: url => root.go(url, false)
         // Given its tab after it was made (PanelBodies): the view starts where the tab is.
-        onTabIdChanged: if (url.length > 0 && webView.url.toString() !== url)
-            webView.url = url
+        onTabIdChanged: {
+            if (url.length > 0 && webView.url.toString() !== url)
+                webView.url = url;
+            root.showQuestions();
+        }
         onEvaluateRequested: (request, script, world) => webView.runJavaScript(script, world, result => page.evaluated(request, result))
         onGrabRequested: request => {
             const grabbed = webView.grabToImage(result => page.grabbed(request, result.image));
@@ -168,6 +171,31 @@ Rectangle {
         else if (permission !== undefined)
             allow ? permission.grant() : permission.deny();
         webView.forceActiveFocus();
+    }
+
+    // The tab Browser.permissions may ask the user about: this one while it
+    // shows. A tab kept while another shows (PanelBodies) asks nothing, and
+    // what it was asking is refused.
+    property string asking: ""
+    onVisibleChanged: showQuestions()
+    Component.onCompleted: showQuestions()
+
+    function showQuestions() {
+        const shown = root.visible ? page.tabId : "";
+        if (shown === root.asking)
+            return;
+        if (root.asking.length > 0) {
+            Browser.permissions.setShown(root.asking, false);
+            for (const id in root.waiting) {
+                const permission = root.waiting[id];
+                permission.deny();
+                Qt.callLater(() => permission.reset());
+            }
+            root.waiting = {};
+        }
+        root.asking = shown;
+        if (shown.length > 0)
+            Browser.permissions.setShown(shown, true);
     }
 
     Component.onDestruction: {
@@ -632,7 +660,7 @@ Rectangle {
                     onDesktopMediaRequested: request => request.cancel()
                     // A link to another app (slack:, mailto:) is the user's to open.
                     onNavigationRequested: request => {
-                        if (Browser.permissions.openLink(page.tabId, request.url) > 0)
+                        if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
                             request.reject();
                     }
                     onNewWindowRequested: request => {
@@ -1004,7 +1032,7 @@ Rectangle {
                 onNewWindowRequested: request => {}
                 onPermissionRequested: permission => root.permissionAsked(permission)
                 onNavigationRequested: request => {
-                    if (Browser.permissions.openLink(page.tabId, request.url) > 0)
+                    if (Browser.permissions.openLink(page.tabId, request.url) !== 0)
                         request.reject();
                 }
                 onWindowCloseRequested: popup.close()
