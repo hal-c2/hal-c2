@@ -273,6 +273,66 @@ defmodule HalC2.Test.FakeOpenShell do
     }
   end
 
+  @doc """
+  A container runtime's API on a Unix socket, for `HalC2.OpenShell.Platform`'s
+  probe: one JSON document per path in `routes`, 404 otherwise. Returns the socket's
+  path, which must fit in 108 bytes, so it is in a short directory relative to the
+  working directory. Stops with the test.
+  """
+  def runtime_socket(routes) do
+    short = Path.join("tmp", "os-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(short)
+    ExUnit.Callbacks.on_exit(fn -> File.rm_rf(short) end)
+    path = Path.join(short, "r.sock")
+
+    {:ok, listen} =
+      :gen_tcp.listen(0, [:binary, ifaddr: {:local, path}, active: false, packet: :http_bin])
+
+    test = self()
+
+    pid =
+      spawn_link(fn ->
+        send(test, :listening)
+        accept(listen, routes)
+      end)
+
+    receive do
+      :listening -> :ok
+    end
+
+    ExUnit.Callbacks.on_exit(fn -> Process.exit(pid, :kill) end)
+    path
+  end
+
+  defp accept(listen, routes) do
+    {:ok, socket} = :gen_tcp.accept(listen)
+    {:ok, {:http_request, :GET, {:abs_path, path}, _}} = :gen_tcp.recv(socket, 0)
+    skip_headers(socket)
+
+    {status, body} =
+      case routes[path] do
+        nil -> {"404 Not Found", "not found"}
+        doc -> {"200 OK", Jason.encode!(doc)}
+      end
+
+    :ok = :inet.setopts(socket, packet: :raw)
+
+    :gen_tcp.send(socket, [
+      "HTTP/1.1 #{status}\r\ncontent-type: application/json\r\ncontent-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n",
+      body
+    ])
+
+    :gen_tcp.close(socket)
+    accept(listen, routes)
+  end
+
+  defp skip_headers(socket) do
+    case :gen_tcp.recv(socket, 0) do
+      {:ok, :http_eoh} -> :ok
+      {:ok, _header} -> skip_headers(socket)
+    end
+  end
+
   defmodule Plug do
     @moduledoc false
     @behaviour Elixir.Plug

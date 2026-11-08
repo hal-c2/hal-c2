@@ -43,6 +43,21 @@ defmodule HalC2.OpenShell.ConfigTest do
     end
   end
 
+  test "each home's gateway keeps its sandboxes apart from another home's", %{tmp_dir: dir} do
+    render = fn driver ->
+      Config.render(%{port: 1, driver: driver, socket: "/run/user/1000/#{driver}.sock"})
+    end
+
+    scope = "hal-c2-" <> OpenShell.instance()
+    assert render.("docker") =~ ~s(\nsandbox_label = "#{scope}"\n)
+    assert render.("podman") =~ ~s(\nnetwork_name = "#{scope}"\n)
+    refute render.("podman") =~ "sandbox_label"
+
+    FakeOpenShell.put_env(home: Path.join(dir, "other"))
+    refute render.("docker") =~ scope
+    refute render.("podman") =~ scope
+  end
+
   test "a path with quotes or control characters stays one TOML string" do
     toml = Config.render(%{port: 1, driver: "podman", socket: ~s(/run/a"b\\c\nd)})
     assert toml =~ ~S(socket_path = "/run/a\"b\\c\u000Ad") <> "\n"

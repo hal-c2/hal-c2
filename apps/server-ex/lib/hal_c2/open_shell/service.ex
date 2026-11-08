@@ -1,9 +1,15 @@
 defmodule HalC2.OpenShell.Service do
   @moduledoc """
   The OpenShell gateway as a service of its own: a systemd user unit on Linux
-  (`hal-c2-openshell.service`), a LaunchAgent on macOS (`io.github.halc2.openshell`).
-  It is not part of the MC's unit, so the gateway and its sandboxes outlive an MC
-  restart or crash, and the MC never holds the runtime socket itself.
+  (`hal-c2-openshell-<instance>.service`), a LaunchAgent on macOS
+  (`io.github.halc2.openshell.<instance>`). It is not part of the MC's unit, so the
+  gateway and its sandboxes outlive an MC restart or crash, and the MC never holds
+  the runtime socket itself.
+
+  Each HAL-C2 home on the machine has a service of its own, named for its
+  `HalC2.OpenShell.instance/0`. A unit under this home's name that runs a gateway
+  from another home's directory was not written here: `install/1`, `stop/0`,
+  `start/0` and `uninstall/0` refuse it (`[unit-not-ours]`) and leave it as it is.
 
   Either unit starts the gateway through `HalC2.OpenShell.Config.command/2`, in an
   environment of its own: neither the systemd user manager's environment nor
@@ -23,22 +29,21 @@ defmodule HalC2.OpenShell.Service do
   alias HalC2.OpenShell.Config
   alias HalC2.Service
 
-  @unit "hal-c2-openshell.service"
-  @label "io.github.halc2.openshell"
   @reap_unit "hal-c2-openshell-reap.service"
   @reap_timer "hal-c2-openshell-reap.timer"
   @reap_label "io.github.halc2.openshell.reap"
 
-  def name(:systemd), do: @unit
-  def name(:launchd), do: @label
+  @doc "This home's gateway service: its systemd unit or its launchd label."
+  def name(:systemd), do: "hal-c2-openshell-#{OpenShell.instance()}.service"
+  def name(:launchd), do: "io.github.halc2.openshell.#{OpenShell.instance()}"
 
   def manager, do: Service.manager()
 
   def unit_path(:systemd),
-    do: Path.join([Service.user_home(), ".config", "systemd", "user", @unit])
+    do: Path.join([Service.user_home(), ".config", "systemd", "user", name(:systemd)])
 
   def unit_path(:launchd),
-    do: Path.join([Service.user_home(), "Library", "LaunchAgents", @label <> ".plist"])
+    do: Path.join([Service.user_home(), "Library", "LaunchAgents", name(:launchd) <> ".plist"])
 
   @doc "The reaper's units, `[{path, contents}]`, that `install/1` writes beside the gateway's."
   def reaper(:systemd) do
@@ -56,9 +61,51 @@ defmodule HalC2.OpenShell.Service do
   end
 
   @doc """
-  `%{"installed", "running", "current", "unitPath"}` for the gateway's unit:
-  whether it exists, whether the service manager says it runs, and whether it is the
-  one `render/2` writes for `state` now.
+  `:ok` unless the unit at this home's path was written by another home: it runs a
+  gateway from another directory than `HalC2.OpenShell.root/0`. No unit, or no
+  service manager, is `:ok`.
+  """
+  # Only the gateway's unit in the user's own service directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  def owned do
+    with manager when manager != nil <- manager(),
+         path = unit_path(manager),
+         {:ok, text} <- File.read(path) do
+      if String.contains?(text, home_line(manager)),
+        do: :ok,
+        else:
+          {:error,
+           "[unit-not-ours] #{path} was not written by this HAL-C2 home (#{OpenShell.root()}): it runs another home's gateway, so it was left alone. If no HAL-C2 home uses it, remove it, then try again."}
+    else
+      nil ->
+        :ok
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, "Cannot read #{unit_path(manager())}: #{:file.format_error(reason)}"}
+    end
+  end
+
+  # The line of the unit `render/2` writes that names this home's directory.
+  defp home_line(:systemd), do: "\nWorkingDirectory=#{Service.quote_value(OpenShell.root())}\n"
+
+  defp home_line(:launchd),
+    do: "\n  <key>WorkingDirectory</key>\n  <string>#{xml(OpenShell.root())}</string>\n"
+
+  defp xml(text) do
+    text
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+  end
+
+  @doc """
+  `%{"installed", "foreign", "running", "current", "unitPath"}` for the gateway's
+  unit: whether it exists, whether another home wrote it (`owned/0`), whether the
+  service manager says it runs, and whether it is the one `render/2` writes for
+  `state` now. A foreign unit is never running or current.
   """
   # Only the gateway's unit in the user's own service directory.
   # sobelow_skip ["Traversal.FileModule"]
@@ -70,12 +117,14 @@ defmodule HalC2.OpenShell.Service do
       manager ->
         path = unit_path(manager)
         installed = File.exists?(path)
+        ours = installed and owned() == :ok
 
         %{
           "installed" => installed,
-          "running" => installed and running?(manager),
+          "foreign" => installed and not ours,
+          "running" => ours and running?(manager),
           "current" =>
-            installed and state != nil and File.read(path) == {:ok, render(manager, state)} and
+            ours and state != nil and File.read(path) == {:ok, render(manager, state)} and
               Enum.all?(reaper(manager), fn {path, unit} -> File.read(path) == {:ok, unit} end),
           "unitPath" => path
         }
@@ -87,6 +136,7 @@ defmodule HalC2.OpenShell.Service do
   # sobelow_skip ["Traversal.FileModule"]
   def install(state) do
     with {:ok, manager} <- fetch_manager(),
+         :ok <- owned(),
          :ok <- prerequisites(manager) do
       path = unit_path(manager)
       File.mkdir_p!(Path.dirname(path))
@@ -102,14 +152,13 @@ defmodule HalC2.OpenShell.Service do
   stopped, or the service manager has no such unit or agent; any other failure is
   an error, and the gateway may still run.
   """
-  def stop, do: with({:ok, manager} <- fetch_manager(), do: shutdown(manager))
+  def stop, do: with({:ok, manager} <- fetch_manager(), :ok <- owned(), do: shutdown(manager))
 
   @doc "Starts the installed unit again."
   def start do
-    case manager() do
-      nil -> {:error, unsupported()}
-      manager -> activate(manager, unit_path(manager))
-    end
+    with {:ok, manager} <- fetch_manager(),
+         :ok <- owned(),
+         do: activate(manager, unit_path(manager))
   end
 
   @doc """
@@ -121,6 +170,7 @@ defmodule HalC2.OpenShell.Service do
   # sobelow_skip ["Traversal.FileModule"]
   def uninstall do
     with {:ok, manager} <- fetch_manager(),
+         :ok <- owned(),
          :ok <- shutdown(manager) do
       path = unit_path(manager)
 
@@ -133,7 +183,7 @@ defmodule HalC2.OpenShell.Service do
           :ok
 
         manager == :systemd ->
-          with :ok <- Service.run_all([{"systemctl", ["--user", "disable", @unit]}]) do
+          with :ok <- Service.run_all([{"systemctl", ["--user", "disable", name(:systemd)]}]) do
             File.rm!(path)
             Service.run_all([{"systemctl", ["--user", "daemon-reload"]}])
           end
@@ -148,7 +198,7 @@ defmodule HalC2.OpenShell.Service do
   # Only a unit or agent the service manager does not have counts as stopped
   # without stopping it; the exit status says which failure it was.
   defp shutdown(:systemd) do
-    args = ["--user", "stop", @unit]
+    args = ["--user", "stop", name(:systemd)]
 
     case Service.command("systemctl", args) do
       {:exit, 0, _} -> :ok
@@ -202,17 +252,17 @@ defmodule HalC2.OpenShell.Service do
   end
 
   defp running?(:systemd),
-    do: Service.probe("systemctl", ["--user", "is-active", @unit]) != :error
+    do: Service.probe("systemctl", ["--user", "is-active", name(:systemd)]) != :error
 
   defp running?(:launchd), do: Service.probe("launchctl", ["print", target()]) != :error
 
-  defp target, do: "gui/#{Service.uid()}/#{@label}"
+  defp target, do: "gui/#{Service.uid()}/#{name(:launchd)}"
 
   defp activate(:systemd, _path) do
     Service.run_all([
       {"systemctl", ["--user", "daemon-reload"]},
-      {"systemctl", ["--user", "enable", @unit]},
-      {"systemctl", ["--user", "restart", @unit]},
+      {"systemctl", ["--user", "enable", name(:systemd)]},
+      {"systemctl", ["--user", "restart", name(:systemd)]},
       {"systemctl", ["--user", "enable", "--now", @reap_timer]}
     ])
   end
@@ -378,11 +428,7 @@ defmodule HalC2.OpenShell.Service do
   end
 
   def render(:launchd, state) do
-    x =
-      &(&1
-        |> String.replace("&", "&amp;")
-        |> String.replace("<", "&lt;")
-        |> String.replace(">", "&gt;"))
+    x = &xml/1
 
     argv = Config.command(OpenShell.gateway_bin(state["version"]))
     log = x.(OpenShell.log_path())
@@ -393,7 +439,7 @@ defmodule HalC2.OpenShell.Service do
     <plist version="1.0">
     <dict>
       <key>Label</key>
-      <string>#{@label}</string>
+      <string>#{name(:launchd)}</string>
       <key>ProgramArguments</key>
       <array>
     #{Enum.map_join(argv, "\n", &"    <string>#{x.(&1)}</string>")}

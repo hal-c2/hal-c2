@@ -57,6 +57,7 @@ defmodule HalC2.OpenShell.Install do
     mode = if Keyword.get(opts, :service, true), do: "managed", else: "foreground"
 
     with :ok <- not_external(previous),
+         :ok <- Service.owned(),
          :ok <- foreground_stopped(previous),
          {:ok, platform} <- platform(),
          {:ok, release} <- release(platform.target, opts) do
@@ -95,7 +96,8 @@ defmodule HalC2.OpenShell.Install do
         staging(fn staging ->
           pki = Path.join(staging, "pki")
 
-          with :ok <- foreground_stopped(state),
+          with :ok <- Service.owned(),
+               :ok <- foreground_stopped(state),
                :ok <- issue(state["version"], pki),
                :ok <- drained(state, opts) do
             switch(state, state, opts, fn -> replace_dir(pki, OpenShell.pki_dir()) end)
@@ -587,12 +589,11 @@ defmodule HalC2.OpenShell.Install do
 
   defp drain({:ok, []}, _conn, _opts), do: :ok
 
+  # The isolation check's sandboxes run no review: they go without a drain.
   defp drain({:ok, sandboxes}, conn, opts) do
-    if opts[:drain],
-      do: delete_all(conn, sandboxes),
-      else:
-        {:error,
-         "[sandboxes-running] #{length(sandboxes)} of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."}
+    {probes, sandboxes} = Enum.split_with(sandboxes, &probe?/1)
+
+    with :ok <- delete_probes(conn, probes), do: drain_reviews(sandboxes, conn, opts)
   end
 
   defp drain({:error, reason}, _conn, opts) do
@@ -601,6 +602,16 @@ defmodule HalC2.OpenShell.Install do
       else:
         {:error,
          "[sandboxes-unknown] The gateway is listening, but this MC's sandboxes on it could not be listed (#{message(reason)}). Stopping it would end any that run. Try again once it answers, or pass --force to go ahead."}
+  end
+
+  defp drain_reviews([], _conn, _opts), do: :ok
+
+  defp drain_reviews(sandboxes, conn, opts) do
+    if opts[:drain],
+      do: delete_all(conn, sandboxes),
+      else:
+        {:error,
+         "[sandboxes-running] #{length(sandboxes)} of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."}
   end
 
   # The dev run's gateway is that shell's own process, which the MC cannot stop or
@@ -811,7 +822,12 @@ defmodule HalC2.OpenShell.Install do
       Mint.HTTP2.close(conn)
       answer
     else
-      _ -> false
+      {:error, %Mint.HTTP2{} = conn, _reason} ->
+        Mint.HTTP2.close(conn)
+        false
+
+      _ ->
+        false
     end
   end
 
@@ -846,30 +862,85 @@ defmodule HalC2.OpenShell.Install do
 
   # A workload in a fresh sandbox tries the runtime's sockets and the gateway's
   # port on every address a container could reach it by, and reports what it
-  # reached. The sandbox is deleted whatever the outcome.
+  # reached. The sandbox is deleted whatever the outcome, and the check passes only
+  # once it is gone. Sandboxes an earlier check left go first.
   defp check_isolation(conn, state) do
     name = "halc2-smoke-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
 
-    try do
-      with {:ok, _} <- Client.create_sandbox(conn, name) |> labelled("creating a sandbox"),
-           :ok <- await_ready(conn, name, System.monotonic_time(:millisecond) + @sandbox_timeout),
-           {:ok, exec} <-
-             Client.exec(conn, name, isolation_probe(state))
-             |> labelled("isolation check") do
-        case collect(exec, [], 60_000) do
-          {:exit, 0, _out} ->
-            :ok
-
-          {:exit, _code, out} ->
-            {:error,
-             "[sandbox-not-isolated] A sandbox workload reached what it must not: #{String.trim(out)}"}
-
-          {:error, reason} ->
-            {:error, "[isolation-check-failed] #{message(reason)}"}
+    with :ok <- clear_probes(conn) do
+      result =
+        try do
+          probe_isolation(conn, name, state)
+        catch
+          kind, reason ->
+            remove_probe(conn, name)
+            :erlang.raise(kind, reason, __STACKTRACE__)
         end
+
+      case {result, remove_probe(conn, name)} do
+        {result, :ok} -> result
+        {:ok, {:error, cleanup}} -> {:error, cleanup}
+        {{:error, reason}, {:error, cleanup}} -> {:error, "#{message(reason)} #{cleanup}"}
       end
-    after
-      Client.delete_sandbox(conn, name)
+    end
+  end
+
+  defp probe_isolation(conn, name, state) do
+    with {:ok, _} <-
+           Client.create_sandbox(conn, name, labels: probe_labels())
+           |> labelled("creating a sandbox"),
+         :ok <- await_ready(conn, name, System.monotonic_time(:millisecond) + @sandbox_timeout),
+         {:ok, exec} <-
+           Client.exec(conn, name, isolation_probe(state))
+           |> labelled("isolation check") do
+      case collect(exec, [], 60_000) do
+        {:exit, 0, _out} ->
+          :ok
+
+        {:exit, _code, out} ->
+          {:error,
+           "[sandbox-not-isolated] A sandbox workload reached what it must not: #{String.trim(out)}"}
+
+        {:error, reason} ->
+          {:error, "[isolation-check-failed] #{message(reason)}"}
+      end
+    end
+  end
+
+  @doc false
+  # The label the isolation check's sandboxes carry, beside the owner label. They
+  # run no review, so an update or uninstall deletes them without a drain.
+  def probe_labels, do: %{"halc2.github.io/purpose" => "openshell-check"}
+
+  defp probe?(%{labels: labels}),
+    do: Enum.all?(probe_labels(), fn {k, v} -> labels[k] == v end)
+
+  # Deletes the sandboxes earlier isolation checks left, as when deleting one failed
+  # or the MC stopped during a check.
+  defp clear_probes(conn) do
+    case Client.list_sandboxes(conn, probe_labels(), timeout: 5_000) do
+      {:ok, probes} -> delete_probes(conn, probes)
+      error -> labelled(error, "listing earlier checks' sandboxes")
+    end
+  end
+
+  defp delete_probes(conn, probes) do
+    Enum.reduce_while(probes, :ok, fn %{name: name}, :ok ->
+      case remove_probe(conn, name) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp remove_probe(conn, name) do
+    case Client.delete_sandbox(conn, name) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        {:error,
+         "[probe-cleanup-failed] The isolation check's sandbox #{name} could not be deleted (#{message(reason)}), so the check did not pass. The next check deletes it first."}
     end
   end
 
@@ -1139,8 +1210,9 @@ defmodule HalC2.OpenShell.Install do
       "update-available"
     )
     |> add(service != nil and not service["installed"], "service-missing")
-    |> add(service != nil and service["installed"] and not service["current"], "service-outdated")
-    |> add(service != nil and service["installed"] and not service["running"], "service-stopped")
+    |> add(service != nil and service["foreign"] == true, "service-not-ours")
+    |> add(ours?(service) and not service["current"], "service-outdated")
+    |> add(ours?(service) and not service["running"], "service-stopped")
     |> add(not match?({:ok, _}, health), "gateway-unreachable")
     |> add(match?({:ok, %{status: s}} when s != :healthy, health), "gateway-unhealthy")
     |> add(
@@ -1150,6 +1222,8 @@ defmodule HalC2.OpenShell.Install do
     )
     |> add(is_list(others) and others != [], "gateway-shared")
   end
+
+  defp ours?(service), do: service != nil and service["installed"] and not service["foreign"]
 
   defp add(list, true, code), do: list ++ [code]
   defp add(list, false, _code), do: list
@@ -1165,7 +1239,8 @@ defmodule HalC2.OpenShell.Install do
         {:error, not_installed()}
 
       state ->
-        with :ok <- foreground_stopped(state),
+        with :ok <- Service.owned(),
+             :ok <- foreground_stopped(state),
              :ok <- drained(state, opts),
              :ok <- if(state["mode"] == "managed", do: service_stopped(), else: :ok),
              :ok <- if(state["mode"] == "managed", do: Service.uninstall(), else: :ok) do
@@ -1198,7 +1273,17 @@ defmodule HalC2.OpenShell.Install do
     try do
       fun.(dir)
     after
-      File.rm_rf(dir)
+      case File.rm_rf(dir) do
+        {:ok, _} ->
+          :ok
+
+        # The step is already done or undone; staging is in this home's private
+        # directory, and the next run starts in a fresh one.
+        {:error, reason, path} ->
+          Logger.warning(
+            "OpenShell: staging #{path} was not removed: #{:file.format_error(reason)}"
+          )
+      end
     end
   end
 

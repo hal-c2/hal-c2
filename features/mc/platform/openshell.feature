@@ -2,6 +2,7 @@
 #   https://github.com/hal-c2/hal-c2/issues/1411
 #   https://github.com/hal-c2/hal-c2/issues/1417 (the MC's client certificate comes from a CA of its own)
 #   https://github.com/hal-c2/hal-c2/issues/1418 (one gateway per HAL-C2 environment)
+#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5819948882: homes, probe cleanup, Docker)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
 #   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix, rootless runtimes only)
@@ -21,7 +22,8 @@ Feature: The OpenShell gateway review sandboxes run in
   identity that is not an operator. It refuses machines it cannot run it safely on, puts
   the previous gateway back when an update fails its check, and touches only the
   sandboxes it labelled as its own. A gateway belongs to one HAL-C2 environment: the MC
-  refuses one that holds another environment's sandboxes, and leaves those alone.
+  refuses one that holds another environment's sandboxes, and leaves those alone. Each
+  HAL-C2 home on a machine runs a gateway of its own, under a service of its own.
 
   Background:
     Given a Linux machine with rootless Podman
@@ -49,13 +51,22 @@ Feature: The OpenShell gateway review sandboxes run in
     And no gateway is installed
 
     Examples:
-      | machine                                 | problem              |
-      | is an Intel Mac                         | intel-mac            |
-      | is Linux on riscv64                     | unsupported-arch     |
-      | is Linux without Landlock               | landlock-missing     |
-      | has no Podman                           | podman-missing       |
-      | runs Podman as root                     | runtime-not-rootless |
-      | names the root Docker daemon's socket   | root-docker          |
+      | machine                                 | problem               |
+      | is an Intel Mac                         | intel-mac             |
+      | is Linux on riscv64                     | unsupported-arch      |
+      | is Linux without Landlock               | landlock-missing      |
+      | has no Podman                           | podman-missing        |
+      | runs Podman as root                     | runtime-not-rootless  |
+      | names the root Docker daemon's socket   | root-docker           |
+      | names Docker Desktop for Linux's socket | docker-desktop-linux  |
+      | names a Docker socket that is not there | docker-socket-missing |
+      | is a Mac with Podman instead of Docker  | podman-on-mac         |
+
+  @mc
+  Scenario: A Docker socket that rootless Podman answers on is used as Podman
+    Given a machine whose named Docker socket is answered by the user's rootless Podman
+    When the user installs OpenShell
+    Then the gateway drives Podman over that socket
 
   @mc
   Scenario: A gateway archive that is not the pinned one is refused
@@ -144,6 +155,20 @@ Feature: The OpenShell gateway review sandboxes run in
     And the probe sandbox is deleted
 
   @mc
+  Scenario: A check whose probe sandbox cannot be deleted fails
+    Given a gateway that does not delete the check's sandboxes
+    When the MC checks the gateway
+    Then the check fails because "probe-cleanup-failed"
+    And the probe sandbox is left, labelled as the check's
+
+  @mc
+  Scenario: A probe sandbox an earlier check left is deleted before the next check
+    Given a gateway with a probe sandbox an earlier check left
+    When the MC checks the gateway
+    Then the check passes
+    And the probe sandbox is deleted
+
+  @mc
   Scenario: The check after start refuses an operator identity
     Given a gateway that gives the MC an operator's identity
     When the MC checks the gateway
@@ -203,6 +228,24 @@ Feature: The OpenShell gateway review sandboxes run in
     When a developer starts the gateway with the dev run
     Then the gateway runs in the foreground without telemetry it inherited
     And no service of the gateway's is left
+
+  @mc
+  Scenario: Two HAL-C2 homes on one machine each run a gateway of their own
+    Given OpenShell is installed
+    And another HAL-C2 home on this machine has installed OpenShell
+    When the other home updates its OpenShell and then uninstalls it
+    Then the other home never asked the service manager about this home's service
+    And this home's gateway, service and certificates are as they were
+
+  @mc
+  Scenario: A service under this home's name that another home wrote is left alone
+    Given OpenShell is installed
+    And the service under this home's name runs another HAL-C2 home's gateway
+    When the user installs OpenShell
+    Then the install is refused because "unit-not-ours"
+    And the service manager was asked nothing
+    When the user asks for OpenShell's status
+    Then the status says "service-not-ours"
 
   @mc
   Scenario: Uninstalling removes the gateway and its files

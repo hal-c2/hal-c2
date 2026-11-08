@@ -12,6 +12,11 @@ defmodule HalC2.OpenShell.Platform do
 
   The runtime's socket goes to the gateway and to nothing else. A root Docker
   daemon's socket is refused even when named: whoever holds it holds the machine.
+  The runtime is told by what answers on the socket, not by its name: a Podman
+  behind a Docker socket is checked, and driven, as Podman. `DOCKER_HOST` is not
+  read; a Linux Docker daemon is used only when the user names its socket. Docker
+  Desktop on Linux is refused: its daemon runs as root in a VM OpenShell's Linux
+  driver does not expect.
 
   `check/1` decides from facts; `facts/0` gathers them from this machine, probing
   the runtime's API over its socket. Tests hand `check/1` facts, and the app env's
@@ -62,8 +67,14 @@ defmodule HalC2.OpenShell.Platform do
       {_, nil} ->
         {:error, [if(os == :darwin, do: "docker-desktop-missing", else: "podman-missing")]}
 
+      {_, %{missing: true}} ->
+        {:error, ["docker-socket-missing"]}
+
       {_, %{reachable: false}} ->
         {:error, ["runtime-unreachable"]}
+
+      {:linux, %{kind: :docker, desktop: true}} ->
+        {:error, ["docker-desktop-linux"]}
 
       {:linux, %{kind: :podman} = r} ->
         problems =
@@ -93,6 +104,9 @@ defmodule HalC2.OpenShell.Platform do
           |> Enum.uniq()
 
         if problems == [], do: {:ok, "docker", r.socket}, else: {:error, problems}
+
+      {:darwin, %{kind: :podman}} ->
+        {:error, ["podman-on-mac"]}
 
       _ ->
         {:error, ["unsupported-runtime"]}
@@ -140,7 +154,7 @@ defmodule HalC2.OpenShell.Platform do
 
   def problem_message("podman-missing"),
     do:
-      "No rootless Podman socket. Install Podman 5 or later and run `systemctl --user enable --now podman.socket` as your own user, or name a rootless Docker daemon's socket in HAL_C2_OPENSHELL_DOCKER_SOCKET."
+      "No rootless Podman socket. Install Podman 5 or later and run `systemctl --user enable --now podman.socket` as your own user, or name a rootless Docker daemon's socket in HAL_C2_OPENSHELL_DOCKER_SOCKET (DOCKER_HOST is not read)."
 
   def problem_message("podman-too-old"), do: "OpenShell needs Podman 5 or later."
 
@@ -153,6 +167,18 @@ defmodule HalC2.OpenShell.Platform do
       "That Docker daemon runs as root, and whoever holds its socket holds the machine. Run a rootless Docker daemon for OpenShell (dockerd-rootless-setuptool.sh) and name its socket, or use rootless Podman."
 
   def problem_message("docker-too-old"), do: "OpenShell needs Docker 28 or later."
+
+  def problem_message("docker-socket-missing"),
+    do:
+      "HAL_C2_OPENSHELL_DOCKER_SOCKET does not name a Unix socket. Give the path of a rootless Docker daemon's socket (a `unix://` prefix is fine, a symlink is not), or unset it to use rootless Podman."
+
+  def problem_message("docker-desktop-linux"),
+    do:
+      "That is Docker Desktop for Linux, whose daemon runs as root in its own VM; OpenShell's Linux driver is not run against it. Use rootless Podman, or a rootless Docker daemon."
+
+  def problem_message("podman-on-mac"),
+    do:
+      "That socket is Podman's. On macOS OpenShell runs on Docker Desktop only: install and start Docker Desktop 28 or later."
 
   def problem_message("docker-desktop-missing"),
     do:
@@ -234,11 +260,13 @@ defmodule HalC2.OpenShell.Platform do
     end
   end
 
-  # Docker only when the user named its socket; otherwise their own Podman's.
+  # Docker only when the user named its socket; otherwise their own Podman's. A
+  # named socket that is not there is reported as such, never passed over for
+  # Podman's.
   defp linux_runtime do
     case System.get_env("HAL_C2_OPENSHELL_DOCKER_SOCKET") do
       socket when socket not in [nil, ""] ->
-        probe_runtime(:docker, socket)
+        named_runtime(socket)
 
       _ ->
         case System.get_env("XDG_RUNTIME_DIR") do
@@ -252,6 +280,16 @@ defmodule HalC2.OpenShell.Platform do
   end
 
   @doc false
+  # The runtime behind a socket the user named, as `DOCKER_HOST` would name it.
+  def named_runtime("unix://" <> socket), do: named_runtime(socket)
+
+  def named_runtime(socket) do
+    probe_runtime(:docker, socket) || %{kind: :docker, socket: socket, missing: true}
+  end
+
+  @doc false
+  # A socket file itself (a symlink is not followed), and the runtime that answers
+  # on it, which may not be the `kind` it was looked for as.
   # sobelow_skip ["Traversal.FileModule"]
   def probe_runtime(kind, socket) do
     with {:ok, %File.Stat{type: :other, uid: owner}} <- File.lstat(socket) do
@@ -279,8 +317,10 @@ defmodule HalC2.OpenShell.Platform do
     end
   end
 
+  # Podman's Docker-compatible API names itself among the version's components.
   defp runtime_info(:docker, socket) do
-    with {:ok, %{"Version" => version}} <- get_json(socket, "/version"),
+    with {:ok, %{"Version" => version} = about} <- get_json(socket, "/version"),
+         false <- podman?(about),
          {:ok, %{} = info} <- get_json(socket, "/info") do
       {:ok,
        %{
@@ -289,9 +329,19 @@ defmodule HalC2.OpenShell.Platform do
          desktop: info["OperatingSystem"] == "Docker Desktop"
        }}
     else
-      _ -> :error
+      true ->
+        with {:ok, info} <- runtime_info(:podman, socket),
+             do: {:ok, Map.put(info, :kind, :podman)}
+
+      _ ->
+        :error
     end
   end
+
+  defp podman?(%{"Components" => components}) when is_list(components),
+    do: Enum.any?(components, &match?(%{"Name" => "Podman Engine"}, &1))
+
+  defp podman?(_about), do: false
 
   # One GET over the runtime's Unix socket, bounded: a runtime that hangs is down.
   # Passive mode, so nothing reaches the caller's mailbox.
@@ -306,6 +356,7 @@ defmodule HalC2.OpenShell.Platform do
          {:ok, body} <- read_body(conn, ref, [], 0) do
       Jason.decode(body)
     else
+      {:error, %Mint.HTTP1{} = conn, _reason} -> close(conn, :error)
       _ -> :error
     end
   end
