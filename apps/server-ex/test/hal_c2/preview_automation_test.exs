@@ -70,6 +70,87 @@ defmodule HalC2.PreviewAutomationTest do
     assert {:ok, %{"url" => "about:blank"}} = Task.await(call)
   end
 
+  test "preview_open refuses addresses a tab cannot show, before any host is asked" do
+    assert {:error, "PreviewAutomationInvalidInputError", message} =
+             HalC2.Mcp.Preview.call("preview_open", %{"url" => "about:blank"}, @caller)
+
+    assert message =~ "protocol \"about:\" is unsupported"
+    assert message =~ "Omit the address to open a blank tab"
+
+    assert {:error, "PreviewAutomationInvalidInputError", message} =
+             HalC2.Mcp.Preview.call("preview_open", %{"url" => "mailto:a@example.com"}, @caller)
+
+    assert message =~ "protocol \"mailto:\" is unsupported"
+  end
+
+  test "preview_open sends a dev-server target on, over an address, and adds a scheme" do
+    host("desk")
+
+    call =
+      Task.async(fn ->
+        HalC2.Mcp.Preview.call(
+          "preview_open",
+          %{
+            "target" => %{"kind" => "environment-port", "port" => 6381},
+            "url" => "http://localhost:3000"
+          },
+          @caller
+        )
+      end)
+
+    {connection_id, request} = next_request("desk")
+    assert request["input"]["target"] == %{"kind" => "environment-port", "port" => 6381}
+    refute Map.has_key?(request["input"], "url")
+    answer("desk", connection_id, request, %{"tabId" => "tab-1"})
+    assert {:ok, _} = Task.await(call)
+
+    call =
+      Task.async(fn ->
+        HalC2.Mcp.Preview.call("preview_open", %{"url" => "localhost:3000"}, @caller)
+      end)
+
+    {_, request} = next_request("desk")
+    assert request["input"]["url"] == "http://localhost:3000"
+    answer("desk", connection_id, request, %{"tabId" => "tab-1"})
+    assert {:ok, _} = Task.await(call)
+  end
+
+  test "a snapshot leaves its screenshot out unless the agent asks for it" do
+    host("desk")
+
+    snapshot = %{
+      "url" => "https://example.com/",
+      "title" => "Example",
+      "visibleText" => "hello",
+      "interactiveElements" => [],
+      "consoleEntries" => [],
+      "networkEntries" => [],
+      "actionTimeline" => [],
+      "screenshot" => %{"mimeType" => "image/png", "data" => @png, "width" => 1, "height" => 1}
+    }
+
+    call = Task.async(fn -> HalC2.Mcp.Preview.call("preview_snapshot", %{}, @caller) end)
+    {connection_id, request} = next_request("desk")
+    answer("desk", connection_id, request, snapshot)
+    assert {:ok, _metadata, content} = Task.await(call)
+    assert Enum.filter(content, &(&1["type"] == "image")) == []
+
+    call =
+      Task.async(fn ->
+        HalC2.Mcp.Preview.call("preview_snapshot", %{"save" => true}, @caller)
+      end)
+
+    {_, request} = next_request("desk")
+    answer("desk", connection_id, request, snapshot)
+
+    assert {:ok, %{"url" => "https://example.com/", "screenshotPath" => path}, content} =
+             Task.await(call)
+
+    assert File.read!(path) == Base.decode64!(@png)
+    assert [%{"text" => _url}, %{"text" => note}] = content
+    assert note =~ path
+  end
+
   test "without a host, or with one that cannot do it, the agent is told" do
     assert {:error, "PreviewAutomationNoAvailableHostError", message} =
              HalC2.Mcp.Preview.call("preview_status", %{}, @caller)

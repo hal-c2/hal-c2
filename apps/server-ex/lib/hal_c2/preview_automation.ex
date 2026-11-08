@@ -76,6 +76,12 @@ defmodule HalC2.PreviewAutomation do
       "PreviewAutomationMalformedResponseError" ->
         "Preview automation client #{client} returned a malformed response for #{op}."
 
+      "PreviewAutomationRecordingTooLargeError" ->
+        "The recording exceeds 50 MiB. The saved copy remains on the desktop."
+
+      "PreviewAutomationRecordingDeadlineExpiredError" ->
+        "The recording transfer deadline expired. The saved copy remains on the desktop."
+
       _ ->
         error["remoteMessage"] || "Preview automation #{op} failed on client #{client}."
     end

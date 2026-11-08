@@ -190,6 +190,40 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
+  # The desktop answers with its own page timeout just inside the MC's limit
+  # (its host leaves itself an answer margin), as a timed-out wait does.
+  step "an agent is waiting for a page in a desktop browser", context do
+    context
+    |> connect_desktop("desktop-1")
+    |> answer("waitFor", fn _request, _context ->
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationTimeoutError",
+         "message" => "Preview automation waitFor timed out after 15000ms."
+       }}
+    end)
+  end
+
+  step "the page wait times out and the browser says so within a second of the time limit",
+       context do
+    act(context, "wait for text to appear")
+  end
+
+  step "the tool fails with the browser's timeout", context do
+    assert {:error, "PreviewAutomationTimeoutError",
+            "Preview automation waitFor timed out after 15000ms."} = context.result
+
+    context
+  end
+
+  step "the agent's next action goes to the same browser", context do
+    assert Map.has_key?(broker().clients, "desktop-1")
+    context = act(context, "click a button")
+    assert {:ok, _} = context.result
+    assert [{"desktop-1", _}] = requests(context, "click")
+    context
+  end
+
   step "an agent is waiting on an action in a desktop browser", context do
     context |> connect_desktop("desktop-1") |> hold("click a button")
   end
@@ -333,6 +367,205 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
+  step "an agent opens a preview of port {int} in its environment",
+       %{args: [port]} = context do
+    tool(context, "preview_open", %{
+      "target" => %{"kind" => "environment-port", "port" => port}
+    })
+  end
+
+  step "an agent opens a preview of port {int} in its environment and also gives the address {string}",
+       %{args: [port, address]} = context do
+    tool(context, "preview_open", %{
+      "target" => %{"kind" => "environment-port", "port" => port},
+      "url" => address
+    })
+  end
+
+  step "the tab opens on that environment's port {int}", %{args: [port]} = context do
+    assert {:ok, %{"done" => "open"}} = context.result
+    assert [{_, %{"input" => input}}] = requests(context, "open")
+    assert input["target"] == %{"kind" => "environment-port", "port" => port}
+    refute Map.has_key?(input, "url")
+    context
+  end
+
+  step "the agent did not have to navigate the tab afterwards", context do
+    assert requests(context, "navigate") == []
+    context
+  end
+
+  step ~r/^an agent opens a preview with (?:the address "(?<address>[^"]*)"|no address)$/,
+       %{args: [address]} = context do
+    if address in [nil, ""],
+      do: tool(context, "preview_open", %{}),
+      else: tool(context, "preview_open", %{"url" => address})
+  end
+
+  step ~r/^the open fails saying the protocol "(?<protocol>[^"]*)" is unsupported$/,
+       %{args: [protocol]} = context do
+    assert {:error, "PreviewAutomationInvalidInputError", message} = context.result
+    assert message =~ "protocol \"#{protocol}\" is unsupported"
+    assert requests(context, "open") == []
+    context
+  end
+
+  step "the tab opens on {string}", %{args: [url]} = context do
+    assert {:ok, %{"done" => "open"}} = context.result
+    assert [{_, %{"input" => %{"url" => ^url}}}] = requests(context, "open")
+    context
+  end
+
+  step "a blank tab opens", context do
+    assert {:ok, %{"done" => "open"}} = context.result
+    assert [{_, %{"input" => input}}] = requests(context, "open")
+    refute Map.has_key?(input, "url")
+    refute Map.has_key?(input, "target")
+    context
+  end
+
+  step ~r/^an agent sends (?<sent>.+)$/, %{args: [sent]} = context do
+    invalid = %{
+      "_tag" => "PreviewAutomationInvalidSelectorError",
+      "message" => "Preview automation click rejected the target in tab tab-1: unexpected token"
+    }
+
+    case sent do
+      "preview_open with the address \"about:blank\"" ->
+        tool(context, "preview_open", %{"url" => "about:blank"})
+
+      "preview_click with a locator it cannot parse" ->
+        context
+        |> answer("click", fn _request, _context -> {:error, invalid} end)
+        |> tool("preview_click", %{"locator" => "role==[["})
+
+      "preview_click with an invalid CSS selector" ->
+        context
+        |> answer("click", fn _request, _context -> {:error, invalid} end)
+        |> tool("preview_click", %{"selector" => "button["})
+    end
+  end
+
+  step ~r/^the tool fails explaining (?<guidance>.+)$/, %{args: [guidance]} = context do
+    assert {:error, _tag, message} = context.result
+
+    case guidance do
+      "the address forms it accepts, and that a blank tab comes from preview_open with no address" ->
+        assert message =~ "absolute http(s) URL or a schemeless host"
+        assert message =~ "Omit the address to open a blank tab"
+
+      "the locator forms it accepts" ->
+        assert message =~ "Locators look like role=button[name='Send'] or text=Continue"
+
+      "how to write a CSS selector or use a locator instead" ->
+        assert message =~ "CSS selector such as button[type='submit']"
+        assert message =~ "or a locator like role=button[name='Send'] instead"
+    end
+
+    context
+  end
+
+  # The browser host knows its own tabs, and refuses an open that names one it
+  # has not got; the MC forwards that tab as explicit and never substitutes.
+  step "the thread has no browser tab {string}", %{args: [_tab]} = context do
+    answer(context, "open", fn _request, _context ->
+      {:error, %{"_tag" => "PreviewAutomationTabNotFoundError"}}
+    end)
+  end
+
+  step "an agent opens a preview naming the tab {string}", %{args: [tab]} = context do
+    tool(context, "preview_open", %{"tabId" => tab})
+  end
+
+  step "the agent is told the tab is not open", context do
+    assert {:error, "PreviewAutomationTabNotFoundError",
+            "Preview tab tab-9 was not found for open."} = context.result
+
+    context
+  end
+
+  step "no new tab is opened", context do
+    assert [{_, %{"tabId" => "tab-9", "tabIdExplicit" => true}}] = requests(context, "open")
+    context
+  end
+
+  # Both threads' agents run as the one provider instance `caller/1` names.
+  step "the threads {string} and {string} share one provider session",
+       %{args: [first, second]} = context do
+    services()
+
+    context
+    |> World.create_project("Shop")
+    |> World.create_thread(first)
+    |> World.create_thread(second)
+  end
+
+  step "{string} has the browser tab {string}", %{args: [thread, _name]} = context do
+    thread_id = World.thread_id(context, thread)
+
+    {tab, context} =
+      World.call!(context, "preview.open", %{
+        "threadId" => thread_id,
+        "url" => @page <> "checkout"
+      })
+
+    context =
+      context
+      |> Map.put(:agent_thread, thread_id)
+      |> tool("preview_navigate", %{"tabId" => tab["tabId"], "url" => @page <> "checkout"})
+
+    assert {:ok, %{"tabId" => _}} = context.result
+    Map.put(context, :checkout_tab, tab["tabId"])
+  end
+
+  # `"{string} is not listed"` is the common step over `context.listing`; the
+  # "Checkout" tab is listed by that name when this thread has it.
+  step "the agent in {string} lists its browser tabs", %{args: [thread]} = context do
+    thread_id = World.thread_id(context, thread)
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => thread_id})
+
+    listing =
+      Enum.map(listed["sessions"], fn session ->
+        if session["tabId"] == context.checkout_tab, do: "Checkout", else: session["tabId"]
+      end)
+
+    context =
+      context
+      |> Map.put(:listing, listing)
+      |> Map.put(:agent_thread, thread_id)
+      |> tool("preview_status", %{})
+
+    # Nor is it this agent's current tab: the status read names no tab.
+    assert {_, request} = List.last(requests(context, "status"))
+    refute Map.has_key?(request, "tabId")
+    context
+  end
+
+  step ~r/^(?:the user invokes a skill or written workflow that names another browser|the preview fails twice on the same step of an open tab|the preview works)$/,
+       context do
+    Map.put(context, :browser_situation, HalC2.Mcp.Instructions.browser())
+  end
+
+  step ~r/^the agent's instructions let it use another browser (?<how>.+)$/,
+       %{args: [how]} = context do
+    text = context.browser_situation
+
+    case how do
+      "and report any missing prerequisite" ->
+        assert text =~ "skill or written workflow that names another browser"
+        assert text =~ "report any missing prerequisite"
+
+      "after quoting the error, without asking" ->
+        assert text =~ "fails twice on the same step of an open tab"
+        assert text =~ "quote the error and switch without asking"
+
+      "not at all, the preview stays the default" ->
+        assert text =~ "while the preview works it stays the default"
+    end
+
+    context
+  end
+
   step "an agent's current tab shows {string}", %{args: [url]} = context do
     current_tab(context, url)
   end
@@ -392,6 +625,74 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "an agent takes a snapshot and asks for no image", context do
     tool(context, "preview_snapshot", %{"includeImage" => false})
+  end
+
+  step "the tool returns no screenshot", context do
+    assert {:ok, _metadata, content} = context.result
+    assert images(content) == []
+    context
+  end
+
+  step "the agent takes a snapshot and asks for the image", context do
+    tool(context, "preview_snapshot", %{"includeImage" => true})
+  end
+
+  step "the agent takes a snapshot and saves the screenshot", context do
+    tool(context, "preview_snapshot", %{"save" => true})
+  end
+
+  step "the agent takes a snapshot with no image and saves the screenshot", context do
+    tool(context, "preview_snapshot", %{"save" => true, "includeImage" => false})
+  end
+
+  step "the tool returns only the page's address and the saved file's path", context do
+    assert {:ok, metadata, content} = context.result
+    assert metadata |> Map.keys() |> Enum.sort() == ["screenshotPath", "url"]
+    assert metadata["url"] == @page
+    assert File.read!(metadata["screenshotPath"]) == png()
+    assert [%{"type" => "text", "text" => url}, %{"type" => "text", "text" => note}] = content
+    assert JSON.decode!(url) == %{"url" => @page}
+    assert note =~ metadata["screenshotPath"]
+    context
+  end
+
+  step "an agent takes a snapshot of a tab that is not open", context do
+    context
+    |> answer("snapshot", fn _request, _context ->
+      {:error, %{"_tag" => "PreviewAutomationTabNotFoundError"}}
+    end)
+    |> tool("preview_snapshot", %{"tabId" => "tab-9"})
+  end
+
+  step "the tool fails saying to open a preview with preview_open first", context do
+    assert {:error, "PreviewAutomationTabNotFoundError", message} = context.result
+    assert message =~ "Preview tab tab-9 was not found for snapshot."
+    assert message =~ "Open a preview with preview_open first."
+    context
+  end
+
+  step "the page's visible text has an emoji where the snapshot cuts it", context do
+    Map.put(
+      context,
+      :snapshot,
+      %{"visibleText" => String.duplicate("a", 7_999) <> "😀" <> String.duplicate("b", 20)}
+    )
+  end
+
+  step "the snapshot's text ends on a whole character", context do
+    visible = bounded(context)["visibleText"]
+    assert String.valid?(visible)
+    assert visible == String.duplicate("a", 7_999) <> "😀…"
+    context
+  end
+
+  step "Codex reads the tool result", context do
+    assert {:ok, metadata, content} = context.result
+    # A strict JSON reader: the whole result round-trips, emoji intact.
+    encoded = JSON.encode!(%{"metadata" => metadata, "content" => content})
+    assert encoded =~ "😀"
+    assert %{"content" => ^content} = JSON.decode!(encoded)
+    context
   end
 
   step "the tool returns the page's text without the screenshot", context do
@@ -540,6 +841,22 @@ defmodule HalC2.Steps.Preview.Automation do
 
   step "the desktop app is too old to upload it", context do
     answer(context, "recordingStop", fn _request, _context -> {:ok, recording(nil)} end)
+  end
+
+  step "the recording is larger than 50 MiB", context do
+    answer(context, "recordingStop", fn _request, _context ->
+      {:ok, recording("pending-too-big") |> Map.put("sizeBytes", 60 * 1024 * 1024)}
+    end)
+  end
+
+  step "the transfer is not finished in time", context do
+    answer(context, "recordingStop", fn _request, _context ->
+      {:error,
+       %{
+         "_tag" => "PreviewAutomationRecordingDeadlineExpiredError",
+         "message" => "transfer deadline"
+       }}
+    end)
   end
 
   # `run "..."` and `run the same command again` are approval steps (the timeline's and

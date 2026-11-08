@@ -77,11 +77,47 @@ export const PreviewAutomationStatus = Schema.Struct({
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
+export const BrowserNavigationTarget = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("url").annotate({
+      description: "Selects direct URL navigation.",
+    }),
+    url: BoundedUrl.annotate({
+      description: `Direct website URL. ${URL_GUIDANCE}`,
+    }),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("environment-port").annotate({
+      description: "Selects a dev-server port relative to the current execution environment.",
+    }),
+    port: Schema.Int.check(Schema.isGreaterThan(0))
+      .check(Schema.isLessThan(65_536))
+      .annotate({ description: "Dev-server TCP port inside the current environment." }),
+    protocol: Schema.optional(
+      Schema.Literals(["http", "https"]).annotate({
+        description: "Dev-server protocol. Defaults to http.",
+      }),
+    ),
+    path: Schema.optional(
+      Schema.String.annotate({
+        description: "Optional path, query, and fragment, for example /settings?tab=account.",
+      }),
+    ),
+  }),
+]);
+export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
+
 export const PreviewAutomationOpenInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
   url: Schema.optional(BoundedUrl).annotate({
     description: `Optional initial page URL. ${URL_GUIDANCE} Omit to open a blank tab.`,
   }),
+  target: Schema.optional(
+    BrowserNavigationTarget.annotate({
+      description:
+        "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment. Wins over url when both are given.",
+    }),
+  ),
   open: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -113,36 +149,6 @@ export const PreviewAutomationOpenInput = Schema.Struct({
       "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
-
-export const BrowserNavigationTarget = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("url").annotate({
-      description: "Selects direct URL navigation.",
-    }),
-    url: BoundedUrl.annotate({
-      description: `Direct website URL. ${URL_GUIDANCE}`,
-    }),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("environment-port").annotate({
-      description: "Selects a dev-server port relative to the current execution environment.",
-    }),
-    port: Schema.Int.check(Schema.isGreaterThan(0))
-      .check(Schema.isLessThan(65_536))
-      .annotate({ description: "Dev-server TCP port inside the current environment." }),
-    protocol: Schema.optional(
-      Schema.Literals(["http", "https"]).annotate({
-        description: "Dev-server protocol. Defaults to http.",
-      }),
-    ),
-    path: Schema.optional(
-      Schema.String.annotate({
-        description: "Optional path, query, and fragment, for example /settings?tab=account.",
-      }),
-    ),
-  }),
-]);
-export type BrowserNavigationTarget = typeof BrowserNavigationTarget.Type;
 
 export const PreviewAutomationNavigateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,

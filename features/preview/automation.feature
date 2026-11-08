@@ -134,7 +134,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #17693: the MC gave up at the same moment the page did, so the browser's own
     # timeout answer, a few milliseconds late, cost the agent its browser.
-    @backlog @mc
+    @mc
     Scenario: A browser that reports its own page timeout stays connected
       Given an agent is waiting for a page in a desktop browser
       When the page wait times out and the browser says so within a second of the time limit
@@ -222,14 +222,14 @@ Feature: Agents drive the preview browser
 
     # Upstream #28027: preview_open dropped a dev-server target and opened a blank tab, so agents
     # needed a second preview_navigate.
-    @backlog @mc
+    @mc
     Scenario: An agent opens a dev server's port in one step
       When an agent opens a preview of port 6381 in its environment
       Then the tab opens on that environment's port 6381
       And the agent did not have to navigate the tab afterwards
 
     # Upstream #28027: a dev-server target knows the environment, so it wins over an address.
-    @backlog @mc
+    @mc
     Scenario: A dev-server port wins over an address given with it
       When an agent opens a preview of port 6381 in its environment and also gives the address "http://localhost:3000"
       Then the tab opens on that environment's port 6381
@@ -246,7 +246,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #29614: "about:blank" failed with an error naming neither the input nor the problem,
     # and "mailto:" was read as a web address with credentials.
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: An agent opening an address the preview cannot show is told its protocol is unsupported
       When an agent opens a preview with <address>
       Then <outcome>
@@ -260,7 +260,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #23396: a rejected address or locator answered with an internal detail, or only the
     # field and its length, so the agent could not tell what to send instead.
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: An agent whose <input> is rejected is told what it accepts
       When an agent sends <sent>
       Then the tool fails explaining <guidance>
@@ -299,7 +299,7 @@ Feature: Agents drive the preview browser
       And the agent and the user see the same page
 
     # Upstream #18146: threads that share a provider session keep their browser tabs apart.
-    @backlog @mc
+    @mc
     Scenario: Threads sharing a provider session keep their own browser tabs
       Given the threads "Tax fix" and "Docs" share one provider session
       And "Tax fix" has the browser tab "Checkout"
@@ -384,7 +384,7 @@ Feature: Agents drive the preview browser
       Then that command fails saying the reply is too large
       And the agent's next command on the tab works
 
-    @backlog @mc @priority-low
+    @mc
     Scenario Outline: An agent's instructions let it use another browser only when the preview cannot do the job
       When <situation>
       Then the agent's instructions let it use another browser <how>
@@ -407,17 +407,9 @@ Feature: Agents drive the preview browser
       When the agent presses a key on the page
       Then the tool result does not name a page
 
-    @mc
-    Scenario: A snapshot returns the page text and a screenshot
-      Given an agent's current tab shows a page
-      When the agent takes a snapshot
-      Then the tool returns the page's address, its text and its interactive elements
-      And the tool returns the page's screenshot
-
     # Upstream #16956: providers replay a tool's images on every later request, and some refuse
-    # them, so the screenshot is only sent when asked for. Replaces the scenario above once the
-    # MC carries it.
-    @backlog @mc
+    # them, so the screenshot is only sent when asked for.
+    @mc
     Scenario: A snapshot returns the page text and leaves the screenshot out unless asked
       Given an agent's current tab shows a page
       When the agent takes a snapshot
@@ -426,7 +418,7 @@ Feature: Agents drive the preview browser
       When the agent takes a snapshot and asks for the image
       Then the tool returns the page's screenshot
 
-    @backlog @mc
+    @mc
     Scenario: A snapshot saved as a file returns only the address and the path unless the image is asked for
       Given an agent's current tab shows a page
       When the agent takes a snapshot and saves the screenshot
@@ -480,20 +472,20 @@ Feature: Agents drive the preview browser
       And it answers within 10 seconds
 
     # Upstream #13558: a save-only snapshot returns the path, not the page metadata.
-    @mc @backlog
+    @mc
     Scenario: A snapshot saved as a file without its image returns only the address and the file's path
       Given an agent's current tab shows a page
       When the agent takes a snapshot with no image and saves the screenshot
       Then the tool returns only the page's address and the saved file's path
 
     # Upstream #13559: a missing preview tab says what to do next, not just that it is missing.
-    @mc @backlog
+    @mc
     Scenario: An agent that names a tab which is not open is told to open a preview first
       When an agent takes a snapshot of a tab that is not open
       Then the tool fails saying to open a preview with preview_open first
 
     # Upstream #19737: preview_open refuses a tab id that is not open
-    @mc @backlog
+    @mc
     Scenario: Opening a preview on a tab that is not open fails instead of opening a new tab
       Given the thread has no browser tab "tab-9"
       When an agent opens a preview naming the tab "tab-9"
@@ -516,7 +508,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #29600: a cut landing inside an emoji left half of it, which strict JSON readers
     # such as Codex's refused, failing the whole tool result.
-    @backlog @mc @priority-high
+    @mc
     Scenario: A snapshot cut never splits an emoji
       Given the page's visible text has an emoji where the snapshot cuts it
       When an agent takes a snapshot
@@ -567,7 +559,7 @@ Feature: Agents drive the preview browser
         | the recording upload cannot be claimed  | The preview recording could not be transferred to this environment. |
         | the desktop app is too old to upload it | Update HAL-C2's desktop app to transfer preview recordings.        |
 
-    @backlog @mc
+    @mc
     Scenario Outline: A recording that cannot be transferred says the desktop keeps its copy
       Given an agent is recording the preview
       And <situation>
