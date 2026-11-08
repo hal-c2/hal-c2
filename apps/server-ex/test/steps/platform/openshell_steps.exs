@@ -72,6 +72,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
     Map.put(context, :openshell, %{
       dir: dir,
+      bin: bin,
       log: log,
       control: control,
       archives: Path.join(dir, "archives")
@@ -144,6 +145,15 @@ defmodule HalC2.Steps.Platform.OpenShell do
     end
 
     installed(context, install(context, "0.1.7", smoke: smoke))
+  end
+
+  step "the gateway's service will not stop", context do
+    File.write!(Path.join(context.openshell.bin, "stop-fails"), "")
+    context
+  end
+
+  step "the user updates to OpenShell 0.1.7", context do
+    installed(context, install(context, "0.1.7"))
   end
 
   step "the install is refused because {string}", %{args: [code]} = context do
@@ -263,7 +273,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
     gateway = FakeOpenShell.start(OpenShell.pki_dir())
 
     OpenShell.put_state(%{
-      "mode" => "foreground",
+      "mode" => "managed",
       "version" => "0.1.6",
       "port" => gateway.port,
       "endpoint" => gateway.endpoint,
@@ -275,6 +285,30 @@ defmodule HalC2.Steps.Platform.OpenShell do
     FakeOpenShell.put_sandbox(gateway, "theirs", %{"team" => "x"})
     Map.put(context, :gateway, gateway)
   end
+
+  step "an OpenShell gateway this MC runs that does not answer the MC, with a sandbox of this MC's and one of someone else's",
+       context do
+    # It listens, but trusts other certificates than the MC holds.
+    gateway = FakeOpenShell.start(Path.join(context.openshell.dir, "elsewhere"))
+    FakeOpenShell.stranger(OpenShell.pki_dir())
+
+    OpenShell.put_state(%{
+      "mode" => "managed",
+      "version" => "0.1.6",
+      "port" => gateway.port,
+      "endpoint" => gateway.endpoint,
+      "driver" => "podman"
+    })
+
+    FakeOpenShell.put_sandbox(gateway, "review-1", %{OpenShell.owner_label() => OpenShell.owner()})
+
+    FakeOpenShell.put_sandbox(gateway, "theirs", %{"team" => "x"})
+    Map.put(context, :gateway, gateway)
+  end
+
+  step("the user updates OpenShell with force", context,
+    do: installed(context, install(context, Manifest.version(), service: false, force: true))
+  )
 
   step("the user updates OpenShell", context,
     do: installed(context, install(context, Manifest.version(), service: false))
@@ -417,7 +451,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
   step "the MC uses that gateway without running one of its own", context do
     assert {:ok, %{"mode" => "external", "endpoint" => endpoint}} = context.result
     assert endpoint == context.gateway.endpoint
-    assert mode(Path.join([OpenShell.pki_dir(), "client", "tls.key"])) == 0o600
+    assert mode(OpenShell.credentials(OpenShell.state())[:key]) == 0o600
     refute File.exists?(Service.unit_path(:systemd))
     assert Storage.service_calls(context.openshell.log) == []
     context
@@ -477,7 +511,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
   step "the MC forgets the gateway and leaves its sandboxes alone", context do
     assert :ok = context.result
     assert OpenShell.state() == nil
-    refute File.exists?(OpenShell.pki_dir())
+    assert Path.wildcard(Path.join(OpenShell.root(), "pki*")) == []
     assert Map.keys(FakeOpenShell.sandboxes(context.gateway)) == ["theirs"]
     context
   end
@@ -517,6 +551,13 @@ defmodule HalC2.Steps.Platform.OpenShell do
       )
 
     Map.put(context, :output, out)
+  end
+
+  step "a developer has staged the gateway with the dev run, and it is running", context do
+    assert {:ok, %{"port" => port}} = install(context, Manifest.version(), service: false)
+    # What listens on the gateway's port is the gateway the developer started.
+    {:ok, socket} = :gen_tcp.listen(port, ip: {127, 0, 0, 1}, reuseaddr: true)
+    Map.put(context, :running, socket)
   end
 
   step "the gateway runs in the foreground without telemetry it inherited", context do

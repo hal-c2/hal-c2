@@ -395,7 +395,8 @@ defmodule HalC2.Test.Storage do
   manager's environment, linger, is-enabled, is-active) are answered from state
   files beside them and not logged: `enabled`, `active` and `linger` follow what
   the service manager was asked to do, and `service_state/3` can set or clear
-  them, or `no-user-manager` and `no-logind` to make those questions fail.
+  them, or `no-user-manager` and `no-logind` to make those questions fail, and
+  `stop-fails` makes a stop fail.
   """
   def fake_service_manager(bin) do
     log = Path.join(bin, "calls.log")
@@ -412,7 +413,7 @@ defmodule HalC2.Test.Storage do
     case "$2" in
       enable) touch "$state/enabled" ;;
       restart) touch "$state/active" ;;
-      stop) rm -f "$state/active" ;;
+      stop) [ -f "$state/stop-fails" ] && exit 1; rm -f "$state/active" ;;
       disable) rm -f "$state/enabled" "$state/active" ;;
     esac
     exit 0

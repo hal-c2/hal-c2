@@ -93,6 +93,29 @@ Feature: The OpenShell gateway review sandboxes run in
     And only the other sandbox remains
 
   @mc
+  Scenario: An update whose gateway will not stop changes nothing
+    Given OpenShell 0.1.6 is installed and has a database
+    And the gateway's service will not stop
+    When the user updates to OpenShell 0.1.7
+    Then the install is refused because "gateway-stop-failed"
+    And OpenShell 0.1.6 runs with its database, certificates and service as they were
+
+  @mc
+  Scenario: An update waits while this MC's sandboxes cannot be counted, unless forced
+    Given an OpenShell gateway this MC runs that does not answer the MC, with a sandbox of this MC's and one of someone else's
+    When the user updates OpenShell with a drain
+    Then the update is refused because "sandboxes-unknown"
+    When the user updates OpenShell with force
+    Then the update succeeds
+
+  @mc
+  Scenario: The dev run's gateway is not changed while it runs
+    Given a developer has staged the gateway with the dev run, and it is running
+    When the user rotates the gateway's certificates
+    Then the MC refuses because "gateway-running"
+    And the gateway has its old certificates
+
+  @mc
   Scenario: Rotating the certificates restarts the gateway on new ones
     Given OpenShell is installed
     When the user rotates the gateway's certificates

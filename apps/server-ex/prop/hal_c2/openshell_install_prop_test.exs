@@ -2,7 +2,8 @@ defmodule HalC2.OpenShellInstallPropTest do
   @moduledoc """
   `HalC2.OpenShell.Install` against a model of what an install promises, over any
   sequence of installs and updates (as a service or for the dev run, with the
-  gateway's preflight or its check after start failing), certificate rotations,
+  gateway's preflight or its check after start failing, or a service that will not
+  stop), certificate rotations,
   uninstalls, the gateway writing its database, and the gateway of a user (`reuse`)
   that is clean or already holds another HAL-C2 environment's sandboxes, or comes
   to hold one later.
@@ -15,7 +16,8 @@ defmodule HalC2.OpenShellInstallPropTest do
   A user's gateway is the TLS fake. The promises checked after every step:
 
     * an install, update or rotation that fails changes nothing: the installed
-      state, the certificates, the database and the unit are what they were;
+      state, the certificates, the database and the unit are what they were; one
+      over a service that will not stop fails;
     * one that succeeds installs what was asked, and only a fresh install or a
       rotation brings new certificates;
     * a gateway run as a service has its current unit, running; any other has none;
@@ -24,7 +26,8 @@ defmodule HalC2.OpenShellInstallPropTest do
       of its own that is not the gateway's, keys and the configuration are
       owner-only, and nothing is left in staging;
     * a user's gateway that holds another environment's sandboxes is refused and the
-      MC keeps what it used; one that comes to hold them is reported by `status` and
+      MC keeps what it used, and the credentials it was tried with are gone; at most
+      the current and the replaced credentials of users' gateways stay; one that comes to hold them is reported by `status` and
       refused by `connect`, and by a connection made before it came, when that one
       is asked for a sandbox; the MC never creates or deletes a sandbox there, and
       never touches the other environment's.
@@ -149,7 +152,7 @@ defmodule HalC2.OpenShellInstallPropTest do
         {4,
          {:call, __MODULE__, :install,
           [oneof(["0.1.6", "0.1.7"]), oneof(["managed", "foreground"]), outcome()]}},
-        {2, {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails])]}},
+        {2, {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails, :stop_fails])]}},
         {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
         {1, {:call, __MODULE__, :uninstall, []}}
       ] ++
@@ -175,7 +178,8 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp external?(state), do: match?({"external", _, _}, state.installed)
   defp writable?(state), do: state.installed != nil and not external?(state)
 
-  defp outcome, do: frequency([{3, :ok}, {1, :smoke_fails}, {1, :preflight_fails}])
+  defp outcome,
+    do: frequency([{3, :ok}, {1, :smoke_fails}, {1, :preflight_fails}, {1, :stop_fails}])
 
   def precondition(state, {:call, _, :write_db, _}), do: writable?(state)
 
@@ -214,7 +218,11 @@ defmodule HalC2.OpenShellInstallPropTest do
       outcome == :preflight_fails ->
         seen(state, :preflight)
 
-      outcome == :ok or mode == "foreground" ->
+      # Only a gateway that runs as a service is stopped before an update.
+      outcome == :stop_fails and match?({"managed", _, _}, state.installed) ->
+        seen(state, :stop_failed)
+
+      outcome in [:ok, :stop_fails] or mode == "foreground" ->
         previous = with {_, v, _} <- state.installed, do: v
         seen(%{state | installed: {mode, version, previous}}, :ok)
 
@@ -231,6 +239,7 @@ defmodule HalC2.OpenShellInstallPropTest do
       nil -> seen(state, :not_installed)
       {"external", _, _} -> seen(state, :external)
       {"managed", _, _} when outcome == :smoke_fails -> seen(state, :smoke)
+      {"managed", _, _} when outcome == :stop_fails -> seen(state, :stop_failed)
       _ -> seen(%{state | pki: gen}, :ok)
     end
   end
@@ -244,9 +253,9 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp step(state, {:call, _, :write_db, [marker]}), do: seen(%{state | db: marker}, :ok)
 
   # A gateway the MC runs is refused, whatever the gateway of the user holds. One
-  # that holds another environment's sandboxes is refused, and the credentials in
-  # use stay; with none in use, those it was tried with go. One that is clean is
-  # recorded, over a gateway the MC recorded before.
+  # that holds another environment's sandboxes is refused and changes nothing: the
+  # credentials it was tried with go (`clean?/1`). One that is clean is recorded,
+  # over a gateway the MC recorded before.
   defp step(state, {:call, _, :reuse, [kind]}) do
     gen = state.next_gen
     state = %{state | next_gen: gen + 1}
@@ -256,7 +265,7 @@ defmodule HalC2.OpenShellInstallPropTest do
         seen(state, :managed)
 
       kind == :shared ->
-        seen(%{state | pki: if(state.installed, do: state.pki)}, :shared)
+        seen(state, :shared)
 
       true ->
         seen(
@@ -318,19 +327,37 @@ defmodule HalC2.OpenShellInstallPropTest do
     {release, archive} = releases[version]
     preflight(outcome == :preflight_fails)
 
-    Install.install(
-      release: release,
-      archive: archive,
-      service: mode == "managed",
-      smoke: smoke(outcome == :smoke_fails)
-    )
+    stop_fails(outcome == :stop_fails, fn ->
+      Install.install(
+        release: release,
+        archive: archive,
+        service: mode == "managed",
+        smoke: smoke(outcome == :smoke_fails)
+      )
+    end)
     |> observe()
   end
 
   def rotate(outcome) do
     next_certificates()
     preflight(false)
-    observe(Install.rotate(smoke: smoke(outcome == :smoke_fails)))
+
+    stop_fails(outcome == :stop_fails, fn ->
+      Install.rotate(smoke: smoke(outcome == :smoke_fails))
+    end)
+    |> observe()
+  end
+
+  # Runs `fun` with the service manager failing every stop, or not.
+  defp stop_fails(fails, fun) do
+    path = Path.join([Process.get(:openshell).home, "bin", "stop-fails"])
+    if fails, do: File.write!(path, "")
+
+    try do
+      fun.()
+    after
+      File.rm_rf!(path)
+    end
   end
 
   def uninstall do
@@ -495,7 +522,7 @@ defmodule HalC2.OpenShellInstallPropTest do
 
   defp observe(result, count? \\ false) do
     state = OpenShell.state()
-    ca = Path.join(OpenShell.pki_dir(), "ca.crt")
+    ca = OpenShell.credentials(state)[:ca]
     unit = Service.unit_path(:systemd)
 
     %{
@@ -526,6 +553,7 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp classify({:ok, _}), do: :ok
   defp classify(:ok), do: :ok
   defp classify({:error, "[smoke]" <> _}), do: :smoke
+  defp classify({:error, "[gateway-stop-failed]" <> _}), do: :stop_failed
   defp classify({:error, "[external]" <> _}), do: :external
   defp classify({:error, "[managed]" <> _}), do: :managed
   defp classify({:error, "[shared-gateway]" <> _}), do: :shared
@@ -534,8 +562,10 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp classify(other), do: other
 
   defp clean?(state) do
-    pki = OpenShell.pki_dir()
+    pki = OpenShell.credentials_dir(state)
     key = Path.join([pki, "client", "tls.key"])
+    users = Path.wildcard(Path.join(OpenShell.root(), "pki-*"))
+    external = state != nil and state["mode"] == "external"
     config = OpenShell.config_path()
     mode = &(File.stat!(&1).mode |> Bitwise.band(0o777))
 
@@ -545,7 +575,11 @@ defmodule HalC2.OpenShellInstallPropTest do
       not File.exists?(pki <> ".client") and
       (not File.exists?(key) or mode.(key) == 0o600) and
       (not File.exists?(config) or mode.(config) == 0o600) and
-      Path.wildcard(Path.join([OpenShell.root(), "staging", "*"])) == []
+      Path.wildcard(Path.join([OpenShell.root(), "staging", "*"])) == [] and
+      if(external,
+        do: pki in users and length(users) <= 2 and not File.exists?(OpenShell.pki_dir()),
+        else: users == []
+      )
   end
 
   # The certificates the MC issued: the client's come from a CA that is not the

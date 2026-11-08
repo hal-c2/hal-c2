@@ -89,20 +89,36 @@ defmodule HalC2.OpenShell do
   """
   def endpoint do
     case state() do
-      %{"endpoint" => endpoint} ->
-        {:ok, endpoint, credentials()}
+      %{"endpoint" => endpoint} = state ->
+        {:ok, endpoint, credentials(state)}
 
       _ ->
         {:error, :not_installed}
     end
   end
 
-  @doc "The MC's client certificate and key, and the CA it trusts the gateway by."
-  def credentials do
+  @doc """
+  The MC's client certificate and key, and the CA it trusts the gateway by, for
+  `state`: in `credentials_dir/1`.
+  """
+  def credentials(state \\ state()) do
+    dir = credentials_dir(state)
+
     [
-      ca: Path.join(pki_dir(), "ca.crt"),
-      cert: Path.join([pki_dir(), "client", "tls.crt"]),
-      key: Path.join([pki_dir(), "client", "tls.key"])
+      ca: Path.join(dir, "ca.crt"),
+      cert: Path.join([dir, "client", "tls.crt"]),
+      key: Path.join([dir, "client", "tls.key"])
     ]
   end
+
+  @doc """
+  Where `state`'s client credentials are. A user's gateway names a directory of
+  its own (`"pki"`, under `root/0`), so that recording another gateway, endpoint
+  and credentials together, is the one rename `put_state/1` makes. Any other
+  state's are in `pki_dir/0`.
+  """
+  def credentials_dir(%{"pki" => name}) when is_binary(name),
+    do: Path.join(root(), Path.basename(name))
+
+  def credentials_dir(_state), do: pki_dir()
 end
