@@ -69,7 +69,12 @@ defmodule HalC2.Steps.Settings.SourceControlWriting do
         policy = HalC2.TextGeneration.Style.policy(cwd)
 
         result =
-          HalC2.TextGeneration.commit_message(cwd, "main", "M README.md", "diff", false,
+          HalC2.TextGeneration.commit_message(
+            cwd,
+            "main",
+            "M README.md",
+            Map.get(context, :staged_patch, "diff"),
+            false,
             policy: policy
           )
 

@@ -254,6 +254,17 @@ defmodule HalC2.Attachments do
   def path(%{"id" => id}),
     do: if(safe_id?(id), do: List.first(Path.wildcard(Path.join(dir(), id <> ".*"))))
 
+  @doc "The bytes of an attachment stored on this MC, or `:error`."
+  # The file comes from `path/1`: an id that passed `safe_id?` inside the attachments
+  # folder, never a path a client or an agent names.
+  # sobelow_skip ["Traversal.FileModule"]
+  def read(attachment) do
+    case path(attachment) do
+      path when is_binary(path) -> File.read(path)
+      nil -> :error
+    end
+  end
+
   @doc "Whether an attachment id can name a stored upload at all."
   def valid_id?(id), do: safe_id?(id)
 

@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
   PreviewRenderedViewportSize,
@@ -63,6 +64,24 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
+/**
+ * A browser tab of the thread as an agent sees it: who opened it (the user or
+ * an agent), whether it is this agent session's, who is using it now (a
+ * person, an agent's running action, or nobody), whether a desktop shows it,
+ * and its browser profile.
+ */
+export const PreviewAutomationThreadTab = Schema.Struct({
+  tabId: PreviewTabId,
+  url: Schema.NullOr(Schema.String),
+  title: Schema.NullOr(Schema.String),
+  openedBy: Schema.Literals(["user", "agent"]),
+  mine: Schema.Boolean,
+  inUseBy: Schema.NullOr(Schema.Literals(["person", "agent"])),
+  shown: Schema.Boolean,
+  profileId: BrowserProfileId,
+});
+export type PreviewAutomationThreadTab = typeof PreviewAutomationThreadTab.Type;
+
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
@@ -74,6 +93,8 @@ export const PreviewAutomationStatus = Schema.Struct({
   viewportSetting: Schema.optional(PreviewViewportSetting),
   /** Measured guest-page viewport in CSS pixels when a webview is ready. */
   viewport: Schema.optional(PreviewRenderedViewportSize),
+  /** Every browser tab of the thread, added by the MC. */
+  tabs: Schema.optional(Schema.Array(PreviewAutomationThreadTab)),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
@@ -136,6 +157,14 @@ export const PreviewAutomationOpenInput = Schema.Struct({
         "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true; set false to create a new tab.",
     }),
   ),
+  profile: Schema.optional(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Browser profile a new tab opens in, by name or id (any case). Omit to use the user's default profile.",
+    }),
+  ),
+  /** The profile the MC resolved `profile` (or the host's default) to; the desktop opens a new tab in it. */
+  profileId: Schema.optional(BrowserProfileId),
 })
   .check(
     Schema.makeFilter(
@@ -595,6 +624,11 @@ export const PreviewAutomationHost = Schema.Struct({
   liveTabIds: Schema.optional(Schema.Array(PreviewTabId)),
   /** This host holds only a snapshot of its browser, so no new agent session starts on it. */
   snapshotOnly: Schema.optional(Schema.Boolean),
+  /** Tabs a person is using on this host now; agents act on them only if they opened them. */
+  controlledTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  /** The browser profiles this host can open tabs in, and the one it opens them in by default. */
+  browserProfiles: Schema.optional(Schema.Array(BrowserProfile)),
+  defaultBrowserProfileId: Schema.optional(BrowserProfileId),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
@@ -602,10 +636,13 @@ export const PreviewAutomationHostFocus = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   connectionId: PreviewAutomationConnectionId,
   focused: Schema.Boolean,
-  /** Updated tab sets, as in PreviewAutomationHost, when they changed with the focus. */
+  /** Updated tab sets and profiles, as in PreviewAutomationHost, when they changed. */
   visibleTabIds: Schema.optional(Schema.Array(PreviewTabId)),
   liveTabIds: Schema.optional(Schema.Array(PreviewTabId)),
   snapshotOnly: Schema.optional(Schema.Boolean),
+  controlledTabIds: Schema.optional(Schema.Array(PreviewTabId)),
+  browserProfiles: Schema.optional(Schema.Array(BrowserProfile)),
+  defaultBrowserProfileId: Schema.optional(BrowserProfileId),
 });
 export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 
@@ -644,6 +681,9 @@ export const PreviewAutomationResponse = Schema.Struct({
       _tag: TrimmedNonEmptyString,
       message: Schema.String,
       detail: Schema.optional(Schema.Unknown),
+      // The tab a failed open reached (one it made, or reused), so the MC
+      // can close a tab it made that the agent never hears of.
+      tabId: Schema.optional(PreviewTabId),
     }),
   ),
 });
@@ -942,7 +982,59 @@ export class PreviewAutomationRecordingDeadlineExpiredError extends Schema.Tagge
   }
 }
 
+export class PreviewAutomationTabOtherAgentError extends Schema.TaggedError<PreviewAutomationTabOtherAgentError>()(
+  "PreviewAutomationTabOtherAgentError",
+  { ...PreviewAutomationScopeErrorFields, tabId: PreviewTabId },
+) {
+  override get message(): string {
+    return `Preview tab ${this.tabId} belongs to another agent session; open your own tab with preview_open.`;
+  }
+}
+
+export class PreviewAutomationTabInUseError extends Schema.TaggedError<PreviewAutomationTabInUseError>()(
+  "PreviewAutomationTabInUseError",
+  { ...PreviewAutomationScopeErrorFields, tabId: PreviewTabId },
+) {
+  override get message(): string {
+    return `A person is in control of preview tab ${this.tabId}; wait until they stop, or open your own tab with preview_open.`;
+  }
+}
+
+export class PreviewAutomationTabLimitError extends Schema.TaggedError<PreviewAutomationTabLimitError>()(
+  "PreviewAutomationTabLimitError",
+  {
+    ...PreviewAutomationScopeErrorFields,
+    within: Schema.Literals(["session", "mc"]),
+    limit: Schema.Int,
+  },
+) {
+  override get message(): string {
+    return this.within === "session"
+      ? `This agent session already has ${this.limit} preview tabs open; close one with preview_close before opening another.`
+      : `${this.limit} agent preview tabs are open across HAL-C2; close one with preview_close before opening another.`;
+  }
+}
+
+export class PreviewAutomationUnknownProfileError extends Schema.TaggedError<PreviewAutomationUnknownProfileError>()(
+  "PreviewAutomationUnknownProfileError",
+  {
+    ...PreviewAutomationScopeErrorFields,
+    profile: Schema.String,
+    profiles: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return this.profiles.length === 0
+      ? `There is no browser profile named "${this.profile}": no desktop reports its browser profiles.`
+      : `There is no browser profile named "${this.profile}". Use one of: ${this.profiles.join(", ")}.`;
+  }
+}
+
 export const PreviewAutomationError = Schema.Union([
+  PreviewAutomationTabOtherAgentError,
+  PreviewAutomationTabInUseError,
+  PreviewAutomationTabLimitError,
+  PreviewAutomationUnknownProfileError,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingTooLargeError,

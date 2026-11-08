@@ -1049,6 +1049,18 @@
               "type": "null"
             }
           ]
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "description": "Browser profile a new tab opens in, by name or id (any case). Omit to use the user's default profile."
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": true
