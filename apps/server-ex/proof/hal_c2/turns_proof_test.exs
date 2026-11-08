@@ -154,6 +154,8 @@ defmodule HalC2.TurnsProofTest do
         "for tests: answers when a try at an unrecorded end fails or records; changes nothing",
       "HalC2.Orchestration.TurnWatch handle_info {:retry, _}" => @unrecorded,
       "HalC2.Orchestration.TurnWatch handle_info {:attempted, _, _}" => @unrecorded,
+      "HalC2.Codex.ThreadRuntime handle_info {:leftover_deadline, _}" =>
+        "fails a run held for a left-over turn Codex did not end when stopped; this model has no left-over turns: unrecorded_turns.maude's held-deadline",
       "HalC2.Codex.ThreadRuntime handle_call {:steer, _, _}" => @steer,
       "HalC2.Codex.ThreadRuntime handle_call {:respond, _, _}" => @items,
       "HalC2.Codex.ThreadRuntime handle_call {:rollback, _}" =>
@@ -186,6 +188,8 @@ defmodule HalC2.TurnsProofTest do
         "saves state to a file for a later boot; no run changes",
       "HalC2.Codex.ThreadRuntime handle_info :durable_save" =>
         "saves state to a file for a later boot; no run changes",
+      "HalC2.Codex.ThreadRuntime handle_info {:leftover_deadline, _}" =>
+        "fails a follow-up held behind a turn left over from one the store could not record (#{@unrecorded})",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does",
