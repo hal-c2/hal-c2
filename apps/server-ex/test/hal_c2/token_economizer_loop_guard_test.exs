@@ -677,7 +677,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert [%{"delivered" => true}] = state.recent
     end
 
-    test "a turn's end stops its judge job, and turning the guard off stops every task" do
+    test "a turn's end stops its judge job, watching stops deliveries, and off stops every task" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = state |> observe(started("a")) |> observe(started("b"))
       {judge, state} = sleeper(state, "a", :judge)
@@ -699,6 +699,14 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       assert_receive {:DOWN, _, :process, ^delivery, _}
       assert state.tasks == %{}
+
+      {judge, state} = sleeper(state, "b", :judge)
+
+      {:reply, :ok, state} =
+        TokenEconomizer.handle_call({:settings, %{"loopGuard" => "off"}}, nil, state)
+
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert state.tasks == %{} and state.turns == %{}
     end
   end
 end
