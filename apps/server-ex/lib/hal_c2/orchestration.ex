@@ -2234,13 +2234,21 @@ defmodule HalC2.Orchestration do
   defp title_effect(%{"threadId" => thread_id, "args" => args}, will_retry) do
     previous = args["previous"]
 
-    root =
+    {root, pull_requests} =
       case HalC2.Shell.row(node(), thread_id) do
-        {"thread", row} -> row["worktreePath"] || project_root(row["projectId"])
-        _ -> nil
+        {"thread", row} ->
+          {row["worktreePath"] || project_root(row["projectId"]),
+           PullRequests.visible(row["pullRequests"] || [])}
+
+        _ ->
+          {nil, []}
       end
 
-    opts = [attachments: args["attachments"] || [], previous_title: previous]
+    opts = [
+      attachments: args["attachments"] || [],
+      previous_title: previous,
+      pull_requests: pull_requests
+    ]
 
     case HalC2.TextGeneration.thread_title(root || System.tmp_dir!(), args["text"] || "", opts) do
       {:ok, %{"title" => title}} when title != "New thread" ->

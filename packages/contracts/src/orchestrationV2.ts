@@ -937,6 +937,8 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
   required: Schema.optional(Schema.Boolean),
+  /** The text a free answer starts from (a Pi editor dialog's current value), kept exactly. */
+  initialAnswer: Schema.optional(Schema.String),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
 
@@ -1332,6 +1334,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
@@ -2083,6 +2089,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
