@@ -13,6 +13,7 @@
 #   sessionErrorOnce   the same, for the next session/new only (then removed)
 #   configOptions      session/new's configOptions (default: one model "fake/one")
 #   modes              session/new's modes
+#   sessionModels      session/new's `models` (currentModelId, availableModels), as Grok reports them
 #   rejectUnknownModels  session/set_config_option refuses a model configOptions lacks
 #   turns              [{"match": substring, "steps": [...]}], first match wins
 #   sessionId          session/new's sessionId (default: a fake one)
@@ -306,6 +307,8 @@ while True:
         result = {"configOptions": cfg.get("configOptions", default_options())}
         if cfg.get("modes") is not None:
             result["modes"] = cfg["modes"]
+        if cfg.get("sessionModels") is not None:
+            result["models"] = cfg["sessionModels"]
         if method == "session/new":
             result["sessionId"] = cfg.get("sessionId") or "fake-session-%d-%d" % (os.getpid(), sessions)
         sid = result.get("sessionId") or params.get("sessionId")
