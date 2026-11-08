@@ -347,7 +347,8 @@ defmodule HalC2.Plugins.Extension do
       "runId", "projectId", "instanceId", "provider", "model", "newConversation"`),
       `turn.item` (a tool call or message that ended: `"threadId", "runId", "itemId",
       "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
-      "status", "input", "output"`, cut to 4,000 characters, and `"exitCode"`) and
+      "status", "input", "output"`, cut to 4,000 characters, `"exitCode"` and, for a
+      file change, the file's `"path"`) and
       `turn.finished` (`"threadId", "runId", "status", "tokenUsage"`: the provider's
       last report of the conversation's context, `%{"usedTokens", "inputTokens",
       "cachedInputTokens", "outputTokens", "maxTokens"}` as far as it reports them, or

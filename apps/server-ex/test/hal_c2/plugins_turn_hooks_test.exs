@@ -97,6 +97,22 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert finished["status"] == "completed"
   end
 
+  test "a plugin hears which file a file change wrote, and a long output's end" do
+    item = %{
+      "id" => "i1",
+      "type" => "file_change",
+      "providerToolName" => "Edit",
+      "status" => "completed",
+      "fileName" => "/r/lib/a.ex",
+      "output" => String.duplicate("x", 5_000) <> "tail"
+    }
+
+    observed = Orchestration.TurnWriter.observed_item(item)
+    assert %{"tool" => "Edit", "path" => "/r/lib/a.ex", "itemType" => "file_change"} = observed
+    assert String.length(observed["output"]) == 4_000
+    assert String.ends_with?(observed["output"], "tail")
+  end
+
   test "a plugin not granted turns:observe hears nothing of a turn", %{thread_id: thread_id} do
     grant(%{"listener" => ["turns:observe"], "deaf" => []})
     feed("listener")

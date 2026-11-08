@@ -360,7 +360,8 @@ defmodule HalC2.Orchestration.TurnWriter do
       "status" => item["status"],
       "input" => observed(item["input"]),
       "output" => observed(item["output"]),
-      "exitCode" => item["exitCode"]
+      "exitCode" => item["exitCode"],
+      "path" => item["fileName"]
     }
   end
 
