@@ -134,7 +134,11 @@ private:
   QJsonObject status(const QString& tabId) const;
   void open(const RequestPtr& request);
   void navigate(const RequestPtr& request);
-  void snapshot(const RequestPtr& request);
+  // The address an open or navigate names: a dev-server `target` wins over
+  // `url`. Fails the request and returns false when it names none it can reach.
+  bool address(const RequestPtr& request, QUrl& url);
+  // Tries again, up to three times, while the page's secrets change under it.
+  void snapshot(const RequestPtr& request, int attempt = 0);
   void click(const RequestPtr& request);
   void type(const RequestPtr& request);
   void press(const RequestPtr& request);

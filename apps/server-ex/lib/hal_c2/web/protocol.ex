@@ -35,7 +35,7 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "desktopUpdateControl", "mc"?: n}`: this client as the desktop app
       that started that MC (`HalC2.DesktopUpdate`); the update control messages
       (`DesktopUpdateControlMessage`) the MC sends it
-    * `{"type": "localServers", "mc": n}`: web servers listening on that MC's
+    * `{"type": "localServers", "mc": n, "configuredUrls"?: [url]}`: web servers listening on that MC's
       host (`DiscoveredLocalServerList`), then the list whenever it changes
     * `{"type": "devices", "mc": n}`: that MC's simulators, emulators and
       open device sessions (`DeviceServiceState`), then the whole state on every change
@@ -339,8 +339,9 @@ defmodule HalC2.Web.Protocol do
   defp decode_shape(%{"type" => "desktopUpdateControl"}, _mcs),
     do: {:ok, {:desktop_update_control, node()}}
 
-  defp decode_shape(%{"type" => "localServers", "mc" => mc}, mcs) do
-    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:local_servers, mc}}
+  defp decode_shape(%{"type" => "localServers", "mc" => mc} = shape, mcs) do
+    urls = Enum.filter(List.wrap(shape["configuredUrls"]), &is_binary/1)
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:local_servers, mc, urls}}
   end
 
   defp decode_shape(%{"type" => "devices", "mc" => mc}, mcs) do

@@ -15,6 +15,7 @@ import { detectInlineImageTransport, inlineImageProtocol } from "./terminalGraph
 import { createHost } from "./host/host.ts";
 import { fileMutedThreads, MUTED_THREADS_FILE } from "./host/mutedThreads.ts";
 import { fileTimestampFormat, TIMESTAMP_FORMAT_FILE } from "./host/timestampFormatSetting.ts";
+import { EFFORT_DISPLAY_FILE, fileEffortDisplay } from "./host/effortDisplaySetting.ts";
 import { enginePluginPort, filePluginStore, PLUGIN_RECORDS_FILE } from "./host/plugins.ts";
 import { movePromptCursorToEnd } from "./host/promptCursor.ts";
 import { PLUGINS_DIR, readUserConfig, saveKeymapOverrides } from "./host/userConfig.ts";
@@ -237,6 +238,7 @@ async function main(): Promise<void> {
     // Muted threads are this device's: they live beside the user's shell config.
     mutedThreads: fileMutedThreads(NodePath.join(configDir, MUTED_THREADS_FILE)),
     timestampFormat: fileTimestampFormat(NodePath.join(configDir, TIMESTAMP_FORMAT_FILE)),
+    effortDisplay: fileEffortDisplay(NodePath.join(configDir, EFFORT_DISPLAY_FILE)),
     // So are the Space pane's project sections the user expanded.
     projectSections: fileMutedThreads(NodePath.join(configDir, "space-sections.json")),
     // ^G: hand the terminal to the editor, then take the screen back.

@@ -3,7 +3,8 @@ defmodule HalC2.ProviderUpdates do
   Whether a provider CLI is behind its latest release (`versionAdvisory` on its
   `ServerProvider` entry), and updating it (`server.updateProvider`).
 
-  The latest version is the npm registry's — or, for a Claude install from
+  The latest version is what npm on the MC's PATH says, which follows the machine's
+  registry setup (the public registry's without npm) — or, for a Claude install from
   Claude's own installer, the newest its release channel offers — read in the
   background at most hourly unless the user turned off
   `enableProviderUpdateChecks`; providers are re-announced when it arrives.
@@ -18,17 +19,21 @@ defmodule HalC2.ProviderUpdates do
   that the provider is no longer behind.
   """
 
+  require Logger
+
   @packages %{
     "codex" => "@openai/codex",
     "claudeAgent" => "@anthropic-ai/claude-code",
     "opencode" => "opencode-ai",
-    "grok" => "@xai-official/grok"
+    "grok" => "@xai-official/grok",
+    "pi" => "@earendil-works/pi-coding-agent"
   }
   @names %{
     "codex" => "Codex",
     "claudeAgent" => "Claude",
     "opencode" => "OpenCode",
-    "grok" => "Grok"
+    "grok" => "Grok",
+    "pi" => "Pi"
   }
   @ttl :timer.hours(1)
 
@@ -78,7 +83,24 @@ defmodule HalC2.ProviderUpdates do
     do: channel_latest(claude_channel(instance))
 
   defp latest_for("grok", path, _update, _instance) when is_binary(path), do: grok_latest(path)
-  defp latest_for(driver, _path, _update, _instance), do: latest(driver)
+  defp latest_for(driver, _path, update, _instance), do: latest(driver, update)
+
+  # The release `latest_for/4` names, read now rather than from the hour's cache; nil
+  # when its source does not answer.
+  defp reread_latest("claudeAgent", _path, [_executable, "update"], instance),
+    do: read_channel(claude_channel(instance))
+
+  defp reread_latest("grok", path, update, _instance) when is_binary(path) do
+    real = real_path(path)
+
+    case String.contains?(real, "/Caskroom/") && cask(real) do
+      {brew, name} -> read_cask(brew, name)
+      false -> read_latest("grok", update)
+      nil -> nil
+    end
+  end
+
+  defp reread_latest(driver, _path, update, _instance), do: read_latest(driver, update)
 
   # The channel a native Claude install follows, from the `autoUpdatesChannel`
   # of the instance's Claude settings; `latest` when it does not say. Only that
@@ -121,18 +143,23 @@ defmodule HalC2.ProviderUpdates do
 
       Task.start(fn ->
         try do
-          if version = channel_version(channel) do
-            :persistent_term.put(
-              {__MODULE__, :claude_channel, channel},
-              {version, System.monotonic_time(:millisecond)}
-            )
-
-            HalC2.Settings.notify_providers()
-          end
+          if read_channel(channel), do: HalC2.Settings.notify_providers()
         after
           :persistent_term.put(key, false)
         end
       end)
+    end
+  end
+
+  # Reads the channel now and keeps what it found; answers it, or nil.
+  defp read_channel(channel) do
+    if version = channel_version(channel) do
+      :persistent_term.put(
+        {__MODULE__, :claude_channel, channel},
+        {version, System.monotonic_time(:millisecond)}
+      )
+
+      version
     end
   end
 
@@ -185,9 +212,17 @@ defmodule HalC2.ProviderUpdates do
     try do
       with {:path, path} when is_binary(path) <- {:path, executable(driver, instance)},
            {:command, [_ | _] = command} <- {:command, update_command(driver, path)},
-           {:target, true} <- {:target, target == nil or targeted(command, target) != nil} do
-        locked(lock_key(command), instance, fn -> run(driver, instance, target) end)
+           {:target, true} <- {:target, target == nil or targeted(command, target) != nil},
+           {:idle, true} <- {:idle, claim(instance)} do
+        try do
+          locked(lock_key(command), instance, fn -> run(driver, instance, target) end)
+        after
+          release(instance)
+        end
       else
+        {:idle, false} ->
+          error(driver, "An update is already running for this provider.")
+
         {:path, _} ->
           error(driver, "#{@names[driver] || driver} is not installed on this machine.")
 
@@ -209,6 +244,14 @@ defmodule HalC2.ProviderUpdates do
       state -> Map.put(entry, "updateState", state)
     end
   end
+
+  # One update per instance at a time, held from the request to its end, queued or
+  # running; a second is refused, not queued behind it.
+  defp claim(instance),
+    do: :global.set_lock({{__MODULE__, :instance, instance}, self()}, [node()], 0)
+
+  defp release(instance),
+    do: :global.del_lock({{__MODULE__, :instance, instance}, self()}, [node()])
 
   # One installer runs one update at a time; the others wait their turn, queued.
   defp locked(key, instance, fun) do
@@ -248,24 +291,138 @@ defmodule HalC2.ProviderUpdates do
     offered = :persistent_term.get({__MODULE__, instance, :offered}, nil)
     path = executable(driver, instance)
     command = path && update_command(driver, path)
+    # Read once: the release checked below is the one the installer would fetch.
+    latest = command && target == nil && fresh_latest(driver, path, command, instance)
 
     cond do
       command == nil or (offered != nil and offered != command) ->
         failed(driver, instance, started, "Provider installation changed. Refresh and try again.")
 
-      true ->
-        [program | args] = if target, do: targeted(command, target), else: command
+      refusal = refusal(driver, instance, path, command, target, latest) ->
+        failed(driver, instance, started, refusal)
 
-        case System.cmd(program, args,
-               stderr_to_stdout: true,
-               env: update_env(driver, instance, command)
-             ) do
-          {output, 0} ->
+      # Upstream #24763: a provider a fresh probe finds current needs no installer.
+      target == nil and current?(driver, instance, path, latest) ->
+        put_state(instance, "succeeded", started, "Already up to date.")
+        {:ok, %{"providers" => HalC2.Environment.providers()}}
+
+      true ->
+        argv = if target, do: targeted(command, target), else: command
+
+        case command(argv, update_env(driver, instance, command)) do
+          {0, output} ->
             verify(driver, instance, started, output, target)
 
-          {output, _} ->
-            failed(driver, instance, started, output |> String.trim() |> String.slice(-500, 500))
+          {:timeout, output} ->
+            failed(driver, instance, started, "Update timed out.", output)
+
+          {status, output} when is_integer(status) ->
+            failed(
+              driver,
+              instance,
+              started,
+              "Update command exited with code #{status}.",
+              output
+            )
+
+          {:error, reason} ->
+            failed(driver, instance, started, "Failed to run update command: #{reason}")
         end
+    end
+  end
+
+  # Why the release an update would install may not be installed here, or nil. A
+  # chosen version must still be the one the provider's compatibility policy
+  # recommends, and supported; the latest must not be broken or unsupported. The
+  # policy may have changed since the user was offered the update.
+  defp refusal(driver, instance, path, command, target, latest) do
+    candidate = target || latest || latest_for(driver, path, command, instance)
+    advisory = candidate && HalC2.ProviderCompatibility.for_version(driver, candidate)
+
+    cond do
+      target != nil and
+          (advisory == nil or advisory["recommendedVersion"] != target or
+             advisory["status"] != "supported") ->
+        "This version is no longer recommended or this installer cannot install a specific version. Refresh provider settings."
+
+      target == nil and advisory != nil and advisory["status"] in ["broken", "unsupported"] ->
+        "The latest provider version is incompatible with this HAL-C2 release. Review provider settings."
+
+      true ->
+        nil
+    end
+  end
+
+  # The latest release read now rather than from the hour's cache. With version
+  # checks off, only what is already known.
+  defp fresh_latest(driver, path, command, instance) do
+    if Application.get_env(:hal_c2, :provider_update_checks, true),
+      do: reread_latest(driver, path, command, instance),
+      else: latest_for(driver, path, command, instance)
+  end
+
+  # Whether the instance is installed at the latest release, both read afresh: the
+  # version it runs, and the latest from its source (a latest that cannot be read is
+  # not proof the provider is current). With version checks off, the latest is only
+  # what is already known.
+  defp current?(driver, instance, path, latest) do
+    forget_version(driver, instance, path)
+
+    with true <- is_binary(latest),
+         %{} = entry <- Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance)) do
+      entry["installed"] != false and entry["versionAdvisory"]["status"] == "current" and
+        entry["versionAdvisory"]["latestVersion"] == latest
+    else
+      _ -> false
+    end
+  end
+
+  # Runs an update's argv, for at most `:provider_update_timeout` (five minutes),
+  # and answers its exit status (or `:timeout`) and what it printed: stderr then
+  # stdout, each read up to 10,000 bytes, and of that the first 10,000 characters.
+  # A command that runs too long is killed with the task that owns it.
+  defp command(argv, env) do
+    timeout = Application.get_env(:hal_c2, :provider_update_timeout, :timer.minutes(5))
+
+    task =
+      Task.async(fn ->
+        try do
+          argv
+          |> Exile.stream(stderr: :consume, ignore_epipe: true, env: env)
+          |> Enum.reduce({nil, "", ""}, fn
+            {:stdout, data}, {status, out, err} -> {status, cap(out, data), err}
+            {:stderr, data}, {status, out, err} -> {status, out, cap(err, data)}
+            {:exit, {:status, status}}, {_, out, err} -> {status, out, err}
+            {:exit, _}, {_, out, err} -> {1, out, err}
+          end)
+          |> then(fn {status, out, err} -> {status, output(out, err)} end)
+        rescue
+          exception -> {:error, Exception.message(exception)}
+        end
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> {:timeout, nil}
+    end
+  end
+
+  defp cap(text, _data) when byte_size(text) >= 10_000, do: text
+
+  defp cap(text, data) do
+    text = text <> IO.iodata_to_binary(data)
+    binary_part(text, 0, min(byte_size(text), 10_000))
+  end
+
+  defp output(out, err) do
+    [err, out]
+    |> Enum.map(&String.replace_invalid/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
+    |> String.trim()
+    |> case do
+      "" -> nil
+      text -> String.slice(text, 0, 10_000)
     end
   end
 
@@ -296,9 +453,9 @@ defmodule HalC2.ProviderUpdates do
     {:ok, %{"providers" => HalC2.Environment.providers()}}
   end
 
-  defp failed(driver, instance, started, reason) do
+  defp failed(driver, instance, started, reason, output \\ nil) do
     message = if reason == "", do: "The update failed.", else: reason
-    put_state(instance, "failed", started, message)
+    put_state(instance, "failed", started, message, output)
     error(driver, reason)
   end
 
@@ -311,7 +468,7 @@ defmodule HalC2.ProviderUpdates do
       "startedAt" => started,
       "finishedAt" => finished,
       "message" => message,
-      "output" => output && String.slice(output, -10_000, 10_000)
+      "output" => output
     })
 
     HalC2.Settings.notify_providers()
@@ -462,13 +619,20 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
+  def executable("pi", instance) do
+    case HalC2.Acp.binary_path(instance) do
+      nil -> nil
+      path -> System.find_executable(path)
+    end
+  end
+
   def executable(_driver, _instance), do: nil
 
   # Provider entries cache the version of each executable; an update makes the
   # updated one's stale, and only that one is read again. OpenCode's is read again from
   # a throwaway session of the CLI on disk; its running sessions keep the version they
   # started with.
-  defp forget_version(driver, instance, _path) when driver in ["opencode", "grok"],
+  defp forget_version(driver, instance, _path) when driver in ["opencode", "grok", "pi"],
     do: HalC2.Acp.reload(instance)
 
   defp forget_version(driver, _instance, path) do
@@ -499,7 +663,7 @@ defmodule HalC2.ProviderUpdates do
         _ -> nil
       end
     else
-      latest("grok")
+      latest("grok", nil)
     end
   end
 
@@ -530,18 +694,7 @@ defmodule HalC2.ProviderUpdates do
 
       Task.start(fn ->
         try do
-          with {out, 0} <-
-                 System.cmd(brew, ["info", "--cask", "--json=v2", name], stderr_to_stdout: true),
-               {:ok, %{"casks" => [%{"version" => version} | _]}} <- JSON.decode(out) do
-            :persistent_term.put(
-              {__MODULE__, {:cask, name}},
-              {version, System.monotonic_time(:millisecond)}
-            )
-
-            HalC2.Settings.notify_providers()
-          end
-        rescue
-          _ -> nil
+          if read_cask(brew, name), do: HalC2.Settings.notify_providers()
         after
           :persistent_term.put(key, false)
         end
@@ -549,22 +702,70 @@ defmodule HalC2.ProviderUpdates do
     end
   end
 
-  # The latest release as last read, starting a read when it is missing or stale.
-  defp latest(driver) do
+  # Asks the cask's brew now and keeps what it said; answers it, or nil.
+  # sobelow_skip ["CI.System"]
+  defp read_cask(brew, name) do
+    with {out, 0} <-
+           System.cmd(brew, ["info", "--cask", "--json=v2", name], stderr_to_stdout: true),
+         {:ok, %{"casks" => [%{"version" => version} | _]}} <- JSON.decode(out) do
+      :persistent_term.put(
+        {__MODULE__, {:cask, name}},
+        {version, System.monotonic_time(:millisecond)}
+      )
+
+      version
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # The latest release as last read, starting a read when it is missing or stale. A
+  # read that found nothing counts as a read: it is tried again once it is stale too.
+  defp latest(driver, update) do
     case :persistent_term.get({__MODULE__, driver}, nil) do
       {version, read_at} ->
-        if System.monotonic_time(:millisecond) - read_at > @ttl, do: refresh(driver)
+        if System.monotonic_time(:millisecond) - read_at > @ttl, do: refresh(driver, update)
         version
 
       nil ->
-        refresh(driver)
+        refresh(driver, update)
         nil
     end
   end
 
   defp checked_at(driver), do: :persistent_term.get({__MODULE__, driver, :checked_at}, nil)
 
-  defp refresh(driver) do
+  # Reads the latest release now and keeps it; answers it, or nil when the read found
+  # nothing (which keeps what an earlier read found, and when this one tried).
+  defp read_latest(driver, update) do
+    package = @packages[driver]
+    now = System.monotonic_time(:millisecond)
+
+    case package && lookup_latest(package, update) do
+      failed when failed in [nil, :npm_failed] ->
+        {last, _} = :persistent_term.get({__MODULE__, driver}, {nil, now})
+        :persistent_term.put({__MODULE__, driver}, {last, now})
+
+        if failed == :npm_failed,
+          do: Logger.warning("Configured npm version lookup failed for #{package}")
+
+        nil
+
+      version ->
+        :persistent_term.put({__MODULE__, driver}, {version, now})
+
+        :persistent_term.put(
+          {__MODULE__, driver, :checked_at},
+          HalC2.Orchestration.Entities.now()
+        )
+
+        version
+    end
+  end
+
+  defp refresh(driver, update) do
     package = @packages[driver]
     key = {__MODULE__, driver, :reading}
 
@@ -574,33 +775,76 @@ defmodule HalC2.ProviderUpdates do
 
       Task.start(fn ->
         try do
-          if version = registry_latest(package) do
-            :persistent_term.put(
-              {__MODULE__, driver},
-              {version, System.monotonic_time(:millisecond)}
-            )
-
-            :persistent_term.put(
-              {__MODULE__, driver, :checked_at},
-              HalC2.Orchestration.Entities.now()
-            )
-
-            HalC2.Settings.notify_providers()
-          end
+          read_latest(driver, update)
         after
           :persistent_term.put(key, false)
+          # Found or not, the read ended, and open clients hear so.
+          HalC2.Settings.notify_providers()
         end
       end)
     end
   end
 
+  # npm owns the registry, scoped auth and proxy the machine is set up with, so the
+  # npm on the MC's PATH is asked, at the install's prefix when npm installed it. When
+  # it cannot say, the public registry is not asked behind its back; without npm, it
+  # is (`:npm_registry_url` stands in for it in tests), and the whole answer must arrive
+  # within four seconds (`:npm_registry_timeout`), not just its headers.
+  defp lookup_latest(package, update) do
+    case System.find_executable("npm") do
+      nil -> registry_latest(package)
+      npm -> npm_latest(npm, package, update)
+    end
+  end
+
+  defp npm_latest(npm, package, update) do
+    prefix =
+      case update do
+        [_npm, "install", "-g", "--prefix", prefix, _package] -> ["--prefix", prefix]
+        _ -> []
+      end
+
+    args = ["view", "--global"] ++ prefix ++ ["--json", package <> "@latest", "version"]
+    task = Task.async(fn -> npm_view([npm | args]) end)
+
+    case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, version} when is_binary(version) -> version
+      _ -> :npm_failed
+    end
+  end
+
+  # `npm view --json` prints the version as a JSON string, or a list of one.
+  defp npm_view(argv) do
+    argv
+    |> Exile.stream(stderr: :disable, ignore_epipe: true)
+    |> Enum.reduce({[], nil}, fn
+      {:exit, status}, {out, _} -> {out, status}
+      data, {out, status} when is_binary(data) -> {[out, data], status}
+      _, acc -> acc
+    end)
+    |> case do
+      {out, {:status, 0}} ->
+        case out |> IO.iodata_to_binary() |> String.trim() |> JSON.decode() do
+          {:ok, version} when is_binary(version) and version != "" -> version
+          {:ok, [version]} when is_binary(version) and version != "" -> version
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
   defp registry_latest(package) do
-    url = ~c"https://registry.npmjs.org/#{String.replace(package, "/", "%2F")}/latest"
+    base = Application.get_env(:hal_c2, :npm_registry_url, "https://registry.npmjs.org")
+    url = ~c"#{base}/#{String.replace(package, "/", "%2F")}/latest"
 
     case :httpc.request(
            :get,
            {url, []},
-           [timeout: 4_000, ssl: :httpc.ssl_verify_host_options(true)],
+           [timeout: Application.get_env(:hal_c2, :npm_registry_timeout, 4_000)] ++ ssl(url),
            body_format: :binary
          ) do
       {:ok, {{_, 200, _}, _, body}} ->
@@ -615,6 +859,9 @@ defmodule HalC2.ProviderUpdates do
   rescue
     _ -> nil
   end
+
+  defp ssl(~c"https://" ++ _), do: [ssl: :httpc.ssl_verify_host_options(true)]
+  defp ssl(_url), do: []
 
   defp newer?(latest, current) do
     with {:ok, latest} <- Version.parse(latest),

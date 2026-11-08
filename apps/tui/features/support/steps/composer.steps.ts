@@ -1000,13 +1000,13 @@ step(
 step(
   "the footer's separators are faint, its captions dim and its values in the text colour",
   async (ctx: World) => {
-    const row = "effort medium";
+    const row = "effort Medium";
     expectColour((await cellOn(ctx, row, "│")).span.fg, THEME.faint);
     for (const caption of ["model", "effort", "^O", "^B"]) {
       const at = await textAt(ctx, `${caption} `);
       expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.dim);
     }
-    for (const value of ["gpt-5", "medium", "Full access", "Build"]) {
+    for (const value of ["GPT-5", "Medium", composer(ctx).runtimeModeLabel, "Build"]) {
       const at = await textAt(ctx, value);
       expectColour((await cellAt(ctx, at.x, at.y)).span.fg, THEME.text);
     }

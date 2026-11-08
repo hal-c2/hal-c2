@@ -47,47 +47,53 @@ defmodule HalC2.Test.DevServer do
   there may already be taken at 127.0.0.1, by any socket of this machine.
   """
   def on_free_port(start) do
-    {result, held} = holding_free_port(start)
-    release(held)
-    result
+    {v4, v6, port} = free_pair()
+
+    try do
+      start.(port)
+    after
+      :gen_tcp.close(v4)
+      close_v6(v6)
+    end
   end
 
   @doc """
-  `on_free_port/1`, but the port stays held by the caller after `start`
-  returns: gives `{result, held}`. A test hands `held` to `release/1` once
-  something must listen there, or keeps its 127.0.0.1 socket as one that has
-  the port in use. Closing and binding again would leave a gap any socket of
-  this machine can take the port in.
+  Like `on_free_port/1`, but the port stays in use at this machine's 127.0.0.1
+  after `start` returns: it gives `{what start returned, listener}` and the
+  caller closes the listener. For a test whose point is a port that is in use
+  here; one that was free when a step looked and is bound again later can be
+  taken in between, by any socket of this machine.
   """
-  def holding_free_port(start) do
+  def on_busy_port(start) do
+    {v4, v6, port} = free_pair()
+
+    try do
+      {start.(port), v4}
+    rescue
+      error ->
+        :gen_tcp.close(v4)
+        reraise error, __STACKTRACE__
+    after
+      close_v6(v6)
+    end
+  end
+
+  # A port free at 127.0.0.1 and ::1, listened on at both: `{v4, v6, port}`.
+  defp free_pair do
     {:ok, v4} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
     {:ok, port} = :inet.port(v4)
 
     case :gen_tcp.listen(port, [:inet6, ip: {0, 0, 0, 0, 0, 0, 0, 1}, ipv6_v6only: true]) do
       {:error, :eaddrinuse} ->
         :gen_tcp.close(v4)
-        holding_free_port(start)
+        free_pair()
 
       v6 ->
-        held = %{v4: v4, v6: with({:ok, socket} <- v6, do: socket, else: (_ -> nil))}
-
-        try do
-          {start.(port), held}
-        catch
-          kind, reason ->
-            release(held)
-            :erlang.raise(kind, reason, __STACKTRACE__)
-        end
+        {v4, v6, port}
     end
   end
 
-  @doc "Closes the sockets `holding_free_port/1` holds; `nil` holds none."
-  def release(nil), do: :ok
-
-  def release(held) do
-    for socket <- Map.values(held), socket, do: :gen_tcp.close(socket)
-    :ok
-  end
+  defp close_v6(v6), do: with({:ok, socket} <- v6, do: :gen_tcp.close(socket))
 
   @doc """
   Watches `pid` on this MC from a process of its own, for a test on another MC

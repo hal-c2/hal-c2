@@ -162,13 +162,20 @@ Feature: Agents drive the preview browser
       When the agent opens it with preview_open
       Then the tool fails saying the navigation timed out after 15000ms
 
-    # Upstream #16941: queued actions ran after their caller timed out, clicking stale pages.
-    @backlog @mc @priority-high
+    # Upstream #16941: queued actions ran after their caller timed out, clicking stale pages. The
+    # queue is the desktop's: the MC sends each action with its time limit straight away.
+    @desktop @priority-high
     Scenario: A queued browser action whose caller gave up is not started
       Given an agent's click is queued behind another action in the same browser
       When the click's time limit passes before its turn comes
       Then the click is never performed
-      But a queued stop of a recording still runs, so the capture is cleaned up
+
+    # Upstream #16941. The desktop does not record yet, so it has no stop to keep.
+    @backlog @desktop @priority-high
+    Scenario: A queued stop of a recording runs after its caller gave up
+      Given an agent's stop of a recording is queued behind another action in the same browser
+      When the stop's time limit passes before its turn comes
+      Then the recording still stops, so the capture is cleaned up
 
     @mc
     Scenario: A browser that disconnects fails its unanswered actions
@@ -222,21 +229,21 @@ Feature: Agents drive the preview browser
 
     # Upstream #28027: preview_open dropped a dev-server target and opened a blank tab, so agents
     # needed a second preview_navigate.
-    @mc
+    @mc @desktop
     Scenario: An agent opens a dev server's port in one step
       When an agent opens a preview of port 6381 in its environment
       Then the tab opens on that environment's port 6381
       And the agent did not have to navigate the tab afterwards
 
     # Upstream #28027: a dev-server target knows the environment, so it wins over an address.
-    @mc
+    @mc @desktop
     Scenario: A dev-server port wins over an address given with it
       When an agent opens a preview of port 6381 in its environment and also gives the address "http://localhost:3000"
       Then the tab opens on that environment's port 6381
 
     # Upstream #29865: a preview_open whose first load failed left a hidden tab the agent never heard
     # of; it counted toward the agent's tabs and made the next open ask which tab to reuse.
-    @backlog @mc
+    @mc
     Scenario: A new tab whose first load fails is closed
       Given the agent's dev server on port 6381 is not running yet
       When the agent opens a preview of "http://localhost:6381" and the load is refused
@@ -272,7 +279,7 @@ Feature: Agents drive the preview browser
         | CSS selector | preview_click with an invalid CSS selector   | how to write a CSS selector or use a locator instead                    |
 
     # Upstream #16956: agents saw only the tabs they opened, so "what is on this page?" failed.
-    @backlog @mc
+    @mc
     Scenario: An agent sees every browser tab of its thread and who has each
       Given the thread has a tab the user opened, a tab this agent opened and a tab another agent session opened
       When the agent asks for the preview status
@@ -306,19 +313,19 @@ Feature: Agents drive the preview browser
       When the agent in "Docs" lists its browser tabs
       Then "Checkout" is not listed
 
-    @backlog @mc
+    @mc
     Scenario: An agent reads the user's tab while the user is using it
       Given the user is typing in a tab the user opened
       When an agent takes a snapshot of that tab by its id
       Then the tool returns the page without waiting for the user's input to finish
 
-    @backlog @mc
+    @mc
     Scenario: An agent with no tab of its own reads the one the user is looking at
       Given the agent has opened no tab and the user is looking at "http://localhost:5173/cart"
       When the agent takes a snapshot without naming a tab
       Then the tool returns "http://localhost:5173/cart"
 
-    @backlog @mc
+    @mc
     Scenario Outline: An agent acts on a tab it did not open only while no one else has it
       Given a tab <tab>
       When an agent clicks on that tab by its id
@@ -329,6 +336,21 @@ Feature: Agents drive the preview browser
         | the user opened and is not using         | the click happens                                            |
         | the user opened and is using             | the tool fails saying a person is in control of the tab      |
         | another agent session opened             | the tool fails saying the tab belongs to another agent       |
+
+    # A request naming no tab is served on the desktop's current tab of the thread, which may be
+    # another session's or the person's, so a session with no tab of its own may not leave the gap.
+    @mc
+    Scenario: An agent with no tab of its own that acts without naming one changes nothing
+      Given another agent session's tab is the browser's current tab of the thread
+      When an agent with no tab of its own clicks without naming a tab
+      Then the tool fails with "No active preview tab was found for click."
+      And the other session's tab was not clicked
+
+    @mc
+    Scenario: An agent with no tab of its own opens a new tab rather than another session's
+      Given another agent session's tab is the browser's current tab of the thread
+      When an agent with no tab of its own opens a preview without naming a tab
+      Then the agent gets a new tab of its own and the other session's tab is left alone
 
     @mc
     Scenario: Only the agent session that opened a tab can close it
@@ -365,13 +387,13 @@ Feature: Agents drive the preview browser
       When an agent asks to close "Checkout"
       Then the agent is told the tab belongs to another agent session
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: An agent's new tab opens in the user's default browser profile
       Given the desktop reports the profiles "Default" and "Work", with "Work" the default
       When an agent opens a preview without naming a profile
       Then the tab opens in the profile "Work"
 
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario Outline: An agent can name the profile a new tab opens in
       Given the desktop reports the profiles "Default" and "Work"
       When an agent opens a preview in the profile "<named>"
@@ -383,7 +405,7 @@ Feature: Agents drive the preview browser
         | personal | the tool fails and lists "Default" and "Work" as the profiles to use |
 
     # Upstream #21745: the MC kept only the last client's profiles, so other clients' profiles vanished.
-    @backlog @mc
+    @mc
     Scenario: Browser profiles reported by several clients are all offered to agents
       Given one desktop reports the profiles "Default" and "Work"
       And another desktop connected to the same MC reports only "Default"
@@ -478,7 +500,7 @@ Feature: Agents drive the preview browser
       Then the screenshot shows the page as it is now, not as it was last drawn
 
     # Upstream #20446: snapshots mask what password fields hold, in every frame.
-    @backlog @mc @desktop @priority-high
+    @mc @desktop @backlog-mc @priority-high
     Scenario: A snapshot never shows what a password field holds
       Given an agent's current tab shows a sign-in form with a password typed in
       When the agent takes a snapshot
@@ -486,7 +508,7 @@ Feature: Agents drive the preview browser
       And the password appears nowhere in the page text, including fields drawn as dots
 
     # Upstream #20446: a snapshot it cannot vouch for fails instead of risking a leak.
-    @backlog @mc @desktop
+    @mc @desktop @backlog-mc
     Scenario: A snapshot of a page that changes while it is read fails instead of leaking
       Given an agent's current tab shows a password field whose value changes while the snapshot is taken
       When the agent takes a snapshot
@@ -855,7 +877,7 @@ Feature: Agents drive the preview browser
       Then the tab is gone for every client
 
     # Upstream #25028: concurrent opens could pass the tab limits, and a failed launch left a session behind.
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: Opens racing each other stay within the agent's tab limit
       Given an agent has 7 browser tabs open
       When the agent opens two more tabs at the same moment
@@ -863,7 +885,7 @@ Feature: Agents drive the preview browser
       And no more than 32 agent tabs are open across the MC
 
     # Upstream #25028
-    @backlog @mc @priority-low
+    @mc @priority-low
     Scenario: A browser tab that fails to launch leaves nothing behind
       When an agent opens a tab and the browser fails to launch it
       Then the open fails
@@ -879,7 +901,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #24186: with every slot held by idle agent tabs, a new agent's open was refused until
     # tabs were closed by hand or the app restarted.
-    @backlog @mc @desktop
+    @mc @desktop @backlog-desktop
     Scenario Outline: An agent's open at the 32-tab limit reclaims the longest idle agent tab nobody sees
       Given 32 agent tabs are open across the MC and the newest agent has fewer than 8
       And the longest idle agent tab, idle for over 30 minutes, <state>

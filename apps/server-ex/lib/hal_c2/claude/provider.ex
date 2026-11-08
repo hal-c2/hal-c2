@@ -42,7 +42,9 @@ defmodule HalC2.Claude.Provider do
   # A fetched manifest may leave Claude out; the release's own catalog then stands.
   defp catalog do
     HalC2.ModelManifest.catalog("claudeAgent") ||
-      get_in(HalC2.ModelManifest.bundled(), ["providers", "claudeAgent"]) ||
+      HalC2.ModelManifest.badged(
+        get_in(HalC2.ModelManifest.bundled(), ["providers", "claudeAgent"])
+      ) ||
       %{"defaults" => %{}, "profiles" => %{}, "models" => []}
   end
 
@@ -604,6 +606,41 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
+  @doc """
+  What instance `id`'s last version check found, without starting a new one:
+  `:ok`, `:failed`, or `:pending` when none has finished. Text generation
+  reads it so a writer that failed its check is not asked to write.
+  """
+  def health_state(id) do
+    case executable(id) do
+      nil ->
+        :pending
+
+      path ->
+        case Map.get(:persistent_term.get(@health, %{}), {id, path}) do
+          {:done, {:ok, _version}} -> :ok
+          {:done, {:error, _message, _version}} -> :failed
+          _ -> :pending
+        end
+    end
+  end
+
+  @doc """
+  Records what a version check of instance `id` found, as `version_health/2`
+  does when its probe answers.
+  """
+  def record_health(id, health) do
+    case executable(id) do
+      nil ->
+        :ok
+
+      path ->
+        records = :persistent_term.get(@health, %{})
+        :persistent_term.put(@health, Map.put(records, {id, path}, {:done, health}))
+        :ok
+    end
+  end
+
   # The version run's outcome, checked once per executable: the first reader runs
   # it (readers while it runs see the check as pending), later ones read the record.
   defp version_health(id, path) do
@@ -1065,7 +1102,8 @@ defmodule HalC2.Claude.Provider do
   effort the CLI has no level for, which goes in the prompt instead (`prompt/2`). A
   model the CLI listed runs under the name it was picked by, with the options its
   entry offers; another the manifest knows runs under its manifest id. A model
-  neither knows runs as named, without options.
+  neither knows runs as named, with only an effort the CLI has a level for
+  (Upstream #20849).
   """
   @spec launch(String.t() | nil, map, String.t()) :: %{
           model: String.t() | nil,
@@ -1079,7 +1117,7 @@ defmodule HalC2.Claude.Provider do
       nil ->
         %{
           model: model,
-          effort: nil,
+          effort: if(Map.has_key?(@effort_labels, options["effort"]), do: options["effort"]),
           settings: %{},
           prompt_effort: nil,
           context_window: 200_000
@@ -1217,6 +1255,13 @@ defmodule HalC2.Claude.Provider do
     RuntimeError ->
       {:error, "the launch arguments in settings have a quote that is never closed"}
   end
+
+  @doc """
+  Whether Claude Code listed `model` on `instance` or the manifest knows it, so
+  `launch/3` has its context window; another model's is the one Claude reports.
+  """
+  @spec known?(String.t() | nil, String.t()) :: boolean
+  def known?(model, instance \\ "claudeAgent"), do: spec(model, instance) != nil
 
   # The slug, capabilities and adapter settings `model` runs with on `instance`: the
   # row Claude Code listed for it, else the manifest's model.

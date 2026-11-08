@@ -1091,18 +1091,29 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
   end
 
   step "the subagent and the command of {string} are interrupted", %{args: [thread]} = context do
+    ended_background(context, thread, "interrupted")
+  end
+
+  # Claude reports a task a stop ended as cancelled; a command has no such report.
+  step ~r/^the subagent of "(?<thread>[^"]+)" is (?<status>cancelled|interrupted) and its command interrupted$/,
+       %{args: [thread, status]} = context do
+    ended_background(context, thread, status)
+  end
+
+  defp ended_background(context, thread, subagent) do
     World.await_state(context, thread, fn state ->
       items = Map.values(state.entities["turn-item"] || %{})
 
-      Enum.map(Map.values(state.entities["subagent"] || %{}), & &1["status"]) == ["interrupted"] and
-        Enum.sort(
+      Enum.map(Map.values(state.entities["subagent"] || %{}), & &1["status"]) == [subagent] and
+        Enum.sort_by(
           for(
             item <- items,
             item["type"] in ["subagent", "command_execution"],
             item["nativeItemRef"]["nativeId"] in ["agent-2", "bash-2"],
-            do: item["status"]
-          )
-        ) == ["interrupted", "interrupted"]
+            do: {item["type"], item["status"]}
+          ),
+          &elem(&1, 0)
+        ) == [{"command_execution", "interrupted"}, {"subagent", subagent}]
     end)
 
     context

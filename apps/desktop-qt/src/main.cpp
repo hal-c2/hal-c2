@@ -219,6 +219,8 @@ int main(int argc, char* argv[]) {
   auto* browserProfile = new QQuickWebEngineProfile(QStringLiteral("hal-c2"), &app);
   browserProfile->setPersistentStoragePath(QDir(storage.data).filePath(QStringLiteral("browser")));
   browserProfile->setCachePath(QDir(storage.cache).filePath(QStringLiteral("browser")));
+  // What a page may ask for is Browser.permissions' to answer and remember, never the engine's.
+  browserProfile->setPersistentPermissionsPolicy(QQuickWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);
   Browser::setProfile(browserProfile);
   Browser::setSupported(true);
 

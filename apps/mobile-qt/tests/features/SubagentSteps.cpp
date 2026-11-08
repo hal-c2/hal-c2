@@ -728,9 +728,20 @@ const Steps steps([] {
     expect(role(timeline(world), rowOf(world, S("subagent")), TimelineModel::StatusLabelRole) == QLatin1String("Working"), describe(timeline(world)));
     world.waitFor([&] { return world.shows(S("npm test"), false); }, [&] { return S("the approval on screen; the screen says: %1").arg(world.texts().join(S(" | "))); });
   });
+  // The approval, or the question when one is open instead: its first option.
   step(S("the user answers it"), [](World& world, const Captures&, const Table&) {
-    world.tap(S("approvalOption-accept"));
+    const QVariantList questions = world.state(S("turn")).toMap().value(S("questions")).toList();
+    if (world.find(S("approvalOption-accept")) != nullptr || questions.isEmpty()) {
+      world.tap(S("approvalOption-accept"));
+      world.sync();
+      return;
+    }
+    const QVariantMap question = questions.constFirst().toMap().value(S("questions")).toList().value(0).toMap();
+    world.tap(S("questionOption-") + question.value(S("options")).toList().value(0).toMap().value(S("label")).toString());
     world.sync();
+    if (QQuickItem* submit = world.find(S("questionSubmit")); submit != nullptr && submit->isVisible() && submit->isEnabled()) world.tap(submit);
+    world.waitFor([&] { return world.state(S("turn")).toMap().value(S("questions")).toList().isEmpty(); },
+                  [&] { return S("the question to close; the turn is %1").arg(show(world.state(S("turn")))); });
   });
   step(S("the subagent continues with the answer"), [approvals](World& world, const Captures&, const Table&) {
     QJsonObject answer;

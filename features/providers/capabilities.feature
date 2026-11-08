@@ -16,6 +16,8 @@
 #   docs/user/providers-pi.md, docs/user/providers-muse.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
 #   https://github.com/pingdotgg/t3code/pull/14542
 #   https://github.com/pingdotgg/t3code/pull/29605
+#   https://github.com/pingdotgg/t3code/pull/28409
+#   packages/provider-acp/src/server/sessionConfig.ts (acpProviderOptionDescriptors, upstream)
 
 @mc
 Feature: Provider capabilities
@@ -199,6 +201,20 @@ Feature: Provider capabilities
     When the MC reads the agent's output
     Then the request receives the agent's answer
     And it does not fail as though the agent's output ended unanswered
+
+  # Upstream #28409 (acpProviderOptionDescriptors): an ACP agent's own session options are its
+  # models' options, and the one in the thought_level category is the effort. The MC publishes only
+  # an ACP session's model list, so an agent's thinking levels, modes and switches never reach the
+  # composer.
+  @backlog
+  Scenario: An ACP agent's own session options are offered with its models
+    Given an ACP agent's session offers its own thinking levels, a mode and an on or off option
+    When the MC lists the agent's models
+    Then each model offers the agent's options under the agent's own ids and names
+    And the thinking levels are marked as the model's effort
+    And the on or off option is a switch
+    And the agent's session modes are one Mode option, unless the agent already offers them as an option
+    And the model and collaboration-mode options are left to the model and plan controls
 
   @backlog @priority-low
   Scenario: A registry agent declares its capabilities through its plugin

@@ -36,8 +36,8 @@ defmodule HalC2.Steps.Preview.Forward do
 
   step "a dev server on the second MC's machine listens on port 3000 for that machine only",
        context do
-    {port, held} = dev_server(context.peer)
-    Map.merge(context, %{dev_port: port, held: held})
+    {port, server} = dev_server(context.peer)
+    Map.merge(context, %{dev_port: port, dev_server: server})
   end
 
   # --- forwarding ----------------------------------------------------------------------------
@@ -102,12 +102,13 @@ defmodule HalC2.Steps.Preview.Forward do
     context
   end
 
-  # The socket that kept the port free since the dev server started takes it,
-  # so nothing else can between.
+  # The Background's dev server was started at a port that was free here, but not held: binding
+  # it again now can lose it to another socket of this machine. So start the dev server again
+  # at a port this step holds in use from the first moment.
   step "port 3000 is in use on the client's machine", context do
-    %{v4: busy, v6: v6} = context.held
-    DevServer.release(%{v6: v6})
-    Map.merge(context, %{busy: busy, held: nil})
+    DevServer.stop(context.dev_server)
+    {{port, server}, busy} = DevServer.on_busy_port(&start_dev_server(context.peer, &1))
+    Map.merge(context, %{dev_port: port, dev_server: server, busy: busy})
   end
 
   step "the client's MC forwards the dev server on a free port of its own machine", context do
@@ -220,17 +221,11 @@ defmodule HalC2.Steps.Preview.Forward do
 
   # At a port free on this machine's loopback, so the forward can take it as it
   # is. That also keeps it off the second MC's own ports, which listen on this
-  # machine too and which the MC rightly refuses to forward. The port stays
-  # held on this machine until the first forward (`forward/3`) or a step that
-  # needs it in use takes it.
-  defp dev_server(peer) do
-    {{port, _server}, held} =
-      DevServer.holding_free_port(
-        &:erpc.call(peer, DevServer, :websocket, [@machine, &1, self()])
-      )
+  # machine too and which the MC rightly refuses to forward.
+  defp dev_server(peer), do: DevServer.on_free_port(&start_dev_server(peer, &1))
 
-    {port, held}
-  end
+  defp start_dev_server(peer, port),
+    do: :erpc.call(peer, DevServer, :websocket, [@machine, port, self()])
 
   # Opens the tab on the thread's MC, then asks this MC for its dev server, as
   # the desktop does before it opens the system browser.
@@ -247,8 +242,6 @@ defmodule HalC2.Steps.Preview.Forward do
   end
 
   defp forward(context, environment, port) do
-    DevServer.release(context[:held])
-    context = Map.put(context, :held, nil)
     input = %{"environmentId" => environment, "threadId" => @thread, "port" => port}
 
     {reply, client} =

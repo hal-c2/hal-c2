@@ -58,8 +58,13 @@ class TimelineModel;
 //      [{label, description}], multiSelect, allowCustomAnswer}], canRespond,
 //      responding, problem}],
 //    plan: {id, title, markdown} | null,  // offered while the thread is idle
-//    queue: [{runId, text}], waiting: [{runId, summary, outcome}],
-//    queueHeld, queueResuming}  // the MC keeps the queue until it is resumed
+//    queue: [{runId, messageId, text, pending}], waiting: [{runId, summary,
+//      outcome}],
+//    queueHeld, queueResuming,  // the MC keeps the queue until it is resumed
+//    queueBusy,  // a remove or send-now the MC has not answered: one at a time
+//    queueEditBlocked}  // why queued messages cannot be edited now, or ""
+// A `pending` queue entry is a send the MC has not confirmed yet: listed, but
+// with nothing to act on.
 // `problem` says why a request cannot be answered, when it cannot. On a new
 // thread's draft route the turn is {threadKey: draftId, kind: "draft",
 // sending} with nothing pending; `sending` while its first send
@@ -114,7 +119,8 @@ class TimelineModel;
 // composer.approval.respond {requestId, decision},
 // composer.question.answer {requestId, answers}, composer.question.dismiss
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
-// composer.queue.steer {runId?} (the first queued without one),
+// composer.queue.steer {runId?} (the first queued without one; on a stopped
+// thread it sends the message now, `queued-run.start`),
 // composer.queue.edit {runId?} (the last queued without one),
 // composer.queue.edit.cancel, composer.queue.resume (a held queue),
 // composer.stash, composer.stash.restore {id},
@@ -147,9 +153,14 @@ class TimelineModel;
 // composer (`composer.editingQueuedRunId`; the message's attachments are
 // listed with `sent`) and sets the thread's own draft, attachments included,
 // aside; a send saves the edit (`queued-run.edit`, its text and, when they
-// changed, its attachments) and cancelling gives the draft back. A run that leaves the queue mid-edit ends it: a changed edit
-// stays in the composer when the set-aside draft was empty, and is dropped
-// with a toast otherwise.
+// changed, its attachments) and cancelling gives the draft back. Saves go
+// one at a time: one made while another is unanswered waits for it, and only
+// the newest waits; a save's answer leaves the edit open when more was typed
+// since. Each thread keeps its own edit: leaving the thread keeps it, deleting
+// the thread drops it, and a run that leaves the queue mid-edit ends it, its
+// thread open or not: a changed edit stays in the composer when the set-aside
+// draft was empty, and is dropped otherwise, with a toast (naming the thread
+// when another is open).
 class ComposerController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -207,6 +218,8 @@ public:
   // Whether `target`'s draft has files still on their way to the MC, or a
   // send in flight that carries the draft's attachments.
   bool attachmentsPending(const QString& target) const;
+  // Whether `target`'s draft has a file attached: it went to the draft's machine.
+  bool holdsFiles(const QString& target) const;
   // The draft key of a Space page; never a thread key (env:id) or a draft id (a uuid).
   static QString pageKey(const QString& pageId) { return QStringLiteral("page#") + pageId; }
   // The draft key of a Space's images prompt.
@@ -459,6 +472,7 @@ private:
   // whether its thread exists. Sends still on their way take the open
   // thread's newest message as their `after` once it is known.
   void reconcileUnsent();
+  void forgetTakenPicks();
   // Sends the outbox's waiting messages of each thread whose environment is
   // connected, in the order they were written; drops those of a thread the
   // environment no longer has. One window drains it.
@@ -518,9 +532,9 @@ private:
   bool editQueued(const QString& target, QString runId);
   bool saveQueuedEdit(const QString& target, const QString& text);
   // Gives the set-aside draft back; `keepEdit` leaves the edit's text instead.
-  void endQueuedEdit(bool keepEdit = false);
-  // Ends an edit whose run is no longer queued.
-  void recoverQueuedEdit(const QVariantMap& turn);
+  void endQueuedEdit(const QString& thread, bool keepEdit = false);
+  // Ends the edits whose run is no longer queued, and drops those of deleted threads.
+  void recoverQueuedEdits();
 
   // The thread the window shows (the shell's route), or empty.
   QString openThread() const;
@@ -603,6 +617,8 @@ private:
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
   bool m_previewing = false;
+  // holdsFiles() of the target, as last published.
+  bool m_heldFiles = false;
   // What every window's composer keeps.
   struct Kept {
     QHash<QString, Draft> drafts;
@@ -704,10 +720,13 @@ private:
     int request = 0;
   };
   PathSearch m_paths;
-  // The queued message the route thread's composer is editing, and the
-  // thread's draft set aside for it.
+  // The queued message a thread's composer is editing, and the thread's
+  // draft set aside for it.
   struct QueuedEdit {
     QString thread;
+    // The thread's stream, watched for the run leaving the queue while
+    // another thread is open.
+    QMetaObject::Connection watch;
     QString runId;
     QString messageId;
     QString original;
@@ -722,8 +741,16 @@ private:
     // the MC refused reuses them rather than storing them again.
     QHash<QString, QJsonObject> stored;
     bool saving = false;
+    // A save made while one is on its way, sent once it is answered.
+    std::optional<QString> next;
   };
-  std::optional<QueuedEdit> m_queuedEdit;
+  QHash<QString, QueuedEdit> m_queuedEdits;
+  QueuedEdit* queuedEdit(const QString& thread) {
+    const auto it = m_queuedEdits.find(thread);
+    return it == m_queuedEdits.end() ? nullptr : &*it;
+  }
+  // Threads with a queue action (remove, send now) the MC has not answered.
+  QSet<QString> m_queueBusy;
   // The sent prompt the composer is showing again: its message and text.
   struct Recall {
     QString target;

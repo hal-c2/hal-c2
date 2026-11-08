@@ -9,8 +9,11 @@ defmodule HalC2.Acp.Auth do
   variables set on the instance, so there is nothing to run. Every method ends by
   opening a session, which only works once the agent is signed in.
 
-  Failures reach clients as fixed messages; what the agent said goes to the log only,
-  since it can hold a device code or a sign-in URL.
+  Failures reach clients as fixed messages. One the agent refused, its sign-in or the
+  session after it, also names the agent's reason (upstream #30295), redacted as its
+  error output is (`HalC2.Acp.Stderr`) and cut to 500 characters, so a proxy's error
+  page cannot fill the panel. A reason holding an address or a device code is left
+  out of the message altogether; it and what else the agent said goes to the log only.
   """
 
   alias HalC2.JsonRpc.Connection
@@ -26,16 +29,19 @@ defmodule HalC2.Acp.Auth do
       HalC2.Acp.with_agent(instance, System.tmp_dir!(), fn _conn, init ->
         {:ok,
          for %{"id" => id, "name" => name} = method <- Enum.take(init["authMethods"] || [], 32),
-             is_binary(id) and is_binary(name) and byte_size(id) <= 128 do
+             is_binary(id) and is_binary(name) and byte_size(id) <= 128 and known?(method) do
            %{
              "id" => id,
-             "name" => name,
-             "description" => method["description"],
+             "name" => String.slice(name, 0, 128),
+             "description" =>
+               if(is_binary(method["description"]),
+                 do: String.slice(method["description"], 0, 1024)
+               ),
              "type" =>
                case method["type"] do
                  "terminal" -> "terminal"
                  "env_var" -> "credentials"
-                 _ -> "agent"
+                 _agent -> "agent"
                end
            }
          end}
@@ -46,10 +52,14 @@ defmodule HalC2.Acp.Auth do
         {:ok, methods}
 
       {:error, reason} ->
-        Logger.warning("#{instance} sign-in methods: #{message(reason)}")
+        Logger.warning("#{instance} sign-in methods: #{redacted(reason)}")
         {:error, "Could not discover this agent's sign-in methods."}
     end
   end
+
+  # A method without a kind is the agent's own; one of a kind HAL-C2 does not know is
+  # not offered at all, rather than run as the agent's own.
+  defp known?(method), do: method["type"] in [nil, "agent", "terminal", "env_var"]
 
   @doc "Runs one sign-in; exits `:normal` on success (see `HalC2.ProviderAuth`)."
   def login(instance, method_id, server, flow_id) do
@@ -58,7 +68,7 @@ defmodule HalC2.Acp.Auth do
     with {:command, {:ok, command, env}} <- {:command, HalC2.Acp.command(instance)},
          {:ok, conn} <- start(command, env, cwd),
          {:ok, init} <- Connection.call(conn, "initialize", HalC2.Acp.initialize_params()) do
-      case Enum.find(init["authMethods"] || [], &(&1["id"] == method_id)) do
+      case Enum.find(init["authMethods"] || [], &(&1["id"] == method_id and known?(&1))) do
         nil ->
           fail("The agent no longer advertises this sign-in method.")
 
@@ -85,6 +95,18 @@ defmodule HalC2.Acp.Auth do
     end
   end
 
+  @doc "Signs the instance out through its agent, stopping its sessions (`HalC2.ProviderAuth`)."
+  def logout(instance, _session) do
+    case HalC2.Acp.Sessions.logout(%{"instanceId" => instance}) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("#{instance} sign-out failed: #{message(reason)}")
+        {:error, "Could not sign out. Try again."}
+    end
+  end
+
   defp start(command, env, cwd),
     do: Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2)
 
@@ -105,7 +127,7 @@ defmodule HalC2.Acp.Auth do
 
         case result do
           {:ok, _} -> :ok
-          {:error, reason} -> fail("The ACP agent could not complete sign-in.", reason)
+          {:error, reason} -> refused("The ACP agent could not complete sign-in.", reason)
         end
 
       {:json_rpc, ^conn, {:request, id, "elicitation/create", params}} ->
@@ -284,16 +306,72 @@ defmodule HalC2.Acp.Auth do
         :ok
 
       {:error, reason} ->
-        fail("The provider could not create a session after sign-in.", reason)
+        refused("The provider could not create a session after sign-in.", reason)
     end
   end
 
   defp fail(message), do: exit({:shutdown, {:failed, message}})
 
   defp fail(message, reason) do
-    Logger.warning("ACP sign-in failed: #{message} #{message(reason)}")
+    Logger.warning("ACP sign-in failed: #{message} #{redacted(reason)}")
     fail(message)
   end
+
+  @reason_chars 500
+
+  # What a sign-in failure never shows: an address with a scheme, a scheme-less host/path
+  # that looks like a login page (`github.com/login/device`), or a device code: two groups
+  # of 4-5 characters standing alone: no `-` or word character on either side, so a group
+  # inside a UUID or a longer hyphenated word is never a pair. RFC 8628 §6.1 recommends
+  # upper-case letters from the base-20 alphabet `BCDFGHJKLMNPQRSTVWXZ` (`WDJB-MJHT`), so
+  # an all-letter upper-case pair counts only when both groups use it (`AUTH-ERROR` has
+  # vowels and is shown). Upper-case pairs holding a digit count (`AB12C-DE34F`,
+  # `WXYZ-9876`) but an all-digit one never does (`2025-2026`). In lower case only a pair with an all-digit group beside a group holding
+  # a letter is one (`wxyz-9876`): `gpt4-mini` has no all-digit group, and
+  # `HTTP-502`/`SHA-256` have a group under 4.
+  @sign_in_address ~r/https?:\/\/|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*(?:login|device|oauth|auth|activate|verify)/i
+  @device_code ~r/(?<![\w-])[a-z0-9]{4,5}-[a-z0-9]{4,5}(?![\w-])/i
+
+  defp sign_in_secret?(said) do
+    said =~ @sign_in_address or
+      Enum.any?(Regex.scan(@device_code, said), fn [code] -> device_code?(code) end)
+  end
+
+  defp device_code?(code) do
+    groups = String.split(code, "-")
+
+    cond do
+      code =~ ~r/\A[A-Z]+-[A-Z]+\z/ -> Enum.all?(groups, &(&1 =~ ~r/\A[BCDFGHJKLMNPQRSTVWXZ]+\z/))
+      code =~ ~r/\A[A-Z0-9]+-[A-Z0-9]+\z/ -> code =~ ~r/[A-Z]/
+      code =~ ~r/[A-Z]/ -> false
+      true -> Enum.any?(groups, &(&1 =~ ~r/\A\d+\z/)) and code =~ ~r/[a-z]/
+    end
+  end
+
+  defp refused(message, reason) do
+    said = redacted(reason)
+    Logger.warning("ACP sign-in failed: #{message} #{said}")
+
+    # Redacted whole, then its start kept: the start of an error page says what it is.
+    said = String.trim(said)
+
+    cond do
+      said == "" ->
+        fail(message)
+
+      # A device code or a sign-in address in the reason is for the user's eyes only
+      # through the sign-in interaction, never in a failure shown or stored with it.
+      sign_in_secret?(said) ->
+        fail(message)
+
+      true ->
+        said = String.slice(said, 0, @reason_chars)
+        fail(message <> " " <> if(said =~ ~r/[.!?]$/, do: said, else: said <> "."))
+    end
+  end
+
+  # An agent's reason as the MC's log keeps it: the log is no place for its secrets.
+  defp redacted(reason), do: reason |> message() |> HalC2.Acp.Stderr.redact()
 
   defp message(%{"message" => message}) when is_binary(message), do: message
   defp message(reason) when is_binary(reason), do: reason
