@@ -53,10 +53,44 @@ defmodule HalC2.PullRequests do
       "You need write access on this repository to approve workflows from a fork pull request."
   }
 
-  @verdict_labels %{"approve" => "approve", "request-changes" => "request changes on"}
+  @verdict_labels %{
+    "approve" => "approve",
+    "request-changes" => "request changes on",
+    "comment" => "comment on"
+  }
 
   @reviewer_refusal "You need write access on this repository to ask for a review."
   @label_refusal "You need triage access on this repository to change its labels."
+
+  # What a host cannot do at all, said as the user is told it (`PullRequestCapabilities`
+  # of the removed server's providers): Azure DevOps writes no remark of any kind,
+  # Forgejo has no thread replies or resolution, Bitbucket and Azure DevOps have no
+  # reactions, and a host no provider claims cannot be rewritten on. A host that can
+  # do a thing but has no MC provider yet still answers `provider-unsupported`.
+  @host_capabilities %{
+    "azure-devops" => %{
+      comment: false,
+      inline: false,
+      reply: false,
+      resolve: false,
+      reactions: false,
+      verdicts: [],
+      edit_comment: false
+    },
+    "bitbucket" => %{reactions: false},
+    "forgejo" => %{reply: false, resolve: false},
+    "unknown" => %{edit_change_request: false, edit_comment: false}
+  }
+
+  @host_refusal_details %{
+    comment: "This host cannot post a comment on a change request.",
+    inline: "This host cannot comment on a line of a change request.",
+    reply: "This host cannot reply to a review conversation.",
+    resolve: "This host cannot resolve a review conversation.",
+    reactions: "This host has no reactions.",
+    edit_change_request: "This host cannot rewrite a change request.",
+    edit_comment: "This host cannot rewrite a comment."
+  }
 
   @methods %{
     "list" => :list,
@@ -810,29 +844,37 @@ defmodule HalC2.PullRequests do
   # Rewriting is left to the host to allow: whoever wrote something may rewrite it,
   # and no host reports that as a permission.
   def update(input) do
-    change(input, "update", fn _project, ctx ->
-      case Map.take(input, ["title", "body"]) do
-        fields when fields == %{} -> refuse("update", "Nothing was changed.")
-        fields -> GitHub.update(ctx, fields)
-      end
-    end)
+    host_refusal(input, "update", :edit_change_request) ||
+      change(input, "update", fn _project, ctx ->
+        case Map.take(input, ["title", "body"]) do
+          fields when fields == %{} -> refuse("update", "Nothing was changed.")
+          fields -> GitHub.update(ctx, fields)
+        end
+      end)
   end
 
   def comment(input) do
     unless_blank(input["body"], "comment", "A comment cannot be empty.", fn ->
-      change(input, "comment", fn _project, ctx -> GitHub.comment(ctx, input["body"]) end)
+      host_refusal(input, "comment", :comment) ||
+        change(input, "comment", fn _project, ctx -> GitHub.comment(ctx, input["body"]) end)
     end)
   end
 
   def update_comment(input) do
     unless_blank(input["body"], "updateComment", "A comment cannot be empty.", fn ->
-      change(input, "updateComment", fn _project, ctx ->
-        GitHub.update_comment(ctx, input["commentId"], input["kind"], input["body"])
-      end)
+      host_refusal(input, "updateComment", :edit_comment) ||
+        change(input, "updateComment", fn _project, ctx ->
+          GitHub.update_comment(ctx, input["commentId"], input["kind"], input["body"])
+        end)
     end)
   end
 
   def submit_review(input) do
+    review_refusal(input) ||
+      submit_review_on_host(input)
+  end
+
+  defp submit_review_on_host(input) do
     change(input, "submitReview", fn _project, ctx ->
       verdict = input["verdict"]
       comments = input["comments"] || []
@@ -857,13 +899,19 @@ defmodule HalC2.PullRequests do
 
   def reply_to_thread(input) do
     unless_blank(input["body"], "replyToThread", "A reply cannot be empty.", fn ->
-      change(input, "replyToThread", fn _project, ctx ->
-        GitHub.reply(ctx, input["threadId"], input["body"])
-      end)
+      host_refusal(input, "replyToThread", :reply) ||
+        change(input, "replyToThread", fn _project, ctx ->
+          GitHub.reply(ctx, input["threadId"], input["body"])
+        end)
     end)
   end
 
   def set_thread_resolution(input) do
+    host_refusal(input, "setThreadResolution", :resolve) ||
+      set_thread_resolution_on_host(input)
+  end
+
+  defp set_thread_resolution_on_host(input) do
     change(input, "setThreadResolution", fn _project, ctx ->
       with {:ok, viewer} <- GitHub.viewer_permissions(ctx) do
         if viewer["resolve"],
@@ -879,9 +927,10 @@ defmodule HalC2.PullRequests do
 
   # Anyone who can read a pull request may react to it.
   def set_reaction(input) do
-    change(input, "setReaction", fn _project, ctx ->
-      GitHub.react(ctx, input["subjectId"], input["content"], input["reacted"])
-    end)
+    host_refusal(input, "setReaction", :reactions) ||
+      change(input, "setReaction", fn _project, ctx ->
+        GitHub.react(ctx, input["subjectId"], input["content"], input["reacted"])
+      end)
   end
 
   @doc "Who a review may be asked of, only for someone who may ask."
@@ -1356,6 +1405,49 @@ defmodule HalC2.PullRequests do
   # Markdown keeps its whitespace, so a body of nothing but whitespace is refused here.
   defp unless_blank(body, operation, detail, fun) do
     if String.trim(body || "") == "", do: refuse(operation, detail), else: fun.()
+  end
+
+  # The kind of the host a reference names, from its project's checkout (or the
+  # host it names), without asking that host anything.
+  defp ref_kind(ref) do
+    project = Enum.find(projects(), &(&1.id == ref["projectId"]))
+
+    cond do
+      project -> project.kind
+      is_binary(ref["host"]) -> kind(String.downcase(String.trim(ref["host"])))
+      true -> nil
+    end
+  end
+
+  # `refuse/2` for a thing the reference's host cannot do at all
+  # (`@host_capabilities`), or nil where it can — or where no provider here
+  # claims the host either way, which `project_for/2` then answers for.
+  defp host_refusal(ref, operation, capability) do
+    capabilities = @host_capabilities[ref_kind(ref)] || %{}
+
+    if capabilities[capability] == false,
+      do: refuse(operation, @host_refusal_details[capability])
+  end
+
+  # As `host_refusal/3`, for a review: a line comment on a host without them is
+  # refused for that first, then a verdict the host does not take.
+  defp review_refusal(input) do
+    capabilities = @host_capabilities[ref_kind(input)] || %{}
+    verdict = input["verdict"]
+
+    cond do
+      not Map.has_key?(@verdict_labels, verdict) ->
+        refuse("submitReview", "A review needs a verdict: approve, request changes or comment.")
+
+      (input["comments"] || []) != [] and capabilities[:inline] == false ->
+        refuse("submitReview", @host_refusal_details.inline)
+
+      is_list(capabilities[:verdicts]) and verdict not in capabilities.verdicts ->
+        refuse("submitReview", "This host cannot #{@verdict_labels[verdict]} a change request.")
+
+      true ->
+        nil
+    end
   end
 
   defp provider_error(_operation, {:missing, _}), do: unavailable("cli-missing", "github")
