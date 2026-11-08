@@ -164,6 +164,14 @@ def prompt(pid, sid, text):
         signal.signal(signal.SIGTERM, lambda *_: (log({"event": "signalled", "signal": "TERM"}), sys.exit(143)))
         time.sleep(60)
         sys.exit(0)
+    # "stop reading": answers, then closes its input and runs on with its output open,
+    # as an agent that stopped reading does (upstream #27924): the MC's next write fails.
+    if "stop reading" in text and "<conversation_history>" not in text:
+        finish(pid, sid, "no longer reading")
+        os.close(0)
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+        while True:
+            time.sleep(1)
     # "fail without a code": answers the prompt with an error that has no JSON-RPC code.
     if "fail without a code" in text:
         return send({"id": pid, "error": {"message": "Prompt refused"}})

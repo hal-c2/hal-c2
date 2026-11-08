@@ -2,20 +2,20 @@ defmodule HalC2.CodexTurnEndPropTest do
   @moduledoc """
   A state machine over one Codex turn (`HalC2.Codex.ThreadRuntime`) that spawns
   subagents of its own: Codex starts subagents and reports where each stands,
-  then the turn ends one of five ways — Codex reports it completed, failed or
+  then the turn ends one of six ways — Codex reports it completed, failed or
   interrupted, its app-server (and with it the event stream) dies without
-  reporting anything, or it stops taking input so the MC's next write to it
-  fails — and a subagent's own report may still arrive after a reported end.
+  reporting anything, it closes its output and runs on, or it stops taking input
+  so the MC's next write to it fails — and a subagent's own report may still
+  arrive after a reported end.
 
-  The promise: the run ends as the turn did (a dead stream or a failed write fails
-  it), and a subagent still running ends with the turn exactly when nothing can
-  report it again — an interrupted turn, or a dead stream or failed write, which
-  fails it. After a
-  completed or failed turn Codex itself reported, its subagents carry on in
-  their own threads and their later reports land; a report for one that had
-  already ended changes nothing. A stream that dies after such a reported
-  end, with no turn active, fails the subagents that turn left running and
-  leaves the run as the turn ended it.
+  The promise: the run ends as the turn did (a dead or closed stream or a failed
+  write fails it), and a subagent still running ends with the turn exactly when
+  nothing can report it again — an interrupted turn, or a dead or closed stream or
+  a failed write, which fails it. After a completed or failed turn Codex itself
+  reported, its subagents carry on in their own threads and their later reports
+  land; a report for one that had already ended changes nothing. A stream that
+  dies after such a reported end, with no turn active, fails the subagents that
+  turn left running and leaves the run as the turn ended it.
 
   The turn runs on the fake app-server in `test/support/fake_codex.py`, which
   leaves a turn saying "wait" open; the test then plays Codex's side itself.
@@ -155,7 +155,8 @@ defmodule HalC2.CodexTurnEndPropTest do
             {2, {:call, __MODULE__, :end_turn, [:failed]}},
             {2, {:call, __MODULE__, :end_turn, [:interrupted]}},
             {2, {:call, __MODULE__, :end_turn, [:stream]}},
-            {2, {:call, __MODULE__, :end_turn, [:deaf]}}
+            {2, {:call, __MODULE__, :end_turn, [:deaf]}},
+            {2, {:call, __MODULE__, :end_turn, [:mute]}}
           ] ++ reports
         )
 
@@ -204,8 +205,9 @@ defmodule HalC2.CodexTurnEndPropTest do
       :interrupted ->
         %{state | phase: :reported, run: "interrupted", subs: settle(state, "interrupted")}
 
-      # A write the app-server no longer takes retires it, as its death does.
-      dead when dead in [:stream, :deaf] ->
+      # A write the app-server no longer takes, or output it closed while it runs
+      # on, retires it, as its death does.
+      dead when dead in [:stream, :deaf, :mute] ->
         %{state | phase: :ended, run: "failed", subs: settle(state, "failed")}
     end
   end
@@ -264,6 +266,15 @@ defmodule HalC2.CodexTurnEndPropTest do
     {_, runtime} = runtime()
     {:ok, _} = HalC2.JsonRpc.Connection.call(runtime.conn, "test/deaf", %{})
     HalC2.JsonRpc.Connection.notify(runtime.conn, "test/ping", nil)
+    await_until(fn -> observed().run != "running" end, "the run never ended")
+    settle_runtime()
+    observed()
+  end
+
+  # The app-server closes its output and runs on: nothing more can be reported.
+  def end_turn(:mute) do
+    {_, runtime} = runtime()
+    HalC2.JsonRpc.Connection.notify(runtime.conn, "test/mute", nil)
     await_until(fn -> observed().run != "running" end, "the run never ended")
     settle_runtime()
     observed()

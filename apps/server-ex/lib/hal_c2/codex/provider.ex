@@ -355,7 +355,8 @@ defmodule HalC2.Codex.Provider do
            handler: self(),
            env: env,
            program: "Codex App Server",
-           stderr_tail: true
+           stderr_tail: true,
+           eof_grace: 250
          ) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:spawn, reason}

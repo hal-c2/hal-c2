@@ -219,8 +219,13 @@ defmodule HalC2.JsonRpc.Connection do
   # too, so its exit gets `@grace_ms` to arrive first and be the error, with what it
   # printed (`{:subprocess_eof, _}`); otherwise the open calls fail with the write
   # error and the owner gets it as the exit reason, `{:shutdown, {:write_failed, error}}`.
+  # Marked `"ended"` like an exit: the program can take nothing more, so its owner drops it.
   defp write_failed(reason, state) do
-    error = %{"message" => "#{state.program} stopped taking input (write failed: #{reason})"}
+    error = %{
+      "message" => "#{state.program} stopped taking input (write failed: #{reason})",
+      "ended" => true
+    }
+
     Process.send_after(self(), :write_failed, @grace_ms)
     %{state | broken: error}
   end

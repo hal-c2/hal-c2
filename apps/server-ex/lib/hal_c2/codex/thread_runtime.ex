@@ -1234,7 +1234,9 @@ defmodule HalC2.Codex.ThreadRuntime do
              log: turn.ids.thread,
              durable: turn.ids.thread,
              program: "Codex App Server",
-             stderr_tail: true
+             stderr_tail: true,
+             # One that closes its output and runs on fails its calls now (upstream #24600).
+             eof_grace: 250
            ),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{

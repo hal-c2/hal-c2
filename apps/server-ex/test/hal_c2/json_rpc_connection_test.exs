@@ -156,8 +156,14 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     open = Task.async(fn -> Connection.call(conn, "start", %{}) end)
     assert_receive {:json_rpc, ^conn, {:notification, "deaf", _}}, 5_000
 
-    assert {:error, %{"message" => "Peer stopped taking input (write failed: epipe)"} = error} =
-             Connection.call(conn, "next", %{})
+    # Marked `"ended"`, as an exit is: the ACP runtime drops the connection on it
+    # (`HalC2.Acp.ThreadRuntime.ended?/1`) and starts the agent afresh.
+    assert {:error, error} = Connection.call(conn, "next", %{})
+
+    assert error == %{
+             "message" => "Peer stopped taking input (write failed: epipe)",
+             "ended" => true
+           }
 
     assert Task.await(open) == {:error, error}
     assert_receive {:DOWN, ^ref, :process, ^conn, {:shutdown, {:write_failed, ^error}}}, 5_000
