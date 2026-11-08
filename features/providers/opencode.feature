@@ -110,7 +110,7 @@ Feature: OpenCode
       | OpenCode Zen      | OpenCode Zen | OpenCode Zen                                | Zen          |
       | OpenRouter        | OpenRouter   | OpenCode · OpenRouter                       | OpenRouter   |
       | OpenCode itself   | OpenCode     | OpenCode                                    | Step 5       |
-      | OpenCode Go       |              | OpenCode · opencode-go, until it is named   | opencode-go  |
+      | OpenCode Go       | (blank)      | OpenCode · opencode-go                      | opencode-go  |
 
   @backlog @mc
   Scenario: OpenCode's models are still listed when it cannot name its providers

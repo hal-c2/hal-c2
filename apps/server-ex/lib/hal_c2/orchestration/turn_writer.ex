@@ -180,7 +180,9 @@ defmodule HalC2.Orchestration.TurnWriter do
     plan_id = "plan:#{driver}:#{native}"
     item_id = item_id(ids, native)
     node_id = "node:todo:#{driver}:#{native}"
-    done = steps != [] and Enum.all?(steps, &(&1["status"] == "completed"))
+    # An empty list is a list whose items all went away (each one cancelled):
+    # finished, not forever active.
+    done = Enum.all?(steps, &(&1["status"] == "completed"))
 
     fields =
       %{"steps" => steps}

@@ -12,6 +12,8 @@ defmodule HalC2.Acp do
   is connected to; it is read once, at boot or when the agent is first enabled.
   """
 
+  require Logger
+
   alias HalC2.JsonRpc.Connection
 
   @agents %{
@@ -389,7 +391,31 @@ defmodule HalC2.Acp do
     {:ok, if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
   end
 
-  defp base_entry(id, _driver, instance) do
+  # An enabled OpenCode whose command is missing stays listed, saying so: the
+  # user turned it on, so its absence is the thing to fix, not a reason to
+  # hide it (as with Muse above).
+  defp base_entry(id, "opencode", instance) do
+    case base_entry_found(id, instance) do
+      {:ok, _} = found ->
+        found
+
+      :error ->
+        if enabled?(id, "opencode", instance),
+          do:
+            {:ok,
+             %{
+               "installed" => false,
+               "status" => "error",
+               "availability" => "unavailable",
+               "auth" => %{"status" => "unknown"}
+             }},
+          else: :error
+    end
+  end
+
+  defp base_entry(id, _driver, instance), do: base_entry_found(id, instance)
+
+  defp base_entry_found(id, instance) do
     with {:ok, [executable | _], _env} <- command(id),
          path when is_binary(path) <- System.find_executable(executable) do
       {:ok,
@@ -536,8 +562,17 @@ defmodule HalC2.Acp do
       result = read_agent(id, dir)
       # Worked out before the lock, which only `:persistent_term` work may run under.
       error = error_message(id, result)
+      if error, do: Logger.warning("reading #{label(id)} (#{id}) failed: #{error}")
       locked(id, fn -> publish(id, generation, result, error) end)
     catch
+      # The agent never answered at all: say so, instead of leaving the
+      # instance unchecked until something forgets it.
+      :exit, {:timeout, _} ->
+        error = error_message(id, {:error, :probe_timeout})
+        Logger.warning("reading #{label(id)} (#{id}) failed: #{error}")
+        locked(id, fn -> publish(id, generation, {:error, :probe_timeout}, error) end)
+        :ok
+
       _, _ ->
         # This read published nothing. While its generation is still current,
         # clear `:loading` so the next `entry/1` starts another read instead
@@ -561,6 +596,9 @@ defmodule HalC2.Acp do
 
   defp error_message(_id, {:error, :antigravity_health_failed}),
     do: "Antigravity could not complete its local health check."
+
+  defp error_message(id, {:error, :probe_timeout}),
+    do: "#{label(id)} CLI version probe timed out."
 
   defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
   defp error_message(_id, {:error, reason}), do: describe(reason)
@@ -634,6 +672,20 @@ defmodule HalC2.Acp do
 
       {:json_rpc, ^conn, {:request, rpc_id, method, _params}} ->
         Connection.respond(conn, rpc_id, {:error, %{"code" => -32601, "message" => method}})
+        serve(conn, id, task)
+
+      {:json_rpc, ^conn, {:notification, "session/update", params}} ->
+        # A server still starting settles its model list with a config update
+        # before the session answers; the read that asked takes the settled
+        # options over the first, partial ones.
+        case get_in(params || %{}, ["update", "sessionUpdate"]) do
+          "config_option_update" ->
+            Process.put({__MODULE__, :settled, id}, params["update"]["configOptions"])
+
+          _ ->
+            :ok
+        end
+
         serve(conn, id, task)
 
       {:json_rpc, ^conn, _notification} ->
@@ -743,40 +795,117 @@ defmodule HalC2.Acp do
   end
 
   defp read_agent(id, dir, driver, entry) do
-    with :ok <- check_version(id, driver, entry) do
-      with_agent(id, dir, fn conn, init ->
-        stage(
-          id,
-          :version,
-          get_in(init, ["agentInfo", "version"]) || "unknown"
-        )
+    with :ok <- check_version(id, driver, entry),
+         :ok <- check_installed(id) do
+      case with_agent(id, dir, fn conn, init ->
+             stage(
+               id,
+               :version,
+               get_in(init, ["agentInfo", "version"]) || "unknown"
+             )
 
-        stage(id, :capabilities, init["agentCapabilities"] || %{})
-        stage(id, :auth_methods, length(init["authMethods"] || []))
-        stage(id, :meta, init["_meta"] || %{})
+             stage(id, :capabilities, init["agentCapabilities"] || %{})
+             stage(id, :auth_methods, length(init["authMethods"] || []))
+             stage(id, :meta, init["_meta"] || %{})
 
-        # Antigravity's models come from its sign-in and sessions
-        # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
-        case if(driver == "antigravity",
-               do: {:ok, %{}},
-               else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
-             ) do
-          {:ok, session} ->
-            stage(id, :config, session["configOptions"] || [])
-            stage(id, :models, models(session))
-            # Antigravity skips `session/new`, so its success proves no sign-in;
-            # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
-            if driver != "antigravity", do: stage(id, :unauthenticated, false)
-            :ok
+             # Antigravity's models come from its sign-in and sessions
+             # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
+             case if(driver == "antigravity",
+                    do: {:ok, %{}},
+                    else:
+                      call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
+                  ) do
+               {:ok, session} ->
+                 session =
+                   case Process.delete({__MODULE__, :settled, id}) do
+                     [_ | _] = settled -> Map.put(session, "configOptions", settled)
+                     _ -> session
+                   end
 
-          # ACP's "authentication required".
-          {:error, %{"code" => -32000}} ->
-            {:error, :unauthenticated}
+                 stage(id, :config, session["configOptions"] || [])
+                 stage(id, :models, models(session))
+                 # Antigravity skips `session/new`, so its success proves no sign-in;
+                 # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
+                 if driver != "antigravity", do: stage(id, :unauthenticated, false)
+                 :ok
 
-          {:error, _} = error ->
-            error
+               # ACP's "authentication required".
+               {:error, %{"code" => -32000}} ->
+                 {:error, :unauthenticated}
+
+               {:error, _} = error ->
+                 error
+             end
+           end) do
+        :ok -> :ok
+        {:error, reason} -> {:error, start_failure(id, reason)}
+        other -> other
+      end
+    end
+  end
+
+  # The command a read would run, present on this machine. A registry agent
+  # installs on first use, so it is never missing in this sense.
+  defp check_installed(id) do
+    case command(id) do
+      {:ok, [executable | _], _env} ->
+        if driver(id) == @registry or System.find_executable(executable) do
+          :ok
+        else
+          {:error,
+           "#{label(id)} CLI (`#{Path.basename(executable)}`) is not installed or not on PATH."}
         end
-      end)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # Why an agent that would not start would not start, when its own version
+  # run says: macOS refusing the binary (a bad code signature, quarantine)
+  # leaves nothing over ACP but a closed connection.
+  defp start_failure(id, reason) do
+    started? =
+      case reason do
+        :closed ->
+          false
+
+        %{"message" => message} when is_binary(message) ->
+          not String.contains?(message, "exited with code")
+
+        %{} ->
+          true
+
+        _ ->
+          false
+      end
+
+    if started?, do: reason, else: diagnose_start(id, reason)
+  end
+
+  defp diagnose_start(id, reason) do
+    output =
+      with {:ok, [executable | _], _env} <- command(id),
+           path when is_binary(path) <- System.find_executable(executable),
+           task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
+           {:ok, {out, _status}} <- Task.yield(task, 5_000) || Task.shutdown(task) do
+        String.downcase(out)
+      else
+        _ -> ""
+      end
+
+    name = label(id)
+    binary = id |> binary_path() |> to_string() |> Path.basename()
+
+    cond do
+      output =~ "signature" ->
+        "macOS killed the #{name} process due to an invalid code signature. The binary may be corrupted — try reinstalling #{name}."
+
+      output =~ "quarantine" ->
+        "macOS is blocking the #{name} binary (quarantine). Run `xattr -d com.apple.quarantine $(which #{binary})` to fix this."
+
+      true ->
+        reason
     end
   end
 
@@ -847,15 +976,28 @@ defmodule HalC2.Acp do
               "slug" => "#{provider}/#{model["id"] || model_id}",
               "name" => String.trim(model["name"]),
               "isCustom" => false,
-              "capabilities" => nil
+              "capabilities" => nil,
+              # A provider the list cannot name (or names with nothing) bills
+              # under its own id, until it is named.
+              "subProvider" =>
+                case entry["name"] do
+                  name when is_binary(name) ->
+                    if String.trim(name) == "", do: provider, else: name
+
+                  _ ->
+                    provider
+                end
             }
-            |> then(&if(entry["name"], do: Map.put(&1, "subProvider", entry["name"]), else: &1))
           end
 
         stage(id, :models, Enum.sort_by(models, & &1["name"]))
+        stage(id, :unauthenticated, false)
         :ok
 
       {:ok, status, _} when status in [401, 403] ->
+        # Signed out as far as that server is concerned; the failure standing in
+        # for the read keeps later listings from probing it again unasked.
+        stage(id, :unauthenticated, true)
         {:error, "OpenCode server rejected authentication. Check the server URL and password."}
 
       {:ok, status, _} ->
@@ -950,6 +1092,11 @@ defmodule HalC2.Acp do
     path = HalC2.ProviderUpdates.executable("opencode", id)
 
     entry
+    |> Map.merge(%{
+      "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
+      "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
+    })
+    |> opencode_unchecked(id)
     |> Map.update!("models", &opencode_options(&1, config))
     |> then(
       &if(path,
@@ -1031,6 +1178,33 @@ defmodule HalC2.Acp do
 
   defp driver_fields(entry, _driver, _id, _instance), do: entry
 
+  # Enabled but never read in this session (its first read is still under way):
+  # the listing says so, as Codex's and Claude's do, instead of looking ready.
+  # Off, it says the server URL it keeps for when it is turned back on.
+  defp opencode_unchecked(entry, id) do
+    cond do
+      entry["enabled"] == false ->
+        if setting(id, "serverUrl"),
+          do:
+            Map.put(
+              entry,
+              "message",
+              "OpenCode is disabled in HAL-C2 settings. A server URL is configured."
+            ),
+          else: entry
+
+      :persistent_term.get({__MODULE__, id, :models}, nil) == nil and
+          :persistent_term.get({__MODULE__, id, :error}, nil) == nil ->
+        Map.merge(entry, %{
+          "status" => "warning",
+          "message" => "OpenCode provider status has not been checked in this session yet."
+        })
+
+      true ->
+        entry
+    end
+  end
+
   # An OpenCode that said no version when it started (staged as "unknown") cannot be
   # told apart from one too old to run.
   defp opencode_version(%{"version" => "unknown", "status" => status} = entry, _id, _instance)
@@ -1091,9 +1265,17 @@ defmodule HalC2.Acp do
           do: variants,
           else: ~w(low medium high xhigh)
 
+      # A model whose variants name no default HAL-C2 knows keeps OpenCode's
+      # own default as its choice, so its reasoning label is never blank.
+      {variants, default} =
+        case default_variant(provider, variants) do
+          nil -> {["default" | variants], "default"}
+          default -> {variants, default}
+        end
+
       descriptors =
         [
-          select("variant", "Reasoning", variants, default_variant(provider, variants)),
+          select("variant", "Reasoning", variants, default),
           agents != [] &&
             select("agent", "Agent", agents, if("build" in agents, do: "build", else: hd(agents)))
         ]
@@ -1284,7 +1466,13 @@ defmodule HalC2.Acp do
          {:ok, conn} <-
            Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2) do
       try do
-        with {:ok, init} <- Connection.call(conn, "initialize", initialize_params()),
+        with {:ok, init} <-
+               Connection.call(
+                 conn,
+                 "initialize",
+                 initialize_params(),
+                 Application.get_env(:hal_c2, :acp_initialize_timeout, 30_000)
+               ),
              do: fun.(conn, init)
       after
         Connection.stop(conn)
@@ -1443,12 +1631,14 @@ defmodule HalC2.Acp do
   @max_commands 200
 
   @doc """
-  Replaces a registry instance's commands with those its session advertises (ACP's
+  Replaces an instance's commands with those its session advertises (ACP's
   `available_commands_update`), and tells subscribed clients. A name starting with
-  `$` is a skill of the agent's; the rest are its slash commands.
+  `$` is a skill of the agent's; the rest are its slash commands. OpenCode
+  advertises the commands and skills it read for the session's project, and a
+  registry agent its own; other drivers' commands come from their own reads.
   """
   def put_commands(id, commands) when is_list(commands) do
-    if driver(id) == "acpRegistry" do
+    if driver(id) in ["acpRegistry", "opencode"] do
       offered =
         for(%{"name" => name} = command when is_binary(name) <- commands, do: command)
         |> Enum.map(&Map.put(&1, "name", String.trim(&1["name"])))
@@ -1669,8 +1859,16 @@ defmodule HalC2.Acp do
     for %{"value" => slug} = model <- option["options"] || [] do
       {sub, name} =
         case String.split(model["name"] || slug, "/", parts: 2) do
-          [sub, name] -> {sub, name}
-          [name] -> {nil, name}
+          [sub, name] ->
+            {sub, name}
+
+          [name] ->
+            # A name with no provider in it (OpenCode 2's) still groups under
+            # the provider its slug names.
+            case String.split(slug, "/", parts: 2) do
+              [sub, _] -> {sub, name}
+              _ -> {nil, name}
+            end
         end
 
       %{

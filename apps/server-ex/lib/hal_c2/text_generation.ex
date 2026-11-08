@@ -502,8 +502,15 @@ defmodule HalC2.TextGeneration do
       {:ok, {:error, reason}} when is_binary(reason) ->
         {:error, reason}
 
-      {:ok, {:error, %{"message" => message}}} ->
-        {:error, "#{label} request failed: #{message}"}
+      {:ok, {:error, %{"message" => _} = error}} ->
+        if driver(id) == "opencode",
+          do: {:error, opencode_failure(error)},
+          else: {:error, "#{label} request failed: #{error["message"]}"}
+
+      {:ok, {:error, %{} = error}} ->
+        if driver(id) == "opencode",
+          do: {:error, opencode_failure(error)},
+          else: {:error, "#{label} request failed: #{inspect(error)}"}
 
       {:ok, {:error, reason}} ->
         {:error, "#{label} request failed: #{inspect(reason)}"}
@@ -512,7 +519,40 @@ defmodule HalC2.TextGeneration do
         {:error, "Antigravity text generation timed out."}
 
       nil ->
-        {:error, "#{label} request timed out."}
+        if driver(id) == "opencode",
+          do: {:error, "OpenCode did not finish generating in time."},
+          else: {:error, "#{label} request timed out."}
+    end
+  end
+
+  # An OpenCode generation the model provider failed, in fixed plain words: the
+  # provider's own text (sometimes only "<none>") never reaches the user.
+  defp opencode_failure(error) do
+    message = String.downcase(to_string(error["message"] || ""))
+    data = if is_map(error["data"]), do: error["data"], else: %{}
+    status = data["statusCode"] || data["status"]
+    name = String.downcase(to_string(data["errorName"] || ""))
+
+    cond do
+      status in [401, 403] or name =~ "auth" or
+          message =~ ~r/unauthor|invalid (api )?key|credential|sign[ -]?in|authentication/ ->
+        "The model provider rejected the credentials. Check the provider's sign-in or API key in OpenCode."
+
+      status == 429 or name =~ "rate" or name =~ "quota" or
+          message =~ ~r/rate.?limit|too many requests|quota/ ->
+        "The model provider's usage or rate limit was reached. Try again later."
+
+      message =~ ~r/context|too long|too large/ ->
+        "The prompt is too long for the selected model's context window."
+
+      message =~ "abort" or name =~ "abort" ->
+        "OpenCode stopped the generation."
+
+      is_integer(status) ->
+        "The model provider failed the request (HTTP #{status})."
+
+      true ->
+        "OpenCode could not generate the text."
     end
   end
 
@@ -523,8 +563,20 @@ defmodule HalC2.TextGeneration do
          :ok <- acp_model(conn, session_id, session, model, antigravity) do
       params = %{"sessionId" => session_id, "prompt" => [%{"type" => "text", "text" => prompt}]}
       task = Task.async(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
-      acp_collect(conn, task.ref, [], antigravity)
+      result = acp_collect(conn, task.ref, [], antigravity)
+      delete_session(conn, session_id)
+      result
     end
+  end
+
+  # A generation's throwaway session is deleted again, so titles and commit
+  # messages leave nothing in the agent's session history. Best effort: an
+  # agent without `session/delete` just says so.
+  defp delete_session(conn, session_id) do
+    Connection.call(conn, "session/delete", %{"sessionId" => session_id}, 2_000)
+    :ok
+  catch
+    :exit, _ -> :ok
   end
 
   # Antigravity runs in its default (asking) mode, never a thread's access mode.
@@ -610,6 +662,11 @@ defmodule HalC2.TextGeneration do
           true ->
             {:error, "Antigravity text generation requested a tool or user input."}
         end
+
+      # The caller that asked for the text went away (the user cancelled):
+      # the generation stops with it instead of running on unattended.
+      {:EXIT, _pid, _reason} ->
+        {:error, "The request was cancelled."}
 
       {^ref, reply} ->
         Process.demonitor(ref, [:flush])
