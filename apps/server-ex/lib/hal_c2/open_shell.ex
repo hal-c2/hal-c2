@@ -31,6 +31,12 @@ defmodule HalC2.OpenShell do
   workspaces by identity under mTLS, so two environments on one gateway would see
   each other's sandboxes; the MC refuses to use a gateway that holds another
   environment's (`HalC2.OpenShell.Client.other_environments/2`).
+
+  Several HAL-C2 homes can run on one machine (the user's MC, a dev MC, a scratch
+  `HAL_C2_MC_HOME`, a test run), each with a gateway of its own. Everything one
+  home's gateway is known by outside its own directories, its service's name and
+  the label its driver puts on runtime resources, carries `instance/0`, so no
+  home's install, update, stop or uninstall reaches another's gateway.
   """
 
   @doc "The workspace every MC request is scoped to."
@@ -43,6 +49,16 @@ defmodule HalC2.OpenShell do
   def owner, do: HalC2.Environment.id()
 
   def root, do: Path.join(HalC2.Paths.data_dir(), "openshell")
+
+  @doc """
+  This home's gateway among the others on the machine: 12 hex digits of the hash
+  of `root/0`. The service's name (`HalC2.OpenShell.Service.name/1`) and the
+  driver's resource label (`HalC2.OpenShell.Config.render/1`) carry it.
+  """
+  def instance do
+    :crypto.hash(:sha256, root()) |> binary_part(0, 6) |> Base.encode16(case: :lower)
+  end
+
   def state_path, do: Path.join(root(), "installed.json")
   def release_dir(version), do: Path.join([root(), "releases", version])
   def gateway_bin(version), do: Path.join(release_dir(version), "openshell-gateway")

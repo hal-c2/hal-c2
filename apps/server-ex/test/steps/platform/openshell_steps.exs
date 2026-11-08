@@ -187,8 +187,8 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
     assert Storage.service_calls(context.openshell.log) == [
              "systemctl --user daemon-reload",
-             "systemctl --user enable hal-c2-openshell.service",
-             "systemctl --user restart hal-c2-openshell.service"
+             "systemctl --user enable #{Service.name(:systemd)}",
+             "systemctl --user restart #{Service.name(:systemd)}"
            ]
 
     context
@@ -374,7 +374,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
   end
 
   step "the gateway's service restarted", context do
-    assert "systemctl --user restart hal-c2-openshell.service" in Storage.service_calls(
+    assert "systemctl --user restart #{Service.name(:systemd)}" in Storage.service_calls(
              context.openshell.log
            )
 
@@ -521,9 +521,63 @@ defmodule HalC2.Steps.Platform.OpenShell do
     refute File.exists?(OpenShell.root())
 
     calls = Storage.service_calls(context.openshell.log)
-    assert "systemctl --user stop hal-c2-openshell.service" in calls
-    assert "systemctl --user disable hal-c2-openshell.service" in calls
+    assert "systemctl --user stop #{Service.name(:systemd)}" in calls
+    assert "systemctl --user disable #{Service.name(:systemd)}" in calls
 
+    context
+  end
+
+  # --- two homes on one machine ----------------------------------------------------
+
+  step "another HAL-C2 home on this machine has installed OpenShell", context do
+    context =
+      Map.put(context, :before, %{
+        state: OpenShell.state(),
+        unit: File.read!(Service.unit_path(:systemd)),
+        ca: ca(),
+        name: Service.name(:systemd)
+      })
+
+    FakeOpenShell.queue_certificates(context.openshell.control)
+    assert {:ok, _} = in_other_home(context, fn -> install(context, "0.1.6") end)
+    context
+  end
+
+  step "the other home updates its OpenShell and then uninstalls it", context do
+    reset_calls(context)
+
+    in_other_home(context, fn ->
+      assert {:ok, _} = install(context, Manifest.version())
+      assert :ok = Install.uninstall()
+    end)
+
+    context
+  end
+
+  step "the other home never asked the service manager about this home's service", context do
+    calls = Storage.service_calls(context.openshell.log)
+    assert Enum.any?(calls, &(&1 =~ "restart"))
+    for call <- calls, do: refute(call =~ context.before.name, call)
+    context
+  end
+
+  step "this home's gateway, service and certificates are as they were", context do
+    assert OpenShell.state() == context.before.state
+    assert File.read!(Service.unit_path(:systemd)) == context.before.unit
+    assert ca() == context.before.ca
+    context
+  end
+
+  step "the service under this home's name runs another HAL-C2 home's gateway", context do
+    state = OpenShell.state()
+    other = in_other_home(context, fn -> Service.render(:systemd, state) end)
+    File.write!(Service.unit_path(:systemd), other)
+    reset_calls(context)
+    context
+  end
+
+  step "the service manager was asked nothing", context do
+    assert Storage.service_calls(context.openshell.log) == []
     context
   end
 
@@ -572,8 +626,8 @@ defmodule HalC2.Steps.Platform.OpenShell do
     refute File.exists?(Service.unit_path(:systemd))
 
     calls = Storage.service_calls(context.openshell.log)
-    assert "systemctl --user stop hal-c2-openshell.service" in calls
-    assert "systemctl --user disable hal-c2-openshell.service" in calls
+    assert "systemctl --user stop #{Service.name(:systemd)}" in calls
+    assert "systemctl --user disable #{Service.name(:systemd)}" in calls
 
     context
   end
@@ -591,6 +645,18 @@ defmodule HalC2.Steps.Platform.OpenShell do
   end
 
   defp installed(context, result), do: Map.put(context, :result, result)
+
+  # Runs `fun` as the MC of another HAL-C2 home on the same machine and user.
+  defp in_other_home(context, fun) do
+    previous = Application.get_env(:hal_c2, :home)
+    Application.put_env(:hal_c2, :home, Path.join(context.openshell.dir, "other-home"))
+
+    try do
+      fun.()
+    after
+      Application.put_env(:hal_c2, :home, previous)
+    end
+  end
 
   defp reset_calls(context), do: File.write!(context.openshell.log, "")
 

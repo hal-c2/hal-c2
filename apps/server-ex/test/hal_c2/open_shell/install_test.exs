@@ -161,8 +161,8 @@ defmodule HalC2.OpenShell.InstallTest do
 
       assert Storage.service_calls(ctx.log) == [
                "systemctl --user daemon-reload",
-               "systemctl --user enable hal-c2-openshell.service",
-               "systemctl --user restart hal-c2-openshell.service"
+               "systemctl --user enable #{Service.name(:systemd)}",
+               "systemctl --user restart #{Service.name(:systemd)}"
              ]
 
       assert_client_authority()
@@ -301,7 +301,7 @@ defmodule HalC2.OpenShell.InstallTest do
       File.write!(ctx.log, "")
 
       assert :ok = Install.uninstall()
-      assert "systemctl --user stop hal-c2-openshell.service" in Storage.service_calls(ctx.log)
+      assert "systemctl --user stop #{Service.name(:systemd)}" in Storage.service_calls(ctx.log)
       refute File.exists?(Path.join(ctx.bin, "active"))
       refute File.exists?(OpenShell.root())
     end
@@ -341,7 +341,9 @@ defmodule HalC2.OpenShell.InstallTest do
       assert {:ok, %{"mode" => "foreground"}} = install(ctx, "0.1.7", service: false)
       refute File.exists?(Service.unit_path(:systemd))
 
-      assert "systemctl --user disable hal-c2-openshell.service" in Storage.service_calls(ctx.log)
+      assert "systemctl --user disable #{Service.name(:systemd)}" in Storage.service_calls(
+               ctx.log
+             )
     end
 
     test "status names what needs attention", ctx do
@@ -352,11 +354,66 @@ defmodule HalC2.OpenShell.InstallTest do
       # Nothing answers on the port the fake gateway's unit was given.
       assert %{"problems" => ["gateway-unreachable"], "mode" => "managed"} = Install.status()
 
-      File.write!(Service.unit_path(:systemd), "edited")
+      unit = Service.unit_path(:systemd)
+      File.write!(unit, File.read!(unit) <> "# edited\n")
       assert "service-outdated" in Install.status()["problems"]
 
       FakeOpenShell.put_env(openshell_facts: %{@facts | landlock: false})
       assert %{"supported" => false, "problems" => ["landlock-missing" | _]} = Install.status()
+    end
+  end
+
+  describe "two homes on one machine" do
+    # Two MCs under one user share the service manager; each home has its own unit.
+    defp home(ctx, name), do: FakeOpenShell.put_env(home: Path.join(ctx.tmp_dir, name))
+
+    test "each installs, updates and uninstalls only its own gateway", ctx do
+      assert {:ok, a} = install(ctx, "0.1.6")
+      a_name = Service.name(:systemd)
+      a_unit = Service.unit_path(:systemd)
+      a_text = File.read!(a_unit)
+      a_root = OpenShell.root()
+
+      home(ctx, "mc-b")
+      assert Service.name(:systemd) != a_name
+      assert Service.unit_path(:systemd) != a_unit
+      File.write!(ctx.log, "")
+      FakeOpenShell.queue_certificates(ctx.control)
+
+      assert {:ok, _} = install(ctx, "0.1.6")
+      assert OpenShell.root() != a_root
+      assert {:ok, _} = install(ctx, "0.1.7", drain: true)
+      assert :ok = Install.uninstall()
+
+      calls = Storage.service_calls(ctx.log)
+      assert "systemctl --user restart #{Service.name(:systemd)}" in calls
+      assert "systemctl --user disable #{Service.name(:systemd)}" in calls
+      for call <- calls, do: refute(call =~ a_name, call)
+
+      assert File.read!(a_unit) == a_text
+      assert File.exists?(a_root)
+
+      home(ctx, "mc")
+      assert OpenShell.state() == a
+      assert Service.status(a)["installed"]
+    end
+
+    test "a unit under this home's name that it did not write is left alone", ctx do
+      assert {:ok, state} = install(ctx, "0.1.7")
+      unit = Service.unit_path(:systemd)
+      other = String.replace(File.read!(unit), OpenShell.root(), "/elsewhere/openshell")
+      File.write!(unit, other)
+      File.write!(ctx.log, "")
+
+      for result <- [install(ctx, "0.1.7"), Install.rotate(), Install.uninstall(force: true)] do
+        assert {:error, "[unit-not-ours] " <> _} = result
+      end
+
+      assert Storage.service_calls(ctx.log) == []
+      assert File.read!(unit) == other
+      assert OpenShell.state() == state
+      assert "service-not-ours" in Install.status()["problems"]
+      refute "service-outdated" in Install.status()["problems"]
     end
   end
 
@@ -375,7 +432,10 @@ defmodule HalC2.OpenShell.InstallTest do
       refute File.exists?(Path.join(OpenShell.pki_dir(), "ca.key"))
       assert_client_authority()
       assert mode(Path.join([OpenShell.pki_dir(), "client", "tls.key"])) == 0o600
-      assert "systemctl --user restart hal-c2-openshell.service" in Storage.service_calls(ctx.log)
+
+      assert "systemctl --user restart #{Service.name(:systemd)}" in Storage.service_calls(
+               ctx.log
+             )
     end
 
     test "a failed check keeps the old certificates", ctx do

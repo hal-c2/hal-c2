@@ -146,6 +146,10 @@ defmodule HalC2.OpenShell.Command do
   def problem_message("service-missing"),
     do: "The gateway's service is gone. Run `hal-c2-service openshell install` to repair it."
 
+  def problem_message("service-not-ours"),
+    do:
+      "The service under this home's name runs another HAL-C2 home's gateway, so this MC leaves it alone. If no HAL-C2 home uses it, remove its unit, then run `hal-c2-service openshell install`."
+
   def problem_message("service-outdated"),
     do:
       "The gateway's service is not the one this MC writes. Run `hal-c2-service openshell install` to repair it."

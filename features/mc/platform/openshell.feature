@@ -2,6 +2,7 @@
 #   https://github.com/hal-c2/hal-c2/issues/1411
 #   https://github.com/hal-c2/hal-c2/issues/1417 (the MC's client certificate comes from a CA of its own)
 #   https://github.com/hal-c2/hal-c2/issues/1418 (one gateway per HAL-C2 environment)
+#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5819948882: homes, probe cleanup, Docker)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
 #   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix, rootless runtimes only)
@@ -21,7 +22,8 @@ Feature: The OpenShell gateway review sandboxes run in
   identity that is not an operator. It refuses machines it cannot run it safely on, puts
   the previous gateway back when an update fails its check, and touches only the
   sandboxes it labelled as its own. A gateway belongs to one HAL-C2 environment: the MC
-  refuses one that holds another environment's sandboxes, and leaves those alone.
+  refuses one that holds another environment's sandboxes, and leaves those alone. Each
+  HAL-C2 home on a machine runs a gateway of its own, under a service of its own.
 
   Background:
     Given a Linux machine with rootless Podman
@@ -203,6 +205,24 @@ Feature: The OpenShell gateway review sandboxes run in
     When a developer starts the gateway with the dev run
     Then the gateway runs in the foreground without telemetry it inherited
     And no service of the gateway's is left
+
+  @mc
+  Scenario: Two HAL-C2 homes on one machine each run a gateway of their own
+    Given OpenShell is installed
+    And another HAL-C2 home on this machine has installed OpenShell
+    When the other home updates its OpenShell and then uninstalls it
+    Then the other home never asked the service manager about this home's service
+    And this home's gateway, service and certificates are as they were
+
+  @mc
+  Scenario: A service under this home's name that another home wrote is left alone
+    Given OpenShell is installed
+    And the service under this home's name runs another HAL-C2 home's gateway
+    When the user installs OpenShell
+    Then the install is refused because "unit-not-ours"
+    And the service manager was asked nothing
+    When the user asks for OpenShell's status
+    Then the status says "service-not-ours"
 
   @mc
   Scenario: Uninstalling removes the gateway and its files

@@ -57,6 +57,7 @@ defmodule HalC2.OpenShell.Install do
     mode = if Keyword.get(opts, :service, true), do: "managed", else: "foreground"
 
     with :ok <- not_external(previous),
+         :ok <- Service.owned(),
          :ok <- foreground_stopped(previous),
          {:ok, platform} <- platform(),
          {:ok, release} <- release(platform.target, opts) do
@@ -95,7 +96,8 @@ defmodule HalC2.OpenShell.Install do
         staging(fn staging ->
           pki = Path.join(staging, "pki")
 
-          with :ok <- foreground_stopped(state),
+          with :ok <- Service.owned(),
+               :ok <- foreground_stopped(state),
                :ok <- issue(state["version"], pki),
                :ok <- drained(state, opts) do
             switch(state, state, opts, fn -> replace_dir(pki, OpenShell.pki_dir()) end)
@@ -1139,8 +1141,9 @@ defmodule HalC2.OpenShell.Install do
       "update-available"
     )
     |> add(service != nil and not service["installed"], "service-missing")
-    |> add(service != nil and service["installed"] and not service["current"], "service-outdated")
-    |> add(service != nil and service["installed"] and not service["running"], "service-stopped")
+    |> add(service != nil and service["foreign"] == true, "service-not-ours")
+    |> add(ours?(service) and not service["current"], "service-outdated")
+    |> add(ours?(service) and not service["running"], "service-stopped")
     |> add(not match?({:ok, _}, health), "gateway-unreachable")
     |> add(match?({:ok, %{status: s}} when s != :healthy, health), "gateway-unhealthy")
     |> add(
@@ -1150,6 +1153,8 @@ defmodule HalC2.OpenShell.Install do
     )
     |> add(is_list(others) and others != [], "gateway-shared")
   end
+
+  defp ours?(service), do: service != nil and service["installed"] and not service["foreign"]
 
   defp add(list, true, code), do: list ++ [code]
   defp add(list, false, _code), do: list
@@ -1165,7 +1170,8 @@ defmodule HalC2.OpenShell.Install do
         {:error, not_installed()}
 
       state ->
-        with :ok <- foreground_stopped(state),
+        with :ok <- Service.owned(),
+             :ok <- foreground_stopped(state),
              :ok <- drained(state, opts),
              :ok <- if(state["mode"] == "managed", do: service_stopped(), else: :ok),
              :ok <- if(state["mode"] == "managed", do: Service.uninstall(), else: :ok) do

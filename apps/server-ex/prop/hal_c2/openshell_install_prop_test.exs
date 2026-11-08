@@ -32,7 +32,12 @@ defmodule HalC2.OpenShellInstallPropTest do
       the current and the replaced credentials of users' gateways stay; one that comes to hold them is reported by `status` and
       refused by `connect`, and by a connection made before it came, when that one
       is asked for a sandbox; the MC never creates or deletes a sandbox there, and
-      never touches the other environment's.
+      never touches the other environment's;
+    * another HAL-C2 home on the machine installing, updating or uninstalling its
+      gateway as a service changes none of this home's: it never names this home's
+      unit to the service manager, and this home's unit, certificates, database and
+      installed state are what they were. It has a service manager stand-in of its
+      own, so this home's unit keeps running whatever the other home's does.
   """
 
   use ExUnit.Case, async: false
@@ -113,6 +118,9 @@ defmodule HalC2.OpenShellInstallPropTest do
     bin = Path.join(home, "bin")
     File.mkdir_p!(bin)
     Storage.fake_service_manager(bin)
+    other_bin = Path.join([home, "other", "bin"])
+    File.mkdir_p!(other_bin)
+    Storage.fake_service_manager(other_bin)
     Application.put_env(:hal_c2, :openshell_facts, @facts)
     Application.put_env(:hal_c2, :service_platform, {:unix, platform})
     Application.put_env(:hal_c2, :service_user_home, Path.join(home, "user"))
@@ -140,7 +148,9 @@ defmodule HalC2.OpenShellInstallPropTest do
       foreign: [],
       # The connection `connect` kept, if any.
       retained: nil,
-      seq: 0
+      seq: 0,
+      # The other home on the machine, and its service manager stand-in.
+      other: %{home: Path.join([home, "other", "mc"]), bin: other_bin}
     })
   end
 
@@ -150,9 +160,18 @@ defmodule HalC2.OpenShellInstallPropTest do
   # certificates on disk, or nil; db: what the database holds; next_gen: the
   # generation the next install, rotation or user's gateway would be issued;
   # shared: whether the user's gateway the MC records holds another environment's
-  # sandboxes; retained: whether the MC keeps a connection to it.
+  # sandboxes; retained: whether the MC keeps a connection to it; other: whether the
+  # machine's other home has its gateway installed.
   def initial_state,
-    do: %{installed: nil, pki: nil, db: nil, next_gen: 0, shared: false, retained: false}
+    do: %{
+      installed: nil,
+      pki: nil,
+      db: nil,
+      next_gen: 0,
+      shared: false,
+      retained: false,
+      other: false
+    }
 
   def command(state) do
     frequency(
@@ -162,7 +181,8 @@ defmodule HalC2.OpenShellInstallPropTest do
           [oneof(["0.1.6", "0.1.7"]), oneof(["managed", "foreground"]), outcome()]}},
         {2, {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails, :stop_fails])]}},
         {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
-        {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails])]}}
+        {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails])]}},
+        {2, {:call, __MODULE__, :other_home, [oneof([:install, :update, :uninstall])]}}
       ] ++
         if(writable?(state),
           do: [{2, {:call, __MODULE__, :write_db, [oneof(["a", "b"])]}}],
@@ -262,6 +282,15 @@ defmodule HalC2.OpenShellInstallPropTest do
     do: seen(%{state | installed: nil, pki: nil, db: nil, shared: false, retained: false}, :ok)
 
   defp step(state, {:call, _, :write_db, [marker]}), do: seen(%{state | db: marker}, :ok)
+
+  # The other home's result; this home's observation is what it was.
+  defp step(state, {:call, _, :other_home, [op]}) do
+    case {op, state.other} do
+      {:uninstall, false} -> seen(state, {:other, :not_installed})
+      {:uninstall, true} -> seen(%{state | other: false}, {:other, :ok})
+      _ -> seen(%{state | other: true}, {:other, :ok})
+    end
+  end
 
   # A gateway the MC runs is refused, whatever the gateway of the user holds. One
   # that holds another environment's sandboxes is refused and changes nothing: the
@@ -376,6 +405,55 @@ defmodule HalC2.OpenShellInstallPropTest do
     drop_retained()
     Process.put(:openshell, %{Process.get(:openshell) | current: nil})
     observe(result)
+  end
+
+  # The machine's other home installs (0.1.6), updates (0.1.7) or uninstalls its
+  # gateway as a service, with its own service manager stand-in.
+  def other_home(op) do
+    ctx = Process.get(:openshell)
+    manager = Service.manager()
+    unit = Service.unit_path(manager)
+    name = Service.name(manager)
+    before = File.read(unit)
+    log = Path.join(ctx.other.bin, "calls.log")
+    File.write!(log, "")
+
+    result =
+      in_other_home(ctx, fn ->
+        case op do
+          :uninstall ->
+            Install.uninstall()
+
+          op ->
+            FakeOpenShell.queue_certificates(ctx.control)
+            preflight(false)
+            {release, archive} = ctx.releases[if(op == :install, do: "0.1.6", else: "0.1.7")]
+            Install.install(release: release, archive: archive, smoke: fn _ -> :ok end)
+        end
+      end)
+
+    calls = Storage.service_calls(log)
+    named = Enum.filter(calls, &String.contains?(&1, name))
+    unchanged = File.read(unit) == before
+
+    observe(
+      {:other, if(named == [] and unchanged, do: classify(result), else: {:touched, named})}
+    )
+  end
+
+  @other_env [:home, :systemctl_command, :launchctl_command]
+
+  defp in_other_home(ctx, fun) do
+    previous = for key <- @other_env, do: {key, Application.get_env(:hal_c2, key)}
+    Application.put_env(:hal_c2, :home, ctx.other.home)
+    Application.put_env(:hal_c2, :systemctl_command, Path.join(ctx.other.bin, "systemctl"))
+    Application.put_env(:hal_c2, :launchctl_command, Path.join(ctx.other.bin, "launchctl"))
+
+    try do
+      fun.()
+    after
+      for {key, value} <- previous, do: Application.put_env(:hal_c2, key, value)
+    end
   end
 
   # A gateway of the user's own, clean or already holding another environment's

@@ -16,6 +16,8 @@ defmodule HalC2.OpenShell.Config do
       the images `HalC2.OpenShell.Manifest` pins, no caller-supplied driver JSON
       and no host bind mounts.
     * A sandbox PID ceiling of #{512}, below OpenShell's 2048.
+    * A Docker resource label or Podman network of this home's own
+      (`HalC2.OpenShell.instance/0`).
     * Telemetry off, and no OTLP or OCSF export.
     * Nothing from the environment it was started from (`command/2`).
   """
@@ -111,8 +113,18 @@ defmodule HalC2.OpenShell.Config do
     allow_driver_config = false
     enable_bind_mounts = false
     sandbox_pids_limit = #{@pids_limit}
-    """
+    """ <> driver_scope(driver)
   end
+
+  # What one home's gateway makes is apart from another's (OpenShell 0.1.7). The
+  # Docker driver labels it with `sandbox_label` and, at start, removes the
+  # supervisors of every sandbox under its label, so each home has a label of its
+  # own. Podman's driver has no such sweep, but puts every sandbox's supervisor on
+  # `network_name`, so each home has a network of its own.
+  defp driver_scope("docker"), do: "sandbox_label = #{toml(scope())}\n"
+  defp driver_scope("podman"), do: "network_name = #{toml(scope())}\n"
+
+  defp scope, do: "hal-c2-" <> OpenShell.instance()
 
   # A TOML basic string.
   defp toml(value) do

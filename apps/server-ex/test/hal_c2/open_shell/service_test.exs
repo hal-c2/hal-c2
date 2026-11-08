@@ -73,8 +73,8 @@ defmodule HalC2.OpenShell.ServiceTest do
 
       assert Storage.service_calls(log) == [
                "systemctl --user daemon-reload",
-               "systemctl --user enable hal-c2-openshell.service",
-               "systemctl --user restart hal-c2-openshell.service"
+               "systemctl --user enable #{Service.name(:systemd)}",
+               "systemctl --user restart #{Service.name(:systemd)}"
              ]
 
       assert %{"installed" => true, "running" => true, "current" => true} = Service.status(@state)
@@ -88,8 +88,8 @@ defmodule HalC2.OpenShell.ServiceTest do
       refute File.exists?(path)
 
       assert Storage.service_calls(log) == [
-               "systemctl --user stop hal-c2-openshell.service",
-               "systemctl --user disable hal-c2-openshell.service",
+               "systemctl --user stop #{Service.name(:systemd)}",
+               "systemctl --user disable #{Service.name(:systemd)}",
                "systemctl --user daemon-reload"
              ]
 
@@ -118,7 +118,7 @@ defmodule HalC2.OpenShell.ServiceTest do
       File.rm!(log)
 
       assert :ok = Service.uninstall()
-      assert Storage.service_calls(log) == ["systemctl --user stop hal-c2-openshell.service"]
+      assert Storage.service_calls(log) == ["systemctl --user stop #{Service.name(:systemd)}"]
       refute File.exists?(Path.join(Path.dirname(log), "active"))
     end
 
@@ -143,7 +143,7 @@ defmodule HalC2.OpenShell.ServiceTest do
       {doc, _} = apply(:xmerl_scan, :string, [String.to_charlist(plist), [quiet: true]])
       dict = dict(xpath(doc, "/plist/dict"))
 
-      assert dict["Label"] == "io.github.halc2.openshell"
+      assert dict["Label"] == Service.name(:launchd)
       # launchd's own environment (`launchctl setenv`) would reach the gateway otherwise.
       assert dict["ProgramArguments"] == Config.command(OpenShell.gateway_bin("0.1.7"))
       assert ["/usr/bin/env", "-i" | _] = dict["ProgramArguments"]
@@ -158,12 +158,12 @@ defmodule HalC2.OpenShell.ServiceTest do
     test "install bootstraps the agent, uninstall boots it out", %{log: log} do
       assert :ok = Service.install(@state)
       path = Service.unit_path(:launchd)
-      assert path =~ "Library/LaunchAgents/io.github.halc2.openshell.plist"
+      assert path =~ "Library/LaunchAgents/#{Service.name(:launchd)}.plist"
 
       uid = HalC2.Service.uid()
 
       assert Storage.service_calls(log) == [
-               "launchctl bootout gui/#{uid}/io.github.halc2.openshell",
+               "launchctl bootout gui/#{uid}/#{Service.name(:launchd)}",
                "launchctl bootstrap gui/#{uid} #{path}"
              ]
 
@@ -172,7 +172,7 @@ defmodule HalC2.OpenShell.ServiceTest do
       refute File.exists?(path)
 
       assert Storage.service_calls(log) == [
-               "launchctl bootout gui/#{uid}/io.github.halc2.openshell"
+               "launchctl bootout gui/#{uid}/#{Service.name(:launchd)}"
              ]
 
       refute File.exists?(Path.join(Path.dirname(log), "loaded"))
@@ -203,10 +203,46 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert :ok = Service.uninstall()
 
       assert Storage.service_calls(log) == [
-               "launchctl bootout gui/#{HalC2.Service.uid()}/io.github.halc2.openshell"
+               "launchctl bootout gui/#{HalC2.Service.uid()}/#{Service.name(:launchd)}"
              ]
 
       refute File.exists?(Path.join(Path.dirname(log), "loaded"))
+    end
+  end
+
+  for platform <- [{:unix, :linux}, {:unix, :darwin}] do
+    test "a unit by this home's name that another home wrote is left alone (#{elem(platform, 1)})",
+         %{log: log, tmp_dir: dir} do
+      Application.put_env(:hal_c2, :service_platform, unquote(Macro.escape(platform)))
+      manager = Service.manager()
+      name = Service.name(manager)
+
+      # Another home's unit, under this home's name.
+      FakeOpenShell.put_env(home: Path.join(dir, "other"))
+      refute Service.name(manager) == name
+      other = Service.render(manager, @state)
+      FakeOpenShell.put_env(home: Path.join(dir, "mc dir"))
+      File.mkdir_p!(Path.dirname(Service.unit_path(manager)))
+      File.write!(Service.unit_path(manager), other)
+
+      assert %{"installed" => true, "foreign" => true, "running" => false, "current" => false} =
+               Service.status(@state)
+
+      for result <- [
+            Service.install(@state),
+            Service.start(),
+            Service.stop(),
+            Service.uninstall()
+          ] do
+        assert {:error, "[unit-not-ours] " <> _} = result
+      end
+
+      assert Storage.service_calls(log) == []
+      assert File.read!(Service.unit_path(manager)) == other
+
+      File.rm!(Service.unit_path(manager))
+      assert :ok = Service.install(@state)
+      assert %{"foreign" => false, "current" => true} = Service.status(@state)
     end
   end
 
