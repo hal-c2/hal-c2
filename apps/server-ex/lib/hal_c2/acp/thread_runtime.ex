@@ -1325,13 +1325,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # Continue the recorded session when the agent can; otherwise start a new one.
   defp open_session(state, %{native_thread_id: native} = turn) when is_binary(native) do
-    params = %{"sessionId" => native, "cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)}
+    servers = mcp_servers(state, turn)
+    params = %{"sessionId" => native, "cwd" => turn.cwd, "mcpServers" => servers}
     caps = state.capabilities
 
     cond do
       is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
         case Connection.call(state.conn, "session/resume", params, 60_000) do
-          {:ok, result} -> {:ok, native, opened(state, result, turn)}
+          {:ok, result} -> {:ok, native, opened(state, result, turn, false, servers)}
           {:error, _} -> fresh_session(state, turn)
         end
 
@@ -1341,7 +1342,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state = %{state | replaying: false}
 
         case result do
-          {:ok, result} -> {:ok, native, opened(state, result || %{}, turn)}
+          {:ok, result} -> {:ok, native, opened(state, result || %{}, turn, false, servers)}
           {:error, _} -> fresh_session(state, turn)
         end
 
@@ -1359,15 +1360,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp new_session(state, turn) do
+    servers = mcp_servers(state, turn)
+
     case Connection.call(
            state.conn,
            "session/new",
-           %{"cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)},
+           %{"cwd" => turn.cwd, "mcpServers" => servers},
            60_000
          ) do
-      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result, turn, true)}
-      {:ok, other} -> {:error, {:unexpected, other}, state}
-      {:error, reason} -> {:error, reason, state}
+      {:ok, %{"sessionId" => id} = result} ->
+        {:ok, id, opened(state, result, turn, true, servers)}
+
+      {:ok, other} ->
+        {:error, {:unexpected, other}, state}
+
+      {:error, reason} ->
+        {:error, reason, state}
     end
   end
 
@@ -1441,7 +1449,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Whether it offers a way to switch models is recorded on the provider thread
   # (`canSwitchModel`), which outlives the process and its session record: a new
   # session's answer says so, a continued one only when it names its model.
-  defp opened(state, result, turn, new? \\ false) do
+  defp opened(state, result, turn, new?, servers) do
+    # The protocol log keeps how the run started (model, mode, the MCP
+    # servers offered by name) — never a server's credential.
+    HalC2.ProviderLog.options(state.thread_id,
+      model: turn.model,
+      permission_mode: turn.runtime_mode,
+      cd: turn.cwd,
+      mcp_servers: servers |> Enum.map(& &1["name"]) |> Enum.reject(&is_nil/1)
+    )
+
     named? =
       Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
 

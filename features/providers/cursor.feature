@@ -705,7 +705,7 @@ Feature: Cursor
       | the thread is forked                     | Cursor Agent SDK does not expose native agent forks.            |
 
   # CursorAgentSdk.ts: the protocol log keeps the shape of what was sent, not its secrets.
-  @backlog
+
   Scenario: Cursor is offered the HAL-C2 tools without the credential reaching the logs
     Given protocol logging is on
     When a Cursor turn starts in a thread that has the HAL-C2 tools

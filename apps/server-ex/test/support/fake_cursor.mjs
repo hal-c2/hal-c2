@@ -137,6 +137,9 @@ const makeAgent = (options, resumed) => {
       return {
         cancel: async () => cancel(),
         wait: async () => {
+          // Triggers read what the user asked, never HAL-C2's own instructions
+          // wrapped around it (they name tools such as hal_c2_thread_wait).
+          message = /<user_request>\n([\s\S]*?)\n<\/user_request>/.exec(message)?.[1] ?? message;
           if (
             control.sandboxBlocksTextGen === true &&
             options.local?.sandboxOptions?.enabled === true &&

@@ -2388,4 +2388,65 @@ defmodule HalC2.Steps.Providers.Cursor do
     assert Enum.all?(agents(context), &(&1["mode"] == "agent"))
     context
   end
+
+  # --- protocol log --------------------------------------------------------------------------
+
+  step "protocol logging is on", context do
+    previous = Application.get_env(:hal_c2, :provider_event_log)
+    Application.put_env(:hal_c2, :provider_event_log, true)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous == nil,
+        do: Application.delete_env(:hal_c2, :provider_event_log),
+        else: Application.put_env(:hal_c2, :provider_event_log, previous)
+    end)
+
+    context
+  end
+
+  step "a Cursor turn starts in a thread that has the HAL-C2 tools", context do
+    Mc.ensure(HalC2.Mcp)
+    ctx = ready_cursor(context)
+    ctx = launch_cursor(ctx, "hello", model: "gpt-5")
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    ctx
+  end
+
+  step "Cursor is offered them as the MCP server {string}", %{args: [name]} = context do
+    assert [%{"mcpServers" => servers}] = Enum.filter(log(context), &(&1["event"] == "send"))
+    assert name in servers
+    context
+  end
+
+  defp protocol_log(context) do
+    context.threads["Cursor"] |> HalC2.ProviderLog.path() |> File.read!()
+  end
+
+  step "the protocol log records the model and mode of the run", context do
+    options =
+      context
+      |> protocol_log()
+      |> String.split("\n", trim: true)
+      |> Enum.map(fn line ->
+        line |> String.split("NTIVE: ", parts: 2) |> List.last() |> JSON.decode!()
+      end)
+      |> Enum.find(&(&1["kind"] == "session-options"))
+
+    assert options["model"] == "gpt-5"
+    assert options["permissionMode"] == "full-access"
+    assert options["mcpServers"] == ["hal-c2"]
+    context
+  end
+
+  step "it holds neither the Cursor API key nor the HAL-C2 tools credential", context do
+    log = protocol_log(context)
+    refute log =~ "cursor-key"
+
+    %{authorization: "Bearer " <> token} =
+      HalC2.Mcp.current(context.threads["Cursor"], "cursor")
+
+    refute log =~ token
+    refute log =~ "Bearer"
+    context
+  end
 end

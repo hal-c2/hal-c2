@@ -95,8 +95,14 @@ defmodule HalC2.ProviderLog do
   credentials cannot reach the log.
   """
   def options(thread_id, opts) do
-    # HAL-C2's own server is the only one a session attaches (`HalC2.Claude.McpConfig`).
-    servers = if opts[:mcp], do: ["hal-c2"], else: []
+    # The names of the MCP servers attached, when the caller named them;
+    # HAL-C2's own server is the only one a Claude session attaches
+    # (`HalC2.Claude.McpConfig`).
+    servers =
+      case opts[:mcp_servers] do
+        names when is_list(names) -> names
+        _ -> if opts[:mcp], do: ["hal-c2"], else: []
+      end
 
     event =
       %{
