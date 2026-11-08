@@ -887,6 +887,36 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  step "the base branch has only {string}", %{args: [path]} = context do
+    context
+    |> commit_files(%{path => template_body(path)})
+    |> Map.put(:template, String.trim_trailing(template_body(path)))
+  end
+
+  step "the base branch has only one text file in {string}", %{args: [dir]} = context do
+    path = Path.join(dir, "bug.txt")
+
+    context
+    |> commit_files(%{path => template_body(path)})
+    |> Map.put(:template, String.trim_trailing(template_body(path)))
+  end
+
+  step "the project's remote is on Forgejo, Azure DevOps or Bitbucket", context do
+    Map.put(context, :forge, "forgejo")
+  end
+
+  # Another template sits in the folder, so a default is told apart from "the only one".
+  step "the project's remote is on GitLab", context do
+    context
+    |> commit_files(%{".gitlab/merge_request_templates/other.md" => "## Other template\n"})
+    |> Map.put(:forge, "gitlab")
+  end
+
+  step "no other template in {string} is used in its place", context do
+    refute prompt(context) =~ "Other template"
+    context
+  end
+
   # --- provider health and saved models -------------------------------------------------
 
   step "the text generation model was saved as {string} on {string}",
@@ -1270,6 +1300,27 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   step "{string} writes a title and the run ends cancelled after printing a valid title",
        %{args: [provider]} = context do
     ended_title(context, provider, "cancelled")
+  end
+
+  # A second, renamed Cursor instance: told apart by its driver, not by its name.
+  step "the Cursor instance {string} writes a title and the run ends with an error after printing a valid title",
+       %{args: [name]} = context do
+    context = install(context, ["cursor"])
+
+    World.put_app_env(:acp_commands, %{
+      "cursor-work" => ["python3", "-u", @fake_acp, "--instance", "cursor"]
+    })
+
+    World.put_env("FAKE_TEXT_STOP", "error")
+
+    context
+    |> World.update_settings(%{
+      "providerInstances" => %{
+        "cursor-work" => %{"driver" => "cursor", "displayName" => name, "config" => %{}}
+      },
+      "textGenerationModelSelection" => selection("cursor-work", @defaults["cursor"])
+    })
+    |> title("Fix the login redirect loop")
   end
 
   defp ended_title(context, provider, ending) do
@@ -1763,7 +1814,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
         "1 file",
         "diff",
         policy: Style.policy(cwd),
-        template: Style.pr_template(cwd, "main")
+        template: Style.pr_template(cwd, "main", Map.get(context, :forge, "github"))
       )
     )
   end

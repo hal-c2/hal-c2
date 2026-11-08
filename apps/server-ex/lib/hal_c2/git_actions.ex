@@ -490,7 +490,7 @@ defmodule HalC2.GitActions do
         }
 
       _ ->
-        %{"title" => title, "body" => body} = pr_content(cwd, base, branch)
+        %{"title" => title, "body" => body} = pr_content(cwd, base, branch, "github")
 
         args =
           ["pr", "create", "--base", base, "--head", branch, "--title", title] ++
@@ -544,7 +544,7 @@ defmodule HalC2.GitActions do
         }
 
       [] ->
-        %{"title" => title, "body" => body} = pr_content(cwd, base, branch)
+        %{"title" => title, "body" => body} = pr_content(cwd, base, branch, target.kind)
 
         request = %{
           "base" => base,
@@ -617,7 +617,7 @@ defmodule HalC2.GitActions do
   end
 
   # The title and body the text generator writes for the branch's commits since `base`.
-  defp pr_content(cwd, base, branch) do
+  defp pr_content(cwd, base, branch, kind) do
     base_ref = base_ref(cwd, base)
     range = "#{base_ref}...HEAD"
     {:ok, commits} = Git.ok(cwd, ["log", "--oneline", String.replace(range, "...", "..")])
@@ -628,7 +628,7 @@ defmodule HalC2.GitActions do
 
     case TextGeneration.pr_content(cwd, base, branch, commits, stat, patch,
            policy: Style.policy(cwd),
-           template: Style.pr_template(cwd, base_ref)
+           template: Style.pr_template(cwd, base_ref, kind)
          ) do
       {:ok, content} -> content
       {:error, reason} -> fail!("Could not write the PR description: #{reason}")

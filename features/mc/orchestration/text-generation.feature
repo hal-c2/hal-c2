@@ -391,6 +391,11 @@ Feature: Generated titles, branch names and source control text
       | with an error     | Cursor SDK request finished with an error. |
       | cancelled         | Cursor SDK request was cancelled.          |
 
+  @mc
+  Scenario: A renamed Cursor instance gives the same ending
+    When the Cursor instance "Work Cursor" writes a title and the run ends with an error after printing a valid title
+    Then it fails with "Cursor SDK request finished with an error."
+
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (requires a key or sign-in), CursorTextGeneration.test.ts
   @mc
   Scenario: Cursor is not asked to write text without a sign-in or key
@@ -747,7 +752,7 @@ Feature: Generated titles, branch names and source control text
       | a file in ".github/PULL_REQUEST_TEMPLATE" and "pull_request_template.md"             | "pull_request_template.md"                  |
 
   # Upstream #25025: GitHub accepts text templates and any capitalisation of their names.
-  @mc @backlog
+  @mc
   Scenario Outline: A text or differently capitalised template is found
     Given the base branch has only <template>
     When pull request text is generated
@@ -760,7 +765,7 @@ Feature: Generated titles, branch names and source control text
       | one text file in ".github/PULL_REQUEST_TEMPLATE" |
 
   # Upstream #25025
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: The exact spelling of a template's name wins over another capitalisation
     Given the base branch has ".github/pull_request_template.md" and ".github/PULL_REQUEST_TEMPLATE.MD"
     When pull request text is generated
@@ -787,7 +792,7 @@ Feature: Generated titles, branch names and source control text
       | a file with only blank lines |
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: templates are read for GitHub only)
-  @mc @backlog
+  @mc
   Scenario: Templates are followed only on a host that has them
     Given the project follows pull request templates
     And the base branch has ".github/pull_request_template.md"
@@ -796,7 +801,7 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given no template
 
   # Upstream #19813: GitLab merge requests follow the repository's default merge request template.
-  @mc @backlog
+  @mc
   Scenario: A GitLab merge request follows the repository's default template
     Given the project follows pull request templates
     And the project's remote is on GitLab

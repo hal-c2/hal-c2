@@ -658,6 +658,7 @@ defmodule HalC2.TextGeneration do
   defp acp(selection, prompt, label, attachments) do
     id = selection["instanceId"]
     antigravity = driver(id) == "antigravity"
+    cursor = driver(id) == "cursor"
 
     task =
       Task.async(fn ->
@@ -707,10 +708,12 @@ defmodule HalC2.TextGeneration do
         end
 
       # Cursor's run that ended badly gives nothing, whatever it printed first.
-      {:ok, {:error, "The request was cancelled."}} when label == "Cursor" ->
+      {:ok, {:error, "The request was cancelled."}} when cursor ->
         {:error, "Cursor SDK request was cancelled."}
 
-      {:ok, {:error, %{}}} when label == "Cursor" ->
+      # The user text stays generic; what Cursor said is only for the log.
+      {:ok, {:error, %{} = reason}} when cursor ->
+        Logger.warning("Cursor text generation ended with an error: #{inspect(reason)}")
         {:error, "Cursor SDK request finished with an error."}
 
       {:ok, {:error, reason}} when is_binary(reason) ->
@@ -748,9 +751,7 @@ defmodule HalC2.TextGeneration do
   defp acp_images(attachments) do
     for %{"type" => "image", "mimeType" => mime} = attachment <- attachments,
         mime in @acp_image_types,
-        path = HalC2.Attachments.path(attachment),
-        is_binary(path),
-        {:ok, bytes} <- [File.read(path)],
+        {:ok, bytes} <- [HalC2.Attachments.read(attachment)],
         do: %{"type" => "image", "mimeType" => mime, "data" => Base.encode64(bytes)}
   end
 
