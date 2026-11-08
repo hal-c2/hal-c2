@@ -609,6 +609,9 @@ private:
     // last sent with: a new thread starts from them.
     QHash<QString, QJsonObject> lastModels;
     QString lastInstance;
+    // The options last given to each model (instanceId + '\n' + slug):
+    // picking a model again offers them back.
+    QHash<QString, QJsonArray> modelOptions;
     // In the order they were sent.
     QList<Unsent> unsent;
     // Each target's send the MC answered last, which its stream may not have

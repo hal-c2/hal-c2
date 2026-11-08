@@ -3830,6 +3830,10 @@ void ComposerController::setInteractionMode(const QString& target, const QString
 
 void ComposerController::rememberModel(const QJsonObject& selection) {
   const QString instanceId = selection.value(QLatin1String("instanceId")).toString();
+  if (!instanceId.isEmpty() && selection.contains(QLatin1String("options"))) {
+    m_kept.modelOptions.insert(instanceId + u'\n' + selection.value(QLatin1String("model")).toString(),
+                               selection.value(QLatin1String("options")).toArray());
+  }
   if (instanceId.isEmpty() || (m_kept.lastInstance == instanceId && m_kept.lastModels.value(instanceId) == selection)) return;
   m_kept.lastInstance = instanceId;
   m_kept.lastModels.insert(instanceId, selection);
@@ -3852,11 +3856,11 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
     }
   }
   Draft& kept = m_drafts[target];
-  const QJsonObject current = selection(target);
   QJsonObject chosen{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}};
-  // Options belong to the provider they were set on.
-  if (current.value(QLatin1String("instanceId")).toString() == instanceId && current.contains(QLatin1String("options"))) {
-    chosen.insert(QStringLiteral("options"), current.value(QLatin1String("options")));
+  // Options belong to the model they were picked with: this model's own come back.
+  if (const auto remembered = m_kept.modelOptions.constFind(instanceId + u'\n' + model);
+      remembered != m_kept.modelOptions.cend()) {
+    chosen.insert(QStringLiteral("options"), *remembered);
   }
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
@@ -3898,6 +3902,9 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   const std::optional<QJsonArray> options = composer::applyOption(descriptors, id, value);
   if (!options) return false;
   chosen.insert(QStringLiteral("options"), *options);
+  m_kept.modelOptions.insert(chosen.value(QLatin1String("instanceId")).toString() + u'\n' +
+                                 chosen.value(QLatin1String("model")).toString(),
+                             *options);
   m_drafts[target].modelSelection = chosen;
   m_drafts[target].carried = false;
   save();
@@ -4075,19 +4082,61 @@ const composer::Instance* ComposerController::instanceOf(const QJsonObject& sele
 
 QJsonObject ComposerController::selection(const QString& target) const {
   QJsonObject chosen = m_drafts.value(target).modelSelection.value_or(baseSelection(target));
-  if (chosen.value(QLatin1String("instanceId")).toString().isEmpty()) {
-    const auto ready = std::find_if(m_catalogue.cbegin(), m_catalogue.cend(), [](const composer::Instance& instance) {
-      return instance.ready();
-    });
+  const auto firstReady = [this]() -> QJsonObject {
+    const auto ready = std::find_if(m_catalogue.cbegin(), m_catalogue.cend(),
+                                    [](const composer::Instance& instance) { return instance.ready(); });
     if (ready == m_catalogue.cend()) return {};
-    return {{QStringLiteral("instanceId"), ready->instanceId}, {QStringLiteral("model"), composer::defaultModel(*ready)}};
-  }
-  if (chosen.value(QLatin1String("model")).toString().isEmpty()) {
-    if (const composer::Instance* instance = instanceOf(chosen)) {
+    QJsonObject next{{QStringLiteral("instanceId"), ready->instanceId},
+                     {QStringLiteral("model"), composer::defaultModel(*ready)}};
+    if (const auto remembered = m_kept.modelOptions.constFind(
+            ready->instanceId + u'\n' + next.value(QLatin1String("model")).toString());
+        remembered != m_kept.modelOptions.cend()) {
+      next.insert(QStringLiteral("options"), *remembered);
+    }
+    return next;
+  };
+  const QString instanceId = chosen.value(QLatin1String("instanceId")).toString();
+  if (instanceId.isEmpty()) return firstReady();
+  const QString model = chosen.value(QLatin1String("model")).toString();
+  const composer::Instance* instance = instanceOf(chosen);
+  const bool isThread = bool(m_store->thread(target));
+  if (instance && instance->ready()) {
+    if (model.isEmpty()) {
       chosen.insert(QStringLiteral("model"), composer::defaultModel(*instance));
+    } else if (!isThread && composer::findModel(*instance, model).isEmpty()) {
+      // A draft still naming the model picked on another instance, whose own
+      // catalogue has no such model: this instance's default, with the
+      // options last given to it here.
+      const QString own = composer::defaultModel(*instance);
+      chosen.insert(QStringLiteral("model"), own);
+      chosen.remove(QStringLiteral("options"));
+      if (const auto remembered = m_kept.modelOptions.constFind(instanceId + u'\n' + own);
+          remembered != m_kept.modelOptions.cend()) {
+        chosen.insert(QStringLiteral("options"), *remembered);
+      }
+    }
+    return chosen;
+  }
+  // The chosen account cannot run a turn: another account of the same driver
+  // that lists the model takes over, with the options last given to the model
+  // there, or the ones picked for it here when it has none of its own.
+  if (instance) {
+    for (const composer::Instance& candidate : m_catalogue) {
+      if (!candidate.ready() || candidate.driver != instance->driver || candidate.instanceId == instanceId) continue;
+      const QString slug = composer::fallbackModelSlug(candidate, model);
+      if (slug.isEmpty()) continue;
+      chosen.insert(QStringLiteral("instanceId"), candidate.instanceId);
+      chosen.insert(QStringLiteral("model"), slug);
+      if (const auto remembered = m_kept.modelOptions.constFind(candidate.instanceId + u'\n' + slug);
+          remembered != m_kept.modelOptions.cend()) {
+        chosen.insert(QStringLiteral("options"), *remembered);
+      }
+      return chosen;
     }
   }
-  return chosen;
+  // A thread keeps its own provider and model, unavailable as they may be; a
+  // draft or a page's ask starts on the first provider that can run instead.
+  return isThread ? chosen : firstReady();
 }
 
 bool ComposerController::planModeOn(const composer::Instance* instance) const {
@@ -4542,6 +4591,8 @@ void ComposerController::setStorePath(const QString& path) {
   m_kept.lastInstance = str(stored, QLatin1String("lastInstance"));
   const QJsonObject lastModels = stored.value(QLatin1String("lastModels")).toObject();
   for (auto it = lastModels.begin(); it != lastModels.end(); ++it) m_kept.lastModels.insert(it.key(), it.value().toObject());
+  const QJsonObject modelOptions = stored.value(QLatin1String("modelOptions")).toObject();
+  for (auto it = modelOptions.begin(); it != modelOptions.end(); ++it) m_kept.modelOptions.insert(it.key(), it.value().toArray());
   const QJsonObject targets = stored.value(QLatin1String("targets")).toObject();
   for (auto it = targets.begin(); it != targets.end(); ++it) {
     const QJsonObject entry = it.value().toObject();
@@ -4673,6 +4724,11 @@ bool ComposerController::save() const {
       for (auto it = m_kept.lastModels.cbegin(); it != m_kept.lastModels.cend(); ++it) lastModels.insert(it.key(), it.value());
       stored.insert(QStringLiteral("lastInstance"), m_kept.lastInstance);
       stored.insert(QStringLiteral("lastModels"), lastModels);
+    }
+    if (!m_kept.modelOptions.isEmpty()) {
+      QJsonObject modelOptions;
+      for (auto it = m_kept.modelOptions.cbegin(); it != m_kept.modelOptions.cend(); ++it) modelOptions.insert(it.key(), it.value());
+      stored.insert(QStringLiteral("modelOptions"), modelOptions);
     }
     file.write(QJsonDocument(stored).toJson(QJsonDocument::Compact));
     written = file.commit();

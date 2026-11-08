@@ -79,7 +79,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #25511: a second instance showed the default instance's draft model, whose slug its
   # own catalog lacks, so its effort control vanished and sending asked for a model it had disabled.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A second instance with no draft model of its own uses its own default
     Given the draft picked "Kimi K3.1 Pro" on the default OpenCode instance
     When the user switches the draft to a second OpenCode instance "Kimi" without picking a model
@@ -841,7 +841,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | the user is holding the step key down after one step |
 
   # Upstream #21406: the phone previewed different options from those it saved.
-  @backlog @desktop @mobile @priority-high
+  @desktop @backlog-mobile @priority-high
   Scenario: Each model keeps the options the user last gave it
     Given the user set "opus" to high effort and "sonnet" to low effort
     When the user switches from "opus" to "sonnet" and back
@@ -875,7 +875,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then it reads "High Fast" with the reasoning icon, and Fast off still shows the icon
 
   # Upstream #23957: a fallback to another instance of the same provider dropped the picked effort.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A composer that falls back to another account keeps the effort picked for the model
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and the account "Claude Team" is ready
@@ -884,7 +884,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And the first turn is sent at extra high effort
 
   # Upstream #23957: options belong to the model they were picked with.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario Outline: A fallback account takes no options that were not picked for what it shows
     Given new threads default to Claude Opus at extra high effort on the account "Claude Personal"
     And "Claude Personal" is turned off and <fallback> is ready
@@ -898,7 +898,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #27859: a thread saved under a model alias such as "5.4" lost its effort when the
   # composer fell back to another account.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A fallback keeps the effort of a model saved under an alias
     Given a thread saved on the account "Codex Personal" with the model "5.4" at high effort
     And "Codex Personal" is turned off and the account "Codex Work" is ready
@@ -908,7 +908,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #29789: picking a custom model whose name matched a built-in Codex alias stored the
   # built-in model, and its effort was saved under the built-in model too.
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: A custom model named like a Codex alias stays the model the user picked
     Given the Codex account "Codex Proxy" has the custom model "gpt-5-codex"
     When the user picks "gpt-5-codex" on "Codex Proxy" at high effort and sends a message

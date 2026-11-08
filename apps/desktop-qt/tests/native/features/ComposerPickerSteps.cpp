@@ -672,6 +672,81 @@ const Steps steps([] {
            QStringLiteral("the picker opens on %1").arg(picker(world)->property("view").toString()));
   });
 
+  // Each model keeps the options it was last given.
+  const auto effortNow = [](World& world) {
+    for (const QVariant& option : composer(world).value(QStringLiteral("options")).toList()) {
+      if (option.toMap().value(QStringLiteral("id")) == QLatin1String("reasoningEffort")) {
+        return option.toMap().value(QStringLiteral("value")).toString();
+      }
+    }
+    return QString();
+  };
+  const auto pickAt = [](World& world, const QString& instanceId, const QString& model, const QString& effort) {
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}});
+    world.bridge().dispatch(QStringLiteral("composer.option.set"), QVariantMap{{QStringLiteral("id"), QStringLiteral("reasoningEffort")}, {QStringLiteral("value"), effort}});
+  };
+  struct Offered {
+    QString sonnet;
+    QString proxyMessage;
+  };
+  step(QStringLiteral("the user set %1 to high effort and %1 to low effort").arg(q), [&](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("claudeAgent"), [&](QJsonObject& entry) {
+      entry.insert(QStringLiteral("models"), QJsonArray{model(c[0], c[0]), model(c[1], c[1])});
+    });
+    pickAt(world, QStringLiteral("claudeAgent"), c[0], QStringLiteral("high"));
+    world.waitFor([&] { return effortNow(world) == QLatin1String("high"); }, QStringLiteral("high to be set"));
+    pickAt(world, QStringLiteral("claudeAgent"), c[1], QStringLiteral("low"));
+    world.waitFor([&] { return effortNow(world) == QLatin1String("low"); }, QStringLiteral("low to be set"));
+  });
+  step(QStringLiteral("the user switches from %1 to %1 and back").arg(q), [&](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), c[0]}});
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), c[1]}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == c[1]; }, QStringLiteral("the switch"));
+    world.mc.part<Offered>().sonnet = effortNow(world);
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), c[0]}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == c[0]; }, QStringLiteral("the switch back"));
+  });
+  step(QStringLiteral("%1 was offered with low effort and %1 is back at high effort").arg(q), [&](World& world, const Captures&, const Table&) {
+    expect(world.mc.part<Offered>().sonnet == QLatin1String("low"), QStringLiteral("sonnet was offered %1").arg(world.mc.part<Offered>().sonnet));
+    expect(effortNow(world) == QLatin1String("high"), QStringLiteral("opus is back at %1").arg(effortNow(world)));
+  });
+
+  // A custom model whose slug is also a built-in's alias stays itself.
+  step(QStringLiteral("the Codex account %1 has the custom model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    shellThread(world);
+    QJsonObject custom = model(c[1], c[1]);
+    custom.insert(QStringLiteral("isCustom"), true);
+    QJsonArray list = providers(world);
+    list.append(provider(QStringLiteral("codex_proxy"), c[0], {custom}));
+    offer(world, list);
+  });
+  step(QStringLiteral("the user picks %1 on %1 at high effort and sends a message").arg(q), [&](World& world, const Captures& c, const Table&) {
+    pickAt(world, QStringLiteral("codex_proxy"), c[0], QStringLiteral("high"));
+    world.waitFor([&] { return effortNow(world) == QLatin1String("high"); }, QStringLiteral("high to be set"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), QStringLiteral("through the proxy")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.mc.part<Offered>().proxyMessage = QStringLiteral("through the proxy");
+    world.sync();
+  });
+  step(QStringLiteral("the turn runs on the custom model %1, not on a built-in model it is an alias of").arg(q), [&](World& world, const Captures& c, const Table&) {
+    // The thread's turn runs on what its switch (or its message) named.
+    QJsonObject selection;
+    for (auto it = world.mc.commands.crbegin(); it != world.mc.commands.crend() && selection.isEmpty(); ++it) {
+      const QString type = it->value(QLatin1String("type")).toString();
+      if ((type == QLatin1String("provider.switch") || type == QLatin1String("message.dispatch")) &&
+          it->contains(QLatin1String("modelSelection"))) {
+        selection = it->value(QLatin1String("modelSelection")).toObject();
+      }
+    }
+    expect(selection.value(QLatin1String("instanceId")) == QLatin1String("codex_proxy") && selection.value(QLatin1String("model")) == c[0],
+           QStringLiteral("the turn ran on %1; the MC has %2").arg(show(selection.toVariantMap()), world.describeCommands()));
+  });
+  step(QStringLiteral("picking %1 again offers high effort").arg(q), [&](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex_proxy")}, {QStringLiteral("model"), c[0]}});
+    world.waitFor([&] { return effortNow(world) == QLatin1String("high"); },
+                  [&] { return QStringLiteral("high again; the composer offers %1").arg(effortNow(world)); });
+  });
+
   // The name the model button says.
   step(QStringLiteral("the model manifest names %1 %1 for short").arg(q), [](World& world, const Captures& c, const Table&) {
     changeProvider(world, QStringLiteral("claudeAgent"), [&c](QJsonObject& entry) {

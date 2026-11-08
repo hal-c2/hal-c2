@@ -51,6 +51,11 @@ const Instance* find(const QList<Instance>& list, const QString& instanceId);
 QJsonObject findModel(const Instance& instance, const QString& model);
 // The model a thread starts on with this instance: its default one.
 QString defaultModel(const Instance& instance);
+// The slug on this instance that `model` (a slug, name or alias from another
+// account of the same driver) names, for falling back to this account: an
+// exact slug wins, then an alias or name of a built-in model. A custom model
+// is only ever itself, never the built-in it is named like. Empty when none.
+QString fallbackModelSlug(const Instance& instance, const QString& model);
 
 // This device's model settings: `favorites` and `providerModelPreferences`.
 struct ModelPrefs {

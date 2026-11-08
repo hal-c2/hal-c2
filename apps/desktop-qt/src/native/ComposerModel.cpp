@@ -358,6 +358,24 @@ QJsonObject findModel(const Instance& instance, const QString& model) {
   return {};
 }
 
+QString fallbackModelSlug(const Instance& instance, const QString& model) {
+  if (model.isEmpty()) return {};
+  for (const QJsonValue& value : instance.models) {
+    if (str(value.toObject(), QLatin1String("slug")) == model) return model;
+  }
+  for (const QJsonValue& value : instance.models) {
+    const QJsonObject candidate = value.toObject();
+    if (candidate.value(QLatin1String("isCustom")).toBool()) continue;
+    if (str(candidate, QLatin1String("name")).compare(model, Qt::CaseInsensitive) == 0) {
+      return str(candidate, QLatin1String("slug"));
+    }
+    for (const QJsonValue& alias : candidate.value(QLatin1String("aliases")).toArray()) {
+      if (alias.toString() == model) return str(candidate, QLatin1String("slug"));
+    }
+  }
+  return {};
+}
+
 QString defaultModel(const Instance& instance) {
   QString firstBuiltIn;
   for (const QJsonValue& value : instance.models) {

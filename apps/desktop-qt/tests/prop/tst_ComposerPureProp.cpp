@@ -207,6 +207,27 @@ private slots:
     }));
   }
 
+  void fallbackSlugsStayExactForCustomModels() {
+    QVERIFY(rc::check("a fallback account's slug is exact, or a built-in's alias, never a custom model's alias", [] {
+      const bool custom = *rc::gen::arbitrary<bool>();
+      const bool exact = *rc::gen::arbitrary<bool>();
+      composer::Instance instance;
+      QJsonObject candidate{{QStringLiteral("slug"), QStringLiteral("gpt-5.4")},
+                            {QStringLiteral("name"), QStringLiteral("GPT-5.4")},
+                            {QStringLiteral("isCustom"), custom},
+                            {QStringLiteral("aliases"), QJsonArray{QStringLiteral("5.4")}}};
+      instance.models = QJsonArray{candidate};
+      const QString asked = exact ? QStringLiteral("gpt-5.4") : QStringLiteral("5.4");
+      const QString slug = composer::fallbackModelSlug(instance, asked);
+      if (exact) {
+        RC_ASSERT(slug == QLatin1String("gpt-5.4"));
+      } else {
+        RC_ASSERT(slug == (custom ? QString() : QStringLiteral("gpt-5.4")));
+      }
+      RC_ASSERT(composer::fallbackModelSlug(instance, QStringLiteral("other")).isEmpty());
+    }));
+  }
+
   void highlightingKeepsTheText() {
     QVERIFY(rc::check("rich text draws the draft without changing it, inside each line", [] {
       const QString text = *composerText();
