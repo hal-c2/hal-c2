@@ -4755,22 +4755,26 @@ defmodule HalC2.Steps.Providers.Opencode do
     do: started_in_background(context)
   )
 
-  # OpenCode 2 sends the child's failed run (`session.execution.failed`) as the child's status,
-  # and nothing to the parent session.
-  step ~r/^the turn of "A" fails without reporting back$/, context do
-    pid = runtime_pid(context)
-    root = root_session(context)
+  # OpenCode 2's `opencode/session/child_update` of a child's status, as the root session's
+  # tree reports it: `parent` is the session that started the child (a grandchild's is its
+  # parent subagent's).
+  defp child_status(root, child, status, parent \\ nil, more \\ %{}) do
+    Map.merge(
+      %{
+        "rootSessionId" => root,
+        "childSessionId" => child,
+        "parentSessionId" => parent || root,
+        "depth" => if(parent, do: 2, else: 1),
+        "title" => "Explore",
+        "type" => "status",
+        "status" => status
+      },
+      more
+    )
+  end
 
-    params = %{
-      "rootSessionId" => root,
-      "childSessionId" => @session,
-      "parentSessionId" => root,
-      "depth" => 1,
-      "title" => "Explore",
-      "type" => "status",
-      "status" => "failed",
-      "error" => %{"type" => "provider.quota", "message" => "Rate limit exceeded."}
-    }
+  defp child_says_status(context, params) do
+    pid = runtime_pid(context)
 
     send(
       pid,
@@ -4778,6 +4782,61 @@ defmodule HalC2.Steps.Providers.Opencode do
        {:notification, "opencode/session/child_update", params}}
     )
 
+    context
+  end
+
+  # OpenCode 2 sends the child's failed run (`session.execution.failed`) as the child's status,
+  # and nothing to the parent session.
+  step ~r/^the turn of "A" fails without reporting back$/, context do
+    error = %{"type" => "provider.quota", "message" => "Rate limit exceeded."}
+    params = child_status(root_session(context), @session, "failed", nil, %{"error" => error})
+    child_says_status(context, params)
+  end
+
+  # A runtime mode change relaunches OpenCode, which loads the session (this one cannot resume
+  # it) and replays, ahead of the load's answer, the end of "A" the thread saw already.
+  step "OpenCode reports a finished child status replayed while the session loads", context do
+    root = root_session(context)
+
+    replayed = %{
+      "method" => "opencode/session/child_update",
+      "params" => child_status(root, @session, "completed")
+    }
+
+    FakeAcp.configure(context, fn config ->
+      Map.merge(config, %{
+        "capabilities" => %{"sessionCapabilities" => %{}},
+        "loadReplay" => [replayed]
+      })
+    end)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.runtime-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "runtimeMode" => "approval-required"
+      })
+
+    context = FakeAcp.send_message(context, "carry on")
+    FakeAcp.await_runs(context, 2)
+    assert [%{"params" => %{"sessionId" => ^root}}] = FakeAcp.received(context, "session/load")
+    context
+  end
+
+  step ~s/OpenCode reports a finished child status from a subagent that "A" started/, context do
+    grandchild = "ses_9f8e7d6c5b4a39281706f5e4d3"
+    params = child_status(root_session(context), grandchild, "completed", @session)
+    context = child_says_status(context, params)
+    :sys.get_state(runtime_pid(context))
+    context
+  end
+
+  # The status the runtime handled before this step left the call as it was; the sidebar row
+  # follows the thread's stream on its own time.
+  step ~s/"A" still runs in the background/, context do
+    assert [%{"status" => "running"}] = subagents(context)
+    World.await_row(World.thread_id(context, @thread), &(length(background_subagents(&1)) == 1))
     context
   end
 

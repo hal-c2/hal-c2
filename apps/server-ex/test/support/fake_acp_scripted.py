@@ -23,6 +23,8 @@
 #   settleOptions      configOptions sent as a `config_option_update` just before
 #                      session/new answers (a catalog still settling)
 #   availableCommands  sent as an `available_commands_update` when a session opens
+#   loadReplay         raw messages session/load sends before it answers (the history
+#                      an agent replays)
 #   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
 #
 # Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate[, "sessionId": child's
@@ -263,6 +265,10 @@ while True:
         if cfg.get("settleOptions") is not None:
             update(sid, {"sessionUpdate": "config_option_update",
                          "configOptions": cfg["settleOptions"]})
+        # What a load replays of the session, as raw messages, ahead of its reply.
+        if method == "session/load":
+            for m in cfg.get("loadReplay") or []:
+                send(m)
         send({"id": mid, "result": result})
         if cfg.get("availableCommands") is not None:
             update(sid, {"sessionUpdate": "available_commands_update",

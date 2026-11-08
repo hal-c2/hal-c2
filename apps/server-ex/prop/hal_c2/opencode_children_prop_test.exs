@@ -7,10 +7,15 @@ defmodule HalC2.OpencodeChildrenPropTest do
   (`opencode/session/child_update` with status completed, failed or interrupted), which is
   the only end of a background child OpenCode 2's ACP sends.
 
+  A report can also come from outside the thread's own children (hal-c2#1316): a grandchild's
+  (whose parent is a child), or one naming a child's session under a parent that is not the
+  thread's session.
+
   The promise: once a child's run ends, no call attached to it (the start and every steer
   that joined that run) is still running, each ends as the run did, and a steer that
   failed on its own keeps "failed". A report of a child that is not running ends nothing,
-  and a steer of an ended child starts a run of its own that the next report ends.
+  nor does a report from outside the thread's children, and a steer of an ended child
+  starts a run of its own that the next report ends.
 
   Turns run on `test/support/fake_acp_scripted.py`, which sends the `subagent` tool as
   `opencode acp` 2.2 does; the child's updates and reports go to the runtime as its
@@ -107,6 +112,9 @@ defmodule HalC2.OpencodeChildrenPropTest do
         spawn,
         {3, {:call, __MODULE__, :steer, ["c#{next}", child, oneof([:joins, :fails])]}},
         {3, {:call, __MODULE__, :report, [child, oneof(~w(completed failed interrupted))]}},
+        {1,
+         {:call, __MODULE__, :stray,
+          [child, oneof(~w(completed failed interrupted)), oneof([:grandchild, :elsewhere])]}},
         {1, {:call, __MODULE__, :says, [child]}}
       ])
     end
@@ -150,6 +158,7 @@ defmodule HalC2.OpencodeChildrenPropTest do
   end
 
   def next_state(state, _result, {:call, _, :says, _}), do: state
+  def next_state(state, _result, {:call, _, :stray, _}), do: state
 
   defp run(state, call, child, status) do
     %{
@@ -204,6 +213,26 @@ defmodule HalC2.OpencodeChildrenPropTest do
     opencode_child(child, %{"type" => "status", "status" => status, "title" => "Explore"})
   end
 
+  # A report from outside the thread's children: the end of a grandchild that child `child`
+  # started, or one naming `child`'s session under another parent.
+  def stray(child, status, :grandchild) do
+    opencode_child(child, %{
+      "type" => "status",
+      "status" => status,
+      "childSessionId" => "#{session(child)}_grand",
+      "parentSessionId" => session(child),
+      "depth" => 2
+    })
+  end
+
+  def stray(child, status, :elsewhere) do
+    opencode_child(child, %{
+      "type" => "status",
+      "status" => status,
+      "parentSessionId" => "ses_elsewhere"
+    })
+  end
+
   # Something child `child` says, outside any turn of the thread.
   def says(child) do
     update = %{
@@ -237,19 +266,23 @@ defmodule HalC2.OpencodeChildrenPropTest do
     settled(System.monotonic_time(:millisecond) + @wait_ms)
   end
 
-  # Delivers OpenCode's `opencode/session/child_update` for `child` as the runtime's
-  # connection does, and reads the thread once the runtime has handled it.
+  # Delivers OpenCode's `opencode/session/child_update` for `child` (a direct child of the
+  # thread's session, unless `params` says otherwise) as the runtime's connection does, and
+  # reads the thread once the runtime has handled it.
   defp opencode_child(child, params) do
     [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, @tid)
     %{conn: conn, session_id: root} = :sys.get_state(pid)
 
     params =
-      Map.merge(params, %{
-        "rootSessionId" => root,
-        "childSessionId" => session(child),
-        "parentSessionId" => root,
-        "depth" => 1
-      })
+      Map.merge(
+        %{
+          "rootSessionId" => root,
+          "childSessionId" => session(child),
+          "parentSessionId" => root,
+          "depth" => 1
+        },
+        params
+      )
 
     send(pid, {:json_rpc, conn, {:notification, "opencode/session/child_update", params}})
     _ = :sys.get_state(pid)
