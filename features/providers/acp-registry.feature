@@ -956,6 +956,30 @@ Feature: ACP registry agents
     Then the user is told "The ACP agent could not complete sign-in. Bearer [redacted] rejected by the proxy."
     And the MC's log holds the reason without "abc123"
 
+  # Review of hal-c2#1309: a device code or sign-in address in a reason is the sign-in
+  # interaction's alone; other hyphenated words stay.
+  Scenario Outline: A reason holding a device code or sign-in address is not shown
+    Given "acme" answers its sign-in with the error "<reason>"
+    When the user signs in to "acme"
+    Then the user is told "The ACP agent could not complete sign-in."
+    And the MC's log holds the reason "<reason>"
+
+    Examples:
+      | reason                                       |
+      | Enter WXYZ-9876 at https://acme.example/device |
+      | Enter wxyz-9876 to continue                  |
+      | Open github.com/login/device to continue     |
+
+  Scenario Outline: A reason with a hyphenated word that is no device code is shown
+    Given "acme" answers its sign-in with the error "<reason>"
+    When the user signs in to "acme"
+    Then the user is told "The ACP agent could not complete sign-in. <reason>."
+
+    Examples:
+      | reason                |
+      | HTTP-502 from upstream |
+      | SHA-256 mismatch      |
+
   # Upstream #30295: a proxy's HTML error page would otherwise fill the sign-in panel.
   @priority-low
   Scenario: A very long reason from the agent is cut at 500 characters

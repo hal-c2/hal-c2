@@ -307,8 +307,19 @@ defmodule HalC2.Acp.Auth do
 
   @reason_chars 500
 
-  # Any address, or a device code (`WXYZ-9876`: upper-case groups joined by `-`).
-  @sign_in_secret ~r/https?:\/\/|\b(?=[A-Z0-9-]*\d)[A-Z0-9]{3,10}(?:-[A-Z0-9]{3,10})+\b/
+  # What a sign-in failure never shows: an address with a scheme, a scheme-less host/path
+  # that looks like a login page (`github.com/login/device`), or a device code (two groups
+  # of four letters or digits, either case, holding both: `WXYZ-9876`; `HTTP-502` and
+  # `SHA-256` have no such shape).
+  @sign_in_address ~r/https?:\/\/|\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\/\S*(?:login|device|oauth|auth|activate|verify)/i
+  @device_code ~r/\b[a-z0-9]{4}-[a-z0-9]{4}\b/i
+
+  defp sign_in_secret?(said) do
+    said =~ @sign_in_address or
+      Enum.any?(Regex.scan(@device_code, said), fn [code] ->
+        code =~ ~r/\d/ and code =~ ~r/[a-z]/i
+      end)
+  end
 
   defp refused(message, reason) do
     said = redacted(reason)
@@ -323,7 +334,7 @@ defmodule HalC2.Acp.Auth do
 
       # A device code or a sign-in address in the reason is for the user's eyes only
       # through the sign-in interaction, never in a failure shown or stored with it.
-      Regex.match?(@sign_in_secret, said) ->
+      sign_in_secret?(said) ->
         fail(message)
 
       true ->
