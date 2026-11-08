@@ -2514,8 +2514,9 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "the fork sends Claude the same compacted context as its source", context do
     replies = World.replies(context, "fork")
+    latest = compactions(context) |> List.last() |> get_in(["nativeItemRef", "nativeId"])
 
-    assert Enum.any?(replies, &String.starts_with?(&1, "resumed at compact-")),
+    assert Enum.any?(replies, &String.starts_with?(&1, "resumed at #{latest} ")),
            inspect(replies)
 
     assert Enum.any?(replies, &(&1 =~ "fork True")), inspect(replies)
