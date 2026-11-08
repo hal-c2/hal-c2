@@ -136,7 +136,7 @@ Feature: Pi
   Scenario: A model Pi no longer offers is removed
     Given Pi listed the models "alpha" and "beta"
     When Pi's models are discovered again and only "alpha" is listed
-    Then only "alpha" is offered
+    Then Pi offers only "alpha"
     And a discovery that fails or does not finish keeps both
 
   Scenario: Pi stays usable when discovery cannot finish
@@ -720,7 +720,7 @@ Feature: Pi
     Examples:
       | outcome                         | shown                                                            |
       | Pi waits to try again           | the attempt number, the most attempts allowed and the wait      |
-      | Pi gives no reason for it       | "Pi provider request failed."                                    |
+      | Pi gives no reason for it       | the failure "Pi provider request failed."                        |
       | every attempt fails             | the turn failing with Pi's last error, or "Pi auto-retry failed." |
 
   Scenario Outline: A Pi failure without a reason gets a plain message
