@@ -1426,11 +1426,12 @@ defmodule HalC2.PullRequests do
   # Resolving an alias can start `ssh` (and evaluate the user's config), and
   # `projects/0` asks once per project on unrecognised hosts on every list
   # read, so an answer is held per alias until the configs it came from
-  # change: keyed on the newest modification time of the two configs and
-  # of the files in their conventional `Include` directories (`config.d`,
-  # `ssh_config.d`), and forgotten with the signed-in accounts on
-  # `invalidate/1`. An edit to a file included from anywhere else needs
-  # that refresh. A host that resolves to
+  # change: keyed on the newest modification time of the two configs, their
+  # conventional `Include` directories (`config.d`, `ssh_config.d`, whose own
+  # time moves when a file in them is added or removed) and the files in
+  # them, and forgotten with the signed-in accounts on `invalidate/1`. An
+  # edit to a file included from anywhere else needs that refresh. Answers
+  # held under an older stamp are dropped when a new one is stored. A host that resolves to
   # nothing is held too, so a self-hosted forge under an unrecognised name
   # does not pay for `ssh` on every read either.
   defp ssh_hostname(alias_name) do
@@ -1448,7 +1449,8 @@ defmodule HalC2.PullRequests do
 
       :error ->
         hostname = ssh_g_hostname(alias_name, config) || ssh_config_hostname(alias_name, config)
-        :persistent_term.put(@ssh_hosts, Map.put(held, key, hostname || :none))
+        current = for {{^config, ^stamp, _} = k, v} <- held, into: %{}, do: {k, v}
+        :persistent_term.put(@ssh_hosts, Map.put(current, key, hostname || :none))
         hostname
     end
   end
@@ -1457,13 +1459,15 @@ defmodule HalC2.PullRequests do
     do: Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
 
   defp ssh_config_stamp(config) do
+    dirs = [config <> ".d", "/etc/ssh/ssh_config.d"]
+
     included =
-      for dir <- [config <> ".d", "/etc/ssh/ssh_config.d"],
+      for dir <- dirs,
           {:ok, names} <- [File.ls(dir)],
           name <- names,
           do: Path.join(dir, name)
 
-    [config, "/etc/ssh/ssh_config" | included]
+    [config, "/etc/ssh/ssh_config" | dirs ++ included]
     |> Enum.map(fn path ->
       case File.stat(path, time: :posix) do
         {:ok, stat} -> stat.mtime

@@ -1971,6 +1971,16 @@ Feature: Browsing pull requests
     And ssh was asked twice how "work-gitlab" resolves
 
   @mc
+  Scenario: An SSH alias is asked of ssh again once a file its config includes is removed
+    Given the project "infra" has the remote "git@work-gitlab:acme/infra.git" and ssh resolves "work-gitlab" to a GitLab server
+    And the ssh config's include directory holds an older and a newer file
+    When the user lists open pull requests
+    And the older file in the ssh config's include directory is removed
+    And the user lists open pull requests
+    Then the open change requests of "infra" are listed
+    And ssh was asked twice how "work-gitlab" resolves
+
+  @mc
   Scenario: Pull requests carry the stacks they belong to
     Given pull request 42 on github.com is the second layer of a stack
     When the user lists open pull requests

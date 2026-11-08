@@ -2605,6 +2605,31 @@ defmodule HalC2.Steps.SourceControl.PullRequestList do
     context
   end
 
+  # Both dated in the past, so only the removal itself can move the stamp.
+  step "the ssh config's include directory holds an older and a newer file", context do
+    dir = Path.join(HalC2.Test.Mc.Host.home(context), ".ssh/config.d")
+    File.mkdir_p!(dir)
+    now = System.os_time(:second)
+
+    for {name, age} <- [{"old-work", 7200}, {"new-work", 3600}] do
+      path = Path.join(dir, name)
+      File.write!(path, "# #{name}\n")
+      File.touch!(path, now - age)
+    end
+
+    File.touch!(dir, now - 3600)
+    context
+  end
+
+  # The directory's time moves with the removal; dated ahead so it is seen
+  # within the same second.
+  step "the older file in the ssh config's include directory is removed", context do
+    dir = Path.join(HalC2.Test.Mc.Host.home(context), ".ssh/config.d")
+    File.rm!(Path.join(dir, "old-work"))
+    File.touch!(dir, System.os_time(:second) + 60)
+    context
+  end
+
   # Dated a minute ahead, so the change is seen within the same second.
   step "a file in the ssh config's include directory changes", context do
     dir = Path.join(HalC2.Test.Mc.Host.home(context), ".ssh/config.d")
