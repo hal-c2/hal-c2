@@ -705,6 +705,8 @@ defmodule HalC2.Orchestration do
         # restart (`HalC2.Orchestration.Effects`).
         HalC2.Orchestration.Effects.cancel_thread(thread_id)
         HalC2.Orchestration.Effects.drop_thread(thread_id)
+        # Browser tabs live in memory only, so there is nothing to record.
+        HalC2.Preview.close_thread(thread_id)
         HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
         HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
         # A page that asked this thread to work says it no longer is.
@@ -1568,9 +1570,9 @@ defmodule HalC2.Orchestration do
       reason = HalC2.Settings.provider_off(Map.get(turn, :project_id), turn.ids.instance) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", off(reason))
 
-      # A bare `/compact` with nothing to compact (`new_run/5`) never reaches
-      # the provider.
-      refusal = Map.get(turn, :compact_refusal) ->
+      # A bare `/compact` with nothing to compact, or a goal command the provider
+      # cannot run (`new_run/5`), never reaches the provider.
+      refusal = Map.get(turn, :refusal) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", refusal)
 
       true ->
@@ -1595,6 +1597,23 @@ defmodule HalC2.Orchestration do
       }
     end
   end
+
+  # Claude Code has no `/goal pause` or `/goal resume`: it reads them as new goals
+  # named "pause" and "resume" (Upstream #25426).
+  defp goal_refusal(%{"text" => text} = command, "claudeAgent") when is_binary(text) do
+    if (command["attachments"] || []) == [] and
+         Regex.match?(~r{^/goal\s+(pause|resume)$}i, String.trim(text)) do
+      %{
+        "class" => "provider_error",
+        "code" => "goal_unsupported",
+        "message" =>
+          "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.",
+        "retryable" => false
+      }
+    end
+  end
+
+  defp goal_refusal(_command, _driver), do: nil
 
   defp off(reason),
     do: %{
@@ -2135,13 +2154,21 @@ defmodule HalC2.Orchestration do
   defp title_effect(%{"threadId" => thread_id, "args" => args}, will_retry) do
     previous = args["previous"]
 
-    root =
+    {root, pull_requests} =
       case HalC2.Shell.row(node(), thread_id) do
-        {"thread", row} -> row["worktreePath"] || project_root(row["projectId"])
-        _ -> nil
+        {"thread", row} ->
+          {row["worktreePath"] || project_root(row["projectId"]),
+           PullRequests.visible(row["pullRequests"] || [])}
+
+        _ ->
+          {nil, []}
       end
 
-    opts = [attachments: args["attachments"] || [], previous_title: previous]
+    opts = [
+      attachments: args["attachments"] || [],
+      previous_title: previous,
+      pull_requests: pull_requests
+    ]
 
     case HalC2.TextGeneration.thread_title(root || System.tmp_dir!(), args["text"] || "", opts) do
       {:ok, %{"title" => title}} when title != "New thread" ->
@@ -5226,6 +5253,15 @@ defmodule HalC2.Orchestration do
         },
         else: %{}
 
+    # A `/compact` or `/logout` reaches a conversation the provider already has as the
+    # command it is, with nothing put before it: what the thread owes that conversation
+    # (`HalC2.Orchestration.Handoff.plan/5`) waits for the next turn, which reads it
+    # from the same `lastRunOrdinal`.
+    bare =
+      maintenance(command) != nil and not foreign and
+        get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]) != nil and
+        is_integer(provider_thread["lastRunOrdinal"])
+
     provider_changes =
       if provider_thread || foreign do
         [
@@ -5237,7 +5273,7 @@ defmodule HalC2.Orchestration do
             # A rolled-back head is where this run resumes the conversation.
             &(&1
               |> Map.merge(%{
-                "lastRunOrdinal" => ordinal,
+                "lastRunOrdinal" => if(bare, do: &1["lastRunOrdinal"], else: ordinal),
                 "providerSessionId" => session_id,
                 "nativeConversationHeadRef" => nil
               })
@@ -5364,7 +5400,9 @@ defmodule HalC2.Orchestration do
         if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
 
     handoff =
-      HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
+      if bare,
+        do: %{fork: nil, fallback: nil, context: nil, changes: []},
+        else: HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
 
     provider_text = HalC2.ComposerContext.for_provider(text, command["context"])
 
@@ -5372,12 +5410,16 @@ defmodule HalC2.Orchestration do
       ids: ids,
       # A run that left the queue (`start_failure/3`).
       queued: queued != nil,
-      # A bare `/compact` with nothing to compact fails before the provider
-      # starts (`begin_turn_now/2`).
-      compact_refusal: compact_refusal(command, provider_thread, handoff),
+      # A bare `/compact` with nothing to compact, or a goal command the provider
+      # cannot run, fails before the provider starts (`begin_turn_now/2`).
+      refusal:
+        compact_refusal(command, provider_thread, handoff) || goal_refusal(command, driver),
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: HalC2.Orchestration.Handoff.prompt(handoff.context, provider_text),
+      # The message as the user wrote it: what a provider's own command (Codex's
+      # `/goal`, `HalC2.Codex.Goals`) is read from.
+      user_text: text,
       # What a new provider conversation gets when the one to resume is gone
       # (`HalC2.Orchestration.Handoff.opened/2`).
       fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),

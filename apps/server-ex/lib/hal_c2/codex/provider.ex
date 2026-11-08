@@ -270,6 +270,15 @@ defmodule HalC2.Codex.Provider do
         {:error, reason} when reason in [:closed, :epipe] ->
           {:spawn, nil}
 
+        # What the spawner says when the program is not there is not Codex speaking.
+        {:error,
+         %{"message" => "Codex App Server process exited" <> _, "stderr" => "[spawner]" <> _}} ->
+          {:spawn, nil}
+
+        {:error, %{"message" => "Codex App Server process exited" <> _ = exit, "stderr" => said}}
+        when said != "" ->
+          {:exited, "#{exit}. It said:\n#{said}"}
+
         {:error, %{"message" => "Codex App Server process exited" <> _}} ->
           {:spawn, nil}
 
@@ -298,6 +307,9 @@ defmodule HalC2.Codex.Provider do
 
       {:spawn, _} ->
         put_check(id, %{"installed" => false, "message" => cannot_start(id)})
+
+      {:exited, message} ->
+        put_check(id, %{"installed" => true, "message" => message})
 
       {:failed, message} ->
         put_check(id, %{
@@ -335,8 +347,17 @@ defmodule HalC2.Codex.Provider do
 
   # Starting the app-server, told apart from it answering badly: a process that
   # never starts means the binary path is wrong, not that Codex misbehaved.
+  # What a Codex that died on start printed is the only account of why (a missing
+  # optional dependency of the npm package, say), so the check keeps its stderr's end.
   defp start_probe(cmd, env) do
-    case Connection.start_link(cmd: cmd, handler: self(), env: env) do
+    case Connection.start_link(
+           cmd: cmd,
+           handler: self(),
+           env: env,
+           program: "Codex App Server",
+           stderr_tail: true,
+           eof_grace: 250
+         ) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:spawn, reason}
     end

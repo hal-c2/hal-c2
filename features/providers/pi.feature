@@ -290,7 +290,6 @@ Feature: Pi
     Then the turn fails saying Pi exited unexpectedly
 
   # Upstream #18639: Pi turn-start prompts are queued while native extension work is running
-  @backlog
   Scenario: A message sent while Pi resumes extension work on its own is queued
     Given Pi has resumed extension work before HAL-C2 heard that it woke
     When the user sends a message in the Pi thread
@@ -378,7 +377,6 @@ Feature: Pi
 
   # Upstream #27539: in a folder Pi has not trusted, Pi quietly skipped the project's own settings,
   # extensions and skills.
-  @backlog
   Scenario: A Pi session in a folder Pi does not trust says what Pi skipped
     Given Pi has not trusted the project's folder
     When a Pi thread runs its first turn, new or resumed
@@ -562,7 +560,6 @@ Feature: Pi
     Then Pi's system prompt holds both that extension's additions and HAL-C2's instructions
 
   # Works around Pi asking OpenRouter for more output than the context can hold.
-  @backlog
   Scenario Outline: Pi's output budget on OpenRouter is capped at 32,768 tokens
     Given a Pi thread uses <model>
     When Pi asks the model for up to <asked> output tokens
@@ -647,8 +644,9 @@ Feature: Pi
     When a Pi extension asks for a line of text titled "Branch" with the placeholder "feature/…"
     Then the question's header is "Branch"
 
-  # Upstream #17206: Pi editor dialogs prefill the answer composer
-  @backlog
+  # Upstream #17206: Pi editor dialogs prefill the answer composer. The MC sends the whole text
+  # as the question's initialAnswer; the clients still have to start the composer from it.
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Pi extension's text edit starts the answer from what is there now
     When a Pi extension asks the user to edit a text that already has content
     Then the whole text fills the answer composer, ready to edit
@@ -664,7 +662,6 @@ Feature: Pi
     When the user dismisses the request
     Then the extension is told the dialog was cancelled
 
-  @backlog
   Scenario: An answer that could not reach Pi can be sent again
     Given a Pi extension asked the user a question
     When the user's answer cannot be delivered to Pi
@@ -704,17 +701,17 @@ Feature: Pi
     And the thread can take the next message
 
   # Upstream #24388: a message sent while Pi compacted its context could be rejected and lost.
-  @backlog
+  # Pi 1.4 rejects every prompt, steers included, while it compacts.
   Scenario Outline: A message sent while Pi compacts is delivered once compaction ends
-    Given Pi is compacting the conversation after a finished turn
-    When the user <sends> "now add the tests"
+    Given Pi is compacting the conversation <when>
+    When the user <sends> "now add the tests" while it does
     Then Pi receives "now add the tests" once, after the compaction ends
-    And a message whose turn the user stops before then is not sent
+    And Pi never gets a message whose turn the user stops before then
 
     Examples:
-      | sends               |
-      | sends               |
-      | steers the turn with |
+      | when                    | sends                |
+      | after a finished turn   | sends                |
+      | inside the running turn | steers the turn with |
 
   Scenario Outline: A Pi retry shows its attempt and how it ended
     When Pi's request to the model fails and <outcome>
@@ -858,7 +855,6 @@ Feature: Pi
     When the user sends "/compacted logs look wrong" to a Pi thread
     Then Pi receives it as an ordinary message
 
-  @backlog
   Scenario: Pi's own subagents show as entries in the thread
     Given Pi has its subagent extension
     When Pi hands three tasks to its own subagents
@@ -889,15 +885,14 @@ Feature: Pi
       | the detail of an extension's failure   | 2,000  |
       | the current value of a text edit       | 2,000  |
 
-  @backlog
   Scenario Outline: Long texts from Pi's own subagents are cut to a limit
     When Pi sends <text> longer than its limit
     Then the thread keeps its first <limit> characters
 
     Examples:
-      | text                                   | limit  |
-      | the progress line of one of its subagents | 200 |
-      | the result of one of its subagents     | 10,000 |
+      | text                                      | limit  |
+      | the progress line of one of its subagents | 200    |
+      | the result of one of its subagents        | 10,000 |
 
   Scenario: Pi's skills not loading in time do not hold up the thread
     Given Pi does not list its skills within 4 seconds
@@ -944,7 +939,6 @@ Feature: Pi
     When the MC restarts and the thread is read back from Pi's session file
     Then only the turns on Pi's current branch are shown
 
-  @backlog
   Scenario: Pi is updated through npm
     Given the pi command on the MC was installed with npm
     When the user updates Pi from HAL-C2
@@ -964,10 +958,9 @@ Feature: Pi
       | edit, without naming a file  | a plain tool call named after the tool, with what it was given |
       | grep                         | a plain tool call named after the tool, with what it was given |
 
-  @backlog
   Scenario Outline: A Pi subagent entry shows how it ended
     Given Pi handed a task to one of its own subagents
-    When the subagent <ends>
+    When Pi's subagent <ends>
     Then its entry is shown as <state>
 
     Examples:
@@ -1045,7 +1038,7 @@ Feature: Pi
     And another message to "pi-work" stays in that process
 
   # Upstream #16210: Pi thread titles use the linked pull request's context
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A Pi thread title takes the linked pull request into account
     Given a Pi thread is linked to a pull request
     When Pi writes the thread's title
@@ -1059,7 +1052,7 @@ Feature: Pi
     Then the models from that provider are listed with its name
 
   # Upstream #17214: Pi extension wakes get an owned continuation turn
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Work a Pi extension starts after a turn settled runs as its own turn
     Given a Pi thread whose last turn has finished
     When a Pi extension wakes Pi to continue on its own
@@ -1067,14 +1060,14 @@ Feature: Pi
     And Pi is not prompted a second time for it
 
   # Upstream #17214: a joining prompt claims the outstanding extension wake
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A message sent while an extension's wake is pending joins that work
     Given a Pi extension has woken Pi after the last turn
     When the user sends a message to the Pi thread before the wake's turn starts
     Then the message's turn shows the extension's work and the reply to the message
 
   # Upstream #17214: rollback does not replay output from a discarded session
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Reverting a Pi thread does not replay work from the discarded conversation
     Given a Pi extension has woken Pi after the last turn
     When the user reverts the Pi thread to an earlier turn
@@ -1095,7 +1088,7 @@ Feature: Pi
       | older than 0.99 | every HAL-C2 tool is offered directly                                                          |
 
   # Upstream #17190: Pi discovers workspace skills and commands
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: Pi offers the skills and commands of the thread's own workspace
     Given the project "web" has its own Pi skill "release" and prompt template "triage"
     When the user opens the skill menu in a Pi thread of "web"
@@ -1103,22 +1096,24 @@ Feature: Pi
     And a Pi thread of another project does not offer them
 
   # Upstream #17190: Pi discovers workspace skills and commands
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A workspace whose Pi commands cannot be found keeps the ones it had
     Given a Pi thread of "web" offered the skill "release"
     When finding the workspace's Pi commands fails
     Then "release" is still offered
 
   # Upstream #13839: Pi native session rewinds are reconciled
-  @backlog @mc @plugin-pi
+  @mc @plugin-pi
   Scenario: A rewind made inside Pi drops the abandoned turns from the thread
     Given a Pi thread with three turns
     When a Pi extension rewinds Pi's session to the end of the first turn
     Then the thread no longer counts the second and third turns as Pi's history
     And reverting the thread afterwards only offers turns Pi still has
 
-  # Upstream #17851: Pi tool images and structured results are preserved
-  @backlog @mc @plugin-pi
+  # Upstream #17851: Pi tool images and structured results are preserved. The MC stores the
+  # image with the thread and lists it in the tool item's attachments; the clients still have
+  # to draw a tool item's attachments.
+  @mc @shared @plugin-pi @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An image a Pi tool returns is shown as an image
     When a Pi tool returns a screenshot alongside structured results
     Then the tool call shows the screenshot as an image, not as text

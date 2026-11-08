@@ -5,8 +5,8 @@ defmodule HalC2.JsonRpc.Connection do
   Callers use `call/4`, `request/5` and `notify/3`. Incoming notifications and server-to-client
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
-  `{:error, :closed}` and the connection stops (so does a call written once the
-  subprocess has closed its stdin, and `stop/1` of a stopped one is a no-op); with `:program` (the subprocess's
+  `{:error, :closed}` and the connection stops (a call written once the subprocess has
+  closed its stdin fails so too, and `stop/1` of a stopped one is a no-op); with `:program` (the subprocess's
   name, as its user knows it) they fail with the exit instead, in the words that
   program's own client used (`"Codex App Server process exited with code 1"`, its code as
   `"exitCode"`). With `:log` (a thread id), every
@@ -35,6 +35,9 @@ defmodule HalC2.JsonRpc.Connection do
   alias HalC2.{JsonRpc, Subprocess}
 
   @state_version 1
+  # How long a program's exit has to arrive once its output ended or a write to it
+  # failed, before its calls fail without it.
+  @grace_ms 250
 
   @type option ::
           {:cmd, [String.t()]}
@@ -85,6 +88,17 @@ defmodule HalC2.JsonRpc.Connection do
   @spec notify(GenServer.server(), String.t(), term) :: :ok
   def notify(conn, method, params), do: GenServer.cast(conn, {:notify, method, params})
 
+  @doc """
+  Writes a notification and says whether it reached the subprocess's stdin: `notify/3`
+  for a message the caller must not lose (an answer it would otherwise drop).
+  """
+  @spec deliver(GenServer.server(), String.t(), term) :: :ok | {:error, term}
+  def deliver(conn, method, params) do
+    GenServer.call(conn, {:deliver, method, params})
+  catch
+    :exit, _ -> {:error, :closed}
+  end
+
   @spec respond(GenServer.server(), JsonRpc.id(), {:ok, term} | {:error, map}) :: :ok
   def respond(conn, id, reply), do: GenServer.cast(conn, {:respond, id, reply})
 
@@ -123,7 +137,8 @@ defmodule HalC2.JsonRpc.Connection do
            eof_grace: Keyword.get(opts, :eof_grace),
            input_ended: false,
            exit_status: nil,
-           stderr: ""
+           stderr: "",
+           broken: nil
          }}
 
       {:error, reason} ->
@@ -147,6 +162,11 @@ defmodule HalC2.JsonRpc.Connection do
   end
 
   @impl true
+  # A connection that has stopped writing answers at once, in the words it failed in.
+  def handle_call({:call, _method, _params}, _from, %{broken: error} = state)
+      when error != nil,
+      do: {:reply, {:error, error}, state}
+
   def handle_call({:call, method, params}, from, state) do
     id = state.next_id
 
@@ -162,22 +182,28 @@ defmodule HalC2.JsonRpc.Connection do
 
       # The agent closed its stdin, dying or about to, before this call reached it:
       # the call has met a closed connection, as one sent after the close does.
-      {:error, reason} when reason in [:epipe, :closed] ->
+      {:error, reason} when state.program == nil and reason in [:epipe, :closed] ->
         {:reply, {:error, :closed}, state}
 
-      {:error, reason} ->
+      {:error, reason} when state.program == nil ->
         {:reply, {:error, reason}, state}
+
+      {:error, reason} ->
+        state = write_failed(reason, state)
+        {:noreply, %{state | pending: Map.put(state.pending, {:unwritten, id}, from)}}
     end
+  end
+
+  def handle_call({:deliver, method, params}, _from, state) do
+    reply = Subprocess.write_line(state.sub, JsonRpc.notification(state.dialect, method, params))
+    {:reply, reply, checkpoint(state)}
   end
 
   def handle_call(:os_pid, _from, state), do: {:reply, Subprocess.os_pid(state.sub), state}
 
   @impl true
-  def handle_cast({:notify, method, params}, state) do
-    Subprocess.write_line(state.sub, JsonRpc.notification(state.dialect, method, params))
-    {:noreply, checkpoint(state)}
-  end
-
+  # A call whose reply goes to the handler as a message. Ahead of the broken guard: on
+  # a broken connection it is answered with the write error, as a call is.
   def handle_cast({:ask, method, params, tag}, state) do
     case handle_call({:call, method, params}, {:handler, tag}, state) do
       {:noreply, state} ->
@@ -189,9 +215,37 @@ defmodule HalC2.JsonRpc.Connection do
     end
   end
 
-  def handle_cast({:respond, id, reply}, state) do
-    Subprocess.write_line(state.sub, JsonRpc.response(state.dialect, id, reply))
-    {:noreply, checkpoint(state)}
+  def handle_cast(_message, %{broken: error} = state) when error != nil, do: {:noreply, state}
+
+  def handle_cast({:notify, method, params}, state),
+    do: cast_line(JsonRpc.notification(state.dialect, method, params), state)
+
+  def handle_cast({:respond, id, reply}, state),
+    do: cast_line(JsonRpc.response(state.dialect, id, reply), state)
+
+  defp cast_line(line, state) do
+    case Subprocess.write_line(state.sub, line) do
+      {:error, reason} when state.program != nil -> {:noreply, write_failed(reason, state)}
+      _ -> {:noreply, checkpoint(state)}
+    end
+  end
+
+  # A program that stopped reading its input while its output stays open would leave
+  # every call waiting on an answer to a request it never read (upstream #27924). A
+  # `:program` connection whose write fails takes no more: what is sent from then on
+  # fails at once with the write error. A program that is dying closes its stdin
+  # too, so its exit gets `@grace_ms` to arrive first and be the error, with what it
+  # printed (`{:subprocess_eof, _}`); otherwise the open calls fail with the write
+  # error and the owner gets it as the exit reason, `{:shutdown, {:write_failed, error}}`.
+  # Marked `"ended"` like an exit: the program can take nothing more, so its owner drops it.
+  defp write_failed(reason, state) do
+    error = %{
+      "message" => "#{state.program} stopped taking input (write failed: #{reason})",
+      "ended" => true
+    }
+
+    Process.send_after(self(), :write_failed, @grace_ms)
+    %{state | broken: error}
   end
 
   @impl true
@@ -219,6 +273,9 @@ defmodule HalC2.JsonRpc.Connection do
   catch
     :exit, _ -> {:stop, :normal, state}
   end
+
+  def handle_info(:write_failed, %{broken: error} = state),
+    do: {:stop, {:shutdown, {:write_failed, error}}, state}
 
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
 
@@ -279,6 +336,9 @@ defmodule HalC2.JsonRpc.Connection do
           }
           |> then(&if state.stderr != "", do: Map.put(&1, "stderr", state.stderr), else: &1)
 
+        _ when state.broken != nil ->
+          state.broken
+
         _ ->
           :closed
       end
@@ -308,6 +368,7 @@ defmodule HalC2.JsonRpc.Connection do
       |> Map.put_new(:methods, %{})
       |> Map.put_new(:earlier, %{})
       |> Map.put_new(:offset, 0)
+      |> Map.put_new(:broken, nil)
       |> Map.put(:v, @state_version)
 
   # After what the program wrote and after what it was sent: one that goes quiet on a

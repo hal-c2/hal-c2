@@ -864,7 +864,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Mc.ensure(HalC2.LocalServers)
     shape = %{"type" => "localServers", "mc" => Atom.to_string(node())}
     client = World.client(context) |> Mc.sub(11, shape)
-    {frame, client} = Mc.await(client, &(&1["t"] == "localServers" and &1["id"] == 11), 10_000)
+    {frame, client} = Mc.await_local_servers(client, 11)
     context |> World.put_client(client) |> Map.put(:servers, ports(frame))
   end
 
@@ -918,7 +918,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     state = :sys.get_state(HalC2.LocalServers)
     assert state.watchers == %{}
     assert state.timer == nil
-    assert state.list == nil
+    assert state.base == nil
     context
   end
 
