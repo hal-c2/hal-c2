@@ -531,7 +531,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       true ->
         digest = State.recent_digest(g.st, 24, envelope)
         {g, verdict, job} = ask_judge(g, digest, opts[:now] || 0)
-        {g, Rules.read_verdict(verdict, thr), job}
+
+        # A judge that could not answer (no textGeneration, the model down) is no judge:
+        # read as unsure, it would let the aggressive level redirect a healthy turn.
+        if is_map(verdict) and verdict["_failed"] == true,
+          do: {g, Rules.assess_abort(g.st, envelope, nil, thr), job},
+          else: {g, Rules.read_verdict(verdict, thr), job}
     end
   end
 
