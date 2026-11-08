@@ -206,7 +206,9 @@ signals:
 private:
   void follow();
   void refresh();
-  void went(const QString& url);
+  void went(const QString& url, quint64 owner);
+  // The report `owner` will not be said back: its echoes go, the rest stay.
+  void forget(const QString& url, quint64 owner);
   void send();
   void setPending(const QJsonObject& viewport, bool waiting);
 
@@ -217,7 +219,14 @@ private:
   // Where the view is, and the addresses it went to that the MC has not said
   // back yet, oldest first: saying them back is no news, anything else is.
   QString m_at;
-  QStringList m_echoes;
+  // The reports behind each: an address several reports (or a navigation,
+  // owner 0) went to is one echo, kept while any of them may still be heard.
+  struct Echo {
+    QString url;
+    QList<quint64> owners;
+  };
+  QList<Echo> m_echoes;
+  quint64 m_reports = 0;
   QJsonObject m_lastReport;
   // The last report never reached the MC (the connection was down): it goes
   // again once the MC lists the tabs, unless its tab has moved on since.
@@ -225,6 +234,9 @@ private:
   // A size picked that the MC's tab does not show yet, whether the MC is yet
   // to answer it, and which pick it was.
   QJsonObject m_pendingViewport;
+  // Earlier picks the MC has not shown yet: their events are not news of the
+  // current one.
+  QList<QJsonObject> m_olderViewports;
   bool m_resizing = false;
   int m_viewportPick = 0;
   qreal m_zoom = 1.0;

@@ -198,6 +198,9 @@ struct Sut {
   QStringList changed;
   // The connection is down (McDown), and what the view was asked to load since.
   bool down = false;
+  // The size the user picked last (empty before any), whose event the MC's
+  // earlier picks' must not be taken for.
+  QJsonObject lastPick;
   QStringList pulledWhileDown;
   // Tabs the MC has where a report from the view shown now put them (the
   // views so far: a view whose tab went is a new one), and the page asked to
@@ -307,6 +310,9 @@ struct Sut {
   // The page's view is at `url` now.
   void go(const QString& url) {
     viewUrl = url;
+    // Loading, then loaded: the MC may have only the first by the time the
+    // second is lost, and the same address makes the reports share an echo.
+    page->report(QStringLiteral("loading"), url, QString(), 0, QString(), false, false);
     page->report(QStringLiteral("loaded"), url, QString(), 0, QString(), false, false);
   }
 
@@ -536,6 +542,9 @@ struct Sut {
     }
     // Away from the MC, nothing takes the page anywhere, and what it shows is
     // what the MC said last, not what it has now.
+    // Several sizes picked and unanswered: the page shows the last, whichever
+    // answers have come.
+    if (page->resizing()) RC_ASSERT(QJsonObject::fromVariantMap(page->viewport()) == lastPick);
     RC_ASSERT(pulledWhileDown.isEmpty());
     RC_ASSERT(pulledBack.isEmpty());
     if (down) return;
@@ -545,6 +554,13 @@ struct Sut {
       if (row != now.cend()) {
         RC_ASSERT(page->url() == row->url);
         if (held.isEmpty() && !row->url.isEmpty() && previews->status() == QStringLiteral("ready")) RC_ASSERT(viewUrl == row->url);
+        // Where the view's report put the MC's tab, it also has the status
+        // the view ended on: a load finished while away is told again.
+        if (held.isEmpty() && previews->status() == QStringLiteral("ready") && reportedTabs.contains(row->tabId)) {
+          const int listed = indexOf(row->tabId);
+          RC_ASSERT(listed >= 0);
+          RC_ASSERT(tabs.at(listed).value(QLatin1String("navStatus")).toObject().value(QLatin1String("_tag")).toString() == QStringLiteral("Success"));
+        }
         const int at = indexOf(row->tabId);
         if (held.isEmpty() && previews->status() == QStringLiteral("ready") && at >= 0) {
           QJsonObject size = tabs.at(at).value(QLatin1String("viewport")).toObject();
@@ -621,6 +637,7 @@ struct PageResize : Step {
       if (!sut.page->exists()) return;
     }
     sut.page->setViewport(viewport().toVariantMap());
+    sut.lastPick = viewport();
     RC_ASSERT(sut.page->resizing());
     RC_ASSERT(QJsonObject::fromVariantMap(sut.page->viewport()) == viewport());
   }

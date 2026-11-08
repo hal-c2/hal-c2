@@ -183,8 +183,13 @@ void BrowserPage::follow() {
     connect(m_previews, &ThreadPreviews::listed, this, [this] {
       // Back from a drop, the MC's tab still where it was: where the page went is news.
       if (!std::exchange(m_unsent, false) || m_lastReport.isEmpty() || m_tab.isEmpty()) return;
+      // The report as the MC lists it, or not: its address, status, title and
+      // history flags all come back (a load finished while away is news).
       const QString where = m_lastReport.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString();
-      if (where == m_at && where != url()) send();
+      const bool listed = m_tab.value(QLatin1String("navStatus")).toObject() == m_lastReport.value(QLatin1String("navStatus")).toObject() &&
+                          m_tab.value(QLatin1String("canGoBack")).toBool() == m_lastReport.value(QLatin1String("canGoBack")).toBool() &&
+                          m_tab.value(QLatin1String("canGoForward")).toBool() == m_lastReport.value(QLatin1String("canGoForward")).toBool();
+      if (where == m_at && !listed) send();
     });
   }
   // What the MC has now is where the page starts: the brick loads `url`.
@@ -204,7 +209,12 @@ void BrowserPage::refresh() {
   emit tabChanged();
   // The MC's tab showing the size picked, or another, ends the pick.
   const bool resized = m_tab.value(QLatin1String("viewport")) != before;
-  if (!m_pendingViewport.isEmpty() && (resized || m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport)) {
+  const QJsonObject shown = m_tab.value(QLatin1String("viewport")).toObject();
+  // An earlier pick's event, in order before the current one's, is not it.
+  const qsizetype older = shown == m_pendingViewport ? -1 : m_olderViewports.indexOf(shown);
+  if (!m_pendingViewport.isEmpty() && older >= 0) {
+    m_olderViewports.remove(0, older + 1);
+  } else if (!m_pendingViewport.isEmpty() && (resized || shown == m_pendingViewport)) {
     setPending({}, false);
     emit viewportChanged();
   } else if (resized && m_pendingViewport.isEmpty()) {
@@ -222,7 +232,8 @@ void BrowserPage::refresh() {
   }
   // The MC saying back where the page went, in order (the page is where it
   // went last).
-  if (const qsizetype echo = m_echoes.indexOf(at); echo >= 0) {
+  const auto echoed = std::find_if(m_echoes.cbegin(), m_echoes.cend(), [&](const Echo& echo) { return echo.url == at; });
+  if (const qsizetype echo = echoed - m_echoes.cbegin(); echoed != m_echoes.cend()) {
     m_echoes.remove(0, echo + 1);
     return;
   }
@@ -238,16 +249,29 @@ void BrowserPage::refresh() {
 
 void BrowserPage::setPending(const QJsonObject& viewport, bool waiting) {
   m_pendingViewport = viewport;
+  if (viewport.isEmpty()) m_olderViewports.clear();
   if (waiting == m_resizing) return;
   m_resizing = waiting;
   emit resizingChanged();
 }
 
-void BrowserPage::went(const QString& url) {
+void BrowserPage::went(const QString& url, quint64 owner) {
   m_at = url;
-  if (!m_echoes.isEmpty() && m_echoes.constLast() == url) return;
-  m_echoes.append(url);
+  if (!m_echoes.isEmpty() && m_echoes.constLast().url == url) {
+    m_echoes.last().owners.append(owner);
+    return;
+  }
+  m_echoes.append({url, {owner}});
   if (m_echoes.size() > kEchoes) m_echoes.removeFirst();
+}
+
+void BrowserPage::forget(const QString& url, quint64 owner) {
+  for (qsizetype i = m_echoes.size() - 1; i >= 0; --i) {
+    Echo& echo = m_echoes[i];
+    if (echo.url != url) continue;
+    echo.owners.removeAll(owner);
+    if (echo.owners.isEmpty()) m_echoes.removeAt(i);
+  }
 }
 
 QString BrowserPage::url() const {
@@ -338,12 +362,14 @@ void BrowserPage::send() {
   const QString url = navStatus.value(QLatin1String("url")).toString();
   const bool canGoBack = m_lastReport.value(QLatin1String("canGoBack")).toBool();
   const bool canGoForward = m_lastReport.value(QLatin1String("canGoForward")).toBool();
-  went(url);
-  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, tabId = m_tabId, guard = QPointer<BrowserPage>(this)](ThreadPreviews::Unheard why) {
+  const quint64 owner = ++m_reports;
+  went(url, owner);
+  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, owner, tabId = m_tabId, guard = QPointer<BrowserPage>(this)](ThreadPreviews::Unheard why) {
     if (!guard || tabId != m_tabId) return;
     // Dropped on the way, the MC may have taken it and say it back once
-    // listed again: the echo stays. Otherwise the MC will not say it back.
-    if (why != ThreadPreviews::Unheard::Dropped) m_echoes.removeAll(url);
+    // listed again: the echo stays. Otherwise the MC will not say it back
+    // (and an earlier report's echo for the address is that report's).
+    if (why != ThreadPreviews::Unheard::Dropped) forget(url, owner);
     if (why != ThreadPreviews::Unheard::Refused) {
       // It may not have heard: the page stays where it went, and says so on the way back.
       m_unsent = true;
@@ -360,7 +386,7 @@ void BrowserPage::send() {
 
 void BrowserPage::navigate(const QString& url) {
   if (!m_previews || m_tabId.isEmpty() || url.isEmpty()) return;
-  went(url);
+  went(url, 0);
   m_previews->navigate(m_tabId, url);
 }
 
@@ -368,7 +394,14 @@ void BrowserPage::setViewport(const QVariantMap& viewport) {
   if (!m_previews || m_tabId.isEmpty()) return;
   const QJsonObject next = QJsonObject::fromVariantMap(viewport);
   const int pick = ++m_viewportPick;
+  // A pick still outstanding is older now: its event is not this one's.
+  if (!m_pendingViewport.isEmpty() && m_pendingViewport != next && !m_olderViewports.contains(m_pendingViewport)) {
+    m_olderViewports.append(m_pendingViewport);
+    if (m_olderViewports.size() > kEchoes) m_olderViewports.removeFirst();
+  }
+  const QJsonObject before = m_pendingViewport;
   setPending(next, true);
+  if (before != next) m_olderViewports.removeAll(next);
   emit viewportChanged();
   m_previews->resizeTab(m_tabId, next, [this, pick, guard = QPointer<BrowserPage>(this)](const std::optional<QString>& error) {
     // Answered, unless the user has picked another since: refused, the MC's

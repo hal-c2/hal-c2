@@ -195,6 +195,8 @@ private:
   int m_subscription = -1;
   // Replies for another thread (or an older load) are dropped.
   int m_generation = 0;
+  // A report found the thread's environment out of reach; its next event relists.
+  bool m_unreached = false;
   QString m_epoch;
   qint64 m_revision = -1;
   QList<QJsonObject> m_rows;

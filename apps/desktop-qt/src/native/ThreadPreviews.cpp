@@ -547,6 +547,8 @@ void ThreadPreviews::reload() {
 
 void ThreadPreviews::onEvent(const QJsonObject& event) {
   if (event.value(QLatin1String("threadId")).toString() != m_thread) return;
+  // Heard from an environment that was out of reach: what was missed is listed.
+  if (std::exchange(m_unreached, false)) reload();
   if (m_listing) m_early.append(event);
   if (m_status != QLatin1String("ready")) return;
   const QString epoch = event.value(QLatin1String("serverEpoch")).toString();
@@ -609,10 +611,16 @@ void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, 
                              {QStringLiteral("navStatus"), navStatus},
                              {QStringLiteral("canGoBack"), canGoBack},
                              {QStringLiteral("canGoForward"), canGoForward}},
-                 [unheard](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, unheard](const QJsonValue&, const std::optional<QString>& error) {
                    if (!error || !unheard) return;
                    // McClient's own errors: the socket was not there to carry it,
-                   // or went with the report already written to it.
+                   // or went with the report already written to it. Or the MC
+                   // could not reach the thread's environment: not carried either,
+                   // and the next word from it lists the tabs again.
+                   if (McClient::unreachable(*error)) {
+                     m_unreached = true;
+                     return unheard(Unheard::Unsent);
+                   }
                    if (*error == QLatin1String("not connected")) return unheard(Unheard::Unsent);
                    if (*error == QLatin1String("disconnected")) return unheard(Unheard::Dropped);
                    unheard(Unheard::Refused);
