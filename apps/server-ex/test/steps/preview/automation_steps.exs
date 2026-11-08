@@ -1219,6 +1219,66 @@ defmodule HalC2.Steps.Preview.Automation do
     context
   end
 
+  # --- a failed first load -------------------------------------------------------------------
+
+  # Until it starts, the desktop makes the new tab and then answers that its
+  # load was refused, as a browser does.
+  step "the agent's dev server on port {int} is not running yet", %{args: [port]} = context do
+    context = context |> agent_thread() |> connect_desktop("desktop-1") |> desktop_makes_tabs()
+    made = context.answers["open"]
+
+    context
+    |> Map.put(:port_url, "http://localhost:#{port}")
+    |> answer("open", fn request, context ->
+      {:ok, %{"tabId" => tab}} = made.(request, context)
+
+      if request["tabId"] == nil and context[:server_up] != true,
+        do:
+          {:error,
+           %{
+             "_tag" => "PreviewAutomationNavigationError",
+             "message" => "Could not load #{context.port_url}: net::ERR_CONNECTION_REFUSED",
+             "tabId" => tab
+           }},
+        else: {:ok, %{"tabId" => tab, "done" => "open"}}
+    end)
+  end
+
+  step "the agent opens a preview of {string} and the load is refused",
+       %{args: [url]} = context do
+    tool(context, "preview_open", %{"url" => url})
+  end
+
+  step "the agent is told the load failed and no tab of that open is left", context do
+    assert {:error, _tag, message} = context.result
+    assert message =~ "net::ERR_CONNECTION_REFUSED"
+    assert [{"desktop-1", _}] = requests(context, "open")
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert listed["sessions"] == []
+    context
+  end
+
+  step "the dev server starts and the agent opens the preview again, and then once more",
+       context do
+    context =
+      context |> Map.put(:server_up, true) |> tool("preview_open", %{"url" => context.port_url})
+
+    assert {:ok, %{"tabId" => first}} = context.result
+    context = tool(context, "preview_open", %{"url" => context.port_url})
+    assert {:ok, %{"tabId" => ^first}} = context.result
+    Map.put(context, :tab, first)
+  end
+
+  step "both opens reuse the one tab the agent has", context do
+    tab = context.tab
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert [%{"tabId" => ^tab}] = listed["sessions"]
+    assert [_failed, {_, first}, {_, %{"tabId" => ^tab}}] = requests(context, "open")
+    refute Map.has_key?(first, "tabId")
+    assert HalC2.PreviewAutomation.tab_ownership(caller(context), tab) == :own
+    context
+  end
+
   # --- who has a tab --------------------------------------------------------------------------
 
   # A person using a tab is what its desktop reports in `controlledTabIds`.

@@ -27,6 +27,11 @@ defmodule HalC2.PreviewAutomationPropTest do
   as the other agent's tab or as in use otherwise. An open in the "Work"
   profile goes to the best host offering it, carrying its id, and is refused
   when no host reports it.
+
+  An open, fresh or in a session that acted, can fail to load: the desktop
+  makes its tab (unless the open reuses one) and answers with the error. The
+  thread's tabs are then as they were before it, and the session keeps its
+  host and current tab.
   """
 
   use ExUnit.Case, async: false
@@ -102,6 +107,7 @@ defmodule HalC2.PreviewAutomationPropTest do
           [oneof(@hosts), bool(), tabs(), tabs(), snapshot(), list(any_tab(state)), bool()]}},
         {4, {:call, __MODULE__, :session, [state.next, maybe_tab(), state.made]}},
         {1, {:call, __MODULE__, :profiled, [state.next, state.made]}},
+        {2, {:call, __MODULE__, :refused, [integer(0, state.next)]}},
         {1, {:call, __MODULE__, :race, [state.next, state.made]}},
         {1, {:call, __MODULE__, :reconnect, [oneof(@hosts)]}},
         {2, {:call, __MODULE__, :ownership, [session_slot(state), any_tab(state)]}}
@@ -139,6 +145,7 @@ defmodule HalC2.PreviewAutomationPropTest do
     do: slot == state.next and made == state.made
 
   def precondition(state, {:call, _, :act, [slot, _tab]}), do: slot < state.next
+  def precondition(state, {:call, _, :refused, [slot]}), do: slot <= state.next
 
   def precondition(state, {:call, _, :race, [slot, made]}),
     do: slot == state.next and made == state.made
@@ -222,6 +229,13 @@ defmodule HalC2.PreviewAutomationPropTest do
     end
   end
 
+  # A failed open makes no tab; the session is assigned as the open routed.
+  def next_state(state, _result, {:call, _, :refused, [slot]}) do
+    state = Map.put(state, :next, max(state.next, slot + 1))
+    {host, current} = refused_route(state, slot)
+    %{state | sessions: Map.put(state.sessions, slot, %{host: host, current: current})}
+  end
+
   def next_state(state, _result, {:call, _, :evict, [slot]}),
     do: reregistered(state, state.sessions[slot].host)
 
@@ -253,6 +267,18 @@ defmodule HalC2.PreviewAutomationPropTest do
 
   defp opened(state, slot, id, tab),
     do: %{state | sessions: Map.put(state.sessions, slot, %{host: id, current: tab})}
+
+  # Where an open naming no tab goes, and the tab it reuses: a live host's
+  # current tab, unless the session may not change it; else it routes afresh.
+  defp refused_route(state, slot) do
+    case state.sessions[slot] do
+      %{host: id, current: current} when id != nil ->
+        {id, if(refusal(state, slot, current), do: nil, else: current)}
+
+      _ ->
+        {expected_host(state, nil), nil}
+    end
+  end
 
   # A host's new connection: its sessions lose their assignment (never their
   # tabs), and it starts unfocused, reporting nothing, as the latest to connect.
@@ -337,6 +363,13 @@ defmodule HalC2.PreviewAutomationPropTest do
 
   def postcondition(state, {:call, _, :profiled, _}, result),
     do: result == expected_profiled(state)
+
+  def postcondition(state, {:call, _, :refused, [slot]}, result) do
+    case refused_route(state, slot) do
+      {nil, _} -> result == nil
+      {id, _} -> result == {id, :unchanged}
+    end
+  end
 
   def postcondition(state, {:call, _, :act, [slot, tab]}, result),
     do: result == expected_act(state, slot, tab)
@@ -428,6 +461,44 @@ defmodule HalC2.PreviewAutomationPropTest do
         Process.demonitor(ref, [:flush])
         tag
     end
+  end
+
+  # An open naming no tab whose page fails to load: the desktop makes a tab
+  # unless the request names one, and answers with the error. The host's id
+  # and whether the thread's tabs are as before (`:unchanged`), or nil when no
+  # host would take it.
+  def refused(slot) do
+    thread = scope(slot).thread_id
+    before = tab_ids(thread)
+    task = Task.async(fn -> PreviewAutomation.invoke(scope(slot), "open", %{}, []) end)
+
+    receive do
+      {:hal_c2_preview_automation, _, id,
+       %{"type" => "request", "connectionId" => connection, "request" => request}} ->
+        tab =
+          request["tabId"] ||
+            then(HalC2.Preview.open(%{"threadId" => thread}), fn {:ok, s} -> s["tabId"] end)
+
+        PreviewAutomation.respond(%{
+          "clientId" => id,
+          "connectionId" => connection,
+          "requestId" => request["requestId"],
+          "ok" => false,
+          "error" => %{"_tag" => "PreviewAutomationNavigationError", "tabId" => tab}
+        })
+
+        {:error, _} = Task.await(task)
+        {id, if(tab_ids(thread) == before, do: :unchanged, else: tab_ids(thread))}
+
+      {ref, {:error, _}} when ref == task.ref ->
+        Process.demonitor(ref, [:flush])
+        nil
+    end
+  end
+
+  defp tab_ids(thread) do
+    {:ok, %{"sessions" => sessions}} = HalC2.Preview.list(%{"threadId" => thread})
+    sessions |> Enum.map(& &1["tabId"]) |> Enum.sort()
   end
 
   # Answered by whichever desktop got it as the desktop does: the tab the

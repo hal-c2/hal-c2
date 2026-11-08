@@ -398,6 +398,9 @@ defmodule HalC2.PreviewAutomation do
           GenServer.reply(pending.from, {:ok, result})
           {:noreply, state |> track_tab(pending, result) |> claim_tab(pending, result)}
         else
+          # Closed before the reply, so the caller never sees the tab.
+          state = discard_failed_open(state, pending)
+
           GenServer.reply(
             pending.from,
             {:error, remote_error(pending.context, response["error"])}
@@ -676,6 +679,27 @@ defmodule HalC2.PreviewAutomation do
   end
 
   defp claim_tab(state, _pending, _result), do: state
+
+  # A failed open closes the tabs it made, so the agent is not left a hidden
+  # tab it never heard of: those absent before and present now that no open
+  # claimed (the host answers a thread's opens in order, so one that made a
+  # tab earlier has claimed it already).
+  defp discard_failed_open(
+         state,
+         %{tabs_before: {:ok, before}, key: {thread, _}, context: %{"operation" => "open"}}
+       ) do
+    with {:ok, now} <- thread_tabs(thread) do
+      for tab <- MapSet.difference(now, before),
+          not Map.has_key?(state.owners, tab),
+          do: HalC2.Preview.close(%{"threadId" => thread, "tabId" => tab})
+    end
+
+    state
+  catch
+    :exit, _ -> state
+  end
+
+  defp discard_failed_open(state, _pending), do: state
 
   # The thread's tab ids in `HalC2.Preview`, which never calls back here, or
   # :error when it cannot say (not running, busy, or an unexpected reply).

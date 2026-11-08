@@ -236,7 +236,7 @@ Feature: Agents drive the preview browser
 
     # Upstream #29865: a preview_open whose first load failed left a hidden tab the agent never heard
     # of; it counted toward the agent's tabs and made the next open ask which tab to reuse.
-    @backlog @mc
+    @mc
     Scenario: A new tab whose first load fails is closed
       Given the agent's dev server on port 6381 is not running yet
       When the agent opens a preview of "http://localhost:6381" and the load is refused

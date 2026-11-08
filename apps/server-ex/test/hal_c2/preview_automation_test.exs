@@ -315,6 +315,52 @@ defmodule HalC2.PreviewAutomationTest do
     assert HalC2.PreviewAutomation.tab_ownership(@caller, tab) == :own
   end
 
+  # The host's answer to an open whose page failed to load, on `tab`.
+  defp refuse(client_id, connection_id, request, tab) do
+    HalC2.PreviewAutomation.respond(%{
+      "clientId" => client_id,
+      "connectionId" => connection_id,
+      "requestId" => request["requestId"],
+      "ok" => false,
+      "error" => %{
+        "_tag" => "PreviewAutomationNavigationError",
+        "message" => "net::ERR_CONNECTION_REFUSED",
+        "tabId" => tab
+      }
+    })
+  end
+
+  defp tabs(thread) do
+    {:ok, %{"sessions" => sessions}} = HalC2.Preview.list(%{"threadId" => thread})
+    Enum.map(sessions, & &1["tabId"])
+  end
+
+  test "a failed open closes the tab it made, never one it reused" do
+    start_supervised!(HalC2.Preview)
+    connection_id = host("desk")
+    {:ok, %{"tabId" => user_tab}} = HalC2.Preview.open(%{"threadId" => "th-1"})
+
+    call = Task.async(fn -> HalC2.PreviewAutomation.invoke(@caller, "open", %{}, []) end)
+    {_, request} = next_request("desk")
+    {:ok, %{"tabId" => made}} = HalC2.Preview.open(%{"threadId" => "th-1"})
+    refuse("desk", connection_id, request, made)
+    assert {:error, %{"remoteMessage" => "net::ERR_CONNECTION_REFUSED"}} = Task.await(call)
+    assert tabs("th-1") == [user_tab]
+
+    call =
+      Task.async(fn ->
+        HalC2.PreviewAutomation.invoke(@caller, "open", %{}, tab_id: user_tab)
+      end)
+
+    {_, request} = next_request("desk")
+    refuse("desk", connection_id, request, user_tab)
+    assert {:error, _} = Task.await(call)
+    assert tabs("th-1") == [user_tab]
+
+    {_, _, tab} = open("desk", [])
+    assert HalC2.PreviewAutomation.tab_ownership(@caller, tab) == :own
+  end
+
   test "an open names a reported profile by name or id in any case, or the host's default" do
     start_supervised!(HalC2.Preview)
     work = %{"id" => "work", "name" => "Work", "kind" => "persistent"}
