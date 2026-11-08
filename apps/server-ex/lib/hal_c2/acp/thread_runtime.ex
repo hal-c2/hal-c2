@@ -2424,6 +2424,11 @@ defmodule HalC2.Acp.ThreadRuntime do
         sub = NativeSubagent.finish(entry.sub, "interrupted", nil)
         %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
 
+      # A task the agent closed as never finished when its run ended takes the run's
+      # outcome, which ends it with the turn (`end_turn_subagents`).
+      get_in(call, ["_meta", "interrupted"]) == true and not entry.done ->
+        state
+
       call["status"] in ["completed", "failed"] and not entry.done ->
         status = if call["status"] == "failed", do: "failed", else: "completed"
         sub = NativeSubagent.finish(entry.sub, status, subagent_result(output))

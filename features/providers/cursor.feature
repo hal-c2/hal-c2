@@ -680,6 +680,12 @@ Feature: Cursor
       | is stopped by the user | interrupted |
 
   @priority-low
+  Scenario: Signing out of Cursor mid-run shows its working subagent as interrupted, not cancelled
+    Given a Cursor subagent is still working
+    When the user signs out of Cursor
+    Then the Cursor subagent is shown as interrupted
+
+  @priority-low
   Scenario: Cancelled and empty Cursor to-dos are left out of the task list
     When Cursor updates its to-do list with a cancelled item and an item with no text
     Then neither item appears in the task list
