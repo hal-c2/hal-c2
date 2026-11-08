@@ -415,7 +415,6 @@ Feature: Pi
     When Pi answers with text that contains the characters U+2028 and U+2029
     Then the reply shows the whole text
 
-  @backlog
   Scenario Outline: A Pi request that goes wrong says what failed
     Given a Pi thread is starting
     When <problem>
@@ -423,11 +422,14 @@ Feature: Pi
 
     Examples:
       | problem                                          | message                                                  |
-      | Pi does not answer a request within its deadline | Pi RPC get_state failed: timed out after 15000ms.        |
       | Pi exits with code 2 before answering            | Pi RPC get_state failed: pi process exited with code 2.  |
+
+    @backlog
+    Examples:
+      | problem                                          | message                                                  |
+      | Pi does not answer a request within its deadline | Pi RPC get_state failed: timed out after 15000ms.        |
       | Pi closes its output before answering            | Pi RPC get_state failed: pi process closed stdout.       |
 
-  @backlog
   Scenario: A long Pi failure detail is cut to 200 characters
     When Pi refuses a request with an explanation of 5,000 characters
     Then the failure the user sees carries its first 200 characters followed by an ellipsis

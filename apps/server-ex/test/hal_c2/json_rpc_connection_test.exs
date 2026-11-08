@@ -74,6 +74,19 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     assert said == "noise\nERROR config is not trusted"
   end
 
+  test "stopping a connection whose program already exited is not an error" do
+    conn =
+      start_supervised!({Connection, cmd: @dies, handler: self(), program: "Peer"},
+        id: :gone,
+        restart: :temporary
+      )
+
+    ref = Process.monitor(conn)
+    assert {:error, %{"exitCode" => 1}} = Connection.call(conn, "start", %{})
+    assert_receive {:DOWN, ^ref, :process, ^conn, _}
+    assert Connection.stop(conn) == :ok
+  end
+
   test "a program's exit carries no stderr unless asked" do
     conn =
       start_supervised!({Connection, cmd: @dies, handler: self(), program: "Peer"},
@@ -82,6 +95,6 @@ defmodule HalC2.JsonRpc.ConnectionTest do
       )
 
     assert {:error, error} = Connection.call(conn, "start", %{})
-    assert error == %{"message" => "Peer process exited with code 1"}
+    assert error == %{"message" => "Peer process exited with code 1", "exitCode" => 1}
   end
 end

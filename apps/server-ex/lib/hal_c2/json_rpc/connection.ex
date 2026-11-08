@@ -7,7 +7,8 @@ defmodule HalC2.JsonRpc.Connection do
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
   `{:error, :closed}` and the connection stops; with `:program` (the subprocess's
   name, as its user knows it) they fail with the exit instead, in the words that
-  program's own client used (`"Codex App Server process exited with code 1"`). With `:log` (a thread id), every
+  program's own client used (`"Codex App Server process exited with code 1"`, its code as
+  `"exitCode"`). With `:log` (a thread id), every
   line the subprocess sends also goes to `HalC2.ProviderLog`. With `:stderr_prefix`,
   stderr lines starting with it reach the handler as `{:invalid, line}`, like a
   non-JSON stdout line, and are not logged; the rest of stderr is discarded. With
@@ -71,8 +72,13 @@ defmodule HalC2.JsonRpc.Connection do
   @spec os_pid(GenServer.server()) :: pos_integer
   def os_pid(conn), do: GenServer.call(conn, :os_pid)
 
+  # A connection whose program already exited has stopped on its own.
   @spec stop(GenServer.server()) :: :ok
-  def stop(conn), do: GenServer.stop(conn)
+  def stop(conn) do
+    GenServer.stop(conn)
+  catch
+    :exit, _ -> :ok
+  end
 
   @impl true
   def init(opts) do
@@ -206,7 +212,7 @@ defmodule HalC2.JsonRpc.Connection do
     error =
       case {state.program, state.exit_status} do
         {program, status} when is_binary(program) and is_integer(status) ->
-          %{"message" => "#{program} process exited with code #{status}"}
+          %{"message" => "#{program} process exited with code #{status}", "exitCode" => status}
           |> then(&if state.stderr != "", do: Map.put(&1, "stderr", state.stderr), else: &1)
 
         _ ->

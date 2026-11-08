@@ -241,7 +241,8 @@ defmodule HalC2.Pi.ThreadRuntime do
              adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
              handler: self(),
              dialect: :pi,
-             log: snapshot.state.thread_id
+             log: snapshot.state.thread_id,
+             program: "pi"
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
       {:reply, :ok,
@@ -864,7 +865,9 @@ defmodule HalC2.Pi.ThreadRuntime do
            cd: cwd,
            env: env,
            dialect: :pi,
-           durable: state.thread_id
+           durable: state.thread_id,
+           # A request open when Pi exits fails with Pi's exit code.
+           program: "pi"
          ) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:error, reason, state}
@@ -927,7 +930,13 @@ defmodule HalC2.Pi.ThreadRuntime do
   # not answering it in time means the session could not be opened (and the
   # failed start then stops that Pi, in `handle_call` for `:start_turn`).
   defp open_call(state, type, params) do
-    Connection.call(state.conn, type, params, open_ms())
+    case Connection.call(state.conn, type, params, open_ms()) do
+      {:error, reason} ->
+        {:error, "Pi RPC #{type} failed: #{reason |> format() |> String.trim_trailing(".")}."}
+
+      reply ->
+        reply
+    end
   catch
     :exit, _ -> {:error, "Pi session could not be opened"}
   end
@@ -1153,7 +1162,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # The prompt's acknowledgement: a refused prompt ends the turn.
   defp event("response", %{"command" => "prompt", "success" => false} = event, state),
-    do: end_turn(state, "failed", nonblank(event["error"]) || "Pi rejected the prompt.")
+    do: end_turn(state, "failed", detail(nonblank(event["error"]) || "Pi rejected the prompt."))
 
   defp event("message_start", %{"message" => %{"role" => "assistant"}}, state),
     do: %{state | message: state.message + 1}
@@ -1613,6 +1622,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       case reply do
         {:reply, {:ok, _}} -> {:ok, false}
         {:reply, {:error, :closed}} -> {{:error, "Pi exited"}, true}
+        {:reply, {:error, %{"exitCode" => _}}} -> {{:error, "Pi exited"}, true}
         {:reply, {:error, reason}} -> {{:error, format(reason)}, false}
         # The connection itself is gone.
         {:error, _down} -> {{:error, "Pi exited"}, true}
@@ -1835,9 +1845,18 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp positive(n) when is_integer(n) and n > 0, do: n
   defp positive(_n), do: nil
 
-  defp format(reason) when is_binary(reason), do: reason
-  defp format(%{"message" => message}), do: message
-  defp format(reason), do: inspect(reason)
+  defp format(reason) when is_binary(reason), do: detail(reason)
+  defp format(%{"message" => message}) when is_binary(message), do: detail(message)
+  defp format(reason), do: detail(inspect(reason))
+
+  @detail_chars 200
+
+  # A failure Pi explains at length, cut to what a banner can show.
+  defp detail(text) do
+    if String.length(text) > @detail_chars,
+      do: String.slice(text, 0, @detail_chars) <> "…",
+      else: text
+  end
 
   # A model error with no reason of its own, and a model at capacity, in the
   # words the thread's error banner reads.

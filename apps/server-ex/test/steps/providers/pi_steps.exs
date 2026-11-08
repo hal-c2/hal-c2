@@ -47,18 +47,26 @@ defmodule HalC2.Steps.Providers.Pi do
         do: m["text"]
   end
 
+  # A turn starts a Pi process, which a loaded machine can take seconds over; only a
+  # failing turn waits this long.
+  @turn_ms 20_000
+
   # Sends `text` and waits for its (new) run to finish as `status`.
   defp turn(context, text, status \\ "completed", title \\ nil) do
     before = for run <- StreamState.list(state(context, title), "run"), do: run["id"]
     context = FakeAcp.send_message(context, text, title)
 
     run =
-      World.await_stream(World.thread_id(context, title || context.thread), fn state ->
-        Enum.find(
-          StreamState.list(state, "run"),
-          &(&1["id"] not in before and &1["status"] in ~w(completed failed interrupted))
-        )
-      end)
+      World.await_stream(
+        World.thread_id(context, title || context.thread),
+        fn state ->
+          Enum.find(
+            StreamState.list(state, "run"),
+            &(&1["id"] not in before and &1["status"] in ~w(completed failed interrupted))
+          )
+        end,
+        @turn_ms
+      )
 
     assert run["status"] == status
     context
@@ -2321,6 +2329,33 @@ defmodule HalC2.Steps.Providers.Pi do
       |> turn("hello Pi", "failed")
 
     tell(context)
+  end
+
+  step("a Pi thread is starting", context, do: context)
+
+  step "Pi exits with code 2 before answering", context do
+    context
+    |> install(%{"exitCommands" => %{"get_state" => 2}})
+    |> FakeAcp.thread()
+    |> turn("hello Pi", "failed")
+    |> tell()
+  end
+
+  step "Pi refuses a request with an explanation of 5,000 characters", context do
+    explanation = String.duplicate("é", 4_999) <> "!"
+
+    context
+    |> install(%{"promptError" => explanation})
+    |> FakeAcp.thread()
+    |> turn("hello Pi", "failed")
+    |> tell()
+    |> Map.put(:explanation, explanation)
+  end
+
+  step "the failure the user sees carries its first 200 characters followed by an ellipsis",
+       context do
+    assert context.told == String.slice(context.explanation, 0, 200) <> "…"
+    context
   end
 
   step "Pi cannot compact when asked by a steer without giving a reason", context do

@@ -478,6 +478,9 @@ def command(msg):
             threading.Thread(target=later, daemon=True).start()
             return
         time.sleep(float(delays[kind]))
+    if kind in (cfg.get("exitCommands") or {}):
+        sys.stdout.flush()
+        os._exit(int(cfg["exitCommands"][kind]))
     if kind in (cfg.get("failCommands") or []):
         respond(msg, error=cfg.get("failMessage", "fake cannot %s" % kind))
         return
