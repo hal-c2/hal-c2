@@ -1506,7 +1506,7 @@ const Steps steps([] {
     return world.mc.environmentId + QStringLiteral(":") + id;
   };
   step(QStringLiteral("the user has typed %1 in thread A").arg(q), [](World& world, const Captures& c, const Table&) { typeInto(world, c[0]); });
-  step(QStringLiteral("the user switches to thread B and back to thread A"), [threadB](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user (?:switches|switched) to thread B and back to thread A"), [threadB](World& world, const Captures&, const Table&) {
     look(world, threadB(world));
     look(world, threadKey(world));
   });
@@ -1517,6 +1517,73 @@ const Steps steps([] {
   });
   step(QStringLiteral("thread B's draft is empty"), [threadB](World& world, const Captures&, const Table&) {
     expect(draftOf(world, threadB(world)).isEmpty(), QStringLiteral("thread B's draft reads \"%1\"").arg(draftOf(world, threadB(world))));
+  });
+
+  // A queued edit belongs to its thread.
+  const auto composerShown = [](World& world) { return world.state(QStringLiteral("composer")).toMap(); };
+  const auto editQueuedMessage = [composerShown](World& world, const QString& text) {
+    queueMessage(world, text);
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), QVariantMap());
+    world.waitFor([&] { return composerShown(world).value(QStringLiteral("editingQueuedRunId")) == QStringLiteral("run-queued-") + text; },
+                  [&] { return QStringLiteral("the edit to open; the composer is %1").arg(show(composerShown(world))); });
+  };
+  step(QStringLiteral("the user is (?:still editing the queued message, reading|editing the queued) %1(?: again)?").arg(q),
+       [composerShown, editQueuedMessage](World& world, const Captures& c, const Table&) {
+         // As a precondition the edit is opened.
+         if (!world.checking) return editQueuedMessage(world, c[0]);
+         world.waitFor([&] { return !composerShown(world).value(QStringLiteral("editingQueuedRunId")).isNull() && composerShown(world).value(QStringLiteral("text")) == c[0]; },
+                       [&] { return QStringLiteral("the edit; the composer is %1").arg(show(composerShown(world))); });
+       });
+  step(QStringLiteral("the user saved %1 over the queued %1 and the MC has not answered yet").arg(q), [editQueuedMessage](World& world, const Captures& c, const Table&) {
+    editQueuedMessage(world, c[1]);
+    world.mc.hold(QStringLiteral("answers:") + kThread);
+    typeInto(world, c[0]);
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), c[0]}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.sync();
+    expect(commandsOf(world, QStringLiteral("queued-run.edit")).size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the user edits the queued message again to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    typeInto(world, c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("the first save finishes"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+    expect(commandsOf(world, QStringLiteral("queued-run.edit")).size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  step(QStringLiteral("the user is editing the queued %1 with a change").arg(q), [editQueuedMessage](World& world, const Captures& c, const Table&) {
+    editQueuedMessage(world, c[0]);
+    typeInto(world, c[0] + QStringLiteral(" and the docs"));
+    world.sync();
+  });
+  step(QStringLiteral("the user has gone to another thread"), [threadB](World& world, const Captures&, const Table&) { look(world, threadB(world)); });
+  step(QStringLiteral("the changed edit waits in the thread's composer if it was empty, with a message naming the thread"),
+       [composerShown](World& world, const Captures&, const Table&) {
+         const QString title = world.mc.threads.value(kThread).value(QLatin1String("title")).toString();
+         world.waitFor([&] {
+           const QVariantList shown = toasts(world);
+           return std::any_of(shown.cbegin(), shown.cend(), [&](const QVariant& toast) {
+             return toast.toMap().value(QStringLiteral("title")) == QLatin1String("Queued message is no longer queued") &&
+                    toast.toMap().value(QStringLiteral("description")).toString().contains(title);
+           });
+         }, [&] { return QStringLiteral("a toast naming \"%1\"; the toasts are %2").arg(title, show(toasts(world))); });
+         // Back in the thread, the change is its draft, no longer an edit.
+         look(world, threadKey(world));
+         const QVariantMap shown = composerShown(world);
+         expect(shown.value(QStringLiteral("editingQueuedRunId")).isNull() && shown.value(QStringLiteral("text")) == QLatin1String("fix typo and the docs"),
+                QStringLiteral("the composer is %1").arg(show(shown)));
+       });
+  step(QStringLiteral("the user is editing a queued message in thread A"), [editQueuedMessage](World& world, const Captures&, const Table&) {
+    editQueuedMessage(world, QStringLiteral("fix typo"));
+  });
+  step(QStringLiteral("thread A is deleted"), [](World& world, const Captures&, const Table&) {
+    world.mc.threads.remove(kThread);
+    world.mc.sendRow(kThread, QJsonObject{{QStringLiteral("deletedAt"), QStringLiteral("2026-09-23T10:00:00Z")}});
+    world.waitFor([&] { return !world.native().store()->thread(threadKey(world)); }, QStringLiteral("thread A to go"));
+  });
+  step(QStringLiteral("the agent asks which database to use"), [](World& world, const Captures&, const Table&) {
+    question(world, QStringLiteral("Which database?"), {QStringLiteral("Postgres"), QStringLiteral("SQLite")});
+    world.waitFor([&] { return !listed(world, QStringLiteral("questions")).isEmpty(); }, QStringLiteral("the question"));
   });
   step(QStringLiteral("the environment is disconnected"), [](World& world, const Captures&, const Table&) {
     world.mc.stopAccepting();

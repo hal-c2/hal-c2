@@ -7,6 +7,8 @@
 // message carries, as the MC holds it. A save the MC refused leaves the edit
 // open, and saving again stores none of its images a second time. Saves go
 // one at a time, and of those made while one is unanswered only the newest goes.
+// Each thread keeps its own edit: going to another thread and back finds it
+// open, unless its message left the queue meanwhile.
 
 #include <algorithm>
 
@@ -32,6 +34,7 @@ namespace {
 
 const QString kThread = QStringLiteral("t1");
 const QString kKey = QStringLiteral("env-a:t1");
+const QString kOther = QStringLiteral("t2");
 QDateTime fixedClock() { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); }
 
 QString png() {
@@ -110,10 +113,18 @@ struct Sut {
                                            {QStringLiteral("title"), kThread},
                                            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
                                            {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-    mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject&) {
+    mc.threads.insert(kOther, QJsonObject{{QStringLiteral("id"), kOther},
+                                          {QStringLiteral("projectId"), QStringLiteral("p1")},
+                                          {QStringLiteral("title"), kOther},
+                                          {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")},
+                                          {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
+    mc.onShape(QStringLiteral("stream"), [this](int id, const QJsonObject& shape) {
       QJsonArray rows;
-      for (const QJsonObject& message : std::as_const(messages)) rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
-      for (const QJsonObject& run : std::as_const(runs)) rows.append(QJsonArray{QStringLiteral("run"), run.value(QLatin1String("id")), run});
+      // The other thread has nothing queued.
+      if (shape.value(QLatin1String("stream")).toString() == kThread)
+        for (const QJsonObject& message : std::as_const(messages)) rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
+      if (shape.value(QLatin1String("stream")).toString() == kThread)
+        for (const QJsonObject& run : std::as_const(runs)) rows.append(QJsonArray{QStringLiteral("run"), run.value(QLatin1String("id")), run});
       mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
                {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), seq},
                {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
@@ -159,10 +170,14 @@ struct Sut {
     native->restoreWindows();
     native->open(mc.origin(), QStringLiteral("mc-token"));
     RC_ASSERT(prop::until([this] { return native->client()->isReady() && native->store()->threadOnline(kKey); }));
-    bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), kKey}});
+    open(kKey);
+  }
+
+  void open(const QString& key) {
+    bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
     barrier();
-    RC_ASSERT(prop::until([this] {
-      const auto* timeline = native->controller<ThreadStore>()->timeline(kKey);
+    RC_ASSERT(prop::until([this, key] {
+      const auto* timeline = native->controller<ThreadStore>()->timeline(key);
       return timeline && timeline->status() == QLatin1String("live");
     }));
   }
@@ -478,6 +493,26 @@ struct Leave : Command {
   void show(std::ostream& os) const override { os << "Leave"; }
 };
 
+// The user goes to the other thread and back, and the first queued run may
+// start meanwhile: the edit waits for them unless its message left the queue.
+struct Away : Command {
+  bool starts = *rc::gen::arbitrary<bool>();
+  void checkPreconditions(const Model& m) const override { RC_PRE(!starts || !m.queue.isEmpty()); }
+  void apply(Model& m) const override {
+    if (!starts) return;
+    const QString runId = m.queue.takeFirst().runId;
+    if (m.editing == runId) m.end();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.open(sut.mc.environmentId + QLatin1Char(':') + kOther);
+    if (starts) sut.leave(m0.queue.constFirst().runId);
+    sut.barrier();
+    sut.open(kKey);
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Away(" << (starts ? "starts" : "") << ")"; }
+};
+
 }  // namespace
 
 class ComposerQueuedEditProp : public QObject {
@@ -490,7 +525,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, AttachFile, Edit, Edit, RemoveSent, Cancel, Save, SaveRefused, SaveWhileSaving, Leave>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, AttachFile, Edit, Edit, RemoveSent, Cancel, Save, SaveRefused, SaveWhileSaving, Leave, Away>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

@@ -155,9 +155,12 @@ class TimelineModel;
 // aside; a send saves the edit (`queued-run.edit`, its text and, when they
 // changed, its attachments) and cancelling gives the draft back. Saves go
 // one at a time: one made while another is unanswered waits for it, and only
-// the newest waits. A run that leaves the queue mid-edit ends it: a changed edit
-// stays in the composer when the set-aside draft was empty, and is dropped
-// with a toast otherwise.
+// the newest waits; a save's answer leaves the edit open when more was typed
+// since. Each thread keeps its own edit: leaving the thread keeps it, deleting
+// the thread drops it, and a run that leaves the queue mid-edit ends it, its
+// thread open or not: a changed edit stays in the composer when the set-aside
+// draft was empty, and is dropped otherwise, with a toast (naming the thread
+// when another is open).
 class ComposerController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -526,9 +529,9 @@ private:
   bool editQueued(const QString& target, QString runId);
   bool saveQueuedEdit(const QString& target, const QString& text);
   // Gives the set-aside draft back; `keepEdit` leaves the edit's text instead.
-  void endQueuedEdit(bool keepEdit = false);
-  // Ends an edit whose run is no longer queued.
-  void recoverQueuedEdit(const QVariantMap& turn);
+  void endQueuedEdit(const QString& thread, bool keepEdit = false);
+  // Ends the edits whose run is no longer queued, and drops those of deleted threads.
+  void recoverQueuedEdits();
 
   // The thread the window shows (the shell's route), or empty.
   QString openThread() const;
@@ -712,10 +715,13 @@ private:
     int request = 0;
   };
   PathSearch m_paths;
-  // The queued message the route thread's composer is editing, and the
-  // thread's draft set aside for it.
+  // The queued message a thread's composer is editing, and the thread's
+  // draft set aside for it.
   struct QueuedEdit {
     QString thread;
+    // The thread's stream, watched for the run leaving the queue while
+    // another thread is open.
+    QMetaObject::Connection watch;
     QString runId;
     QString messageId;
     QString original;
@@ -733,7 +739,11 @@ private:
     // A save made while one is on its way, sent once it is answered.
     std::optional<QString> next;
   };
-  std::optional<QueuedEdit> m_queuedEdit;
+  QHash<QString, QueuedEdit> m_queuedEdits;
+  QueuedEdit* queuedEdit(const QString& thread) {
+    const auto it = m_queuedEdits.find(thread);
+    return it == m_queuedEdits.end() ? nullptr : &*it;
+  }
   // Threads with a queue action (remove, send now) the MC has not answered.
   QSet<QString> m_queueBusy;
   // The sent prompt the composer is showing again: its message and text.
