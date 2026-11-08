@@ -2220,9 +2220,23 @@ defmodule HalC2.Acp do
     :ok
   end
 
-  @doc "Forgets what was read from an instance's agent, so it is probed again."
+  @doc """
+  Forgets what was read from an instance's agent, so it is probed again. Workspace
+  snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
+  the user already saw for a folder, and only the next workspace refresh replaces
+  them. `drop/1` is for an instance that is gone.
+  """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
+  end
+
+  @doc "Forgets an instance that was removed: `forget/1`, and its workspace snapshots too."
+  def drop(id) do
+    locked(id, fn ->
+      forget_now(id)
+      :persistent_term.erase({__MODULE__, id, :workspaces})
+      :ok
+    end)
   end
 
   defp forget_now(id) do
@@ -2240,7 +2254,6 @@ defmodule HalC2.Acp do
           :config,
           :commands,
           :skills,
-          :workspaces,
           :pi_signed_out,
           :muse_signed_out
         ],

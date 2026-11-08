@@ -6,7 +6,8 @@ defmodule HalC2.CursorSkillsPropTest do
   (a skill folder that cannot be read) keeps the previous snapshot and
   reports the failure, one workspace's refresh never touches another's,
   and forgetting what was probed (`HalC2.Acp.forget/1`) leaves snapshots
-  alone — only the next workspace refresh replaces them.
+  alone — only the next workspace refresh replaces them — while dropping a
+  removed instance (`HalC2.Acp.drop/1`) erases them.
   """
 
   use ExUnit.Case, async: false
@@ -50,7 +51,8 @@ defmodule HalC2.CursorSkillsPropTest do
       {1, {:call, __MODULE__, :mend, [oneof(@cwds)]}},
       {4, {:call, __MODULE__, :refresh, [oneof(@cwds)]}},
       {3, {:call, __MODULE__, :read, []}},
-      {1, {:call, __MODULE__, :forget, []}}
+      {1, {:call, __MODULE__, :forget, []}},
+      {1, {:call, __MODULE__, :drop, []}}
     ])
   end
 
@@ -78,6 +80,8 @@ defmodule HalC2.CursorSkillsPropTest do
     end
   end
 
+  def next_state(state, _result, {:call, _, :drop, []}), do: %{state | snapshots: %{}}
+
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :refresh, [cwd]}, result) do
@@ -95,6 +99,9 @@ defmodule HalC2.CursorSkillsPropTest do
 
   def postcondition(state, {:call, _, :forget, []}, result),
     do: result == model_snapshots(state)
+
+  def postcondition(state, {:call, _, :drop, []}, result),
+    do: result == %{} and model_snapshots(%{state | snapshots: %{}}) == %{}
 
   def postcondition(_state, _call, result), do: result == :ok
 
@@ -132,6 +139,11 @@ defmodule HalC2.CursorSkillsPropTest do
 
   def forget do
     HalC2.Acp.forget(@instance)
+    snapshots_now()
+  end
+
+  def drop do
+    HalC2.Acp.drop(@instance)
     snapshots_now()
   end
 
