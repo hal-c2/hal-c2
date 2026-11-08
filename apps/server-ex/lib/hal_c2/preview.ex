@@ -292,14 +292,22 @@ defmodule HalC2.Preview do
     end
   end
 
-  defp late?(%{"_tag" => "LoadFailed"}, %{"_tag" => "Success", "url" => url}, url), do: true
+  # Late while the failure stands, or while its page is retried (`Loading`).
+  defp late?(%{"_tag" => tag}, %{"_tag" => "Success", "url" => url}, url)
+       when tag in ["LoadFailed", "Loading"],
+       do: true
+
   defp late?(_, _, _), do: false
 
   # The page a navigation left, once a report names another: a late report for it
   # must not undo a failure. Unchanged while reports stay on the same page.
   # A new navigation starting after a failure ends the lateness: going back to the page
   # it left reports that page as new.
-  defp left(%{"_tag" => "LoadFailed"}, %{"_tag" => "Loading"}), do: nil
+  # A retry of the failed page itself keeps the guard.
+  defp left(%{"_tag" => "LoadFailed", "url" => failed}, %{"_tag" => "Loading", "url" => to})
+       when failed != to,
+       do: nil
+
   defp left(%{"url" => from}, %{"url" => to}) when from != to, do: from
   defp left(_, _), do: :keep
 

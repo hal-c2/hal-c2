@@ -4,7 +4,7 @@ defmodule HalC2.PreviewTabsPropTest do
   are listed exactly while open, closing a thread closes all of its tabs and
   no one else's, and a late success report for the page a failed navigation
   left never turns the failure back into a success, unless a new navigation has
-  started since (a `Loading` report, or the MC's own navigate).
+  started since (a `Loading` report for another page than the failed one, or the MC's own navigate).
 
   Commands open tabs, report navigation outcomes (`Loading`, `Success` or
   `LoadFailed` at one of two pages), navigate from the MC, close one tab, close a whole thread, and restart the
@@ -83,13 +83,13 @@ defmodule HalC2.PreviewTabsPropTest do
 
     cond do
       # The failure's own page reporting in again.
-      kind == :ok and elem(tab.status, 0) == :failed and tab.left == page ->
+      kind == :ok and elem(tab.status, 0) in [:failed, :loading] and tab.left == page ->
         state
 
       true ->
         left =
           cond do
-            kind == :loading and elem(tab.status, 0) == :failed -> nil
+            kind == :loading and elem(tab.status, 0) == :failed and current != page -> nil
             current != page -> current
             true -> tab.left
           end

@@ -903,6 +903,7 @@ defmodule HalC2.Web.Socket do
   # it lets go of the ref itself once the subscribe has been taken, ordered after it.
   defp watch(state, shape) do
     {key, mc, module, sub, unsub, args} = watch_spec(shape)
+    {sub, args} = downgrade_sub(shape, mc, sub, args)
     socket = self()
     tag = make_ref()
     verdict = :atomics.new(1, [])
@@ -993,6 +994,14 @@ defmodule HalC2.Web.Socket do
   # for subscribing.
   defp unsub_args({:local_servers, _mc, _urls}, [pid | _]), do: [pid]
   defp unsub_args(_shape, args), do: args
+
+  # An MC without `subscribe_urls` is watched by `subscribe`, which never probes the
+  # addresses. Only subscribing asks (`urls_supported?/1` can block on a remote MC);
+  # keys and unsubscribing do not.
+  defp downgrade_sub({:local_servers, _mc, _urls}, mc, :subscribe_urls, [pid | _] = args),
+    do: if(urls_supported?(mc), do: {:subscribe_urls, args}, else: {:subscribe, [pid]})
+
+  defp downgrade_sub(_shape, _mc, sub, args), do: {sub, args}
 
   # Whether `mc` has `HalC2.LocalServers.subscribe_urls/3`, asked once per MC.
   defp urls_supported?(mc) when mc == node(), do: true
@@ -1841,13 +1850,10 @@ defmodule HalC2.Web.Socket do
 
   # The addresses go by `subscribe_urls`, which an MC from before it lacks; that one is
   # watched by `subscribe` and simply never probes them. Unsubscribing is the same.
-  defp watch_spec({:local_servers, mc, urls}) do
-    if urls_supported?(mc),
-      do:
-        {{:local_servers, mc}, mc, HalC2.LocalServers, :subscribe_urls, :unsubscribe,
-         [self(), urls]},
-      else: {{:local_servers, mc}, mc, HalC2.LocalServers, :subscribe, :unsubscribe, [self()]}
-  end
+  defp watch_spec({:local_servers, mc, urls}),
+    do:
+      {{:local_servers, mc}, mc, HalC2.LocalServers, :subscribe_urls, :unsubscribe,
+       [self(), urls]}
 
   defp watch_spec({kind, mc} = shape) when is_map_key(@services, kind),
     do: {shape, mc, Map.fetch!(@services, kind), :subscribe, :unsubscribe, [self()]}
