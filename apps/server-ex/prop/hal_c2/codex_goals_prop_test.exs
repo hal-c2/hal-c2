@@ -4,14 +4,16 @@ defmodule HalC2.CodexGoalsPropTest do
   sets a goal with `/goal`, its first turn ends with the goal still active, and from
   there Codex starts turns of its own for it, changes the goal (completes it, pauses
   it, runs out of budget), or does not go on before the grace runs out; the user may
-  press Stop; and once the run has ended Codex may still start a turn for the goal.
+  press Stop; the app-server may exit; and once the run has ended Codex may still
+  start a turn for the goal, or a grace armed before it ended may still fire.
 
   The promise: the goal's turns are one run, running until the goal stops being
   active between turns, the grace runs out, or the user stops it, and each turn
   Codex starts for it is a provider turn of that run. A run that ends with the goal
   still active (the grace, or Stop) pauses it, and a turn Codex starts for it after
   that is stopped; a goal Codex itself took out of active is left as it is, and so
-  are its later turns.
+  are its later turns. A run whose app-server exits fails, and a grace that fires
+  after leaves the thread's runtime and its run as they were.
 
   The goal runs on the fake app-server in `test/support/fake_codex.py` with
   FAKE_CODEX_GOAL_STALL set, so Codex never goes on by itself: the test plays its
@@ -131,12 +133,14 @@ defmodule HalC2.CodexGoalsPropTest do
 
     Process.put(:goal_turns, 0)
     Process.delete(:late)
+    Process.delete(:stale_hold)
   end
 
   # --- model ---------------------------------------------------------------------
 
   # phase: :held (between the goal's turns, waiting for Codex's next), :turn (a turn
-  # Codex started for the goal is running) or :ended (the run ended). turns: the
+  # Codex started for the goal is running), :ended (the run ended) or :exited (the
+  # app-server exited, so nothing more comes from Codex). turns: the
   # run's provider turns. stops: whether a turn Codex starts after the run is stopped.
   def initial_state,
     do: %{phase: :held, run: "running", goal: "active", turns: 1, stops: false, late: nil}
@@ -146,7 +150,8 @@ defmodule HalC2.CodexGoalsPropTest do
       {4, {:call, __MODULE__, :continue_goal, []}},
       {2, {:call, __MODULE__, :grace, []}},
       {2, {:call, __MODULE__, :goal_update, [oneof(Map.keys(@shown))]}},
-      {1, {:call, __MODULE__, :stop, []}}
+      {1, {:call, __MODULE__, :stop, []}},
+      {1, {:call, __MODULE__, :exit_app_server, []}}
     ])
   end
 
@@ -154,17 +159,20 @@ defmodule HalC2.CodexGoalsPropTest do
     frequency([
       {4, {:call, __MODULE__, :finish_turn, []}},
       {2, {:call, __MODULE__, :goal_update, [oneof(Map.keys(@shown))]}},
-      {1, {:call, __MODULE__, :stop, []}}
+      {1, {:call, __MODULE__, :stop, []}},
+      {1, {:call, __MODULE__, :exit_app_server, []}}
     ])
   end
 
   def command(%{phase: :ended}), do: {:call, __MODULE__, :late_turn, []}
+  def command(%{phase: :exited}), do: {:call, __MODULE__, :stale_grace, []}
 
   def precondition(state, {:call, _, :late_turn, []}), do: state.phase == :ended
+  def precondition(state, {:call, _, :stale_grace, []}), do: state.phase == :exited
   def precondition(state, {:call, _, :continue_goal, []}), do: state.phase == :held
   def precondition(state, {:call, _, :grace, []}), do: state.phase == :held
   def precondition(state, {:call, _, :finish_turn, []}), do: state.phase == :turn
-  def precondition(state, {:call, _, _, _}), do: state.phase != :ended
+  def precondition(state, {:call, _, _, _}), do: state.phase in [:held, :turn]
 
   def next_state(state, _result, {:call, _, :continue_goal, []}),
     do: %{state | phase: :turn, turns: state.turns + 1, late: nil}
@@ -191,11 +199,17 @@ defmodule HalC2.CodexGoalsPropTest do
   def next_state(state, _result, {:call, _, :stop, []}),
     do: ended(state, "interrupted", state.goal, false)
 
+  def next_state(state, _result, {:call, _, :exit_app_server, []}),
+    do: %{state | phase: :exited, run: "failed", late: nil}
+
   def next_state(state, _result, {:call, _, :late_turn, []}), do: %{state | late: state.stops}
   def next_state(state, _result, _call), do: state
 
   defp ended(state, run, goal, stops),
     do: %{state | phase: :ended, run: run, goal: goal, stops: stops, late: nil}
+
+  def postcondition(state, {:call, _, :stale_grace, []} = call, {alive, seen}),
+    do: alive and postcondition(state, call, seen)
 
   def postcondition(state, call, seen) do
     expected = next_state(state, nil, call)
@@ -275,6 +289,42 @@ defmodule HalC2.CodexGoalsPropTest do
     {_, runtime} = runtime()
     HalC2.JsonRpc.Connection.call(runtime.conn, "test/ping", %{})
     observed()
+  end
+
+  # The app-server exits (killed by the pid its connection started, never by name).
+  def exit_app_server do
+    {pid, %{conn: conn, goal_hold: hold}} = runtime()
+    Process.put(:stale_hold, hold || Process.get(:stale_hold))
+    ref = Process.monitor(conn)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      @wait_ms -> :ok
+    end
+
+    await_until(fn -> observed().run != "running" end, "the run never failed")
+    # Behind the runtime's handling of its connection's end.
+    _ = :sys.get_state(pid)
+    observed()
+  end
+
+  # A grace armed before the app-server exited fires after.
+  def stale_grace do
+    {pid, _} = runtime()
+    send(pid, {:goal_grace, Process.get(:stale_hold)})
+
+    # Behind the grace in the runtime's mailbox.
+    alive =
+      try do
+        is_map(:sys.get_state(pid))
+      catch
+        :exit, _ -> false
+      end
+
+    {alive, observed()}
   end
 
   # --- the real side ---------------------------------------------------------------

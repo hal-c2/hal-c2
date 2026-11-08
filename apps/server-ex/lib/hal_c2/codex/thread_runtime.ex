@@ -798,7 +798,9 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   def handle_info({:interrupt_deadline, _turn_id}, state), do: {:noreply, state}
 
-  def handle_info({:goal_grace, hold}, %{goal_hold: hold} = state) when hold != nil,
+  # A grace whose run already ended (Stop, or the app-server exited) has nothing
+  # left to end.
+  def handle_info({:goal_grace, hold}, %{turn: %{}, goal_hold: hold} = state) when hold != nil,
     do: {:noreply, goal_grace_over(state)}
 
   def handle_info({:goal_grace, _hold}, state), do: {:noreply, state}
@@ -2497,7 +2499,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     finish(state, status, failure)
 
     state
-    |> Map.merge(%{turn: nil, items: %{}, requests: %{}, interrupting: nil})
+    |> Map.merge(%{turn: nil, items: %{}, requests: %{}, interrupting: nil, goal_hold: nil})
     |> Map.put(:last_turn_status, status)
   end
 
