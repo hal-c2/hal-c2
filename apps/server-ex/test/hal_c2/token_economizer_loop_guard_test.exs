@@ -42,6 +42,11 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
           {"grep -rn BookingRequestError apps | head -20", true},
           {"git show HEAD:apps/web/booking.ts | sed -n '1,80p'", true},
           {"set -o pipefail; python repro.py | tail -5", true},
+          {"set -euo pipefail\npython repro.py | tail -5", true},
+          {"set +o pipefail; python repro.py | tail -5", false},
+          {"set -o pipefail; set +o pipefail; python repro.py | tail -5", false},
+          {"python repro.py | tail -5; set -o pipefail", false},
+          {"echo 'set -o pipefail'; python repro.py | tail -5", false},
           {"python repro.py 2>&1 | tail -20", false},
           {"npm test; echo \"exit=$?\"", false},
           {"sed -i 's/a/b/' x.ts; npm test", false},
@@ -76,9 +81,26 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     assert {_, _, _, nil} =
              TokenEconomizer.call_of(command("python repro.py 2>&1 | tail", "Traceback"))
 
-    # Stopped before it finished: no status.
-    assert {_, _, _, nil} = TokenEconomizer.call_of(command("npm test", "", "declined"))
-    # The provider's own code wins.
+    # A zero is the last command's, which says nothing of a crash piped into it.
+    crash =
+      command("python -c 'raise RuntimeError(1)' 2>&1 | tail -n 4", "Traceback", "completed")
+
+    assert {_, _, "Traceback", nil} =
+             TokenEconomizer.call_of(Map.put(crash, "exitCode", 0))
+
+    assert {_, _, _, 0} =
+             TokenEconomizer.call_of(command("npm test", "", "completed", %{"exitCode" => 0}))
+
+    # Never ran (an edit or a command the person declined): not a call.
+    assert TokenEconomizer.call_of(command("npm test", "", "cancelled")) == nil
+
+    assert TokenEconomizer.call_of(%{
+             "itemType" => "file_change",
+             "status" => "cancelled",
+             "path" => "/r/a.py"
+           }) == nil
+
+    # A failure's own code wins.
     assert {_, _, _, 2} =
              TokenEconomizer.call_of(command("npm test", "", "failed", %{"exitCode" => 2}))
 
@@ -357,6 +379,11 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       assert job["id"] == "t:0:1"
       assert job["digest"] =~ "The last verification run failed."
+      assert job["redirect"]
+
+      # With no redirect left, a stuck verdict is offered as a stop: none is to be written.
+      assert {_, %{"redirect" => false}} =
+               until_job(Turn.new("t"), Keyword.put(opts, :nudge_budget, 0))
 
       assert {_, nil, nil} =
                Turn.fold(
@@ -461,6 +488,19 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute Turn.resolved_proxy(g)
     end
 
+    test "a pipe after pipefail is turned off hides the run's status, so its failing summary counts" do
+      cmd = "set +o pipefail; pytest -q 2>&1 | tail -n 2"
+      assert Turn.status_of_tests(cmd) == "hidden"
+      assert Turn.status_of_tests("set -o pipefail; pytest -q 2>&1 | tail -n 2") == "own"
+
+      g =
+        Turn.new()
+        |> fold("Edit", %{"file_path" => "/r/a.py"}, "ok")
+        |> fold("Bash", %{"command" => cmd}, "==== 1 failed, 2 passed in 0.12s ====", 0)
+
+      refute Turn.resolved_proxy(g)
+    end
+
     test "an edit that failed changed nothing, so the failing check before it still counts" do
       g =
         Turn.new()
@@ -500,6 +540,23 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
         refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
         assert text =~ "a.py", "#{inspect(cmd)} showed #{inspect(text)}"
       end
+
+      # A plugin hears a command's last 4,000 characters: a long one may have lost its
+      # heredoc's opening line, and what is left is the file it writes.
+      long =
+        HalC2.Orchestration.TurnWriter.observed_item(%{
+          "id" => "i",
+          "type" => "command_execution",
+          "status" => "completed",
+          "input" =>
+            "cat > src/a.py <<'EOF'\n" <>
+              String.duplicate("SECRET = 1\n", 500) <> "EOF\npytest -q",
+          "output" => ""
+        })
+
+      {name, args, out, code} = TokenEconomizer.call_of(long)
+      {g, nil, nil} = Turn.fold(Turn.new(), name, args, out, code)
+      refute State.recent_digest(g.st) =~ "SECRET"
 
       # What only runs or searches keeps its words.
       assert digest(~s(grep -rn "def handle" src)) =~ ~s(grep -rn "def handle" src)
@@ -690,6 +747,14 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       refute Map.has_key?(Judge.run("digest", 0.7, unsure), "_nudge")
 
+      # With no redirect left to send, a stuck verdict is offered as a stop: no writer.
+      judge_only = fn _prompt, %{"stuck" => _} = schema -> sure.("", schema) end
+
+      assert %{"stuck" => true, "_tokens" => 12} =
+               run = Judge.run("digest", 0.7, judge_only, false)
+
+      refute Map.has_key?(run, "_nudge")
+
       # A reply with no words is paid for all the same, and cached input is part of the
       # input, not more of it.
       blank = fn
@@ -754,6 +819,71 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert Process.alive?(other)
       assert state.turns["a"].guard.segment == 1
       assert [%{"delivered" => true}] = state.recent
+    end
+
+    test "a judge job gone stale is stopped when a new one replaces it" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      saved = %{"level" => "default", "resolved_turns" => List.duplicate(30, 5)}
+      state = put_in(state.trackers[{"p", "claudeAgent"}], Envelope.new("default", %{}, saved))
+      state = observe(state, started("a"))
+      {old, state} = sleeper(state, "a", :judge)
+      since = System.monotonic_time(:second) - Turn.judge_stale_s() - 1
+      pending = %{"id" => "a:0:1", "since" => since, "segment" => 0}
+      state = update_in(state.turns["a"].guard, &%{&1 | judge_pending: pending, judge_calls: 1})
+
+      state =
+        Enum.reduce_while(1..60, state, fn i, state ->
+          item =
+            if rem(i, 2) == 0,
+              do: %{"itemType" => "file_change", "status" => "completed", "path" => "/r/a.py"},
+              else:
+                command("pytest -q", "FAILED t - AssertionError", "failed", %{"exitCode" => 1})
+
+          state =
+            observe(
+              state,
+              Map.merge(item, %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"})
+            )
+
+          if state.stats["judgeCalls"] > 0, do: {:halt, state}, else: {:cont, state}
+        end)
+
+      assert state.stats["judgeCalls"] == 1
+      assert_receive {:DOWN, _, :process, ^old, _}
+      assert [{_, {"a", :judge}}] = Map.to_list(state.tasks)
+    end
+
+    test "a cancelled edit after a failing check changes nothing, so the turn does not end green" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a"))
+      at = %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"}
+
+      state =
+        state
+        |> observe(
+          Map.merge(at, %{
+            "itemType" => "file_change",
+            "status" => "completed",
+            "path" => "/r/a.py"
+          })
+        )
+        |> observe(
+          Map.merge(
+            at,
+            command("pytest -q", "FAILED t - AssertionError", "failed", %{"exitCode" => 1})
+          )
+        )
+        |> observe(
+          Map.merge(at, %{
+            "itemType" => "file_change",
+            "status" => "cancelled",
+            "path" => "/r/a.py"
+          })
+        )
+
+      guard = state.turns["a"].guard
+      assert guard.edits == 1 and guard.cum_turns == 2
+      refute Turn.resolved_proxy(guard)
     end
 
     test "a turn's end stops its judge job, watching stops deliveries, and off stops every task" do

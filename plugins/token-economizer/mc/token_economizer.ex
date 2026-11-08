@@ -1009,13 +1009,22 @@ defmodule HalC2Plugins.TokenEconomizer do
     end)
   end
 
+  # A new job replaces any the turn still has out, one gone stale: its answer would not
+  # be read.
   defp start_judge(state, thread_id, run_id, job, threshold) do
     server = self()
 
-    spawn_task(state, thread_id, :judge, fn ->
+    state
+    |> cancel_judge(thread_id)
+    |> spawn_task(thread_id, :judge, fn ->
       verdict =
         try do
-          Judge.run(job["digest"], threshold, &Host.generate(@id, &1, &2))
+          Judge.run(
+            job["digest"],
+            threshold,
+            &Host.generate(@id, &1, &2),
+            job["redirect"] != false
+          )
         rescue
           e ->
             Logger.warning("token-economizer: the judge failed: #{Exception.message(e)}")
@@ -1109,12 +1118,24 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # --- what a call was ------------------------------------------------------------------
 
+  # What a plugin hears of a command's input at most (`TurnWriter.observed_item/1`).
+  @observed_chars 4_000
+
   @doc """
   A turn item as the loop guard folds it, `{name, args, result, exit_code}`, or nil for
-  an item that is not a tool call. A command's exit code is the provider's when it gave
-  one; else a failed call's is 1 and a successful one's 0 only when the command's exit
-  status covers the work it ran (`Turn.exit_status_covers/1`), else unknown.
+  an item that is not a tool call, or one that never ran (cancelled, as an edit or a
+  command the person declined is). A failed call's exit code is the provider's, else 1;
+  a successful command's is 0 only when the command's exit status covers the work it ran
+  (`Turn.exit_status_covers/1`), else unknown: `python repro.py | tail` exits with
+  `tail`'s status.
+
+  A plugin hears only the last `#{@observed_chars}` characters of a command
+  (`HalC2.Orchestration.TurnWriter.observed_item/1`), so a longer one may have lost its
+  start, a heredoc's opening line with it, and what is left can be the body of a file it
+  writes. Its text is not read at all.
   """
+  def call_of(%{"status" => status}) when status in ["cancelled", "declined"], do: nil
+
   def call_of(%{"itemType" => type, "status" => status} = item) do
     failed = status == "failed"
     output = text(item["output"])
@@ -1122,10 +1143,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     case type do
       "command_execution" ->
         command = text(item["input"])
+        command = if String.length(command) >= @observed_chars, do: "", else: command
 
         code =
           cond do
-            is_integer(item["exitCode"]) -> item["exitCode"]
+            is_integer(item["exitCode"]) and item["exitCode"] != 0 -> item["exitCode"]
             failed -> 1
             status == "completed" and Turn.exit_status_covers(command) -> 0
             true -> nil

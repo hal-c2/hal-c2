@@ -104,13 +104,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
 
   @doc """
   One job: the judge, and the writer only when the verdict is stuck at `threshold` or
-  more. The verdict, with the redirect in `"_nudge"` when one was written and both
-  calls' spend in `"_tokens"`.
+  more and a redirect can still be sent (`redirect`). The verdict, with the redirect in
+  `"_nudge"` when one was written and both calls' spend in `"_tokens"`.
   """
-  def run(digest, threshold, generate) do
+  def run(digest, threshold, generate, redirect \\ true) do
     verdict = stuck_judge(digest, generate)
 
-    if verdict["stuck"] == true and verdict["confidence"] >= threshold do
+    if redirect and verdict["stuck"] == true and verdict["confidence"] >= threshold do
       written = nudge_writer(digest, generate)
       verdict = Map.update!(verdict, "_tokens", &(&1 + written["_tokens"]))
       if written["text"] != "", do: Map.put(verdict, "_nudge", written["text"]), else: verdict
