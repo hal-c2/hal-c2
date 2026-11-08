@@ -13,6 +13,7 @@
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
 import glob, json, os, re, signal, string, sys, threading, time, uuid
 import fake_codex_goals as goals  # thread/goal/*: Codex's own goal
+import fake_codex_chatgpt  # the ChatGPT sign-in, while FAKE_CODEX_CHATGPT is set
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -286,6 +287,8 @@ for line in sys.stdin:
             send({"method": "item/started", "params": {**ctx, "item": item}})
             text = "received " + json.dumps(msg.get("result"), sort_keys=True)
             send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
+        continue
+    if fake_codex_chatgpt.handle(method, params, mid, send):
         continue
     if method == "initialize":
         # FAKE_CODEX_PROBE_ERROR is answered as the initialize call's error, and

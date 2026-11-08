@@ -164,8 +164,12 @@ defmodule HalC2.ProviderUsageLimits.Codex do
     with_app_server(instance, fn conn ->
       read = call(conn, "account/read", %{}, 10_000)
 
-      with {:ok, %{"account" => %{} = account}} <- read,
-           do: Limits.remember_account(instance, account(account))
+      managed? = HalC2.Codex.ChatGpt.managed?(instance)
+
+      with {:ok, %{"account" => %{} = account}} <- read do
+        if managed?, do: HalC2.Codex.ChatGpt.seen(instance, account)
+        Limits.remember_account(instance, account(account))
+      end
 
       case read do
         {:ok, %{"account" => %{"type" => "apiKey"}}} ->
@@ -174,7 +178,11 @@ defmodule HalC2.ProviderUsageLimits.Codex do
         {:ok, %{"account" => nil, "requiresOpenaiAuth" => true}} ->
           Limits.remember_account(instance, %{
             "status" => "unauthenticated",
-            "message" => "Codex CLI is not authenticated. Run `codex login` and try again."
+            "message" =>
+              if(managed?,
+                do: HalC2.Codex.ChatGpt.seen(instance, nil),
+                else: "Codex CLI is not authenticated. Run `codex login` and try again."
+              )
           })
 
           Limits.unavailable(checked_at, "probeFailed")
@@ -243,40 +251,40 @@ defmodule HalC2.ProviderUsageLimits.Codex do
     end) || {:error, :spawn}
   end
 
-  # Runs `fun` against a fresh, initialized app-server of `instance` (its executable
-  # and its variables, such as CODEX_HOME); nil when it cannot start.
+  # Runs `fun` against a fresh, initialized app-server of `instance` (its executable,
+  # its home, as its sessions run in, and its variables); nil when it cannot start.
   defp with_app_server(instance, fun) do
     Process.flag(:trap_exit, true)
     env = Enum.to_list(HalC2.Settings.instance_env(instance))
 
-    case Connection.start_link(cmd: command(instance), handler: self(), env: env) do
-      {:ok, conn} ->
-        try do
-          with {:ok, _} <-
-                 call(
-                   conn,
-                   "initialize",
-                   %{
-                     "clientInfo" => %{
-                       "name" => "hal_c2_desktop",
-                       "title" => "HAL-C2 Desktop",
-                       "version" => "0.1.0"
-                     },
-                     "capabilities" => %{"experimentalApi" => true}
+    with {:ok, home} <- HalC2.Codex.Home.env(instance),
+         {:ok, conn} <-
+           Connection.start_link(cmd: command(instance), handler: self(), env: home ++ env) do
+      try do
+        with {:ok, _} <-
+               call(
+                 conn,
+                 "initialize",
+                 %{
+                   "clientInfo" => %{
+                     "name" => "hal_c2_desktop",
+                     "title" => "HAL-C2 Desktop",
+                     "version" => "0.1.0"
                    },
-                   15_000
-                 ) do
-            Connection.notify(conn, "initialized", nil)
-            fun.(conn)
-          else
-            _ -> nil
-          end
-        after
-          stop(conn)
+                   "capabilities" => %{"experimentalApi" => true}
+                 },
+                 15_000
+               ) do
+          Connection.notify(conn, "initialized", nil)
+          fun.(conn)
+        else
+          _ -> nil
         end
-
-      _ ->
-        nil
+      after
+        stop(conn)
+      end
+    else
+      _ -> nil
     end
   end
 

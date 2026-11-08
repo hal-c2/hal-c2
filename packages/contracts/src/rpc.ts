@@ -9,6 +9,7 @@ import {
   ProviderAuthState,
   ProviderAuthStartInput,
   ProviderAuthRespondInput,
+  ProviderChatGptMoveInput,
   ProviderInstallCancelInput,
   ProviderInstallState,
   ProviderSetupError,
@@ -452,6 +453,7 @@ export const WS_METHODS = {
   providerAuthCancel: "provider.auth.cancel",
   providerAuthLogout: "provider.auth.logout",
   providerAuthSubscribe: "provider.auth.subscribe",
+  providerChatGptMove: "provider.chatgpt.move",
   providerInstallStart: "provider.install.start",
   providerInstallCancel: "provider.install.cancel",
   providerInstallSubscribe: "provider.install.subscribe",
@@ -759,6 +761,12 @@ const WsProviderAuthRespondRpc = Rpc.make(WS_METHODS.providerAuthRespond, {
 const WsProviderAuthCompleteRpc = Rpc.make(WS_METHODS.providerAuthComplete, {
   payload: ProviderAuthCompleteInput,
   success: ProviderAuthState,
+  error: ProviderSetupRpcError,
+});
+
+const WsProviderChatGptMoveRpc = Rpc.make(WS_METHODS.providerChatGptMove, {
+  payload: ProviderChatGptMoveInput,
+  success: ProviderChatGptMoveInput,
   error: ProviderSetupRpcError,
 });
 
@@ -2264,6 +2272,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
+  WsProviderChatGptMoveRpc,
   WsProviderAuthRespondRpc,
   WsProviderAuthCancelRpc,
   WsProviderAuthLogoutRpc,
