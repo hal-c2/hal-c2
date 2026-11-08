@@ -355,7 +355,8 @@ defmodule HalC2.Plugins.Extension do
       nil when it has not). Events reach the plugin one at a time, in the order
       each thread's turns had them, in a process of the plugin's own. A plugin too slow
       to keep up misses events rather than holding agents back: the next event it gets
-      counts what it missed in `"dropped"`. What it missed while it was not running
+      counts what it missed in `"dropped"`, and in `"waiting"` the events queued behind
+      it then, which with it are all that may have come before the missed ones. What it missed while it was not running
       stays in the threads (`HalC2.Plugins.Host.history/2`).
     * `shape_run(run, context)`: with `runs:shape`, called as an agent starts a new
       conversation, never for one it resumes, with `%{"threadId", "runId",

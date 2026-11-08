@@ -241,6 +241,30 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert shape["plugins"] == ["good"]
   end
 
+  test "a plugin that missed events hears how many, and how many were still waiting then" do
+    grant(%{"slow" => ["turns:observe"]})
+    feed("slow", nil, nil, true)
+    [{_, %{dropped: dropped}}] = Feed.lookup(:observe)
+
+    HalC2.Plugins.observe(%{"type" => "turn.started", "n" => 1})
+    assert_receive {:holding, busy}, 5_000
+    HalC2.Plugins.observe(%{"type" => "turn.item", "n" => 2})
+    HalC2.Plugins.observe(%{"type" => "turn.item", "n" => 3})
+    # As a sender that found the queue full does.
+    :counters.add(dropped, 1, 2)
+
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 1} = first}, 5_000
+    refute Map.has_key?(first, "dropped")
+    assert_receive {:holding, ^busy}, 5_000
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 2, "dropped" => 2, "waiting" => 1}}, 5_000
+    assert_receive {:holding, ^busy}, 5_000
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 3} = last}, 5_000
+    refute Map.has_key?(last, "dropped")
+  end
+
   test "a plugin hears turns with the settings saved last, after its feed restarts, and is asked to shape with them while its feed is busy" do
     grant(%{"tuned" => ["turns:observe", "runs:shape"]}, %{"tuned" => %{"mode" => "b"}})
     feed("tuned", nil, :mode, true)

@@ -22,7 +22,9 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   - no run gets more redirects than the budget, nor more than one stop offer;
   - a turn teaches the project's envelope only when it ended completed, made calls and
     was heard whole, never when the next turn's start closes it; one heard whole that
-    completed with nothing but passing checks does.
+    completed with nothing but passing checks does. A turn is heard whole unless it was
+    under way when the feed said it missed events, or one of its events came in the
+    window that report opens: the reported event and those the feed had waiting.
 
   `prop/hal_c2/token_economizer_prop_test.exs` runs one turn's guard;
   `proof/hal_c2/token_economizer_loop_guard_proof_test.exs` explores the turns, the
@@ -43,7 +45,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   @learned [3, 3, 4, 4, 5]
 
   property "the plugin keeps its laws over two threads, missed events, mode changes and late answers",
-    numtests: HalC2.Prop.numtests(200) do
+    numtests: HalC2.Prop.numtests(1000) do
     forall budget <- integer(0, 2) do
       forall cmds <- more_commands(8, commands(__MODULE__, initial_state(budget))) do
         open_case(budget)
@@ -118,10 +120,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   # --- the model --------------------------------------------------------------------------
 
   # `open`: thread => %{run, partial, kinds}, the turns under way the plugin heard start
-  # while on. `dropped`: the feed said it missed events while the plugin was on; the
-  # turns heard after are partial (the feed's queue is longer than any case).
+  # while on. `missing`: the events still to hear that the feed had waiting when it said
+  # it missed some; the turns they belong to are partial.
   def initial_state(budget \\ 1),
-    do: %{budget: budget, mode: "nudge", runs: 0, open: %{}, dropped: false}
+    do: %{budget: budget, mode: "nudge", runs: 0, open: %{}, missing: 0}
 
   def command(state) do
     open = Map.keys(state.open)
@@ -150,7 +152,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     ])
   end
 
-  defp dropped, do: frequency([{15, false}, {1, true}])
+  # false, or the events the feed had waiting when it said it missed some.
+  defp dropped, do: frequency([{6, false}, {1, integer(0, 2)}])
   defp kind, do: frequency([{5, "fail"}, {3, "edit"}, {2, "pass"}])
 
   defp run_of(state, t) do
@@ -168,29 +171,26 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :start, [t, run, dropped]}) do
-    state = %{heard(state, dropped) | runs: state.runs + 1}
-
-    if state.mode == "off",
-      do: state,
-      else: put_in(state.open[t], %{run: run, partial: state.dropped, kinds: []})
+    state = %{state | runs: state.runs + 1}
+    heard(state, t, dropped, &put_in(&1.open[t], %{run: run, partial: false, kinds: []}))
   end
 
   def next_state(state, _result, {:call, _, :item, [t, run, kind, dropped]}) do
-    state = heard(state, dropped)
-
-    case state.open[t] do
-      %{run: ^run} when state.mode != "off" -> update_in(state.open[t].kinds, &(&1 ++ [kind]))
-      _ -> state
-    end
+    heard(state, t, dropped, fn state ->
+      case state.open[t] do
+        %{run: ^run} -> update_in(state.open[t].kinds, &(&1 ++ [kind]))
+        _ -> state
+      end
+    end)
   end
 
   def next_state(state, _result, {:call, _, :finish, [t, run, _, dropped]}) do
-    state = heard(state, dropped)
-
-    case state.open[t] do
-      %{run: ^run} when state.mode != "off" -> %{state | open: Map.delete(state.open, t)}
-      _ -> state
-    end
+    heard(state, t, dropped, fn state ->
+      case state.open[t] do
+        %{run: ^run} -> %{state | open: Map.delete(state.open, t)}
+        _ -> state
+      end
+    end)
   end
 
   def next_state(state, _result, {:call, _, :mode, [mode, _]}),
@@ -198,13 +198,29 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
 
   def next_state(state, _result, _call), do: state
 
-  # A missed event marks the turns under way partial, and those heard after it.
-  defp heard(%{mode: "off"} = state, _), do: state
-  defp heard(state, false), do: state
+  # An event of thread `t`, heard while on: a report of missed events marks the turns
+  # under way partial and opens a window over the reported event and those waiting
+  # behind it; `hear` applies the event; each event in the window marks its thread's
+  # turn partial.
+  defp heard(%{mode: "off"} = state, _t, _dropped, _hear), do: state
 
-  defp heard(state, true) do
-    open = Map.new(state.open, fn {t, turn} -> {t, %{turn | partial: true}} end)
-    %{state | open: open, dropped: true}
+  defp heard(state, t, dropped, hear) do
+    state =
+      if dropped == false,
+        do: state,
+        else: %{
+          state
+          | open: Map.new(state.open, fn {t, turn} -> {t, %{turn | partial: true}} end),
+            missing: max(state.missing, dropped + 1)
+        }
+
+    state = hear.(state)
+
+    cond do
+      state.missing == 0 -> state
+      state.open[t] -> %{put_in(state.open[t].partial, true) | missing: state.missing - 1}
+      true -> %{state | missing: state.missing - 1}
+    end
   end
 
   def postcondition(state, {:call, _, name, args} = call, seen) do
@@ -235,7 +251,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   defp teaches?(state, :finish, [t, run, status, dropped], taught) do
     case state.open[t] do
       %{run: ^run} = turn when state.mode != "off" ->
-        whole = not turn.partial and not dropped
+        whole = not turn.partial and dropped == false
         green = whole and status == "completed" and turn.kinds != []
 
         (not taught or green) and
@@ -338,7 +354,12 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   defp observe(event, dropped) do
     plugin = Process.get(:plugin)
     before = learned(plugin)
-    event = if dropped, do: Map.put(event, "dropped", 1), else: event
+
+    event =
+      if dropped == false,
+        do: event,
+        else: Map.merge(event, %{"dropped" => 1, "waiting" => dropped})
+
     {:reply, :ok, plugin} = TokenEconomizer.handle_call({:observe, event}, nil, plugin)
     settle(plugin, learned(plugin, before) > before)
   end
