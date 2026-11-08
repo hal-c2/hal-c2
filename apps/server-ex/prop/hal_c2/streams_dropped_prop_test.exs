@@ -10,6 +10,9 @@ defmodule HalC2.StreamsDroppedPropTest do
   - what the process decides and reads in dry mode is the store's record with the
     changes it dropped, so a write that ends an entity it made finds it;
   - once forgotten, or outside dry mode, it reads the store's record alone.
+
+  The messages belong to a settled run, which later runs push into cold storage
+  (`HalC2.StreamState`, "Hot and cold"), so a dropped change can be to a cold one.
   """
 
   use ExUnit.Case, async: false
@@ -32,6 +35,7 @@ defmodule HalC2.StreamsDroppedPropTest do
         home = HalC2.Prop.scratch_home("streams-dropped")
         :persistent_term.put({__MODULE__, :full}, false)
         Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse, []})
+        Application.put_env(:hal_c2, :stream_hot_items, 1)
 
         HalC2.Prop.start_services([
           {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -42,6 +46,7 @@ defmodule HalC2.StreamsDroppedPropTest do
         HalC2.Prop.stop_services()
         HalC2.Streams.forget_unrecorded()
         Application.delete_env(:hal_c2, :store_hook)
+        Application.delete_env(:hal_c2, :stream_hot_items)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -72,6 +77,7 @@ defmodule HalC2.StreamsDroppedPropTest do
       {2, {:call, __MODULE__, :dry_read, [oneof(@streams), oneof(@ids)]}},
       {2, {:call, __MODULE__, :write, [oneof(@streams), oneof(@ids), text()]}},
       {2, {:call, __MODULE__, :read, [oneof(@streams), oneof(@ids)]}},
+      {1, {:call, __MODULE__, :cool, [oneof(@streams)]}},
       {1, {:call, __MODULE__, :disk, [boolean()]}},
       {1, {:call, __MODULE__, :forget, []}}
     ])
@@ -82,6 +88,7 @@ defmodule HalC2.StreamsDroppedPropTest do
 
   # A recorded write to "child" waits for the disk; a delete for what is there.
   def precondition(state, {:call, _, :write, ["child", _, _]}), do: not state.full
+  def precondition(state, {:call, _, :cool, ["child"]}), do: not state.full
 
   def precondition(state, {:call, _, :dry_write, [stream, id, :delete, _]}),
     do: view(state, stream, id) != nil
@@ -142,7 +149,7 @@ defmodule HalC2.StreamsDroppedPropTest do
 
         patch =
           case op do
-            :put -> %{"s" => %{"id" => id, "text" => text}}
+            :put -> %{"s" => %{"id" => id, "runId" => "r0", "text" => text}}
             :merge -> %{"s" => %{"text" => text}}
             :delete -> %{"d" => true}
           end
@@ -158,8 +165,28 @@ defmodule HalC2.StreamsDroppedPropTest do
   def write(stream, id, text) do
     {:ok, _} =
       HalC2.Streams.commit(stream, :thread, [
-        {"message", id, %{"s" => %{"id" => id, "text" => text}}}
+        {"message", id, %{"s" => %{"id" => id, "runId" => "r0", "text" => text}}}
       ])
+
+    :ok
+  end
+
+  # A settled run with more turn items than memory keeps, recorded: the messages'
+  # run, settled before it, goes cold.
+  def cool(stream) do
+    n = System.unique_integer([:positive, :monotonic])
+    run = "r#{n}"
+
+    {:ok, _} =
+      HalC2.Streams.commit(
+        stream,
+        :thread,
+        [
+          {"run", "r0", %{"s" => %{"id" => "r0", "ordinal" => 0, "status" => "completed"}}},
+          {"run", run, %{"s" => %{"id" => run, "ordinal" => n, "status" => "completed"}}}
+        ] ++
+          for(i <- 1..3, do: {"turn-item", "#{run}-#{i}", %{"s" => %{"runId" => run}}})
+      )
 
     :ok
   end

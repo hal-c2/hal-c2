@@ -231,10 +231,14 @@ defmodule HalC2.Streams do
     Process.put(:hal_c2_dropped, Map.put(dropped(), stream_id, %{entities: entities, ends: ends}))
   end
 
-  # The stream as this process left it: with the changes it dropped.
+  # The stream as this process left it: with the changes it dropped. What they
+  # change is brought back from cold storage first, so its cold row is stale and a
+  # deletion hides it from the reads that go through to the cold rows.
   defp with_dropped(state, stream_id) do
     case dry?() and dropped() do
       %{^stream_id => %{entities: dropped}} ->
+        state = StreamState.promote(state, Map.keys(dropped))
+
         Enum.reduce(dropped, state, fn
           {{kind, id}, nil}, state ->
             update_in(

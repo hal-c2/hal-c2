@@ -403,6 +403,26 @@ defmodule HalC2.StreamsColdTest do
     assert shell["itemCount"] == length(Timeline.local_items(whole))
   end
 
+  # A turn the store failed reads what it dropped (`Streams.unrecorded/2`): a cold
+  # entity it deleted is gone from every read, cold ones included.
+  test "a turn the store failed no longer reads a cold entity it deleted" do
+    for i <- 1..8, do: run("th", i, 3)
+    assert StreamState.get(Streams.state("th"), "message")["r1-m"] == nil
+
+    Streams.unrecorded("th", fn ->
+      {:ok, _} = Streams.commit("th", :thread, [{"message", "r1-m", %{"d" => true}}])
+      state = Streams.state("th")
+
+      assert Streams.get("th", "message", "r1-m") == nil
+      assert StreamState.fetch(state, "message", "r1-m") == nil
+      assert StreamState.lookup(state, [{"message", "r1-m"}]) == %{}
+      assert Streams.read("th", &StreamState.fetch(&1, "message", "r1-m")) == nil
+    end)
+
+    Streams.forget_unrecorded()
+    assert StreamState.fetch(Streams.state("th"), "message", "r1-m")["text"] == "q1"
+  end
+
   # --- helpers ----------------------------------------------------------------
 
   # One settled run of `n` turn items with its user message, `ordinal` `i`.
