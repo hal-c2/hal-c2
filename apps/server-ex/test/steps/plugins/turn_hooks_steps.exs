@@ -373,6 +373,11 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     call(context, %{"call" => "steer", "text" => text} |> Map.merge(ids(context)))
   end
 
+  step "the plugin steers the thread with {string}, naming no turn", %{args: [text]} = context do
+    input = %{"call" => "steer", "text" => text, "threadId" => World.thread_id(context, @thread)}
+    call(context, input)
+  end
+
   step "Claude gets {string} in that turn", %{args: [text]} = context do
     assert {:ok, _} = context.reply
 

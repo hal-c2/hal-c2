@@ -391,6 +391,36 @@ defmodule HalC2.PluginsTurnHooksTest do
     refute Enum.any?(messages(thread_id), &(&1["text"] == "too late"))
   end
 
+  test "a steer that names no run is refused, steering nothing and starting no turn",
+       %{thread_id: thread_id} do
+    grant(%{"steerer" => ["threads:steer"]})
+
+    # Nothing runs: neither a turn started nor a message kept.
+    assert {:error, _} = Host.steer("steerer", thread_id, nil, "unnamed")
+
+    unnamed = %{
+      "type" => "message.dispatch",
+      "threadId" => thread_id,
+      "text" => "unnamed",
+      "attachments" => [],
+      "createdBy" => "system",
+      "creationSource" => "server",
+      "deliveryIntent" => "steer",
+      "dispatchMode" => %{"type" => "steer_active"},
+      "steerOnly" => true
+    }
+
+    assert {:error, _} = Orchestration.dispatch(Map.put(unnamed, "commandId", "c1"))
+    assert [] = statuses(thread_id)
+
+    # A turn runs: it is not steered.
+    {:ok, _} = send_message(thread_id, "m1", "wait m1")
+    [_running] = await_statuses(thread_id, ["running"])
+    assert {:error, _} = Orchestration.dispatch(Map.put(unnamed, "commandId", "c2"))
+    assert ["running"] = statuses(thread_id)
+    refute Enum.any?(messages(thread_id), &(&1["text"] == "unnamed"))
+  end
+
   test "steering a thread without threads:steer is refused", %{thread_id: thread_id} do
     grant(%{"steerer" => []})
     assert {:error, message} = Host.steer("steerer", thread_id, "run:any", "hi")

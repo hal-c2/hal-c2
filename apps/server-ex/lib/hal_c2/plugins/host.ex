@@ -231,10 +231,12 @@ defmodule HalC2.Plugins.Host do
   Steers run `run_id` of `thread_id` with `text`, as a user's steer does, and only it:
   a run that has ended, is being stopped, or whose provider cannot take a message while
   it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
-  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`.
+  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
+  also when `run_id` names no run.
   """
   def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
-    with :ok <- permit(id, "threads:steer") do
+    with :ok <- permit(id, "threads:steer"),
+         :ok <- if(is_binary(run_id), do: :ok, else: {:error, "A steer must name its run."}) do
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "commandId" => "plugin:#{id}:#{HalC2.Environment.uuid4()}",

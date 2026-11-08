@@ -153,6 +153,14 @@ Feature: Plugins that watch and shape turns
     And no turn is queued and no message kept for "Too late"
 
   @mc
+  Scenario: A plugin's steer that names no turn is refused and starts none
+    Given a plugin on turns granted "threads:steer"
+    And a Claude thread whose turn ended
+    When the plugin steers the thread with "Unnamed", naming no turn
+    Then the plugin is told the turn cannot take it
+    And no turn is queued and no message kept for "Unnamed"
+
+  @mc
   Scenario: A plugin's notice sits in the turn it is about and offers to stop it
     Given a plugin on turns granted "threads:notice"
     And a Claude thread working on a turn
