@@ -999,8 +999,25 @@ defmodule HalC2.Steps.Providers.Opencode do
   defp fail_waiting(context, error) do
     trace = context.fakes.logs["acp"]
     File.write!(trace <> ".stop", JSON.encode!(error))
+    # The fake notes its pid once the prompt is waiting; that note is the
+    # receipt this signal needs, and it can land after the run reads running.
+    await_waiting_pid(trace <> ".waiting")
     {_, 0} = System.cmd("kill", ["-USR1", File.read!(trace <> ".waiting")])
     context
+  end
+
+  defp await_waiting_pid(path, left \\ 500) do
+    cond do
+      File.exists?(path) ->
+        :ok
+
+      left <= 0 ->
+        flunk("the fake agent never noted a waiting prompt")
+
+      true ->
+        Process.sleep(10)
+        await_waiting_pid(path, left - 1)
+    end
   end
 
   defp limited(context) do
@@ -2663,7 +2680,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   step "OpenCode says its CLI version probe timed out", context do
     opencode = FakeAcp.find(context.providers, "opencode")
     assert opencode["status"] == "error"
-    assert opencode["message"] == "OpenCode CLI version probe timed out."
+    assert opencode["message"] == "OpenCode did not answer in time."
     context
   end
 
@@ -3018,14 +3035,14 @@ defmodule HalC2.Steps.Providers.Opencode do
         entry && entry["slashCommands"] not in [nil, []]
       end)
 
-    Map.put(context, :providers, providers)
-  end
-
-  step ~r|^"deploy" and "/review" are offered$|, context do
-    entry = FakeAcp.find(context.providers, "opencode")
+    entry = FakeAcp.find(providers, "opencode")
     assert Enum.map(entry["slashCommands"], & &1["name"]) == ["review"]
     assert Enum.map(entry["skills"], & &1["name"]) == ["deploy"]
+
+    # The shared "... are offered" step reads `context.slash_commands`.
     context
+    |> Map.put(:providers, providers)
+    |> Map.put(:slash_commands, entry["slashCommands"] ++ entry["skills"])
   end
 
   step "the project has the OpenCode skill \"greet\"", context do
@@ -3179,8 +3196,10 @@ defmodule HalC2.Steps.Providers.Opencode do
         "deliveryIntent" => "steer"
       })
 
-    await_fake(context, fn _log -> length(prompts(context)) >= 2 end)
+    # The fake polls for the file without reading its input, so the steer's
+    # prompt is only logged once the held turn is released.
     File.write!(Path.join(FakeAcp.fake(context).dir, "steer-done"), "")
+    await_fake(context, fn _log -> length(prompts(context)) >= 2 end)
     FakeAcp.await_run(context, "completed")
     Map.put(context, :attachment_id, id)
   end
@@ -3261,23 +3280,27 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
-  # The usage service fails its first read (the timed-out startup read) and
-  # answers after that. Keyed on the request count it serves.
+  # The usage service fails while it is down (the timed-out startup read) and
+  # answers once the scenario brings it back, at the next health check.
   defp go_timeout_once(context) do
-    {:ok, count} = Agent.start_link(fn -> 0 end)
+    {:ok, down} = Agent.start_link(fn -> true end)
 
-    go_install(
-      context,
-      %{"opencode-go" => %{"type" => "api", "key" => "go-key"}},
-      fn _conn ->
-        if Agent.get_and_update(count, &{&1, &1 + 1}) == 0,
-          do: {503, %{"error" => "timed out"}},
-          else: {200, go_windows()}
-      end
-    )
+    context =
+      go_install(
+        context,
+        %{"opencode-go" => %{"type" => "api", "key" => "go-key"}},
+        fn _conn ->
+          if Agent.get(down, & &1),
+            do: {503, %{"error" => "timed out"}},
+            else: {200, go_windows()}
+        end
+      )
+
+    Map.put(context, :go_down, down)
   end
 
   step "the next health check comes round", context do
+    Agent.update(context.go_down, fn _ -> false end)
     before = length(HalC2.Test.FakeHttp.requests(context.usage_log))
     refresh_limits()
     {providers, context} = FakeAcp.open_config(context)
@@ -3302,7 +3325,7 @@ defmodule HalC2.Steps.Providers.Opencode do
         "opencode" => %{"type" => "api", "key" => "console-key"}
       },
       fn conn ->
-        if Plug.Conn.get_req_header(conn, "authorization") == ["Bearer [REDACTED]"],
+        if Plug.Conn.get_req_header(conn, "authorization") == ["Bearer console-key"],
           do: {200, go_windows()},
           else: {401, %{"error" => "expired"}}
       end
@@ -3321,8 +3344,8 @@ defmodule HalC2.Steps.Providers.Opencode do
     auths =
       Enum.map(HalC2.Test.FakeHttp.requests(context.usage_log), & &1["authorization"])
 
-    assert "Bearer [REDACTED]" in auths
-    assert List.last(auths) == "Bearer [REDACTED]"
+    assert "Bearer console-key" in auths
+    assert List.last(auths) == "Bearer console-key"
     context
   end
 
@@ -3601,7 +3624,8 @@ defmodule HalC2.Steps.Providers.Opencode do
         })
       end)
 
-    World.await_row(World.thread_id(context, @thread), &(&1["latestRunStatus"] == "interrupted"))
+    # The interrupt is on its way; only now may the session finish opening,
+    # so the runtime meets the stop before it could send the prompt.
     File.write!(Path.join(FakeAcp.fake(context).dir, "open-session"), "")
     Task.await(context.send_task, 10_000)
     Task.await(stop, 10_000)
@@ -3772,11 +3796,10 @@ defmodule HalC2.Steps.Providers.Opencode do
     assert length(runtime_requests(context)) == 1
 
     answers =
-      for %{"answer" => answer} <- FakeAcp.log(context),
-          answer["selected"],
-          do: answer["selected"]["outcome"]["optionId"]
+      for %{"result" => %{"outcome" => %{"optionId" => option}}} <- FakeAcp.answers(context),
+          do: option
 
-    assert ["accept", "reject"] = answers
+    assert ["once", "reject"] = answers
     context
   end
 
@@ -3853,7 +3876,8 @@ defmodule HalC2.Steps.Providers.Opencode do
     }
 
     context
-    |> FakeAcp.configure(&Map.update(&1, "turns", [], fn turns -> [turn | turns] end))
+    |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+    |> FakeAcp.thread(@thread, "approval-required")
     |> FakeAcp.send_message("let the subagent edit")
     |> Map.put(:thread, @thread)
   end
@@ -3863,7 +3887,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step "the approval reaches the thread that started the subagent", context do
-    assert context.asked["requestKind"] == "file-change"
+    assert context.asked["kind"] == "file-change"
     FakeAcp.respond(context, context.asked["id"], %{"decision" => "accept"})
     FakeAcp.await_runs(context, 1)
     context
@@ -3974,44 +3998,57 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   step "an OpenCode turn is running with the agent {string} and the {string} variant in plan mode",
        %{args: [_agent, _variant]} = context do
+    # HAL-C2's tools (and with them its instructions) reach the session only
+    # while the MCP server runs.
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
+
     turn = %{
       "match" => "plan the work",
       "steps" => [%{"waitFile" => "plan-done"}, %{"text" => " Planned."}]
     }
 
     context =
-      FakeAcp.install(context, "opencode", %{
-        "turns" => [turn | FakeAcp.turns()],
-        "configOptions" =>
-          with_options({@connected, ~w(build plan)})["configOptions"] ++
-            [
-              %{
-                "id" => "mode",
-                "name" => "Mode",
-                "type" => "enum",
-                "currentValue" => "build",
-                "options" =>
-                  Enum.map(
-                    ~w(build plan reviewer),
-                    &%{"value" => &1, "name" => &1}
-                  )
-              },
-              %{
-                "id" => "effort",
-                "name" => "Effort",
-                "type" => "enum",
-                "currentValue" => "low",
-                "options" => Enum.map(~w(low high), &%{"value" => &1, "name" => &1})
-              }
-            ]
-      })
+      FakeAcp.install(
+        context,
+        "opencode",
+        %{
+          "turns" => [turn | FakeAcp.turns()],
+          "capabilities" => %{"mcpCapabilities" => %{"http" => true}},
+          "configOptions" =>
+            models(@connected)["configOptions"] ++
+              [
+                %{
+                  "id" => "mode",
+                  "name" => "Mode",
+                  "type" => "enum",
+                  "currentValue" => "build",
+                  "options" =>
+                    Enum.map(
+                      ~w(build plan reviewer),
+                      &%{"value" => &1, "name" => &1}
+                    )
+                },
+                %{
+                  "id" => "effort",
+                  "name" => "Effort",
+                  "type" => "enum",
+                  "currentValue" => "low",
+                  "options" => Enum.map(~w(low high), &%{"value" => &1, "name" => &1})
+                }
+              ]
+        },
+        enabled: true
+      )
 
     context =
-      FakeAcp.thread(context, @thread, %{
-        full_access: true,
-        selection: %{
+      FakeAcp.thread(context, @thread, "full-access", %{
+        "modelSelection" => %{
+          "instanceId" => "opencode",
           "model" => "fake/one",
-          "options" => %{"agent" => "reviewer", "variant" => "high"}
+          "options" => [
+            %{"id" => "agent", "value" => "reviewer"},
+            %{"id" => "variant", "value" => "high"}
+          ]
         }
       })
 
@@ -4057,49 +4094,75 @@ defmodule HalC2.Steps.Providers.Opencode do
   # --- a blank reasoning label --------------------------------------------------------------------------------
 
   step "OpenCode reports a default variant its reasoning menu does not list", context do
-    options =
-      with_options({@connected, ~w(build plan)})["configOptions"] ++
-        [
-          %{
-            "id" => "model",
-            "name" => "Model",
-            "type" => "enum",
-            "currentValue" => "acme/thing-1",
-            "options" => [
-              %{
-                "value" => "acme/thing-1",
-                "name" => "Acme/Thing 1",
-                "_meta" => %{"opencode" => %{"variants" => %{"low" => %{}, "high" => %{}}}}
-              }
-            ]
-          }
-        ]
+    # One model from a provider HAL-C2 has no known default variant for: its
+    # menu lists low and high, and neither is the default HAL-C2 would pick.
+    options = [
+      %{
+        "id" => "model",
+        "name" => "Model",
+        "type" => "select",
+        "currentValue" => "acme/thing-1",
+        "options" => [%{"value" => "acme/thing-1", "name" => "Acme/Thing 1"}]
+      },
+      %{
+        "id" => "effort",
+        "name" => "Effort",
+        "type" => "select",
+        "currentValue" => "default",
+        "options" => for(v <- ~w(default low high), do: %{"value" => v, "name" => v})
+      },
+      %{
+        "id" => "mode",
+        "name" => "Mode",
+        "type" => "select",
+        "currentValue" => "build",
+        "options" => for(v <- ~w(build plan), do: %{"value" => v, "name" => v})
+      }
+    ]
 
     FakeAcp.install(context, "opencode", %{"configOptions" => options}, enabled: true)
   end
 
-  step "the user has saved no explicit reasoning choice", context do
+  step "no explicit choice is saved", context do
     context
   end
 
-  step "the reasoning label reads \"Default\"", context do
-    entry = FakeAcp.probe("opencode")
-    assert [%{"modelOptions" => [variant]}] = entry["models"]
+  step "the reasoning label reads Default rather than blank", context do
+    {providers, context} =
+      FakeAcp.await_providers(context, fn providers ->
+        match?(%{"models" => [_ | _]}, FakeAcp.find(providers, "opencode"))
+      end)
+
+    model =
+      Enum.find(FakeAcp.find(providers, "opencode")["models"], &(&1["slug"] == "acme/thing-1"))
+
+    variant =
+      Enum.find(model["capabilities"]["optionDescriptors"], &(&1["id"] == "variant"))
 
     assert variant["currentValue"] == "default"
-    assert variant["options"] |> hd() |> then(& &1["label"]) == "Default"
+
+    assert [%{"id" => "default", "label" => "Default"}] =
+             Enum.filter(variant["options"], & &1["isDefault"])
+
     context
   end
 
   # --- HAL-C2's tools however long the thread's id ----------------------------------------------------------------
 
-  defp session_new_params(context), do: FakeAcp.received(context, "session/new")
+  # A session the agent no longer has is loaded again rather than made new;
+  # either way it is (re)registered with its MCP servers.
+  defp session_new_params(context),
+    do: Enum.flat_map(~w(session/new session/load session/resume), &FakeAcp.received(context, &1))
 
   step "a delegated child thread whose id would make the server's name longer than OpenCode allows",
        context do
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
+
     context
     |> FakeAcp.install("opencode", %{}, enabled: true)
-    |> FakeAcp.thread(@thread)
+    |> FakeAcp.thread(@thread, "full-access", %{
+      "threadId" => "th-delegated-child-#{String.duplicate("a-very-long-thread-", 12)}ends"
+    })
     |> Map.put(:thread, @thread)
   end
 
@@ -4140,6 +4203,8 @@ defmodule HalC2.Steps.Providers.Opencode do
   # --- tools after the project sat idle --------------------------------------------------------------------------------
 
   step "a thread on OpenCode 2 whose project OpenCode evicted while it sat idle", context do
+    HalC2.Test.Mc.ensure(HalC2.Mcp)
+
     context =
       context
       |> FakeAcp.install(
@@ -4159,9 +4224,8 @@ defmodule HalC2.Steps.Providers.Opencode do
     %{sub: sub} = :sys.get_state(conn)
     {_, 0} = System.cmd("kill", ["-9", "#{HalC2.Subprocess.os_pid(sub)}"])
 
-    World.await_stream(World.thread_id(context, @thread), fn state ->
-      Enum.find(StreamState.list(state, "provider-session"), &(&1["status"] == "closed"))
-    end)
+    # No stream state names the eviction: the next turn finds the agent gone
+    # and must open (and register the tools on) a fresh session.
 
     Map.put(context, :thread, @thread)
   end
@@ -4334,7 +4398,11 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   step "OpenCode writes a commit message and it succeeds", context do
     before = length(FakeAcp.received(context, "session/new"))
-    turn = %{"match" => "concise git commit messages"}
+
+    turn = %{
+      "match" => "concise git commit messages",
+      "steps" => [%{"text" => ~s({"subject": "Fix the parser", "body": ""})}]
+    }
 
     context
     |> generate_commit(turn)

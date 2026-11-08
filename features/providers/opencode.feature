@@ -180,7 +180,7 @@ Feature: OpenCode
 
   # Upstream #28294: each OpenCode 1.x title, branch name or commit message left a "T3 Code"
   # session behind in the user's OpenCode history.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: An OpenCode text generation leaves no session behind
     Given OpenCode is picked for text generation
     When OpenCode writes a commit message and <ends>
@@ -350,7 +350,7 @@ Feature: OpenCode
   # from full access to approval required was never asked. #26302 does the same for subagents,
   # which keep their own limits such as not delegating further.
   # Upstream #26302: subagent sessions follow the thread's access mode too, keeping their own limits.
-  @backlog @priority-high
+  @priority-high
   Scenario Outline: Changing the access mode of an OpenCode thread changes what its sessions are asked
     Given the thread started OpenCode in full access and <session> exists
     When the user changes the thread to approval required and sends a message
@@ -390,7 +390,7 @@ Feature: OpenCode
 
   # Upstream #23270: a steer to OpenCode 1.x sent only the text, so the rest of the turn ran with
   # OpenCode's default agent, no reasoning variant and none of HAL-C2's instructions.
-  @backlog @priority-high
+  @priority-high
   Scenario: A steer keeps the OpenCode turn's agent, variant and instructions
     Given an OpenCode turn is running with the agent "reviewer" and the "high" variant in plan mode
     When the user steers the OpenCode turn with "check the tests too"
@@ -486,7 +486,7 @@ Feature: OpenCode
 
   # Upstream #27757: one timed-out usage read at startup left Go limits unavailable until restart,
   # though OpenCode itself was ready and signed in.
-  @backlog @priority-low
+  @priority-low
   Scenario: OpenCode Go limits come back after a usage read times out at startup
     Given OpenCode is signed in to OpenCode Go and runs locally
     And reading its Go usage timed out when OpenCode started
@@ -504,7 +504,7 @@ Feature: OpenCode
     And the user is not told "OpenCode Go could not read usage."
 
   # Upstream #21007: OpenCode 2 running Go through a Console API key showed "could not read usage".
-  @backlog @priority-low
+  @priority-low
   Scenario: OpenCode Go limits are read through a connected Console API key
     Given a local OpenCode runs Go through a connected Console API key
     And its separate OpenCode Go key has expired
@@ -731,14 +731,12 @@ Feature: OpenCode
     Then it is allowed
     And work in any other folder outside the project is denied
 
-  @backlog
   Scenario: An OpenCode subagent works under the thread's access mode
     Given the thread runs OpenCode in approval required
     When an OpenCode subagent wants to edit a file
     Then the user is asked for approval in the parent thread
     And the subagent keeps the limits its own agent adds
 
-  @backlog
   Scenario: A request from a subagent OpenCode has not announced yet is not lost
     Given an OpenCode subagent asks for approval before OpenCode says which run it belongs to
     When OpenCode names the subagent's parent shortly after
@@ -868,7 +866,6 @@ Feature: OpenCode
 
   # Upstream #16145: OpenCode turns and steers got saved images only as paths; a local OpenCode
   # now receives them as files, with the path kept in the prompt.
-  @backlog
   Scenario Outline: An image sent to a local OpenCode reaches the model as an image
     When the user <sends> with an attached image
     Then OpenCode receives the image as a file
@@ -905,7 +902,7 @@ Feature: OpenCode
     When OpenCode reports an error without saying which session it belongs to
     Then both turns fail with that error
 
-  @backlog @priority-low
+  @priority-low
   Scenario: An OpenCode failure without details gets a plain message
     When OpenCode reports that a session failed without saying why
     Then the turn fails saying "OpenCode session failed without an error payload."
@@ -1025,7 +1022,6 @@ Feature: OpenCode
       | is OpenCode's own install under the user's home   | OpenCode's own upgrade command is run     |
       | was installed with npm                            | the opencode-ai package is updated by npm |
 
-  @backlog
   Scenario: OpenCode's skills and commands are read for the project being worked in
     Given the project has the OpenCode skill "deploy" and the command "/review"
     When the user opens the skill and command lists in an OpenCode thread
@@ -1129,7 +1125,7 @@ Feature: OpenCode
     And the list is finished
     And a list whose every item was cancelled is finished too
 
-  @backlog @priority-low
+  @priority-low
   Scenario: An OpenCode to-do without text is numbered
     When OpenCode's second to-do has no text
     Then it reads "Todo 2"
@@ -1225,13 +1221,13 @@ Feature: OpenCode
     When the MC starts an OpenCode server
     Then the MC uses http://127.0.0.1:4096 and does not time out waiting for it
 
-  @backlog @shared @priority-low
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A blank reasoning label shows Default
     Given OpenCode reports a default variant its reasoning menu does not list
     When no explicit choice is saved
     Then the reasoning label reads Default rather than blank
 
-  @backlog @mc @plugin-opencode @priority-low
+  @mc @plugin-opencode @priority-low
   Scenario: A thread's HAL-C2 tools reach OpenCode however long the thread id is
     Given a delegated child thread whose id would make the server's name longer than OpenCode allows
     When an OpenCode turn starts in it
@@ -1239,7 +1235,7 @@ Feature: OpenCode
     And the thread can use the HAL-C2 tools
 
   # Upstream #16796: each OpenCode 2 turn adds the HAL-C2 tool server again, since OpenCode drops it with an idle project.
-  @backlog @priority-low
+  @priority-low
   Scenario: A thread keeps its HAL-C2 tools after OpenCode 2 forgets an idle project
     Given a thread on OpenCode 2 whose project OpenCode evicted while it sat idle
     When the user sends the thread another message
