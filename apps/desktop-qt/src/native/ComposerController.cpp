@@ -2551,6 +2551,11 @@ bool ComposerController::addReviewComment(const QVariantMap& comment) {
   return true;
 }
 
+bool ComposerController::holdsFiles(const QString& target) const {
+  const QList<Attachment> attachments = m_drafts.value(target).attachments;
+  return std::any_of(attachments.cbegin(), attachments.cend(), [](const Attachment& a) { return a.file; });
+}
+
 bool ComposerController::attachmentsPending(const QString& target) const {
   for (const Attachment& attachment : m_drafts.value(target).attachments) {
     if (attachment.upload == QLatin1String("uploading")) return true;
@@ -3354,6 +3359,13 @@ void ComposerController::publish() {
   if (composerState != m_publishedComposer) {
     m_publishedComposer = composerState;
     m_bridge->publish(QStringLiteral("composer"), composerState);
+    // A file ties the draft to its machine, so the machine picker stops
+    // reading "Auto balance" (WorkspaceController::autoBalanced).
+    const bool files = holdsFiles(target());
+    if (files != m_heldFiles) {
+      m_heldFiles = files;
+      if (auto* workspace = NativeShell::of(this)->controller<WorkspaceController>()) workspace->publish();
+    }
   }
   const QVariantMap picker = pickerState();
   if (picker != m_publishedPicker) {

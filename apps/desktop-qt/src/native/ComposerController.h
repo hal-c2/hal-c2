@@ -207,6 +207,8 @@ public:
   // Whether `target`'s draft has files still on their way to the MC, or a
   // send in flight that carries the draft's attachments.
   bool attachmentsPending(const QString& target) const;
+  // Whether `target`'s draft has a file attached: it went to the draft's machine.
+  bool holdsFiles(const QString& target) const;
   // The draft key of a Space page; never a thread key (env:id) or a draft id (a uuid).
   static QString pageKey(const QString& pageId) { return QStringLiteral("page#") + pageId; }
   // The draft key of a Space's images prompt.
@@ -604,6 +606,8 @@ private:
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
   bool m_previewing = false;
+  // holdsFiles() of the target, as last published.
+  bool m_heldFiles = false;
   // What every window's composer keeps.
   struct Kept {
     QHash<QString, Draft> drafts;

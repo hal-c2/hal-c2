@@ -26,6 +26,8 @@
 #   docs/user/permission-modes.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (model, effort, permissions, Build and Plan, context strip)
 #   apps/web/src/components/BranchToolbar.logic.ts (Run on: every connected machine's projects)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp (machine choice, Auto balance, workspace label)
+#   apps/desktop-qt/tests/native/features/ComposerMachineSteps.cpp
 #   apps/tui/src/models.ts (flattened model list, unavailable providers skipped)
 #   apps/tui/src/components/ChatView.tsx (plan toggle, access, model and effort shortcuts)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.runtime-mode.set, thread.interaction-mode.set, thread.model-selection.set)
@@ -289,7 +291,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #27114: at the default chat width a project on several machines showed only the
   # machine's name, with the checkout or worktree choice hidden in its menu.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: At the default chat width the machine, workspace and branch each have their own control
     Given the project can run on more than one machine
     When the user starts a new thread at the default chat width
@@ -298,7 +300,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #21404: the phone could inherit new-worktree mode for a plain folder and then
   # refuse to start on a branch that cannot exist.
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A project that is not a Git repository starts its thread in its folder
     Given the project is a plain folder with no Git repository
     And the last thread was started in a new worktree, or a saved draft asked for one
@@ -320,7 +322,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     Then the user is asked to select a base branch
 
   # Upstream #13590: a thread whose worktree is still being checked out is in worktree mode.
-  @desktop @backlog
+  @desktop
   Scenario: A thread still preparing its worktree says "New worktree" until checkout finishes
     Given the user started a thread in a new worktree
     And the worktree is still being checked out
@@ -346,38 +348,53 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
 
   # Upstream #22242: reverted #15636, which listed every checkout as its own row; checkouts of
   # one repository are grouped as one project again.
-  @backlog @desktop
+  @desktop
   Scenario: Checkouts of one repository are one project in the new-thread picker
     Given "shop" has checkouts on "laptop" and "server"
     When the user opens the project picker for a new thread
     Then "shop" is listed once
     And both machines are offered under it
 
-  @backlog @desktop
+  # "Auto balance" is the machine choice of a draft no machine is tied to while balancing is on:
+  # the MC places it when its first message is sent (settings/load-balancing.feature).
+  @desktop
   Scenario: The user lets a new thread's machine be picked automatically
     Given the project exists on two connected machines and load balancing is on
     When the user chooses "Auto balance" as the machine a new thread runs on
     Then the thread starts on the machine with the most room when the first message is sent
 
-  @backlog @desktop @priority-low
+  # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
+  # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
+  # the composer has no checking, failing or "no room" state to show before the send.
+  # Carrying this means asking the MC while the draft is open and holding the send on it.
+  @backlog @desktop @priority-low @blocked
   Scenario: Auto balance says when it cannot check the machines
     Given the user chose "Auto balance" for a new thread
     When checking the machines' free resources fails
     Then the picker shows "Auto balance unavailable"
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The user takes a new thread off Auto balance
     Given the user chose "Auto balance" for a new thread
     When the user chooses the machine "laptop" instead
+    And the user sends the first message
     Then the thread starts on "laptop"
 
-  @backlog @desktop @priority-low
+  # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
+  # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
+  # the composer has no checking, failing or "no room" state to show before the send.
+  # Carrying this means asking the MC while the draft is open and holding the send on it.
+  @backlog @desktop @priority-low @blocked
   Scenario: Auto balance says it is checking until a machine is picked
     Given the user chose "Auto balance" for a new thread
     When the machines' free resources are still being checked
     Then the picker shows "Checking machines…"
 
-  @backlog @desktop
+  # Waits for a maintainer decision: HAL-C2's MC places a balanced thread when its first
+  # message is sent (settings/load-balancing.feature, "The MC chooses, not the client"), so
+  # the composer has no checking, failing or "no room" state to show before the send.
+  # Carrying this means asking the MC while the draft is open and holding the send on it.
+  @backlog @desktop @blocked
   Scenario Outline: A first message waits for Auto balance to pick a machine
     Given the user chose "Auto balance" for a new thread
     And <situation>
@@ -390,14 +407,14 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | the machines are still being checked    | Checking machine resources   |
       | no machine has room for another thread  | Choose a machine to continue |
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: Auto balance is refused while the draft has attachments
     Given the draft of a new thread has an attached file
     When the user chooses "Auto balance" as the machine the thread runs on
     Then the user is told "Keep attachments on this machine" and to remove them first
     And the thread still runs on the machine it was on
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: A machine is named the way its owner would know it
     Given the machine is <machine> and its own name is "<own>" and the user named it "<saved>"
     When the user opens the choice of machine for a new thread
@@ -411,7 +428,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | another one         | server   | Rack      | server      |
       | another one         |          | Rack      | Rack        |
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The only connected machine is still shown when it is a remote one
     Given the project runs on a remote machine "server" and no other machine is connected
     When the user looks at a new thread's composer
@@ -419,20 +436,22 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     And it cannot be changed
 
   # Upstream #19900: a started thread offered other machines, and picking one did nothing.
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: A started thread names its machine without offering others
     Given a thread has started on the machine "server" in a project on several machines
     When the user looks at the thread's composer
     Then the machine "server" is shown
     And no other machine is offered, by the menu or by the machine shortcut
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: The machine is left out when it is the only one and it is this one
     Given the project runs on the machine being used and no other machine is connected
     When the user looks at a new thread's composer
     Then no machine is shown
 
-  @backlog @desktop @priority-low
+  # Waits for a maintainer decision with the Auto balance scenarios above, and for each
+  # machine's update status to reach the composer.
+  @backlog @desktop @priority-low @blocked
   Scenario Outline: Updates for every balanced machine are gathered in one notice
     Given the user chose "Auto balance" for a new thread
     And <state>
