@@ -37,7 +37,11 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     again at once; one it still has, or may have while its plugin restarts, shows
     where it is now;
   - paused at the usage limit, this machine shares no queued review, and the user's
-    ask that ends the pause still leaves a commit the laptop claimed to the laptop.
+    ask that ends the pause still leaves a commit the laptop claimed to the laptop;
+  - a review the look found starts only while the repository's daily limit has room,
+    counting the reviews this machine started and those the connected laptop tells it
+    started in the last day (kept once heard, cut off or not); one over it waits as
+    ready, limited, and one the user asked for starts anyway and counts.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -60,6 +64,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # yet started (soft), or started on a commit (hard).
   @rows [{"queued", false}, {"running", false}, {"running", true}, {"published", true}]
   @settle_ms 15_000
+  # The most reviews a day of the repository; no author limit.
+  @per_repository 5
   @paused "code-review reports: Reviews are paused: the agent hit its usage limit, which resets at 2999-01-01T00:00:00Z. Queued reviews wait instead of failing one by one."
 
   setup_all do
@@ -172,7 +178,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # it has; `rows`: key → `{head, status,
   # claimed, held}` it shares, `held` the status of a claim of the other head or nil.
   # `held` (of the model): runs held at the fetch. `paused`: stopped at the agent's
-  # usage limit, until the user asks for a review.
+  # usage limit, until the user asks for a review. `starts`: the starts this machine
+  # counted toward the review limits; `peer`: the laptop's, `{id, whether within the
+  # last day}`; `merged`: the ids of those this machine took in, which it keeps.
   #
   # The plugin reviews every new head of both pull requests on its own, one at a time,
   # and keeps reviews for the user to publish. Its first look finds both at head 1.
@@ -190,7 +198,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       held: [],
       paused: false,
       seq: 0,
-      crashes: 0
+      crashes: 0,
+      starts: 0,
+      peer: [],
+      merged: MapSet.new()
     })
   end
 
@@ -276,6 +287,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         {3, {:call, __MODULE__, :push, [key]}},
         {if(waiting == [], do: 2, else: 6), {:call, __MODULE__, :publish, [published]}},
         {2, {:call, __MODULE__, :hold, [boolean()]}},
+        {1, {:call, __MODULE__, :peer_started, [frequency([{3, true}, {1, false}])]}},
         {if(m.restarting, do: 4, else: 1), {:call, __MODULE__, :restarting, [not m.restarting]}},
         if(m.laptop,
           do: {if(left?, do: 6, else: 1), {:call, __MODULE__, :disconnect, []}},
@@ -314,6 +326,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       checkouts: checkouts(m),
       orphans: [],
       posts: m.posts,
+      starts: m.starts + MapSet.size(m.merged),
       problems: if(m.paused, do: [@paused], else: [])
     }
 
@@ -339,7 +352,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
     case m.reviews[key] do
       %{status: s} when s in [:queued, :running] -> {pump(m), :ok}
-      _ -> {m |> queue(key) |> pump(), :ok}
+      _ -> {m |> queue(key, true) |> pump(), :ok}
     end
   end
 
@@ -402,7 +415,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # The run waits in the queue again, and nothing starts until the user asks.
   defp step(m, {:call, _, :limited, [{key, k}]}) do
     case m.reviews[key] do
-      %{run: ^k, status: :running} -> {%{queue(m, key) | paused: true}, nil}
+      %{run: ^k, status: :running} -> {%{queue(m, key, m.reviews[key].asked) | paused: true}, nil}
       _ -> {m, nil}
     end
   end
@@ -430,6 +443,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         {m, :error}
     end
   end
+
+  # The laptop started a review, today or (`recent` false) over a day ago.
+  defp step(m, {:call, _, :peer_started, [recent]}),
+    do: {%{m | peer: m.peer ++ [{"laptop-#{length(m.peer) + 1}", recent}]}, :ok}
 
   defp step(m, {:call, _, :on_github, [key, head, mine]}),
     do: {%{m | github: m.github ++ [{key, head, mine}]}, :ok}
@@ -507,13 +524,17 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       elsewhere: nil,
       publish_error: false,
       seq: nil,
-      held: nil
+      held: nil,
+      # Whether the user asked for its run, which the review limits count but never
+      # hold back, and whether a limit held its start back.
+      asked: false,
+      limited: false
     }
   end
 
   # Queued for a head other than the one it reviewed, a review still holds that commit,
   # and what became of it.
-  defp queue(m, key) do
+  defp queue(m, key, asked) do
     r = m.reviews[key]
 
     held =
@@ -524,6 +545,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     review = %{
       r
       | status: :queued,
+        asked: asked,
+        limited: false,
         held: held,
         seq: m.seq + 1,
         claimed: false,
@@ -559,8 +582,12 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         reviewed == head ->
           put_review(m, key, seen)
 
+        # A review a limit held back today waits for the user's ask.
+        seen.limited ->
+          put_review(m, key, seen)
+
         true ->
-          m |> put_review(key, seen) |> queue(key)
+          m |> put_review(key, seen) |> queue(key, false)
       end
     end)
     |> pump()
@@ -580,20 +607,40 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
     case {running, queued} do
       {false, [{key, r} | _]} ->
-        runs = (m.runs[key] || []) ++ [false]
+        # The start is counted with the laptop's of the last day, if it can say them;
+        # one the watch would start over the limit goes back to ready. It had a thread id
+        # of its own, which never launches, and the checkout of the run before stays.
+        m =
+          if tells?(m),
+            do: %{
+              m
+              | merged: MapSet.union(m.merged, MapSet.new(for {id, true} <- m.peer, do: id))
+            },
+            else: m
 
-        m = %{
-          put_review(m, key, %{r | status: :running, run: length(runs)})
-          | runs: Map.put(m.runs, key, runs)
-        }
-
-        if m.hold,
-          do: %{m | held: m.held ++ [{key, length(runs)}]},
-          else: resolve(m, key, length(runs))
+        if not r.asked and m.starts + MapSet.size(m.merged) >= @per_repository,
+          do:
+            %{m | runs: Map.update(m.runs, key, [false], &(&1 ++ [false]))}
+            |> put_review(key, %{r | status: :ready, limited: true})
+            |> pump(),
+          else: launch(%{m | starts: m.starts + 1}, key, r)
 
       _ ->
         m
     end
+  end
+
+  defp launch(m, key, r) do
+    runs = (m.runs[key] || []) ++ [false]
+
+    m = %{
+      put_review(m, key, %{r | status: :running, run: length(runs)})
+      | runs: Map.put(m.runs, key, runs)
+    }
+
+    if m.hold,
+      do: %{m | held: m.held ++ [{key, length(runs)}]},
+      else: resolve(m, key, length(runs))
   end
 
   # Run `k` of `key` checks out the head there is now and claims it, unless the
@@ -664,7 +711,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end)
     |> Enum.map(fn {key, r} ->
       run = if r.status in [:queued, :ready], do: nil, else: r.run
-      {key, r.status, run, r.seen, r.reviewed, r.elsewhere, r.publish_error}
+      {key, r.status, run, r.seen, r.reviewed, r.elsewhere, r.publish_error, r.limited}
     end)
   end
 
@@ -715,6 +762,22 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
     :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_rows, rows])
     tell()
+    observe(:ok)
+  end
+
+  # The laptop shares a review it started an hour ago, or (`recent` false) two days ago.
+  def peer_started(recent) do
+    starts = :peer.call(laptop().pid, :persistent_term, :get, [:cr_peer_starts, []])
+    hours = if recent, do: 1, else: 48
+
+    row = %{
+      "id" => "laptop-#{length(starts) + 1}",
+      "at" => DateTime.utc_now() |> DateTime.add(-hours * 3600, :second) |> DateTime.to_iso8601(),
+      "repository" => "acme/api",
+      "author" => "octocat"
+    }
+
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_starts, starts ++ [row]])
     observe(:ok)
   end
 
@@ -929,6 +992,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       checkouts: length(checkout_dirs()),
       orphans: orphans(),
       posts: posts(),
+      starts: length(apply(@server, :starts, [])),
       problems: Process.put(:cr_problems, []) |> Enum.reverse()
     }
   end
@@ -952,7 +1016,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       end
 
     {key, @statuses[r["status"]], run(key, r["threadId"]), head(r["headSha"]),
-     head(r["reviewedSha"]), elsewhere, r["publishError"] != nil}
+     head(r["reviewedSha"]), elsewhere, r["publishError"] != nil, r["limited"] != nil}
   end
 
   # The run a thread id is: its place among the thread ids seen for the review, in
@@ -1215,6 +1279,12 @@ defmodule HalC2.CodeReviewClaimsPropTest do
             false -> maps:with(Keys, persistent_term:get(cr_peer_rows, \#{}))
         end,
         {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
+    peer(<<"code-review">>, starts, []) ->
+        Result = case persistent_term:get(cr_peer_restarting, false) of
+            true -> restarting;
+            false -> persistent_term:get(cr_peer_starts, [])
+        end,
+        {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
     peer(_, _, _) ->
         none.
     """
@@ -1274,6 +1344,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     %{pid: peer, node: node} = laptop()
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_rows, %{}])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_restarting, false])
+    :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_starts, []])
     :net_kernel.monitor_nodes(true)
     if node not in Node.list(), do: true = Node.connect(node)
     :global.sync()
@@ -1341,9 +1412,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           "concurrency" => 1,
           "reviewNewPushes" => true,
           "readReviewMd" => false,
-          # The model counts no reviews a day.
           "reviewsPerAuthorPerDay" => 0,
-          "reviewsPerRepositoryPerDay" => 0
+          "reviewsPerRepositoryPerDay" => @per_repository
         }
       })
 
