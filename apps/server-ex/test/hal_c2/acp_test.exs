@@ -147,8 +147,8 @@ defmodule HalC2.AcpTest do
              "run /deploy now"
   end
 
-  test "Pi is offered only where its binary is installed" do
-    {:ok, _} =
+  test "an enabled Pi whose binary is missing stays listed as unavailable" do
+    {:ok, version} =
       HalC2.Settings.put(
         %{
           "providerInstances" => %{
@@ -163,6 +163,27 @@ defmodule HalC2.AcpTest do
       )
 
     assert HalC2.Acp.agent?("pi")
+
+    # An enabled Pi stays listed so its health load can say it is missing
+    # (pi.feature health states), as an enabled Muse does; a Pi nobody
+    # enabled is not offered at all (pi.feature "only offered when installed").
+    assert %{"installed" => false, "status" => "error", "availability" => "unavailable"} =
+             HalC2.Acp.entry("pi")
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "pi" => %{
+              "driver" => "pi",
+              "enabled" => false,
+              "config" => %{"binaryPath" => "/nope/pi"}
+            }
+          }
+        },
+        version
+      )
+
     assert HalC2.Acp.entry("pi") == nil
   end
 

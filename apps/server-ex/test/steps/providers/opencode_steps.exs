@@ -1315,8 +1315,14 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   step ~r/^the user is asked to approve (?<kind>a file change|a file read|a command)$/,
        %{args: [kind]} = context do
-    expected = Map.fetch!(@kinds, kind)
-    assert Enum.map(approvals(context), & &1["kind"]) == List.duplicate(expected, context.asks)
+    if context[:provider] == "pi" do
+      request = FakeAcp.await_request(context)
+      assert request["kind"] == if(kind == "a file change", do: "file-change", else: "command")
+    else
+      expected = Map.fetch!(@kinds, kind)
+      assert Enum.map(approvals(context), & &1["kind"]) == List.duplicate(expected, context.asks)
+    end
+
     context
   end
 

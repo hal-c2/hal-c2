@@ -34,6 +34,10 @@ const QStringList kDefaultGlobs{
     QStringLiteral("timeline/scrolling-and-links.feature:A long thread opens*"),
     QStringLiteral("timeline/scrolling-and-links.feature:Earlier turns load*"),
     QStringLiteral("timeline/scrolling-and-links.feature:A thread that does not fill*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:The view follows new output*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:The end of the thread holds still*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:Scrolling away stops the view*"),
+    QStringLiteral("timeline/scrolling-and-links.feature:The user returns to the end*"),
     QStringLiteral("connections/local-cache.feature"),
     QStringLiteral("timeline/scrolling-and-links.feature:The user cites part of a reply*"),
     QStringLiteral("navigation/environment-themes.feature"),
@@ -106,6 +110,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:Send stands out*"),
     QStringLiteral("composer/queue-and-steer.feature:A shortcut bound to stop*"),
     QStringLiteral("composer/queue-and-steer.feature:Queued messages are listed*"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message that quotes the agent*"),
     QStringLiteral("composer/queue-and-steer.feature:What the MC queued for the agent itself*"),
     QStringLiteral("composer/queue-and-steer.feature:Removing a queued message cancels its run*"),
     QStringLiteral("composer/queue-and-steer.feature:A removal the MC refuses*"),
@@ -115,9 +120,25 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/queue-and-steer.feature:Saving an edited queued message*"),
     QStringLiteral("composer/queue-and-steer.feature:An edit the MC refuses*"),
     QStringLiteral("composer/queue-and-steer.feature:An edit whose message starts running*"),
-    QStringLiteral("composer/queue-and-steer.feature:Leaving the thread ends the edit"),
+    QStringLiteral("composer/queue-and-steer.feature:Leaving the thread keeps the edit"),
+    QStringLiteral("composer/queue-and-steer.feature:A save that finishes after a newer edit began*"),
+    QStringLiteral("composer/queue-and-steer.feature:An edit whose message starts while its thread is closed*"),
+    QStringLiteral("composer/queue-and-steer.feature:Deleting a thread ends its queued edit"),
+    QStringLiteral("composer/queue-and-steer.feature:An edit open when a question arrives*"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message's attachments are listed*"),
     QStringLiteral("composer/queue-and-steer.feature:Editing a queued message can drop its attachments"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message offers to send it now*"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message on a stopped thread*"),
+    QStringLiteral("composer/queue-and-steer.feature:One queue action at a time"),
+    QStringLiteral("composer/queue-and-steer.feature:The steer shortcut sends the first queued message*"),
+    QStringLiteral("composer/queue-and-steer.feature:Sending with Mod+Enter during a turn*"),
+    QStringLiteral("composer/queue-and-steer.feature:An unchanged edit whose message starts running closes quietly"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message is listed before the MC confirms it"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message cannot be edited while a question is open"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message being edited is marked*"),
+    QStringLiteral("composer/queue-and-steer.feature:A second save of a queued message*"),
+    QStringLiteral("composer/queue-and-steer.feature:The queue can be folded away*"),
+    QStringLiteral("composer/queue-and-steer.feature:The send control says what sending will do*"),
     QStringLiteral("composer/context-references.feature:A bare @*"),
     QStringLiteral("composer/context-references.feature:The @ menu says it cannot search*"),
     QStringLiteral("composer/context-references.feature:A trigger character offers*"),
@@ -237,6 +258,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:An agent's own options do not crowd*"),
     QStringLiteral("composer/model-and-mode.feature:Confirming input-method text*"),
     QStringLiteral("navigation/toasts.feature"),
+    QStringLiteral("preview/automation.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("preview/remote.feature"),
     QStringLiteral("plugins/ui-plugins.feature"),
@@ -845,6 +867,14 @@ int main(int argc, char** argv) {
   qputenv("TZ", "UTC");
   tzset();
   // Before the application, as main.cpp does: the browser scenarios' pages.
+  // A fake camera and microphone, so a page asking for one is refused by the
+  // app and not for want of a device; and pages off this machine go to a proxy
+  // that is not there (the loopback goes direct), so no scenario reaches the
+  // network. No leading space: the engine takes an empty flag as an argument,
+  // and back from a page's source then stops.
+  QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+  qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
+          flags + (flags.isEmpty() ? "" : " ") + "--use-fake-device-for-media-stream --proxy-server=127.0.0.1:9");
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   tst_Features test;

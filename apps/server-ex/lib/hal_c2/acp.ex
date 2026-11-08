@@ -474,8 +474,25 @@ defmodule HalC2.Acp do
   end
 
   # Pi is offered where Pi is installed; its adapter installs when first used.
-  defp base_entry(_id, "pi", instance) do
-    if System.find_executable(binary("pi", instance, "pi")), do: {:ok, %{}}, else: :error
+  # One the user enabled stays listed, and its load says it is missing, so the
+  # client never waits on an entry that will not come.
+  defp base_entry(id, "pi", instance) do
+    cond do
+      System.find_executable(binary("pi", instance, "pi")) ->
+        {:ok, %{}}
+
+      enabled?(id, "pi", instance) ->
+        {:ok,
+         %{
+           "installed" => false,
+           "status" => "error",
+           "availability" => "unavailable",
+           "auth" => %{"status" => "unknown"}
+         }}
+
+      true ->
+        :error
+    end
   end
 
   # Muse is offered where Muse is installed. One the user enabled stays listed, and its
@@ -950,19 +967,23 @@ defmodule HalC2.Acp do
   # offers "Pi default"; refused launch arguments are the provider's error.
   defp read_agent(id, dir, "pi", entry) do
     with :ok <- check_version(id, "pi", entry),
-         {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")),
+         {:ok, args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")),
          :ok <- read_stage(id, :session) do
       stage(id, :capabilities, %{})
 
       case HalC2.Pi.discover(id, dir) do
         {:ok, %{models: models, commands: commands, skills: skills}} ->
           stage(id, :models, [@pi_default | models])
+          stage(id, :pi_last_models, {binary_path(id), [@pi_default | models]})
           stage(id, :commands, commands)
           stage(id, :skills, skills)
           stage(id, :pi_signed_out, models == [])
+          pi_pinned_model_notice(id, args, models)
 
         {:error, _} ->
-          stage(id, :models, [@pi_default])
+          # A discovery that fails or does not finish keeps the models the last
+          # successful one offered for this same Pi binary.
+          stage(id, :models, pi_last_models(id))
 
           stage(
             id,
@@ -1119,6 +1140,50 @@ defmodule HalC2.Acp do
         stage(id, :notice, @grok_probe_warning)
         :ok
     end
+  end
+
+  defp pi_last_models(id) do
+    case :persistent_term.get({__MODULE__, id, :pi_last_models}, nil) do
+      {bin, models} when is_list(models) ->
+        if bin == binary_path(id), do: models, else: [@pi_default]
+
+      _ ->
+        [@pi_default]
+    end
+  end
+
+  # A launch-argument model Pi does not offer has no credentials behind it:
+  # discovery lists only models Pi can actually run, so "Pi default" would
+  # fail every turn without saying why.
+  defp pi_pinned_model_notice(id, args, models) do
+    pinned =
+      Enum.find_value(args, fn
+        "--model=" <> value -> value
+        _ -> nil
+      end) ||
+        args
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.find_value(fn
+          ["--model", value] -> value
+          _ -> nil
+        end)
+
+    # Pi resolves a bare id against its own models, so the id part of a
+    # discovered `provider/id` slug counts as offered too.
+    offered? = fn slug ->
+      slug == pinned or slug |> to_string() |> String.split("/") |> List.last() == pinned
+    end
+
+    if is_binary(pinned) and models != [] and
+         not Enum.any?(models, &offered?.(&1["slug"])) do
+      stage(
+        id,
+        :notice,
+        "Pi's launch arguments pin the model #{pinned}, but its provider has no credentials in Pi, so Pi does not offer it. Pi's other models remain available."
+      )
+    end
+
+    :ok
   end
 
   # The command a read would run, present on this machine. A registry agent
@@ -1312,28 +1377,43 @@ defmodule HalC2.Acp do
     end
   end
 
-  # HAL-C2 drives Pi #{@pi_minimum} or newer (`pi --version`).
+  # HAL-C2 drives Pi #{@pi_minimum} or newer (`pi --version`): its health states,
+  # missing, unusable, slow or broken, each say so. The check is given ten
+  # seconds: a healthy CLI that starts slowly is not unavailable.
   defp check_version(id, "pi", entry) do
-    output =
-      with path when is_binary(path) <- System.find_executable(binary("pi", entry, "pi")),
-           task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
-           {:ok, {out, 0}} <- Task.yield(task, 10_000) || Task.shutdown(task) do
-        out
-      else
-        _ -> ""
-      end
+    bin = binary("pi", entry, "pi")
 
-    case Regex.run(~r/\d+\.\d+\.\d+/, output) do
-      [version] ->
-        stage(id, :version, version)
-
-        if Version.compare(version, @pi_minimum) == :lt,
-          do: {:error, "Pi #{version} is unsupported. Update to Pi #{@pi_minimum} or newer."},
-          else: :ok
-
+    case System.find_executable(bin) do
       nil ->
-        {:error,
-         "HAL-C2 could not determine the Pi version. Pi #{@pi_minimum} or newer is required."}
+        if File.exists?(bin),
+          do: {:error, "Failed to execute Pi CLI health check."},
+          else:
+            {:error,
+             "Pi CLI (`pi`) is not installed or not on PATH. Install with `npm install -g @earendil-works/pi-coding-agent`."}
+
+      path ->
+        task =
+          Task.async(fn ->
+            try do
+              {:ok, System.cmd(path, ["--version"], stderr_to_stdout: true)}
+            rescue
+              _ -> :cannot_run
+            end
+          end)
+
+        case Task.yield(task, 10_000) || Task.shutdown(task) do
+          {:ok, {:ok, {output, 0}}} ->
+            pi_version(id, output)
+
+          {:ok, {:ok, {_output, _status}}} ->
+            {:error, "Pi CLI is installed but failed to run."}
+
+          {:ok, :cannot_run} ->
+            {:error, "Failed to execute Pi CLI health check."}
+
+          _ ->
+            {:error, "Pi CLI is installed but timed out while running `pi --version`."}
+        end
     end
   end
 
@@ -1409,6 +1489,21 @@ defmodule HalC2.Acp do
   end
 
   defp check_version(_id, _driver, _entry), do: :ok
+
+  defp pi_version(id, output) do
+    case Regex.run(~r/\d+\.\d+\.\d+/, output) do
+      [version] ->
+        stage(id, :version, version)
+
+        if Version.compare(version, @pi_minimum) == :lt,
+          do: {:error, "Pi #{version} is unsupported. Update to Pi #{@pi_minimum} or newer."},
+          else: :ok
+
+      nil ->
+        {:error,
+         "HAL-C2 could not determine the Pi version. Pi #{@pi_minimum} or newer is required."}
+    end
+  end
 
   # Runs `grok --version` under erlexec so a hang past the timeout kills the
   # OS process too, not only the Elixir task waiting on it.
@@ -1527,16 +1622,25 @@ defmodule HalC2.Acp do
         "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
       })
 
-    if entry["status"] == "ready" and
-         :persistent_term.get({__MODULE__, id, :pi_signed_out}, false),
-       do:
-         Map.merge(entry, %{
-           "status" => "warning",
-           "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
-           "message" =>
-             "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
-         }),
-       else: entry
+    cond do
+      entry["status"] == "ready" and
+          :persistent_term.get({__MODULE__, id, :pi_signed_out}, false) ->
+        Map.merge(entry, %{
+          "status" => "warning",
+          "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
+          "message" =>
+            "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
+        })
+
+      # A read is under way and nothing is known yet.
+      entry["enabled"] and :persistent_term.get({__MODULE__, id, :loading}, false) and
+        :persistent_term.get({__MODULE__, id, :models}, nil) == nil and
+          not Map.has_key?(entry, "message") ->
+        Map.put(entry, "message", "Checking Pi CLI availability...")
+
+      true ->
+        entry
+    end
   end
 
   # Muse maps two access modes (`promptUnmatched`, `allowAll`), cannot rewind or fork
@@ -2013,6 +2117,19 @@ defmodule HalC2.Acp do
     # the instance meanwhile forgets it after, which drops this read's generation.
     enabled = enabled?(id) or HalC2.Settings.provider_on_in_a_project?(id)
 
+    # Pi being read for the first time already is left to finish: its entry
+    # says it is still being checked meanwhile, and a settings change forgets
+    # the read first.
+    if enabled and driver(id) == "pi" and loading?(id) and
+         :persistent_term.get({__MODULE__, id, :models}, nil) == nil and
+         :persistent_term.get({__MODULE__, id, :error}, nil) == nil do
+      :ok
+    else
+      reload_now(id, enabled)
+    end
+  end
+
+  defp reload_now(id, enabled) do
     # A Grok refresh that finds no models keeps these (see the Grok read).
     if driver(id) == "grok" do
       Process.put(

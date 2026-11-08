@@ -1927,9 +1927,10 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the user sends the next message", context do
-    context = World.post_message(context, @thread, "hello")
+    title = if context[:provider] == "pi", do: context.thread, else: @thread
+    context = World.post_message(context, title, "hello")
 
-    World.await_value(context, @thread, fn state ->
+    World.await_value(context, title, fn state ->
       runs = StreamState.list(state, "run")
       length(runs) == 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"]))
     end)
@@ -3191,6 +3192,17 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the turn carries on", context do
+    if context[:provider] == "pi" do
+      # Pi already carried on past what the step before this did to the turn.
+      World.await_runs(context, context.thread, ["completed"])
+      assert World.replies(context, context.thread) != []
+      context
+    else
+      turn_carries_on(context)
+    end
+  end
+
+  defp turn_carries_on(context) do
     assert [%{"status" => "running"}] = World.runs(context, @thread)
 
     claude_says(context, %{
