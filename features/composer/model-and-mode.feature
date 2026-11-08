@@ -643,7 +643,7 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
   # Upstream #25869: the composer names the effort as a word after the model, such as
   # "Opus 5.5 Extra High", and a bolt after it when Fast is on. Settings › Appearance ›
   # Effort display shows the level as rising bars instead; Max, Ultracode and Ultrathink stay words.
-  @shared @backlog-mobile @backlog-tui
+  @shared @backlog-mobile
   Scenario Outline: The composer names the model's effort as the user chose to see it
     Given the thread runs on "Opus 5.5" with <effort> effort
     And the effort display is set to "<display>"

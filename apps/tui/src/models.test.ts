@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { ProviderInstanceId, type ServerProvider } from "@hal-c2/contracts";
 import {
   defaultModelSlug,
+  effortReadout,
   fallbackModelSlug,
   flattenModelOptions,
   modelPickerRows,
@@ -340,6 +341,54 @@ describe("modelPickerRows", () => {
 
   it("lists them in place once shown, and the row then shows less", () => {
     expect(names(new Set(["codex"]))).toEqual(["gpt-6", "o3", "gpt-4o", "less:2", "opus"]);
+  });
+});
+
+describe("effortReadout", () => {
+  const model = (ids: string[], descriptorId = "effort") =>
+    flattenModelOptions([
+      {
+        instanceId: "claude",
+        driver: "claudeAgent",
+        models: [
+          {
+            slug: "opus",
+            name: "Opus",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  type: "select",
+                  id: descriptorId,
+                  label: "Effort",
+                  options: ids.map((id) => ({ id, label: id === "xhigh" ? "Extra High" : id })),
+                  promptInjectedValues: ["ultrathink"],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ] as never);
+  const selection = { instanceId: ProviderInstanceId.make("claude"), model: "opus" };
+  const read = (ids: string[], value: string, descriptorId?: string) =>
+    effortReadout(model(ids, descriptorId), selection, value);
+
+  it("names the level by its label and fills a bar for each level up to it", () => {
+    expect(read(["low", "medium", "high", "xhigh", "max", "ultrathink"], "xhigh")).toEqual({
+      label: "Extra High",
+      bars: { count: 4, filled: 4 },
+    });
+  });
+
+  it("counts no bar for an off level the levels start at", () => {
+    expect(read(["off", "low", "high"], "off").bars).toEqual({ count: 2, filled: 0 });
+  });
+
+  it("keeps a named level, a lone level and another select as words", () => {
+    expect(read(["low", "high", "max"], "max").bars).toBeNull();
+    expect(read(["low", "ultrathink"], "low").bars).toBeNull();
+    expect(read(["low", "high"], "low", "verbosity").bars).toBeNull();
   });
 });
 

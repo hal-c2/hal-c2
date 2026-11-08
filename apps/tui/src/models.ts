@@ -338,6 +338,41 @@ export function steppedEffort(
   return { descriptorId: descriptor.id, value };
 }
 
+/** How full the effort's rising bars are; `count` levels, the lowest `filled` lit. */
+export interface EffortBars {
+  readonly count: number;
+  readonly filled: number;
+}
+
+/**
+ * The effort as the composer names it (upstream #25869): the level's label,
+ * and the bars Settings' effort display can show it as instead. Max, Ultracode
+ * and a level the prompt carries keep their names, and an "off" at the bottom
+ * is no bar (the desktop's effortBars). Bars are null for a word-only level or
+ * a select that is not the model's reasoning.
+ */
+export function effortReadout(
+  options: ReadonlyArray<ModelOption>,
+  selection: ModelSelection,
+  value: string,
+): { readonly label: string; readonly bars: EffortBars | null } {
+  const descriptor = effortDescriptor(options, selection);
+  const label = descriptor?.options.find((choice) => choice.id === value)?.label || value;
+  if (!descriptor || !REASONING_DESCRIPTOR_IDS.has(descriptor.id)) return { label, bars: null };
+  const named = new Set(["ultracode", "max", ...(descriptor.promptInjectedValues ?? [])]);
+  const levels = descriptor.options.map((choice) => choice.id).filter((id) => !named.has(id));
+  const at = levels.indexOf(value);
+  if (levels.length < 2 || at < 0) return { label, bars: null };
+  const startsAtOff = levels[0] === "off" || levels[0] === "none";
+  return {
+    label,
+    bars: {
+      count: startsAtOff ? levels.length - 1 : levels.length,
+      filled: startsAtOff ? at : at + 1,
+    },
+  };
+}
+
 /** "please ultrathink about it": the prompt asks for Ultrathink in its own words, past any prefix. */
 export function ultrathinkInWords(text: string): boolean {
   return /\bultrathink\b/i.test(withoutUltrathinkPrefix(text));

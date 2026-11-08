@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import {
   DEFAULT_SERVER_SETTINGS,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type EffortDisplay,
   type KnownComposerContextRecord,
   type ModelSelection,
   type OrchestrationThread,
@@ -62,6 +63,7 @@ import {
 import { placeNewThread } from "../loadBalancing.ts";
 import {
   defaultModelSlug,
+  effortReadout,
   fallbackModelSlug,
   modelOptionStates,
   modelPickerRows,
@@ -74,6 +76,7 @@ import {
   steppedEffort,
   withModelSelectionOption,
   withoutUltrathinkPrefix,
+  type EffortBars,
   type ModelOption,
   type ModelOptionState,
 } from "../models.ts";
@@ -133,6 +136,8 @@ export interface ComposerOptions {
   readonly onTextCompleted?: (text: string) => void;
   /** A new-thread draft opened or closed: the sidebar row and the page follow it. */
   readonly onDraftChange?: () => void;
+  /** How the composer names the effort: its word, or rising bars (Settings' effort display). */
+  readonly effortDisplay?: () => EffortDisplay;
   /** The editor's rows or the composer's other rows changed: the layout follows. */
   readonly onRowsChange?: (rows: number) => void;
   /** The user stopped this turn from here (its work stays open in the timeline). */
@@ -246,6 +251,8 @@ export interface TuiComposerState {
   readonly selectedInstanceId: string | null;
   readonly selectedModel: string | null;
   readonly effort: string | null;
+  /** The effort as rising bars, when the effort display shows bars and the level is one. */
+  readonly effortBars: EffortBars | null;
   /** The selected model's provider options (effort, toggles) with their values. */
   readonly options: ReadonlyArray<ModelOptionState>;
   readonly interactionMode: ProviderInteractionMode;
@@ -418,6 +425,14 @@ export interface PickRequest {
 }
 
 const EMPTY_DRAFT: Draft = { text: "", images: [] };
+
+const BAR_HEIGHTS = "▁▂▃▄▅▆▇█";
+/** `count` bars rising to full height, one cell each. */
+const barGlyphs = (count: number) =>
+  Array.from(
+    { length: count },
+    (_, at) => BAR_HEIGHTS[Math.ceil(((at + 1) * BAR_HEIGHTS.length) / count) - 1]!,
+  ).join("");
 // The project-scope picker's "All projects" value.
 const ALL_PROJECTS = "__all__";
 const NEW_TARGET = "new";
@@ -820,6 +835,19 @@ export function createComposer(options: ComposerOptions): Composer {
       promptEffort(modelOptions, model, draft.text)?.value ??
       reasoningChoicesForSelection(modelOptions, model)?.selectedId ??
       null;
+    const readout = model && effort ? effortReadout(modelOptions, model, effort) : null;
+    const effortBars =
+      (options.effortDisplay?.() ?? "label") === "bars" ? (readout?.bars ?? null) : null;
+    // The bars rise left to right; the lit ones are the level.
+    const effortChip = () =>
+      effortBars
+        ? styled(
+            chunk("effort ", { fg: palette.dim }),
+            chunk(barGlyphs(effortBars.count).slice(0, effortBars.filled), { fg: palette.text }),
+            chunk(barGlyphs(effortBars.count).slice(effortBars.filled), { fg: palette.dim }),
+            chunk(" ▾", { fg: palette.text }),
+          )
+        : footerChip("effort", readout?.label ?? effort ?? "—", { muted: !effort, dropdown: true });
     const interactionMode: ProviderInteractionMode = newDraft
       ? newDraft.interactionMode
       : page
@@ -950,6 +978,7 @@ export function createComposer(options: ComposerOptions): Composer {
       selectedInstanceId: model?.instanceId ?? null,
       selectedModel: model?.model ?? null,
       effort,
+      effortBars,
       options: modelOptionStates(modelOptions, model),
       interactionMode,
       interactionModeLabel: interactionModeLabel(interactionMode),
@@ -980,7 +1009,7 @@ export function createComposer(options: ComposerOptions): Composer {
       moreAttachments: hiddenCount > 0 ? `+${hiddenCount} more` : "",
       footer: {
         model: footerChip("model", modelButtonLabel(model), { muted: !model, dropdown: true }),
-        effort: footerChip("effort", effort ?? "—", { muted: !effort, dropdown: true }),
+        effort: effortChip(),
         access: footerChip("^O", runtimeModeLabel(runtimeMode), { dropdown: true }),
         mode: footerChip("^B", interactionModeLabel(interactionMode), {
           active: interactionMode === "plan",
