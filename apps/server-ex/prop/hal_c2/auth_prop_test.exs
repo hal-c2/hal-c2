@@ -956,6 +956,10 @@ defmodule HalC2.AuthPropTest do
       {:connected, ^pid} -> :ok
     end
 
+    # `connected/2` is a cast: a round trip to Auth comes after it, so the report
+    # is recorded before the next command (a restart would drop a queued cast).
+    _ = :sys.get_state(Auth)
+
     Reg.put({:sockets, h}, Reg.get({:sockets, h}, []) ++ [pid])
     :ok
   end

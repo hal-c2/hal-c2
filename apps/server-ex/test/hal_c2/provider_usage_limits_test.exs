@@ -509,7 +509,7 @@ defmodule HalC2.ProviderUsageLimitsTest do
              "auth" => %{
                "status" => "authenticated",
                "email" => "me@example.com",
-               "label" => "ChatGPT Pro 20x Subscription"
+               "label" => "ChatGPT Pro 200 Subscription"
              }
            } =
              Limits.put(%{"instanceId" => "codex", "auth" => %{"status" => "authenticated"}})
