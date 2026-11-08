@@ -347,7 +347,7 @@ Feature: Repository status and working tree changes
     When the branch's remote is changed to a different repository and status is read again
     Then the status carries no pull request
   # Upstream #21046: the local scan is published before a slow pull request lookup finishes.
-  @backlog @mc
+  @mc
   Scenario: Local status is not held back by a slow pull request lookup
     Given the host is slow to answer the pull request lookup for "feature/tax"
     When the user changes "src/cart.ts" while the lookup is still waiting
@@ -550,7 +550,7 @@ Feature: Repository status and working tree changes
     Then the status carries that pull request without waiting for the slower recheck
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus: background policy)
-  @mc @backlog
+  @mc
   Scenario: The turn-end pull request check respects the background settings
     Given background work is paused for "shop" by the user's background activity settings
     When a thread's turn ends in "shop"
@@ -581,7 +581,7 @@ Feature: Repository status and working tree changes
     Then the status carries no pull request
 
   # Legacy: apps/server/src/git/GitManager.ts (invalidateStatus bumps the lookup epoch)
-  @mc @backlog
+  @mc
   Scenario Outline: What the user does asks the host again at once
     Given status showed no pull request for "feature/tax" a moment ago
     When <action>
@@ -608,14 +608,14 @@ Feature: Repository status and working tree changes
     And every client gets a status read after its own request
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (fingerprints)
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: A refresh that finds nothing new sends nothing to watchers
     Given a client is watching the status of "shop"
     When the status is refreshed and nothing about the checkout changed
     Then the client receives no update
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (poller per cwd)
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: Clients watching one checkout share a single background fetch
     Given two clients are watching the status of "shop"
     When the fetch interval elapses

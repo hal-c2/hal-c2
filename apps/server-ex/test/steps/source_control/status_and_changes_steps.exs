@@ -1156,4 +1156,181 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
     assert %{"number" => 43} = :sys.get_state(watcher(context)).remote["pr"]
     context
   end
+
+  # --- what the user does asks the host again ---------------------------------------------------
+
+  step "status showed no pull request for {string} a moment ago", %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    World.commit!(context.cwd, %{"tax.ts" => "1\n"}, "Add tax")
+    context = context |> shared_answers() |> show(true)
+    assert context.vcs.remote["pr"] == nil
+    assert asked(context, branch) >= 1
+    context
+  end
+
+  step "the user refreshes the status", context do
+    Map.put(context, :next_status, :refresh)
+  end
+
+  step "the user pushes the branch", context do
+    {events, context} = World.git_action(context, context.cwd, "push")
+    assert List.last(events)["kind"] == "action_finished"
+    Map.put(context, :next_status, :fetch)
+  end
+
+  step "the user creates the pull request", context do
+    {events, context} = World.git_action(context, context.cwd, "create_pr")
+    assert List.last(events)["kind"] == "action_finished"
+    Map.put(context, :next_status, :fetch)
+  end
+
+  step "the next status asks the host about the branch again", context do
+    branch = git(context, ~w(branch --show-current))
+    before = asked(context, branch)
+
+    case context.next_status do
+      :refresh ->
+        {reply, _context} = World.call(context, "vcs.refreshStatus", %{"cwd" => context.cwd})
+        assert {:ok, _} = reply
+
+      :fetch ->
+        assert fetch_now(context) == nil
+    end
+
+    assert asked(context, branch) == before + 1
+    context
+  end
+
+  # --- watchers ---------------------------------------------------------------------------------------
+
+  step "a client is watching the status of {string}", %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    HalC2.Vcs.Watch.subscribe(context.cwd, self())
+    context
+  end
+
+  step "the status is refreshed and nothing about the checkout changed", context do
+    HalC2.Vcs.Watch.refresh(context.cwd)
+    # The watcher has handled the refresh once it answers.
+    _ = :sys.get_state(watcher(context))
+    context
+  end
+
+  step "the client receives no update", context do
+    refute_received {:hal_c2_vcs, _, _}
+    context
+  end
+
+  step "two clients are watching the status of {string}", %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    context = context |> shared_answers() |> show(true) |> upstream_moves() |> record_git()
+    parent = self()
+    cwd = context.cwd
+
+    for name <- [:one, :two] do
+      spawn_link(fn ->
+        HalC2.Vcs.Watch.subscribe(cwd, self())
+        send(parent, {:ready, name})
+
+        receive do
+          {:hal_c2_vcs, _, event} -> send(parent, {:got, name, event})
+        end
+      end)
+    end
+
+    assert_receive {:ready, :one}
+    assert_receive {:ready, :two}
+    context
+  end
+
+  step "the MC fetches {string} once", %{args: [_title]} = context do
+    fetches =
+      context.git_log
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.filter(&(&1 =~ " fetch "))
+
+    assert length(fetches) == 1
+    context
+  end
+
+  step "both clients receive the result", context do
+    assert_receive {:got, :one, %{"_tag" => "remoteUpdated"}}
+    assert_receive {:got, :two, %{"_tag" => "remoteUpdated"}}
+    context
+  end
+
+  # --- background settings and the host ----------------------------------------------------------------
+
+  step "background work is paused for {string} by the user's background activity settings",
+       %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    git(context, ["checkout", "-q", "-b", "feature/tax"])
+
+    context =
+      World.cli_rules(context, [
+        %{
+          "args" => ["pr list", "--head feature/tax"],
+          "stdout" => [pr(42, "feature/tax", "OPEN", false)]
+        }
+      ])
+
+    # No client is in front: nothing wants the checkout's status.
+    context = context |> shared_answers() |> show(false)
+    Map.put(context, :asked_before, asked(context, "feature/tax"))
+  end
+
+  step "a thread's turn ends in {string}", %{args: [title]} = context do
+    assert World.project(context, title).root == context.cwd
+    context = World.run_turn(context, context.thread_title, "write notes.md")
+    # The watcher has handled the turn's end once it answers.
+    _ = :sys.get_state(watcher(context))
+    context
+  end
+
+  step "the host is not asked about the pull request", context do
+    assert asked(context, "feature/tax") == context.asked_before
+    context
+  end
+
+  # --- a slow pull request lookup --------------------------------------------------------------------------
+
+  step "the host is slow to answer the pull request lookup for {string}",
+       %{args: [branch]} = context do
+    git(context, ["checkout", "-q", "-b", branch])
+    context = context |> shared_answers() |> show(true)
+
+    World.cli_rules(context, [
+      %{
+        "args" => ["pr list", "--head #{branch}"],
+        "sleep" => 2,
+        "stdout" => [pr(42, branch, "OPEN", false)]
+      }
+    ])
+  end
+
+  step "the user changes {string} while the lookup is still waiting", %{args: [path]} = context do
+    HalC2.Vcs.Watch.turn_ended(context.cwd)
+    %{lookup: {_ref, _again, pid}} = :sys.get_state(watcher(context))
+    File.mkdir_p!(Path.dirname(Path.join(context.cwd, path)))
+    File.write!(Path.join(context.cwd, path), "export const cart = 1\n")
+    HalC2.Vcs.Watch.refresh(context.cwd)
+    Map.put(context, :lookup_pid, pid)
+  end
+
+  step "the status shows the change to {string} before the lookup answers",
+       %{args: [path]} = context do
+    {event, context} =
+      World.await_vcs(context, fn event ->
+        event["_tag"] == "localUpdated" and
+          Enum.any?(event["local"]["workingTree"]["files"], &(&1["path"] == path))
+      end)
+
+    assert event["local"]["hasWorkingTreeChanges"]
+    # The lookup is still waiting on the host.
+    assert Process.alive?(context.lookup_pid)
+    down = Process.monitor(context.lookup_pid)
+    assert_receive {:DOWN, ^down, :process, _, _}, 10_000
+    context
+  end
 end
