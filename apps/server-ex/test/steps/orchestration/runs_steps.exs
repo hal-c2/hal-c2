@@ -1510,13 +1510,21 @@ defmodule HalC2.Steps.Orchestration.Runs do
     })
   end
 
+  # With no run going (the thread is between turns) the stop names none.
   step "the user presses Stop", context do
-    World.command(context, %{
+    command = %{
       "type" => "run.interrupt",
       "threadId" => World.thread_id(context, context.thread),
-      "runId" => context.running,
       "stopDelegated" => true
-    })
+    }
+
+    World.command(
+      context,
+      Map.merge(
+        command,
+        Map.take(context, [:running]) |> Map.new(fn {_, run} -> {"runId", run} end)
+      )
+    )
   end
 
   step "an agent stops it through HAL-C2's tools", context do

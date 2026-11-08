@@ -5665,6 +5665,9 @@ defmodule HalC2.Orchestration do
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: provider_text,
+      # The message as the user wrote it: what a provider's own command (Codex's
+      # `/goal`, `HalC2.Codex.Goals`) is read from.
+      user_text: text,
       # What a new provider conversation gets when the one to resume is gone
       # (`HalC2.Orchestration.Handoff.opened/2`).
       fresh: handoff.fallback && Map.put(handoff.fallback, :text, provider_text),

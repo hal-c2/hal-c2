@@ -7667,9 +7667,17 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Codex's "a new Codex app-server is started" names the thread whose turn ran.
   step "the turn runs", context do
-    World.await_runs(context, @thread, ["completed"])
-    assert "Hello from claude" in World.replies(context, @thread)
+    case context[:turn_thread] do
+      nil ->
+        World.await_runs(context, @thread, ["completed"])
+        assert "Hello from claude" in World.replies(context, @thread)
+
+      title ->
+        assert "Hello from codex" in World.replies(context, title)
+    end
+
     context
   end
 
