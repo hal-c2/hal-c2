@@ -391,5 +391,10 @@ export const ThreadPluginMark = Schema.Struct({
   kind: TrimmedNonEmptyString,
   /** False keeps the thread out of the thread list; it still opens by id. */
   listed: Schema.Boolean,
+  /**
+   * True when the plugin's manifest has `threadsStay` (a fork copies it): the thread is
+   * refused a move and an export, and is offered no destination.
+   */
+  stays: Schema.optionalKey(Schema.Boolean),
 });
 export type ThreadPluginMark = typeof ThreadPluginMark.Type;
