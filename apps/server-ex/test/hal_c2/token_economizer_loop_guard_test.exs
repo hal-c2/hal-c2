@@ -500,6 +500,39 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute Turn.resolved_proxy(g)
     end
 
+    test "a test runner named in a heredoc's text is not a test run" do
+      printed = "cat <<'EOF'\npytest -q\nEOF"
+      assert Turn.status_of_tests(printed) == nil
+      assert Turn.status_of_tests("bash -lc \"" <> printed <> "\"") == nil
+      assert Turn.status_of_tests("python3 - <<EOF\nprint(1)\nEOF\npytest -q") == "own"
+
+      g =
+        Turn.new()
+        |> fold("Edit", %{"file_path" => "/r/a.py"}, "ok")
+        |> fold("Bash", %{"command" => "pytest -q"}, "FAILED t - AssertionError", 1)
+        |> fold("Bash", %{"command" => printed}, "pytest -q", 0)
+
+      refute Turn.resolved_proxy(g)
+    end
+
+    test "a shell edit that failed changed nothing, unless a test run after it is what failed" do
+      g =
+        Turn.new()
+        |> fold("Bash", %{"command" => "pytest -q"}, "FAILED t - AssertionError", 1)
+
+      failed = fold(g, "Bash", %{"command" => "sed -i 's/x/y/' missing.py"}, "No such file", 2)
+      refute Turn.resolved_proxy(failed)
+      assert failed.edits == 0
+
+      assert Turn.resolved_proxy(fold(g, "Bash", %{"command" => "sed -i 's/x/y/' a.py"}, "", 0))
+
+      checked =
+        fold(g, "Bash", %{"command" => "sed -i 's/x/y/' a.py && pytest -q"}, "FAILED t", 1)
+
+      assert checked.edits == 1
+      refute Turn.resolved_proxy(checked)
+    end
+
     test "an edit that failed changed nothing, so the failing check before it still counts" do
       g =
         Turn.new()
@@ -533,7 +566,10 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "bash -lc \"" <> patch <> "\"",
             "printf 'SECRET = 1\\n' > src/a.py",
             "sed -i 's/x = 0/SECRET = 1/' src/a.py",
-            "cat > src/a.py <<EOF\nSECRET = 1\nEOF"
+            "cat > src/a.py <<EOF\nSECRET = 1\nEOF",
+            "echo SECRET=1 > src/a.py",
+            "cat > src/a.py <<'EOF-CODE'\nSECRET = 1\nEOF-CODE",
+            "bash -lc 'echo SECRET=1 >> src/a.py && pytest -q'"
           ] do
         text = shell_edit(cmd)
         refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
@@ -556,6 +592,13 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       {name, args, out, code} = TokenEconomizer.call_of(long)
       {g, nil, nil} = Turn.fold(Turn.new(), name, args, out, code)
       refute State.recent_digest(g.st) =~ "SECRET"
+
+      assert shell_edit("echo SECRET=1 > src/a.py && pytest -q") =~ "echo; pytest …"
+
+      assert ShellEdits.split_heredocs("cat <<'EOF-CODE'\nx\nEOF-CODE\nls") ==
+               {"cat <<'EOF-CODE'\nls", ["x"]}
+
+      assert ShellEdits.split_heredocs("grep x <<< \"$v\"\nls") == {"grep x <<< \"$v\"\nls", []}
 
       # What only runs or searches keeps its words.
       assert digest(~s(grep -rn "def handle" src)) =~ ~s(grep -rn "def handle" src)

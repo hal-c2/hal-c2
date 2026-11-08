@@ -167,9 +167,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   # `cmd` as its commands and the separators between them (`[cmd, sep, cmd, ...]`), with
   # quoted text masked, and whether `pipefail` is on as each command runs. A command
-  # recorded as `bash -lc '<script>'` (Codex) is split by its script.
+  # recorded as `bash -lc '<script>'` (Codex) is split by its script, and a heredoc's
+  # lines are the input of the command that reads them, not commands of their own.
   defp pieces(cmd) do
-    cmd = ShellEdits.script(cmd)
+    {cmd, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
     masked = Regex.replace(~r/[(){}]/, Regex.replace(@quoted, cmd, "Q"), " ")
     pieces = masked |> then(&Regex.split(@sep, &1, include_captures: true)) |> drop_trailing()
     {pieces, pipefail(pieces)}
@@ -237,8 +238,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     if String.trim(cmd) == "" do
       false
     else
-      {shell, _} = ShellEdits.split_heredocs(cmd)
-      {pieces, pipefail} = pieces(shell)
+      {pieces, pipefail} = pieces(cmd)
 
       pieces
       |> after_each(pipefail)
@@ -318,10 +318,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         verifies = status_of_tests(cmd) != nil
 
         g =
-          if shell_edits != [],
+          cond do
+            shell_edits == [] ->
+              g
+
+            # `sed -i 's/x/y/' missing.py` failed and, as a failed edit tool's does, changed
+            # nothing to verify. A failed run after a write is the run's failure.
+            exit_code not in [nil, 0] and not verifies ->
+              g
+
             # `sed -i ... && pytest`: the edit comes first, so the run verifies it.
-            do: %{g | last_edit: g.cum_turns - if(verifies, do: 1, else: 0), edits: g.edits + 1},
-            else: g
+            true ->
+              %{g | last_edit: g.cum_turns - if(verifies, do: 1, else: 0), edits: g.edits + 1}
+          end
 
         if verifies do
           failed =

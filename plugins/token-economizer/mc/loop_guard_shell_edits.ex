@@ -3,7 +3,8 @@
 # Ported from tokeneconomizer/loopguard/shell_edits.py (microsoft/TokenEconomizer@cb42207e3e09),
 # into Elixir for HAL-C2's MC. Changed: Python's `shlex` (non-POSIX, with punctuation
 # characters) is reimplemented here, quirks included, so commands split as upstream's do;
-# `fold_shell_edits` lives in State.
+# `fold_shell_edits` lives in State; a heredoc's delimiter may be any word (`<<'EOF-CODE'`),
+# not only an identifier; `programs/1` is new.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @moduledoc """
@@ -20,7 +21,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   alias HalC2Plugins.TokenEconomizer.LoopGuard.State
 
   @shells ~w(sh bash zsh dash ksh)
-  @heredoc_start ~r/<<-?\s*(['"]?)([A-Za-z_]\w*)\1/
+  # A heredoc's delimiter, quoted (`<<'EOF-CODE'`, `<<"END"`) or not (`<<EOF`, `<<\EOF`);
+  # not a here-string (`<<<`).
+  @heredoc_start ~r/(?<!<)<<-?\s*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z_][^\s'"<>|&;()]*))/
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
   # Redirects that write their operand.
   @out [">", ">>", ">|", "&>", "&>>"]
@@ -93,6 +96,18 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   def revert_targets(_), do: []
 
+  @doc """
+  The programs a shell command runs, by name (`sed`, `printf`, `pytest`), without their
+  arguments; of the script for one run as `bash -lc '<script>'`.
+  """
+  def programs(cmd) when is_binary(cmd) do
+    {shell, _} = cmd |> script() |> split_heredocs()
+    {cmds, _} = commands(shell)
+    cmds |> bare() |> Enum.map(&head/1) |> Enum.reject(&(&1 == ""))
+  end
+
+  def programs(_), do: []
+
   defp written_by("sed", tokens, _),
     do:
       inplace_files(
@@ -148,8 +163,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
         line, {shell, bodies, nil, []} ->
           tag =
             case Regex.run(@heredoc_start, line) do
-              [_, _, tag] -> tag
-              _ -> nil
+              [_ | tags] -> Enum.find(tags, &(&1 != ""))
+              nil -> nil
             end
 
           {[line | shell], bodies, tag, []}
