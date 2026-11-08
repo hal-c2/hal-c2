@@ -1492,7 +1492,6 @@ Feature: Claude
     Then the thread's task list is unchanged
 
   # Upstream #18398: a Claude task list survives an MC restart
-  @backlog
   Scenario: Claude's task list keeps its earlier tasks after the MC restarts
     Given Claude's task list has three tasks
     And the MC restarted
@@ -2323,7 +2322,7 @@ Feature: Claude
       | "auto:0" | "auto:0"   |
       | "auto:100" | "auto:100" |
 
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude 5 task list reaches the thread's tasks
     Given the Claude instance turns on Claude's task tools in its environment variables
     When a Claude 5 model creates tasks, updates one to in progress and lists them
@@ -2465,7 +2464,7 @@ Feature: Claude
     And the next turn reads the settings again
 
   # Upstream #20985: subagents' task changes did not reach the parent's task list.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude subagent's task changes reach the thread's task list
     Given a Claude thread has a task list
     When a Claude subagent adds a task and finishes another

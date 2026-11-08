@@ -4559,6 +4559,268 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- Claude 5's task tools ---------------------------------------------------------------------
+
+  # The built-in instance with its own Claude home, where Claude keeps its task lists, and
+  # its own variables.
+  defp task_instance(context, vars) do
+    home = Mc.tmp_dir(context.mc, "claude-tasks-home")
+    context = World.fake_providers(context)
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), "claudeAgent"], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "config" => %{"homePath" => home},
+          "environment" =>
+            Enum.map(vars, fn {name, value} ->
+              %{"name" => name, "value" => value, "sensitive" => false}
+            end)
+        })
+      end)
+
+    Map.put(context, :claude_home, home)
+  end
+
+  # Claude calls task tool `name` and reports `output`: a structured result, or the text
+  # alone, as a subagent's call (under `opts[:parent]`) returns it.
+  defp task_call(context, id, name, input, output, opts \\ []) do
+    under = if parent = opts[:parent], do: %{"parent_tool_use_id" => parent}, else: %{}
+
+    claude_says(
+      context,
+      Map.merge(under, %{
+        "type" => "assistant",
+        "message" => %{
+          "id" => "m-#{id}",
+          "content" => [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+        }
+      })
+    )
+
+    result = %{
+      "type" => "tool_result",
+      "tool_use_id" => id,
+      "content" => if(is_binary(output), do: output, else: "Task tool finished."),
+      "is_error" => opts[:error] == true
+    }
+
+    user =
+      Map.merge(under, %{
+        "type" => "user",
+        "message" => %{"role" => "user", "content" => [result]}
+      })
+
+    claude_says(
+      context,
+      if(is_map(output), do: Map.put(user, "tool_use_result", output), else: user)
+    )
+
+    context
+  end
+
+  # Claude creates task `id` and saves it where it keeps the session's task list.
+  defp task_created(context, id, subject) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    dir = Path.join([context.claude_home, "tasks", :sys.get_state(pid).session_id])
+    File.mkdir_p!(dir)
+
+    task = %{"id" => id, "subject" => subject, "description" => "", "status" => "pending"}
+    File.write!(Path.join(dir, "#{id}.json"), JSON.encode!(task))
+
+    task_call(context, "task-create-#{id}", "TaskCreate", %{"subject" => subject}, %{
+      "task" => %{"id" => id, "subject" => subject}
+    })
+  end
+
+  # The steps of the thread's newest active task list, once the runtime has handled
+  # what Claude said.
+  defp task_steps(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    _ = :sys.get_state(pid)
+
+    for %{"status" => "active"} = plan <- todo_plans(context),
+        step <- plan["steps"],
+        do: {step["id"], step["text"], step["status"]}
+  end
+
+  defp claude_ends_turn(context) do
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    context
+  end
+
+  step "the Claude instance turns on Claude's task tools in its environment variables",
+       context do
+    task_instance(context, %{"CLAUDE_CODE_ENABLE_TODO_TOOLS" => "1"})
+  end
+
+  step "a Claude 5 model creates tasks, updates one to in progress and lists them", context do
+    context =
+      context
+      |> running_turn()
+      |> task_call("t1", "TaskCreate", %{"subject" => "Inspect the logs"}, %{
+        "task" => %{"id" => "1", "subject" => "Inspect"}
+      })
+      |> task_call("t2", "TaskCreate", %{"subject" => "Fix the bug"}, %{
+        "task" => %{"id" => "2", "subject" => "Fix the bug"}
+      })
+      |> task_call("t3", "TaskUpdate", %{"taskId" => "1", "status" => "in_progress"}, %{
+        "success" => true,
+        "taskId" => "1",
+        "updatedFields" => ["status"]
+      })
+
+    assert task_steps(context) == [
+             {"task-1", "Inspect", "running"},
+             {"task-2", "Fix the bug", "pending"}
+           ]
+
+    context
+    |> task_call("t4", "TaskList", %{}, %{
+      "tasks" => [
+        %{"id" => "1", "subject" => "Inspect", "status" => "in_progress", "blockedBy" => []},
+        %{"id" => "2", "subject" => "Fix the bug", "status" => "completed", "blockedBy" => []}
+      ]
+    })
+    |> claude_ends_turn()
+    |> tap(&World.await_runs(&1, @thread, ["completed"]))
+  end
+
+  step "the thread's task list shows those tasks with their status", context do
+    assert task_steps(context) == [
+             {"task-1", "Inspect", "running"},
+             {"task-2", "Fix the bug", "completed"}
+           ]
+
+    start = Enum.find(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+    assert start["env"]["CLAUDE_CODE_ENABLE_TODO_TOOLS"] == "1"
+    context
+  end
+
+  step "Claude's task list has three tasks", context do
+    context =
+      context
+      |> task_instance(%{})
+      |> running_turn()
+      |> task_created("1", "Inspect")
+      |> task_created("2", "Fix")
+      |> task_created("3", "Test")
+      |> claude_ends_turn()
+
+    World.await_runs(context, @thread, ["completed"])
+    assert [{_, "Inspect", _}, {_, "Fix", _}, {_, "Test", _}] = task_steps(context)
+    context
+  end
+
+  step "Claude adds a fourth task", context do
+    context = World.post_message(context, @thread, "wait for the fourth task")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "message", "content"]) == "wait for the fourth task")
+    )
+
+    context
+    |> task_created("4", "Deploy")
+    |> claude_ends_turn()
+    |> tap(&World.await_runs(&1, @thread, ["completed", "completed"]))
+  end
+
+  step "the task list shows all four tasks", context do
+    assert [
+             {"task-1", "Inspect", "pending"},
+             {"task-2", "Fix", "pending"},
+             {"task-3", "Test", "pending"},
+             {"task-4", "Deploy", "pending"}
+           ] = task_steps(context)
+
+    context
+  end
+
+  step "a Claude thread has a task list", context do
+    context =
+      context
+      |> task_instance(%{})
+      |> running_turn()
+      |> task_created("1", "Inspect")
+      |> task_created("2", "Fix")
+
+    assert [{"task-1", "Inspect", "pending"}, {"task-2", "Fix", "pending"}] = task_steps(context)
+    context
+  end
+
+  step "a Claude subagent adds a task and finishes another", context do
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-agent-tasks",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "agent-tasks",
+            "name" => "Agent",
+            "input" => %{"description" => "Helper", "prompt" => "Help with the tasks"}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-agent-tasks",
+      "tool_use_id" => "agent-tasks",
+      "description" => "Helper",
+      "task_type" => "local_agent"
+    })
+
+    context
+    |> task_call(
+      "sub-create",
+      "TaskCreate",
+      %{"subject" => "Write docs", "description" => "Document the fix"},
+      "Task #3 created successfully: Write docs",
+      parent: "agent-tasks"
+    )
+    |> task_call(
+      "sub-update",
+      "TaskUpdate",
+      %{"taskId" => "1", "status" => "completed"},
+      "Updated task #1 status",
+      parent: "agent-tasks"
+    )
+  end
+
+  step "the thread's task list shows the added task and the finished one", context do
+    assert task_steps(context) == [
+             {"task-1", "Inspect", "completed"},
+             {"task-2", "Fix", "pending"},
+             {"task-3", "Write docs", "pending"}
+           ]
+
+    context
+  end
+
+  step "a task change that failed leaves the list as it was", context do
+    before = task_steps(context)
+    update = %{"taskId" => "2", "status" => "completed"}
+
+    context
+    |> task_call("sub-failed", "TaskUpdate", update, "Task not found",
+      parent: "agent-tasks",
+      error: true
+    )
+    # A hook that blocks the call answers in text, without the error flag.
+    |> task_call("sub-blocked", "TaskUpdate", update, "Blocked by a hook", parent: "agent-tasks")
+    |> task_call("root-failed", "TaskUpdate", update, %{"success" => false, "taskId" => "2"})
+
+    assert task_steps(context) == before
+    context
+  end
+
   # --- background commands and subagents ----------------------------------------------------------
 
   step "Claude runs a long command as a background task", context do

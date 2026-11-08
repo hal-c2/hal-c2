@@ -39,6 +39,9 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @state_version 12
 
+  # Claude 5's task tools (`task_tools/2`).
+  @task_tools ["TaskCreate", "TaskUpdate", "TaskList"]
+
   # How to sign in, naming where when this instance runs under its own config
   # directory: the login has to land in the directory Claude will be pointed at.
   defp signed_out_message(turn) do
@@ -302,7 +305,12 @@ defmodule HalC2.Claude.ThreadRuntime do
        # The goal Claude works on (`goal/2`), as the provider thread shows it, and whether
        # Claude worked on it in the running turn.
        goal: nil,
-       goal_checked: false
+       goal_checked: false,
+       # Claude's task tools' list (`task_tools/2`): `{list id, [{task id, step}]}`, the
+       # list id nil once Claude's own copy turned out unreadable; nil before any change
+       # of this runtime's. And the task tool calls still to report back, by tool use id.
+       task_list: nil,
+       task_calls: %{}
      }}
   end
 
@@ -1009,6 +1017,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:bypass_notice, nil)
        |> Map.put_new(:goal, nil)
        |> Map.put_new(:goal_checked, false)
+       |> Map.put_new(:task_list, nil)
+       |> Map.put_new(:task_calls, %{})
        |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
@@ -1878,7 +1888,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # Every message of Claude's the thread handles, between turns or in one: what it says
   # of the goal (`goal/2`), then the rest.
-  defp message(message, state), do: claude_message(message, goal(state, message))
+  defp message(message, state),
+    do: claude_message(message, state |> goal(message) |> task_tools(message))
 
   defp claude_message(%{"type" => type, "parent_tool_use_id" => parent} = message, state)
        when type in @sidechain and is_binary(parent),
@@ -2272,6 +2283,201 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   defp goal(state, _message), do: state
+
+  # Claude 5 keeps its todos with task tools (TaskCreate, TaskUpdate and TaskList, in
+  # place of TodoWrite), which edit one list per session across turns, its subagents'
+  # calls included (Upstream #14964, #20985). The thread's task list is that list, one
+  # per turn, updated in place. A call that failed or never ran changed nothing.
+  defp task_tools(state, %{"type" => "assistant", "message" => %{"content" => content}})
+       when is_list(content) do
+    Enum.reduce(content, state, fn
+      %{"type" => "tool_use", "id" => id, "name" => name} = block, state
+      when name in @task_tools ->
+        put_in(state.task_calls[id], {name, block["input"] || %{}})
+
+      _block, state ->
+        state
+    end)
+  end
+
+  defp task_tools(state, %{"type" => "user", "message" => %{"content" => content}} = message)
+       when is_list(content) do
+    Enum.reduce(content, state, fn
+      %{"type" => "tool_result", "tool_use_id" => id} = result, state
+      when is_map_key(state.task_calls, id) ->
+        {{name, input}, calls} = Map.pop(state.task_calls, id)
+        state = %{state | task_calls: calls}
+
+        if result_status(result) == "completed",
+          do: task_changed(state, name, input, task_output(message, result)),
+          else: state
+
+      _block, state ->
+        state
+    end)
+  end
+
+  defp task_tools(state, _message), do: state
+
+  # The call's structured result, or its text when there is none (a subagent's).
+  defp task_output(%{"tool_use_result" => output}, _result) when is_map(output), do: output
+  defp task_output(_message, result), do: result_text(result["content"])
+
+  defp task_changed(%{turn: nil} = state, _name, _input, _output), do: state
+
+  defp task_changed(state, name, input, output) do
+    list_id = task_list_id(state)
+
+    {known, tasks} =
+      case state.task_list do
+        {^list_id, tasks} -> {true, tasks}
+        _ -> {false, []}
+      end
+
+    # A structured TaskList is the whole list. Any other change after a restart (or
+    # by a subagent, whose TaskList is only text) starts from the list Claude keeps,
+    # read once (Upstream #18398).
+    stored =
+      if not known and not (name == "TaskList" and is_list(task_field(output, "tasks"))),
+        do: stored_tasks(state, list_id)
+
+    case apply_task_tool(stored || tasks, name, input, output) || stored do
+      nil ->
+        %{state | task_list: {list_id, tasks}}
+
+      tasks ->
+        state = %{state | task_list: {list_id, tasks}}
+
+        steps =
+          for {id, step} <- tasks, do: Map.put(step, "id", "task-#{id}")
+
+        write_todo(state, "tasks:#{state.turn.ids.run}", steps)
+    end
+  end
+
+  # Claude names the list after the session, or CLAUDE_CODE_TASK_LIST_ID when set.
+  defp task_list_id(state) do
+    instance = Entities.instance(state.turn.ids)
+
+    custom =
+      [HalC2.Settings.instance_env(instance)["CLAUDE_CODE_TASK_LIST_ID"]] ++
+        [System.get_env("CLAUDE_CODE_TASK_LIST_ID")]
+
+    Enum.find_value(custom, fn
+      value when is_binary(value) -> if String.trim(value) != "", do: String.trim(value)
+      _ -> nil
+    end) || state.session_id
+  end
+
+  # The tasks Claude saved under `<config dir>/tasks/<list id>/<n>.json`, in order; nil
+  # when they cannot be read. The format is Claude's own and undocumented, so this is
+  # best effort, and Claude's internal tasks are not the user's.
+  defp stored_tasks(_state, nil), do: nil
+
+  defp stored_tasks(state, list_id) do
+    instance = Entities.instance(state.turn.ids)
+
+    dir =
+      Path.join([Provider.config_dir(instance, state.turn[:cwd]), "tasks", sanitized(list_id)])
+
+    with {:ok, names} <- File.ls(dir) do
+      names
+      |> Enum.filter(&Regex.match?(~r/^\d+\.json$/, &1))
+      |> Enum.sort_by(&String.to_integer(Path.rootname(&1)))
+      |> Enum.flat_map(fn name ->
+        with {:ok, text} <- File.read(Path.join(dir, name)),
+             {:ok, %{"id" => id, "subject" => subject} = task} <- JSON.decode(text),
+             false <- get_in(task, ["metadata", "_internal"]) not in [nil, false],
+             id when id != "" <- task_text(id),
+             text when text != "" <- task_text(subject),
+             status when status != nil <- task_status(task["status"]) do
+          [{id, %{"text" => text, "status" => status}}]
+        else
+          _ -> []
+        end
+      end)
+    else
+      _ -> nil
+    end
+  end
+
+  defp sanitized(list_id), do: String.replace(list_id, ~r/[^a-zA-Z0-9_-]/, "-")
+
+  # The list after a finished task call, or nil when it leaves the list as it was:
+  # TaskList replaces it, TaskCreate adds the task under the id Claude gave it, and
+  # TaskUpdate changes one it knows (a `deleted` status removes it).
+  defp apply_task_tool(tasks, "TaskList", _input, output) do
+    case task_field(output, "tasks") do
+      listed when is_list(listed) ->
+        listed =
+          for task <- listed,
+              id = task_text(task_field(task, "id")),
+              text = task_text(task_field(task, "subject")),
+              status = task_status(task_field(task, "status")),
+              id != "" and text != "" and status != nil,
+              do: {id, %{"text" => text, "status" => status}}
+
+        if listed == [] and tasks == [], do: nil, else: listed
+
+      _ ->
+        nil
+    end
+  end
+
+  defp apply_task_tool(tasks, "TaskCreate", input, output) do
+    # A subagent's result is only the text "Task #3 created successfully: <subject>".
+    {text_id, text_subject} =
+      case is_binary(output) && Regex.run(~r/^Task #(\S+) created successfully: (.+)$/s, output) do
+        [_, id, subject] -> {id, subject}
+        _ -> {nil, nil}
+      end
+
+    created = task_field(output, "task")
+    id = first_text([task_field(created, "id"), text_id])
+    text = first_text([task_field(created, "subject"), text_subject, input["subject"]])
+
+    if id && text,
+      do: List.keystore(tasks, id, 0, {id, %{"text" => text, "status" => "pending"}})
+  end
+
+  defp apply_task_tool(tasks, "TaskUpdate", input, output) do
+    failed? =
+      task_field(output, "success") == false or
+        (is_binary(output) and not String.starts_with?(output, "Updated task #"))
+
+    id = first_text([input["taskId"], task_field(output, "taskId")])
+
+    with false <- failed?,
+         {^id, step} <- id && List.keyfind(tasks, id, 0) do
+      if input["status"] == "deleted" do
+        List.keydelete(tasks, id, 0)
+      else
+        next = %{
+          "text" => first_text([input["subject"]]) || step["text"],
+          "status" => task_status(input["status"]) || step["status"]
+        }
+
+        if next != step, do: List.keyreplace(tasks, id, 0, {id, next})
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  defp task_field(value, key) when is_map(value), do: value[key]
+  defp task_field(_value, _key), do: nil
+
+  defp task_text(value) when is_binary(value), do: String.trim(value)
+  defp task_text(value) when is_integer(value), do: Integer.to_string(value)
+  defp task_text(_value), do: ""
+
+  defp first_text(values),
+    do: Enum.find_value(values, fn value -> if task_text(value) != "", do: task_text(value) end)
+
+  defp task_status("pending"), do: "pending"
+  defp task_status("in_progress"), do: "running"
+  defp task_status("completed"), do: "completed"
+  defp task_status(_status), do: nil
 
   defp goal_said("Goal set: " <> objective, _goal) do
     case String.trim(objective) do
