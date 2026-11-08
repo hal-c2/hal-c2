@@ -75,7 +75,31 @@ defmodule HalC2.CodexGoalRuntimeTest do
     assert ["completed"] = statuses(thread_id)
   end
 
-  defp start_goal_run(thread_id, work) do
+  # Codex finishes the goal just before the user's clear or pause reaches it, so its
+  # report that the goal is complete is queued ahead of the answer. The answer is newer:
+  # the goal stays cleared or paused.
+  for {command, expected} <- [{"/goal clear", nil}, {"/goal pause", "paused"}] do
+    test "#{command} answered after Codex reported the goal complete keeps the answer",
+         %{work: work} do
+      System.put_env("FAKE_CODEX_GOAL", ~s({"objective": "ship the fix", "status": "active"}))
+      System.put_env("FAKE_CODEX_GOAL_DONE_BEFORE_STOP", "1")
+
+      on_exit(fn ->
+        System.delete_env("FAKE_CODEX_GOAL")
+        System.delete_env("FAKE_CODEX_GOAL_DONE_BEFORE_STOP")
+      end)
+
+      thread_id = "thread-goal-#{String.replace(unquote(command), " ", "-")}"
+      start_goal_run(thread_id, work, unquote(command))
+
+      [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+      state = await_state(pid, &(&1.turn == nil))
+      assert get_in(state.goal, ["status"]) == unquote(expected)
+      assert ["completed"] = statuses(thread_id)
+    end
+  end
+
+  defp start_goal_run(thread_id, work, text \\ "/goal ship the fix") do
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
     selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
 
@@ -96,7 +120,7 @@ defmodule HalC2.CodexGoalRuntimeTest do
         "type" => "message.dispatch",
         "threadId" => thread_id,
         "messageId" => "m1",
-        "text" => "/goal ship the fix",
+        "text" => text,
         "attachments" => [],
         "modelSelection" => selection,
         "dispatchMode" => %{"type" => "start_immediately"}

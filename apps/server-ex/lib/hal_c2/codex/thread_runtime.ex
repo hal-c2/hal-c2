@@ -2696,7 +2696,7 @@ defmodule HalC2.Codex.ThreadRuntime do
          {:ok, %{turn: %{}} = state} <- native_turn_started(state, turn, native_turn) do
       case goal_call(state, "thread/goal/set", %{"status" => "active"}) do
         {:ok, got} ->
-          {:ok, settle_goal(state, Goals.from_codex(got["goal"]))}
+          {:ok, settle_goal(state, Goals.from_codex(got["goal"]), :keep_ended)}
 
         {:error, reason, state} ->
           Logger.warning("codex goal not activated: #{inspect(reason)}")
@@ -2784,23 +2784,29 @@ defmodule HalC2.Codex.ThreadRuntime do
     |> finish_item(native, "completed", &Map.merge(&1, %{"text" => reply, "streaming" => false}))
   end
 
-  # Setting a goal passes through cleared and paused ones on its way: Codex's reports
-  # of those, already here behind its answer, are stale once the answer is in. Not so
-  # a report that the goal ended: a fast Codex has worked on and finished it by then,
-  # and dropping that would leave it active, holding the run until the grace paused it.
-  defp settle_goal(%{conn: conn} = state, answered) do
-    put_goal(state, drain_goal_updates(conn, answered))
+  # Codex's goal reports already here behind its answer to a goal command are stale
+  # once the answer is in, so the answer stands (`:drop_ended`): a clear or pause that
+  # Codex answered is newer than its report that it had finished the goal. Activating a
+  # goal (`:keep_ended`) is the exception: a fast Codex works on and finishes the goal
+  # before the answer is read, and dropping that report would leave it active, holding
+  # the run until the grace paused it.
+  defp settle_goal(%{conn: conn} = state, answered, ended \\ :drop_ended) do
+    put_goal(state, drain_goal_updates(conn, answered, ended))
   end
 
-  defp drain_goal_updates(conn, goal) do
+  defp drain_goal_updates(conn, goal, ended) do
     receive do
       {:json_rpc, ^conn, {:notification, "thread/goal/updated", %{"goal" => reported}}} ->
         reported = Goals.from_codex(reported)
-        ended? = reported != nil and reported["status"] not in ["active", "paused"]
-        drain_goal_updates(conn, if(ended?, do: reported, else: goal))
+
+        keep? =
+          ended == :keep_ended and reported != nil and
+            reported["status"] not in ["active", "paused"]
+
+        drain_goal_updates(conn, if(keep?, do: reported, else: goal), ended)
 
       {:json_rpc, ^conn, {:notification, "thread/goal/cleared", _params}} ->
-        drain_goal_updates(conn, goal)
+        drain_goal_updates(conn, goal, ended)
     after
       0 -> goal
     end

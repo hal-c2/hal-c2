@@ -6,6 +6,9 @@
 # last marking the goal complete. FAKE_CODEX_GOAL_STALL: Codex never starts one.
 # FAKE_CODEX_GOAL_FINISH_FIRST: setting the goal active reports it complete before the
 # answer, which still shows it active, as a Codex that finished the goal first would.
+# FAKE_CODEX_GOAL_DONE_BEFORE_STOP: clearing or pausing the goal reports it complete
+# before the answer, as a Codex that finished it just before the user's command would
+# (a clear's own report then comes ahead of the answer too).
 import json, os, time
 
 MAX_OBJECTIVE = 4000
@@ -31,6 +34,11 @@ def _updated(thread, turn=None):
     _send({"method": "thread/goal/updated",
            "params": {"threadId": thread, "turnId": turn, "goal": {**goal, "threadId": thread}}})
 
+def _done(thread):
+    global goal
+    goal = {**goal, "status": "complete", "updatedAt": int(time.time())}
+    _updated(thread)
+
 def request(mid, method, params):
     global goal
     thread = params.get("threadId")
@@ -38,9 +46,14 @@ def request(mid, method, params):
         _send({"id": mid, "result": {"goal": goal and {**goal, "threadId": thread}}})
     elif method == "thread/goal/clear":
         cleared = goal is not None
+        early = cleared and os.environ.get("FAKE_CODEX_GOAL_DONE_BEFORE_STOP")
+        if early:
+            _done(thread)
         goal = None
+        if early:
+            _send({"method": "thread/goal/cleared", "params": {"threadId": thread}})
         _send({"id": mid, "result": {"cleared": cleared}})
-        if cleared:
+        if cleared and not early:
             _send({"method": "thread/goal/cleared", "params": {"threadId": thread}})
     elif method == "thread/goal/set":
         objective = params.get("objective")
@@ -53,6 +66,8 @@ def request(mid, method, params):
             _send({"id": mid, "error": {"code": -32600, "message": "thread has no goal"}})
             return
         elif params.get("status"):
+            if params["status"] == "paused" and os.environ.get("FAKE_CODEX_GOAL_DONE_BEFORE_STOP"):
+                _done(thread)
             goal = {**goal, "status": params["status"], "updatedAt": int(time.time())}
         if os.environ.get("FAKE_CODEX_GOAL_FINISH_FIRST") and goal["status"] == "active":
             answer = {**goal, "threadId": thread}
