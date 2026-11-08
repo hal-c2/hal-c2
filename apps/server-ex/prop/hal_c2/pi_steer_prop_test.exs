@@ -2,7 +2,7 @@ defmodule HalC2.PiSteerPropTest do
   @moduledoc """
   A state machine over one Pi thread (`HalC2.Pi.ThreadRuntime`) driven through the
   orchestration commands a client sends: send a message whose turn works (after a tool
-  that returns an image, or not) until it is steered or stopped (or Pi aborts it itself, which reads as interrupted), either taking the steer into its running work or settling just
+  that returns an image, or one that hands tasks to Pi's own subagents, or not) until it is steered or stopped (or Pi aborts it itself, which reads as interrupted), either taking the steer into its running work or settling just
   before the steer lands (so Pi answers it in a run of its own), or just before two
   steers sent at once land; steer the running turn, with a message Pi takes, one it
   refuses, one it refuses only once the run settled (which finds the turn over, so it
@@ -36,8 +36,10 @@ defmodule HalC2.PiSteerPropTest do
   checks that each turn ends once, with the status it should, that every steer's
   answer is recorded in the thread, whichever way Pi ran it, that a steer Pi refused
   is an error for its sender that leaves the turn running, that no compaction
-  shows in a turn except that turn's own, and that an image a tool returned is stored
-  with the thread and listed on that turn's tool item. Messages resent on their own
+  shows in a turn except that turn's own, that an image a tool returned is stored
+  with the thread and listed on that turn's tool item, and that each task a turn
+  handed Pi's own subagents shows the way it ended, or, still working, ends with
+  its turn. Messages resent on their own
   at once may run in either order, so runs and replies compare as sets. After each command the test
   waits on the thread's stream until the runs it ended have ended and a running turn
   began saying "Working on it.".
@@ -70,6 +72,39 @@ defmodule HalC2.PiSteerPropTest do
             %{"type" => "image", "data" => @png, "mimeType" => "image/png"}
           ],
           "details" => %{"width" => 1}
+        },
+        %{"text" => "Working on it."},
+        %{"waitAbort" => true}
+      ]
+    },
+    # A "joins" turn that first hands three tasks to Pi's own subagents (its example
+    # extension): one has finished, one exited with an error, one works on with the turn.
+    %{
+      "match" => "delegates",
+      "steps" => [
+        %{
+          "event" => %{
+            "type" => "tool_execution_start",
+            "toolCallId" => "call-subagent",
+            "toolName" => "subagent",
+            "args" => %{}
+          }
+        },
+        %{
+          "event" => %{
+            "type" => "tool_execution_update",
+            "toolCallId" => "call-subagent",
+            "toolName" => "subagent",
+            "partialResult" => %{
+              "details" => %{
+                "results" => [
+                  %{"agent" => "a", "task" => "one", "finished" => true, "exitCode" => 0},
+                  %{"agent" => "b", "task" => "two", "finished" => true, "exitCode" => 1},
+                  %{"agent" => "c", "task" => "three", "exitCode" => -1}
+                ]
+              }
+            }
+          }
         },
         %{"text" => "Working on it."},
         %{"waitAbort" => true}
@@ -277,7 +312,8 @@ defmodule HalC2.PiSteerPropTest do
       next: 1,
       abandoned: :none,
       compactions: [],
-      images: []
+      images: [],
+      subagents: []
     }
 
   # With an abandoned compaction still out (its task has not answered),
@@ -301,7 +337,9 @@ defmodule HalC2.PiSteerPropTest do
 
   def command(%{turn: nil, next: next}) do
     frequency([
-      {5, {:call, __MODULE__, :send, [id(next), oneof([:joins, :ends, :pair, :aborts, :shows])]}},
+      {5,
+       {:call, __MODULE__, :send,
+        [id(next), oneof([:joins, :ends, :pair, :aborts, :shows, :delegates])]}},
       {2, {:call, __MODULE__, :send, [id(next), oneof([:compacts, :holds])]}},
       {2, {:call, __MODULE__, :send_compacted, [id(next), id(next + 1)]}},
       {1, {:call, __MODULE__, :send_handled, [id(next)]}},
@@ -472,6 +510,22 @@ defmodule HalC2.PiSteerPropTest do
         turn: msg,
         how: :joins,
         images: state.images ++ [msg]
+    }
+  end
+
+  # Its subagents that ended keep their ending; the one still working ends with
+  # the turn (`:with_run`).
+  def next_state(state, _result, {:call, _, :send, [msg, :delegates]}) do
+    runs = state.runs ++ [{msg, "running"}]
+    subagents = [{msg, "completed"}, {msg, "failed"}, {msg, :with_run}]
+
+    %{
+      state
+      | next: state.next + 1,
+        runs: runs,
+        turn: msg,
+        how: :joins,
+        subagents: state.subagents ++ subagents
     }
   end
 
@@ -652,7 +706,16 @@ defmodule HalC2.PiSteerPropTest do
       Enum.sort(projection.runs) == Enum.sort(model.runs) and
       Enum.sort(projection.replies) == Enum.sort(model.replies) and
       projection.compactions == model.compactions and
-      Enum.sort(projection.images) == Enum.sort(model.images)
+      Enum.sort(projection.images) == Enum.sort(model.images) and
+      Enum.sort(projection.subagents) == Enum.sort(subagents(model))
+  end
+
+  defp subagents(model) do
+    for {msg, status} <- model.subagents do
+      if status == :with_run,
+        do: {msg, model.runs |> Enum.find(&(elem(&1, 0) == msg)) |> elem(1)},
+        else: {msg, status}
+    end
   end
 
   # --- commands ---------------------------------------------------------------------
@@ -1241,6 +1304,16 @@ defmodule HalC2.PiSteerPropTest do
           run <- runs(state),
           run["id"] == item["runId"],
           do: run["userMessageId"]
+        ),
+      # The status of each entry Pi's own subagents have, by the message whose turn
+      # handed out its task.
+      subagents:
+        for(
+          item <- StreamState.list(state, "turn-item"),
+          item["type"] == "subagent",
+          run <- runs(state),
+          run["id"] == item["runId"],
+          do: {run["userMessageId"], item["status"]}
         ),
       # Pi answers a steer it took in "steered: <text>", and one it ran on its own
       # "Reply to <text> after [...]".

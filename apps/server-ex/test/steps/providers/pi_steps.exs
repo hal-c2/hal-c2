@@ -723,6 +723,142 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # --- Pi's own subagents ---
+
+  # Pi's example subagent extension: one `subagent` tool call hands out tasks and
+  # reports each in its result's details, with what the subagent said last.
+  defp subagent_task(n, fields \\ %{}) do
+    Map.merge(
+      %{
+        "agent" => "scout-#{n}",
+        "task" => "Look into part #{n}",
+        "model" => "fake-model",
+        "exitCode" => 0,
+        "messages" => [
+          %{
+            "role" => "assistant",
+            "content" => [%{"type" => "text", "text" => "Part #{n} found"}]
+          }
+        ]
+      },
+      fields
+    )
+  end
+
+  defp subagent_steps(running, ended, after_update \\ []) do
+    call = %{"toolCallId" => "call-subagent", "toolName" => "subagent"}
+    args = %{"tasks" => Enum.map(running, &Map.take(&1, ["agent", "task"]))}
+
+    [
+      %{"event" => Map.merge(call, %{"type" => "tool_execution_start", "args" => args})},
+      %{
+        "event" =>
+          Map.merge(call, %{
+            "type" => "tool_execution_update",
+            "args" => args,
+            "partialResult" => %{"content" => [], "details" => %{"results" => running}}
+          })
+      }
+    ] ++
+      after_update ++
+      [
+        %{
+          "event" =>
+            Map.merge(call, %{
+              "type" => "tool_execution_end",
+              "result" => %{
+                "content" => [%{"type" => "text", "text" => "All done"}],
+                "details" => %{"results" => ended}
+              },
+              "isError" => false
+            })
+        },
+        %{"text" => "Done."}
+      ]
+  end
+
+  defp said(text),
+    do: [%{"role" => "assistant", "content" => [%{"type" => "text", "text" => text}]}]
+
+  step("Pi has its subagent extension", context, do: context)
+
+  step "Pi hands three tasks to its own subagents", context do
+    running =
+      for n <- 1..3,
+          do: subagent_task(n, %{"exitCode" => -1, "messages" => said("Reading part #{n}")})
+
+    ended = for n <- 1..3, do: subagent_task(n)
+    event_thread(context, subagent_steps(running, ended), "split the work")
+  end
+
+  step "the thread shows one entry per task with its progress and result", context do
+    entries = items(context, "subagent")
+
+    assert Enum.map(entries, &{&1["title"], &1["prompt"], &1["progress"], &1["result"]}) ==
+             for(
+               n <- 1..3,
+               do: {"scout-#{n}", "Look into part #{n}", "Reading part #{n}", "Part #{n} found"}
+             )
+
+    assert Enum.all?(
+             entries,
+             &(&1["status"] == "completed" and &1["origin"] == "provider_native")
+           )
+
+    context
+  end
+
+  step "no child thread is created for them", context do
+    assert Enum.all?(items(context, "subagent"), &(&1["childThreadId"] == nil))
+    assert context |> state() |> StreamState.list("subagent") == []
+    context
+  end
+
+  step("Pi handed a task to one of its own subagents", context, do: context)
+
+  # How the subagent's task reads in the result Pi reports once the tool ended,
+  # or, for one that has not finished, in its last update while the tool runs on.
+  step ~r/^Pi's subagent (?<ends>has not finished|finishes|is aborted|exits with a code other than zero|stops on an error)$/,
+       %{args: [ends]} = context do
+    running = [subagent_task(1, %{"exitCode" => -1, "messages" => said("Reading")})]
+
+    ended =
+      case ends do
+        "finishes" -> %{}
+        "is aborted" -> %{"stopReason" => "aborted", "errorMessage" => "Aborted"}
+        "exits with a code other than zero" -> %{"exitCode" => 1, "stderr" => "scout crashed"}
+        "stops on an error" -> %{"stopReason" => "error", "errorMessage" => "model overloaded"}
+        "has not finished" -> nil
+      end
+
+    if ended do
+      context =
+        event_thread(context, subagent_steps(running, [subagent_task(1, ended)]), "hand it off")
+
+      [entry] = items(context, "subagent")
+      Map.put(context, :subagent_status, entry["status"])
+    else
+      steps = subagent_steps(running, [subagent_task(1)], [%{"until" => "release"}])
+      context = event_thread(context, steps, "hand it off", :running)
+
+      entry =
+        World.await_stream(World.thread_id(context, context.thread), fn state ->
+          Enum.find(
+            StreamState.list(state, "turn-item"),
+            &(&1["type"] == "subagent" and &1["progress"] == "Reading")
+          )
+        end)
+
+      File.touch!(Path.join(FakeAcp.fake(context, "pi").dir, "release"))
+      Map.put(context, :subagent_status, entry["status"])
+    end
+  end
+
+  step "its entry is shown as {word}", %{args: [status]} = context do
+    assert context.subagent_status == status
+    context
+  end
+
   # --- skills ---
 
   step "Pi loads the project skill {string}", %{args: [name]} = context do
@@ -3976,7 +4112,7 @@ defmodule HalC2.Steps.Providers.Pi do
   # Each long text arrives its own way; `kept` is what the thread shows of
   # it and `cut_original` what Pi sent, taken from the fake's own log or the
   # script, so the limit is checked against Pi's text, not the MC's copy.
-  step ~r/^Pi sends (?<text>the input of a tool awaiting approval|the reason a compaction failed|the detail of an extension's failure|the current value of a text edit) longer than its limit$/,
+  step ~r/^Pi sends (?<text>the input of a tool awaiting approval|the reason a compaction failed|the detail of an extension's failure|the current value of a text edit|the progress line of one of its subagents|the result of one of its subagents) longer than its limit$/,
        %{args: [text]} = context do
     {original, kept} =
       case text do
@@ -4059,6 +4195,23 @@ defmodule HalC2.Steps.Providers.Pi do
           [question] = await_question(context)["questions"]
           [_, kept] = String.split(question["question"], "Current value:\n", parts: 2)
           {prefill, kept}
+
+        "the progress line of one of its subagents" ->
+          line = String.duplicate("g", 5_000)
+          running = [subagent_task(1, %{"exitCode" => -1, "messages" => said(line)})]
+
+          context =
+            event_thread(context, subagent_steps(running, [subagent_task(1)]), "hand it off")
+
+          [entry] = items(context, "subagent")
+          {line, entry["progress"]}
+
+        "the result of one of its subagents" ->
+          result = String.duplicate("s", 20_000)
+          ended = [subagent_task(1, %{"messages" => said(result)})]
+          context = event_thread(context, subagent_steps(ended, ended), "hand it off")
+          [entry] = items(context, "subagent")
+          {result, entry["result"]}
       end
 
     Map.merge(context, %{cut_original: original, cut_kept: kept})

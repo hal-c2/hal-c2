@@ -1520,50 +1520,27 @@ defmodule HalC2.Pi.ThreadRuntime do
     state |> flush() |> ensure_item(tool_native(state, id), kind, fields)
   end
 
-  defp event("tool_execution_end", %{"toolCallId" => id} = event, state) do
-    native = tool_native(state, id)
-
+  # Pi's example subagent extension reports its tasks as the tool runs.
+  defp event(
+         "tool_execution_update",
+         %{"toolCallId" => id, "toolName" => "subagent"} = event,
+         state
+       ) do
     state =
-      if Map.has_key?(state.items, native),
+      if Map.has_key?(state.items, tool_native(state, id)),
         do: state,
         else: event("tool_execution_start", event, state)
 
-    %{kind: kind} = state.items[native]
-    output = result_text(event["result"])
-    images = if kind == :tool, do: tool_images(state.thread_id, event["result"]), else: []
-
-    # A Stop aborts in-flight tools, and Pi reports those as error ends: they
-    # read as interrupted, matching the run, rather than failed.
-    status =
-      cond do
-        event["isError"] == true and state.interrupted -> "interrupted"
-        event["isError"] == true -> "failed"
-        true -> "completed"
-      end
-
-    finish_item(state, native, status, fn entity ->
-      case kind do
-        :command ->
-          exit_code =
-            get_in(event, ["result", "details", "exitCode"]) ||
-              get_in(event, ["result", "exitCode"]) ||
-              get_in(event, ["result", "structuredContent", "exitCode"])
-
-          entity
-          |> Map.put("output", output)
-          |> then(&if(is_integer(exit_code), do: Map.put(&1, "exitCode", exit_code), else: &1))
-
-        :file ->
-          Map.put(entity, "diffStr", output)
-
-        _ ->
-          entity
-          |> Map.put("output", output)
-          |> then(&if(images == [], do: &1, else: Map.put(&1, "attachments", images)))
-          |> then(&put_details(&1, get_in(event, ["result", "details"])))
-      end
-    end)
+    subagents(state, id, event["partialResult"], false)
   end
+
+  defp event("tool_execution_end", %{"toolCallId" => id, "toolName" => "subagent"} = event, state) do
+    state = tool_end(state, id, event)
+    subagents(state, id, event["result"], true)
+  end
+
+  defp event("tool_execution_end", %{"toolCallId" => id} = event, state),
+    do: tool_end(state, id, event)
 
   defp event("compaction_start", _event, state) do
     n = state.compactions + 1
@@ -1686,6 +1663,51 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp event(_type, _event, state), do: state
 
+  defp tool_end(state, id, event) do
+    native = tool_native(state, id)
+
+    state =
+      if Map.has_key?(state.items, native),
+        do: state,
+        else: event("tool_execution_start", event, state)
+
+    %{kind: kind} = state.items[native]
+    output = result_text(event["result"])
+    images = if kind == :tool, do: tool_images(state.thread_id, event["result"]), else: []
+
+    # A Stop aborts in-flight tools, and Pi reports those as error ends: they
+    # read as interrupted, matching the run, rather than failed.
+    status =
+      cond do
+        event["isError"] == true and state.interrupted -> "interrupted"
+        event["isError"] == true -> "failed"
+        true -> "completed"
+      end
+
+    finish_item(state, native, status, fn entity ->
+      case kind do
+        :command ->
+          exit_code =
+            get_in(event, ["result", "details", "exitCode"]) ||
+              get_in(event, ["result", "exitCode"]) ||
+              get_in(event, ["result", "structuredContent", "exitCode"])
+
+          entity
+          |> Map.put("output", output)
+          |> then(&if(is_integer(exit_code), do: Map.put(&1, "exitCode", exit_code), else: &1))
+
+        :file ->
+          Map.put(entity, "diffStr", output)
+
+        _ ->
+          entity
+          |> Map.put("output", output)
+          |> then(&if(images == [], do: &1, else: Map.put(&1, "attachments", images)))
+          |> then(&put_details(&1, get_in(event, ["result", "details"])))
+      end
+    end)
+  end
+
   # Extension failures queued between turns, shown at the head of this turn.
   defp show_extension_errors(state) do
     Enum.reduce(state.extension_errors, %{state | extension_errors: []}, &extension_error(&2, &1))
@@ -1750,6 +1772,107 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp tool_shape(name, args), do: {:tool, %{"toolName" => name || "tool", "input" => args}}
+
+  # Pi's example subagent extension reports the tasks it handed out in its result's
+  # details. Each shows as its own subagent entry, and none gets a child thread: Pi
+  # runs them without a session. A result of another shape stays the tool's output.
+  defp subagents(state, call, result, ended?) do
+    case result do
+      %{"details" => %{"results" => tasks}} when is_list(tasks) ->
+        tasks
+        |> Enum.with_index()
+        |> Enum.reduce(state, fn {task, n}, state -> subagent(state, call, task, n, ended?) end)
+
+      _ ->
+        state
+    end
+  end
+
+  defp subagent(state, call, %{"agent" => agent, "task" => prompt} = task, n, ended?)
+       when is_binary(agent) and is_binary(prompt) do
+    native = "#{tool_native(state, call)}:subagent:#{task["step"] || n}"
+
+    state =
+      ensure_item(state, native, :subagent, %{
+        "origin" => "provider_native",
+        "driver" => "pi",
+        "providerInstanceId" => Entities.instance(state.turn.ids),
+        "childThreadId" => nil,
+        "title" => agent,
+        "prompt" => prompt,
+        "model" => if(is_binary(task["model"]), do: task["model"]),
+        "result" => nil
+      })
+
+    %{node: node} = item = state.items[native]
+    finished? = ended? or task["finished"] == true
+    output = subagent_output(task)
+
+    fields =
+      if finished?,
+        do: %{
+          "subagentId" => node,
+          "result" => if(output != "", do: String.slice(output, 0, 10_000))
+        },
+        else: %{"subagentId" => node, "progress" => String.slice(output, 0, 200)}
+
+    fields = Map.reject(fields, &(&1 == {"progress", ""}))
+
+    cond do
+      item[:done] ->
+        state
+
+      finished? ->
+        state
+        |> finish_item(native, subagent_status(task), &Map.merge(&1, fields))
+        |> put_in([Access.key!(:items), native, :done], true)
+
+      # Pi reports every task with each update: one whose progress has not
+      # changed is not written again.
+      item[:shown] == fields ->
+        state
+
+      true ->
+        commit(state, fn stream ->
+          [Orchestration.upsert(stream, "turn-item", item.id, &Map.merge(&1, fields))]
+        end)
+
+        put_in(state.items[native][:shown], fields)
+    end
+  end
+
+  defp subagent(state, _call, _task, _n, _ended?), do: state
+
+  defp subagent_status(%{"stopReason" => "aborted"}), do: "interrupted"
+  defp subagent_status(%{"stopReason" => "error"}), do: "failed"
+  defp subagent_status(%{"exitCode" => code}) when is_integer(code) and code != 0, do: "failed"
+  defp subagent_status(_task), do: "completed"
+
+  # What a subagent said last, or why it failed.
+  defp subagent_output(task) do
+    failed? =
+      task["stopReason"] in ["error", "aborted"] or
+        (is_integer(task["exitCode"]) and task["exitCode"] != 0)
+
+    failure =
+      if failed?,
+        do: Enum.find([task["errorMessage"], task["stderr"]], &(is_binary(&1) and &1 != ""))
+
+    failure ||
+      (task["messages"] || [])
+      |> List.wrap()
+      |> Enum.reverse()
+      |> Enum.find_value("", fn
+        %{"role" => "assistant", "content" => content} ->
+          case if(is_binary(content), do: content, else: result_text(%{"content" => content})) do
+            "" -> nil
+            text -> text
+          end
+
+        _ ->
+          nil
+      end)
+  end
 
   defp result_text(%{"content" => content}) when is_list(content) do
     for(%{"type" => "text", "text" => text} <- content, do: text) |> Enum.join("\n")

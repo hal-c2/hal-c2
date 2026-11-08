@@ -855,7 +855,6 @@ Feature: Pi
     When the user sends "/compacted logs look wrong" to a Pi thread
     Then Pi receives it as an ordinary message
 
-  @backlog
   Scenario: Pi's own subagents show as entries in the thread
     Given Pi has its subagent extension
     When Pi hands three tasks to its own subagents
@@ -886,15 +885,14 @@ Feature: Pi
       | the detail of an extension's failure   | 2,000  |
       | the current value of a text edit       | 2,000  |
 
-  @backlog
   Scenario Outline: Long texts from Pi's own subagents are cut to a limit
     When Pi sends <text> longer than its limit
     Then the thread keeps its first <limit> characters
 
     Examples:
-      | text                                   | limit  |
-      | the progress line of one of its subagents | 200 |
-      | the result of one of its subagents     | 10,000 |
+      | text                                      | limit  |
+      | the progress line of one of its subagents | 200    |
+      | the result of one of its subagents        | 10,000 |
 
   Scenario: Pi's skills not loading in time do not hold up the thread
     Given Pi does not list its skills within 4 seconds
@@ -960,10 +958,9 @@ Feature: Pi
       | edit, without naming a file  | a plain tool call named after the tool, with what it was given |
       | grep                         | a plain tool call named after the tool, with what it was given |
 
-  @backlog
   Scenario Outline: A Pi subagent entry shows how it ended
     Given Pi handed a task to one of its own subagents
-    When the subagent <ends>
+    When Pi's subagent <ends>
     Then its entry is shown as <state>
 
     Examples:
