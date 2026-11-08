@@ -7906,6 +7906,153 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- the goal (`/goal`, Upstream #15592, #16598, #25426) --------------------------------
+
+  # The fake's "/goal OBJECTIVE" says "Goal set", works, gets one unmet check back as
+  # Stop hook feedback ("the tests still fail") and stays open; an objective "in the
+  # background" starts a background subagent (agent-1, task task-agent-1) and ends the turn.
+  defp goal(context) do
+    World.stream(context, @thread)
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(& &1["goal"])
+  end
+
+  defp await_goal(context, fun) do
+    World.await_value(context, @thread, fn state ->
+      state |> StreamState.list("provider-thread") |> Enum.find_value(& &1["goal"]) |> fun.()
+    end)
+  end
+
+  step "the user sends {string} with an objective in a Claude thread",
+       %{args: ["/goal"]} = context do
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", "/goal make the tests pass")
+  end
+
+  step "the goal's state and the number of checks show in the thread", context do
+    await_goal(
+      context,
+      &(&1 == %{
+          "objective" => "make the tests pass",
+          "status" => "active",
+          "checks" => 1,
+          "lastCheck" => "the tests still fail"
+        })
+    )
+
+    context
+  end
+
+  # A Stop hook of the user's ends the turn first: Claude never ran the goal's check.
+  step "the goal shows complete only when Claude ends the turn normally", context do
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => false,
+      "terminal_reason" => "stop_hook_prevented"
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    assert %{"status" => "active", "checks" => 1} = goal(context)
+
+    context = World.post_message(context, @thread, "keep going")
+    World.await_runs(context, @thread, ["completed", "completed"])
+
+    assert goal(context) == %{
+             "objective" => "make the tests pass",
+             "status" => "complete",
+             "checks" => 1
+           }
+
+    context
+  end
+
+  step "a Claude thread is working on a {string} objective", %{args: ["/goal"]} = context do
+    context
+    |> World.fake_providers()
+    |> World.launch_on(@thread, "claudeAgent", "/goal survey the repo in the background")
+  end
+
+  step "Claude has a subagent running in the background", context do
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => "running"}], StreamState.list(state, "subagent"))
+    end)
+
+    context
+  end
+
+  step "the main turn ends normally", context do
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the goal is still shown as active", context do
+    assert %{"objective" => "survey the repo in the background", "status" => "active"} =
+             goal(context)
+
+    context
+  end
+
+  # A turn of the user's ends while the subagent runs, then the subagent's end wakes Claude.
+  step "it shows complete only after a later turn ends normally with no subagent running",
+       context do
+    context = World.post_message(context, @thread, "keep going")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert %{"status" => "active"} = goal(context)
+
+    subagent_notification(context, "completed", "lib has three modules")
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-goal-wake",
+        "content" => [%{"type" => "text", "text" => "The survey is done"}]
+      }
+    })
+
+    World.await_value(context, @thread, fn _state ->
+      match?([_, _, %{"status" => "running"}], World.runs(context, @thread))
+    end)
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    await_goal(context, &match?(%{"status" => "complete"}, &1))
+    context
+  end
+
+  step "the user sends {string} in a Claude thread", %{args: [command]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, command)
+    World.await_runs(context, @thread, ["completed", "failed"])
+    Map.put(context, :goal_command, command)
+  end
+
+  step "the command is refused, saying Claude cannot pause or resume a goal", context do
+    assert Enum.any?(
+             StreamState.list(World.stream(context, @thread), "turn-item"),
+             &(&1["type"] == "error" and &1["failure"]["code"] == "goal_unsupported" and
+                 &1["failure"]["message"] ==
+                   "Claude goals cannot be paused or resumed. Send /goal clear to remove the goal.")
+           )
+
+    # The command never reached Claude.
+    refute Enum.any?(
+             World.provider_log(context, "claude"),
+             &(get_in(&1, ["in", "message", "content"]) == context.goal_command)
+           )
+
+    context
+  end
+
+  step "no goal named {string} is set", %{args: [_word]} = context do
+    assert goal(context) == nil
+    context
+  end
+
   defp claude_says(context, message) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
     send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})

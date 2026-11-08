@@ -2268,14 +2268,14 @@ Feature: Claude
     Then the steer goes in at once
     And the tool call Claude did not run shows as cancelled, not as denied permission
 
-  @backlog @mc @shared @plugin-claude
+  @mc @shared @plugin-claude @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Claude's goal shows as a work state
     When the user sends "/goal" with an objective in a Claude thread
     Then the goal's state and the number of checks show in the thread
     And the goal shows complete only when Claude ends the turn normally
 
   # Upstream #16598: a /goal read as complete while a background subagent still ran.
-  @backlog @shared @priority-high
+  @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario: A Claude goal is not complete while a background subagent still runs
     Given a Claude thread is working on a "/goal" objective
     And Claude has a subagent running in the background
@@ -2284,7 +2284,7 @@ Feature: Claude
     And it shows complete only after a later turn ends normally with no subagent running
 
   # Upstream #25426: Claude Code has no /goal pause or resume and read them as new goals.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: Pausing or resuming a Claude goal is refused
     When the user sends "<command>" in a Claude thread
     Then the command is refused, saying Claude cannot pause or resume a goal

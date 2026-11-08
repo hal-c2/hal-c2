@@ -142,6 +142,20 @@ defmodule HalC2.Orchestration.HandoffTest do
              "User: hi\n\nAssistant: hello"
   end
 
+  # Found by the Claude goal property: a refused `/goal resume` handed "User: /goal
+  # resume" to the thread's next turn, which Claude then got wrapped in that history.
+  test "a goal control is not handed over as conversation, a goal's objective is" do
+    state =
+      state(
+        turn(1, "/goal resume", "") ++
+          turn(2, "/goal", "Goal active: ship it") ++
+          turn(3, "/goal Clear", "") ++ turn(4, "/goal ship it", "Working on it")
+      )
+
+    assert Handoff.transcript(state, 5) ==
+             "Assistant: Goal active: ship it\n\nUser: /goal ship it\n\nAssistant: Working on it"
+  end
+
   test "a failed command with no exit code is handed over as failed" do
     command = %{"input" => "mix test", "status" => "failed", "output" => "1 failure\n"}
 

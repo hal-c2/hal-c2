@@ -98,6 +98,7 @@ session_rules = []  # Bash commands the session allows without asking
 asked_before_plan = False  # a "question first" turn waiting on its answer
 asking_subagent = None  # (Agent tool id, command) of a subagent waiting on its permission answer
 pending_tool = None  # the Bash call a "leave a tool pending" turn has not answered yet
+goal = None  # the objective "/goal OBJECTIVE" set, until "/goal clear"
 pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 mcp_servers = {}  # the MCP servers the host handed over stdin (mcp_set_servers)
@@ -357,6 +358,42 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": "", "session_id": session,
               **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
         lifecycle("completed")
+        continue
+    # "/goal OBJECTIVE": Claude Code's own goal command. It says "Goal set" in a synthetic
+    # message, works on it, and its Stop hook finds it unmet once ("Stop hook feedback")
+    # before the turn goes on; the turn stays open for the test to end. With "in the
+    # background" in the objective Claude starts a background subagent (agent-N, task
+    # task-agent-N) and ends the turn while it runs, deferring the check. "/goal" alone
+    # says the goal's state, "/goal clear" clears it. Like Claude Code, it reads "/goal
+    # pause" as a goal named "pause".
+    if text == "/goal" or text.startswith("/goal "):
+        synthetic = lambda said: send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"goal-uuid-{turn}",
+                                       "message": {"id": f"m{turn}goal", "model": "<synthetic>", "role": "assistant", "content": [{"type": "text", "text": said}]}})
+        objective = text[len("/goal"):].strip()
+        if objective in ("", "clear"):
+            said = ("No goal set" if goal is None else (f"Goal cleared: {goal}" if objective else f"Goal active: {goal} (not yet evaluated)"))
+            if objective:
+                goal = None
+            synthetic(said)
+            send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": said, "session_id": session})
+            continue
+        goal = objective
+        synthetic(f"Goal set: {goal}")
+        if "in the background" in goal:
+            agent = f"agent-{turn}"
+            send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "message": {"id": f"m{turn}g", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+                "description": "Survey the repo", "prompt": "List what is in the repo", "subagent_type": "general-purpose", "run_in_background": True}}]}})
+            send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+                  "description": "Survey the repo", "task_type": "local_agent", "prompt": "List what is in the repo", "is_backgrounded": True})
+            send({"type": "user", "session_id": session, "parent_tool_use_id": None, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+                  "content": [{"type": "text", "text": f"Async agent launched successfully.\nagentId: task-{agent}"}]}]}})
+            send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "A helper is surveying the repo"}]}})
+            send({"type": "result", "subtype": "success", "is_error": False, "result": "A helper is surveying the repo", "session_id": session})
+            continue
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}a", "message": {"id": f"m{turn}a", "role": "assistant", "content": [{"type": "text", "text": "Working on it"}]}})
+        send({"type": "user", "session_id": session, "parent_tool_use_id": None, "isSynthetic": True, "message": {"role": "user", "content": [
+            {"type": "text", "text": f"Stop hook feedback:\n[{goal}]: the tests still fail"}]}})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}b", "role": "assistant", "content": [{"type": "text", "text": "Fixing the last test"}]}})
         continue
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):

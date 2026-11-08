@@ -1104,6 +1104,7 @@ defmodule HalC2.Orchestration.TurnWriter do
               failure["code"] == "queued_start_failed" -> "Queued provider could not start"
               failure["code"] == "provider_turned_off" -> "Provider turned off"
               failure["code"] == "compact_empty_thread" -> "Cannot compact an empty thread"
+              failure["code"] == "goal_unsupported" -> "Goal command not supported"
               failure["code"] == "worktree_unavailable" -> "Worktree could not be made"
               true -> "Provider error"
             end,

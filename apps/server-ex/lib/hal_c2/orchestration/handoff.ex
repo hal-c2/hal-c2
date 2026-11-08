@@ -542,7 +542,8 @@ defmodule HalC2.Orchestration.Handoff do
   # A row's transcript entry as `{run, at, role, text}`, if it has one. A bare
   # `/compact` or `/logout` the user sent was an instruction to the provider of its
   # day, not conversation: the next provider is not handed it, so a refused
-  # `/compact` leaves the thread with nothing to compact.
+  # `/compact` leaves the thread with nothing to compact. So was a goal control
+  # (`/goal` alone, or with clear, pause or resume).
   defp entry({"message", _, message}) do
     if maintenance?(message), do: [], else: message_entry(message)
   end
@@ -559,7 +560,8 @@ defmodule HalC2.Orchestration.Handoff do
   defp maintenance?(%{"role" => "user", "text" => text} = message) when is_binary(text),
     do:
       (message["attachments"] || []) == [] and
-        String.downcase(String.trim(text)) in ~w(/compact /logout)
+        (String.downcase(String.trim(text)) in ~w(/compact /logout /goal) or
+           Regex.match?(~r{^/goal\s+(clear|pause|resume)$}i, String.trim(text)))
 
   defp maintenance?(_message), do: false
 
