@@ -10,7 +10,9 @@ defmodule HalC2.Acp.Auth do
   opening a session, which only works once the agent is signed in.
 
   Failures reach clients as fixed messages; what the agent said goes to the log only,
-  since it can hold a device code or a sign-in URL.
+  since it can hold a device code or a sign-in URL. Cursor's sidecar is HAL-C2's own
+  and writes its sign-in failures for the user (a free plan needs a paid one), so its
+  words are the failure message.
   """
 
   alias HalC2.JsonRpc.Connection
@@ -67,14 +69,14 @@ defmodule HalC2.Acp.Auth do
           terminal(command, env, method, cwd, server, flow_id)
           {:ok, conn} = start(command, env, cwd)
           {:ok, _} = Connection.call(conn, "initialize", HalC2.Acp.initialize_params())
-          verify(conn, cwd, server, flow_id)
+          verify(conn, cwd, server, flow_id, instance)
 
         %{"type" => "env_var"} ->
-          verify(conn, cwd, server, flow_id)
+          verify(conn, cwd, server, flow_id, instance)
 
         _agent ->
-          authenticate(conn, method_id, server, flow_id)
-          verify(conn, cwd, server, flow_id)
+          authenticate(conn, method_id, server, flow_id, instance)
+          verify(conn, cwd, server, flow_id, instance)
       end
     else
       {:command, {:error, reason}} ->
@@ -89,35 +91,41 @@ defmodule HalC2.Acp.Auth do
     do: Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2)
 
   # `authenticate` runs off this process, which answers the agent's requests meanwhile.
-  defp authenticate(conn, method_id, server, flow_id) do
+  defp authenticate(conn, method_id, server, flow_id, instance) do
     task =
       Task.async(fn ->
         Connection.call(conn, "authenticate", %{"methodId" => method_id}, @login_timeout)
       end)
 
-    await_authenticate(conn, task, server, flow_id)
+    await_authenticate(conn, task, server, flow_id, instance)
   end
 
-  defp await_authenticate(conn, task, server, flow_id) do
+  defp await_authenticate(conn, task, server, flow_id, instance) do
     receive do
       {ref, result} when ref == task.ref ->
         Process.demonitor(ref, [:flush])
 
         case result do
-          {:ok, _} -> :ok
-          {:error, reason} -> fail("The ACP agent could not complete sign-in.", reason)
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            fail(
+              failure_message(instance, "The ACP agent could not complete sign-in.", reason),
+              reason
+            )
         end
 
       {:json_rpc, ^conn, {:request, id, "elicitation/create", params}} ->
         Connection.respond(conn, id, {:ok, elicit(params, server, flow_id)})
-        await_authenticate(conn, task, server, flow_id)
+        await_authenticate(conn, task, server, flow_id, instance)
 
       {:json_rpc, ^conn, {:request, id, method, _params}} ->
         Connection.respond(conn, id, {:error, %{"code" => -32601, "message" => method}})
-        await_authenticate(conn, task, server, flow_id)
+        await_authenticate(conn, task, server, flow_id, instance)
 
       {:json_rpc, ^conn, _notification} ->
-        await_authenticate(conn, task, server, flow_id)
+        await_authenticate(conn, task, server, flow_id, instance)
     end
   end
 
@@ -275,7 +283,7 @@ defmodule HalC2.Acp.Auth do
     if String.valid?(tail), do: tail, else: binary_tail(tail, max - 1)
   end
 
-  defp verify(conn, cwd, server, flow_id) do
+  defp verify(conn, cwd, server, flow_id, instance) do
     send(server, {:auth_verifying, flow_id})
 
     case Connection.call(conn, "session/new", %{"cwd" => cwd, "mcpServers" => []}, 60_000) do
@@ -284,7 +292,21 @@ defmodule HalC2.Acp.Auth do
         :ok
 
       {:error, reason} ->
-        fail("The provider could not create a session after sign-in.", reason)
+        fail(
+          failure_message(instance, "The provider could not create a session after sign-in.", reason),
+          reason
+        )
+    end
+  end
+
+  # The user's words for a failed sign-in: the fixed message, except from our own
+  # Cursor sidecar, whose error is written for the user (see moduledoc).
+  defp failure_message(instance, fixed, reason) do
+    with "cursor" <- HalC2.Acp.driver(instance),
+         %{"message" => text} when is_binary(text) and text != "" <- reason do
+      text
+    else
+      _ -> fixed
     end
   end
 

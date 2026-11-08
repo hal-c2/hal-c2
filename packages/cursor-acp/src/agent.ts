@@ -36,6 +36,11 @@ export interface CursorSdk {
       readonly variants?: ReadonlyArray<ModelVariant>;
     }>
   >;
+  /** The account behind a key, when the SDK can say (its email may be absent). */
+  readonly me?: (apiKey: string) => Promise<{
+    readonly userEmail?: string;
+    readonly apiKeyName: string;
+  }>;
   readonly login: (options: {
     readonly store: SdkCredentialStore;
     readonly signal: AbortSignal;
@@ -70,7 +75,9 @@ export type RuntimeMode =
   | "approval-required"
   | "auto-accept-edits"
   | "auto"
-  | "text-generation";
+  | "text-generation"
+  /** Text generation retried once, after its sandbox stopped the first run. */
+  | "text-generation-unsandboxed";
 
 type JsonRpcId = string | number;
 type Message = {
@@ -83,9 +90,12 @@ type Message = {
 
 class RpcError extends Error {
   readonly code: number;
-  constructor(code: number, message: string) {
+  /** Cursor's own error code for a failed run, when the SDK gave one. */
+  readonly data: { readonly code: string } | undefined;
+  constructor(code: number, message: string, data?: { readonly code: string }) {
     super(message);
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -110,6 +120,8 @@ export function makeCursorAcp(input: {
   readonly write: (message: object) => void;
   /** The platform the MC runs on (`process.platform`); Cursor's sandbox is not on Windows. */
   readonly platform?: string;
+  /** How long a model catalog request may take before Cursor reads as unavailable. */
+  readonly catalogTimeoutMs?: number;
 }) {
   const { sdk, write } = input;
   const sessions = new Map<string, Session>();
@@ -123,15 +135,94 @@ export function makeCursorAcp(input: {
       write({ jsonrpc: "2.0", id, method, params });
     });
 
-  const apiKey = async () => sdk.envApiKey ?? (await sdk.store.load())?.apiKey;
-
-  const requireKey = async () => {
-    const key = await apiKey();
-    if (key === undefined) throw authRequired();
-    return key;
+  const loadStore = async () => {
+    try {
+      return await sdk.store.load();
+    } catch {
+      throw new RpcError(-32603, "Could not open the Cursor credential store.");
+    }
   };
 
-  const text = input.mode === "text-generation";
+  /** The run's key, and whether it is the stored sign-in rather than `CURSOR_API_KEY`. */
+  const requireKey = async (): Promise<{ key: string; stored: boolean }> => {
+    if (sdk.envApiKey !== undefined) return { key: sdk.envApiKey, stored: false };
+    const stored = (await loadStore())?.apiKey;
+    if (stored === undefined) throw authRequired();
+    return { key: stored, stored: true };
+  };
+
+  const paidPlan = () =>
+    new RpcError(
+      -32603,
+      "A paid Cursor plan is needed to use Cursor with HAL-C2. Free Cursor accounts cannot use the Cursor SDK.",
+    );
+  const freePlanError = (cause: unknown) =>
+    /free (?:plan|tier|account)|paid plan|upgrade (?:to|your)/i.test(
+      cause instanceof Error ? cause.message : String(cause),
+    );
+  const blockedAccountError = (cause: unknown) =>
+    /permission|forbidden|\b403\b|blocked by|not authorized/i.test(
+      cause instanceof Error ? cause.message : String(cause),
+    );
+
+  /**
+   * The model catalog, time-boxed: a refused key and a free-plan account are
+   * answers about the sign-in, a hang or a network failure is the catalog's.
+   */
+  const catalog = async (key: string, stored: boolean, clearOnFree = true) => {
+    const timeoutMs = input.catalogTimeoutMs ?? 10_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const models = await Promise.race([
+        sdk.listModels(key),
+        new Promise<never>((_resolve, reject) => {
+          // @effect-diagnostics-next-line globalTimers:off - a plain timer races the SDK call.
+          timer = setTimeout(() => reject(new Error("cursor catalog timeout")), timeoutMs);
+        }),
+      ]);
+      return { models, catalogError: undefined as "failed" | "timeout" | undefined };
+    } catch (cause) {
+      if (cause instanceof Error && cause.message === "cursor catalog timeout") {
+        return { models: [], catalogError: "timeout" as const };
+      }
+      if (sdk.isAuthError(cause)) throw authRequired();
+      if (freePlanError(cause)) {
+        if (stored && clearOnFree) await sdk.store.clear().catch(() => {});
+        throw paidPlan();
+      }
+      return { models: [], catalogError: "failed" as const };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+
+  /**
+   * Who the key belongs to, for the provider list. A team that blocks the
+   * account endpoint still lets Cursor run: the account then reads as a
+   * Cursor account (or API key) without an email, and only a saved sign-in
+   * Cursor cannot confirm at all is an error.
+   */
+  const account = async (key: string, stored: boolean) => {
+    const fallback = { label: stored ? "Cursor account" : "Cursor API key" };
+    if (sdk.me === undefined) return fallback;
+    try {
+      const me = await sdk.me(key);
+      return me.userEmail ? { email: me.userEmail } : fallback;
+    } catch (cause) {
+      if (sdk.isAuthError(cause)) throw authRequired();
+      if (freePlanError(cause)) {
+        if (stored) await sdk.store.clear().catch(() => {});
+        throw paidPlan();
+      }
+      if (blockedAccountError(cause)) return fallback;
+      if (stored) {
+        throw new RpcError(-32603, "Could not verify the Cursor sign-in. Try again.");
+      }
+      return fallback;
+    }
+  };
+
+  const text = input.mode === "text-generation" || input.mode === "text-generation-unsandboxed";
   const windows = (input.platform ?? "linux") === "win32";
   // Cursor's SDK has no sandbox on Windows, so a mode whose safety is the sandbox
   // alone (auto-accept edits: no review either) cannot run there at all.
@@ -148,7 +239,10 @@ export function makeCursorAcp(input: {
       cwd,
       // Auto reviews escalations instead of denying them (upstream #19712).
       autoReview: input.mode === "approval-required" || input.mode === "auto",
-      sandboxOptions: { enabled: input.mode !== "full-access" && !windows },
+      sandboxOptions: {
+        enabled:
+          input.mode !== "full-access" && input.mode !== "text-generation-unsandboxed" && !windows,
+      },
       enableAgentRetries: true,
       ...(text ? { settingSources: [] } : {}),
     },
@@ -157,51 +251,54 @@ export function makeCursorAcp(input: {
   // Each model's catalog variants, for Max Mode when a model is picked.
   const variantsByModel = new Map<string, ReadonlyArray<ModelVariant>>();
 
-  const modelOption = async (key: string, current: string) => {
-    const models = await sdk.listModels(key).catch(() => []);
+  const modelOption = async (key: string, current: string, stored = false) => {
+    const { models, catalogError } = await catalog(key, stored);
     for (const model of models) {
       if (model.variants !== undefined) variantsByModel.set(model.id, model.variants);
     }
-    return [
-      {
-        id: "model",
-        name: "Model",
-        type: "select",
-        currentValue: current,
-        options: [
-          { value: "default", name: "Auto" },
-          // Each model's parameters ride along, for the client's model options.
-          ...models.map((model) => ({
-            value: model.id,
-            name: model.displayName,
-            ...(model.parameters === undefined || model.parameters.length === 0
-              ? {}
-              : { _meta: { parameters: model.parameters, variants: model.variants ?? [] } }),
-          })),
-        ],
-      },
-      // Cursor's own plan mode, which the client's plan toggle chooses.
-      ...(text
-        ? []
-        : [
-            {
-              id: "mode",
-              name: "Mode",
-              category: "mode",
-              type: "select",
-              currentValue: "agent",
-              options: [
-                { value: "agent", name: "Agent" },
-                { value: "plan", name: "Plan" },
-              ],
-            },
-          ]),
-    ];
+    return {
+      catalogError,
+      options: [
+        {
+          id: "model",
+          name: "Model",
+          type: "select",
+          currentValue: current,
+          options: [
+            { value: "default", name: "Auto" },
+            // Each model's parameters ride along, for the client's model options.
+            ...models.map((model) => ({
+              value: model.id,
+              name: model.displayName,
+              ...(model.parameters === undefined || model.parameters.length === 0
+                ? {}
+                : { _meta: { parameters: model.parameters, variants: model.variants ?? [] } }),
+            })),
+          ],
+        },
+        // Cursor's own plan mode, which the client's plan toggle chooses.
+        ...(text
+          ? []
+          : [
+              {
+                id: "mode",
+                name: "Mode",
+                category: "mode",
+                type: "select",
+                currentValue: "agent",
+                options: [
+                  { value: "agent", name: "Agent" },
+                  { value: "plan", name: "Plan" },
+                ],
+              },
+            ]),
+      ],
+    };
   };
 
   const open = async (params: Record<string, unknown>, agentId?: string) => {
     if (sandboxRefused !== undefined) throw new RpcError(-32603, sandboxRefused);
-    const key = await requireKey();
+    const { key, stored } = await requireKey();
     const cwd = String(params.cwd ?? process.cwd());
     const model: ModelSelection = { id: "default" };
     const agent = await guard(
@@ -209,6 +306,8 @@ export function makeCursorAcp(input: {
         ? sdk.createAgent(agentOptions(cwd, key, model))
         : sdk.resumeAgent(agentId, agentOptions(cwd, key, model)),
     );
+    const { options, catalogError } = await modelOption(key, model.id, stored);
+    const who = await account(key, stored);
     sessions.get(agent.agentId)?.agent.close();
     sessions.set(agent.agentId, {
       agent,
@@ -220,7 +319,11 @@ export function makeCursorAcp(input: {
     });
     return {
       ...(agentId === undefined ? { sessionId: agent.agentId } : {}),
-      configOptions: await modelOption(key, model.id),
+      configOptions: options,
+      _meta: {
+        account: who,
+        ...(catalogError === undefined ? {} : { catalogError }),
+      },
     };
   };
 
@@ -300,7 +403,11 @@ export function makeCursorAcp(input: {
       const failure = updates.finish(result);
       if (result.status === "cancelled") return { stopReason: "cancelled" };
       if (failure !== undefined)
-        throw new RpcError(-32603, explainFailure(failure, current.model.id, input.mode));
+        throw new RpcError(
+          -32603,
+          explainFailure(failure.message, current.model.id, input.mode),
+          failure.code ? { code: failure.code } : undefined,
+        );
       return { stopReason: "end_turn" };
     } finally {
       current.run = undefined;
@@ -345,6 +452,16 @@ export function makeCursorAcp(input: {
           });
         },
       });
+      // A free-plan sign-in is no sign-in for the SDK: say so now, rather
+      // than keeping credentials every later run refuses. The next status
+      // check is what discards them (see `catalog`), so it can say why too.
+      const key = (await loadStore())?.apiKey;
+      if (key !== undefined) {
+        await sdk.listModels(key).catch((cause: unknown) => {
+          if (freePlanError(cause)) throw paidPlan();
+          return [];
+        });
+      }
       return {};
     },
     logout: async () => {
@@ -414,7 +531,12 @@ export function makeCursorAcp(input: {
     } catch (cause) {
       const code = cause instanceof RpcError ? cause.code : -32603;
       const text = cause instanceof Error ? cause.message : String(cause);
-      write({ jsonrpc: "2.0", id: message.id, error: { code, message: text } });
+      const data = cause instanceof RpcError ? cause.data : undefined;
+      write({
+        jsonrpc: "2.0",
+        id: message.id,
+        error: { code, message: text, ...(data === undefined ? {} : { data }) },
+      });
     }
   };
 
@@ -595,11 +717,12 @@ export function makeUpdateTranslator(
       case "shell-output-delta": {
         // Output of the shell still running: the newest open shell call's.
         const shell = [...openTools.entries()]
-          .reverse()
+          .toReversed()
           .find(([, toolCall]) => toolCall.type === "shell");
         if (shell === undefined) return;
         const [callId, toolCall] = shell;
-        const soFar = (shellOutput.get(callId) ?? "") + shellOutputText(update.event);
+        const appended = (shellOutput.get(callId) ?? "") + shellOutputText(update.event);
+        const soFar = shellTail(appended);
         shellOutput.set(callId, soFar);
         emit({
           sessionUpdate: "tool_call_update",
@@ -636,8 +759,8 @@ export function makeUpdateTranslator(
   const finish = (result: {
     readonly status: string;
     readonly result?: string;
-    readonly error?: { readonly message: string };
-  }): string | undefined => {
+    readonly error?: { readonly message: string; readonly code?: string };
+  }): { readonly message: string; readonly code?: string } | undefined => {
     for (const child of childTranslators.values()) child.finish({ status: "finished" });
     childTranslators.clear();
     endTextSegment();
@@ -669,14 +792,14 @@ export function makeUpdateTranslator(
         if (!streamedText && result.result) emitText(result.result);
         return undefined;
       }
-      return message;
+      return { message, ...(result.error?.code ? { code: result.error.code } : {}) };
     }
-    if (tailFailure) return "Provider turn failed.";
+    if (tailFailure) return { message: "Provider turn failed." };
     // An answer that arrives only with the run's result is still the answer.
     if (!streamedText && result.result && options.suppressText !== true) {
       const probe = new TransportFailure();
       probe.push(result.result);
-      if (probe.failure !== undefined) return "Provider turn failed.";
+      if (probe.failure !== undefined) return { message: "Provider turn failed." };
       emitText(result.result);
     }
     return undefined;
@@ -919,6 +1042,20 @@ function toolRawOutput(toolCall: ToolCall): Record<string, unknown> | undefined 
   }
 }
 
+/**
+ * The tail of a running shell's output worth re-sending on each delta: the MC
+ * keeps only this much of a command's output (`CommandTail.kept/0`), so more
+ * only costs pipe traffic that grows with the output already sent.
+ */
+const shellTailBytes = 256 * 1024;
+
+function shellTail(text: string): string {
+  if (text.length <= shellTailBytes) return text;
+  const cut = text.slice(text.length - shellTailBytes);
+  // A cut can land inside a surrogate pair: its leftover half goes.
+  return cut.charCodeAt(0) >= 0xdc00 && cut.charCodeAt(0) <= 0xdfff ? cut.slice(1) : cut;
+}
+
 function shellOutputText(event: Record<string, unknown>): string {
   return [event.text, event.output, event.data, event.stdout, event.stderr, event.chunk]
     .filter((value): value is string => typeof value === "string")
@@ -931,10 +1068,38 @@ const transportError =
   /^Error: (?:RetriableError: (?!\[internal\]).+|ConnectError: \[(?:unavailable|aborted|deadline_exceeded)\].*)$/;
 const serverError = "Something went wrong communicating with the server. Please try again.";
 
+/** Whether `text` (a line so far, end-trimmed) could still grow into a transport error line. */
+function couldBeTransportError(text: string): boolean {
+  const retriable = "Error: RetriableError: ";
+  const connect = "Error: ConnectError: [";
+  if (retriable.startsWith(text) || connect.startsWith(text)) return true;
+  if (text.startsWith(retriable)) {
+    return !text.slice(retriable.length).startsWith("[internal]");
+  }
+  if (text.startsWith(connect)) {
+    const rest = text.slice(connect.length);
+    return ["unavailable", "aborted", "deadline_exceeded"].some(
+      (word) => word.startsWith(rest) || rest.startsWith(`${word}]`),
+    );
+  }
+  return false;
+}
+
 class TransportFailure {
   disqualified = false;
   #failure: string | undefined;
   #line = "";
+
+  // Whether the partial line could still leave this segment a pure transport
+  // failure (a transport error line, the server error, blank so far, or a
+  // stack line under a failure already seen). Once it cannot, the segment is
+  // ordinary text and streams instead of waiting for its first newline.
+  #couldStillFail(): boolean {
+    const text = this.#line.trimEnd();
+    if (text.trim() === "") return true;
+    if (serverError.startsWith(text) || couldBeTransportError(text)) return true;
+    return this.#failure !== undefined && /^\s+(?:a|at(?:\s.*)?)?$/.test(this.#line);
+  }
 
   #consume(line: string, state: { disqualified: boolean; failure: string | undefined }) {
     if (state.disqualified) return;
@@ -964,6 +1129,12 @@ class TransportFailure {
         return;
       }
       this.#line += part;
+      if (!this.#couldStillFail()) {
+        this.disqualified = true;
+        this.#failure = undefined;
+        this.#line = "";
+        return;
+      }
     }
   }
 
@@ -987,7 +1158,7 @@ function explainFailure(message: string, model: string, mode: RuntimeMode): stri
     return "Cursor usage limit reached. Try again later or choose another text-generation provider.";
   }
   if (
-    /invalid parameters for registry model|model.*(?:not found|not available|unavailable|invalid)|unknown model/i.test(
+    /invalid parameters for registry model|unknown model|model .{0,80}?\b(?:not found|does not exist)\b/i.test(
       message,
     )
   ) {

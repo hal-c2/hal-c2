@@ -1,7 +1,7 @@
 import type { InteractionUpdate, SendOptions, StoredSdkCredentials } from "@cursor/sdk";
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeCursorAcp, type CursorSdk } from "./agent.ts";
+import { makeCursorAcp, makeUpdateTranslator, type CursorSdk } from "./agent.ts";
 
 const credentials: StoredSdkCredentials = {
   version: 1,
@@ -197,6 +197,109 @@ describe("Cursor over ACP", () => {
         },
       ],
     });
+  });
+
+  it("streams ordinary text before its first newline, and still hides a pure transport error", () => {
+    const shown: Array<string> = [];
+    const updates = makeUpdateTranslator((update) => {
+      const text = (update as { content?: { text?: string } }).content?.text;
+      if (text !== undefined) shown.push(text);
+    });
+    const delta = (text: string) =>
+      updates({ type: "text-delta", text } as unknown as InteractionUpdate);
+
+    // No newline yet, and already not a transport error: it streams at once.
+    delta("Hello there");
+    expect(shown).toEqual(["Hello there"]);
+
+    // Still a possible transport error prefix: held, until it proves ordinary.
+    shown.length = 0;
+    const held = makeUpdateTranslator((update) => {
+      const text = (update as { content?: { text?: string } }).content?.text;
+      if (text !== undefined) shown.push(text);
+    });
+    const heldDelta = (text: string) =>
+      held({ type: "text-delta", text } as unknown as InteractionUpdate);
+    heldDelta("Error: Retr");
+    expect(shown).toEqual([]);
+    heldDelta("iableError: [internal] a note about errors");
+    expect(shown).toEqual(["Error: RetriableError: [internal] a note about errors"]);
+
+    // The server error itself, in pieces, is never shown as a reply.
+    shown.length = 0;
+    const failed = makeUpdateTranslator((update) => {
+      const text = (update as { content?: { text?: string } }).content?.text;
+      if (text !== undefined) shown.push(text);
+    });
+    failed({
+      type: "text-delta",
+      text: "Something went wrong communicating with the server. Please try again.",
+    } as unknown as InteractionUpdate);
+    expect(shown).toEqual([]);
+    expect(failed.finish({ status: "finished" })).toMatchObject({
+      message: "Provider turn failed.",
+    });
+  });
+
+  it("sends only a bounded tail of a running shell's output per delta", () => {
+    const texts: Array<string> = [];
+    const updates = makeUpdateTranslator((update) => {
+      const content = (update as { content?: Array<{ content?: { text?: string } }> }).content;
+      const text = content?.[0]?.content?.text;
+      if (text !== undefined) texts.push(text);
+    });
+    const push = (update: unknown) => updates(update as InteractionUpdate);
+    push({
+      type: "tool-call-started",
+      callId: "s1",
+      toolCall: { type: "shell", args: { command: "yes" } },
+    });
+    const big = "x".repeat(300 * 1024);
+    push({ type: "shell-output-delta", event: { text: big } });
+    push({ type: "shell-output-delta", event: { text: "tail-end" } });
+
+    expect(texts[0]?.length).toBe(256 * 1024);
+    // The second delta carries the bounded tail, not everything again.
+    expect(texts[1]?.length).toBe(256 * 1024);
+    expect(texts[1]?.endsWith("tail-end")).toBe(true);
+  });
+
+  it("forwards Cursor's error code, and only rewrites a model the account does not offer", async () => {
+    const { sdk } = fakeSdk([]);
+    await sdk.store.save(credentials);
+    let failure: { message: string; code?: string } = { message: "boom" };
+    const failing: CursorSdk = {
+      ...sdk,
+      createAgent: async () => ({
+        agentId: "agent-1",
+        close: () => {},
+        send: async () => ({
+          wait: async () => ({ status: "error", error: failure }),
+          cancel: async () => {},
+        }),
+      }),
+    };
+    const { call } = client(failing);
+    await call("session/new", { cwd: "/work" });
+    const prompt = () =>
+      call("session/prompt", {
+        sessionId: "agent-1",
+        prompt: [{ type: "text", text: "go" }],
+      });
+
+    failure = { message: "Model Blocked by your admin", code: "model_blocked" };
+    const blocked = await prompt();
+    expect(blocked.error.data).toEqual({ code: "model_blocked" });
+    expect(blocked.error.message).toBe("Model Blocked by your admin");
+
+    // A transient failure is not rewritten as "choose another model".
+    failure = { message: "The model is temporarily unavailable" };
+    expect((await prompt()).error.message).toBe("The model is temporarily unavailable");
+    failure = { message: "model produced invalid tool call" };
+    expect((await prompt()).error.message).toBe("model produced invalid tool call");
+
+    failure = { message: "Invalid parameters for registry model: model not found" };
+    expect((await prompt()).error.message).toContain("is not one this Cursor account offers");
   });
 
   it("cancels a running prompt", async () => {

@@ -42,6 +42,7 @@ const refused = (key) => control.revoked === true || key === "revoked";
 
 const store = {
   load: async () => {
+    if (control.storeBroken === true) throw new Error("cannot read credentials file");
     try {
       return JSON.parse(fs.readFileSync(credentials, "utf8"));
     } catch {
@@ -81,6 +82,7 @@ const makeAgent = (options, resumed) => {
     apiKey: options.apiKey,
     autoReview: options.local?.autoReview,
     sandbox: options.local?.sandboxOptions?.enabled,
+    agentRetries: options.local?.enableAgentRetries ?? null,
     settingSources: options.local?.settingSources ?? null,
   });
   return {
@@ -135,6 +137,37 @@ const makeAgent = (options, resumed) => {
       return {
         cancel: async () => cancel(),
         wait: async () => {
+          if (
+            control.sandboxBlocksTextGen === true &&
+            options.local?.sandboxOptions?.enabled === true &&
+            (mode === "text-generation" || mode === "text-generation-unsandboxed")
+          ) {
+            return {
+              status: "error",
+              error: { message: "Operation blocked by the sandbox policy" },
+            };
+          }
+          if (message.includes("run it sandboxed")) {
+            // The SDK retries a sandbox-stopped command outside the sandbox
+            // only when the agent was made with retries on.
+            const shell = { type: "shell", args: { command: "curl https://example.test" } };
+            started("sb-1", shell);
+            sendOptions.onDelta({
+              update: {
+                type: "tool-call-completed",
+                callId: "sb-1",
+                toolCall: {
+                  ...shell,
+                  result: { status: "error", value: { reason: { case: "sandboxDenied" } } },
+                },
+              },
+            });
+            if (options.local?.enableAgentRetries === true) {
+              tool("sb-2", shell, { stdout: "200 ok", stderr: "", exitCode: 0 });
+            }
+            say("Fetched it.");
+            return { status: "finished" };
+          }
           if (control.usageLimit === true) {
             return {
               status: "error",
@@ -207,7 +240,10 @@ const makeAgent = (options, resumed) => {
           if (message.includes("fail with model blocked")) {
             return {
               status: "error",
-              error: { message: "Model Blocked Please ask your admin to enable access" },
+              error: {
+                message: "Model Blocked Please ask your admin to enable access",
+                code: "model_blocked",
+              },
             };
           }
           if (message.includes("reject the model")) {
@@ -628,6 +664,7 @@ const makeAgent = (options, resumed) => {
 const acp = makeCursorAcp({
   mode,
   platform: process.env.HAL_C2_CURSOR_PLATFORM ?? "linux",
+  catalogTimeoutMs: control.catalogTimeoutMs ?? 10000,
   write: (message) => process.stdout.write(`${JSON.stringify(message)}\n`),
   sdk: {
     version: "1.0.31",
@@ -635,8 +672,27 @@ const acp = makeCursorAcp({
     envApiKey: process.env.CURSOR_API_KEY?.trim() || undefined,
     createAgent: async (options) => makeAgent(options),
     resumeAgent: async (agentId, options) => makeAgent(options, agentId),
+    me: async (key) => {
+      log({ event: "me" });
+      if (refused(key)) throw authError();
+      if (control.freePlan === true) {
+        throw new Error("Free plan users cannot use the Cursor SDK. Upgrade to a paid plan.");
+      }
+      if (control.meError === "blocked") {
+        throw new Error("403 Forbidden: permission denied by team settings");
+      }
+      if (control.meError === "boom") throw new Error("network unreachable");
+      return control.noEmail === true
+        ? { apiKeyName: "HAL-C2" }
+        : { userEmail: control.email ?? "dev@example.com", apiKeyName: "HAL-C2" };
+    },
     listModels: async (key) => {
       if (refused(key)) throw authError();
+      if (control.freePlan === true) {
+        throw new Error("Free plan users cannot use the Cursor SDK. Upgrade to a paid plan.");
+      }
+      if (control.catalogError === true) throw new Error("socket hang up");
+      if (control.catalogHang === true) await new Promise(() => {});
       return (
         control.models ?? [
           ["composer-2", "Composer 2"],
@@ -681,6 +737,8 @@ lines.on("line", (line) => {
     id: message.id ?? null,
     result: message.result ?? null,
   });
+  // A probe the MC is still waiting on: its first request never answers.
+  if (control.hangInitialize === true && message.method === "initialize") return;
   void acp.receive(message);
 });
 lines.on("close", () => process.exit(0));

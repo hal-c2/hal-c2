@@ -962,10 +962,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       %{
         "class" => "provider_error",
         "message" => message,
+        # Cursor's own code rides in the RPC error's `data` (cursor-acp forwards
+        # the SDK's); the RPC code itself is always -32603 and says nothing.
         "code" =>
-          case error["code"] do
-            code when is_integer(code) -> "cursor_rpc_#{code}"
-            code when is_binary(code) and code != "" -> code
+          case error do
+            %{"data" => %{"code" => code}} when is_binary(code) and code != "" -> code
+            %{"code" => code} when is_binary(code) and code != "" -> code
             _ -> "cursor_run_failed"
           end,
         "retryable" => nil

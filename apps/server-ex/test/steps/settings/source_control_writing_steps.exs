@@ -51,6 +51,19 @@ defmodule HalC2.Steps.Settings.SourceControlWriting do
   # (`context.text_log`), asks for the message itself as a commit does.
   step "a commit message is generated", context do
     case context do
+      %{cursor_world: true} ->
+        # A Cursor text-generation scenario (features/providers/cursor.feature)
+        # asks for the message itself, failure included.
+        cwd = World.project(context).root
+        policy = HalC2.TextGeneration.Style.policy(cwd)
+
+        result =
+          HalC2.TextGeneration.commit_message(cwd, "main", "M README.md", "diff", false,
+            policy: policy
+          )
+
+        Map.put(context, :reply, World.normalize_reply(result))
+
       %{text_log: _} ->
         cwd = World.project(context).root
         policy = HalC2.TextGeneration.Style.policy(cwd)

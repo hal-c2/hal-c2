@@ -13,6 +13,8 @@ import {
   FileCredentialStore,
 } from "@cursor/sdk";
 
+import { HostProcessPlatform } from "@hal-c2/shared/hostProcess";
+
 import { makeCursorAcp, type RuntimeMode } from "./agent.ts";
 
 // Stdout carries protocol frames only; anything the SDK logs goes to stderr.
@@ -34,7 +36,10 @@ process.stdout.on("error", (cause) => {
 
 const acp = makeCursorAcp({
   mode,
-  platform: process.env.HAL_C2_CURSOR_PLATFORM || process.platform,
+  platform: process.env.HAL_C2_CURSOR_PLATFORM || HostProcessPlatform.defaultValue(),
+  ...(Number(process.env.HAL_C2_CURSOR_CATALOG_TIMEOUT_MS) > 0
+    ? { catalogTimeoutMs: Number(process.env.HAL_C2_CURSOR_CATALOG_TIMEOUT_MS) }
+    : {}),
   write: (message) => {
     try {
       process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -49,6 +54,7 @@ const acp = makeCursorAcp({
     createAgent: (options) => Agent.create(options),
     resumeAgent: (agentId, options) => Agent.resume(agentId, options),
     listModels: (apiKey) => Cursor.models.list({ apiKey }),
+    me: (apiKey) => Cursor.me({ apiKey }),
     login: (options) => Cursor.auth.login({ ...options, openBrowser: false, apiKeyName: "HAL-C2" }),
     isAuthError: (cause) =>
       cause instanceof AuthenticationError ||

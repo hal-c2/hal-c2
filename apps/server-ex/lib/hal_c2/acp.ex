@@ -126,6 +126,7 @@ defmodule HalC2.Acp do
              do: {:ok, command, env ++ instance_env(instance)}
 
       {"cursor", _entry} ->
+        migrate_cursor_credentials(instance)
         credentials = cursor_credentials(instance)
 
         {:ok, [node_command(), cursor_script(), "--mode", runtime_mode || "approval-required"],
@@ -346,6 +347,50 @@ defmodule HalC2.Acp do
   @doc "How long a stopped Cursor turn waits for Cursor to confirm before it ends anyway."
   def cursor_cancel_timeout,
     do: Application.get_env(:hal_c2, :cursor_cancel_timeout_ms, 10_000)
+
+  # An older Cursor login lives in the SDK's own file (`~/.cursor/sdk/auth.json`):
+  # it moves into this instance's sign-in once, and the old file is removed. A
+  # sign-in already kept (and readable) wins; the old file goes either way.
+  # Both paths are the MC's own: the SDK's fixed file under the user's home and
+  # this instance's sign-in under the MC's data directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp migrate_cursor_credentials(instance) do
+    target = cursor_credentials(instance)
+    legacy = Path.join([HalC2.Paths.user_home(), ".cursor", "sdk", "auth.json"])
+
+    if legacy != target && File.regular?(legacy) do
+      try do
+        if not cursor_credentials_valid?(target) && cursor_credentials_valid?(legacy) do
+          File.mkdir_p!(Path.dirname(target))
+          File.cp!(legacy, target)
+          File.chmod!(target, 0o600)
+        end
+
+        File.rm!(legacy)
+      rescue
+        error ->
+          require Logger
+
+          Logger.warning(
+            "Could not migrate legacy Cursor credentials: #{Exception.message(error)}"
+          )
+      end
+    end
+
+    :ok
+  end
+
+  # Reads only the two credential paths `migrate_cursor_credentials/1` named.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp cursor_credentials_valid?(path) do
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"apiKey" => key}} <- JSON.decode(text),
+         true <- is_binary(key) && key != "" do
+      true
+    else
+      _ -> false
+    end
+  end
 
   @doc false
   # Each instance keeps its own Cursor sign-in, owner-only, in the MC's data.
@@ -580,6 +625,12 @@ defmodule HalC2.Acp do
   defp error_message(_id, {:error, :antigravity_health_failed}),
     do: "Antigravity could not complete its local health check."
 
+  defp error_message(_id, {:error, :cursor_catalog_failed}),
+    do: "Cursor SDK catalog request failed. Check server logs for details."
+
+  defp error_message(_id, {:error, :cursor_catalog_timeout}),
+    do: "Cursor SDK catalog request timed out. Check your connection and try again."
+
   defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
   defp error_message(_id, {:error, reason}), do: describe(reason)
   defp error_message(_id, _result), do: nil
@@ -785,7 +836,17 @@ defmodule HalC2.Acp do
             # Antigravity skips `session/new`, so its success proves no sign-in;
             # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
             if driver != "antigravity", do: stage(id, :unauthenticated, false)
-            :ok
+
+            # Cursor's agent says who its key belongs to, and whether the
+            # catalog itself failed, on the session it opened.
+            if driver == "cursor" && is_map(get_in(session, ["_meta", "account"])),
+              do: stage(id, :account, get_in(session, ["_meta", "account"]))
+
+            case {driver, get_in(session, ["_meta", "catalogError"])} do
+              {"cursor", "timeout"} -> {:error, :cursor_catalog_timeout}
+              {"cursor", "failed"} -> {:error, :cursor_catalog_failed}
+              _ -> :ok
+            end
 
           # ACP's "authentication required".
           {:error, %{"code" => -32000}} ->
@@ -1036,8 +1097,43 @@ defmodule HalC2.Acp do
     do: HalC2.Acp.Antigravity.entry_fields(entry, id)
 
   # Cursor has a plan mode of its own, which the thread's plan toggle chooses.
-  defp driver_fields(entry, "cursor", _id, _instance),
-    do: Map.put(entry, "showInteractionModeToggle", true)
+  # Its account (who the key belongs to) comes from the probe's session, and
+  # before any probe has answered the entry says it is still checking.
+  defp driver_fields(entry, "cursor", id, _instance) do
+    entry = Map.put(entry, "showInteractionModeToggle", true)
+    account = :persistent_term.get({__MODULE__, id, :account}, nil)
+
+    entry =
+      if is_map(account) && entry["auth"]["status"] == "authenticated" do
+        auth =
+          entry["auth"]
+          |> then(
+            &if(is_binary(account["email"]),
+              do: Map.put(&1, "email", account["email"]),
+              else: &1
+            )
+          )
+          |> then(
+            &if(is_binary(account["label"]),
+              do: Map.put(&1, "label", account["label"]),
+              else: &1
+            )
+          )
+
+        Map.put(entry, "auth", auth)
+      else
+        entry
+      end
+
+    if entry["enabled"] &&
+         :persistent_term.get({__MODULE__, id, :models}, nil) == nil &&
+         :persistent_term.get({__MODULE__, id, :error}, nil) == nil &&
+         not Map.has_key?(entry, "message") do
+      Map.put(entry, "message", "Checking Cursor SDK availability...")
+    else
+      entry
+    end
+  end
 
   # What a registry agent's running session advertises (`put_commands/2`).
   defp driver_fields(entry, "acpRegistry", id, _instance) do
@@ -1418,6 +1514,7 @@ defmodule HalC2.Acp do
           :loading,
           :meta,
           :notice,
+          :account,
           :config,
           :commands,
           :skills,

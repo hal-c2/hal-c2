@@ -193,6 +193,9 @@ importers:
         specifier: 1.2.0
         version: 1.2.0(zod@4.6.7)
     devDependencies:
+      '@hal-c2/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4

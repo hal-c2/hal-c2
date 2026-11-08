@@ -450,7 +450,9 @@ defmodule HalC2.TextGeneration do
   end
 
   # One ACP prompt in its own process, which outlives neither the agent nor the timeout.
-  defp acp(selection, prompt, label) do
+  # A Cursor run its sandbox stopped is retried once without the sandbox, and
+  # only that run: `retried` carries the retry's mode.
+  defp acp(selection, prompt, label, retried \\ nil) do
     id = selection["instanceId"]
     antigravity = driver(id) == "antigravity"
 
@@ -477,7 +479,12 @@ defmodule HalC2.TextGeneration do
 
               true ->
                 # Cursor plans read-only there, without the user's Cursor settings or tools.
-                mode = if driver(id) == "cursor", do: "text-generation"
+                mode =
+                  cond do
+                    driver(id) != "cursor" -> nil
+                    retried -> retried
+                    true -> "text-generation"
+                  end
 
                 HalC2.Acp.with_agent(
                   id,
@@ -500,10 +507,14 @@ defmodule HalC2.TextGeneration do
         end
 
       {:ok, {:error, reason}} when is_binary(reason) ->
-        {:error, reason}
+        if cursor_sandbox_retry?(selection, retried, reason),
+          do: acp(selection, prompt, label, "text-generation-unsandboxed"),
+          else: {:error, reason}
 
       {:ok, {:error, %{"message" => message}}} ->
-        {:error, "#{label} request failed: #{message}"}
+        if cursor_sandbox_retry?(selection, retried, message),
+          do: acp(selection, prompt, label, "text-generation-unsandboxed"),
+          else: {:error, "#{label} request failed: #{message}"}
 
       {:ok, {:error, reason}} ->
         {:error, "#{label} request failed: #{inspect(reason)}"}
@@ -514,6 +525,13 @@ defmodule HalC2.TextGeneration do
       nil ->
         {:error, "#{label} request timed out."}
     end
+  end
+
+  # Only Cursor's first, sandboxed attempt is retried, and only when its
+  # sandbox is what stopped it.
+  defp cursor_sandbox_retry?(selection, retried, message) do
+    retried == nil && driver(selection["instanceId"]) == "cursor" &&
+      String.contains?(String.downcase(message), "sandbox")
   end
 
   defp acp_prompt(conn, dir, model, prompt, antigravity \\ false) do

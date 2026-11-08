@@ -762,7 +762,7 @@ defmodule HalC2.Steps.Providers.Cursor do
         end)
 
       assert item["status"] == "interrupted"
-      Map.put(context, :interrupted_command, item)
+      context
     end
   end
 
@@ -1313,6 +1313,8 @@ defmodule HalC2.Steps.Providers.Cursor do
     # (`HalC2.Orchestration.Delegation.failure_text/3`).
     error = Enum.find(items(context), &(&1["type"] == "error"))
     assert error["failure"]["message"] == context.failure_message
+    # The item's code is Cursor's own, not the sidecar's RPC code.
+    assert error["failure"]["code"] == "model_blocked"
     context
   end
 
@@ -1694,6 +1696,266 @@ defmodule HalC2.Steps.Providers.Cursor do
     send = log(context) |> Enum.filter(&(&1["event"] == "send")) |> List.last()
     assert [%{"mimeType" => "image/png", "bytes" => bytes}] = send["images"]
     assert bytes > 0
+    context
+  end
+
+  # --- health, sign-in and accounts --------------------------------------------------------
+
+  step "the user's Cursor account reports no email", context do
+    Acp.control(context, "cursor-cursor", %{"noEmail" => true})
+    Map.put(context, :cursor_world, true)
+  end
+
+  step "the user signs in to Cursor and finishes on the website", context do
+    ctx = start_sign_in(context)
+    {state, ctx} = waiting(ctx)
+    finish_on_website(ctx, state["interaction"])
+  end
+
+  step "Cursor is signed in", context do
+    assert File.exists?(credentials("cursor"))
+    entry = Acp.check("cursor")
+    assert entry["auth"]["status"] == "authenticated"
+    # An account Cursor gives no email for still has a name to show.
+    assert entry["auth"]["label"] == "Cursor account"
+    assert entry["auth"]["email"] == nil
+    Map.put(context, :told, entry["message"])
+  end
+
+  step "the user is not told the sign-in could not be saved", context do
+    refute (context.told || "") =~ "could not be saved"
+    refute (context.told || "") =~ "Could not save"
+    context
+  end
+
+  step ~r/^(Cursor is turned off in the provider settings|the MC is still looking for Cursor|Cursor has neither a sign-in nor a CURSOR_API_KEY|a browser sign-in was rejected by Cursor|the CURSOR_API_KEY was rejected by Cursor|the Cursor model catalog request fails for another reason)$/,
+       %{args: [situation]} = context do
+    ctx = ops(context)
+
+    case situation do
+      "Cursor is turned off in the provider settings" ->
+        Acp.put_provider("cursor", %{"enabled" => false})
+
+      "the MC is still looking for Cursor" ->
+        Acp.control(ctx, "cursor-cursor", %{"hangInitialize" => true})
+        Acp.put_provider("cursor", %{"enabled" => true})
+
+      "Cursor has neither a sign-in nor a CURSOR_API_KEY" ->
+        {_entry, _ctx} = enabled(ctx)
+
+      "a browser sign-in was rejected by Cursor" ->
+        sign_in("cursor")
+        Acp.control(ctx, "cursor-cursor", %{"revoked" => true})
+        {_entry, _ctx} = enabled(ctx)
+
+      "the CURSOR_API_KEY was rejected by Cursor" ->
+        Acp.put_instance("cursor", %{
+          "driver" => "cursor",
+          "enabled" => true,
+          "environment" => [%{"name" => "CURSOR_API_KEY", "value" => "revoked"}]
+        })
+
+        Acp.check("cursor")
+
+      "the Cursor model catalog request fails for another reason" ->
+        sign_in("cursor")
+        Acp.control(ctx, "cursor-cursor", %{"catalogError" => true})
+        {_entry, _ctx} = enabled(ctx)
+    end
+
+    Map.put(ctx, :cursor_world, true)
+  end
+
+  step "Cursor is shown with the message {string}", %{args: [message]} = context do
+    entry = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+    assert entry["message"] == message
+    context
+  end
+
+  step "the user signs in to Cursor with a free-plan account", context do
+    ctx = ops(context)
+    Acp.control(ctx, "cursor-cursor", %{"freePlan" => true})
+    {_entry, ctx} = enabled(ctx)
+    ctx = start_sign_in(ctx)
+    {state, ctx} = waiting(ctx)
+    ctx |> Map.put(:interaction, state["interaction"]) |> Map.put(:cursor_world, true)
+  end
+
+  step "Cursor rejects the account", context do
+    # The user finished on the website; Cursor then refuses the account.
+    File.write!(Path.join(Acp.dir(context), "cursor-cursor.login-done"), "")
+
+    {_, ctx} =
+      World.call!(
+        context,
+        "provider.auth.respond",
+        %{
+          "instanceId" => "cursor",
+          "flowId" => context.flow,
+          "interactionId" => context.interaction["id"],
+          "response" => %{"type" => "browser", "action" => "accept"}
+        },
+        "ops"
+      )
+
+    {state, ctx} = await_phase(ctx, "failed")
+    Map.put(ctx, :sign_in_message, state["message"] || "")
+  end
+
+  step "Cursor's status and the sign-in say a paid Cursor plan is needed", context do
+    assert context.sign_in_message =~ "paid Cursor plan"
+    entry = Acp.check("cursor")
+    assert entry["message"] =~ "paid Cursor plan"
+    assert entry["status"] == "error"
+    context
+  end
+
+  step "the rejected sign-in is not kept", context do
+    refute File.exists?(credentials("cursor"))
+    context
+  end
+
+  step "the user's Cursor team has turned off the account details endpoint", context do
+    sign_in("cursor")
+    ctx = ops(context)
+    Acp.control(ctx, "cursor-cursor", %{"meError" => "blocked"})
+    {_entry, ctx} = enabled(ctx)
+    Map.put(ctx, :cursor_world, true)
+  end
+
+  step "Cursor is ready with its models", context do
+    entry = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+    assert entry["status"] == "ready"
+    assert Enum.map(entry["models"], & &1["slug"]) == ["default", "composer-2", "gpt-5"]
+    context
+  end
+
+  step "the account shows as {string} or {string} without an email",
+       %{args: [_first, _second]} = context do
+    entry = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+    assert entry["auth"]["label"] in ["Cursor account", "Cursor API key"]
+    assert entry["auth"]["email"] == nil
+    context
+  end
+
+  step "a rejected sign-in or key still fails as an authentication error", context do
+    Acp.control(context, "cursor-cursor", %{"meError" => "blocked", "revoked" => true})
+    entry = Acp.check("cursor")
+    assert entry["auth"]["status"] == "unauthenticated"
+    assert entry["message"] =~ "expired or was rejected"
+    context
+  end
+
+  step "the user has a CURSOR_API_KEY", context do
+    api_key_instance(context) |> Map.put(:cursor_world, true)
+  end
+
+  step "the Cursor model catalog request does not finish in time", context do
+    Acp.control(context, "cursor-cursor", %{"catalogHang" => true, "catalogTimeoutMs" => 300})
+    Acp.check("cursor")
+    context
+  end
+
+  step "Cursor is shown as unavailable with a message that the catalog request timed out",
+       context do
+    entry = Enum.find(context.providers, &(&1["instanceId"] == "cursor"))
+    assert entry["status"] == "error"
+    assert entry["message"] =~ "timed out"
+    context
+  end
+
+  step ~r/^(the MC cannot open its store of Cursor logins|Cursor cannot confirm the saved sign-in)$/,
+       %{args: [situation]} = context do
+    ctx = ops(context)
+    # Confirming a sign-in needs one saved; opening the store does not get that far.
+    if situation =~ "cannot confirm", do: sign_in("cursor")
+
+    control =
+      if situation =~ "cannot open", do: %{"storeBroken" => true}, else: %{"meError" => "boom"}
+
+    Acp.control(ctx, "cursor-cursor", control)
+    Map.put(ctx, :cursor_world, true)
+  end
+
+  step "the MC checks Cursor", context do
+    {entry, ctx} = enabled(context)
+    # What the user was told is the checked entry's message (`context.told`).
+    Map.put(ctx, :told, entry["message"])
+  end
+
+  step "an older Cursor login file exists", context do
+    ctx = ops(context)
+    legacy = Path.join([HalC2.Paths.user_home(), ".cursor", "sdk", "auth.json"])
+    File.mkdir_p!(Path.dirname(legacy))
+
+    File.write!(
+      legacy,
+      JSON.encode!(%{
+        "version" => 1,
+        "backendUrl" => "https://example.test",
+        "apiKey" => "cursor-key",
+        "createdAtMs" => 1
+      })
+    )
+
+    ctx |> Map.put(:legacy_auth, legacy) |> Map.put(:cursor_world, true)
+  end
+
+  step "Cursor starts for the first time on this version", context do
+    sign_in_file = credentials("cursor")
+    File.rm(sign_in_file)
+    {_entry, ctx} = enabled(context)
+    ctx
+  end
+
+  step "the login moves into the MC's secrets and the old file is removed", context do
+    assert File.exists?(credentials("cursor"))
+    assert JSON.decode!(File.read!(credentials("cursor")))["apiKey"] == "cursor-key"
+    assert Acp.check("cursor")["auth"]["status"] == "authenticated"
+    refute File.exists?(context.legacy_auth)
+    context
+  end
+
+  # --- text generation -----------------------------------------------------------------------
+
+  step "the user has reached a Cursor usage limit", context do
+    Acp.control(context, "cursor-cursor", %{"usageLimit" => true})
+    Map.put(context, :cursor_world, true)
+  end
+
+  step "the failure says the Cursor usage limit was reached", context do
+    assert {:error, error, _detail} = context.reply
+    assert error =~ "Cursor usage limit reached"
+    Map.put(context, :failure, error)
+  end
+
+  step "it says to try again later or choose another text-generation provider", context do
+    assert context.failure =~ "Try again later or choose another text-generation provider."
+    context
+  end
+
+  step "generating a title fails only because Cursor's sandbox blocks it", context do
+    Acp.control(context, "cursor-cursor", %{"sandboxBlocksTextGen" => true})
+    Map.put(context, :cursor_world, true)
+  end
+
+  step "the MC retries the request", context do
+    root = World.project(context).root
+    result = HalC2.TextGeneration.thread_title(root, "Fix the parser")
+    Map.put(context, :title_result, result)
+  end
+
+  step "the retry removes only the restriction that blocked it", context do
+    text_runs = Enum.filter(agents(context), &(&1["settingSources"] == []))
+    # Two runs, the second without the sandbox and otherwise the same
+    # read-only, settings-free text generation run.
+    assert Enum.map(text_runs, & &1["sandbox"]) == [true, false]
+    assert Enum.all?(text_runs, &(&1["mode"] == "plan" and &1["autoReview"] == false))
+    context
+  end
+
+  step "the thread gets its title", context do
+    assert {:ok, %{"title" => "cursor title"}} = context.title_result
     context
   end
 end

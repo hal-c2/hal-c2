@@ -80,7 +80,6 @@ Feature: Cursor
     And Cursor is signed in once the user finishes on the website
 
   # Upstream #24702: a sign-in whose account had no email was refused as "Could not save the Cursor sign-in."
-  @backlog
   Scenario: A Cursor account without an email still signs in
     Given Cursor is enabled and signed out
     And the user's Cursor account reports no email
@@ -96,7 +95,6 @@ Feature: Cursor
     And the user can start sign-in again
 
   # Health states of CursorProvider.ts checkCursorProviderStatus.
-  @backlog
   Scenario Outline: Cursor's health states are explained
     Given <situation>
     When the user opens the provider list
@@ -112,7 +110,7 @@ Feature: Cursor
       | the Cursor model catalog request fails for another reason | Cursor SDK catalog request failed. Check server logs for details.           |
 
   # Upstream #19771: a free-plan Cursor account is told a paid plan is needed; its credentials are discarded.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A free-plan Cursor account is told it needs a paid plan
     Given the user signs in to Cursor with a free-plan account
     When Cursor rejects the account
@@ -121,7 +119,7 @@ Feature: Cursor
 
   # Upstream #24639: Enterprise teams can block Cursor's account endpoint while models and local
   # runs still work; the blocked read failed the whole status check.
-  @backlog @priority-low
+  @priority-low
   Scenario: Cursor is ready when the team blocks reading the account
     Given the user's Cursor team has turned off the account details endpoint
     When the user opens the provider list
@@ -129,7 +127,6 @@ Feature: Cursor
     And the account shows as "Cursor account" or "Cursor API key" without an email
     And a rejected sign-in or key still fails as an authentication error
 
-  @backlog
   Scenario: A Cursor model catalog request that does not finish is reported
     Given the user has a CURSOR_API_KEY
     And the Cursor model catalog request does not finish in time
@@ -169,7 +166,6 @@ Feature: Cursor
 
   # Upstream #29748: a Cursor text generation stopped by a usage limit failed with only "Cursor SDK
   # request finished with an error."
-  @backlog
   Scenario: Cursor text generation stopped by a usage limit says so
     Given Cursor is picked for text generation
     And the user has reached a Cursor usage limit
@@ -338,7 +334,7 @@ Feature: Cursor
     When the user mentions "deploy" in a message
     Then Cursor receives the skill reference
 
-  @backlog @priority-low
+  @priority-low
   Scenario: Credentials from an older Cursor login move to the MC's secrets once
     Given an older Cursor login file exists
     When Cursor starts for the first time on this version
@@ -396,7 +392,6 @@ Feature: Cursor
     When a Cursor thread in auto-accept edits starts its first turn
     Then the turn fails saying Cursor cannot sandbox on Windows
 
-  @backlog
   Scenario: Cursor text generation that its sandbox blocks is retried without the sandbox
     Given Cursor is picked for text generation
     And generating a title fails only because Cursor's sandbox blocks it
@@ -531,7 +526,6 @@ Feature: Cursor
     Then "deploy" reaches Cursor as a skill reference
     And "$HOME" reaches Cursor as typed
 
-  @backlog
   Scenario Outline: A Cursor sign-in that cannot be checked is explained
     Given <problem>
     When the MC checks Cursor
