@@ -12,7 +12,8 @@ defmodule HalC2.MuseRuntimePropTest do
   turn; crash the runtime mid-turn; have `muse serve` exit under it, idle or mid-turn;
   release the idle thread's session as IdleSessions does; have the store refuse one of
   a waiting turn's writes (a full disk, hal-c2#1285) while Muse ignores the stop that
-  sends, so the turn runs on unrecorded and Muse refuses the user's stop of it after.
+  sends, so the turn runs on unrecorded and Muse refuses the user's stop of it after,
+  or the time Muse has to end that turn runs out.
 
   Turns run on the fake `muse serve` in `test/support/fake_muse_msp.py`, which keeps
   its sessions on disk. A turn that replies names every message Muse's session has
@@ -163,8 +164,10 @@ defmodule HalC2.MuseRuntimePropTest do
 
         create()
         :ok = HalC2.Streams.subscribe(@tid, self(), nil)
+        Application.put_env(:hal_c2, :muse_interrupt_timeout_ms, 3_600_000)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :muse_interrupt_timeout_ms)
         HalC2.Test.Machines.refuse_changes(nil)
         HalC2.Acp.forget("muse")
 
@@ -243,9 +246,10 @@ defmodule HalC2.MuseRuntimePropTest do
                {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access)), false]}}
             ] ++ if(kind == :wait, do: [{2, {:call, __MODULE__, :fail_write, []}}], else: [])
 
-          # Unrecorded: the run ends with the stop, a crash or the host going.
+          # Unrecorded: the run ends with the stop, a crash, the host going, or Muse
+          # not ending the turn it answered the stop of in time.
           :dry ->
-            []
+            [{2, {:call, __MODULE__, :outlast, []}}]
 
           # Full access answers the command's open prompt, so the turn runs to its end.
           :shell ->
@@ -296,6 +300,7 @@ defmodule HalC2.MuseRuntimePropTest do
     do: match?(%{kind: :ask}, turn)
 
   def precondition(%{turn: turn}, {:call, _, :fail_write, _}), do: match?(%{kind: :wait}, turn)
+  def precondition(%{turn: turn}, {:call, _, :outlast, _}), do: match?(%{kind: :dry}, turn)
   def precondition(_state, {:call, _, :host_exit, _}), do: true
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
@@ -356,6 +361,8 @@ defmodule HalC2.MuseRuntimePropTest do
   # A turn the store failed fails, however it ends, and the next run records as usual.
   def next_state(%{turn: %{kind: :dry}} = state, _result, {:call, _, :interrupt, _}),
     do: end_turn(state, "failed")
+
+  def next_state(state, _result, {:call, _, :outlast, _}), do: end_turn(state, "failed")
 
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
   def next_state(state, _result, {:call, _, :crash, _}), do: end_turn(state, "failed")
@@ -534,6 +541,16 @@ defmodule HalC2.MuseRuntimePropTest do
     HalC2.Test.Machines.refuse_changes(nil)
     configure(&Map.put(&1, "interruptFails", true))
     reply({:ok, %{}}, [])
+  end
+
+  # The time Muse has to end a turn whose stop it answered runs out: the runtime ends
+  # the turn and closes the host. The property's bound is an hour, so only this ends it.
+  def outlast do
+    ending = active_runs()
+    [{runtime, _}] = Registry.lookup(HalC2.Muse.Registry, @tid)
+    %{turn: %{ids: %{run: run}}} = :sys.get_state(runtime)
+    Kernel.send(runtime, {:settle_interrupt, run})
+    reply({:ok, %{}}, ending)
   end
 
   # The runtime driving the turn dies, as a crash in the adapter would; its host goes

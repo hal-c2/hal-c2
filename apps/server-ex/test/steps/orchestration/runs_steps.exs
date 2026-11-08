@@ -2326,6 +2326,32 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  step "Muse Code has half a second to end a turn the MC stopped", context do
+    World.put_app_env(:muse_interrupt_timeout_ms, 500)
+    context
+  end
+
+  # Muse answered the stop and keeps the turn: once its time is out the MC closes its
+  # host and ends the turn there.
+  step "Muse Code does not end the turn the MC stopped", context do
+    World.await_runs(context, "Muse", ["failed"])
+    context
+  end
+
+  step "the next message to Muse Code runs and its reply is recorded", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", &Map.delete(&1, "interruptIgnored"))
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Muse")
+    World.await_runs(context, "Muse", ["failed", "completed"])
+    run = World.entities(context, "Muse", "run") |> Enum.max_by(& &1["ordinal"])
+
+    assert Enum.any?(
+             World.entities(context, "Muse", "message"),
+             &(&1["runId"] == run["id"] and &1["text"] =~ "Reply to Next")
+           )
+
+    context
+  end
+
   # Muse refuses the user's stop, so the MC closes its host and ends the turn there.
   step "the user stops the Muse Code turn and Muse refuses", context do
     HalC2.Test.FakeAcp.configure(context, "muse", &Map.put(&1, "interruptFails", true))

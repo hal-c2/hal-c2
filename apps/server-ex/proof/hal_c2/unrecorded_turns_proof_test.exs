@@ -6,8 +6,10 @@ defmodule HalC2.UnrecordedTurnsProofTest do
   # recovering, the provider ending its turn or ignoring a stop, the runtime crashing
   # and the MC restarting. Codex stands for every runtime: its stop is the one that can
   # time out and leave its provider turn running for the next message to stop first.
-  # A stop Muse refuses, or ACP answers at once, ends the turn inside the runtime's
-  # call instead, and the failure goes with that turn too.
+  # One Claude or Muse answers but does not follow is ended by the runtime once its
+  # time is out, closing the provider, as the provider ending it would ([own-end]). A
+  # stop Muse refuses, or ACP answers at once, ends the turn inside the runtime's call
+  # instead, and the failure goes with that turn too.
   #
   # What the store wrote is the truth here: no side file. An MC that restarts while
   # TurnWatch holds an end loses it, and boot recovery ends the run as interrupted at

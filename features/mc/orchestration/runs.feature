@@ -325,6 +325,17 @@ Feature: Runs and turns
     Then that run fails with Muse Code's own reason
     And the message after it runs and its reply is recorded
 
+  # hal-c2#1398: Muse answering the MC's stop of a turn the store could not record, and
+  # then never ending it, left the run running for good.
+  @mc
+  Scenario: A run whose events cannot be recorded ends when Muse Code does not end its stopped turn
+    Given a Muse Code turn is running on a Muse that keeps its turn when the MC stops it
+    And Muse Code has half a second to end a turn the MC stopped
+    When the MC fails to record the Muse Code turn's events
+    And Muse Code does not end the turn the MC stopped
+    Then the Muse Code run is failed because it could not be saved
+    And the next message to Muse Code runs and its reply is recorded
+
   @mc
   Scenario: A provider session that cannot be opened fails the run
     Given the provider's session cannot be opened while "t1" starts a turn
