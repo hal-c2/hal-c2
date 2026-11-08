@@ -8,6 +8,7 @@
 #include <QInputMethod>
 #include <QQuickItem>
 #include <QRegularExpression>
+#include <QUrl>
 
 #include <algorithm>
 #include <functional>
@@ -775,6 +776,25 @@ const Steps steps([] {
                   [&] { return S("%1; the screen says: %2").arg(name, screenTexts(world)); });
     return world.item(name);
   };
+  // A queued follow-up that quotes the agent: its text holds the quote's link.
+  const auto quoting = [](const QString& quote) {
+    return S("see [Assistant quote](hal-c2-citation://v1/env-a/thread-1/msg-1?text=%1&start=0&end=%2&prefix=&suffix=)")
+        .arg(QString::fromLatin1(QUrl::toPercentEncoding(quote)).replace(QLatin1String("%20"), QLatin1String("+")))
+        .arg(quote.size());
+  };
+  step(S("the user queued a message quoting %1 from the agent's reply").arg(kQuoted), [queue, quoting](World& world, const Captures& c, const Table&) {
+    queue(world, quoting(c[0]), {});
+    lastQueued = quoting(c[0]);
+  });
+  step(S("the queued message reads %1, not a link").arg(kQuoted), [rowPart](World& world, const Captures& c, const Table&) {
+    QQuickItem* text = rowPart(world, S("queueText"), lastQueued);
+    expect(text->property("text").toString() == S("see ") + c[0], S("the row reads %1").arg(show(text->property("text"))));
+  });
+  step(S("editing it gives back the message with its quote"), [tapQueued](World& world, const Captures&, const Table&) {
+    tapQueued(world, S("queueEdit"), lastQueued);
+    world.waitFor([&] { return composer(world).value(S("text")).toString() == lastQueued; },
+                  [&] { return S("the composer is %1").arg(show(composer(world))); });
+  });
   step(S("the user looks at %1 in the queue").arg(kQuoted), [rowPart](World& world, const Captures& c, const Table&) {
     rowPart(world, S("queueText"), c[0]);
   });

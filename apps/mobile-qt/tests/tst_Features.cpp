@@ -31,6 +31,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/queue-and-steer.feature:A queued message can be removed on the phone"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message cannot be edited while a question is open"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message offers to send it now*"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message that quotes the agent*"),
     QStringLiteral("composer/queue-and-steer.feature:A queued message on a stopped thread*"),
     QStringLiteral("composer/queue-and-steer.feature:A second save of a queued message*"),
     QStringLiteral("composer/queue-and-steer.feature:Leaving the thread keeps the edit"),

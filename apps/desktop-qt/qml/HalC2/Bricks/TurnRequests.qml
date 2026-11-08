@@ -1080,7 +1080,8 @@ Item {
                                         objectName: "queueText-" + (queued.pending ? queued.modelData.messageId : queued.modelData.runId)
                                         Layout.fillWidth: true
                                         // An attachment-only message says what it carries.
-                                        text: queued.modelData.text.length > 0 || queued.attachments.length === 0 ? queued.modelData.text : qsTr("%n attachment(s)", "", queued.attachments.length)
+                                        // A quoted reply reads as its words (the controller's `shown`).
+                                        text: queued.modelData.text.length > 0 || queued.attachments.length === 0 ? (queued.modelData.shown ?? queued.modelData.text) : qsTr("%n attachment(s)", "", queued.attachments.length)
                                         textFormat: Text.PlainText
                                         color: queued.modelData.text.length > 0 && !queued.pending ? requests.foreground : requests.muted
                                         font.family: requests.uiFont

@@ -218,6 +218,30 @@ QString citationLink(const QJsonObject& citation) {
   return QStringLiteral("[Assistant quote](hal-c2-citation://v1/%1?%2)").arg(path.join(u'/'), query.join(u'&'));
 }
 
+// A message as the queue lists it: each quoted reply as its words, and the
+// comment after them, not its link (upstream #18999).
+QString quotedPlainly(const QString& text) {
+  static const QRegularExpression link(QStringLiteral("\\[Assistant quote\\]\\((?:hal-c2|t3)-citation://v1/[^\\s)?]+\\?([^\\s)]+)\\)"));
+  if (!text.contains(QLatin1String("-citation://v1/"))) return text;
+  QString shown;
+  qsizetype from = 0;
+  for (auto it = link.globalMatch(text); it.hasNext();) {
+    const QRegularExpressionMatch match = it.next();
+    QString quote;
+    QString comment;
+    for (const QString& pair : match.captured(1).split(u'&')) {
+      const qsizetype eq = pair.indexOf(u'=');
+      const QString value = QUrl::fromPercentEncoding(pair.mid(eq + 1).replace(u'+', u' ').toLatin1());
+      if (pair.startsWith(QLatin1String("text="))) quote = value;
+      if (pair.startsWith(QLatin1String("comment="))) comment = value;
+    }
+    shown += text.mid(from, match.capturedStart() - from);
+    shown += quote.isEmpty() ? match.captured(0) : comment.isEmpty() ? quote : quote + QStringLiteral(" Comment: ") + comment;
+    from = match.capturedEnd();
+  }
+  return (shown + text.mid(from)).trimmed();
+}
+
 }  // namespace
 
 ComposerController::ComposerController(ShellBridge* bridge, McClient* client, ShellStore* store,
@@ -3647,6 +3671,7 @@ QVariantMap ComposerController::turnState() const {
       attachments.append(shown);
     }
     entry.insert(QStringLiteral("attachments"), attachments);
+    entry.insert(QStringLiteral("shown"), quotedPlainly(entry.value(QStringLiteral("text")).toString()));
     entry.insert(QStringLiteral("pending"), false);
     queue.append(entry);
   }
@@ -3670,6 +3695,7 @@ QVariantMap ComposerController::turnState() const {
       queue.append(QVariantMap{{QStringLiteral("runId"), QString()},
                                {QStringLiteral("messageId"), str(command, QLatin1String("messageId"))},
                                {QStringLiteral("text"), str(command, QLatin1String("text"))},
+                               {QStringLiteral("shown"), quotedPlainly(str(command, QLatin1String("text")))},
                                {QStringLiteral("attachments"), attachments},
                                {QStringLiteral("pending"), true}});
     }

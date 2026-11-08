@@ -10,6 +10,7 @@
 #include <QQuickItem>
 #include <QRegularExpression>
 #include <QTest>
+#include <QUrl>
 #include <QVariantMap>
 
 #include <functional>
@@ -1312,6 +1313,33 @@ const Steps steps([] {
     const QJsonObject command = lastCommand(world, QStringLiteral("queued-run.start"));
     expect(command.value(QLatin1String("runId")) == QStringLiteral("run-queued-") + c[0] && commandsOf(world, QStringLiteral("queued-message.promote-to-steer")).isEmpty(),
            QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
+  // A queued follow-up that quotes the agent: its text holds the quote's link.
+  const auto quoting = [](const QString& quote) {
+    return QStringLiteral("see [Assistant quote](hal-c2-citation://v1/env-a/thread-1/msg-1?text=%1&start=0&end=%2&prefix=&suffix=)")
+        .arg(QString::fromLatin1(QUrl::toPercentEncoding(quote)).replace(QLatin1String("%20"), QLatin1String("+")))
+        .arg(quote.size());
+  };
+  step(QStringLiteral("the user queued a message quoting %1 from the agent's reply").arg(q), [quoting](World& world, const Captures& c, const Table&) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    const int position = ++fake.ordinal;
+    set(world, QStringLiteral("message"), QStringLiteral("message-quote"),
+        {{QStringLiteral("id"), QStringLiteral("message-quote")}, {QStringLiteral("role"), QStringLiteral("user")}, {QStringLiteral("text"), quoting(c[0])}});
+    set(world, QStringLiteral("run"), QStringLiteral("run-queued-quote"),
+        {{QStringLiteral("id"), QStringLiteral("run-queued-quote")},
+         {QStringLiteral("ordinal"), position},
+         {QStringLiteral("status"), QStringLiteral("queued")},
+         {QStringLiteral("queuePosition"), position},
+         {QStringLiteral("userMessageId"), QStringLiteral("message-quote")}});
+  });
+  step(QStringLiteral("the queued message reads %1, not a link").arg(q), [rowPart](World& world, const Captures& c, const Table&) {
+    QQuickItem* text = rowPart(world, QStringLiteral("queueText"), QStringLiteral("quote"));
+    expect(text->property("text").toString() == QStringLiteral("see ") + c[0], QStringLiteral("the row reads %1").arg(show(text->property("text"))));
+  });
+  step(QStringLiteral("editing it gives back the message with its quote"), [quoting](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.queue.edit"), QVariantMap{{QStringLiteral("runId"), QStringLiteral("run-queued-quote")}});
+    const QString expected = quoting(QStringLiteral("the cart total is wrong"));
+    world.waitFor([&] { return openDraft(world) == expected; }, [&] { return QStringLiteral("the composer reads %1").arg(show(openDraft(world))); });
   });
   step(QStringLiteral("the user presses the shortcut that steers the queued message"), [](World& world, const Captures&, const Table&) {
     setKeyFocus(world, {});

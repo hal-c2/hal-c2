@@ -106,6 +106,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/drafting-and-sending.feature:Send stands out*"),
     QStringLiteral("composer/queue-and-steer.feature:A shortcut bound to stop*"),
     QStringLiteral("composer/queue-and-steer.feature:Queued messages are listed*"),
+    QStringLiteral("composer/queue-and-steer.feature:A queued message that quotes the agent*"),
     QStringLiteral("composer/queue-and-steer.feature:What the MC queued for the agent itself*"),
     QStringLiteral("composer/queue-and-steer.feature:Removing a queued message cancels its run*"),
     QStringLiteral("composer/queue-and-steer.feature:A removal the MC refuses*"),

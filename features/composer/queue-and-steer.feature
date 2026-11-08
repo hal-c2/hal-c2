@@ -210,7 +210,7 @@ Feature: Follow-ups while the agent is working
 
   # Upstream #18999: queued follow-ups that quote the agent show the quoted text, not the citation link.
   # Upstream #19007: the phone's queue sheet shows the quote as text too.
-  @backlog @desktop @mobile
+  @desktop @mobile
   Scenario: A queued message that quotes the agent shows the quoted words
     Given the user queued a message quoting "the cart total is wrong" from the agent's reply
     Then the queued message reads "the cart total is wrong", not a link
