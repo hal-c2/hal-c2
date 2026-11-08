@@ -3791,7 +3791,7 @@ defmodule HalC2.Steps.Providers.Opencode do
 
     context
     |> opencode_2(extra_turns ++ [two])
-    |> FakeAcp.thread(@thread, %{full_access: true})
+    |> FakeAcp.thread(@thread, "full-access")
     |> Map.put(:thread, @thread)
     |> Map.put(:runs_total, 2)
     # The shared "changes the thread to approval required" step addresses
@@ -3947,7 +3947,7 @@ defmodule HalC2.Steps.Providers.Opencode do
 
     context
     |> opencode_2([turn])
-    |> FakeAcp.thread(@thread, %{full_access: true})
+    |> FakeAcp.thread(@thread, "full-access")
     |> FakeAcp.send_message("explore it")
     |> Map.put(:thread, @thread)
   end
@@ -3998,7 +3998,7 @@ defmodule HalC2.Steps.Providers.Opencode do
 
     context
     |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
-    |> FakeAcp.thread(@thread, %{full_access: true})
+    |> FakeAcp.thread(@thread, "full-access")
     |> FakeAcp.send_message("explore it")
     |> Map.put(:thread, @thread)
   end
