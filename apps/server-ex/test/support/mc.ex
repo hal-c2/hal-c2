@@ -232,6 +232,30 @@ defmodule HalC2.Test.Mc do
   end
 
   @doc """
+  The list a `localServers` subscription `id` holds once the scan its subscribe started
+  has finished (on `mc`, this node by default): the first frame answers from the last
+  scan, and the scan's own result follows as a change. Returns `{frame, client}`.
+  """
+  def await_local_servers(client, id, mc \\ node()) do
+    shape = &(&1["t"] == "localServers" and &1["id"] == id)
+    {first, client} = await(client, shape, 10_000)
+
+    sync = fn client ->
+      client = WsClient.send_json(client, %{"t" => "ping"})
+      {_, skipped, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 10_000)
+      {Enum.filter(skipped, shape), client}
+    end
+
+    # The ping ends after the subscribe was taken, so its scan is queued; the scan
+    # asked for now is done when the call returns, its change sent before the pong.
+    {early, client} = sync.(client)
+    :erpc.call(mc, Kernel, :send, [HalC2.LocalServers, :scan])
+    :erpc.call(mc, :sys, :get_state, [HalC2.LocalServers])
+    {late, client} = sync.(client)
+    {List.last([first | early ++ late]), client}
+  end
+
+  @doc """
   The config frame of the subscription `id`. A config the MC could not build comes as an
   error frame saying why, and waiting on past it would only report a missing frame.
   """

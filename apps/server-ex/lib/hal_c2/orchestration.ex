@@ -705,6 +705,8 @@ defmodule HalC2.Orchestration do
         # restart (`HalC2.Orchestration.Effects`).
         HalC2.Orchestration.Effects.cancel_thread(thread_id)
         HalC2.Orchestration.Effects.drop_thread(thread_id)
+        # Browser tabs live in memory only, so there is nothing to record.
+        HalC2.Preview.close_thread(thread_id)
         HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
         HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
         # A page that asked this thread to work says it no longer is.
