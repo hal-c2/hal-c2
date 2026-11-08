@@ -2995,9 +2995,18 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp finish_tool(state, id, call) do
     %{kind: kind} = state.items[id]
 
-    # OpenCode reports a shell command's exit in its metadata, and a non-zero one as
-    # completed like any other.
+    # A command's reported exit code is shown either way; whether it failed
+    # the tool depends on who reported it. OpenCode reports a shell command's
+    # exit in its metadata alone, where a non-zero one failed the command.
+    # Antigravity and Cursor report a plain `exitCode` on a completed call:
+    # the command ran, and its exit code is not a failed tool by itself.
     exit_code = kind == :command && reported_exit(call["rawOutput"])
+
+    failed_exit? =
+      match?(
+        %{"metadata" => %{"exit" => code}} when is_integer(code) and code != 0,
+        call["rawOutput"]
+      )
 
     status =
       cond do
@@ -3008,7 +3017,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         get_in(call, ["_meta", "interrupted"]) == true -> "interrupted"
         call["status"] == "failed" -> "failed"
         kind == :command and state.interrupted -> "interrupted"
-        is_integer(exit_code) and exit_code != 0 -> "failed"
+        failed_exit? -> "failed"
         true -> "completed"
       end
 

@@ -117,6 +117,22 @@ defmodule HalC2.Environment do
       # its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
       %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
         cond do
+          HalC2.Acp.driver(id) == "cursor" ->
+            case HalC2.Acp.CursorSkills.refresh_workspace(id, cwd) do
+              :ok ->
+                :ok
+
+              {:error, detail} ->
+                {:error,
+                 %{
+                   "_tag" => "ProviderSetupError",
+                   "instanceId" => id,
+                   "operation" => "refresh",
+                   "detail" => detail,
+                   "message" => detail
+                 }}
+            end
+
           HalC2.Acp.driver(id) == "antigravity" ->
             case HalC2.Acp.Antigravity.refresh_workspace(id, cwd) do
               :ok ->

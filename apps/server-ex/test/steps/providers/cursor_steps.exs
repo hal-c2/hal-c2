@@ -1967,4 +1967,381 @@ defmodule HalC2.Steps.Providers.Cursor do
     assert {:ok, %{"title" => "cursor title"}} = context.title_result
     context
   end
+
+  # --- skill discovery -----------------------------------------------------------------------
+
+  defp write_skill(dir, header \\ "", body \\ "Run it.\n") do
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "SKILL.md"), "---\n#{header}---\n#{body}")
+    dir
+  end
+
+  # The composer opening a Cursor thread's skill list: a workspace refresh,
+  # whose reply and provider list are kept for the steps that read them.
+  defp open_cursor_skills(context) do
+    ctx = ops(context)
+    root = World.project(ctx).root
+
+    {reply, ctx} =
+      World.call(
+        ctx,
+        "server.refreshProviders",
+        %{"instanceId" => "cursor", "cwd" => root},
+        "ops"
+      )
+
+    ctx = Map.put(ctx, :reply, reply)
+
+    case reply do
+      {:ok, result} -> Map.put(ctx, :providers, result["providers"])
+      _ -> ctx
+    end
+  end
+
+  defp listed_cursor_skills(context) do
+    root = World.project(context).root
+    entry = Enum.find(context.providers || [], &(&1["instanceId"] == "cursor")) || %{}
+
+    case Enum.filter(entry["workspaceSnapshots"] || [], &(&1["cwd"] == root)) do
+      [%{"skills" => skills}] -> skills
+      _ -> []
+    end
+  end
+
+  defp listed_skill(context, name),
+    do: Enum.find(listed_cursor_skills(context), &(&1["name"] == name))
+
+  step "the user opens the skill list in a Cursor thread", context do
+    open_cursor_skills(context)
+  end
+
+  step "the user lists Cursor's skills", context do
+    open_cursor_skills(context)
+  end
+
+  step "the MC reads the Cursor skills", context do
+    open_cursor_skills(context)
+  end
+
+  step "Cursor's built-in skill {string} in {string} of the user's home",
+       %{args: [name, folder]} = context do
+    write_skill(Path.join([HalC2.Test.Mc.Host.home(context), folder, name]))
+    context
+  end
+
+  step "the project has its own skill {string}", %{args: [name]} = context do
+    cursor_skill(context, name)
+    context
+  end
+
+  step "Cursor's built-in skills are offered as system skills", context do
+    # Where no project skill of the name stands in front of it, the built-in
+    # skill is listed with the system scope.
+    elsewhere = Path.join(context.mc.home, "elsewhere")
+    File.mkdir_p!(elsewhere)
+
+    {reply, ctx} =
+      World.call(
+        context,
+        "server.refreshProviders",
+        %{"instanceId" => "cursor", "cwd" => elsewhere},
+        "ops"
+      )
+
+    assert {:ok, result} = reply
+    entry = Enum.find(result["providers"] || [], &(&1["instanceId"] == "cursor")) || %{}
+
+    [%{"skills" => skills}] =
+      Enum.filter(entry["workspaceSnapshots"] || [], &(&1["cwd"] == elsewhere))
+
+    assert Enum.find(skills, &(&1["name"] == "review"))["scope"] == "system"
+    ctx
+  end
+
+  step "{string} is the project's skill", %{args: [name]} = context do
+    assert listed_skill(context, name)["scope"] == "project"
+    context
+  end
+
+  step "the skill {string} exists in the project and in the user's home",
+       %{args: [name]} = context do
+    write_skill(
+      Path.join([World.project(context).root, ".cursor", "skills", name]),
+      "description: from the project\n"
+    )
+
+    write_skill(
+      Path.join([HalC2.Test.Mc.Host.home(context), ".cursor", "skills", name]),
+      "description: from the user's home\n"
+    )
+
+    context
+  end
+
+  step "the project has a Cursor skill whose header limits it to surfaces other than the CLI",
+       context do
+    write_skill(
+      Path.join([World.project(context).root, ".cursor", "skills", "ide-only"]),
+      "metadata:\n  surfaces: [ide, web]\n"
+    )
+
+    Map.put(context, :cursor_skill_name, "ide-only")
+  end
+
+  step "the project has a Cursor skill whose header forbids the model from starting it",
+       context do
+    write_skill(
+      Path.join([World.project(context).root, ".cursor", "skills", "by-hand"]),
+      "disable-model-invocation: true\n"
+    )
+
+    Map.put(context, :cursor_skill_name, "by-hand")
+  end
+
+  step "the skill is offered as one only the user can run", context do
+    assert listed_skill(context, context.cursor_skill_name)["userInvocationOnly"] == true
+    context
+  end
+
+  step "the user's {string} holds a folder tree deeper than the scan reaches",
+       %{args: [folder]} = context do
+    deep =
+      Enum.reduce(1..12, Path.join([HalC2.Test.Mc.Host.home(context), folder]), fn i, dir ->
+        Path.join(dir, "level#{i}")
+      end)
+
+    write_skill(Path.join(deep, "buried"))
+    context
+  end
+
+  step "skills inside the too-deep part of the tree are not", context do
+    assert {:ok, _} = context.reply
+    refute listed_skill(context, "buried")
+    context
+  end
+
+  step ~r/^the user's "([^"]+)" is a link to "([^"]+)"$/, %{args: [link, target]} = context do
+    home = HalC2.Test.Mc.Host.home(context)
+    link_path = Path.join(home, String.trim_leading(link, "~/"))
+    File.mkdir_p!(Path.dirname(link_path))
+    File.ln_s!(Path.join(home, String.trim_leading(target, "~/")), link_path)
+    context
+  end
+
+  step ~r/^"([^"]+)" holds 6,000 entries including the skill "([^"]+)"$/,
+       %{args: [folder, name]} = context do
+    root = Path.join(HalC2.Test.Mc.Host.home(context), String.trim_leading(folder, "~/"))
+    write_skill(Path.join(root, name))
+    for i <- 1..5_999, do: File.mkdir!(Path.join(root, "d#{i}"))
+    context
+  end
+
+  step "{string} is offered once", %{args: [name]} = context do
+    assert Enum.count(listed_cursor_skills(context), &(&1["name"] == name)) == 1
+    context
+  end
+
+  step "the skill search is not reported as incomplete", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "a Cursor skill folder holds an installed \"node_modules\" with thousands of files",
+       context do
+    dir = Path.join([World.project(context).root, ".cursor", "skills", "withdeps"])
+    write_skill(dir)
+    modules = Path.join([dir, "node_modules", "pkg"])
+    File.mkdir_p!(modules)
+    for i <- 1..2_000, do: File.write!(Path.join(modules, "f#{i}.js"), "")
+    write_skill(Path.join(modules, "hidden"))
+    context
+  end
+
+  step "other skills sit beside it", context do
+    write_skill(Path.join([World.project(context).root, ".cursor", "skills", "beside"]))
+    context
+  end
+
+  step "every skill is listed", context do
+    assert listed_skill(context, "withdeps")
+    assert listed_skill(context, "beside")
+    context
+  end
+
+  step "nothing inside \"node_modules\" is searched for skills", context do
+    refute listed_skill(context, "hidden")
+    context
+  end
+
+  step "the project has the Cursor skills {string} and {string}",
+       %{args: [first, second]} = context do
+    cursor_skill(context, first)
+    cursor_skill(context, second)
+    context
+  end
+
+  step "{string} holds 11,000 files under its \"artifacts\" folder",
+       %{args: [name]} = context do
+    artifacts =
+      Path.join([World.project(context).root, ".cursor", "skills", name, "artifacts"])
+
+    File.mkdir_p!(artifacts)
+    for i <- 1..11_000, do: File.write!(Path.join(artifacts, "a#{i}.txt"), "")
+    context
+  end
+
+  step "{string} and {string} are both listed", %{args: [first, second]} = context do
+    assert listed_skill(context, first)
+    assert listed_skill(context, second)
+    context
+  end
+
+  step "Cursor's provider check passes", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step ~r/^(the skill folders hold more than 10,000 entries or 8 MB of skill files|the skill folders are nested more than ten levels deep|a skill folder cannot be read)$/,
+       %{args: [situation]} = context do
+    root = Path.join([World.project(context).root, ".cursor", "skills"])
+    File.mkdir_p!(root)
+
+    case situation do
+      "the skill folders hold more than 10,000 entries or 8 MB of skill files" ->
+        for i <- 1..10_001, do: File.mkdir!(Path.join(root, "d#{i}"))
+
+      "the skill folders are nested more than ten levels deep" ->
+        Enum.reduce(1..11, root, fn _level, dir ->
+          for i <- 1..1_000, do: File.mkdir!(Path.join(dir, "s#{i}"))
+          next = Path.join(dir, "next")
+          File.mkdir!(next)
+          next
+        end)
+
+      "a skill folder cannot be read" ->
+        locked = Path.join(root, "locked")
+        File.mkdir_p!(locked)
+        File.chmod!(locked, 0o000)
+        ExUnit.Callbacks.on_exit(fn -> File.chmod(locked, 0o755) end)
+    end
+
+    context
+  end
+
+  step ~r/^reading fails saying skill discovery was incomplete because of (\S+)$/,
+       %{args: [reason]} = context do
+    assert {:error, message, _detail} = World.normalize_reply(context.reply)
+    assert message =~ "was incomplete"
+    assert message =~ reason
+    context
+  end
+
+  step "the user sends {string} to Cursor", %{args: [text]} = context do
+    sign_in("cursor")
+    {_entry, ctx} = enabled(context)
+    ctx = Acp.launch(ctx, "Cursor", "cursor", text)
+    Acp.await_runs(ctx.threads["Cursor"], 1)
+    [%{"message" => message}] = Enum.filter(log(ctx), &(&1["event"] == "send"))
+    Map.merge(ctx, %{thread: "Cursor", sent_message: message})
+  end
+
+  step "{string} reaches Cursor as a skill reference", %{args: [name]} = context do
+    assert context.sent_message =~ "/#{name}"
+    context
+  end
+
+  step "{string} reaches Cursor as typed", %{args: [text]} = context do
+    assert context.sent_message =~ text
+    context
+  end
+
+  step "the project keeps the skill {string} in {string} under {string}",
+       %{args: [name, subfolder, folder]} = context do
+    write_skill(Path.join([World.project(context).root, folder, subfolder]))
+    Map.put(context, :cursor_skill_name, name)
+  end
+
+  step "the project has a Cursor skill in the folder {string} whose header names it {string}",
+       %{args: [folder, shown]} = context do
+    write_skill(
+      Path.join([World.project(context).root, ".cursor", "skills", folder]),
+      "name: #{shown}\n"
+    )
+
+    Map.put(context, :cursor_skill_name, folder)
+  end
+
+  step "the skill is shown as {string}", %{args: [shown]} = context do
+    assert listed_skill(context, context.cursor_skill_name)["displayName"] == shown
+    context
+  end
+
+  step "the user mentions it as {string}", %{args: [name]} = context do
+    assert listed_skill(context, name)
+    context
+  end
+
+  step "{string} holds a link {string} to a skill kept elsewhere on the machine",
+       %{args: [folder, link]} = context do
+    kept = Path.join([context.mc.home, "elsewhere", "kept"])
+    write_skill(kept)
+    skills = Path.join([World.project(context).root, folder])
+    File.mkdir_p!(skills)
+    File.ln_s!(kept, Path.join(skills, link))
+    Map.put(context, :kept_skill, kept)
+  end
+
+  step "that skill's own folder holds further skills below it", context do
+    write_skill(Path.join(context.kept_skill, "nested"))
+    context
+  end
+
+  step "the skills below it are not searched for", context do
+    refute listed_skill(context, "nested")
+    context
+  end
+
+  step "the project has a Cursor skill whose header is not valid", context do
+    write_skill(
+      Path.join([World.project(context).root, ".cursor", "skills", "broken"]),
+      "name: \"unclosed\n"
+    )
+
+    cursor_skill(context, "deploy")
+    Map.put(context, :cursor_skill_name, "broken")
+  end
+
+  step "the project has a Cursor skill {string} whose skill file is larger than 1 MB",
+       %{args: [name]} = context do
+    write_skill(
+      Path.join([World.project(context).root, ".cursor", "skills", name]),
+      "name: The Manual\ndescription: Big\n",
+      String.duplicate("x", 1_100_000)
+    )
+
+    context
+  end
+
+  step "{string} is offered under its folder's name with no description",
+       %{args: [name]} = context do
+    skill = listed_skill(context, name)
+    assert skill
+    refute Map.has_key?(skill, "description")
+    refute Map.has_key?(skill, "displayName")
+    context
+  end
+
+  step "the project has a Cursor skill whose header says the user cannot start it", context do
+    write_skill(
+      Path.join([World.project(context).root, ".cursor", "skills", "agent-only"]),
+      "user-invocable: false\n"
+    )
+
+    Map.put(context, :cursor_skill_name, "agent-only")
+  end
+
+  step "the skill is listed as one the user cannot start", context do
+    assert listed_skill(context, context.cursor_skill_name)["userInvocable"] == false
+    context
+  end
 end

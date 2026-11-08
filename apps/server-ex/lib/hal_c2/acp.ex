@@ -1121,7 +1121,11 @@ defmodule HalC2.Acp do
   # Its account (who the key belongs to) comes from the probe's session, and
   # before any probe has answered the entry says it is still checking.
   defp driver_fields(entry, "cursor", id, _instance) do
-    entry = Map.put(entry, "showInteractionModeToggle", true)
+    entry =
+      entry
+      |> Map.put("showInteractionModeToggle", true)
+      |> Map.put("workspaceSnapshots", HalC2.Acp.CursorSkills.workspaces(id))
+
     account = :persistent_term.get({__MODULE__, id, :account}, nil)
 
     entry =
@@ -1459,30 +1463,11 @@ defmodule HalC2.Acp do
   mentions, and amounts of money, are left as they are.
   """
   def cursor_skill_mentions(text, cwd) do
-    names = cursor_skills(cwd)
+    names = MapSet.new(HalC2.Acp.CursorSkills.discover(cwd), & &1["name"])
 
     Regex.replace(@skill_mention, text, fn match, prefix, name ->
       if MapSet.member?(names, name), do: prefix <> "/" <> name, else: match
     end)
-  end
-
-  # The names of the skills Cursor loads in `cwd`: each folder with a SKILL.md under
-  # the project's and the user's `.cursor`, `.agents`, `.codex` and `.claude` skills,
-  # by its frontmatter `name`, else the folder's.
-  defp cursor_skills(cwd) do
-    for base <- [cwd, HalC2.Paths.user_home()],
-        is_binary(base),
-        root <- ~w(.cursor .agents .codex .claude),
-        dir = Path.join([base, root, "skills"]),
-        {:ok, entries} <- [File.ls(dir)],
-        entry <- entries,
-        {:ok, body} <- [File.read(Path.join([dir, entry, "SKILL.md"]))],
-        into: MapSet.new() do
-      case Regex.run(~r/\A---\s*\n.*?^name:\s*["']?([^"'\n]+?)["']?\s*$/ms, body) do
-        [_, name] -> String.trim(name)
-        _ -> entry
-      end
-    end
   end
 
   @doc """

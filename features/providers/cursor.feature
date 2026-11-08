@@ -430,7 +430,7 @@ Feature: Cursor
     Then the send is completed or failed explicitly
     And the user's next message starts a new Cursor run
 
-  @backlog
+
   Scenario Outline: Cursor skills are read from every skill folder Cursor reads
     Given a skill "deploy" in <folder> of the project or of the user's home
     When the user opens the skill list in a Cursor thread
@@ -444,7 +444,7 @@ Feature: Cursor
       | .claude/skills |
 
   # Upstream #24595: Cursor's built-in skills live in ~/.cursor/skills-cursor and were missing.
-  @backlog @priority-low
+  @priority-low
   Scenario: Cursor's built-in skills are offered as system skills after the others
     Given Cursor's built-in skill "review" in ".cursor/skills-cursor" of the user's home
     And the project has its own skill "review"
@@ -452,25 +452,25 @@ Feature: Cursor
     Then Cursor's built-in skills are offered as system skills
     And "review" is the project's skill
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A project's Cursor skill wins over the user's skill of the same name
     Given the skill "deploy" exists in the project and in the user's home
     When the user opens the skill list in a Cursor thread
     Then "deploy" is offered once, from the project
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A skill that is not meant for the Cursor CLI is not offered
     Given the project has a Cursor skill whose header limits it to surfaces other than the CLI
     When the user opens the skill list in a Cursor thread
     Then that skill is not offered
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A Cursor skill only the user may run is marked so
     Given the project has a Cursor skill whose header forbids the model from starting it
     When the user opens the skill list in a Cursor thread
     Then the skill is offered as one only the user can run
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A skill folder nested too deep does not hide the other skills
     Given the project has the Cursor skill "review"
     And the user's ".claude/skills" holds a folder tree deeper than the scan reaches
@@ -480,7 +480,7 @@ Feature: Cursor
 
   # Upstream #18664: skill discovery walks a folder once even when two skill roots link to
   # it, so a linked root no longer doubles the scan and exhausts its budget.
-  @backlog @priority-low
+  @priority-low
   Scenario: A skill folder linked from a second root is read once
     Given the user's "~/.agents/skills" is a link to "~/.claude/skills"
     And "~/.claude/skills" holds 6,000 entries including the skill "review"
@@ -489,7 +489,7 @@ Feature: Cursor
     And the skill search is not reported as incomplete
 
   # Upstream #19806: installed node_modules no longer exhaust skill discovery
-  @backlog
+
   Scenario: Installed dependencies inside a skill do not hide the other skills
     Given a Cursor skill folder holds an installed "node_modules" with thousands of files
     And other skills sit beside it
@@ -499,7 +499,7 @@ Feature: Cursor
 
   # Upstream #23326: supporting files used up the skill search's shared budget, so 11,000 files
   # under one skill hid its sibling and failed the provider check.
-  @backlog @priority-low
+  @priority-low
   Scenario: A skill's supporting files do not hide the skills beside it
     Given the project has the Cursor skills "review" and "deploy"
     And "review" holds 11,000 files under its "artifacts" folder
@@ -507,7 +507,7 @@ Feature: Cursor
     Then "review" and "deploy" are both listed
     And Cursor's provider check passes
 
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A Cursor skill search that cannot finish is reported, not cut short
     Given <situation>
     When the MC reads the Cursor skills
@@ -519,7 +519,7 @@ Feature: Cursor
       | the skill folders are nested more than ten levels deep                 | scan-budget-exhausted |
       | a skill folder cannot be read                                          | filesystem-error      |
 
-  @backlog @priority-low
+  @priority-low
   Scenario: Only a known Cursor skill is turned into a skill reference
     Given the project has the Cursor skill "deploy"
     When the user sends "run $deploy with $HOME set" to Cursor
@@ -714,20 +714,20 @@ Feature: Cursor
     And it holds neither the Cursor API key nor the HAL-C2 tools credential
 
   # CursorSkills.ts: the corners of reading Cursor's skill folders.
-  @backlog @priority-low
+  @priority-low
   Scenario: Cursor skills kept in sub-folders of a skill folder are found
     Given the project keeps the skill "deploy" in "team/release/deploy" under ".cursor/skills"
     When the user opens the skill list in a Cursor thread
     Then "deploy" is offered
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A Cursor skill is known by its folder and shown by the name in its header
     Given the project has a Cursor skill in the folder "deploy" whose header names it "Ship it"
     When the user opens the skill list in a Cursor thread
     Then the skill is shown as "Ship it"
     And the user mentions it as "deploy"
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A Cursor skill linked from outside its skill folder is offered without searching where it lives
     Given ".cursor/skills" holds a link "shared" to a skill kept elsewhere on the machine
     And that skill's own folder holds further skills below it
@@ -735,20 +735,20 @@ Feature: Cursor
     Then "shared" is offered
     And the skills below it are not searched for
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A Cursor skill whose header cannot be read is not offered
     Given the project has a Cursor skill whose header is not valid
     When the user opens the skill list in a Cursor thread
     Then that skill is not offered
     And the other skills are still offered
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A Cursor skill file larger than 1 MB is offered without its description
     Given the project has a Cursor skill "manual" whose skill file is larger than 1 MB
     When the user opens the skill list in a Cursor thread
     Then "manual" is offered under its folder's name with no description
 
-  @backlog @priority-low
+  @priority-low
   Scenario: A Cursor skill the user may not start is listed as unavailable to them
     Given the project has a Cursor skill whose header says the user cannot start it
     When the user opens the skill list in a Cursor thread
