@@ -582,11 +582,15 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   step "the user signs in to {string}", %{args: [id]} = context do
     cond do
       context[:refused_sign_in] ->
-        ctx = start_sign_in(context, "acme-login")
-        # The browser step, where there is one: the session after it is refused.
-        ctx = accept_browser(ctx)
-        {state, ctx} = await_phase(ctx, "failed")
-        Map.put(ctx, :told, state["message"])
+        {{state, ctx}, log} =
+          ExUnit.CaptureLog.with_log(fn ->
+            ctx = start_sign_in(context, "acme-login")
+            # The browser step, where there is one: the session after it is refused.
+            ctx = accept_browser(ctx)
+            await_phase(ctx, "failed")
+          end)
+
+        Map.merge(ctx, %{told: state["message"], log: log})
 
       id == "acme" ->
         ctx = start_sign_in(context, "acme-terminal")
@@ -4259,6 +4263,12 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     assert Enum.all?(names, &(String.length(&1) <= 128))
     assert Enum.all?(descriptions, &(String.length(&1) <= 1024))
     assert Enum.any?(descriptions, &(String.length(&1) == 1024))
+    context
+  end
+
+  step "the MC's log holds the reason without {string}", %{args: [secret]} = context do
+    assert context.log =~ "rejected by the proxy"
+    refute context.log =~ secret
     context
   end
 end
