@@ -855,6 +855,51 @@ defmodule HalC2.Steps.Providers.Pi do
     turn(context, "hello after the stop")
   end
 
+  # Pi's `abort` does not stop a compaction: the stopped steer compaction
+  # finishes (its events land) while the next turn runs, and that turn then
+  # compacts for real. The fake scripts both pairs of events into the turn.
+  step "the next Pi turn runs while Pi finishes the stopped compaction and then compacts again",
+       context do
+    ended = fn summary ->
+      %{
+        "event" => %{
+          "type" => "compaction_end",
+          "aborted" => false,
+          "result" => %{
+            "summary" => summary,
+            "tokensBefore" => 1000,
+            "estimatedTokensAfter" => 200
+          }
+        }
+      }
+    end
+
+    start = %{"event" => %{"type" => "compaction_start", "reason" => "manual"}}
+
+    steps = [
+      %{"text" => "Working again."},
+      start,
+      ended.("The stopped compaction."),
+      start,
+      ended.("This turn's compaction."),
+      %{"text" => "Done."}
+    ]
+
+    context =
+      FakeAcp.configure(context, fn cfg ->
+        Map.update(cfg, "turns", [], &[%{"match" => "after the stop", "steps" => steps} | &1])
+      end)
+
+    turn(context, "hello after the stop")
+  end
+
+  step "the next turn shows only its own compaction", context do
+    assert [%{"title" => "Context compacted", "summary" => "This turn's compaction."}] =
+             items(context, "compaction")
+
+    context
+  end
+
   defp steer(context, text) do
     HalC2.Orchestration.dispatch(%{
       "type" => "message.dispatch",

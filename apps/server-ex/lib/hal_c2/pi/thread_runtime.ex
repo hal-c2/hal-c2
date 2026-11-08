@@ -26,7 +26,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 5
+  @state_version 6
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -160,6 +160,10 @@ defmodule HalC2.Pi.ThreadRuntime do
        # running turn also holds its caller until the compaction answers.
        compact: nil,
        compact_steer: nil,
+       # Compactions Pi is still finishing after their turn ended (`abort`
+       # does not stop one): their late `compaction_start`/`compaction_end`
+       # events are dropped, each until its `compaction_end` arrives.
+       abandoned_compacts: 0,
        items: %{},
        buffer: %{},
        flush_timer: nil,
@@ -402,6 +406,18 @@ defmodule HalC2.Pi.ThreadRuntime do
   @impl true
   def handle_info({:json_rpc, conn, {:notification, type, event}}, %{conn: conn} = state) do
     cond do
+      # A compaction abandoned when its turn ended: Pi finishes it anyway,
+      # and its events land in whatever turn runs then (or between turns).
+      # They are that stopped turn's, so they are dropped; the abandoned
+      # compaction is forgotten once its `compaction_end` has been dropped.
+      state.abandoned_compacts > 0 and type in ["compaction_start", "compaction_end"] ->
+        abandoned =
+          if type == "compaction_end",
+            do: state.abandoned_compacts - 1,
+            else: state.abandoned_compacts
+
+        {:noreply, %{state | abandoned_compacts: abandoned}}
+
       state.turn ->
         {:noreply, event(type, event, state)}
 
@@ -473,7 +489,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
     if state.compact_steer, do: GenServer.reply(state.compact_steer, {:error, "Pi exited"})
 
-    {:noreply, %{state | conn: nil, compact: nil, compact_steer: nil}}
+    {:noreply, %{state | conn: nil, compact: nil, compact_steer: nil, abandoned_compacts: 0}}
   end
 
   def handle_info(:flush, state),
@@ -507,6 +523,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  defp migrate(%{v: 5} = state),
+    do: state |> Map.merge(%{v: 6, abandoned_compacts: 0}) |> migrate()
 
   defp migrate(%{v: 4} = state),
     do: state |> Map.merge(%{v: 5, compact_steer: nil}) |> migrate()
@@ -553,7 +572,8 @@ defmodule HalC2.Pi.ThreadRuntime do
         baseline_thinking: nil,
         session_name: nil,
         compact: nil,
-        compact_steer: nil
+        compact_steer: nil,
+        abandoned_compacts: 0
     }
   end
 
@@ -1556,14 +1576,20 @@ defmodule HalC2.Pi.ThreadRuntime do
         steers: unanswered(state.steers, status),
         settled: false,
         compact: nil,
-        compact_steer: nil
+        compact_steer: nil,
+        # A compaction still out when its turn ends is abandoned: Pi
+        # finishes it anyway, and its late events are dropped on arrival
+        # (`handle_info` for notifications), so they show in no later turn.
+        abandoned_compacts: state.abandoned_compacts + if(state.compact, do: 1, else: 0)
     }
   end
 
   # A steered compaction still running when its turn ends (Pi's `abort` does
   # not stop a compaction): its caller hears what an unanswered steer hears,
-  # and the task's late result falls into the catch-all, so neither it nor
-  # its caller leaks into the next turn.
+  # and the task's late result falls into the catch-all. Pi still finishes
+  # the compaction and emits its events; `end_turn/3` counts it abandoned so
+  # those are dropped until its `compaction_end`. Nothing of it leaks into
+  # the next turn.
   defp answer_compact_steer(%{compact_steer: nil} = state, _status), do: state
 
   defp answer_compact_steer(state, status) do

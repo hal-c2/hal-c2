@@ -811,6 +811,13 @@ Feature: Pi
     Then the steer is answered and the turn is stopped
     And the next Pi turn finishes
 
+  Scenario: A stopped steered compaction that finishes during the next turn does not show there
+    Given a Pi turn that is still working while Pi compacts slowly
+    When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
+    Then the steer is answered and the turn is stopped
+    When the next Pi turn runs while Pi finishes the stopped compaction and then compacts again
+    Then the next turn shows only its own compaction
+
   Scenario: A message that only starts with /compact is an ordinary message
     When the user sends "/compacted logs look wrong" to a Pi thread
     Then Pi receives it as an ordinary message
