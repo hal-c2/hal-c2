@@ -1463,25 +1463,45 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:ok, %{"thread" => %{"id" => id}}} ->
         {:ok, %{state | native_thread_id: id}}
 
-      # A conversation Codex can no longer find (its rollout was cleaned up, say)
-      # starts fresh: HAL-C2 keeps the thread's history, Codex a new conversation.
       {:error, reason} when turn.native_thread_id != nil ->
-        if recoverable_resume?(reason) do
-          case Connection.call(state.conn, "thread/start", params) do
-            {:ok, %{"thread" => %{"id" => id}}} ->
-              {:ok, Map.put(%{state | native_thread_id: id}, :fresh_start, true)}
-
-            {:error, reason} ->
-              {:error, reason, state}
-          end
-        else
-          {:error, reason, state}
-        end
+        resume_failed(state, params, reason)
 
       {:error, reason} ->
         {:error, reason, state}
     end
   end
+
+  @thread_in_use "This conversation is open in another Codex client, such as the Codex app, " <>
+                   "the Codex CLI, or an IDE extension. Codex lets one client write to a " <>
+                   "conversation at a time. Quit that client, then send your message again."
+
+  # A conversation Codex can no longer find (its rollout was cleaned up, say)
+  # starts fresh: HAL-C2 keeps the thread's history, Codex a new conversation. One
+  # another client (the Codex app, the CLI, an IDE) holds open does not: Codex lets
+  # one client write to it at a time, and a fresh one would split it (Upstream #21045).
+  defp resume_failed(state, params, reason) do
+    cond do
+      active_writer?(reason) ->
+        {:error, @thread_in_use, state}
+
+      recoverable_resume?(reason) ->
+        case Connection.call(state.conn, "thread/start", params) do
+          {:ok, %{"thread" => %{"id" => id}}} ->
+            {:ok, Map.put(%{state | native_thread_id: id}, :fresh_start, true)}
+
+          {:error, reason} ->
+            {:error, reason, state}
+        end
+
+      true ->
+        {:error, reason, state}
+    end
+  end
+
+  defp active_writer?(%{"code" => -32600, "message" => message}) when is_binary(message),
+    do: String.contains?(message, "already has an active writer")
+
+  defp active_writer?(_reason), do: false
 
   # Paginated history cuts before a turn (`thread/revert`, as `rewind/2` cuts
   # it); legacy history only takes a count (`thread/rollback`). Neither

@@ -325,6 +325,30 @@ defmodule HalC2.Steps.Providers.CodexRuntime do
     context
   end
 
+  # --- a conversation another Codex client holds -----------------------------------------
+
+  # The thread's next message resumes its conversation in a new app-server, which Codex
+  # refuses as it does while another client sharing the Codex home has it loaded.
+  step "the Codex app has the thread's Codex conversation open on the same Codex home",
+       context do
+    context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    {pid, runtime} = World.codex_runtime(context, @thread)
+    kill_and_await(pid, runtime.conn)
+    native = runtime.native_thread_id
+    World.put_os_env("FAKE_CODEX_RESUME_ERROR", "thread #{native} already has an active writer")
+    context
+  end
+
+  step "the turn fails telling the user to quit the other Codex client and try again",
+       context do
+    state = World.await_runs(context, @thread, ["completed", "failed"])
+    assert [%{"lastError" => error}] = StreamState.list(state, "provider-session")
+    assert error =~ "open in another Codex client"
+    assert error =~ "Quit that client, then send your message again."
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------
 
   # Kills the app-server by the pid its connection started (never found by name), and

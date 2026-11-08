@@ -833,7 +833,6 @@ Feature: Codex
 
   # Upstream #21045: a conversation another Codex client held open was silently replaced with a
   # fresh one, leaving its native history behind.
-  @backlog @priority-high
   Scenario: A Codex conversation open in another Codex client is not replaced
     Given the Codex app has the thread's Codex conversation open on the same Codex home
     When the user sends a message
