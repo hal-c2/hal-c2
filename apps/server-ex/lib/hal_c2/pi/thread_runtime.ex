@@ -26,7 +26,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 7
+  @state_version 8
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -41,6 +41,12 @@ defmodule HalC2.Pi.ThreadRuntime do
   # steer, so one Pi is merely slow to answer is not cut off sooner than another
   # provider's would be.
   @steer_answer_ms 33_000
+  # How long a turn may show no Pi activity at all before the runtime asks Pi
+  # whether it is working (`turn_watchdog/2`): a prompt an extension command
+  # handled without the agent never settles, and a Pi gone silent never does
+  # either. Three failed checks in a row stop the session.
+  @turn_watchdog_ms 4_000
+  @turn_watchdog_failures 3
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -83,6 +89,9 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp steer_answer_ms, do: Application.get_env(:hal_c2, :pi_steer_answer_ms, @steer_answer_ms)
+
+  defp turn_watchdog_ms,
+    do: Application.get_env(:hal_c2, :pi_turn_watchdog_ms, @turn_watchdog_ms)
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def respond(thread_id, request_id, response) do
@@ -162,17 +171,20 @@ defmodule HalC2.Pi.ThreadRuntime do
        compact_steer: nil,
        # The task refs of compactions Pi is still finishing after their turn
        # ended (`abort` does not stop one): while any is out, its late
-       # `compaction_start`/`compaction_end` events are dropped. A dropped
-       # `compaction_end` forgets one ref, and the task's own reply or
-       # `:DOWN` forgets it too — a compaction can end without
-       # `compaction_end` (it fails, or sends no events), and then the reply
+       # `compaction_start`/`compaction_end` events are dropped. Only the
+       # task's own reply or `:DOWN` forgets a ref — a dropped
+       # `compaction_end` cannot say which compaction ended, and a compaction
+       # can end without one (it fails, or sends no events), where the reply
        # is the only end it gets. Pi sends `compaction_end` before answering,
-       # so whichever arrives second finds nothing left to drop.
+       # so by the reply nothing is left to drop.
        abandoned_compacts: MapSet.new(),
        items: %{},
        buffer: %{},
        flush_timer: nil,
        interrupted: false,
+       # Whether Pi has shown any work for this turn yet; until it does, the
+       # turn watchdog asks whether it is working at all (`turn_watchdog/2`).
+       turn_active: false,
        failure: nil,
        message: 0,
        compactions: 0,
@@ -228,6 +240,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       | turn: turn,
         items: %{},
         interrupted: false,
+        turn_active: false,
         failure: nil,
         message: 0,
         compactions: 0,
@@ -414,20 +427,15 @@ defmodule HalC2.Pi.ThreadRuntime do
       # A compaction abandoned when its turn ended: Pi finishes it anyway,
       # and its events land in whatever turn runs then (or between turns).
       # They are that stopped turn's, so they are dropped while its task is
-      # still out. Its `compaction_end` forgets one abandoned task; one that
-      # ends without an end is forgotten by its reply (`forget_abandoned/2`).
+      # still out; only its reply or `:DOWN` forgets it (`forget_abandoned/2`).
       MapSet.size(state.abandoned_compacts) > 0 and
           type in ["compaction_start", "compaction_end"] ->
-        abandoned =
-          if type == "compaction_end" do
-            MapSet.delete(state.abandoned_compacts, Enum.at(state.abandoned_compacts, 0))
-          else
-            state.abandoned_compacts
-          end
-
-        {:noreply, %{state | abandoned_compacts: abandoned}}
+        {:noreply, state}
 
       state.turn ->
+        # Anything but the prompt's own acknowledgement is Pi at work on the
+        # turn; the watchdog only watches a turn that has shown none.
+        state = if type == "response", do: state, else: %{state | turn_active: true}
         {:noreply, event(type, event, state)}
 
       # An extension that fails between turns is shown on the next turn.
@@ -507,6 +515,20 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
 
+  # A turn that has shown no work since its prompt: ask Pi whether it is
+  # working. Idle twice in a row means an extension handled the prompt
+  # without the agent, so the turn settles (twice, so work Pi sent while a
+  # check was out is read in between and counts as activity); streaming
+  # means work is on its way, so ask again later; three checks Pi does not
+  # answer stop the session and fail it.
+  def handle_info({:turn_watchdog, run, failures, idle}, state) do
+    if state.turn && state.turn.ids.run == run && !state.turn_active && state.conn do
+      {:noreply, turn_watchdog(state, run, failures, idle)}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info(message, state) do
     state = forget_abandoned(state, message)
 
@@ -539,6 +561,41 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp forget_abandoned(state, _message), do: state
 
+  defp turn_watchdog(state, run, failures, idle) do
+    case pi_streaming(state) do
+      {:ok, true} ->
+        Process.send_after(self(), {:turn_watchdog, run, 0, false}, turn_watchdog_ms())
+        state
+
+      {:ok, false} ->
+        if idle do
+          settle(state)
+        else
+          Process.send_after(self(), {:turn_watchdog, run, 0, true}, turn_watchdog_ms())
+          state
+        end
+
+      :error when failures + 1 >= @turn_watchdog_failures ->
+        state |> end_turn("failed", "Pi stopped answering.") |> stop_session()
+
+      :error ->
+        Process.send_after(self(), {:turn_watchdog, run, failures + 1, false}, turn_watchdog_ms())
+        state
+    end
+  end
+
+  # Whether Pi says it is working right now; a check Pi does not answer
+  # (an error, a timeout, a dead connection) is a failed check.
+  defp pi_streaming(state) do
+    case Connection.call(state.conn, "get_state", %{}, @stats_ms) do
+      {:ok, %{"isStreaming" => streaming}} when is_boolean(streaming) -> {:ok, streaming}
+      {:ok, _} -> {:ok, false}
+      _ -> :error
+    end
+  catch
+    :exit, _ -> :error
+  end
+
   @impl true
   def terminate(_reason, state) do
     Durable.leaving(state, &flush(&1, :timer))
@@ -554,6 +611,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  defp migrate(%{v: 7} = state),
+    do: state |> Map.merge(%{v: 8, turn_active: false}) |> migrate()
 
   # A count of abandoned compactions becomes the set of their task refs; a
   # restored state's tasks went with the runtime that held them, so it starts empty.
@@ -736,13 +796,13 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp switch(state, file) do
     with {:ok, switched} <-
            if(is_binary(file),
-             do: call(state, "switch_session", %{"sessionPath" => file}),
+             do: open_call(state, "switch_session", %{"sessionPath" => file}),
              else: {:ok, nil}
            ),
          :ok <- session_switch(switched),
-         {:ok, pi} <- call(state, "get_state", %{}),
+         {:ok, pi} <- open_call(state, "get_state", %{}),
          :ok <- persisted(pi),
-         {:ok, entries} <- call(state, "get_entries", %{}) do
+         {:ok, entries} <- open_call(state, "get_entries", %{}) do
       state =
         remember_model(
           %{
@@ -781,6 +841,17 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp remember_model(state, _model), do: state
 
   defp call(state, type, params), do: Connection.call(state.conn, type, params, @call_ms)
+
+  # A call that opens a session, bounded by the minute a reopening gets: Pi
+  # not answering it in time means the session could not be opened (and the
+  # failed start then stops that Pi, in `handle_call` for `:start_turn`).
+  defp open_call(state, type, params) do
+    Connection.call(state.conn, type, params, open_ms())
+  catch
+    :exit, _ -> {:error, "Pi session could not be opened"}
+  end
+
+  defp open_ms, do: Application.get_env(:hal_c2, :pi_open_ms, @call_ms)
 
   # "Pi default" leaves the model to the user's own Pi settings: the model and
   # thinking this Pi process started the session with (the baseline).
@@ -880,6 +951,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       :error ->
         {state, payload} = prompt_payload(state, turn.text, Map.get(turn, :attachments, []))
         Connection.notify(state.conn, "prompt", payload)
+        Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, false}, turn_watchdog_ms())
         state
     end
   end
@@ -1634,9 +1706,8 @@ defmodule HalC2.Pi.ThreadRuntime do
   # not stop a compaction): its caller hears what an unanswered steer hears,
   # and the task's late result falls into the catch-all. Pi still finishes
   # the compaction and emits its events; `end_turn/3` keeps its task ref as
-  # abandoned so those are dropped while it is out, and its dropped
-  # `compaction_end` or its reply (or `:DOWN`) forgets it. Nothing of it
-  # leaks into the next turn.
+  # abandoned so those are dropped while it is out, and its reply (or
+  # `:DOWN`) forgets it. Nothing of it leaks into the next turn.
   defp answer_compact_steer(%{compact_steer: nil} = state, _status), do: state
 
   defp answer_compact_steer(state, status) do

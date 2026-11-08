@@ -406,7 +406,6 @@ Feature: Pi
     Then the stray text is ignored
     And the turn finishes normally
 
-  @backlog
   Scenario: A single Pi message larger than 8 MiB is dropped
     When Pi sends one message larger than 8 MiB
     Then that message is dropped
@@ -433,7 +432,6 @@ Feature: Pi
     When Pi refuses a request with an explanation of 5,000 characters
     Then the failure the user sees carries its first 200 characters followed by an ellipsis
 
-  @backlog
   Scenario: Requests waiting on Pi fail at once when Pi dies
     Given HAL-C2 is waiting for Pi to answer several requests
     When the Pi process exits
@@ -570,19 +568,17 @@ Feature: Pi
     Then the Pi session is stopped
     And the thread says "Pi started agent work outside an active HAL-C2 turn. The session was stopped to prevent invisible tool execution."
 
-  @backlog
   Scenario: A message an extension command handles without the agent still ends its turn
     Given a Pi extension handles "/stats" without starting agent work
     When the user sends "/stats" to a Pi thread
     Then the turn finishes once Pi is idle
-    And it is not left running
+    And the Pi turn is not left running
 
-  @backlog
   Scenario: Pi going silent after a message stops the session
     Given Pi accepted a message but never reports whether it is working
     When three checks of Pi's state fail
     Then the Pi process is stopped
-    And the turn fails
+    And the silent turn fails
 
   Scenario: A notice from a Pi extension shows in the work log
     When a Pi extension shows the warning "Lint found 3 problems"
@@ -809,7 +805,7 @@ Feature: Pi
     And the next Pi turn finishes
 
   Scenario: A stopped steered compaction that finishes during the next turn does not show there
-    Given a Pi turn that is still working while Pi compacts slowly
+    Given a Pi turn that is still working while Pi compacts for a few seconds
     When the user steers the thread with "/compact" and stops the turn before Pi finishes compacting
     Then the steer is answered and the turn is stopped
     When the next Pi turn runs while Pi finishes the stopped compaction and then compacts again
@@ -867,7 +863,6 @@ Feature: Pi
     Then the thread is ready without them
     And the skills are looked up again the first time the user mentions one
 
-  @backlog
   Scenario: Reopening a Pi session that does not answer within a minute stops Pi
     Given a Pi thread with history
     When Pi does not finish reopening that session within 60 seconds
@@ -988,15 +983,14 @@ Feature: Pi
     When a HAL-C2 tool Pi called answers with an error
     Then Pi receives the tool's text marked as an error
 
-  @backlog
-  Scenario Outline: A Pi session that is not kept in its own file is refused
-    When <problem>
-    Then the thread fails to start with "<message>"
+  Scenario: A Pi session with no file of its own is refused
+    When Pi reports no file for the session
+    Then the thread fails to start with "get_state returned no persisted sessionFile"
 
-    Examples:
-      | problem                                               | message                                      |
-      | Pi reports no file for the session                    | get_state returned no persisted sessionFile  |
-      | Pi reuses the previous thread's file for a new thread | Pi did not create a distinct session file    |
+  @backlog
+  Scenario: A Pi session that reuses another thread's file is refused
+    When Pi reuses the previous thread's file for a new thread
+    Then the thread fails to start with "Pi did not create a distinct session file"
 
   # HalC2.Plugins.Kinds: another instance runs with its own settings, home and account,
   # so its turn needs its own process rather than the first instance's.

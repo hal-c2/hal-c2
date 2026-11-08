@@ -855,46 +855,77 @@ defmodule HalC2.Steps.Providers.Pi do
     turn(context, "hello after the stop")
   end
 
+  # As the slow compaction above, but Pi finishes it a couple of seconds
+  # after it starts: within whatever turn runs next.
+  step "a Pi turn that is still working while Pi compacts for a few seconds", context do
+    turns = [
+      %{
+        "match" => "a steered task",
+        "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]
+      }
+    ]
+
+    context =
+      context
+      |> install(%{"turns" => turns ++ FakeAcp.pi_turns(), "compactDelaySec" => 2})
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("please do a steered task")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+    end)
+
+    context
+  end
+
   # Pi's `abort` does not stop a compaction: the stopped steer compaction
-  # finishes (its events land) while the next turn runs, and that turn then
-  # compacts for real. The fake scripts both pairs of events into the turn.
+  # finishes while the next turn runs. The fake scripts its late events into
+  # that turn; once Pi's answer has landed (and with it the abandonment),
+  # steering `/compact` again compacts for real.
   step "the next Pi turn runs while Pi finishes the stopped compaction and then compacts again",
        context do
-    ended = fn summary ->
-      %{
-        "event" => %{
-          "type" => "compaction_end",
-          "aborted" => false,
-          "result" => %{
-            "summary" => summary,
-            "tokensBefore" => 1000,
-            "estimatedTokensAfter" => 200
-          }
+    ended = %{
+      "event" => %{
+        "type" => "compaction_end",
+        "aborted" => false,
+        "result" => %{
+          "summary" => "The stopped compaction.",
+          "tokensBefore" => 1000,
+          "estimatedTokensAfter" => 200
         }
       }
-    end
+    }
 
     start = %{"event" => %{"type" => "compaction_start", "reason" => "manual"}}
-
-    steps = [
-      %{"text" => "Working again."},
-      start,
-      ended.("The stopped compaction."),
-      start,
-      ended.("This turn's compaction."),
-      %{"text" => "Done."}
-    ]
+    steps = [%{"text" => "Working again."}, start, ended, %{"waitAbort" => true}]
 
     context =
       FakeAcp.configure(context, fn cfg ->
         Map.update(cfg, "turns", [], &[%{"match" => "after the stop", "steps" => steps} | &1])
       end)
 
-    turn(context, "hello after the stop")
+    context = FakeAcp.send_message(context, "hello after the stop")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+    end)
+
+    await_compact_answered(context)
+    context = FakeAcp.configure(context, &Map.delete(&1, "compactDelaySec"))
+    {:ok, _} = steer(context, "/compact")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    FakeAcp.await_run(context, "interrupted")
+    context
   end
 
   step "the next turn shows only its own compaction", context do
-    assert [%{"title" => "Context compacted", "summary" => "This turn's compaction."}] =
+    assert [%{"title" => "Context compacted", "summary" => "Compacted."}] =
              items(context, "compaction")
 
     context
@@ -2809,21 +2840,27 @@ defmodule HalC2.Steps.Providers.Pi do
   end
 
   step "the Pi process is stopped", context do
-    assert [%{"pid" => pid}] = thread_starts(context)
+    pids = for %{"pid" => pid} <- thread_starts(context), do: pid
+    assert [_ | _] = pids
 
-    # The pid the fake itself logged at spawn: it is gone now (no such process).
+    # The pids the fake itself logged at spawn: each is gone now (no such process).
     deadline = System.monotonic_time(:millisecond) + 5_000
 
     await = fn await ->
-      alive? =
-        match?({_, 0}, System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true))
+      alive =
+        Enum.find(pids, fn pid ->
+          match?(
+            {_, 0},
+            System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true)
+          )
+        end)
 
       cond do
-        not alive? ->
+        alive == nil ->
           :ok
 
         System.monotonic_time(:millisecond) > deadline ->
-          flunk("Pi (pid #{pid}) is still running")
+          flunk("Pi (pid #{alive}) is still running")
 
         true ->
           receive do
@@ -2834,6 +2871,187 @@ defmodule HalC2.Steps.Providers.Pi do
     end
 
     await.(await)
+    context
+  end
+
+  # --- oversized messages, idle and silent Pi, dying with requests out ---
+
+  # The watchdog's check interval, shortened so scenarios do not wait on it.
+  defp quick_watchdog(context) do
+    Application.put_env(:hal_c2, :pi_turn_watchdog_ms, 200)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :pi_turn_watchdog_ms) end)
+    context
+  end
+
+  # One event whose line alone is over 8 MiB, then a normal reply in the
+  # same turn: only the oversized message may be lost.
+  step "Pi sends one message larger than 8 MiB", context do
+    huge = %{
+      "event" => %{
+        "type" => "message_update",
+        "message" => %{"role" => "assistant"},
+        "assistantMessageEvent" => %{
+          "type" => "text_delta",
+          "delta" => String.duplicate("x", 9_000_000)
+        }
+      }
+    }
+
+    context
+    |> with_turns([
+      %{"match" => "big please", "steps" => [huge, %{"text" => "After."}]}
+    ])
+    |> FakeAcp.thread()
+    |> turn("big please")
+  end
+
+  step "that message is dropped", context do
+    assert replies(context) == ["After."]
+    context
+  end
+
+  step "the session keeps running", context do
+    context = turn(context, "hello again")
+    assert List.last(replies(context)) =~ "Reply to hello again"
+    context
+  end
+
+  step "a Pi extension handles {string} without starting agent work",
+       %{args: [command]} = context do
+    context
+    |> quick_watchdog()
+    |> install(%{"handledCommands" => [command]})
+  end
+
+  step "the turn finishes once Pi is idle", context do
+    runs = StreamState.list(state(context), "run")
+    assert Enum.any?(runs, &(&1["status"] == "completed"))
+    context
+  end
+
+  step "the Pi turn is not left running", context do
+    active = ~w(preparing queued starting running waiting pending)
+    runs = StreamState.list(state(context), "run")
+    refute Enum.any?(runs, &(&1["status"] in active))
+    context
+  end
+
+  step "Pi accepted a message but never reports whether it is working", context do
+    context =
+      context
+      |> quick_watchdog()
+      |> install(%{"silentCommands" => ["go silent"]})
+      |> FakeAcp.thread()
+      |> turn("hello Pi")
+
+    before = length(FakeAcp.received_type(context, "get_state"))
+    context = FakeAcp.configure(context, &Map.put(&1, "failCommands", ["get_state"]))
+    context = FakeAcp.send_message(context, "go silent please")
+    await_received(context, "prompt", 2)
+    Map.put(context, :get_state_before, before)
+  end
+
+  step "three checks of Pi's state fail", context do
+    await_received(context, "get_state", context.get_state_before + 3)
+    context
+  end
+
+  step "the silent turn fails", context do
+    FakeAcp.await_run(context, "failed")
+    context
+  end
+
+  # The fake has received `count` commands of `type` (it logs every one).
+  defp await_received(context, type, count, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 10_000
+
+    cond do
+      length(FakeAcp.received_type(context, type)) >= count ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("Pi never received #{count} #{type} commands")
+
+      true ->
+        receive do
+        after
+          20 -> await_received(context, type, count, deadline)
+        end
+    end
+  end
+
+  # Several calls out on the MC's own Pi channel at once, on a Pi that takes
+  # half a minute to answer any of them.
+  step "HAL-C2 is waiting for Pi to answer several requests", context do
+    context = install(context, %{"commandDelays" => %{"get_state" => 30}})
+    {:ok, argv, env} = HalC2.Pi.launch("pi", ephemeral: true)
+
+    {:ok, conn} =
+      HalC2.JsonRpc.Connection.start_link(
+        cmd: argv,
+        handler: self(),
+        cd: World.project(context).root,
+        env: env,
+        dialect: :pi
+      )
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if Process.alive?(conn) do
+        try do
+          HalC2.JsonRpc.Connection.stop(conn)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+    end)
+
+    tasks =
+      for _ <- 1..3 do
+        Task.async(fn -> HalC2.JsonRpc.Connection.call(conn, "get_state", %{}, 60_000) end)
+      end
+
+    await_received(context, "get_state", 1)
+    Map.merge(context, %{waiting_conn: conn, waiting_tasks: tasks})
+  end
+
+  step "the Pi process exits", context do
+    pid = HalC2.JsonRpc.Connection.os_pid(context.waiting_conn)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(pid)])
+    Map.put(context, :waiting_since, System.monotonic_time(:millisecond))
+  end
+
+  step "every waiting request fails immediately instead of waiting out its deadline", context do
+    results = Task.yield_many(context.waiting_tasks, 10_000)
+    elapsed = System.monotonic_time(:millisecond) - context.waiting_since
+
+    assert Enum.all?(results, fn {_task, outcome} -> match?({:ok, {:error, _}}, outcome) end)
+    assert elapsed < 10_000
+    context
+  end
+
+  # Reopening restarts Pi in a new mode, which switches back to the session
+  # file; here that Pi takes far longer than the (shortened) minute to say
+  # how its state is.
+  step "Pi does not finish reopening that session within 60 seconds", context do
+    Application.put_env(:hal_c2, :pi_open_ms, 300)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :pi_open_ms) end)
+
+    context =
+      FakeAcp.configure(context, &Map.put(&1, "commandDelays", %{"get_state" => 5}))
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.runtime-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "runtimeMode" => "full-access"
+      })
+
+    turn(context, "hello again", "failed")
+  end
+
+  step "the user is told the session could not be opened", context do
+    assert (last_error(context) || "") =~ "session could not be opened"
     context
   end
 

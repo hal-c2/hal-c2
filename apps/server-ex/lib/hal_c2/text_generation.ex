@@ -774,17 +774,24 @@ defmodule HalC2.TextGeneration do
           {:ok, _} ->
             :ok
 
-          # The bare Pi that writes text loads no extensions, so a model only
-          # an extension provides cannot load here however good the slug is.
-          {:error, reason} ->
-            detail = if is_binary(reason), do: reason, else: inspect(reason)
+          # Pi answered with an error: the bare Pi that writes text loads no
+          # extensions, so a model only an extension provides cannot load
+          # here however good the slug is. A transport failure (Pi exited)
+          # is passed through as it came.
+          {:error, reason} when is_binary(reason) or is_map(reason) ->
+            detail =
+              cond do
+                is_binary(reason) -> reason
+                is_binary(reason["message"]) -> reason["message"]
+                true -> inspect(reason)
+              end
 
             {:error,
              "Pi could not load the model '#{model}': #{detail}. " <>
                "Extensions are not loaded when Pi writes titles and commit messages, " <>
                "so a model only an extension provides cannot be used for them."}
 
-          error ->
+          {:error, _reason} = error ->
             error
         end
 

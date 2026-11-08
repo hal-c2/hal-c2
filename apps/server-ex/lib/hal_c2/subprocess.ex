@@ -42,6 +42,9 @@ defmodule HalC2.Subprocess do
   @type t :: %__MODULE__{proc: Proc.t(), reader: pid, durable: map | nil, errors: pid | nil}
 
   @read_size 65_535
+  # A stdout line longer than this is dropped, however it arrives: one
+  # message Pi sends larger than 8 MiB never reaches its handler.
+  @max_line 8_388_608
   # A stderr line longer than this is dropped unread; prefixed lines are short.
   @max_stderr_line 65_536
   # How much of the end of stderr `:stderr_tail` keeps, and how many lines it hands over.
@@ -411,8 +414,8 @@ defmodule HalC2.Subprocess do
     case Proc.read(proc, @read_size) do
       {:ok, data} ->
         data = IO.iodata_to_binary(data)
-        {lines, rest} = split_lines(partial <> data)
-        offset = offset + byte_size(partial) + byte_size(data) - byte_size(rest)
+        {lines, rest} = split_lines(partial, data)
+        offset = offset + line_bytes(partial) + byte_size(data) - line_bytes(rest)
         {lines, ended} = Enum.split_while(lines, &(not Durable.exit_line?(&1)))
 
         if lines != [] do
@@ -442,7 +445,7 @@ defmodule HalC2.Subprocess do
   def reader_loop(proc, owner, partial) do
     case Proc.read(proc, @read_size) do
       {:ok, data} ->
-        {lines, rest} = split_lines(partial <> IO.iodata_to_binary(data))
+        {lines, rest} = split_lines(partial, IO.iodata_to_binary(data))
 
         if lines != [] do
           send(owner, {:subprocess_lines, self(), lines})
@@ -452,10 +455,16 @@ defmodule HalC2.Subprocess do
         __MODULE__.reader_loop(proc, owner, rest)
 
       _eof_or_error ->
-        if partial != "", do: send(owner, {:subprocess_lines, self(), [partial]})
+        if is_binary(partial) and partial != "",
+          do: send(owner, {:subprocess_lines, self(), [partial]})
+
         send(owner, {:subprocess_eof, self()})
     end
   end
+
+  # The bytes an unsplit rest holds; a dropped line's rest (`:skip`) holds none.
+  defp line_bytes(:skip), do: 0
+  defp line_bytes(partial), do: byte_size(partial)
 
   @doc false
   def stderr_init(proc, owner, prefix, tail \\ nil) do
@@ -585,16 +594,37 @@ defmodule HalC2.Subprocess do
       else: :binary.copy(partial <> data)
   end
 
-  # Lines are copied so a retained line never pins the whole read chunk.
-  @doc false
-  def split_lines(buffer) do
-    case :binary.split(buffer, "\n", [:global]) do
-      [rest] ->
-        {[], rest}
+  @doc """
+  Splits `partial <> data` into whole lines: `{lines, rest}`. A line longer
+  than `max` bytes is dropped, and so is the rest of it as it arrives (`rest`
+  is then `:skip` until the next newline), so one oversized message neither
+  reaches the owner nor piles up in the reader. Lines are copied so a
+  retained line never pins the whole read chunk.
+  """
+  def split_lines(partial, data, max \\ @max_line) do
+    case :binary.split(data, "\n", [:global]) do
+      [tail] ->
+        {[], grow_line(partial, tail, max)}
 
-      parts ->
-        {lines, [rest]} = Enum.split(parts, -1)
-        {for(l <- lines, l != "", do: :binary.copy(l)), :binary.copy(rest)}
+      [head | parts] ->
+        {middle, [tail]} = Enum.split(parts, -1)
+        first = if partial == :skip, do: [], else: [partial <> head]
+
+        lines =
+          for line <- first ++ middle,
+              line != "",
+              byte_size(line) <= max,
+              do: :binary.copy(line)
+
+        {lines, grow_line("", tail, max)}
     end
+  end
+
+  defp grow_line(:skip, _data, _max), do: :skip
+
+  defp grow_line(partial, data, max) do
+    if byte_size(partial) + byte_size(data) > max,
+      do: :skip,
+      else: :binary.copy(partial <> data)
   end
 end

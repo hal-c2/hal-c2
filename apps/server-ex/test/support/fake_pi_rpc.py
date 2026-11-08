@@ -540,6 +540,12 @@ def command(msg):
     elif kind == "prompt" and steer(msg) and "ignore" in msg.get("message", ""):
         # A steer saying "ignore" that reaches Pi once its run settled is never answered.
         pass
+    elif kind == "prompt" and not steer(msg) and (
+            any(msg.get("message", "").startswith(c) for c in cfg.get("handledCommands") or []) or
+            any(msg.get("message", "").startswith(c) for c in cfg.get("silentCommands") or [])):
+        # An extension command Pi handles without the agent, or a prompt Pi
+        # accepts and then never reports on: the answer, and nothing else.
+        respond(msg)
     elif kind == "prompt" and "promptError" in cfg:
         respond(msg, error=cfg["promptError"])
     elif kind == "prompt":
