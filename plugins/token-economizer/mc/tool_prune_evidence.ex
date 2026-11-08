@@ -1,0 +1,572 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: The TokenEconomizer authors (microsoft/TokenEconomizer); HAL-C2 contributors
+# Ported in part from tokeneconomizer/toolprune/{tools.py,codex.py,stage.py},
+# tokeneconomizer/plugin/{fold.py,adapter.py,denylist.py} (the decisions, not their
+# settings-file writing) (microsoft/TokenEconomizer@cb42207e3e09), into Elixir for
+# HAL-C2's MC. Changed: the evidence comes from turns the MC hears, not transcript
+# files, and a decision takes effect through `shape_run/2` at the next provider
+# conversation, so nothing is written into a provider's own settings.
+
+defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
+  @moduledoc """
+  Tool pruning's evidence and decisions, per project and provider, as plain functions
+  over one JSON-shaped state map (the plugin keeps one file of it per project and
+  provider in its data directory).
+
+  A conversation's loaded tools that go unused grow a streak, in conversations
+  (sessions) and in the turns (prompts) those conversations ran; a use resets the
+  streak and protects the tool for good. A tool is proposed once `enough_evidence?/4`
+  holds — unused over `toolprune_evidence` prompts across at least
+  `toolprune_min_sessions` sessions, or over `toolprune_sessions` sessions, three
+  times as long for a high-risk tool (`NotebookEdit`, Codex's image/media package) —
+  and a protected work-surface tool, a tool the person named in `toolprune_protect`,
+  a tool ever seen in use, or one the person gave back with restore, never is.
+
+  What a conversation had loaded is not in the MC's turn events, so the loaded set is
+  derived, per provider, from what the MC can turn off (`candidate_tools/1`): for
+  Codex that is exact, the three capability packages its runtime toggles; for Claude
+  it is the known built-in tools outside the protected work surface and the
+  interactive set (`INTERACTIVE_PROTECTED` upstream). A candidate a Claude build
+  does not load counts as loaded-and-unused and may be turned off to no effect; a
+  tool outside the list (an MCP tool, say) is never proposed until this list grows —
+  upstream has the same limit without a probed catalog snapshot, where only deferred
+  tools can be proposed. Providers the MC turns nothing off for get no proposals.
+
+  Codex keeps upstream's controller shape: a package is first *demoted* — after its
+  minimum loaded-but-unused exposures, at most two newly demoted per folded
+  session — and proposed only once demoted and evidenced as above. A single use
+  protects a package for good, stricter than upstream's recent-outcomes window.
+
+  Modes: under `auto` a proposal is held pending and applied only once the
+  project's conversations have been idle `toolprune_quiet_minutes` (or a day has
+  passed since it formed), so a resumed conversation never has its tools changed
+  under a warm prompt cache; under `propose` nothing is applied until the person
+  applies it; under `off` the evidence still accrues and nothing is turned off.
+  Evidence folded from a thread's earlier turns (`imported`) may form a proposal,
+  but `auto` holds only what the turns heard live are enough evidence for on their
+  own, as upstream does for sessions read from an agent's history.
+  """
+
+  # The work surface nothing prunes, upstream's `PROTECTED_TOOLS`, plus what a person
+  # relies on interactively (`INTERACTIVE_PROTECTED`), which upstream's plugin adds.
+  @protected MapSet.new(~w(
+    bash view grep glob edit create str_replace read_bash stop_bash list_bash read_file
+    shell apply_patch
+    Bash Edit Write Read Grep Glob MultiEdit LS NotebookRead BashOutput KillShell KillBash
+    AskUserQuestion EnterPlanMode ExitPlanMode TodoWrite
+    TaskCreate TaskUpdate TaskGet TaskList TaskOutput TaskStop
+    Agent Task Skill ToolSearch SlashCommand Monitor WebFetch WebSearch
+  ))
+
+  # Rarely used, but expensive to lose: three times the usual evidence.
+  @high_risk MapSet.new(~w(NotebookEdit image_media))
+  @high_risk_factor 3
+
+  # What `shape_run/2` can turn off, by unit: Claude's known built-in tools outside
+  # the protected sets, and Codex's live capability packages (upstream's
+  # `CODEX_LIVE_CAPABILITIES`, the same three the MC's Codex runtime toggles).
+  @candidates %{
+    "tool" => ~w(NotebookEdit Workflow CronCreate CronDelete CronList ScheduleWakeup
+                 EnterWorktree ExitWorktree),
+    "capability" => ~w(collaboration goals image_media)
+  }
+
+  # Codex packages' minimum loaded-but-unused exposures before demotion, upstream's
+  # `MIN_LOADED_EXPOSURES` for the live packages, and its per-session demotion cap.
+  @min_exposures %{"collaboration" => 1, "goals" => 1, "image_media" => 3}
+  @max_demotions 2
+
+  # A pending `auto` list is applied after a day however busy the project stayed.
+  @pending_max_s 24 * 3600
+
+  # The capability a Codex item exercises, by its tool name (upstream's
+  # `_ITEM_TYPES_BY_CAPABILITY`, for the live packages).
+  @capability_of Map.merge(
+                   Map.new(
+                     ~w(spawn_agent send_input send_message followup_task resume_agent
+                        wait_agent close_agent interrupt_agent list_agents collab_tool_call),
+                     &{&1, "collaboration"}
+                   ),
+                   Map.merge(
+                     Map.new(~w(create_goal get_goal update_goal), &{&1, "goals"}),
+                     Map.new(
+                       ~w(view_image image audio generated_image image_generation),
+                       &{&1, "image_media"}
+                     )
+                   )
+                 )
+
+  # --- configuration ---------------------------------------------------------
+
+  @doc """
+  The tool-pruning settings in effect: upstream's numbers (10 prompts over at least
+  2 sessions, or 5 sessions; a quiet hour) unless the person set others.
+  """
+  def config(settings) do
+    %{
+      "mode" => settings["toolPrune"] || "auto",
+      "evidence" => trunc(settings["toolPruneEvidence"] || 10),
+      "min_sessions" => trunc(settings["toolPruneMinSessions"] || 2),
+      "sessions" => trunc(settings["toolPruneSessions"] || 5),
+      "quiet_minutes" => trunc(settings["toolPruneQuietMinutes"] || 60),
+      "protect" => List.wrap(settings["toolPruneProtect"] || [])
+    }
+  end
+
+  @doc "The unit `shape_run/2` turns off for a provider driver, or nil for none."
+  def unit_for_provider("claudeAgent"), do: "tool"
+  def unit_for_provider("codex"), do: "capability"
+  def unit_for_provider(_), do: nil
+
+  @doc "The tools a conversation of `unit` is taken to have loaded, before any are off."
+  def candidate_tools(unit), do: @candidates[unit] || []
+
+  @doc "Whether nothing may propose `tool`: a protected name, or one the person protected by name or pattern."
+  def protected?(tool, cfg) do
+    MapSet.member?(@protected, tool) or
+      Enum.any?(cfg["protect"], &matches?(tool, &1))
+  end
+
+  defp matches?(tool, pattern) do
+    regex =
+      pattern
+      |> String.graphemes()
+      |> Enum.map(fn
+        "*" -> ".*"
+        "?" -> "."
+        char -> Regex.escape(char)
+      end)
+      |> Enum.join()
+
+    Regex.match?(Regex.compile!("\\A" <> regex <> "\\z"), tool)
+  end
+
+  @doc "Whether `tool` needs three times the usual evidence."
+  def high_risk?(tool), do: MapSet.member?(@high_risk, tool)
+
+  @doc """
+  Has a never-used tool gone unused long enough? Over `evidence` prompts spread
+  across at least `min_sessions` sessions, or over `sessions` sessions however
+  short; a high-risk tool needs three times the prompts and the sessions.
+  """
+  def enough_evidence?(sessions, prompts, cfg, high_risk \\ false) do
+    k = if high_risk, do: @high_risk_factor, else: 1
+
+    (sessions >= cfg["min_sessions"] and prompts >= cfg["evidence"] * k) or
+      sessions >= cfg["sessions"] * k
+  end
+
+  # --- state -----------------------------------------------------------------
+
+  @doc "A project's evidence for one provider unit, from what its JSON file had (`saved`)."
+  def new(unit, saved \\ %{}) do
+    %{
+      "unit" => unit,
+      "used" => strings(saved["used"]),
+      "kept" => strings(saved["kept"]),
+      "off" => strings(saved["off"]),
+      "demoted" => strings(saved["demoted"]),
+      "streaks" => streaks(saved["streaks"]),
+      "liveStreaks" => streaks(saved["liveStreaks"]),
+      "loadedSessions" => counts(saved["loadedSessions"]),
+      "seededRuns" => saved["seededRuns"] |> strings() |> Enum.take(-200),
+      "sessions" => count(saved["sessions"]),
+      "prompts" => count(saved["prompts"]),
+      "importedSessions" => count(saved["importedSessions"]),
+      "pending" =>
+        case saved["pending"] do
+          %{"items" => items} = pending ->
+            %{"items" => strings(items), "since" => count(pending["since"])}
+
+          _ ->
+            nil
+        end,
+      "lastActivity" => count(saved["lastActivity"])
+    }
+  end
+
+  @doc "The state as its JSON file keeps it (it already is that shape)."
+  def dump(state), do: state
+
+  defp strings(list), do: list |> List.wrap() |> Enum.filter(&is_binary/1) |> Enum.uniq()
+  defp count(n) when is_number(n), do: trunc(n)
+  defp count(_), do: 0
+
+  defp streaks(map) when is_map(map) do
+    Map.new(map, fn {tool, streak} ->
+      {tool, %{"sessions" => count(streak["sessions"]), "prompts" => count(streak["prompts"])}}
+    end)
+  end
+
+  defp streaks(_), do: %{}
+
+  defp counts(map) when is_map(map), do: Map.new(map, fn {k, v} -> {k, count(v)} end)
+  defp counts(_), do: %{}
+
+  # --- folding one conversation (or idle segment of one) ---------------------
+
+  @doc """
+  Folds one finished conversation — or one idle segment of a conversation that may
+  later resume — into the evidence: what it had `loaded`, what it `used`, and the
+  `prompts` (turns) it ran. A segment that ran no prompt is no evidence, and one
+  folded from a thread's earlier turns (`imported: true`) does not grow the live
+  streaks `auto` needs. `now` is unix seconds. Returns the new state.
+  """
+  def fold_segment(state, loaded, used, prompts, cfg, now, opts \\ []) do
+    imported = Keyword.get(opts, :imported, false)
+    used = MapSet.new(used)
+
+    state =
+      state
+      |> put_in(["used"], Enum.uniq(state["used"] ++ MapSet.to_list(used)))
+      |> heal(cfg)
+
+    cond do
+      prompts <= 0 ->
+        # No evidence about the unused, but a use is still a use.
+        Enum.reduce(loaded, state, fn tool, acc ->
+          if MapSet.member?(used, tool),
+            do: acc |> reset("streaks", tool) |> reset("liveStreaks", tool),
+            else: acc
+        end)
+
+      loaded == [] ->
+        count_session(state, prompts, imported)
+
+      true ->
+        state =
+          Enum.reduce(loaded, state, fn tool, acc ->
+            acc = update_in(acc["loadedSessions"][tool], &((&1 || 0) + 1))
+
+            if MapSet.member?(used, tool) do
+              acc
+              |> reset("streaks", tool)
+              |> reset("liveStreaks", tool)
+            else
+              acc
+              |> grow("streaks", tool, prompts)
+              |> then(&if(imported, do: &1, else: grow(&1, "liveStreaks", tool, prompts)))
+            end
+          end)
+
+        state
+        |> count_session(prompts, imported)
+        |> demote(cfg)
+        |> hold(cfg, now)
+    end
+  end
+
+  defp count_session(state, prompts, imported) do
+    state
+    |> update_in(["sessions"], &(&1 + 1))
+    |> update_in(["prompts"], &(&1 + prompts))
+    |> then(&if(imported, do: update_in(&1["importedSessions"], fn n -> n + 1 end), else: &1))
+  end
+
+  defp reset(state, key, tool),
+    do: put_in(state[key][tool], %{"sessions" => 0, "prompts" => 0})
+
+  defp grow(state, key, tool, prompts) do
+    streak = state[key][tool] || %{"sessions" => 0, "prompts" => 0}
+
+    put_in(state[key][tool], %{
+      "sessions" => streak["sessions"] + 1,
+      "prompts" => streak["prompts"] + prompts
+    })
+  end
+
+  # A tool that has since become protected, or has been seen in use, comes back:
+  # only ever in the direction of giving a tool back.
+  defp heal(state, cfg) do
+    blocked = fn tool ->
+      protected?(tool, cfg) or tool in state["used"] or tool in state["kept"]
+    end
+
+    state
+    |> update_in(["off"], &Enum.reject(&1, blocked))
+    |> update_in(["demoted"], &Enum.reject(&1, blocked))
+  end
+
+  # Codex: demote at most two newly eligible packages per folded session.
+  defp demote(%{"unit" => "capability"} = state, cfg) do
+    fresh =
+      @candidates["capability"]
+      |> Enum.filter(fn cap ->
+        cap not in state["demoted"] and cap not in state["off"] and
+          cap not in state["kept"] and cap not in state["used"] and
+          not protected?(cap, cfg) and
+          (state["loadedSessions"][cap] || 0) >= @min_exposures[cap]
+      end)
+      |> Enum.take(@max_demotions)
+
+    update_in(state["demoted"], &Enum.uniq(&1 ++ fresh))
+  end
+
+  defp demote(state, _cfg), do: state
+
+  # `auto`: hold the proposal pending, from when it first waited. What rests only on
+  # imported turns waits for the person to apply it.
+  defp hold(state, %{"mode" => "auto"} = cfg, now) do
+    held =
+      state
+      |> proposal(cfg)
+      |> Enum.filter(fn tool ->
+        state["importedSessions"] == 0 or
+          enough?(state["liveStreaks"][tool], cfg, high_risk?(tool))
+      end)
+
+    if held == [] do
+      state
+    else
+      since = (state["pending"] || %{})["since"] || now
+      put_in(state["pending"], %{"items" => held, "since" => since})
+    end
+  end
+
+  defp hold(state, _cfg, _now), do: state
+
+  # --- proposals and what is off ---------------------------------------------
+
+  @doc "The tools the evidence proposes turning off now, in candidate order."
+  def proposal(state, cfg) do
+    if cfg["mode"] == "off" do
+      []
+    else
+      Enum.filter(candidate_tools(state["unit"]), fn tool ->
+        proposable?(state, cfg, tool) and
+          (state["unit"] != "capability" or tool in state["demoted"]) and
+          enough?(state["streaks"][tool], cfg, high_risk?(tool))
+      end)
+    end
+  end
+
+  defp proposable?(state, cfg, tool) do
+    not protected?(tool, cfg) and tool not in state["used"] and
+      tool not in state["kept"] and tool not in state["off"]
+  end
+
+  defp enough?(nil, _cfg, _high), do: false
+
+  defp enough?(streak, cfg, high),
+    do: enough_evidence?(streak["sessions"], streak["prompts"], cfg, high)
+
+  @doc """
+  What the next conversation runs without: the applied list, healed of anything
+  since protected, used, or given back. Nothing under `off`.
+  """
+  def denied(state, cfg) do
+    if cfg["mode"] == "off" do
+      []
+    else
+      state["off"]
+      |> Enum.filter(&(&1 in candidate_tools(state["unit"])))
+      |> Enum.reject(fn tool ->
+        protected?(tool, cfg) or tool in state["used"] or tool in state["kept"]
+      end)
+    end
+  end
+
+  @doc """
+  Applies the pending `auto` list once the project has been quiet long enough —
+  idle `quiet_minutes`, or a day since the list formed — and no turn is under way
+  (`active`). `{state, applied}`; nothing is applied, and the wait goes on, until
+  then. A list whose tools were used, protected or given back meanwhile applies
+  only what is left of it, and is dropped when nothing is.
+  """
+  def apply_pending(state, cfg, now, active \\ false) do
+    case {cfg["mode"], state["pending"]} do
+      {"auto", %{"items" => items, "since" => since}} ->
+        items =
+          Enum.filter(items, fn tool ->
+            (tool in proposal(state, cfg) or tool in state["demoted"]) and
+              proposable?(state, cfg, tool)
+          end)
+
+        idle = now - state["lastActivity"]
+        waited = now - since
+
+        cond do
+          items == [] ->
+            {put_in(state["pending"], nil), []}
+
+          active or (idle < cfg["quiet_minutes"] * 60 and waited < @pending_max_s) ->
+            {state, []}
+
+          true ->
+            state =
+              state
+              |> update_in(["off"], &Enum.uniq(&1 ++ items))
+              |> put_in(["pending"], nil)
+
+            {state, items}
+        end
+
+      _ ->
+        # No longer `auto` (or nothing held): a held list does not outlive the mode.
+        {put_in(state["pending"], nil), []}
+    end
+  end
+
+  @doc """
+  Applies tools by the person's say-so: the whole proposal when `tools` is nil, or
+  the named ones, which may include a tool given back with restore (applying it by
+  name is the one way back). A protected or ever-used tool is refused even by name,
+  as is a name that is no candidate here. `{state, applied, refused}`.
+  """
+  def apply_named(state, cfg, tools) do
+    wanted = if tools, do: Enum.uniq(tools), else: proposal(state, cfg)
+
+    {applied, refused} =
+      Enum.split_with(wanted, fn tool ->
+        tool in candidate_tools(state["unit"]) and not protected?(tool, cfg) and
+          tool not in state["used"]
+      end)
+
+    state =
+      state
+      |> update_in(["off"], &Enum.uniq(&1 ++ applied))
+      |> update_in(["kept"], &(&1 -- applied))
+      |> drop_pending(applied)
+
+    {state, applied, refused}
+  end
+
+  @doc """
+  Gives tools back: all that are off when `tools` is nil, or the named ones that
+  are. A tool given back is kept — never proposed or applied by itself again, only
+  applied by name. `{state, restored}`.
+  """
+  def restore(state, tools) do
+    restored =
+      if tools, do: Enum.filter(Enum.uniq(tools), &(&1 in state["off"])), else: state["off"]
+
+    state =
+      state
+      |> update_in(["off"], &(&1 -- restored))
+      |> update_in(["kept"], &Enum.uniq(&1 ++ restored))
+      |> drop_pending(restored)
+
+    {state, restored}
+  end
+
+  defp drop_pending(state, done) do
+    case state["pending"] do
+      %{"items" => items} = pending ->
+        case items -- done do
+          [] -> put_in(state["pending"], nil)
+          left -> put_in(state["pending"], %{pending | "items" => left})
+        end
+
+      _ ->
+        state
+    end
+  end
+
+  @doc """
+  Notes tools seen in use while a conversation is still under way, before its
+  segment folds: a use protects a tool from the moment it is seen, so a tool
+  applied by name and then used in a conversation that had it loaded comes back
+  at once, not at the fold, and no other conversation is shaped without it.
+  """
+  def note_used(state, used, cfg) do
+    state
+    |> put_in(["used"], Enum.uniq(state["used"] ++ used))
+    |> heal(cfg)
+    |> drop_pending(used)
+  end
+
+  @doc """
+  Remembers runs already folded, live or read back from a thread's history, so a
+  restart does not fold a thread's earlier turns again. The newest 200 are kept.
+  """
+  def note_runs(state, run_ids) do
+    update_in(state["seededRuns"], fn seen ->
+      (seen ++ Enum.filter(run_ids, &is_binary/1)) |> Enum.uniq() |> Enum.take(-200)
+    end)
+  end
+
+  @doc "Marks when the project last did anything (a turn starting, running, or ending)."
+  def activity(state, now), do: put_in(state["lastActivity"], max(state["lastActivity"], now))
+
+  # --- what a turn item used ---------------------------------------------------
+
+  @doc """
+  The tools of `unit` one observed turn item used: Claude's own tool name where the
+  item has one (else the work-surface name its kind stands for), or the Codex
+  capability a tool name exercises, including a nested `tools.<name>(...)` call in
+  a tool's input, as upstream reads Codex traces.
+  """
+  def used_in_item(item, "tool") do
+    cond do
+      is_binary(item["tool"]) and item["tool"] != "" -> [item["tool"]]
+      item["itemType"] == "command_execution" -> ["Bash"]
+      item["itemType"] == "file_change" -> ["Edit"]
+      item["itemType"] == "file_search" -> ["Grep"]
+      item["itemType"] == "web_search" -> ["WebSearch"]
+      true -> []
+    end
+  end
+
+  def used_in_item(item, "capability") do
+    names =
+      [item["tool"], item["itemType"], item["title"]] ++
+        nested_tools(item["input"])
+
+    names
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&@capability_of[&1])
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  def used_in_item(_item, _unit), do: []
+
+  defp nested_tools(input) when is_binary(input) do
+    ~r/\btools\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/
+    |> Regex.scan(input)
+    |> Enum.map(&Enum.at(&1, 1))
+  end
+
+  defp nested_tools(_), do: []
+
+  # --- what clients are shown ----------------------------------------------------
+
+  @doc "The state as the `toolPrune` topic and the `toolPrune` call carry it, with the evidence for each tool."
+  def summary(state, cfg) do
+    proposed = proposal(state, cfg)
+    off = denied(state, cfg)
+
+    tools =
+      Map.new(candidate_tools(state["unit"]), fn tool ->
+        streak = state["streaks"][tool] || %{"sessions" => 0, "prompts" => 0}
+
+        {tool,
+         %{
+           "state" =>
+             cond do
+               protected?(tool, cfg) -> "protected"
+               tool in state["used"] -> "used"
+               tool in state["kept"] -> "kept"
+               tool in off -> "off"
+               tool in proposed -> "proposed"
+               true -> "loaded"
+             end,
+           "unusedSessions" => streak["sessions"],
+           "unusedPrompts" => streak["prompts"],
+           "loadedSessions" => state["loadedSessions"][tool] || 0
+         }}
+      end)
+
+    %{
+      "unit" => state["unit"],
+      "mode" => cfg["mode"],
+      "off" => off,
+      "proposed" => proposed,
+      "kept" => state["kept"],
+      "pending" => (state["pending"] || %{})["items"] || [],
+      "sessions" => state["sessions"],
+      "prompts" => state["prompts"],
+      "tools" => tools
+    }
+  end
+end

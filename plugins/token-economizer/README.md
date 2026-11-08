@@ -3,8 +3,15 @@
 Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls
 and, when an agent keeps repeating the same failing edit and check, redirects it once
 and offers you a stop if it still does not recover. What counts as stuck is learned
-per project from turns that ended green. What it does, scenario by scenario, is in
-[features/plugins/token-economizer-loop-guard.feature](../../features/plugins/token-economizer-loop-guard.feature).
+per project from turns that ended green. Its tool pruning counts the tools a
+project's conversations had loaded and never used, and once the evidence is enough
+turns them off from the next conversation — by itself under `auto` once the project
+has been quiet a while, or when you apply the proposal under `propose` — and gives
+them back when you restore them, for good unless you apply them by name. What it
+does, scenario by scenario, is in
+[features/plugins/token-economizer-loop-guard.feature](../../features/plugins/token-economizer-loop-guard.feature)
+and
+[features/plugins/token-economizer-tool-prune.feature](../../features/plugins/token-economizer-tool-prune.feature).
 
 It is a port of Microsoft's [TokenEconomizer](https://github.com/microsoft/TokenEconomizer)
 and, unlike the other packages here, is licensed under the Apache License 2.0
@@ -19,19 +26,30 @@ API: copy the folder into an MC's `plugins` folder to install it.
 - `plugin.json`: the name, description, the permissions it asks for and why, and
   its settings.
 - `mc/`: the MC part. `token_economizer.ex` is the plugin's process: it hears turns,
-  keeps each one's guard, runs the judge's jobs and delivers redirects and notices.
+  keeps each one's guard, runs the judge's jobs, delivers redirects and notices, and
+  shapes each new conversation for tool pruning.
   The `loop_guard_*.ex` files are the guard itself, pure and ported from upstream:
   what a call means (`state`, `shell_edits`), when a turn looks stuck (`rules`), a
   turn's guard (`turn`), what a project learned (`envelope`) and the judge (`judge`).
+  `tool_prune_evidence.ex` is tool pruning's evidence and decisions, pure likewise.
 - `assets/`: the icon.
+
+The `toolPrune` topic, and the calls `toolPrune`, `toolPruneApply` and
+`toolPruneRestore` (each taking a `projectId`, a `provider`, and tools by name to
+apply or restore just those), carry what is off, proposed and kept per project,
+with the evidence for each tool — what the plugin's page and settings show and
+drive.
 
 ## Tests
 
 From `apps/server-ex`:
 
-- the MC scenarios: `mise exec -- mix features plugins/token-economizer-loop-guard.feature`;
-- upstream's tests, ported: `mise exec -- mix test test/hal_c2/token_economizer_loop_guard_test.exs`;
-- a state machine of one turn's guard: `mise exec -- mix prop prop/hal_c2/token_economizer_prop_test.exs`;
+- the MC scenarios: `mise exec -- mix features plugins/token-economizer-loop-guard.feature plugins/token-economizer-tool-prune.feature`;
+- upstream's tests, ported: `mise exec -- mix test test/hal_c2/token_economizer_loop_guard_test.exs test/hal_c2/token_economizer_tool_prune_test.exs`;
+- a state machine of one turn's guard, and of tool pruning's evidence: `mise exec -- mix prop prop/hal_c2/token_economizer_prop_test.exs prop/hal_c2/token_economizer_tool_prune_prop_test.exs`;
 - a Maude model of the plugin hearing a thread's turns, with a feed that may miss
   events, late or lost verdicts and redirects delivered late:
-  `mise exec -- mix proof proof/hal_c2/token_economizer_loop_guard_proof_test.exs`.
+  `mise exec -- mix proof proof/hal_c2/token_economizer_loop_guard_proof_test.exs`;
+- a Maude model of tool pruning over conversations, applies, restores, mode
+  changes, quiet spells and plugin restarts:
+  `mise exec -- mix proof proof/hal_c2/token_economizer_tool_prune_proof_test.exs`.

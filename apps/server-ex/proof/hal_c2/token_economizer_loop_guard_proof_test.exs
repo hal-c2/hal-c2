@@ -1,18 +1,24 @@
 # The plugin's MC modules are compiled when the plugin starts, not with the MC: compiled
-# here to beams of their own, which keep the docs and source the coverage reads.
+# here to beams of their own, which keep the docs and source the coverage reads. The
+# plugin's proofs share them, so the compile is locked: test files load in parallel,
+# and two compiles of one module at once fail.
 beams = Path.join(Mix.Project.build_path(), "plugins/token-economizer")
-File.rm_rf!(beams)
-File.mkdir_p!(beams)
-docs = Code.get_compiler_option(:docs)
-Code.put_compiler_option(:docs, true)
 
-{:ok, _, _} =
-  "../../../../plugins/token-economizer/mc/*.ex"
-  |> Path.expand(__DIR__)
-  |> Path.wildcard()
-  |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
+:global.trans({:token_economizer_beams, self()}, fn ->
+  File.rm_rf!(beams)
+  File.mkdir_p!(beams)
+  docs = Code.get_compiler_option(:docs)
+  Code.put_compiler_option(:docs, true)
 
-Code.put_compiler_option(:docs, docs)
+  {:ok, _, _} =
+    "../../../../plugins/token-economizer/mc/*.ex"
+    |> Path.expand(__DIR__)
+    |> Path.wildcard()
+    |> Kernel.ParallelCompiler.compile_to_path(beams, return_diagnostics: true)
+
+  Code.put_compiler_option(:docs, docs)
+end)
+
 Code.prepend_path(beams)
 
 defmodule HalC2.TokenEconomizerLoopGuardProofTest do
@@ -76,10 +82,30 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.judge_stale_s/0" => "stale"
     },
     abstracts: %{
+      "HalC2Plugins.TokenEconomizer handle_call {:shape, _}" =>
+        "tool pruning shaping a conversation, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer handle_call {:toolprune, _, _}" =>
+        "tool pruning's calls, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer handle_info {:toolprune_tick, _}" =>
+        "tool pruning's quiet tick, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" =>
         "the settings are fixed for a run of the model; a change reads the trackers afresh and, turned off, drops the turns",
       "HalC2Plugins.TokenEconomizer handle_call :status" => "reads the counts, changes nothing",
       "HalC2Plugins.TokenEconomizer handle_info _" => "any other message is ignored",
+      "HalC2Plugins.TokenEconomizer state :prunes" =>
+        "tool pruning's evidence, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :convs" =>
+        "tool pruning's conversations, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :shaped" =>
+        "the loaded set a conversation was shaped with, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :seeded" =>
+        "tool pruning's read-back of earlier turns, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :prune_timers" =>
+        "tool pruning's quiet timers, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer.prune_status/1" =>
+        "what tool pruning's topic carries, which decides nothing here",
+      "HalC2Plugins.TokenEconomizer.toolprune_path/1" =>
+        "where tool pruning's evidence is kept; the loop guard's model keeps what it taught",
       "HalC2Plugins.TokenEconomizer state :stats" => "counts for the topic, which decide nothing",
       "HalC2Plugins.TokenEconomizer state :recent" =>
         "the latest actions for the topic, which decide nothing",

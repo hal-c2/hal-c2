@@ -1,0 +1,301 @@
+sload model-checker
+
+--- TokenEconomizer's tool pruning (plugins/token-economizer/mc): one project, one
+--- candidate tool (a Codex package stands for all of them: the same laws hold tool by
+--- tool, and the counters are bounded, the unused-session streak saturating at the
+--- evidence threshold; the exact prompt and session counts are the property test's,
+--- prop/hal_c2/token_economizer_tool_prune_prop_test.exs). Conversations start, use
+--- the tool or not, and end; their segments fold into the evidence; the person
+--- applies a proposal or a tool by name and restores what is off; the settings
+--- change mode; the plugin restarts. Between conversations the project may go
+--- quiet. proof/hal_c2/token_economizer_tool_prune_proof_test.exs maps it to the
+--- code and checks it.
+---
+--- cfg(Safe, Kept, Frozen, Gated, Quiet, Capped, Evid, Persist) switches each part
+--- of the design on, so that the design without it can be shown to fail (see the
+--- test's moduledoc for the counterexamples):
+---   Safe    - a protected or ever-used tool is never proposed or turned off, and
+---             comes back if it was off (proposable?/3, heal/2, denied/2).
+---   Kept    - a tool given back with restore is never proposed or applied by
+---             itself again; only applying it by name turns it off (restore/2,
+---             apply_named/3).
+---   Frozen  - a conversation keeps the tools it started with: what is off changes
+---             only as a conversation starts (shape_run/2 and the shape the MC
+---             keeps on the conversation).
+---   Gated   - under propose nothing is turned off without the person's apply;
+---             only auto applies what it held (apply_pending/4).
+---   Quiet   - auto applies only once the project has been quiet, never while a
+---             turn is under way (apply_pending/4, the tick).
+---   Capped  - a fold demotes at most two Codex packages (demote/2).
+---   Evid    - a tool is proposed only after the evidence threshold (enough?/3).
+---   Persist - the evidence is kept in the plugin's data directory, so a restart
+---             loses only the segment under way, not what was used or given back.
+
+mod TOKEN-ECONOMIZER-TOOL-PRUNE is
+  protecting NAT .
+
+  sorts Mode Cand Conv Seg Item Conf Sys .
+  subsort Item < Conf .
+
+  ops auto propose off : -> Mode [ctor] .
+
+  --- One candidate: its unused-session streak (saturating at the threshold, 2),
+  --- whether the plugin has ever seen it used, whether the person gave it back,
+  --- whether it is off, whether it is proposed, whether it is demoted.
+  op cand : Nat Bool Bool Bool Bool Bool -> Cand [ctor] .
+  op fresh : -> Cand .
+  eq fresh = cand(0, false, false, false, false, false) .
+
+  --- A provider conversation: the mask (tool off) it started with and has now.
+  op none : -> Conv [ctor] .
+  op live : Bool Bool -> Conv [ctor] .
+
+  --- The plugin's open segment of a conversation: whether it used the tool, and
+  --- whether it ran a prompt at all (the exact count is the property test's).
+  op noseg : -> Seg [ctor] .
+  op seg : Bool Bool -> Seg [ctor] .
+
+  --- The switches, the mode, and the truth the plugin cannot see directly: whether
+  --- the tool is a protected one, and whether an agent has ever really used it.
+  op cfg : Bool Bool Bool Bool Bool Bool Bool Bool -> Item [ctor] .
+  op mode : Mode -> Item [ctor] .
+  op prot : Bool -> Item [ctor] .
+  op truth : Bool -> Item [ctor] .
+  --- The evidence, the conversation and its segment, what auto holds, whether the
+  --- project has been quiet, this fold's demotions and the packages not yet
+  --- demoted, the conversations left to run and the person's actions left.
+  op tool : Cand -> Item [ctor] .
+  op conv : Conv -> Item [ctor] .
+  op hearing : Seg -> Item [ctor] .
+  op pend : Bool -> Item [ctor] .
+  op quiet : Bool -> Item [ctor] .
+  op demot : Nat -> Item [ctor] .
+  op pkgs : Nat -> Item [ctor] .
+  op left : Nat -> Item [ctor] .
+  op acts : Nat -> Item [ctor] .
+  --- That auto applied, in which mode, and whether the project had been quiet.
+  op autoapp : Mode Bool -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars S N P : Nat .
+  vars SF KP FR GT QU CP EV PS PR RU K O PP D U B B' Q M1 PD LD : Bool .
+  var M : Mode .
+  var CD : Cand .
+  var CV : Conv .
+  var SG : Seg .
+  var C : Conf .
+
+  --- proposable?/3 and apply_named/3's refusal: under Safe, neither a protected
+  --- tool nor one the plugin has seen used may be proposed or turned off.
+  op allowed : Cand Bool Bool -> Bool .
+  eq allowed(cand(S, RU, K, O, PP, D), PR, SF) = not SF or (not PR and not RU) .
+
+  op isOff : Cand -> Bool .
+  eq isOff(cand(S, RU, K, O, PP, D)) = O .
+
+  --- Turning the tool off: it leaves the kept and proposed lists (apply_named/3,
+  --- apply_pending/4). Without Frozen a conversation under way follows at once.
+  op turnoff : Cand -> Cand .
+  eq turnoff(cand(S, RU, K, O, PP, D)) = cand(S, RU, false, true, false, D) .
+
+  op follow : Conv Bool Bool -> Conv .
+  eq follow(none, FR, O) = none .
+  eq follow(live(M1, B), FR, O) = if FR then live(M1, B) else live(M1, O) fi .
+
+  --- apply_pending/4 may apply what auto held: in auto (Gated), once quiet
+  --- -- the Quiet switch -- allowed, and not given back (Kept).
+  op canAuto2 : Cand Mode Bool Bool Bool Bool Bool Bool -> Bool .
+  eq canAuto2(cand(S, RU, K, O, PP, D), M, PR, Q, SF, KP, GT, QU) =
+    not O and (M == auto or not GT) and (Q or not QU) and
+    allowed(cand(S, RU, K, O, PP, D), PR, SF) and (not K or not KP) .
+
+  --- shape/2 (shape_run/2): what auto held is applied first if it may be, then the
+  --- conversation starts with the tool off or not, for as long as it lasts.
+  op begin : Cand Bool Mode Bool Bool Bool Bool Bool Bool Bool -> Conf .
+  ceq begin(CD, PD, M, PR, Q, SF, KP, FR, GT, QU) =
+    tool(turnoff(CD)) conv(live(true, true)) pend(false) autoapp(M, Q)
+    if PD and canAuto2(CD, M, PR, Q, SF, KP, GT, QU) .
+  eq begin(CD, PD, M, PR, Q, SF, KP, FR, GT, QU) =
+    tool(CD) conv(live(isOff(CD), isOff(CD))) pend(PD) [owise] .
+
+  --- fold_segment/7: a finished segment. Its use is remembered and resets the
+  --- streak; an unused loaded segment grows it (saturating at the threshold);
+  --- what has since become protected or used comes back (heal/2); at most two
+  --- packages are demoted (demote/2, Capped); the proposal is recomputed
+  --- by proposal/2: demoted, evidenced, allowed, not kept, not off; under auto a
+  --- proposal is held (hold/3). A segment that ran no prompt, or in which the
+  --- tool was off and so not loaded, is no evidence about the unused.
+  op folded : Cand Seg Bool Mode Bool Bool Bool Bool Bool Nat -> Conf .
+  eq folded(cand(S, RU, K, O, PP, D), seg(U, B), LD, M, PR, SF, KP, CP, EV, P) =
+    fold2(cand(S, RU, K, O, PP, D), U, B, LD, M, PR, SF, KP, CP, EV, P) .
+  eq folded(CD, noseg, LD, M, PR, SF, KP, CP, EV, P) =
+    tool(CD) pend(false) demot(0) pkgs(P) .
+
+  op fold2 : Cand Bool Bool Bool Mode Bool Bool Bool Bool Bool Nat -> Conf .
+  --- Whether this fold may demote: the tool was loaded through a prompt.
+  op adds : Bool Bool Bool Nat -> Nat .
+  eq adds(B, LD, CP, P) =
+    if B and LD then (if CP then min(2, P) else P fi) else 0 fi .
+  op streak : Nat Bool Bool Bool -> Nat .
+  eq streak(S, U, B, LD) =
+    if not (B and LD) then S else (if U then 0 else min(s S, 2) fi) fi .
+  eq fold2(cand(S, RU, K, O, PP, D), U, B, LD, M, PR, SF, KP, CP, EV, P) =
+    tool(cand(streak(S, U, B, LD), RU or U, K,
+              O and allowed(cand(S, RU or U, K, O, PP, D), PR, SF),
+              propon(streak(S, U, B, LD), RU or U, K,
+                      O and allowed(cand(S, RU or U, K, O, PP, D), PR, SF),
+                      D or adds(B, LD, CP, P) > 0, PR, SF, KP, EV),
+              D or adds(B, LD, CP, P) > 0))
+    pend(propon(streak(S, U, B, LD), RU or U, K,
+                      O and allowed(cand(S, RU or U, K, O, PP, D), PR, SF),
+                      D or adds(B, LD, CP, P) > 0, PR, SF, KP, EV) and M == auto)
+    demot(adds(B, LD, CP, P)) pkgs(sd(P, adds(B, LD, CP, P))) .
+
+  --- proposal/2 for the one tool.
+  op propon : Nat Bool Bool Bool Bool Bool Bool Bool Bool -> Bool .
+  eq propon(S, RU, K, O, D, PR, SF, KP, EV) =
+    D and not O and (not K or not KP) and allowed(cand(S, RU, K, O, false, D), PR, SF) and
+    (S >= 2 or not EV) .
+
+  --- The MC runs a new conversation, shaped as it starts; the plugin hears it.
+  rl [shape-start] :
+    { left(s N) conv(none) hearing(SG) tool(CD) pend(B) mode(M) prot(PR) quiet(Q)
+      cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    => { left(N) hearing(seg(false, true)) mode(M) prot(PR) quiet(false)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS) C
+         begin(CD, B, M, PR, Q, SF, KP, FR, GT, QU) } .
+
+  --- The agent uses the tool, which it can only do while the tool is loaded. The
+  --- use is noted at once (note_used/3): a tool applied by name for the next
+  --- conversation and then used in this one comes back before any fold.
+  rl [use] :
+    { conv(live(M1, false)) hearing(seg(U, B)) truth(B') prot(PR)
+      tool(cand(S, RU, K, O, PP, D)) cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    => { conv(live(M1, false)) hearing(seg(true, true)) truth(true) prot(PR)
+         tool(cand(S, true, K, O and allowed(cand(S, true, K, O, PP, D), PR, SF),
+                   false, D))
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS) C } .
+  --- A turn runs without it.
+  rl [prompt] : conv(live(M1, B)) hearing(seg(U, B'))
+    => conv(live(M1, B)) hearing(seg(U, true)) .
+
+  --- The conversation ends; the plugin folds what it heard (observe/2, and an idle
+  --- segment folds the same way at the tick before it can resume).
+  rl [finish] :
+    { conv(live(M1, B)) hearing(SG) tool(CD) mode(M) prot(PR) demot(N) pkgs(P)
+      cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    => { conv(none) hearing(noseg) mode(M) prot(PR)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS) C
+         folded(CD, SG, not B, M, PR, SF, KP, CP, EV, P) } .
+
+  --- No conversation under way, and time passes: the project has been quiet.
+  rl [wait] : conv(none) quiet(false) => conv(none) quiet(true) .
+
+  --- The tick applies what auto held, once that may happen (apply_pending/4).
+  crl [auto-apply] :
+    { conv(CV) tool(CD) pend(true) mode(M) prot(PR) quiet(Q)
+      cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    => { conv(follow(CV, FR, true)) tool(turnoff(CD)) pend(false) mode(M) prot(PR)
+         quiet(Q) cfg(SF, KP, FR, GT, QU, CP, EV, PS) autoapp(M, Q and CV == none) C }
+    if canAuto2(CD, M, PR, Q and CV == none, SF, KP, GT, QU) .
+
+  --- The person applies the proposal (toolPruneApply without names).
+  crl [apply] :
+    { acts(s N) conv(CV) tool(CD) prot(PR) cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    => { acts(N) conv(follow(CV, FR, true)) tool(turnoff(CD)) prot(PR)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    if proponof(CD) and allowed(CD, PR, SF) .
+
+  op proponof : Cand -> Bool .
+  eq proponof(cand(S, RU, K, O, PP, D)) = PP .
+
+  --- The person applies the tool by name: the one way back for a kept tool; a
+  --- protected or used one is refused even by name under Safe.
+  crl [apply-name] :
+    { acts(s N) conv(CV) tool(CD) prot(PR) cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    => { acts(N) conv(follow(CV, FR, true)) tool(turnoff(CD)) prot(PR)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    if allowed(CD, PR, SF) and not isOff(CD) .
+
+  --- The person gives the tool back (toolPruneRestore). A conversation under way
+  --- keeps running without it; the next one has it again.
+  rl [restore] :
+    { acts(s N) tool(cand(S, RU, K, true, PP, D)) pend(B) C }
+    => { acts(N) tool(cand(S, RU, true, false, false, D)) pend(false) C } .
+
+  --- The person changes the mode (settings_changed/3).
+  rl [settings] : acts(s N) mode(auto) => acts(N) mode(propose) .
+  rl [settings] : acts(s N) mode(propose) => acts(N) mode(off) .
+  rl [settings] : acts(s N) mode(off) => acts(N) mode(auto) .
+
+  --- The plugin restarts: the segment under way is lost (its turns are read back
+  --- as history, which the property test covers); the evidence stands (Persist).
+  rl [restart] :
+    { acts(s N) conv(CV) hearing(SG) tool(CD) pend(B)
+      cfg(SF, KP, FR, GT, QU, CP, EV, PS) C }
+    => { acts(N) conv(CV) hearing(if CV == none then noseg else seg(false, false) fi)
+         tool(if PS then CD else fresh fi) pend(if PS then B else false fi)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS) C } .
+
+  --- Switches, the mode it starts in, whether the tool is a protected one, the
+  --- conversations to run, and the person's actions.
+  op start : Bool Bool Bool Bool Bool Bool Bool Bool Mode Bool Nat Nat -> Sys .
+  eq start(SF, KP, FR, GT, QU, CP, EV, PS, M, PR, N, S) =
+    { cfg(SF, KP, FR, GT, QU, CP, EV, PS) mode(M) prot(PR) truth(false)
+      tool(fresh) conv(none) hearing(noseg) pend(false) quiet(false)
+      demot(0) pkgs(3) left(N) acts(S) } .
+
+  --- A protected or ever-used tool is off.
+  op unsafeSafe : Sys -> Bool .
+  eq unsafeSafe({ tool(cand(S, RU, K, true, PP, D)) prot(PR) truth(B) C }) = PR or B .
+  eq unsafeSafe({ C }) = false [owise] .
+
+  --- A tool given back is off without having been applied by name (which clears kept).
+  op unsafeKept : Sys -> Bool .
+  eq unsafeKept({ tool(cand(S, RU, true, true, PP, D)) C }) = true .
+  eq unsafeKept({ C }) = false [owise] .
+
+  --- A conversation's tools changed under way.
+  op unsafeFrozen : Sys -> Bool .
+  ceq unsafeFrozen({ conv(live(M1, B)) C }) = true if M1 =/= B .
+  eq unsafeFrozen({ C }) = false [owise] .
+
+  --- Auto applied outside auto, or before the quiet.
+  op unsafeGate : Sys -> Bool .
+  eq unsafeGate({ autoapp(M, Q) C }) = M =/= auto or not Q .
+  eq unsafeGate({ C }) = false [owise] .
+
+  --- More than two packages demoted in a fold.
+  op unsafeCap : Sys -> Bool .
+  ceq unsafeCap({ demot(N) C }) = true if N > 2 .
+  eq unsafeCap({ C }) = false [owise] .
+
+  --- Proposed before the evidence threshold.
+  op unsafeEvid : Sys -> Bool .
+  ceq unsafeEvid({ tool(cand(S, RU, K, O, true, D)) C }) = true if S < 2 .
+  eq unsafeEvid({ C }) = false [owise] .
+
+  op unsafe : Sys -> Bool .
+  eq unsafe(X:Sys) =
+    unsafeSafe(X:Sys) or unsafeKept(X:Sys) or unsafeFrozen(X:Sys) or
+    unsafeGate(X:Sys) or unsafeCap(X:Sys) or unsafeEvid(X:Sys) .
+
+  --- Every conversation has ended.
+  op over : Sys -> Bool .
+  eq over({ left(0) conv(none) C }) = true .
+  eq over({ C }) = false [owise] .
+endm
+
+mod TOKEN-ECONOMIZER-TOOL-PRUNE-PROPS is
+  including TOKEN-ECONOMIZER-TOOL-PRUNE .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  var C : Conf .
+
+  op finished : -> Prop [ctor] .
+  eq { C } |= finished = over({ C }) .
+endm

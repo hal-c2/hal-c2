@@ -4,10 +4,12 @@
 # (microsoft/TokenEconomizer@cb42207e3e09), into Elixir for HAL-C2's MC. Changed: the
 # guard hears the MC's turns (`observe/2`) instead of an agent's hooks, steers a turn
 # through the MC instead of answering a hook, and keeps its state in one process.
+# Tool pruning is ported in `tool_prune_evidence.ex`; here it is fed the same turns
+# and shapes each new provider conversation (`shape_run/2`).
 
 defmodule HalC2Plugins.TokenEconomizer do
   @moduledoc """
-  TokenEconomizer's MC part: the loop guard.
+  TokenEconomizer's MC part: the loop guard and tool pruning.
 
   It hears every thread's turns. Each turn gets a guard (`LoopGuard.Turn`) that folds its
   tool calls as they end. When the guard finds the turn stuck in a loop, the plugin
@@ -27,6 +29,18 @@ defmodule HalC2Plugins.TokenEconomizer do
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
   never per tool call.
+
+  Tool pruning watches the same turns for tools a conversation had loaded and never
+  used (`ToolPrune.Evidence`). Once the evidence is enough it turns those tools off
+  from the next provider conversation of the project — by itself under `auto`, once
+  the project has been quiet a while, or when the person applies the proposal under
+  `propose`; `off` only watches. A conversation already under way never has its
+  tools changed. The topic `toolPrune` and the calls `toolPrune`, `toolPruneApply`
+  and `toolPruneRestore` carry what is off, what is proposed, what was given back,
+  and the evidence for each, per project and provider. Restore is the way back: a
+  tool given back is never turned off again unless the person applies it by name.
+  Turns a thread ran while the plugin was not running are read back once, when the
+  thread is next heard, and fold in as imported evidence.
   """
   @behaviour HalC2.Plugins.Extension
   use GenServer
@@ -35,9 +49,18 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   alias HalC2.Plugins.Host
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Turn}
+  alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
 
   @id "token-economizer"
   @topic "loopGuard"
+  @prune_topic "toolPrune"
+  # The tool-pruning numbers a person may set, `{setting, least}`: whole numbers all.
+  @prune_numbers %{
+    "toolPruneEvidence" => 1,
+    "toolPruneMinSessions" => 1,
+    "toolPruneSessions" => 1,
+    "toolPruneQuietMinutes" => 0
+  }
   @recent 20
   # The thresholds a person may pin, after upstream's `LOOPGUARD_KEYS`: `{kind, least,
   # most}`. A count takes a whole number, so 12.5 calls is refused rather than truncated.
@@ -86,6 +109,18 @@ defmodule HalC2Plugins.TokenEconomizer do
         {name, _} = bad
         {:error, "loopGuardThresholds: #{name} takes #{range(@pinnable[name])}."}
 
+      bad =
+          Enum.find(Enum.sort(@prune_numbers), fn {key, least} ->
+            value = settings[key]
+            value != nil and not (is_number(value) and value >= least and value == trunc(value))
+          end) ->
+        {name, least} = bad
+        {:error, "#{name}: give a whole number, #{least} or more."}
+
+      not (is_list(settings["toolPruneProtect"] || []) and
+               Enum.all?(settings["toolPruneProtect"] || [], &is_binary/1)) ->
+        {:error, "toolPruneProtect: give a list of tool names or patterns."}
+
       true ->
         :ok
     end
@@ -105,7 +140,29 @@ defmodule HalC2Plugins.TokenEconomizer do
   @impl HalC2.Plugins.Extension
   def call("status", _input, _context), do: {:ok, GenServer.call(__MODULE__, :status)}
 
+  def call("toolPrune", input, _context),
+    do: GenServer.call(__MODULE__, {:toolprune, :state, input || %{}})
+
+  def call("toolPruneApply", input, _context),
+    do: GenServer.call(__MODULE__, {:toolprune, :apply, input || %{}})
+
+  def call("toolPruneRestore", input, _context),
+    do: GenServer.call(__MODULE__, {:toolprune, :restore, input || %{}})
+
   def call(method, _input, _context), do: {:error, "Unknown method #{method}."}
+
+  @impl HalC2.Plugins.Extension
+  # Asked as a provider conversation starts, and left out when it takes too long:
+  # the tools a project's evidence turned off, for the whole conversation.
+  def shape_run(run, _context) do
+    if Process.whereis(__MODULE__) do
+      try do
+        GenServer.call(__MODULE__, {:shape, run}, 250)
+      catch
+        :exit, _ -> nil
+      end
+    end
+  end
 
   @impl HalC2.Plugins.Extension
   # The feed waits for each event, so a guard is never folded out of order and missed
@@ -123,6 +180,17 @@ defmodule HalC2Plugins.TokenEconomizer do
        turns: %{},
        # {project id, provider} => tracker
        trackers: %{},
+       # {project id, provider} => tool pruning's evidence, loaded on first use
+       prunes: %{},
+       # thread id => %{project, loaded, used, prompts, active}, the conversation
+       # tool pruning is hearing (a segment folds when it ends or goes idle)
+       convs: %{},
+       # thread id => the loaded set its next conversation was shaped with
+       shaped: %{},
+       # thread ids whose earlier turns were read back this run
+       seeded: MapSet.new(),
+       # {project id, provider} => the timer that folds its idle conversations
+       prune_timers: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
        # The latest redirects and stop offers, newest first.
        recent: []
@@ -145,15 +213,28 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   @impl GenServer
   def handle_call({:settings, settings}, _from, state) do
-    # The level and pinned thresholds shape each tracker: read them afresh.
+    # The level and pinned thresholds shape each tracker: read them afresh. Tool
+    # pruning reads its settings at each decision, so its evidence stays.
     state = %{state | settings: settings, trackers: %{}}
     state = if on?(state), do: state, else: %{state | turns: %{}}
-    {:reply, :ok, publish(state)}
+    {:reply, :ok, state |> publish() |> publish_prune()}
   end
 
   def handle_call(:status, _from, state), do: {:reply, status(state), state}
 
+  def handle_call({:shape, run}, _from, state) do
+    {shape, state} = shape(state, run)
+    {:reply, shape, state}
+  end
+
+  def handle_call({:toolprune, action, input}, _from, state) do
+    {reply, state} = prune_call(state, action, input)
+    {:reply, reply, state}
+  end
+
   def handle_call({:observe, event}, _from, state) do
+    state = hear_prune(state, event)
+
     state =
       if on?(state) do
         state |> missed(event["dropped"]) |> hear(event)
@@ -181,7 +262,414 @@ defmodule HalC2Plugins.TokenEconomizer do
     {:noreply, state}
   end
 
+  def handle_info({:toolprune_tick, project}, state) do
+    {:noreply,
+     prune_tick(%{state | prune_timers: Map.delete(state.prune_timers, project)}, project)}
+  end
+
   def handle_info(_other, state), do: {:noreply, state}
+
+  # --- tool pruning -----------------------------------------------------------------------
+
+  defp prune_cfg(state), do: Prune.config(state.settings)
+
+  @doc "What the `toolPrune` topic carries: every project's evidence the plugin holds."
+  def prune_status(state) do
+    cfg = prune_cfg(state)
+
+    %{
+      "mode" => cfg["mode"],
+      "projects" =>
+        state.prunes
+        |> Enum.sort()
+        |> Enum.map(fn {{project_id, provider}, prune} ->
+          Map.merge(Prune.summary(prune, cfg), %{
+            "projectId" => project_id,
+            "provider" => provider
+          })
+        end)
+    }
+  end
+
+  defp publish_prune(state) do
+    Host.publish(@id, @prune_topic, prune_status(state))
+    state
+  end
+
+  # A new conversation: apply whatever `auto` held once the quiet has passed, then
+  # answer what it runs without, and remember what it had loaded for its evidence.
+  defp shape(state, run) do
+    unit = run["toolUnit"] || Prune.unit_for_provider(run["provider"])
+    project = {run["projectId"], run["provider"]}
+
+    if unit in ["tool", "capability"] and is_binary(run["projectId"]) and
+         is_binary(run["provider"]) do
+      cfg = prune_cfg(state)
+      {prune, state} = prune(state, project, unit)
+      {prune, applied} = Prune.apply_pending(prune, cfg, now_s(), active?(state, project))
+      state = put_prune(state, project, prune, applied != [])
+      denied = Prune.denied(prune, cfg)
+      loaded = Prune.candidate_tools(unit) -- denied
+      state = put_in(state.shaped[run["threadId"]], loaded)
+      state = if applied != [], do: publish_prune(state), else: state
+      {if(denied == [], do: nil, else: %{"deniedTools" => denied}), state}
+    else
+      {nil, state}
+    end
+  end
+
+  defp prune_call(state, action, input) do
+    cfg = prune_cfg(state)
+    tools = if is_list(input["tools"]), do: Enum.filter(input["tools"], &is_binary/1)
+
+    case prune_targets(state, input) do
+      {:ok, [], state} when action != :state ->
+        {{:error, "TokenEconomizer has no tool evidence for that project and provider."}, state}
+
+      {:ok, targets, state} ->
+        {results, state} =
+          Enum.map_reduce(targets, state, fn project, acc ->
+            prune = acc.prunes[project]
+
+            {prune, changed, extra} =
+              case action do
+                :state ->
+                  {prune, [], %{}}
+
+                :apply ->
+                  {next, applied, refused} = Prune.apply_named(prune, cfg, tools)
+                  {next, applied, %{"applied" => applied, "refused" => refused}}
+
+                :restore ->
+                  {next, restored} = Prune.restore(prune, tools)
+                  {next, restored, %{"restored" => restored}}
+              end
+
+            acc = put_prune(acc, project, prune, changed != [])
+            {project_summary(project, prune, cfg, extra), acc}
+          end)
+
+        state = if action == :state, do: state, else: publish_prune(state)
+        {{:ok, %{"mode" => cfg["mode"], "projects" => results}}, state}
+    end
+  end
+
+  defp project_summary({project_id, provider}, prune, cfg, extra) do
+    Prune.summary(prune, cfg)
+    |> Map.merge(%{"projectId" => project_id, "provider" => provider})
+    |> Map.merge(extra)
+  end
+
+  # The projects a `toolPrune` call names, loading a named one's file if need be.
+  # Without a project the state call lists all held; apply and restore need one.
+  defp prune_targets(state, %{"projectId" => project_id, "provider" => provider})
+       when is_binary(project_id) and is_binary(provider) do
+    case Prune.unit_for_provider(provider) do
+      nil ->
+        {:ok, [], state}
+
+      unit ->
+        {_prune, state} = prune(state, {project_id, provider}, unit)
+        {:ok, [{project_id, provider}], state}
+    end
+  end
+
+  defp prune_targets(state, %{"projectId" => project_id}) when is_binary(project_id) do
+    {:ok, for({id, _} = project <- Map.keys(state.prunes), id == project_id, do: project), state}
+  end
+
+  defp prune_targets(state, _input), do: {:ok, Map.keys(state.prunes), state}
+
+  # The turns as tool pruning hears them, whatever the loop guard's mode: a new
+  # conversation closes the thread's last one, a turn's items say what it used, and
+  # a finished turn leaves the project idle for the quiet timer to fold.
+  defp hear_prune(
+         state,
+         %{"type" => "turn.started", "threadId" => thread_id} = event
+       ) do
+    unit = Prune.unit_for_provider(event["provider"])
+    project = {event["projectId"], event["provider"]}
+
+    if unit == nil or not is_binary(event["projectId"]) do
+      state
+    else
+      state = seed_history(state, thread_id, project, unit)
+      {prune, state} = prune(state, project, unit)
+      state = touch(state, project, prune)
+
+      if event["newConversation"] do
+        state = close_conv(state, thread_id)
+        loaded = state.shaped[thread_id] || default_loaded(state, project, unit)
+
+        put_in(state.convs[thread_id], %{
+          project: project,
+          loaded: loaded,
+          used: [],
+          prompts: 1,
+          active: true
+        })
+      else
+        case state.convs[thread_id] do
+          nil ->
+            put_in(state.convs[thread_id], %{
+              project: project,
+              loaded: default_loaded(state, project, unit),
+              used: [],
+              prompts: 1,
+              active: true
+            })
+
+          conv ->
+            put_in(state.convs[thread_id], %{conv | prompts: conv.prompts + 1, active: true})
+        end
+      end
+    end
+  end
+
+  defp hear_prune(state, %{"type" => "turn.item", "threadId" => thread_id} = item) do
+    case state.convs[thread_id] do
+      nil ->
+        state
+
+      conv ->
+        unit = Prune.unit_for_provider(elem(conv.project, 1))
+        used = Prune.used_in_item(item, unit)
+        conv = %{conv | used: Enum.uniq(conv.used ++ used)}
+        state = put_in(state.convs[thread_id], conv)
+        {prune, state} = prune(state, conv.project, unit)
+        state = touch(state, conv.project, prune)
+        # A use protects its tool at once, not only when the segment folds.
+        noted = Prune.note_used(state.prunes[conv.project], used, prune_cfg(state))
+
+        if noted != state.prunes[conv.project] do
+          state |> put_prune(conv.project, noted, true) |> publish_prune()
+        else
+          state
+        end
+    end
+  end
+
+  defp hear_prune(state, %{"type" => "turn.finished", "threadId" => thread_id} = event) do
+    case state.convs[thread_id] do
+      nil ->
+        state
+
+      conv ->
+        state = put_in(state.convs[thread_id].active, false)
+        unit = Prune.unit_for_provider(elem(conv.project, 1))
+        {prune, state} = prune(state, conv.project, unit)
+        prune = Prune.note_runs(prune, [event["runId"]])
+        state = put_in(state.prunes[conv.project], prune)
+
+        state =
+          state |> touch(conv.project, state.prunes[conv.project]) |> save_prune(conv.project)
+
+        schedule_tick(state, conv.project)
+    end
+  end
+
+  defp hear_prune(state, _event), do: state
+
+  defp default_loaded(state, project, unit) do
+    {prune, _state} = prune(state, project, unit)
+    Prune.candidate_tools(unit) -- Prune.denied(prune, prune_cfg(state))
+  end
+
+  # Folds the thread's open conversation, if any, and forgets it.
+  defp close_conv(state, thread_id) do
+    case Map.pop(state.convs, thread_id) do
+      {nil, _} -> state
+      {conv, convs} -> fold_conv(%{state | convs: convs}, conv)
+    end
+  end
+
+  defp fold_conv(state, conv, imported \\ false) do
+    unit = Prune.unit_for_provider(elem(conv.project, 1))
+    {prune, state} = prune(state, conv.project, unit)
+
+    prune =
+      Prune.fold_segment(prune, conv.loaded, conv.used, conv.prompts, prune_cfg(state), now_s(),
+        imported: imported
+      )
+
+    state
+    |> put_prune(conv.project, prune, true)
+    |> publish_prune()
+    |> schedule_tick(conv.project)
+  end
+
+  # Once the project has been quiet long enough, its open conversations fold as
+  # finished sessions (a later resume starts a new segment with the same loaded
+  # tools, which a conversation keeps), and whatever `auto` held is applied.
+  defp prune_tick(state, project) do
+    unit = Prune.unit_for_provider(elem(project, 1))
+
+    if unit == nil or active?(state, project) do
+      schedule_tick(state, project, 1_000)
+    else
+      cfg = prune_cfg(state)
+      {prune, state} = prune(state, project, unit)
+      idle = now_s() - prune["lastActivity"]
+      waited = now_s() - ((prune["pending"] || %{})["since"] || now_s())
+
+      if idle >= cfg["quiet_minutes"] * 60 or (prune["pending"] != nil and waited >= 86_400) do
+        state =
+          Enum.reduce(state.convs, state, fn {thread_id, conv}, acc ->
+            if conv.project == project and (conv.prompts > 0 or conv.used != []) do
+              acc
+              |> fold_conv(conv)
+              |> put_in([:convs, thread_id], %{conv | used: [], prompts: 0, active: false})
+            else
+              acc
+            end
+          end)
+
+        {prune, state} = prune(state, project, unit)
+        {prune, applied} = Prune.apply_pending(prune, cfg, now_s(), false)
+
+        if applied != [] do
+          Logger.info(
+            "token-economizer: turned off #{Enum.join(applied, ", ")} for project #{elem(project, 0)} (#{elem(project, 1)})"
+          )
+        end
+
+        state |> put_prune(project, prune, applied != []) |> publish_prune()
+      else
+        schedule_tick(state, project)
+      end
+    end
+  end
+
+  defp schedule_tick(state, project, delay \\ nil) do
+    if Map.has_key?(state.prune_timers, project) do
+      state
+    else
+      cfg = prune_cfg(state)
+      ms = delay || max(cfg["quiet_minutes"] * 60_000, 0)
+      ref = Process.send_after(self(), {:toolprune_tick, project}, ms)
+      put_in(state.prune_timers[project], ref)
+    end
+  end
+
+  defp active?(state, project),
+    do: Enum.any?(state.convs, fn {_id, conv} -> conv.project == project and conv.active end)
+
+  defp touch(state, project, prune) do
+    put_in(state.prunes[project], Prune.activity(prune, now_s()))
+  end
+
+  # Turns a thread ran while the plugin was not running, read back once per run of
+  # the plugin and folded as one imported session: what they used for good, and
+  # their prompts as evidence `auto` alone does not act on.
+  defp seed_history(state, thread_id, project, unit) do
+    if MapSet.member?(state.seeded, thread_id) do
+      state
+    else
+      state = update_in(state.seeded, &MapSet.put(&1, thread_id))
+
+      {prune, state} = prune(state, project, unit)
+      seen = MapSet.new(prune["seededRuns"])
+      runs = Enum.reject(history(thread_id), &MapSet.member?(seen, &1["runId"]))
+
+      case runs do
+        [] ->
+          state
+
+        runs ->
+          state =
+            put_in(
+              state.prunes[project],
+              Prune.note_runs(state.prunes[project], Enum.map(runs, & &1["runId"]))
+            )
+
+          used =
+            runs
+            |> Enum.flat_map(& &1["items"])
+            |> Enum.flat_map(&Prune.used_in_item(&1, unit))
+            |> Enum.uniq()
+
+          fold_conv(
+            state,
+            %{
+              project: project,
+              loaded: Prune.candidate_tools(unit),
+              used: used,
+              prompts: length(runs)
+            },
+            true
+          )
+      end
+    end
+  end
+
+  defp history(thread_id) do
+    case Host.history(@id, thread_id, limit: 50) do
+      {:ok, runs} when is_list(runs) -> runs
+      _ -> []
+    end
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  defp now_s, do: System.os_time(:second)
+
+  # --- tool pruning's files ---------------------------------------------------
+
+  defp prune(state, project, unit) do
+    case state.prunes[project] do
+      nil ->
+        prune = Prune.new(unit, read_prune(project))
+        {prune, put_in(state.prunes[project], prune)}
+
+      prune ->
+        {prune, state}
+    end
+  end
+
+  defp put_prune(state, project, prune, save?) do
+    state = put_in(state.prunes[project], prune)
+    if save?, do: save_prune(state, project), else: state
+  end
+
+  @doc "The file that keeps tool pruning's evidence of `project`, `{project id, provider}`."
+  def toolprune_path({project_id, provider}) do
+    key =
+      :crypto.hash(:sha256, "#{project_id}\n#{provider}")
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 24)
+
+    Path.join([Host.data_dir(@id), "toolprune", key <> ".json"])
+  end
+
+  defp read_prune(project) do
+    with {:ok, text} <- File.read(toolprune_path(project)),
+         {:ok, %{} = saved} <- JSON.decode(text) do
+      saved
+    else
+      _ -> %{}
+    end
+  end
+
+  defp save_prune(state, {project_id, provider} = project) do
+    case state.prunes[project] do
+      nil ->
+        state
+
+      prune ->
+        path = toolprune_path(project)
+        File.mkdir_p!(Path.dirname(path))
+
+        saved =
+          Map.merge(Prune.dump(prune), %{"projectId" => project_id, "provider" => provider})
+
+        tmp = path <> ".tmp"
+        File.write!(tmp, JSON.encode!(saved))
+        File.rename!(tmp, path)
+        state
+    end
+  end
 
   # --- turns ------------------------------------------------------------------------------
 

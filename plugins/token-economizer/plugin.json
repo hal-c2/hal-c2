@@ -3,7 +3,7 @@
   "name": "TokenEconomizer",
   "version": "0.1.0",
   "apiVersion": 1,
-  "description": "Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls and, when an agent keeps repeating the same failing edit and test, redirects it once and offers you a button to stop the turn if it still does not recover. What counts as stuck is learned per project from turns that ended well. A port of Microsoft's TokenEconomizer.",
+  "description": "Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls and, when an agent keeps repeating the same failing edit and test, redirects it once and offers you a button to stop the turn if it still does not recover. What counts as stuck is learned per project from turns that ended well. Its tool pruning turns tools a project's agents never use off from their next conversation, and gives them back when you ask. A port of Microsoft's TokenEconomizer.",
   "author": {
     "name": "HAL-C2, porting microsoft/TokenEconomizer",
     "url": "https://github.com/microsoft/TokenEconomizer"
@@ -15,6 +15,10 @@
     {
       "id": "turns:observe",
       "reason": "The loop guard reads each tool call as it ends: the command, the files it changed, and the tail of its output. Only counts and short signatures are kept, per turn, and they are dropped when the turn ends."
+    },
+    {
+      "id": "runs:shape",
+      "reason": "Tool pruning turns the tools a project's agents never use off as a conversation starts, for the whole conversation. A tool you use, a work-surface tool, or one you gave back is never turned off, and what is off is listed so you can give it back."
     },
     {
       "id": "threads:steer",
@@ -67,6 +71,53 @@
       "type": "object",
       "default": {},
       "description": "Pinned detector thresholds, such as {\"min_turns\": 30}, over the sensitivity's and what was learned."
+    },
+    {
+      "key": "toolPrune",
+      "label": "Tool pruning",
+      "type": "choice",
+      "options": [
+        { "value": "auto", "label": "Turn unused tools off by itself" },
+        { "value": "propose", "label": "Only propose" },
+        { "value": "off", "label": "Off" }
+      ],
+      "default": "auto",
+      "description": "Tools a project's agents had loaded and never used, for long enough, are left out of their next conversation. Under propose nothing changes until you apply it; off leaves every tool in and still learns."
+    },
+    {
+      "key": "toolPruneEvidence",
+      "label": "Unused turns before a tool is proposed",
+      "type": "number",
+      "default": 10,
+      "description": "Turns a never-used tool must have stayed loaded and unused through, over at least the sessions below."
+    },
+    {
+      "key": "toolPruneMinSessions",
+      "label": "Sessions those turns must span",
+      "type": "number",
+      "default": 2,
+      "description": "So one long session never decides alone."
+    },
+    {
+      "key": "toolPruneSessions",
+      "label": "Or unused sessions, however short",
+      "type": "number",
+      "default": 5,
+      "description": "A tool unused through this many sessions is proposed whatever their length."
+    },
+    {
+      "key": "toolPruneQuietMinutes",
+      "label": "Quiet minutes before applying by itself",
+      "type": "number",
+      "default": 60,
+      "description": "Under auto, a new list is applied only once the project's sessions have been idle this long, so a resumed conversation keeps its prompt cache."
+    },
+    {
+      "key": "toolPruneProtect",
+      "label": "Tools never proposed",
+      "type": "list",
+      "default": [],
+      "description": "Tool names or patterns such as mcp__headroom__*, on top of the work-surface tools that are never proposed anyway."
     }
   ]
 }
