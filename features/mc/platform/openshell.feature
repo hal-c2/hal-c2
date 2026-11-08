@@ -51,13 +51,22 @@ Feature: The OpenShell gateway review sandboxes run in
     And no gateway is installed
 
     Examples:
-      | machine                                 | problem              |
-      | is an Intel Mac                         | intel-mac            |
-      | is Linux on riscv64                     | unsupported-arch     |
-      | is Linux without Landlock               | landlock-missing     |
-      | has no Podman                           | podman-missing       |
-      | runs Podman as root                     | runtime-not-rootless |
-      | names the root Docker daemon's socket   | root-docker          |
+      | machine                                 | problem               |
+      | is an Intel Mac                         | intel-mac             |
+      | is Linux on riscv64                     | unsupported-arch      |
+      | is Linux without Landlock               | landlock-missing      |
+      | has no Podman                           | podman-missing        |
+      | runs Podman as root                     | runtime-not-rootless  |
+      | names the root Docker daemon's socket   | root-docker           |
+      | names Docker Desktop for Linux's socket | docker-desktop-linux  |
+      | names a Docker socket that is not there | docker-socket-missing |
+      | is a Mac with Podman instead of Docker  | podman-on-mac         |
+
+  @mc
+  Scenario: A Docker socket that rootless Podman answers on is used as Podman
+    Given a machine whose named Docker socket is answered by the user's rootless Podman
+    When the user installs OpenShell
+    Then the gateway drives Podman over that socket
 
   @mc
   Scenario: A gateway archive that is not the pinned one is refused
@@ -146,12 +155,6 @@ Feature: The OpenShell gateway review sandboxes run in
     And the probe sandbox is deleted
 
   @mc
-  Scenario: The check after start refuses an operator identity
-    Given a gateway that gives the MC an operator's identity
-    When the MC checks the gateway
-    Then the check fails because "operator-identity"
-
-  @mc
   Scenario: A check whose probe sandbox cannot be deleted fails
     Given a gateway that does not delete the check's sandboxes
     When the MC checks the gateway
@@ -164,6 +167,12 @@ Feature: The OpenShell gateway review sandboxes run in
     When the MC checks the gateway
     Then the check passes
     And the probe sandbox is deleted
+
+  @mc
+  Scenario: The check after start refuses an operator identity
+    Given a gateway that gives the MC an operator's identity
+    When the MC checks the gateway
+    Then the check fails because "operator-identity"
 
   @mc
   Scenario: A gateway the user runs is used once it passes the checks

@@ -11,7 +11,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
   import ExUnit.Assertions
 
   alias HalC2.OpenShell
-  alias HalC2.OpenShell.{Client, Config, Install, Manifest, Service}
+  alias HalC2.OpenShell.{Client, Config, Install, Manifest, Platform, Service}
   alias HalC2.Test.{FakeOpenShell, Mc, Storage}
 
   @podman %{
@@ -49,7 +49,23 @@ defmodule HalC2.Steps.Platform.OpenShell do
             version: "28.1.0",
             rootless: false
         }
-    }
+    },
+    "names Docker Desktop for Linux's socket" => %{
+      @linux
+      | runtime:
+          Map.merge(@podman, %{
+            kind: :docker,
+            socket: "/home/me/.docker/desktop/docker.sock",
+            version: "28.1.0",
+            rootless: false,
+            desktop: true
+          })
+    },
+    "names a Docker socket that is not there" => %{
+      @linux
+      | runtime: %{kind: :docker, socket: "/run/user/1000/docker.sock", missing: true}
+    },
+    "is a Mac with Podman instead of Docker" => %{os: :darwin, arch: "aarch64", runtime: @podman}
   }
 
   step "a Linux machine with rootless Podman", context do
@@ -81,6 +97,31 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   step ~r/^a machine that (?<machine>.+)$/, %{args: [machine]} = context do
     put_facts(Map.fetch!(@machines, machine))
+    context
+  end
+
+  # What the MC finds when it probes the socket the user named.
+  step "a machine whose named Docker socket is answered by the user's rootless Podman",
+       context do
+    socket =
+      FakeOpenShell.runtime_socket(%{
+        "/version" => %{
+          "Version" => "5.2.1",
+          "Components" => [%{"Name" => "Podman Engine", "Version" => "5.2.1"}]
+        },
+        "/v5.0.0/libpod/info" => %{"host" => %{"security" => %{"rootless" => true}}}
+      })
+
+    put_facts(%{@linux | runtime: Platform.named_runtime("unix://" <> socket)})
+    Map.put(context, :socket, socket)
+  end
+
+  step "the gateway drives Podman over that socket", context do
+    assert {:ok, %{"driver" => "podman", "socket" => socket}} = context.result
+    assert socket == context.socket
+    config = File.read!(OpenShell.config_path())
+    assert config =~ "[openshell.drivers.podman]\n"
+    assert config =~ ~s(socket_path = "#{socket}")
     context
   end
 

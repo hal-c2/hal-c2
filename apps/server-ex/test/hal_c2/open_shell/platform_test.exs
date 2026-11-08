@@ -2,6 +2,7 @@ defmodule HalC2.OpenShell.PlatformTest do
   use ExUnit.Case, async: true
 
   alias HalC2.OpenShell.Platform
+  alias HalC2.Test.FakeOpenShell
 
   @moduletag :tmp_dir
 
@@ -134,8 +135,26 @@ defmodule HalC2.OpenShell.PlatformTest do
     test "every other OS, and Podman on macOS, is unsupported" do
       assert {:error, ["unsupported-os"]} = Platform.check(%{os: :other, arch: "x86_64"})
 
-      assert {:error, ["unsupported-runtime"]} =
+      assert {:error, ["podman-on-mac"]} =
                Platform.check(%{os: :darwin, arch: "aarch64", runtime: podman()})
+    end
+
+    test "a Docker socket is judged by what answers on it" do
+      # Podman behind a socket named as Docker's is checked, and driven, as Podman.
+      assert {:ok, %{driver: "podman", socket: "/run/user/1000/docker.sock"}} =
+               Platform.check(linux(%{runtime: podman(%{socket: "/run/user/1000/docker.sock"})}))
+
+      assert {:error, ["runtime-not-rootless"]} =
+               Platform.check(
+                 linux(%{runtime: podman(%{socket: "/run/podman/podman.sock", owner_uid: 0})})
+               )
+
+      # Docker Desktop for Linux is the user's socket on a root daemon in a VM.
+      assert {:error, ["docker-desktop-linux"]} =
+               Platform.check(linux(%{runtime: docker(%{desktop: true, rootless: false})}))
+
+      assert {:error, ["docker-socket-missing"]} =
+               Platform.check(linux(%{runtime: %{kind: :docker, socket: "/nope", missing: true}}))
     end
 
     test "every target check/1 can pick has a pinned archive" do
@@ -154,7 +173,8 @@ defmodule HalC2.OpenShell.PlatformTest do
       codes =
         ~w(unsupported-os unsupported-arch intel-mac glibc-too-old kernel-too-old landlock-missing
            podman-missing podman-too-old runtime-not-rootless root-docker docker-too-old
-           docker-desktop-missing runtime-unreachable unsupported-runtime)
+           docker-desktop-missing runtime-unreachable unsupported-runtime docker-socket-missing
+           docker-desktop-linux podman-on-mac)
 
       for code <- codes, do: refute(Platform.problem_message(code) == code, code)
     end
@@ -190,6 +210,41 @@ defmodule HalC2.OpenShell.PlatformTest do
                Platform.probe_runtime(:docker, socket)
     end
 
+    test "a Docker socket that Podman answers on is probed as Podman", %{tmp_dir: dir} do
+      socket =
+        serve(dir, %{
+          "/version" => %{
+            "Version" => "5.2.1",
+            "Components" => [%{"Name" => "Podman Engine", "Version" => "5.2.1"}]
+          },
+          "/v5.0.0/libpod/info" => %{"host" => %{"security" => %{"rootless" => true}}}
+        })
+
+      assert %{kind: :podman, version: "5.2.1", rootless: true, socket: ^socket} =
+               Platform.probe_runtime(:docker, socket)
+    end
+
+    test "a named socket may carry DOCKER_HOST's scheme, and one that is not there says so", %{
+      tmp_dir: dir
+    } do
+      socket =
+        serve(dir, %{
+          "/version" => %{"Version" => "28.1.0"},
+          "/info" => %{"SecurityOptions" => ["name=rootless"], "OperatingSystem" => "Ubuntu"}
+        })
+
+      assert %{kind: :docker, socket: ^socket, rootless: true} =
+               Platform.named_runtime("unix://" <> socket)
+
+      link = Path.join(Path.dirname(socket), "link.sock")
+      File.ln_s!(Path.basename(socket), link)
+
+      for named <- [link, Path.join(dir, "absent.sock"), "tcp://127.0.0.1:2375"] do
+        assert %{missing: true} = runtime = Platform.named_runtime(named)
+        assert {:error, ["docker-socket-missing"]} = Platform.check(linux(%{runtime: runtime}))
+      end
+    end
+
     test "a socket that answers nonsense is unreachable, and a missing one is no runtime", %{
       tmp_dir: dir
     } do
@@ -202,60 +257,5 @@ defmodule HalC2.OpenShell.PlatformTest do
     end
   end
 
-  # A runtime API on a Unix socket: one JSON document per path, 404 otherwise.
-  # A socket path must fit in 108 bytes, so it goes in a short directory relative to
-  # the working directory rather than in `dir`.
-  defp serve(_dir, routes) do
-    short = Path.join("tmp", "os-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(short)
-    on_exit(fn -> File.rm_rf(short) end)
-    path = Path.join(short, "r.sock")
-
-    {:ok, listen} =
-      :gen_tcp.listen(0, [:binary, ifaddr: {:local, path}, active: false, packet: :http_bin])
-
-    test = self()
-
-    pid =
-      spawn_link(fn ->
-        send(test, :listening)
-        accept(listen, routes)
-      end)
-
-    receive do
-      :listening -> :ok
-    end
-
-    on_exit(fn -> Process.exit(pid, :kill) end)
-    path
-  end
-
-  defp accept(listen, routes) do
-    {:ok, socket} = :gen_tcp.accept(listen)
-    {:ok, {:http_request, :GET, {:abs_path, path}, _}} = :gen_tcp.recv(socket, 0)
-    skip_headers(socket)
-
-    {status, body} =
-      case routes[path] do
-        nil -> {"404 Not Found", "not found"}
-        doc -> {"200 OK", Jason.encode!(doc)}
-      end
-
-    :ok = :inet.setopts(socket, packet: :raw)
-
-    :gen_tcp.send(socket, [
-      "HTTP/1.1 #{status}\r\ncontent-type: application/json\r\ncontent-length: #{byte_size(body)}\r\nconnection: close\r\n\r\n",
-      body
-    ])
-
-    :gen_tcp.close(socket)
-    accept(listen, routes)
-  end
-
-  defp skip_headers(socket) do
-    case :gen_tcp.recv(socket, 0) do
-      {:ok, :http_eoh} -> :ok
-      {:ok, _header} -> skip_headers(socket)
-    end
-  end
+  defp serve(_dir, routes), do: FakeOpenShell.runtime_socket(routes)
 end
