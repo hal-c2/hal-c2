@@ -10,7 +10,9 @@ defmodule HalC2.MuseRuntimePropTest do
   answer the question; switch the running turn's access, which on full access answers its
   open command prompt; interrupt the
   turn; crash the runtime mid-turn; have `muse serve` exit under it, idle or mid-turn;
-  release the idle thread's session as IdleSessions does.
+  release the idle thread's session as IdleSessions does; have the store refuse one of
+  a waiting turn's writes (a full disk, hal-c2#1285) while Muse ignores the stop that
+  sends, so the turn runs on unrecorded and Muse refuses the user's stop of it after.
 
   Turns run on the fake `muse serve` in `test/support/fake_muse_msp.py`, which keeps
   its sessions on disk. A turn that replies names every message Muse's session has
@@ -163,6 +165,7 @@ defmodule HalC2.MuseRuntimePropTest do
         :ok = HalC2.Streams.subscribe(@tid, self(), nil)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
+        HalC2.Test.Machines.refuse_changes(nil)
         HalC2.Acp.forget("muse")
 
         (result == :ok)
@@ -179,7 +182,7 @@ defmodule HalC2.MuseRuntimePropTest do
   # with its status (a :finish turn's already completed while the turn runs on);
   # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :hold | :finish | :shell | :ask, :guarded for a
   # command with two requirements (:shell once the first is approved), or :workflow for a
-  # workflow child's :guarded command;
+  # workflow child's :guarded command, or :dry for a :wait turn the store failed;
   # mode: the thread's runtime mode; full access runs every command without asking, and
   # switching a running :shell turn to it answers the open prompt;
   # quota: the last run was refused on the quota, so the thread is limited;
@@ -238,7 +241,11 @@ defmodule HalC2.MuseRuntimePropTest do
               {3, {:call, __MODULE__, :steer, [msg]}},
               {1,
                {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access)), false]}}
-            ]
+            ] ++ if(kind == :wait, do: [{2, {:call, __MODULE__, :fail_write, []}}], else: [])
+
+          # Unrecorded: the run ends with the stop, a crash or the host going.
+          :dry ->
+            []
 
           # Full access answers the command's open prompt, so the turn runs to its end.
           :shell ->
@@ -288,6 +295,7 @@ defmodule HalC2.MuseRuntimePropTest do
   def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:answer, :dismiss],
     do: match?(%{kind: :ask}, turn)
 
+  def precondition(%{turn: turn}, {:call, _, :fail_write, _}), do: match?(%{kind: :wait}, turn)
   def precondition(_state, {:call, _, :host_exit, _}), do: true
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
@@ -340,6 +348,14 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(state, _result, {:call, _, fun, _})
       when fun in [:approve, :decline, :answer, :dismiss],
       do: end_turn(state, "completed")
+
+  # The store took nothing of the turn since, so the run still reads as running.
+  def next_state(state, _result, {:call, _, :fail_write, _}),
+    do: %{state | turn: %{state.turn | kind: :dry}}
+
+  # A turn the store failed fails, however it ends, and the next run records as usual.
+  def next_state(%{turn: %{kind: :dry}} = state, _result, {:call, _, :interrupt, _}),
+    do: end_turn(state, "failed")
 
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
   def next_state(state, _result, {:call, _, :crash, _}), do: end_turn(state, "failed")
@@ -409,6 +425,8 @@ defmodule HalC2.MuseRuntimePropTest do
   end
 
   def send(msg, kind) do
+    configure(fn _config -> %{"turns" => @turns} end)
+
     result = Orchestration.dispatch(message(msg, "#{kind} #{msg}", "queue_after_active"))
     # A reply ends its run, as does a command in full access; the others stop where the
     # fake waits.
@@ -501,6 +519,23 @@ defmodule HalC2.MuseRuntimePropTest do
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid}), ending)
   end
 
+  # The store refuses the turn's next write, a todo list Muse sends, and Muse answers
+  # the stop the runtime sends for it but goes on with the turn. Returns once the
+  # runtime drives the turn dry and the store takes writes again; Muse refuses the
+  # user's stop from then on, so that stop ends the turn inside the runtime's call.
+  def fail_write do
+    configure(&Map.put(&1, "interruptIgnored", true))
+    [{runtime, _}] = Registry.lookup(HalC2.Muse.Registry, @tid)
+    %{conn: conn, session: session} = :sys.get_state(runtime)
+    todos = %{"sessionId" => session, "items" => [%{"text" => "Save", "status" => "inProgress"}]}
+    HalC2.Test.Machines.refuse_changes(@tid)
+    Kernel.send(runtime, {:json_rpc, conn, {:notification, "session/todoListChanged", todos}})
+    %{unrecorded: %{}} = :sys.get_state(runtime)
+    HalC2.Test.Machines.refuse_changes(nil)
+    configure(&Map.put(&1, "interruptFails", true))
+    reply({:ok, %{}}, [])
+  end
+
   # The runtime driving the turn dies, as a crash in the adapter would; its host goes
   # with it.
   def crash do
@@ -588,6 +623,11 @@ defmodule HalC2.MuseRuntimePropTest do
 
     File.chmod!(bin, 0o755)
     bin
+  end
+
+  defp configure(fun) do
+    path = Path.join(Process.get(:fake_dir), "config.json")
+    File.write!(path, JSON.encode!(fun.(JSON.decode!(File.read!(path)))))
   end
 
   defp current, do: HalC2.Streams.Server.state(HalC2.Streams.ensure(@tid))

@@ -816,11 +816,15 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info(_other, state), do: {:noreply, state}
 
   # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
-  defoverridable handle_info: 2
+  defoverridable handle_info: 2, handle_call: 3
 
   @impl true
   def handle_info(message, state),
     do: Unrecorded.handle_info(__MODULE__, message, state, fn m, s -> super(m, s) end)
+
+  @impl true
+  def handle_call(request, from, state),
+    do: Unrecorded.handle_call(request, from, state, fn r, f, s -> super(r, f, s) end)
 
   # The app-server, and the terminals it runs, stop with this process: released when
   # idle, or stopped with its thread. Its writes may fail when the MC itself is

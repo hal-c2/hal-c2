@@ -13,7 +13,9 @@ sload model-checker
 --- The time is a clock that moves when the store recovers and when the MC restarts, so
 --- an end recorded with the time it is written, not the time it failed, reads late.
 --- Codex stands for every runtime: it is the one whose stop can time out and leave
---- its provider turn running; the others stop theirs, or the process running it.
+--- its provider turn running; the others stop theirs, or the process running it. A
+--- stop the provider refuses (Muse) or answers at once (ACP) ends the turn inside the
+--- runtime's call rather than in a message of the provider's: [interrupt-dry].
 
 mod UNRECORDED-TURNS is
   protecting BOOL .
@@ -53,8 +55,9 @@ mod UNRECORDED-TURNS is
   --- Parts of the fix switched off, one at a time, so a proof shows each is needed:
   --- TurnWatch's retry, the original time, the provider's own ending, the follow-up's
   --- stop of a left-over turn, the stop of a turn the store failed, the run TurnWatch
-  --- holds counting as driven, and abandon/5's check that the run is still active.
-  ops noRetry nowTime overwrite noLeftoverStop noInterrupt notDriven noActiveCheck : -> Sw [ctor] .
+  --- holds counting as driven, abandon/5's check that the run is still active, and
+  --- the failure going with its turn however the turn ended.
+  ops noRetry nowTime overwrite noLeftoverStop noInterrupt notDriven noActiveCheck keepMark : -> Sw [ctor] .
   op off : Sw -> Item [ctor] .
 
   op store : Bool -> Item [ctor] .
@@ -84,9 +87,11 @@ mod UNRECORDED-TURNS is
   op late : Rid -> Item [ctor] .
   op endmsg : Rid St -> Item [ctor] .
 
-  --- The runtime and the turn it left running (`state.leftover`).
+  --- The runtime and the turn it left running (`state.leftover`); with keepMark, the
+  --- failure an ended turn left in its state (`state.unrecorded`), at the time it failed.
   op rt : Slot -> Item [ctor] .
   op lo : Rid -> Item [ctor] .
+  op mark : Rid Nat -> Item [ctor] .
 
   --- TurnWatch: a run's end held until the store takes it (time, provider turn, and
   --- whether a try has failed), and a runtime's `:DOWN` it has yet to act on.
@@ -132,6 +137,7 @@ mod UNRECORDED-TURNS is
   eq killed(late(R) C) = killed(C) .
   eq killed(endmsg(R, S) C) = killed(C) .
   eq killed(lo(R) C) = killed(C) .
+  eq killed(mark(R, T) C) = killed(C) .
   eq killed(C) = C [owise] .
 
   --- An MC that stops loses what it held in memory, TurnWatch's ends included: the run
@@ -231,6 +237,12 @@ mod UNRECORDED-TURNS is
   rl [finish] : { store(true) clock(N) rt(drive(R)) endmsg(R, S) run(R, active) ends(R, K) rpt(R, X) C }
     => { store(true) clock(N) rt(idle) heard(R, S) run(R, over(S, N)) ends(R, s K) rpt(R, S) C } .
 
+  --- With keepMark, TurnWriter.finish/3 taking a failure an earlier turn left for the
+  --- runtime's: the run's end goes to TurnWatch as that failure, at its time.
+  crl [finish] : { rt(drive(R)) endmsg(R, S) mark(R', M) C }
+    => { rt(idle) heard(R, S) pend(R, M, S, false) C }
+    if R =/= R' .
+
   --- TurnWriter.finish/3 of a dry runtime: the turn's end goes to TurnWatch.
   rl [hand-over] : { rt(dry(R, T)) endmsg(R, S) pend(R, M, pending, B) C }
     => { rt(idle) heard(R, S) pend(R, M, S, B) C } .
@@ -310,11 +322,20 @@ mod UNRECORDED-TURNS is
     if not driven(C, R, not has(C, notDriven)) .
   crl [interrupt-undriven] : { ustop(R) run(R, Z) C } => { run(R, Z) C } if Z =/= active .
 
+  --- Unrecorded.handle_call/4: a user's stop of a dry turn the provider refuses (Muse,
+  --- which closes its host) or answers at once (ACP, its prompt answered) ends the turn
+  --- inside the call, writing nothing; its end goes to TurnWatch as interrupted, and the
+  --- failure with it, unless keepMark leaves it in the runtime's state.
+  rl [interrupt-dry] : { ustop(R) rt(dry(R, T)) pend(R, M, pending, B) C }
+    => { rt(idle) heard(R, interrupted) pend(R, M, interrupted, B)
+         (if has(C, keepMark) then mark(R, T) else empty fi) killed(C) } .
+
   --- An end written twice; a run TurnWatch recorded at another time than it failed; a
   --- provider turn the runtime heard end recorded otherwise; a run the store failed
-  --- recorded as anything but failed (both but for a run an MC restart forgot); two
+  --- recorded as anything but failed (both but for a run an MC restart forgot); a run
+  --- the store took that fails as if it had not, though its turn ended otherwise; two
   --- provider turns of the thread running at once; an active run nothing will end.
-  ops twice late overwritten lost twoTurns orphan quiet : Sys -> Bool .
+  ops twice late overwritten lost misfiled twoTurns orphan quiet : Sys -> Bool .
   eq twice({ ends(R, s s K) C }) = true .
   eq twice({ C }) = false [owise] .
   ceq late({ watched(R) noticed(R, T) run(R, over(S, M)) C }) = true if M =/= T .
@@ -323,10 +344,18 @@ mod UNRECORDED-TURNS is
   eq overwritten({ C }) = false [owise] .
   ceq lost({ unrec(R) run(R, over(S, M)) C }) = true if S =/= failed /\ not forgotten(C, R) .
   eq lost({ C }) = false [owise] .
+  ceq misfiled({ heard(R, S) run(R, over(failed, M)) C }) = true
+    if S =/= failed /\ not failedTurn(C, R) .
+  eq misfiled({ C }) = false [owise] .
   eq twoTurns({ pt(r1, live) pt(r2, live) C }) = true .
   eq twoTurns({ C }) = false [owise] .
   ceq orphan({ run(R, active) C }) = true if not keeps(C, R) .
   eq orphan({ C }) = false [owise] .
+
+  --- The store failed the run's turn, or the runtime under it crashed.
+  op failedTurn : Conf Rid -> Bool .
+  eq failedTurn(unrec(R) C, R) = true .
+  eq failedTurn(C, R) = forgotten(C, R) [owise] .
 
   op forgotten : Conf Rid -> Bool .
   eq forgotten(forgot(R) C, R) = true .

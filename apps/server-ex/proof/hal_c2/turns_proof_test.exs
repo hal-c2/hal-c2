@@ -168,6 +168,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_info :flush" => @items,
       "HalC2.Codex.ThreadRuntime handle_info _" =>
         "ignores what it does not know, and hands every message to Unrecorded.handle_info/4, which only acts when the store fails (#{@unrecorded})",
+      "HalC2.Codex.ThreadRuntime handle_call _" =>
+        "hands every call to Unrecorded.handle_call/4, which only acts while the store fails a turn (#{@unrecorded})",
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Orchestration.IdleSessions.start_link/1" => "starts the timer the idle rules run on",

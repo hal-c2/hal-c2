@@ -637,7 +637,7 @@ defmodule HalC2.Orchestration.TurnWriter do
     cond do
       # A turn whose events the store could not record fails, recorded apart, with
       # how its provider turn ended (`HalC2.Orchestration.Unrecorded`).
-      (unrecorded = Map.get(state, :unrecorded)) && run_id ->
+      (unrecorded = unrecorded(state, run_id)) != nil ->
         # A provider turn the runtime could not stop is still running (`"running"`).
         provider_turn =
           if unrecorded.provider_turn == :pending, do: status, else: unrecorded.provider_turn
@@ -655,6 +655,12 @@ defmodule HalC2.Orchestration.TurnWriter do
         finish_active(state, status, failure, at)
     end
   end
+
+  # The marker is its turn's alone: one an earlier turn left behind is not this run's.
+  defp unrecorded(%{unrecorded: %{run: run} = unrecorded}, run) when is_binary(run),
+    do: unrecorded
+
+  defp unrecorded(_state, _run), do: nil
 
   defp finish_active(state, status, failure, at) do
     checkpoint =

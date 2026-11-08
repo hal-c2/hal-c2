@@ -23,6 +23,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch_message, new_run, begin_turn, release_session)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (begin_turn, interrupt)
+#   https://github.com/hal-c2/hal-c2/issues/1285 (a stop that ends an unrecorded turn, #1398)
 #   apps/server-ex/proof/models/turns.maude
 #   apps/server/src/orchestration-v2/ (run lifecycle)
 #   apps/server/src/orchestration-v2/RunExecutionService.ts (interrupt outcome, open subagents, bare
@@ -292,6 +293,19 @@ Feature: Runs and turns
       | had already failed       | failed                                          |
       | was still running        | interrupted                                     |
       | could not be interrupted | running, so the next message stops it first     |
+
+  # hal-c2#1285: a turn that ended inside the user's stop (Muse refusing it, so the MC
+  # closed its host) left the failure on the runtime for the thread's next run, which
+  # then lost its first event or failed with the old failure.
+  @mc
+  Scenario: A run whose events cannot be recorded leaves the next run to record as usual
+    Given a Muse Code turn is running on a Muse that keeps its turn when the MC stops it
+    When the MC fails to record the Muse Code turn's events
+    And the user stops the Muse Code turn and Muse refuses
+    Then the Muse Code run is failed because it could not be saved
+    When the next message to Muse Code fails to open its session
+    Then that run fails with Muse Code's own reason
+    And the message after it runs and its reply is recorded
 
   @mc
   Scenario: A provider session that cannot be opened fails the run

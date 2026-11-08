@@ -2232,6 +2232,102 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  # --- the same on Muse Code, whose stop can end the turn inside the call -------------
+
+  step "a Muse Code turn is running on a Muse that keeps its turn when the MC stops it",
+       context do
+    Mc.ensure(HalC2.Mcp)
+
+    turns = [
+      %{
+        "match" => "a long task",
+        "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]
+      }
+    ]
+
+    context =
+      context
+      |> HalC2.Test.FakeAcp.install_muse(%{"interruptIgnored" => true},
+        enabled: true,
+        turns: turns
+      )
+      |> HalC2.Test.FakeAcp.thread("Muse")
+      |> HalC2.Test.FakeAcp.send_message("a long task")
+
+    World.await_stream(World.thread_id(context, "Muse"), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["text"] == "Working on it."))
+    end)
+
+    [run] = World.entities(context, "Muse", "run")
+    Map.put(context, :running, run["id"])
+  end
+
+  # Muse's next event fails to record; the MC's stop of the turn reaches Muse, which
+  # answers it and goes on, so the run's end waits on the turn's.
+  step "the MC fails to record the Muse Code turn's events", context do
+    context = refuse(context, 1)
+    [{pid, _}] = Registry.lookup(HalC2.Muse.Registry, World.thread_id(context, "Muse"))
+    %{conn: conn, session: session} = :sys.get_state(pid)
+    todos = %{"sessionId" => session, "items" => [%{"text" => "Save", "status" => "inProgress"}]}
+    send(pid, {:json_rpc, conn, {:notification, "session/todoListChanged", todos}})
+    assert %{unrecorded: %{run: run}} = :sys.get_state(pid)
+    assert run == context.running
+    assert [%{"status" => "running"}] = World.entities(context, "Muse", "run")
+    context
+  end
+
+  # Muse refuses the user's stop, so the MC closes its host and ends the turn there.
+  step "the user stops the Muse Code turn and Muse refuses", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", &Map.put(&1, "interruptFails", true))
+    id = World.thread_id(context, "Muse")
+    assert {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => id})
+    World.await_runs(context, "Muse", ["failed"])
+    context
+  end
+
+  step "the Muse Code run is failed because it could not be saved", context do
+    [run] = World.entities(context, "Muse", "run")
+    assert run["status"] == "failed"
+    assert run["failure"] =~ "The turn could not be saved"
+    context
+  end
+
+  # Muse answers the resume under another session, so the run fails in the runtime's
+  # start, before Muse takes the turn: with Muse's reason, not the earlier run's.
+  step "the next message to Muse Code fails to open its session", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", fn config ->
+      config
+      |> Map.drop(~w(interruptFails interruptIgnored))
+      |> Map.put("mismatch", "session/resume")
+    end)
+
+    context = HalC2.Test.FakeAcp.send_message(context, "out of step", "Muse")
+    World.await_runs(context, "Muse", ["failed", "failed"])
+    context
+  end
+
+  step "that run fails with Muse Code's own reason", context do
+    [_, run] = Enum.sort_by(World.entities(context, "Muse", "run"), & &1["ordinal"])
+    assert run["failure"] =~ "Muse resumed another session"
+    refute run["failure"] =~ "could not be saved"
+    context
+  end
+
+  step "the message after it runs and its reply is recorded", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", &Map.delete(&1, "mismatch"))
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Muse")
+    World.await_runs(context, "Muse", ["failed", "failed", "completed"])
+    run = World.entities(context, "Muse", "run") |> Enum.max_by(& &1["ordinal"])
+    assert run["failure"] == nil
+
+    assert Enum.any?(
+             World.entities(context, "Muse", "message"),
+             &(&1["runId"] == run["id"] and &1["text"] =~ "Reply to Next")
+           )
+
+    context
+  end
+
   defp refuse(context, n) do
     left = :counters.new(1, [])
     :counters.put(left, 1, n)

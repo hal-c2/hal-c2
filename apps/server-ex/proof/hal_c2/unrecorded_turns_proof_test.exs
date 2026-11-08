@@ -6,6 +6,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
   # recovering, the provider ending its turn or ignoring a stop, the runtime crashing
   # and the MC restarting. Codex stands for every runtime: its stop is the one that can
   # time out and leave its provider turn running for the next message to stop first.
+  # A stop Muse refuses, or ACP answers at once, ends the turn inside the runtime's
+  # call instead, and the failure goes with that turn too.
   #
   # What the store wrote is the truth here: no side file. An MC that restarts while
   # TurnWatch holds an end loses it, and boot recovery ends the run as interrupted at
@@ -29,6 +31,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       # runs fails the run and stops the turn, and from then on the runtime is dry
       # until the turn's end is handed over.
       "HalC2.Orchestration.Unrecorded.handle_info/4" => ~w(unrecorded hand-over deadline),
+      # And every call: one that ends a dry turn (a stop the provider refuses) hands its
+      # end over, and the failure goes with the turn.
+      "HalC2.Orchestration.Unrecorded.handle_call/4" => ~w(interrupt-dry interrupt-driven),
       "HalC2.Orchestration.TurnWatch.claim/2" => "take",
       "HalC2.Orchestration.TurnWatch.release/1" => "finish",
       "HalC2.Orchestration.TurnWatch.driven?/1" => ~w(interrupt-driven interrupt-undriven),
@@ -50,7 +55,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
         ~w(finish hand-over leftover-end ignored-end unrecorded),
       # Every message, the wrapper's clause included: one it does not know is ignored.
-      "HalC2.Codex.ThreadRuntime handle_info _" => ~w(unrecorded hand-over ignored-end)
+      "HalC2.Codex.ThreadRuntime handle_info _" => ~w(unrecorded hand-over ignored-end),
+      "HalC2.Codex.ThreadRuntime handle_call _" => ~w(take refuse-start interrupt-driven)
     },
     abstracts: %{
       "HalC2.Orchestration.TurnWatch.attempted/2" =>
@@ -105,7 +111,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         "A run whose events cannot be recorded stops its provider turn",
         "A run failure that could not be recorded is recorded once storage recovers",
         "A follow-up first stops a provider turn an earlier failed run left running",
-        "A run whose events cannot be recorded keeps how its provider turn ended"
+        "A run whose events cannot be recorded keeps how its provider turn ended",
+        "A run whose events cannot be recorded leaves the next run to record as usual"
       ]
     }
 
@@ -134,6 +141,11 @@ defmodule HalC2.UnrecordedTurnsProofTest do
 
     test "a provider turn's own ending is not overwritten, from #{init}", %{proof: proof} do
       refute_reachable(proof, unquote(init), "overwritten", depth: @depth)
+    end
+
+    test "a run whose turn the store took fails only for what it heard, from #{init}",
+         %{proof: proof} do
+      refute_reachable(proof, unquote(init), "misfiled", depth: @depth)
     end
 
     test "a follow-up never runs alongside a left-over provider turn, from #{init}",
@@ -169,7 +181,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         {"noLeftoverStop", "twoTurns", "the next message stopping a left-over provider turn"},
         {"noInterrupt", "twoTurns", "the failed turn's provider turn being stopped"},
         {"notDriven", "lost", "a held end counting as driven, so a stop leaves it"},
-        {"noActiveCheck", "twice", "abandon/5 leaving a run that already ended"}
+        {"noActiveCheck", "twice", "abandon/5 leaving a run that already ended"},
+        {"keepMark", "misfiled", "the failure going with its turn when a call ends it"}
       ] do
     test "without #{what}, #{bad} is reachable", %{proof: proof} do
       assert_reachable(proof, unquote("init(2, true, off(#{part}))"), unquote(bad), depth: @depth)

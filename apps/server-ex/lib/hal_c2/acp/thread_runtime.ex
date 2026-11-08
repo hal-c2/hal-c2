@@ -941,13 +941,20 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
-  defoverridable handle_info: 2
+  defoverridable handle_info: 2, handle_call: 3
 
   @impl true
   def handle_info(message, state),
     do:
       HalC2.Orchestration.Unrecorded.handle_info(__MODULE__, message, state, fn m, s ->
         super(m, s)
+      end)
+
+  @impl true
+  def handle_call(request, from, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_call(request, from, state, fn r, f, s ->
+        super(r, f, s)
       end)
 
   # One of the turn's prompts answered. A steer OpenCode took into the running loop
