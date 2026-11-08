@@ -271,19 +271,40 @@ defmodule HalC2.ProviderUsageLimits.Acp do
       data = present(env["XDG_DATA_HOME"]) || Path.join(home(env), ".local/share")
       auth = present(env["OPENCODE_AUTH_CONTENT"]) || read(Path.join(data, "opencode/auth.json"))
 
-      key =
+      stored =
         case JSON.decode(auth) do
-          {:ok, %{"opencode-go" => %{"type" => "api", "key" => key}}} when is_binary(key) -> key
-          _ -> env["OPENCODE_API_KEY"]
+          {:ok, %{} = providers} -> providers
+          _ -> %{}
         end
 
-      case present(key) && http(:get, opencode_url(), String.trim(key)) do
-        nil ->
+      # The Go key first; a Console API key connected in OpenCode reads Go
+      # usage too, so an expired Go key does not lose the windows while the
+      # account runs through the Console key. A key the endpoint refuses
+      # outright (401/403) gives way to the next.
+      keys =
+        Enum.uniq(
+          Enum.filter(
+            [
+              api_key(stored["opencode-go"]),
+              api_key(stored["opencode"]),
+              present(env["OPENCODE_API_KEY"])
+            ],
+            &is_binary/1
+          )
+        )
+
+      case read_go(keys) do
+        :none ->
           unavailable(checked_at, "unsupported")
 
         # A Zen key without a Go subscription.
-        {:error, 403} ->
+        {:refused, 403} ->
           unavailable(checked_at, "unsupported")
+
+        # Every key refused as expired or unknown: the read failed, it is
+        # not that the account has no Go subscription.
+        {:refused, 401} ->
+          unavailable(checked_at, "probeFailed", "OpenCode Go could not read usage.")
 
         {:ok, %{"usage" => usage}} ->
           opencode_limits(usage, checked_at)
@@ -291,6 +312,24 @@ defmodule HalC2.ProviderUsageLimits.Acp do
         _ ->
           unavailable(checked_at, "probeFailed", "OpenCode Go could not read usage.")
       end
+    end
+  end
+
+  defp api_key(%{"type" => "api", "key" => key}) when is_binary(key), do: present(key)
+  defp api_key(_), do: nil
+
+  defp read_go([]), do: :none
+
+  defp read_go([key | rest]) do
+    case http(:get, opencode_url(), key) do
+      {:error, status} when status in [401, 403] ->
+        case read_go(rest) do
+          :none -> {:refused, status}
+          other -> other
+        end
+
+      other ->
+        other
     end
   end
 

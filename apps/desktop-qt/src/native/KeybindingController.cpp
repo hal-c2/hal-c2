@@ -257,6 +257,14 @@ void KeybindingController::registerCommands() {
   }
   // The composer brick hands the stash its latest text first.
   add(QStringLiteral("composer.stash"), [this] { m_bridge->sendToBricks(QStringLiteral("composer.stash.key")); });
+  // The effort one level up or down without opening its picker; unbound
+  // until the user gives them keys.
+  for (const auto& [command, direction] : {std::pair{QStringLiteral("composer.increaseEffort"), 1},
+                                           std::pair{QStringLiteral("composer.decreaseEffort"), -1}}) {
+    add(command, [this, direction] {
+      m_bridge->dispatch(QStringLiteral("composer.effort.step"), QVariantMap{{QStringLiteral("direction"), direction}});
+    });
+  }
   // The composer brick opens its own pickers.
   add(QStringLiteral("modelPicker.toggle"), [this] { m_bridge->sendToBricks(QStringLiteral("composer.modelPicker.toggle")); });
   for (const QString& command : {QStringLiteral("composer.effort"), QStringLiteral("composer.mode"),
@@ -390,6 +398,15 @@ bool KeybindingController::press(const QString& sequence, const QVariantMap& foc
   return false;
 }
 
+// Whether `sequence` runs a command that cycles through states (the
+// appearance, the effort) with any focus, which a held key must not repeat.
+bool KeybindingController::cycles(const QString& sequence) const {
+  static const QSet<QString> cycling{kAppearanceCycle, QStringLiteral("composer.increaseEffort"),
+                                     QStringLiteral("composer.decreaseEffort")};
+  const QVariantMap composer{{QStringLiteral("composer"), true}, {QStringLiteral("editable"), true}};
+  return cycling.contains(resolve(sequence, {})) || cycling.contains(resolve(sequence, composer));
+}
+
 // One entry per sequence; each flag says whether the key is the shell's with
 // that focus: the chrome, a terminal, the composer's field, or any other text
 // field (`editable`), or a browser tab's page (`preview`).
@@ -407,8 +424,8 @@ void KeybindingController::refreshShortcuts() {
     seen.insert(sequence);
     shortcuts.append(QVariantMap{
         {QStringLiteral("sequence"), sequence},
-        // Held down, a toggle that cycles must not spin through its states.
-        {QStringLiteral("autoRepeat"), resolve(sequence, chrome) != kAppearanceCycle},
+        // Held down, a command that cycles must not spin through its states.
+        {QStringLiteral("autoRepeat"), !cycles(sequence)},
         {QStringLiteral("chrome"), native(resolve(sequence, chrome))},
         {QStringLiteral("composer"), native(resolve(sequence, composer))},
         {QStringLiteral("editable"), native(resolve(sequence, editable))},

@@ -21,6 +21,10 @@ void openTurnThread(World& world);
 // its queue behind that turn (its run is "run-queued-<text>").
 void startWorkingTurn(World& world);
 void queueTurnMessage(World& world, const QString& text);
+// The same working turn waiting on the user: an approval to run a command,
+// or the agent's question "Which database?".
+void awaitTurnApproval(World& world);
+void awaitTurnQuestion(World& world);
 
 class Brick;
 
