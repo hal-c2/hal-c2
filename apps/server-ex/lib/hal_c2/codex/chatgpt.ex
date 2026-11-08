@@ -201,6 +201,10 @@ defmodule HalC2.Codex.ChatGpt do
 
       {:json_rpc, ^conn, _other} ->
         await_completed(conn, login_id)
+
+      # Codex is gone (`open/1` traps exits): its sign-in can never complete.
+      {:EXIT, ^conn, _reason} ->
+        fail("Codex stopped before the ChatGPT sign-in finished. Start sign-in again.")
     end
   end
 
@@ -464,7 +468,7 @@ defmodule HalC2.Codex.ChatGpt do
   # A fresh, initialized app-server of `instance` in its managed home.
   defp open(instance) do
     Process.flag(:trap_exit, true)
-    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    env = HalC2.Codex.Home.instance_env(instance)
 
     with {:ok, home} <- HalC2.Codex.Home.env(instance),
          {:ok, conn} <-

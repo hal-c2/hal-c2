@@ -95,6 +95,40 @@ defmodule HalC2.Codex.ChatGptTest do
     end
   end
 
+  describe "login/4" do
+    # A Codex that answers the sign-in's start with OpenAI's link and then exits.
+    @dies_after_start """
+    import json, sys
+    LINK = sys.argv[1]
+    for line in sys.stdin:
+        msg = json.loads(line)
+        if msg.get("method") == "initialize":
+            print(json.dumps({"id": msg["id"], "result": {}}), flush=True)
+        elif msg.get("method") == "account/login/start":
+            result = {"type": "chatgpt", "loginId": "l1", "authUrl": LINK}
+            print(json.dumps({"id": msg["id"], "result": result}), flush=True)
+            sys.exit(0)
+    """
+
+    test "fails at once when Codex stops before the sign-in completes", %{tmp_dir: dir} do
+      script = Path.join(dir, "codex.py")
+      File.write!(script, @dies_after_start)
+      Application.put_env(:hal_c2, :codex_command, ["python3", script, @link])
+      on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
+
+      server = self()
+      {pid, ref} = spawn_monitor(fn -> ChatGpt.login("codex", "chatgpt", server, "f1") end)
+
+      assert_receive {:auth_interaction, "f1", %{"url" => @link}, ^pid}, 15_000
+
+      assert_receive {:DOWN, ^ref, :process, ^pid,
+                      {:shutdown,
+                       {:failed,
+                        "Codex stopped before the ChatGPT sign-in finished. Start sign-in again."}}},
+                     15_000
+    end
+  end
+
   describe "managed?/1" do
     test "is each instance's own mode, never the built-in instance's" do
       {:ok, _} =

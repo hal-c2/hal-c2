@@ -1239,8 +1239,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
     # home its settings name (`HalC2.Codex.Home`), and both over the project's
-    # environment when the project loads it.
-    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    # environment when the project loads it. A managed instance's shadow home wins.
+    env = HalC2.Codex.Home.instance_env(instance)
 
     with {:ok, args} <- launch_args(instance),
          {:ok, home} <- home_env(instance),

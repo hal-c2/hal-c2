@@ -222,7 +222,7 @@ defmodule HalC2.Codex.Provider do
     spawned_at = System.os_time(:millisecond)
     deadline = System.monotonic_time(:millisecond) + check_budget()
 
-    env = Enum.to_list(HalC2.Settings.instance_env(id))
+    env = HalC2.Codex.Home.instance_env(id)
 
     result =
       with [_ | _] = cmd <- command(id),
@@ -528,7 +528,7 @@ defmodule HalC2.Codex.Provider do
   end
 
   defp read_skills(id, cwd, timeout) do
-    env = Enum.to_list(HalC2.Settings.instance_env(id))
+    env = HalC2.Codex.Home.instance_env(id)
 
     with [_ | _] = cmd <- command(id),
          {:ok, args} <- launch_args(id),

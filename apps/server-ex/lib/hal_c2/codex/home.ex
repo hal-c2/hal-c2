@@ -33,14 +33,14 @@ defmodule HalC2.Codex.Home do
   def env(instance) do
     home = HalC2.Settings.instance_setting(instance, "homePath")
     shadow = HalC2.Settings.instance_setting(instance, "shadowHomePath")
-    managed? = shadow == nil and HalC2.Codex.ChatGpt.managed?(instance)
 
     cond do
       # A ChatGPT account connected through HAL-C2 signs in in a shadow home of
       # the instance's own (`HalC2.Codex.ChatGpt.home/1`), over the home Codex
-      # would use: so its threads are the CLI account's threads too.
-      managed? ->
-        shared = if home, do: expand(home), else: default_home()
+      # would use, an instance `CODEX_HOME` included: so its threads are the CLI
+      # account's threads too, and the CLI's own login is never touched.
+      managed?(instance) ->
+        shared = shared(instance) || default_home()
         shadow = HalC2.Codex.ChatGpt.home(instance)
         with :ok <- link(shared, shadow), do: {:ok, [{"CODEX_HOME", shadow}]}
 
@@ -56,6 +56,22 @@ defmodule HalC2.Codex.Home do
         with :ok <- link(shared, shadow), do: {:ok, [{"CODEX_HOME", shadow}]}
     end
   end
+
+  @doc """
+  The instance's own variables for Codex (`HalC2.Settings.instance_env/1`), as a
+  list to follow `env/1`'s. A managed instance's `CODEX_HOME` is left out: it
+  names the shared home its shadow is made over, and Codex must run in the shadow.
+  """
+  @spec instance_env(String.t()) :: [{String.t(), String.t()}]
+  def instance_env(instance) do
+    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    if managed?(instance), do: Enum.reject(env, &match?({"CODEX_HOME", _}, &1)), else: env
+  end
+
+  defp managed?(instance),
+    do:
+      HalC2.Settings.instance_setting(instance, "shadowHomePath") == nil and
+        HalC2.Codex.ChatGpt.managed?(instance)
 
   @doc """
   The home shared by every account of `instance`'s Codex home, or nil for the
