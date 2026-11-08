@@ -421,6 +421,39 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     end
   end
 
+  describe "missed events" do
+    defp observe(state, event) do
+      {:reply, :ok, state} = TokenEconomizer.handle_call({:observe, event}, nil, state)
+      state
+    end
+
+    defp started(thread, extra \\ %{}) do
+      Map.merge(
+        %{
+          "type" => "turn.started",
+          "threadId" => thread,
+          "runId" => "run-" <> thread,
+          "projectId" => "p",
+          "provider" => "claudeAgent"
+        },
+        extra
+      )
+    end
+
+    test "mark partial the turns under way and those heard before the feed's queue drains" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a"))
+      # Reported on an event queued before the missed ones: "b" may have lost them.
+      state = state |> observe(started("b", %{"dropped" => 3})) |> observe(started("c"))
+      assert state.turns["a"].partial and state.turns["b"].partial and state.turns["c"].partial
+
+      queued = HalC2.Plugins.Feed.max_queue() - 2
+      state = Enum.reduce(1..queued, state, fn _, s -> observe(s, %{"type" => "noop"}) end)
+      state = observe(state, started("d"))
+      refute state.turns["d"].partial
+    end
+  end
+
   describe "the envelope" do
     test "learns only from turns that ended green, and only past enough of them" do
       tracker = Envelope.new()
