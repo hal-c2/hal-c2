@@ -34,6 +34,7 @@ struct Instance {
   bool available = false;
   bool requiresNewThreadForModelChange = false;
   bool showInteractionModeToggle = true;
+  bool canSetUp = false;  // setup.canInstall or setup.canAuthenticate
   QStringList runtimeModes;  // supportedRuntimeModes; empty: all
   QJsonArray models;
   QJsonArray slashCommands;
@@ -50,6 +51,11 @@ const Instance* find(const QList<Instance>& list, const QString& instanceId);
 QJsonObject findModel(const Instance& instance, const QString& model);
 // The model a thread starts on with this instance: its default one.
 QString defaultModel(const Instance& instance);
+// The slug on this instance that `model` (a slug, name or alias from another
+// account of the same driver) names, for falling back to this account: an
+// exact slug wins, then an alias or name of a built-in model. A custom model
+// is only ever itself, never the built-in it is named like. Empty when none.
+QString fallbackModelSlug(const Instance& instance, const QString& model);
 
 // This device's model settings: `favorites` and `providerModelPreferences`.
 struct ModelPrefs {
@@ -91,6 +97,15 @@ std::optional<QJsonArray> applyOption(const QJsonArray& descriptors, const QStri
 
 // `composer.runtimeModes`: [{value, label, description}].
 QVariantList runtimeModes(const Instance* instance);
+// What the composer shows as the permissions: `saved` when this instance
+// offers it, else Supervised (or the first mode it offers). The saved value
+// itself stays until the user chooses.
+QString shownRuntimeMode(const Instance* instance, const QString& saved);
+// What stands where the model would be when no provider can run a turn, as
+// a key the QML words and translates: "open-provider-settings" when the MC
+// says one can be set up, else "no-provider-available". Empty when some
+// provider is ready, or none has been reported yet.
+QString noProviderStandIn(const QList<Instance>& list);
 
 // `composer.enterIntents`: {singleLine, multiline}, each held-modifier set
 // ("ctrl+meta+alt+shift" order, "" for none) to what Enter sends.
