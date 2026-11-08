@@ -16,8 +16,12 @@ defmodule HalC2.OpenShell.Install do
   says why.
 
   Updating or rotating refuses while this MC's sandboxes exist, since their
-  gateway is about to stop (`drain: true` deletes them first). Reuse and
-  uninstall never touch a sandbox this MC did not label.
+  gateway is about to stop (`drain: true` deletes them first), and while they
+  cannot be counted on a gateway that still listens (`force: true` goes ahead).
+  A gateway run as a service must stop before anything of it is copied or
+  replaced. One the dev run started is that shell's process, which the MC cannot
+  stop: nothing changes under it while it listens. Reuse and uninstall never
+  touch a sandbox this MC did not label.
   """
 
   require Logger
@@ -41,7 +45,7 @@ defmodule HalC2.OpenShell.Install do
   @doc """
   Installs the pinned gateway, or updates or repairs the one installed, and
   returns `{:ok, state}` (`HalC2.OpenShell.state/0`) or `{:error, message}`.
-  Options: `:archive` (a local copy of the pinned archive), `:drain`, and
+  Options: `:archive` (a local copy of the pinned archive), `:drain`, `:force`, and
   `service: false`, which stages everything but leaves starting the gateway to
   `foreground_command/0` (the dev run, `mise run openshell`).
   """
@@ -53,6 +57,7 @@ defmodule HalC2.OpenShell.Install do
     mode = if Keyword.get(opts, :service, true), do: "managed", else: "foreground"
 
     with :ok <- not_external(previous),
+         :ok <- foreground_stopped(previous),
          {:ok, platform} <- platform(),
          {:ok, release} <- release(platform.target, opts) do
       staging(fn staging ->
@@ -81,7 +86,8 @@ defmodule HalC2.OpenShell.Install do
 
   @doc """
   Issues new certificates and restarts the gateway on them, which closes every
-  connection made with the old ones. Option: `:drain`.
+  connection made with the old ones. A dev run's gateway must be stopped first,
+  and uses them once started again. Options: `:drain`, `:force`.
   """
   def rotate(opts \\ []) do
     case OpenShell.state() do
@@ -89,7 +95,8 @@ defmodule HalC2.OpenShell.Install do
         staging(fn staging ->
           pki = Path.join(staging, "pki")
 
-          with :ok <- issue(state["version"], pki),
+          with :ok <- foreground_stopped(state),
+               :ok <- issue(state["version"], pki),
                :ok <- drained(state, opts) do
             switch(state, state, opts, fn -> replace_dir(pki, OpenShell.pki_dir()) end)
           end
@@ -110,36 +117,70 @@ defmodule HalC2.OpenShell.Install do
   # certificate the local user named on the command line.
   # sobelow_skip ["Traversal.FileModule"]
   defp switch(previous, state, opts, prepare) do
-    backup = previous && previous["mode"] in ["managed", "foreground"] && backup(previous)
+    with {:ok, backup} <- stop_and_backup(previous) do
+      result =
+        with :ok <- prepare.(),
+             :ok <- File.chmod(OpenShell.config_path(), 0o600),
+             :ok <- start(state, opts) do
+          :ok
+        end
 
-    result =
-      with :ok <- prepare.(),
-           :ok <- File.chmod(OpenShell.config_path(), 0o600),
-           :ok <- start(state, opts) do
-        :ok
+      # A gateway that no longer runs as a service must not start again at login.
+      result =
+        if result == :ok and match?(%{"mode" => "managed"}, previous) and
+             state["mode"] != "managed",
+           do: Service.uninstall(),
+           else: result
+
+      case result do
+        :ok ->
+          OpenShell.put_state(state)
+          prune(state)
+          {:ok, state}
+
+        {:error, reason} ->
+          {:error, rollback(previous, state, backup, opts, message(reason))}
       end
-
-    # A gateway that no longer runs as a service must not start again at login.
-    result =
-      if result == :ok and match?(%{"mode" => "managed"}, previous) and state["mode"] != "managed",
-        do: Service.uninstall(),
-        else: result
-
-    case result do
-      :ok ->
-        OpenShell.put_state(state)
-        prune(state)
-        {:ok, state}
-
-      {:error, reason} ->
-        {:error, rollback(previous, state, backup, opts, message(reason))}
     end
   end
 
+  # Stops `previous` and copies what it runs on (nil: nothing of it to keep). Its
+  # database is only copied, or written over, once it has stopped.
+  defp stop_and_backup(%{"mode" => "managed"} = previous) do
+    case Service.stop() do
+      :ok ->
+        {:ok, backup(previous)}
+
+      {:error, reason} ->
+        {:error,
+         "[gateway-stop-failed] The gateway did not stop, so nothing was changed: #{message(reason)}"}
+    end
+  end
+
+  defp stop_and_backup(%{"mode" => "foreground"} = previous) do
+    with :ok <- foreground_stopped(previous), do: {:ok, backup(previous)}
+  end
+
+  defp stop_and_backup(_previous), do: {:ok, nil}
+
   # Undoes a `switch/4` to `state` that failed, back to `previous` and its backup.
+  # A new gateway that will not stop keeps its files: nothing goes back under it.
   defp rollback(previous, state, backup, opts, reason) do
+    stopped = if state["mode"] == "managed", do: Service.stop(), else: :ok
+
+    case stopped do
+      :ok ->
+        put_back(previous, state, backup, opts, reason)
+
+      {:error, stop} ->
+        kept = if backup, do: " The previous gateway's backup is in #{backup}.", else: ""
+
+        "#{reason} Stopping the new gateway failed too, so nothing was put back: #{message(stop)}.#{kept}"
+    end
+  end
+
+  defp put_back(previous, state, backup, opts, reason) do
     managed = state["mode"] == "managed"
-    if managed, do: Service.stop()
 
     if backup do
       restore(backup)
@@ -161,8 +202,11 @@ defmodule HalC2.OpenShell.Install do
   end
 
   # An update or rotation of a gateway this MC runs is not rolled back for who else
-  # uses it; `status` and `check` report that.
-  defp smoke_fun(opts), do: Keyword.get(opts, :smoke, &smoke(&1, shared: false))
+  # uses it; `status` and `check` report that. The gateway started is checked for
+  # the version it was started at: the one going back after a failed update is the
+  # previous one.
+  defp smoke_fun(opts),
+    do: Keyword.get(opts, :smoke, &smoke(&1, shared: false, version: &1["version"]))
 
   # A foreground gateway is started, and checked, by whoever runs it.
   defp start(%{"mode" => "foreground"}, _opts), do: :ok
@@ -462,7 +506,6 @@ defmodule HalC2.OpenShell.Install do
   # certificate the local user named on the command line.
   # sobelow_skip ["Traversal.FileModule"]
   defp backup(state) do
-    if state["mode"] == "managed", do: Service.stop()
     dir = OpenShell.backup_dir(state["version"])
     File.rm_rf!(dir)
     HalC2.Paths.mkdir_private!(dir)
@@ -514,34 +557,74 @@ defmodule HalC2.OpenShell.Install do
 
   # --- draining ---------------------------------------------------------------------
 
-  # A running gateway with this MC's sandboxes on it is not stopped unless they go
-  # first. A gateway that does not answer has none to save.
-  defp drained(%{"mode" => mode}, opts) when mode in ["managed", "foreground"] do
-    with {:ok, conn} <- Client.connect_unchecked() do
-      try do
-        case Client.list_sandboxes(conn, %{}, timeout: 5_000) do
-          {:ok, []} ->
-            :ok
+  # A gateway with this MC's sandboxes on it is not stopped unless they go first.
+  # One with nothing on its port runs none. One that listens but whose sandboxes
+  # cannot be listed is taken to have some, unless the user says `force: true`.
+  defp drained(%{"mode" => mode} = previous, opts) when mode in ["managed", "foreground"] do
+    if listening?(previous) do
+      case Client.connect_unchecked() do
+        {:ok, conn} ->
+          try do
+            conn |> Client.list_sandboxes(%{}, timeout: 5_000) |> drain(conn, opts)
+          after
+            Client.disconnect(conn)
+          end
 
-          {:ok, sandboxes} ->
-            if opts[:drain],
-              do: delete_all(conn, sandboxes),
-              else:
-                {:error,
-                 "[sandboxes-running] #{length(sandboxes)} of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."}
-
-          {:error, _} ->
-            :ok
-        end
-      after
-        Client.disconnect(conn)
+        error ->
+          drain(error, nil, opts)
       end
     else
-      _ -> :ok
+      :ok
     end
   end
 
   defp drained(_previous, _opts), do: :ok
+
+  defp drain({:ok, []}, _conn, _opts), do: :ok
+
+  defp drain({:ok, sandboxes}, conn, opts) do
+    if opts[:drain],
+      do: delete_all(conn, sandboxes),
+      else:
+        {:error,
+         "[sandboxes-running] #{length(sandboxes)} of this MC's sandboxes are on the gateway. Let their reviews finish, or pass --drain to delete them."}
+  end
+
+  defp drain({:error, reason}, _conn, opts) do
+    if opts[:force],
+      do: :ok,
+      else:
+        {:error,
+         "[sandboxes-unknown] The gateway is listening, but this MC's sandboxes on it could not be listed (#{message(reason)}). Stopping it would end any that run. Try again once it answers, or pass --force to go ahead."}
+  end
+
+  # The dev run's gateway is that shell's own process, which the MC cannot stop or
+  # restart; nothing changes under it while it listens.
+  defp foreground_stopped(%{"mode" => "foreground"} = state) do
+    if listening?(state),
+      do:
+        {:error,
+         "[gateway-running] The dev gateway is still running on port #{state["port"]}. Stop it (end `mise run openshell`), run this again, then start it again."},
+      else: :ok
+  end
+
+  defp foreground_stopped(_state), do: :ok
+
+  # Whether anything takes connections on the port of a gateway this MC runs. Only
+  # a refusal says nothing does.
+  defp listening?(%{"port" => port}) do
+    case :gen_tcp.connect({127, 0, 0, 1}, port, [], 2_000) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        true
+
+      {:error, :econnrefused} ->
+        false
+
+      {:error, _} ->
+        true
+    end
+  end
 
   defp delete_all(conn, sandboxes) do
     Enum.reduce_while(sandboxes, :ok, fn %{name: name}, :ok ->
@@ -561,7 +644,9 @@ defmodule HalC2.OpenShell.Install do
   Checks the gateway `state` names is the one this MC can trust, and returns `:ok`
   or `{:error, message}`:
 
-    * it answers over mTLS, healthy, at the pinned version, with the expected driver
+    * it answers over mTLS with the credentials `state` names, healthy, at the
+      pinned version (`version:` names another, as for the previous gateway a
+      failed update puts back), with the expected driver
     * it takes the MC's certificate for a user that is not an operator
     * it refuses a caller with no certificate, and refuses plaintext
     * the `hal-c2` workspace exists
@@ -572,11 +657,13 @@ defmodule HalC2.OpenShell.Install do
   """
   def smoke(state, opts \\ []) do
     wait = if state["mode"] == "managed", do: @start_timeout, else: 0
+    credentials = OpenShell.credentials(state)
+    version = Keyword.get(opts, :version, Manifest.version())
 
-    with {:ok, conn} <- connect_when_up(state["endpoint"], wait) do
+    with {:ok, conn} <- connect_when_up(state["endpoint"], credentials, wait) do
       try do
-        with :ok <- check_gateway(conn, state),
-             :ok <- check_refusals(state["endpoint"]),
+        with :ok <- check_gateway(conn, state, version),
+             :ok <- check_refusals(state["endpoint"], credentials[:ca]),
              :ok <- Client.ensure_workspace(conn) |> labelled("workspace"),
              :ok <- if(Keyword.get(opts, :shared, true), do: check_not_shared(conn), else: :ok),
              :ok <-
@@ -594,12 +681,12 @@ defmodule HalC2.OpenShell.Install do
 
   # A gateway that was just started takes a moment to listen; it gets until
   # `deadline` to answer its health check.
-  defp connect_when_up(endpoint, wait),
-    do: connect_when_up(endpoint, System.monotonic_time(:millisecond) + wait, nil)
+  defp connect_when_up(endpoint, credentials, wait),
+    do: await_up(endpoint, credentials, System.monotonic_time(:millisecond) + wait)
 
-  defp connect_when_up(endpoint, deadline, _last) do
+  defp await_up(endpoint, credentials, deadline) do
     result =
-      with {:ok, conn} <- Client.connect(endpoint, OpenShell.credentials()) do
+      with {:ok, conn} <- Client.connect(endpoint, credentials) do
         case Client.health(conn, timeout: 3_000) do
           {:ok, _} ->
             {:ok, conn}
@@ -617,7 +704,7 @@ defmodule HalC2.OpenShell.Install do
       error ->
         if System.monotonic_time(:millisecond) < deadline do
           Process.sleep(500)
-          connect_when_up(endpoint, deadline, error)
+          await_up(endpoint, credentials, deadline)
         else
           {:error,
            "[gateway-unreachable] The gateway did not answer: #{message(error)}. Its log: #{OpenShell.log_path()}"}
@@ -625,7 +712,7 @@ defmodule HalC2.OpenShell.Install do
     end
   end
 
-  defp check_gateway(conn, state) do
+  defp check_gateway(conn, state, version) do
     with {:ok, health} <- Client.health(conn) |> labelled("health"),
          {:ok, info} <- Client.gateway_info(conn) |> labelled("gateway info"),
          {:ok, user} <- Client.current_user(conn) |> labelled("identity") do
@@ -633,9 +720,9 @@ defmodule HalC2.OpenShell.Install do
         health.status != :healthy ->
           {:error, "[gateway-unhealthy] The gateway reports #{health.status}."}
 
-        health.version != Manifest.version() ->
+        health.version != version ->
           {:error,
-           "[version-mismatch] The gateway is #{health.version}; this MC needs #{Manifest.version()}."}
+           "[version-mismatch] The gateway is #{health.version}; this MC needs #{version}."}
 
         state["driver"] != nil and state["driver"] not in info.drivers ->
           {:error,
@@ -671,9 +758,9 @@ defmodule HalC2.OpenShell.Install do
       "(`hal-c2-service openshell install`); the other environment's sandboxes are left alone."
   end
 
-  defp check_refusals(endpoint) do
+  defp check_refusals(endpoint, ca) do
     anonymous =
-      case Client.connect(endpoint, ca: OpenShell.credentials()[:ca], anonymous: true) do
+      case Client.connect(endpoint, ca: ca, anonymous: true) do
         {:ok, conn} ->
           try do
             Client.current_user(conn, timeout: 5_000)
@@ -761,7 +848,9 @@ defmodule HalC2.OpenShell.Install do
     try do
       with {:ok, _} <- Client.create_sandbox(conn, name) |> labelled("creating a sandbox"),
            :ok <- await_ready(conn, name, System.monotonic_time(:millisecond) + @sandbox_timeout),
-           {:ok, exec} <- Client.exec(conn, name, ["bash", "-c", isolation_probe(state)]) do
+           {:ok, exec} <-
+             Client.exec(conn, name, isolation_probe(state))
+             |> labelled("isolation check") do
         case collect(exec, [], 60_000) do
           {:exit, 0, _out} ->
             :ok
@@ -779,9 +868,35 @@ defmodule HalC2.OpenShell.Install do
     end
   end
 
-  @doc false
+  # $1 is the port; the sockets follow, then `--` and the hosts.
+  @isolation_script """
+  found=0
+  port=$1
+  shift
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+    if [ -e "$1" ]; then echo "socket $1"; found=1; fi
+    shift
+  done
+  [ "$#" -gt 0 ] && shift
+  for h in "$@"; do
+    if timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$h" "$port" 2>/dev/null; then
+      echo "gateway via $h"
+      found=1
+    fi
+  done
+  exit $found
+  """
+
+  @doc """
+  The command the isolation check runs in its sandbox: one fixed script, with the
+  gateway's port, the runtime sockets and the names the gateway may answer on as
+  its arguments, so no value from the state is read as shell. The names are the
+  host's own and its container aliases (`host.openshell.internal` is OpenShell's),
+  and the endpoint's host, which may be a name or address only a sandbox resolves.
+  """
   def isolation_probe(state) do
-    port = state["port"] || Client.parse_endpoint(state["endpoint"]) |> elem(2)
+    {:ok, host, endpoint_port} = Client.parse_endpoint(state["endpoint"])
+    port = state["port"] || endpoint_port
 
     sockets =
       Enum.uniq(
@@ -796,16 +911,17 @@ defmodule HalC2.OpenShell.Install do
         )
       )
 
-    """
-    found=0
-    for s in #{Enum.map_join(sockets, " ", &shell_quote/1)}; do
-      if [ -e "$s" ]; then echo "socket $s"; found=1; fi
-    done
-    for h in 127.0.0.1 host.containers.internal host.docker.internal; do
-      if timeout 3 bash -c "exec 3<>/dev/tcp/$h/#{port}" 2>/dev/null; then echo "gateway via $h"; found=1; fi
-    done
-    exit $found
-    """
+    hosts =
+      Enum.uniq([
+        "127.0.0.1",
+        "host.containers.internal",
+        "host.docker.internal",
+        "host.openshell.internal",
+        host
+      ])
+
+    ["bash", "-c", @isolation_script, "isolation-probe", to_string(port)] ++
+      sockets ++ ["--"] ++ hosts
   end
 
   defp shell_quote(value), do: "'" <> String.replace(value, "'", "'\\''") <> "'"
@@ -870,59 +986,67 @@ defmodule HalC2.OpenShell.Install do
     with :ok <- not_managed(OpenShell.state()),
          {:ok, _host, _port} <- Client.parse_endpoint(endpoint) |> endpoint_error() do
       previous = OpenShell.state()
-      state = %{"mode" => "external", "endpoint" => endpoint, "version" => Manifest.version()}
-      tmp = OpenShell.pki_dir() <> ".new"
-      kept = OpenShell.pki_dir() <> ".previous"
-      File.rm_rf!(tmp)
-      File.rm_rf!(kept)
-      HalC2.Paths.mkdir_private!(Path.join(tmp, "client"))
+      name = "pki-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 
-      copied =
-        Enum.reduce_while(
-          [{:ca, "ca.crt"}, {:cert, "client/tls.crt"}, {:key, "client/tls.key"}],
-          :ok,
-          fn {key, name}, :ok ->
-            to = Path.join(tmp, name)
+      state = %{
+        "mode" => "external",
+        "endpoint" => endpoint,
+        "version" => Manifest.version(),
+        "pki" => name
+      }
 
-            with path when is_binary(path) <- credentials[key],
-                 :ok <- File.cp(path, to),
-                 :ok <- File.chmod(to, if(key == :key, do: 0o600, else: 0o644)) do
-              {:cont, :ok}
-            else
-              _ -> {:halt, {:error, "Cannot read the #{key} file #{inspect(credentials[key])}."}}
-            end
-          end
-        )
+      dir = OpenShell.credentials_dir(state)
+      HalC2.Paths.mkdir_private!(Path.join(dir, "client"))
 
-      with :ok <- copied,
-           _ <- if(previous, do: File.rename(OpenShell.pki_dir(), kept)),
-           :ok <- replace_dir(tmp, OpenShell.pki_dir()),
-           :ok <- OpenShell.put_state(state),
+      # The gateway is checked with the credentials where they were staged. Only
+      # then does one write of the state, naming both, reach `Client.connect/0`.
+      with :ok <- copy_credentials(credentials, dir),
            :ok <- smoke(state) do
-        File.rm_rf!(kept)
+        OpenShell.put_state(state)
+        prune_credentials([state, previous])
         {:ok, state}
       else
         {:error, reason} ->
-          File.rm_rf!(tmp)
-
-          cond do
-            # The new credentials were put in place; the previous ones go back.
-            File.exists?(kept) ->
-              File.rm_rf!(OpenShell.pki_dir())
-              File.rename(kept, OpenShell.pki_dir())
-              OpenShell.put_state(previous)
-
-            previous == nil ->
-              File.rm_rf!(OpenShell.pki_dir())
-              OpenShell.delete_state()
-
-            true ->
-              :ok
-          end
-
+          File.rm_rf!(dir)
           {:error, message(reason)}
       end
     end
+  end
+
+  # Every path is below this MC's own OpenShell directory, or a certificate the
+  # local user named on the command line.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp copy_credentials(credentials, dir) do
+    Enum.reduce_while(
+      [{:ca, "ca.crt"}, {:cert, "client/tls.crt"}, {:key, "client/tls.key"}],
+      :ok,
+      fn {key, name}, :ok ->
+        to = Path.join(dir, name)
+
+        with path when is_binary(path) <- credentials[key],
+             :ok <- File.cp(path, to),
+             :ok <- File.chmod(to, if(key == :key, do: 0o600, else: 0o644)) do
+          {:cont, :ok}
+        else
+          _ -> {:halt, {:error, "Cannot read the #{key} file #{inspect(credentials[key])}."}}
+        end
+      end
+    )
+  end
+
+  # Removes the credentials of a user's gateway but those `keep` (states, or nil)
+  # name. The ones just replaced stay until the next reuse, for a connection that
+  # read the state before it changed.
+  # Only credential directories in the MC's own OpenShell directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp prune_credentials(keep) do
+    keep = for state <- keep, state != nil, do: OpenShell.credentials_dir(state)
+
+    for dir <- [OpenShell.pki_dir() | Path.wildcard(Path.join(OpenShell.root(), "pki-*"))],
+        dir not in keep,
+        do: File.rm_rf!(dir)
+
+    :ok
   end
 
   defp not_managed(%{"mode" => mode}) when mode in ["managed", "foreground"],
@@ -1028,7 +1152,7 @@ defmodule HalC2.OpenShell.Install do
   @doc """
   Removes the gateway this MC runs (its unit, binary, certificates, configuration
   and database), or forgets the one it reused. Refuses while this MC's sandboxes
-  exist on it, unless `drain: true`.
+  exist on it, unless `drain: true` (`force: true` when they cannot be listed).
   """
   def uninstall(opts \\ []) do
     case OpenShell.state() do
@@ -1036,13 +1160,14 @@ defmodule HalC2.OpenShell.Install do
         {:error, not_installed()}
 
       state ->
-        with :ok <- drained(state, opts),
+        with :ok <- foreground_stopped(state),
+             :ok <- drained(state, opts),
              :ok <- if(state["mode"] == "managed", do: Service.uninstall(), else: :ok) do
           if state["mode"] != "external" do
             File.rm_rf!(OpenShell.root())
             File.rm_rf!(Path.dirname(OpenShell.db_path()))
           else
-            File.rm_rf!(OpenShell.pki_dir())
+            prune_credentials([])
             OpenShell.delete_state()
           end
 

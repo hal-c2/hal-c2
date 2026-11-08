@@ -2,13 +2,14 @@ defmodule HalC2.OpenShell.Command do
   @moduledoc """
   `hal-c2-service openshell ...` and `mix hal_c2.openshell ...`:
 
-      install [--archive FILE] [--drain]   install, update or repair the pinned gateway
+      install [--archive FILE] [--drain] [--force]
+                                           install, update or repair the pinned gateway
       status                               what is installed and what to fix
       check                                run the install's smoke test again
-      rotate [--drain]                     issue new certificates and restart on them
+      rotate [--drain] [--force]           issue new certificates and restart on them
       reuse URL --ca FILE --cert FILE --key FILE
                                            use a gateway you run yourself
-      uninstall [--drain]                  remove the gateway (or forget a reused one)
+      uninstall [--drain] [--force]        remove the gateway (or forget a reused one)
       reap                                 delete review sandboxes past their time (the
                                            reaper's timer runs it every minute)
       run --script FILE [--archive FILE]   (dev) stage it, and write the line that runs
@@ -23,11 +24,11 @@ defmodule HalC2.OpenShell.Command do
   alias HalC2.OpenShell.Platform
 
   @usage """
-  usage: hal-c2-service openshell install [--archive FILE] [--drain]
+  usage: hal-c2-service openshell install [--archive FILE] [--drain] [--force]
          hal-c2-service openshell status | check
-         hal-c2-service openshell rotate [--drain]
+         hal-c2-service openshell rotate [--drain] [--force]
          hal-c2-service openshell reuse https://HOST:PORT --ca FILE --cert FILE --key FILE
-         hal-c2-service openshell uninstall [--drain]
+         hal-c2-service openshell uninstall [--drain] [--force]
          hal-c2-service openshell reap\
   """
 
@@ -53,6 +54,7 @@ defmodule HalC2.OpenShell.Command do
            strict: [
              archive: :string,
              drain: :boolean,
+             force: :boolean,
              ca: :string,
              cert: :string,
              key: :string,
@@ -60,7 +62,7 @@ defmodule HalC2.OpenShell.Command do
            ]
          ) do
       {opts, ["install"], []} ->
-        with {:ok, state} <- Install.install(Keyword.take(opts, [:archive, :drain])) do
+        with {:ok, state} <- Install.install(Keyword.take(opts, [:archive, :drain, :force])) do
           verb =
             if state["previous"], do: "updated from #{state["previous"]} to", else: "installed,"
 
@@ -73,7 +75,7 @@ defmodule HalC2.OpenShell.Command do
       {opts, ["run"], []} ->
         with script when is_binary(script) <- opts[:script] || {:error, @usage},
              {:ok, _} <-
-               Install.install([service: false] ++ Keyword.take(opts, [:archive, :drain])),
+               Install.install([service: false] ++ Keyword.take(opts, [:archive, :drain, :force])),
              {:ok, line} <- Install.foreground_command(),
              :ok <- File.write(script, line <> "\n") do
           {:ok, "OpenShell staged; starting it in the foreground."}
@@ -89,9 +91,14 @@ defmodule HalC2.OpenShell.Command do
         end
 
       {opts, ["rotate"], []} ->
-        with {:ok, _} <- Install.rotate(Keyword.take(opts, [:drain])),
-             do:
-               {:ok, "OpenShell's certificates were replaced, and the gateway restarted on them."}
+        with {:ok, state} <- Install.rotate(Keyword.take(opts, [:drain, :force])) do
+          if state["mode"] == "foreground",
+            do:
+              {:ok,
+               "OpenShell's certificates were replaced. Start the dev gateway again (`mise run openshell`) to use them."},
+            else:
+              {:ok, "OpenShell's certificates were replaced, and the gateway restarted on them."}
+        end
 
       {opts, ["reuse", endpoint], []} ->
         with {:ok, _} <- Install.reuse(endpoint, Keyword.take(opts, [:ca, :cert, :key])),
@@ -101,7 +108,7 @@ defmodule HalC2.OpenShell.Command do
         reap()
 
       {opts, ["uninstall"], []} ->
-        with :ok <- Install.uninstall(Keyword.take(opts, [:drain])),
+        with :ok <- Install.uninstall(Keyword.take(opts, [:drain, :force])),
              do: {:ok, "OpenShell removed."}
 
       _ ->

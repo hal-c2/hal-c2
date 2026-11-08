@@ -46,6 +46,14 @@ previous gateway, its certificates and its data are put back.
 
 An update, a rotation or an uninstall waits while this MC has sandboxes running.
 Add `--drain` to delete them first. Only the sandboxes this MC created are touched.
+If the gateway is running but cannot say which sandboxes it holds
+(`sandboxes-unknown`), they wait too; `--force` goes ahead anyway and ends any that
+run. If the gateway's service does not stop (`gateway-stop-failed`), nothing is
+changed.
+
+A gateway started with `mise run openshell` must be stopped before you update,
+rotate or uninstall it (`gateway-running`). After a rotation, start it again to use
+the new certificates.
 
 ### A machine without internet access
 

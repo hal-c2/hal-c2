@@ -38,10 +38,11 @@ defmodule HalC2.OpenShell.Client do
   alias HalC2.OpenShell.Proto.Openshell.V1, as: Pb
   alias Pb.OpenShell.Stub
 
-  @enforce_keys [:channel]
-  defstruct [:channel]
+  # `dial` opens another connection to the same gateway, for an exec stream.
+  @enforce_keys [:channel, :dial]
+  defstruct [:channel, :dial]
 
-  @type t :: %__MODULE__{channel: GRPC.Channel.t()}
+  @type t :: %__MODULE__{channel: GRPC.Channel.t(), dial: {String.t(), keyword()}}
   @timeout 10_000
   # A label value the gateway accepts: what Kubernetes allows.
   @label_key ~r/\A([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*\/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?\z/
@@ -56,18 +57,22 @@ defmodule HalC2.OpenShell.Client do
   """
   def connect do
     with {:ok, conn} <- connect_unchecked() do
-      case other_environments(conn) do
-        {:ok, []} ->
+      case alone(conn) do
+        :ok ->
           {:ok, conn}
-
-        {:ok, others} ->
-          disconnect(conn)
-          {:error, {:shared_gateway, others}}
 
         error ->
           disconnect(conn)
           error
       end
+    end
+  end
+
+  defp alone(conn, opts \\ []) do
+    case other_environments(conn, opts) do
+      {:ok, []} -> :ok
+      {:ok, others} -> {:error, {:shared_gateway, others}}
+      error -> error
     end
   end
 
@@ -84,15 +89,18 @@ defmodule HalC2.OpenShell.Client do
   def connect(endpoint, credentials) do
     with {:ok, host, port} <- parse_endpoint(endpoint),
          {:ok, ssl} <- ssl_options(host, credentials) do
-      target = "#{address_family(host)}:#{host}:#{port}"
+      dial =
+        {"#{address_family(host)}:#{host}:#{port}",
+         [cred: GRPC.Credential.new(ssl: ssl), adapter: GRPC.Client.Adapters.Mint]}
 
-      case GRPC.Stub.connect(target,
-             cred: GRPC.Credential.new(ssl: ssl),
-             adapter: GRPC.Client.Adapters.Mint
-           ) do
-        {:ok, channel} -> {:ok, %__MODULE__{channel: channel}}
-        {:error, reason} -> {:error, {:connect, reason}}
-      end
+      with {:ok, channel} <- dial(dial), do: {:ok, %__MODULE__{channel: channel, dial: dial}}
+    end
+  end
+
+  defp dial({target, opts}) do
+    case GRPC.Stub.connect(target, opts) do
+      {:ok, channel} -> {:ok, channel}
+      {:error, reason} -> {:error, {:connect, reason}}
     end
   end
 
@@ -178,7 +186,7 @@ defmodule HalC2.OpenShell.Client do
 
   defp identity(_anonymous), do: {:ok, []}
 
-  @doc "Closes the connection, and every exec stream on it with it."
+  @doc "Closes the connection. An exec stream has its own, and ends on its own terms."
   def disconnect(%__MODULE__{channel: channel}) do
     GRPC.Stub.disconnect(channel)
     :ok
@@ -247,9 +255,14 @@ defmodule HalC2.OpenShell.Client do
     * `:environment` - a map of variables
     * `:command` - the main process, a list (the image's otherwise)
     * `:providers` - provider names to attach
+
+  `{:error, {:shared_gateway, environments}}`, and nothing made, once the gateway
+  holds another HAL-C2 environment's sandboxes, even on a connection made before
+  they came.
   """
   def create_sandbox(%__MODULE__{} = conn, name, opts \\ []) do
-    with {:ok, labels} <- owned_labels(Keyword.get(opts, :labels, %{})) do
+    with {:ok, labels} <- owned_labels(Keyword.get(opts, :labels, %{})),
+         :ok <- alone(conn, opts) do
       template = %Pb.SandboxTemplate{
         image: Keyword.get(opts, :image, ""),
         resources: resources(Keyword.get(opts, :limits))
@@ -349,12 +362,17 @@ defmodule HalC2.OpenShell.Client do
   end
 
   @doc """
-  Deletes sandbox `name` if this MC owns it. `:ok` once the gateway took it, or when
-  it is already gone; `{:error, :not_owned}` for one this MC did not create.
+  Deletes sandbox `name` if this MC owns it, and returns once it is gone: `:ok`
+  when the gateway deleted it, when it was already gone, or, for a deletion the
+  gateway only accepted, once GetSandbox no longer finds it (or finds another
+  sandbox under its name). Waiting gives up after `:delete_timeout` ms (#{120_000})
+  with `{:error, {:delete_pending, id}}`. `{:error, :not_owned}` for a sandbox this
+  MC did not create; `{:error, {:deletion_outcome, outcome}}` for an outcome that
+  does not say it was deleted.
   """
   def delete_sandbox(%__MODULE__{} = conn, name, opts \\ []) do
     case get_sandbox(conn, name, opts) do
-      {:ok, _} ->
+      {:ok, %{id: id}} ->
         request = %Pb.DeleteSandboxRequest{
           workspace_scope: scope(),
           name: name,
@@ -362,8 +380,9 @@ defmodule HalC2.OpenShell.Client do
           request_id: request_id()
         }
 
-        with {:ok, %Pb.DeleteSandboxResponse{}} <- call(conn, :delete_sandbox, request, opts),
-             do: :ok
+        with {:ok, %Pb.DeleteSandboxResponse{} = response} <-
+               call(conn, :delete_sandbox, request, opts),
+             do: deleted(conn, name, id, response, opts)
 
       {:error, %{status: :not_found}} ->
         :ok
@@ -372,6 +391,48 @@ defmodule HalC2.OpenShell.Client do
         error
     end
   end
+
+  defp deleted(_conn, _name, _id, %{outcome: outcome}, _opts)
+       when outcome in [:DELETION_OUTCOME_COMPLETED, :DELETION_OUTCOME_ALREADY_ABSENT],
+       do: :ok
+
+  # The gateway's record still exists: watch for it to go, as OpenShell's own
+  # `wait_deleted` does (250 ms, doubling to 2 s).
+  defp deleted(conn, name, id, %{outcome: :DELETION_OUTCOME_ACCEPTED} = response, opts) do
+    id = if response.sandbox_id in [nil, ""], do: id, else: response.sandbox_id
+    deadline = now() + Keyword.get(opts, :delete_timeout, 120_000)
+    await_deleted(conn, name, id, deadline, 250, opts)
+  end
+
+  defp deleted(_conn, _name, _id, %{outcome: outcome}, _opts),
+    do: {:error, {:deletion_outcome, outcome}}
+
+  defp await_deleted(conn, name, id, deadline, delay, opts) do
+    request = %Pb.GetSandboxRequest{workspace_scope: scope(), name: name}
+
+    case call(conn, :get_sandbox, request, opts) do
+      {:error, %{status: :not_found}} ->
+        :ok
+
+      {:ok, %Pb.SandboxResponse{sandbox: %Pb.Sandbox{metadata: %{id: other}}}} when other != id ->
+        :ok
+
+      {:ok, _} ->
+        case deadline - now() do
+          left when left <= 0 ->
+            {:error, {:delete_pending, id}}
+
+          left ->
+            Process.sleep(min(delay, left))
+            await_deleted(conn, name, id, deadline, min(delay * 2, 2_000), opts)
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp now, do: System.monotonic_time(:millisecond)
 
   @doc """
   Creates provider `name` of `type` (`"claude"`, `"codex"`, ...) holding
@@ -471,8 +532,16 @@ defmodule HalC2.OpenShell.Client do
   and returns its `HalC2.OpenShell.Exec`. Options: `:workdir`, `:environment`,
   `:tty` (false), `:timeout_seconds` (none). See `HalC2.OpenShell.Exec` for the
   messages it sends and how to write to it.
+
+  The sandbox must be this MC's (`get_sandbox/3`): one it does not own, or that
+  does not exist, is `{:error, :not_owned}` or the gateway's error, with no stream
+  opened. The gateway takes an exec by name, so this is a check before the call.
+
+  Each exec has a connection of its own, closed when it ends: a write still
+  waiting on a command that stopped reading is queued on its connection, and must
+  not hold up, or outlive, anything else on the gateway.
   """
-  def exec(%__MODULE__{channel: channel}, name, command, opts \\ []) do
+  def exec(%__MODULE__{dial: dial} = conn, name, command, opts \\ []) do
     start = %Pb.ExecSandboxRequest{
       workspace_scope: scope(),
       sandbox: name,
@@ -488,53 +557,110 @@ defmodule HalC2.OpenShell.Client do
       request_id: request_id()
     }
 
-    Exec.start(channel, start, Keyword.get(opts, :owner, self()))
+    with {:ok, _sandbox} <- get_sandbox(conn, name, opts),
+         {:ok, channel} <- dial(dial) do
+      case Exec.start(channel, start, Keyword.get(opts, :owner, self())) do
+        {:ok, exec} ->
+          {:ok, exec}
+
+        error ->
+          GRPC.Stub.disconnect(channel)
+          error
+      end
+    end
   end
 
   @doc """
   Unpacks the tar archive `tar` (an iodata or a file path as `{:file, path}`) into
   directory `dest` in sandbox `name`, over the same exec stream: `tar -x -C dest`
   with the archive on its stdin. `:ok` once tar exits 0.
+
+  The whole upload, writing included, has one deadline, `:upload_timeout` ms from
+  the call (600_000); past it, `{:error, :timeout}`. A file that cannot be read is
+  `{:error, {:read, reason}}`. However it returns, the command is cancelled.
   """
   def upload(%__MODULE__{} = conn, name, dest, tar, opts \\ []) do
+    deadline = now() + Keyword.get(opts, :upload_timeout, 600_000)
+
     with {:ok, exec} <-
            exec(conn, name, ["tar", "-x", "--no-same-owner", "-C", dest, "-f", "-"], opts) do
-      result =
-        with :ok <- write_tar(exec, tar), :ok <- Exec.close_stdin(exec) do
-          await_exit(exec, [], Keyword.get(opts, :upload_timeout, 600_000))
-        end
+      # The writer is its own process: a write waits on flow control for as long as
+      # the sandbox does not read, and only killing the writer ends that wait.
+      {writer, ref} =
+        spawn_monitor(fn ->
+          exit({:written, with(:ok <- write_tar(exec, tar), do: Exec.close_stdin(exec))})
+        end)
 
-      Exec.cancel(exec)
-      result
+      try do
+        await_upload(exec, ref, [], deadline)
+      after
+        Process.demonitor(ref, [:flush])
+        Process.exit(writer, :kill)
+        Exec.cancel(exec)
+        flush(exec)
+      end
+    end
+  end
+
+  # Once cancelled, the exec sends nothing more; what it already sent is the upload's.
+  defp flush(exec) do
+    receive do
+      {:openshell_exec, ^exec, _} -> flush(exec)
+    after
+      0 -> :ok
     end
   end
 
   # A local file the MC itself chose to upload.
   # sobelow_skip ["Traversal.FileModule"]
   defp write_tar(exec, {:file, path}) do
-    path
-    |> File.stream!(65_536)
-    |> Enum.reduce_while(:ok, fn chunk, :ok ->
-      case Exec.send_stdin(exec, chunk) do
-        :ok -> {:cont, :ok}
-        error -> {:halt, error}
-      end
-    end)
+    case File.open(path, [:read, :binary, :raw]) do
+      {:ok, file} ->
+        try do
+          write_file(exec, file)
+        after
+          File.close(file)
+        end
+
+      {:error, reason} ->
+        {:error, {:read, reason}}
+    end
   end
 
   defp write_tar(exec, iodata), do: Exec.send_stdin(exec, iodata)
 
-  defp await_exit(exec, stderr, timeout) do
+  defp write_file(exec, file) do
+    case IO.binread(file, 65_536) do
+      :eof ->
+        :ok
+
+      {:error, reason} ->
+        {:error, {:read, reason}}
+
+      chunk ->
+        with :ok <- Exec.send_stdin(exec, chunk), do: write_file(exec, file)
+    end
+  end
+
+  # Until tar exits or the deadline passes. A write the stream refused is not the
+  # answer: how the command ended says why, so that is still awaited.
+  defp await_upload(exec, writer, stderr, deadline) do
     receive do
+      {:DOWN, ^writer, :process, _, {:written, {:error, {:read, _}} = error}} ->
+        error
+
+      {:DOWN, ^writer, :process, _, {:written, _}} ->
+        await_upload(exec, nil, stderr, deadline)
+
+      {:DOWN, ^writer, :process, _, reason} ->
+        {:error, {:writer, reason}}
+
       {:openshell_exec, ^exec, {:stdout, _}} ->
-        await_exit(exec, stderr, timeout)
+        await_upload(exec, writer, stderr, deadline)
 
       {:openshell_exec, ^exec, {:stderr, data}} ->
-        await_exit(
-          exec,
-          [stderr, data] |> IO.iodata_to_binary() |> binary_part_tail(4096),
-          timeout
-        )
+        stderr = [stderr, data] |> IO.iodata_to_binary() |> binary_part_tail(4096)
+        await_upload(exec, writer, stderr, deadline)
 
       {:openshell_exec, ^exec, {:exit, 0}} ->
         :ok
@@ -545,7 +671,7 @@ defmodule HalC2.OpenShell.Client do
       {:openshell_exec, ^exec, {:error, reason}} ->
         {:error, reason}
     after
-      timeout -> {:error, :timeout}
+      max(deadline - now(), 0) -> {:error, :timeout}
     end
   end
 

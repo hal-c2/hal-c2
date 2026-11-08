@@ -149,6 +149,18 @@ defmodule HalC2.OpenShell.ClientTest do
   end
 
   describe "sandboxes" do
+    # A connection outlives `connect/0`'s check: another environment may arrive after it.
+    test "a connection made before another environment arrived makes no sandbox there", %{
+      conn: conn,
+      gateway: g
+    } do
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "env-b"})
+
+      assert {:error, {:shared_gateway, ["env-b"]}} = Client.create_sandbox(conn, "mine")
+      refute_received {:openshell_request, "CreateSandbox", _}
+      assert Map.keys(FakeOpenShell.sandboxes(g)) == ["theirs"]
+    end
+
     test "the workspace is created once", %{conn: conn} do
       assert :ok = Client.ensure_workspace(conn)
       assert_received {:openshell_request, "CreateWorkspace", "hal-c2"}
@@ -203,10 +215,13 @@ defmodule HalC2.OpenShell.ClientTest do
     @tag gateway: [ignore_selector: true]
     test "listing returns only this MC's sandboxes, even when the gateway returns more",
          %{conn: conn, gateway: g} do
-      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "another-mc"})
-      FakeOpenShell.put_sandbox(g, "unlabelled", %{})
       {:ok, _} = Client.create_sandbox(conn, "mine-1", labels: %{"halc2.github.io/review" => "1"})
       {:ok, _} = Client.create_sandbox(conn, "mine-2", labels: %{"halc2.github.io/review" => "2"})
+      # Each create first looked for other environments' sandboxes, in every workspace.
+      assert_received {:openshell_request, "ListSandboxes", %{label_selector: ""}}
+      assert_received {:openshell_request, "ListSandboxes", %{label_selector: ""}}
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "another-mc"})
+      FakeOpenShell.put_sandbox(g, "unlabelled", %{})
 
       assert {:ok, all} = Client.list_sandboxes(conn)
       assert Enum.map(all, & &1.name) == ["mine-1", "mine-2"]
@@ -237,6 +252,44 @@ defmodule HalC2.OpenShell.ClientTest do
 
       assert :ok = Client.delete_sandbox(conn, "mine")
       assert {:error, %{status: :not_found}} = Client.get_sandbox(conn, "mine")
+    end
+
+    # OpenShell's ACCEPTED means the record still exists: `:ok` waits until it is gone.
+    @tag gateway: [delete: {:accepted, 2}]
+    test "an accepted deletion is :ok only once the sandbox is gone", %{conn: conn, gateway: g} do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+      assert :ok = Client.delete_sandbox(conn, "mine")
+      assert_received {:openshell_request, "DeleteSandbox", _}
+      assert_received {:openshell_request, "GetSandbox", %{name: "mine"}}
+      assert_received {:openshell_request, "GetSandbox", %{name: "mine"}}
+      refute Map.has_key?(FakeOpenShell.sandboxes(g), "mine")
+    end
+
+    @tag gateway: [delete: {:accepted, :never}]
+    test "an accepted deletion that never finishes is still pending at the deadline", %{
+      conn: conn,
+      gateway: g
+    } do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+
+      assert {:error, {:delete_pending, "id-mine"}} =
+               Client.delete_sandbox(conn, "mine", delete_timeout: 300)
+
+      assert Map.has_key?(FakeOpenShell.sandboxes(g), "mine")
+    end
+
+    @tag gateway: [delete: :replaced]
+    test "an accepted deletion is done once the name holds another sandbox", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+      assert :ok = Client.delete_sandbox(conn, "mine")
+    end
+
+    @tag gateway: [delete: :unspecified]
+    test "an unspecified deletion outcome is not taken for done", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+
+      assert {:error, {:deletion_outcome, :DELETION_OUTCOME_UNSPECIFIED}} =
+               Client.delete_sandbox(conn, "mine")
     end
   end
 
@@ -313,9 +366,24 @@ defmodule HalC2.OpenShell.ClientTest do
       assert_receive {:DOWN, ^ref, :process, ^exec, :normal}
     end
 
-    test "a sandbox that does not exist ends the stream with the gateway's error", %{conn: conn} do
-      {:ok, exec} = Client.exec(conn, "missing", ["true"])
-      assert_receive {:openshell_exec, ^exec, {:error, %{status: :not_found}}}
+    test "a sandbox that does not exist is the gateway's error, with no stream", %{conn: conn} do
+      assert {:error, %{status: :not_found}} = Client.exec(conn, "missing", ["true"])
+      refute_received {:openshell_request, "ExecSandboxInteractive", _}
+    end
+
+    test "a sandbox this MC does not own runs nothing, and takes no upload", %{
+      gateway: g,
+      conn: conn
+    } do
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "env-b"})
+      FakeOpenShell.put_sandbox(g, "unlabelled", %{"team" => "x"})
+
+      for name <- ["theirs", "unlabelled"] do
+        assert {:error, :not_owned} = Client.exec(conn, name, ["true"])
+        assert {:error, :not_owned} = Client.upload(conn, name, "/sandbox", "archive")
+      end
+
+      refute_received {:openshell_request, "ExecSandboxInteractive", _}
     end
   end
 
@@ -339,6 +407,56 @@ defmodule HalC2.OpenShell.ClientTest do
 
       assert {:error, {:upload_failed, 2, "tar: not a tar archive\n"}} =
                Client.upload(conn, "box", "/sandbox", "garbage")
+    end
+
+    @tag exec: :stalls, timeout: 10_000
+    test "a sandbox that stops reading times the upload out, and leaves the connection working",
+         %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      # More than the flow-control windows hold, so the archive's writer is left waiting.
+      tar = :binary.copy(<<0>>, 4_000_000)
+
+      assert {:error, :timeout} =
+               Client.upload(conn, "box", "/sandbox", tar, upload_timeout: 200)
+
+      # The gateway stopped the command, and nothing of it is left to the caller.
+      assert_receive {:handler, handler}
+      ref = Process.monitor(handler)
+      assert_receive {:DOWN, ^ref, :process, ^handler, _}
+      refute_received {:openshell_exec, _, _}
+
+      # A later command on the same connection still gets its stdin through.
+      {:ok, exec} = Client.exec(conn, "box", ["cat"])
+      assert :ok = Exec.send_stdin(exec, "still here")
+      assert :ok = Exec.close_stdin(exec)
+      assert {"still here", {:exit, 0}} = collect(exec)
+    end
+
+    @tag exec: :chatters, timeout: 10_000
+    test "the upload's deadline holds while the sandbox keeps talking", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+
+      assert {:error, :timeout} =
+               Client.upload(conn, "box", "/sandbox", "archive", upload_timeout: 300)
+
+      assert_receive {:handler, handler}
+      ref = Process.monitor(handler)
+      assert_receive {:DOWN, ^ref, :process, ^handler, _}
+    end
+
+    @tag exec: :untar
+    test "an archive that cannot be read is the upload's error, and its command is stopped", %{
+      conn: conn,
+      tmp_dir: dir
+    } do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+
+      assert {:error, {:read, :enoent}} =
+               Client.upload(conn, "box", "/sandbox", {:file, Path.join(dir, "missing.tar")})
+
+      # Cancelled, so tar never saw the end of an archive.
+      refute_received {:command, _, _}
+      refute_received {:openshell_exec, _, _}
     end
   end
 
@@ -373,6 +491,36 @@ defmodule HalC2.OpenShell.ClientTest do
       read_all(io, [])
       io.stderr.("tar: not a tar archive\n")
       io.exit.(2)
+    end
+  end
+
+  # Takes the first command's stdin no further; any later command is `cat`.
+  defp handler(:stalls, test) do
+    fn
+      ["tar" | _], _io ->
+        send(test, {:handler, self()})
+
+        receive do: (:never -> :ok), after: (30_000 -> :ok)
+
+      _command, io ->
+        io.stdout.(read_all(io, []))
+        io.exit.(0)
+    end
+  end
+
+  # Takes the archive, then writes output for longer than the upload may take.
+  defp handler(:chatters, test) do
+    fn _command, io ->
+      read_all(io, [])
+      send(test, {:handler, self()})
+
+      # Until the stream is gone.
+      Enum.reduce_while(1..500, :ok, fn _, :ok ->
+        Process.sleep(10)
+        if io.stdout.(".") == :ok, do: {:cont, :ok}, else: {:halt, :closed}
+      end)
+
+      io.exit.(0)
     end
   end
 
