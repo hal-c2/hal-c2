@@ -4341,7 +4341,13 @@ defmodule HalC2.Steps.Providers.Claude do
   step "the user sends another message", context do
     selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
     context = World.post_message(context, @thread, "what next?", %{"modelSelection" => selection})
-    World.await_runs(context, @thread, ["completed", "failed", "completed"])
+
+    statuses =
+      if context[:refused_twice],
+        do: ["completed", "failed", "failed", "failed", "completed"],
+        else: ["completed", "failed", "completed"]
+
+    World.await_runs(context, @thread, statuses)
     context
   end
 
@@ -4364,6 +4370,49 @@ defmodule HalC2.Steps.Providers.Claude do
              Enum.map(["and now?", "what next?"], &:binary.match(sent, &1))
 
     assert missed < new
+    context
+  end
+
+  step "Claude never starts a turn for the message after it", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+
+    context =
+      World.post_message(context, @thread, "never start a turn", %{"modelSelection" => selection})
+
+    World.await_runs(context, @thread, ["completed", "failed", "failed"])
+    context
+  end
+
+  step "Claude refuses the message after that because of that work too", context do
+    selection = %{
+      "instanceId" => "claudeAgent",
+      "model" => "claude-opus-4-6",
+      "options" => [%{"id" => "fastMode", "value" => true}]
+    }
+
+    context = World.post_message(context, @thread, "and then?", %{"modelSelection" => selection})
+    World.await_runs(context, @thread, ["completed", "failed", "failed", "failed"])
+    assert refused?(context)
+    Map.put(context, :refused_twice, true)
+  end
+
+  step "it reads all three messages it missed, in order, before the new one", context do
+    assert [sent | _] =
+             for(
+               %{"in" => %{"type" => "user"} = message} <- World.provider_log(context, "claude"),
+               text = inspect(message["message"]["content"]),
+               text =~ "what next?",
+               do: text
+             )
+
+    at =
+      Enum.map(
+        ["and now?", "never start a turn", "and then?", "what next?"],
+        &:binary.match(sent, &1)
+      )
+
+    refute :nomatch in at, sent
+    assert at == Enum.sort(at), sent
     context
   end
 

@@ -2357,6 +2357,17 @@ Feature: Claude
     Then Claude resumes the same session
     And it reads the messages it missed before the new one
 
+  # A turn refused for background work hands over nothing, and leaves owed what a prompt
+  # Claude never started was handed before it.
+  @mc @plugin-claude
+  Scenario: Messages a Claude busy with background work never took all reach it later
+    Given a Claude thread whose background subagent is still working
+    And Claude refuses the user's next turn because of that work
+    And Claude never starts a turn for the message after it
+    And Claude refuses the message after that because of that work too
+    When the user sends another message
+    Then it reads all three messages it missed, in order, before the new one
+
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
   @mc @plugin-claude @priority-high
   Scenario Outline: A prompt Claude never starts a turn for fails instead of hanging

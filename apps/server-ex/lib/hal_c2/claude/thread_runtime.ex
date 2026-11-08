@@ -3826,10 +3826,14 @@ defmodule HalC2.Claude.ThreadRuntime do
             thread
             |> Map.put("lastRunOrdinal", turn[:seen_run_ordinal])
             # Nor did the history the run handed over: its mark goes, so the next run
-            # resumes the conversation and hands that over again (`Handoff.plan/6`).
+            # resumes the conversation and hands that over again (`Handoff.plan/6`). A
+            # mark the run found stands again: what it stands for is still unconfirmed.
             |> then(fn thread ->
               if thread["unconfirmedRunId"] == turn.ids.run,
-                do: Map.drop(thread, ["unconfirmedRunId", "unconfirmedSince"]),
+                do:
+                  thread
+                  |> Map.drop(["unconfirmedRunId", "unconfirmedSince"])
+                  |> Map.merge(Map.get(turn, :seen_mark, %{})),
                 else: thread
             end)
             |> then(fn thread ->

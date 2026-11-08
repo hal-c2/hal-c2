@@ -5712,6 +5712,8 @@ defmodule HalC2.Orchestration do
       # The last run the provider thread saw before this one, which a run the provider
       # never got the prompt of puts back (`HalC2.Claude.ThreadRuntime`).
       seen_run_ordinal: (provider_thread || %{})["lastRunOrdinal"],
+      # And the handoff it found unconfirmed, which this run's own mark replaced.
+      seen_mark: Map.take(provider_thread || %{}, ["unconfirmedRunId", "unconfirmedSince"]),
       # The provider's live session leaves the conversation it holds for a new one
       # (`start_turn_now/2`).
       new_conversation: handoff.new_conversation,
