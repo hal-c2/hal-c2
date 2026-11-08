@@ -251,22 +251,21 @@ Feature: Provider setup, updates and sign-in
     Then Pi's update status is unknown
     And no update to a version called "latest" is offered
 
-  @backlog @mc @priority-low
+  @priority-low
   Scenario: Latest versions are looked up at most once an hour per package
     Given Codex was installed with npm
     When the MC checks provider versions twice within an hour
     Then the registry is asked for the latest Codex version once
 
-  @backlog @mc @priority-low
+  @priority-low
   Scenario: A registry that does not answer leaves the update status unknown
     Given Codex was installed with npm
     And the package registry does not answer within four seconds
     When the MC checks provider versions
-    Then Codex's update status is unknown
-    And no error is shown to the user
+    Then Codex's update status is unknown, with no message for the user
 
   # Upstream #22044: the four-second deadline ended when headers arrived, not when the body did.
-  @backlog @mc @priority-low
+  @priority-low
   Scenario: A registry that stalls after it starts answering still ends the lookup at four seconds
     Given Codex was installed with npm
     And the package registry answers at once but stops sending before the version arrives

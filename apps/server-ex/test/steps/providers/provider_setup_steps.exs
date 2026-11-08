@@ -1088,18 +1088,81 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
     npm_on_path(context, ~s(echo "npm error code E401" >&2; exit 1))
   end
 
-  # Only the tools a provider's version check runs, and no npm.
   step "npm is not installed on the machine", context do
+    without_npm(context)
+  end
+
+  # Only the tools a provider's version check runs, and no npm: the public registry
+  # (the fake) is asked.
+  defp without_npm(context) do
     bin = Path.join(context.mc.home, "path-without-npm")
-    File.mkdir_p!(bin)
 
-    for tool <- ~w(sh dirname readlink cat printf python3 git env uname),
-        path = System.find_executable(tool),
-        do: File.ln_s!(path, Path.join(bin, tool))
+    unless File.dir?(bin) do
+      File.mkdir_p!(bin)
 
-    World.put_env("PATH", bin)
+      for tool <- ~w(sh dirname readlink cat printf python3 git env uname),
+          path = System.find_executable(tool),
+          do: File.ln_s!(path, Path.join(bin, tool))
+
+      World.put_env("PATH", bin)
+    end
+
     refute System.find_executable("npm")
     context
+  end
+
+  step "the MC checks provider versions twice within an hour", context do
+    context = context |> without_npm() |> HalC2.Steps.Settings.Updates.check()
+    assert latest_read(context) == "9.9.9"
+    HalC2.Steps.Settings.Updates.check(context)
+  end
+
+  step "the registry is asked for the latest Codex version once", context do
+    assert [_] = public_reads(context)
+    context
+  end
+
+  # A deadline of 200ms stands in for four seconds. The reply, 9.9.9, comes far later,
+  # so a status that is unknown (not 9.9.9) is the deadline's doing.
+  step "the package registry does not answer within four seconds", context do
+    stalled_registry(context, fn _conn ->
+      Process.sleep(3_000)
+      {200, %{"version" => "9.9.9"}}
+    end)
+  end
+
+  step "the package registry answers at once but stops sending before the version arrives",
+       context do
+    stalled_registry(context, fn conn ->
+      conn = Plug.Conn.send_chunked(conn, 200)
+      {:ok, conn} = Plug.Conn.chunk(conn, ~s({"name":"@openai/codex","versi))
+      Process.sleep(3_000)
+      # The MC has hung up by now.
+      _ = Plug.Conn.chunk(conn, ~s(on":"9.9.9"}))
+      conn
+    end)
+  end
+
+  step ~r/^(after four seconds )?Codex's update status is unknown(, with no message for the user)?$/,
+       context do
+    read_ended()
+    assert [_] = public_reads(context)
+    advisory = Acp.provider("codex")["versionAdvisory"]
+    assert %{"status" => "unknown", "latestVersion" => nil, "message" => nil} = advisory
+    context
+  end
+
+  defp stalled_registry(context, answer) do
+    World.put_app_env(:npm_registry_timeout, 200)
+    {url, registry} = HalC2.Test.FakeHttp.start(%{"/@openai%2Fcodex/latest" => answer})
+    World.put_app_env(:npm_registry_url, url)
+    context |> without_npm() |> Map.put(:registry, registry)
+  end
+
+  # Every read, found or not, ends with the providers announced (after it stops reading).
+  defp read_ended do
+    assert_receive {:hal_c2_providers_changed, _}, 15_000
+    if :persistent_term.get({HalC2.ProviderUpdates, "codex", :reading}, false), do: read_ended()
   end
 
   step "the latest version comes from the company registry", context do
@@ -1177,13 +1240,30 @@ defmodule HalC2.Steps.Providers.ProviderSetup do
 
   # Claude 1.0.0 from Homebrew, reported behind 1.1.0; then, before the MC reads
   # its version again, it is at 1.1.0 already.
+  # The user was offered 1.2.0, read within the hour. By the update, Claude is 1.1.0,
+  # and npm now says 1.1.0 is the latest (1.2.0 was pulled): only a reread of the
+  # latest finds Claude current.
   step "a fresh check finds Claude installed at its latest version", context do
     ctx = Acp.ready(context)
     homebrew(ctx, "claude-code", :claude_command, "fake_claude.py", "%s (Claude Code)", "1.0.0")
     key = {HalC2.ProviderUpdates, "claudeAgent"}
-    :persistent_term.put(key, {"1.1.0", System.monotonic_time(:millisecond)})
+    :persistent_term.put(key, {"1.2.0", System.monotonic_time(:millisecond)})
     ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase(key) end)
     assert Acp.provider("claudeAgent")["versionAdvisory"]["status"] == "behind_latest"
+
+    npm = Path.join(ctx.mc.home, "fake-bin/npm")
+    script = File.read!(npm)
+
+    File.write!(
+      npm,
+      String.replace(
+        script,
+        "#!/bin/sh\n",
+        ~s(#!/bin/sh\nif [ "$1" = view ]; then echo '"1.1.0"'; exit 0; fi\n)
+      )
+    )
+
+    World.put_app_env(:provider_update_checks, true)
     File.write!(Path.join(ctx.mc.home, "homebrew/claude-code.version"), "1.1.0")
     ctx
   end
