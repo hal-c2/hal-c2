@@ -22,12 +22,17 @@ defmodule HalC2.OpenShell.Client do
   (`HalC2.OpenShell.owner_label/0`), listing returns only those, and deleting one
   that lacks it is refused.
 
+  A gateway belongs to one environment. `connect/0` refuses one that holds another
+  environment's sandboxes (`other_environments/2`), since under that same lack of
+  scoping the two would see each other's; it never touches theirs.
+
   Each call is bounded (10 s by default, `:timeout` to change it); an exec runs
   until it exits or is cancelled (`HalC2.OpenShell.Exec`).
   """
 
   alias HalC2.OpenShell
   alias HalC2.OpenShell.Exec
+  alias HalC2.OpenShell.Proto.Openshell.Datamodel.V1, as: Datamodel
   alias HalC2.OpenShell.Proto.Openshell.Datamodel.V1.WorkspaceSelector
   alias HalC2.OpenShell.Proto.Openshell.V1, as: Pb
   alias Pb.OpenShell.Stub
@@ -42,12 +47,38 @@ defmodule HalC2.OpenShell.Client do
   @label_value ~r/\A([A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?\z/
 
   @doc """
-  Connects to the installed gateway (`HalC2.OpenShell.endpoint/0`), or to
-  `endpoint` (`https://host:port`) with `ca:`, `cert:` and `key:` file paths.
+  Connects to the installed gateway (`HalC2.OpenShell.endpoint/0`) to use it:
+  `{:error, {:shared_gateway, environments}}` when another HAL-C2 environment has
+  sandboxes on it, so no new sandbox is made there. Checked on every connect, since
+  a gateway can become shared after it was set up. Managing a gateway that is
+  shared (status, draining, uninstalling) uses `connect_unchecked/0`.
   """
   def connect do
+    with {:ok, conn} <- connect_unchecked() do
+      case other_environments(conn) do
+        {:ok, []} ->
+          {:ok, conn}
+
+        {:ok, others} ->
+          disconnect(conn)
+          {:error, {:shared_gateway, others}}
+
+        error ->
+          disconnect(conn)
+          error
+      end
+    end
+  end
+
+  @doc "Connects to the installed gateway without checking who else uses it."
+  def connect_unchecked do
     with {:ok, endpoint, credentials} <- OpenShell.endpoint(), do: connect(endpoint, credentials)
   end
+
+  @doc """
+  Connects to `endpoint` (`https://host:port`) with `ca:`, `cert:` and `key:` file
+  paths.
+  """
 
   def connect(endpoint, credentials) do
     with {:ok, host, port} <- parse_endpoint(endpoint),
@@ -272,9 +303,33 @@ defmodule HalC2.OpenShell.Client do
     end
   end
 
+  @doc """
+  The other HAL-C2 environments that have sandboxes on the gateway, in any
+  workspace: the distinct values of the owner label that are not this MC's, sorted.
+  Sandboxes without the label are not HAL-C2's and do not count. Read-only.
+  """
+  def other_environments(%__MODULE__{} = conn, opts \\ []) do
+    all = %WorkspaceSelector{selection: {:all_workspaces, %Datamodel.AllWorkspaces{}}}
+
+    with {:ok, sandboxes} <- list_pages(conn, all, "", "", [], opts, fn _ -> true end) do
+      others =
+        for %{labels: labels} <- sandboxes,
+            owner = labels[OpenShell.owner_label()],
+            owner not in [nil, "", OpenShell.owner()],
+            uniq: true,
+            do: owner
+
+      {:ok, Enum.sort(others)}
+    end
+  end
+
   defp list_pages(conn, selector, token, acc, opts) do
+    list_pages(conn, scope(), selector, token, acc, opts, &owned?/1)
+  end
+
+  defp list_pages(conn, scope, selector, token, acc, opts, keep) do
     request = %Pb.ListSandboxesRequest{
-      workspace_scope: scope(),
+      workspace_scope: scope,
       label_selector: selector,
       page_size: 500,
       page_token: token
@@ -282,9 +337,13 @@ defmodule HalC2.OpenShell.Client do
 
     with {:ok, %Pb.ListSandboxesResponse{sandboxes: page, next_page_token: next}} <-
            call(conn, :list_sandboxes, request, opts) do
-      # The selector already asks for the owner label; this is the MC's own check.
-      acc = acc ++ (page |> Enum.map(&sandbox/1) |> Enum.filter(&owned?/1))
-      if next in [nil, ""], do: {:ok, acc}, else: list_pages(conn, selector, next, acc, opts)
+      # For this MC's sandboxes the selector already asks for the owner label; `keep`
+      # is the MC's own check.
+      acc = acc ++ (page |> Enum.map(&sandbox/1) |> Enum.filter(keep))
+
+      if next in [nil, ""],
+        do: {:ok, acc},
+        else: list_pages(conn, scope, selector, next, acc, opts, keep)
     end
   end
 

@@ -24,7 +24,9 @@ defmodule HalC2.OpenShell.ConfigTest do
     assert toml =~ "disable_tls = false\n"
     assert toml =~ "allow_unauthenticated_users = false\n"
     assert toml =~ "[openshell.gateway.mtls_auth]\nenabled = true\noperator_enabled = false\n"
-    assert toml =~ ~s(client_ca_path = "#{Path.join(OpenShell.pki_dir(), "ca.crt")}")
+    # Clients are trusted by a CA of their own, not the one that signed the gateway's certificate.
+    assert toml =~ ~s(client_ca_path = "#{Path.join(OpenShell.pki_dir(), "client-ca.crt")}")
+    assert toml =~ ~s(guest_tls_ca = "#{Path.join(OpenShell.pki_dir(), "ca.crt")}")
     assert toml =~ "[openshell.drivers.podman]\n"
     assert toml =~ "allow_driver_config = false\n"
     assert toml =~ "enable_bind_mounts = false\n"

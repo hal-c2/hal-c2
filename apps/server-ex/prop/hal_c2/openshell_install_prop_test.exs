@@ -3,13 +3,16 @@ defmodule HalC2.OpenShellInstallPropTest do
   `HalC2.OpenShell.Install` against a model of what an install promises, over any
   sequence of installs and updates (as a service or for the dev run, with the
   gateway's preflight or its check after start failing), certificate rotations,
-  uninstalls, and the gateway writing its database.
+  uninstalls, the gateway writing its database, and the gateway of a user (`reuse`)
+  that is clean or already holds another HAL-C2 environment's sandboxes, or comes
+  to hold one later.
 
   The gateway is a shell script (its `generate-certs` copies a fresh certificate set
-  the test issued for that command), the service manager is the test's systemctl
-  stand-in, and the check after start is the `:smoke` seam. A check that fails
-  first writes over the database, as a new gateway that migrated it would. The
-  promises checked after every step:
+  the test issued for that command, two per install: one for the gateway and one
+  for the CA of the MC's client certificate), the service manager is the test's
+  systemctl stand-in, and the check after start is the `:smoke` seam. A check that
+  fails first writes over the database, as a new gateway that migrated it would.
+  A user's gateway is the TLS fake. The promises checked after every step:
 
     * an install, update or rotation that fails changes nothing: the installed
       state, the certificates, the database and the unit are what they were;
@@ -17,8 +20,13 @@ defmodule HalC2.OpenShellInstallPropTest do
       rotation brings new certificates;
     * a gateway run as a service has its current unit, running; any other has none;
     * uninstalling removes the certificates and the database with the gateway;
-    * the CA's key never stays on disk, keys and the configuration are owner-only,
-      and nothing is left in staging.
+    * the CA's key never stays on disk, the MC's client certificate comes from a CA
+      of its own that is not the gateway's, keys and the configuration are
+      owner-only, and nothing is left in staging;
+    * a user's gateway that holds another environment's sandboxes is refused and the
+      MC keeps what it used; one that comes to hold them is reported by `status` and
+      refused by `connect`; the MC never creates or deletes a sandbox there, and
+      never touches the other environment's.
   """
 
   use ExUnit.Case, async: false
@@ -26,7 +34,9 @@ defmodule HalC2.OpenShellInstallPropTest do
   use PropCheck.StateM
 
   alias HalC2.OpenShell
+  alias HalC2.OpenShell.Client
   alias HalC2.OpenShell.Install
+  alias HalC2.OpenShell.Manifest
   alias HalC2.OpenShell.Service
   alias HalC2.Test.FakeOpenShell
   alias HalC2.Test.Storage
@@ -74,6 +84,7 @@ defmodule HalC2.OpenShellInstallPropTest do
             run_commands(__MODULE__, cmds)
           after
             Logger.configure(level: level)
+            stop_gateways()
             for key <- @env, do: Application.delete_env(:hal_c2, key)
             File.rm_rf!(home)
           end
@@ -103,15 +114,29 @@ defmodule HalC2.OpenShellInstallPropTest do
         {version, release(home, control, version)}
       end
 
-    Process.put(:openshell, %{control: control, releases: releases, gens: %{}, next_gen: 0})
+    Process.put(:openshell, %{
+      home: home,
+      control: control,
+      releases: releases,
+      gens: %{},
+      next_gen: 0,
+      # The gateways of users that were started, the one the MC records, and the
+      # other environment's sandboxes put on them (`{gateway, name}`).
+      servers: [],
+      current: nil,
+      foreign: [],
+      seq: 0
+    })
   end
 
   # --- model ----------------------------------------------------------------------
 
   # installed: nil or `{mode, version, previous}`; pki: the generation of the
   # certificates on disk, or nil; db: what the database holds; next_gen: the
-  # generation the next install or rotation would be issued.
-  def initial_state, do: %{installed: nil, pki: nil, db: nil, next_gen: 0}
+  # generation the next install, rotation or user's gateway would be issued;
+  # shared: whether the user's gateway the MC records holds another environment's
+  # sandboxes.
+  def initial_state, do: %{installed: nil, pki: nil, db: nil, next_gen: 0, shared: false}
 
   def command(state) do
     frequency(
@@ -120,18 +145,35 @@ defmodule HalC2.OpenShellInstallPropTest do
          {:call, __MODULE__, :install,
           [oneof(["0.1.6", "0.1.7"]), oneof(["managed", "foreground"]), outcome()]}},
         {2, {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails])]}},
+        {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
         {1, {:call, __MODULE__, :uninstall, []}}
       ] ++
-        if(state.installed,
+        if(writable?(state),
           do: [{2, {:call, __MODULE__, :write_db, [oneof(["a", "b"])]}}],
+          else: []
+        ) ++
+        if(external?(state),
+          do: [
+            {2, {:call, __MODULE__, :other_environment_arrives, []}},
+            {2, {:call, __MODULE__, :connect, []}},
+            {2, {:call, __MODULE__, :status, []}}
+          ],
           else: []
         )
     )
   end
 
+  defp external?(state), do: match?({"external", _, _}, state.installed)
+  defp writable?(state), do: state.installed != nil and not external?(state)
+
   defp outcome, do: frequency([{3, :ok}, {1, :smoke_fails}, {1, :preflight_fails}])
 
-  def precondition(state, {:call, _, :write_db, _}), do: state.installed != nil
+  def precondition(state, {:call, _, :write_db, _}), do: writable?(state)
+
+  def precondition(state, {:call, _, name, _})
+      when name in [:other_environment_arrives, :connect, :status],
+      do: external?(state)
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, call), do: elem(step(state, call), 0)
@@ -146,6 +188,10 @@ defmodule HalC2.OpenShellInstallPropTest do
       false
     end
   end
+
+  # The MC uses a gateway it does not run; the certificates are queued but unused.
+  defp step(%{installed: {"external", _, _}} = state, {:call, _, :install, _}),
+    do: seen(%{state | next_gen: state.next_gen + 1}, :external)
 
   defp step(state, {:call, _, :install, [version, mode, outcome]}) do
     gen = state.next_gen
@@ -171,6 +217,7 @@ defmodule HalC2.OpenShellInstallPropTest do
 
     case state.installed do
       nil -> seen(state, :not_installed)
+      {"external", _, _} -> seen(state, :external)
       {"managed", _, _} when outcome == :smoke_fails -> seen(state, :smoke)
       _ -> seen(%{state | pki: gen}, :ok)
     end
@@ -180,9 +227,44 @@ defmodule HalC2.OpenShellInstallPropTest do
     do: seen(state, :not_installed)
 
   defp step(state, {:call, _, :uninstall, []}),
-    do: seen(%{state | installed: nil, pki: nil, db: nil}, :ok)
+    do: seen(%{state | installed: nil, pki: nil, db: nil, shared: false}, :ok)
 
   defp step(state, {:call, _, :write_db, [marker]}), do: seen(%{state | db: marker}, :ok)
+
+  # A gateway the MC runs is refused, whatever the gateway of the user holds. One
+  # that holds another environment's sandboxes is refused, and the credentials in
+  # use stay; with none in use, those it was tried with go. One that is clean is
+  # recorded, over a gateway the MC recorded before.
+  defp step(state, {:call, _, :reuse, [kind]}) do
+    gen = state.next_gen
+    state = %{state | next_gen: gen + 1}
+
+    cond do
+      match?({mode, _, _} when mode in ["managed", "foreground"], state.installed) ->
+        seen(state, :managed)
+
+      kind == :shared ->
+        seen(%{state | pki: if(state.installed, do: state.pki)}, :shared)
+
+      true ->
+        seen(
+          %{state | installed: {"external", Manifest.version(), nil}, pki: gen, shared: false},
+          :ok
+        )
+    end
+  end
+
+  defp step(state, {:call, _, :other_environment_arrives, []}),
+    do: seen(%{state | shared: true}, :ok)
+
+  defp step(state, {:call, _, :connect, []}),
+    do: seen(state, if(state.shared, do: {:shared, ["env-b"]}, else: :ok))
+
+  defp step(state, {:call, _, :status, []}) do
+    if state.shared,
+      do: seen(state, {:status, ["gateway-shared"], ["env-b"]}),
+      else: seen(state, {:status, [], []})
+  end
 
   defp seen(state, result) do
     unit = if match?({"managed", _, _}, state.installed), do: {true, true}, else: :absent
@@ -194,7 +276,8 @@ defmodule HalC2.OpenShellInstallPropTest do
        pki: state.pki,
        db: state.db,
        unit: unit,
-       clean: true
+       clean: true,
+       safe: true
      }}
   end
 
@@ -220,24 +303,113 @@ defmodule HalC2.OpenShellInstallPropTest do
     observe(Install.rotate(smoke: smoke(outcome == :smoke_fails)))
   end
 
-  def uninstall, do: observe(Install.uninstall())
+  def uninstall do
+    result = Install.uninstall()
+    Process.put(:openshell, %{Process.get(:openshell) | current: nil})
+    observe(result)
+  end
+
+  # A gateway of the user's own, clean or already holding another environment's
+  # sandbox. Nothing may be created there when it is refused.
+  def reuse(kind) do
+    ctx = Process.get(:openshell)
+    dir = Path.join([ctx.home, "gateways", "g#{ctx.seq}"])
+    exec = fn _command, io -> io.exit.(0) end
+    gateway = FakeOpenShell.start(dir, exec: exec, notify: self())
+    foreign = if kind == :shared, do: [{gateway, "elsewhere"}], else: []
+    for {gw, name} <- foreign, do: FakeOpenShell.put_sandbox(gw, name, other_labels())
+
+    ctx = %{
+      ctx
+      | seq: ctx.seq + 1,
+        servers: [gateway | ctx.servers],
+        foreign: foreign ++ ctx.foreign,
+        gens: Map.put(ctx.gens, File.read!(gateway.credentials[:ca]), ctx.next_gen),
+        next_gen: ctx.next_gen + 1
+    }
+
+    result = Install.reuse(gateway.endpoint, gateway.credentials)
+    current = if match?({:ok, _}, result), do: gateway, else: ctx.current
+    Process.put(:openshell, %{ctx | current: current})
+    observe(result, kind == :shared)
+  end
+
+  def other_environment_arrives do
+    ctx = Process.get(:openshell)
+    FakeOpenShell.put_sandbox(ctx.current, "elsewhere", other_labels())
+    Process.put(:openshell, %{ctx | foreign: [{ctx.current, "elsewhere"} | ctx.foreign]})
+    observe(:ok)
+  end
+
+  def connect do
+    case Client.connect() do
+      {:ok, conn} ->
+        Client.disconnect(conn)
+        observe(:ok, true)
+
+      {:error, {:shared_gateway, ids}} ->
+        observe({:shared, ids}, true)
+
+      {:error, reason} ->
+        observe({:connect_failed, reason}, true)
+    end
+  end
+
+  def status do
+    status = Install.status()
+    observe({:status, status["problems"], status["sharedWith"]}, true)
+  end
+
+  defp other_labels, do: %{OpenShell.owner_label() => "env-b"}
 
   def write_db(marker) do
     File.write!(OpenShell.db_path(), marker)
     observe(:ok)
   end
 
-  # Issues the certificate set the gateway's next `generate-certs` copies, and
-  # remembers its generation by its CA.
+  # Issues the two certificate sets the gateway's next two `generate-certs` calls
+  # copy, and remembers the generation of the first (the gateway's) by its CA.
   defp next_certificates do
     ctx = Process.get(:openshell)
-    pki = Path.join(ctx.control, "pki")
-    File.rm_rf!(pki)
-    FakeOpenShell.stranger(pki)
-    ca = File.read!(Path.join(pki, "ca.crt"))
+    [ca | _] = FakeOpenShell.queue_certificates(ctx.control)
     ctx = %{ctx | gens: Map.put(ctx.gens, ca, ctx.next_gen), next_gen: ctx.next_gen + 1}
     Process.put(:openshell, ctx)
     ctx
+  end
+
+  defp stop_gateways do
+    for %{server: server} <- Process.get(:openshell).servers do
+      try do
+        Supervisor.stop(server)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+  end
+
+  # The requests the fake gateways were sent that make or remove a sandbox, since
+  # the last call.
+  defp mutations(count \\ 0) do
+    receive do
+      {:openshell_request, method, _} when method in ["CreateSandbox", "DeleteSandbox"] ->
+        mutations(count + 1)
+
+      {:openshell_request, _, _} ->
+        mutations(count)
+    after
+      0 -> count
+    end
+  end
+
+  # No sandbox of another environment is gone, and, where asked, nothing was made or
+  # removed since the last call.
+  defp safe?(count?) do
+    made = mutations()
+
+    (not count? or made == 0) and
+      Enum.all?(Process.get(:openshell).foreign, fn {gateway, name} ->
+        Map.has_key?(FakeOpenShell.sandboxes(gateway), name)
+      end)
   end
 
   defp preflight(fails) do
@@ -262,7 +434,7 @@ defmodule HalC2.OpenShellInstallPropTest do
     end
   end
 
-  defp observe(result) do
+  defp observe(result, count? \\ false) do
     state = OpenShell.state()
     ca = Path.join(OpenShell.pki_dir(), "ca.crt")
     unit = Service.unit_path(:systemd)
@@ -287,27 +459,59 @@ defmodule HalC2.OpenShellInstallPropTest do
         else
           :absent
         end,
-      clean: clean?()
+      clean: clean?(state),
+      safe: safe?(count?)
     }
   end
 
   defp classify({:ok, _}), do: :ok
   defp classify(:ok), do: :ok
   defp classify({:error, "[smoke]" <> _}), do: :smoke
+  defp classify({:error, "[external]" <> _}), do: :external
+  defp classify({:error, "[managed]" <> _}), do: :managed
+  defp classify({:error, "[shared-gateway]" <> _}), do: :shared
   defp classify({:error, "[not-installed]" <> _}), do: :not_installed
   defp classify({:error, "`openshell-gateway config preflight` failed" <> _}), do: :preflight
   defp classify(other), do: other
 
-  defp clean? do
+  defp clean?(state) do
     pki = OpenShell.pki_dir()
     key = Path.join([pki, "client", "tls.key"])
     config = OpenShell.config_path()
     mode = &(File.stat!(&1).mode |> Bitwise.band(0o777))
 
     Path.wildcard(Path.join(OpenShell.root(), "**/ca.key"), match_dot: true) == [] and
+      client_authority?(pki, state) and
+      (not File.exists?(pki <> ".new") and not File.exists?(pki <> ".previous")) and
+      not File.exists?(pki <> ".client") and
       (not File.exists?(key) or mode.(key) == 0o600) and
       (not File.exists?(config) or mode.(config) == 0o600) and
       Path.wildcard(Path.join([OpenShell.root(), "staging", "*"])) == []
+  end
+
+  # The certificates the MC issued: the client's come from a CA that is not the
+  # gateway's, and the gateway's own do not authenticate as a client. A gateway of
+  # the user's has the user's CA and no CA of ours.
+  defp client_authority?(pki, state) do
+    ca = Path.join(pki, "ca.crt")
+    client_ca = Path.join(pki, "client-ca.crt")
+    cert = Path.join([pki, "client", "tls.crt"])
+    server = Path.join([pki, "server", "tls.crt"])
+
+    cond do
+      not File.exists?(ca) ->
+        true
+
+      state && state["mode"] == "external" ->
+        not File.exists?(client_ca)
+
+      true ->
+        File.read!(ca) != File.read!(client_ca) and
+          FakeOpenShell.signed_by?(cert, client_ca) and
+          not FakeOpenShell.signed_by?(cert, ca) and
+          FakeOpenShell.signed_by?(server, ca) and
+          not FakeOpenShell.signed_by?(server, client_ca)
+    end
   end
 
   # A gateway release whose binary is a shell script (see the moduledoc).

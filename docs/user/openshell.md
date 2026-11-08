@@ -63,6 +63,15 @@ a client certificate it trusts. The address must use `https`, and the gateway mu
 pass the same checks as an installed one. `uninstall` then only makes the MC forget
 it; the gateway and its sandboxes are left alone.
 
+### One gateway for each HAL-C2 environment
+
+OpenShell 0.1.7 does not keep one client's sandboxes from another's, so two HAL-C2
+environments must not share a gateway. `reuse` refuses a gateway that holds sandboxes
+of another HAL-C2 environment (`shared-gateway`). If a gateway you reuse comes to hold
+them later, `status` and `check` report `gateway-shared` and this MC makes no new
+sandboxes there. The other environment's sandboxes are never touched. Give each
+environment a gateway of its own with `install`, or run a second gateway for it.
+
 ## What to know
 
 - Telemetry is off: the gateway sends no usage data and exports no traces or logs.
@@ -81,6 +90,7 @@ it; the gateway and its sandboxes are left alone.
 | `update-available`, `version-mismatch`                                    | Run `install` to move to the version this MC pins.                           |
 | `service-missing`, `service-outdated`                                     | Run `install` to rewrite the gateway's service.                              |
 | `service-stopped`, `gateway-unreachable`                                  | Read the gateway's log (`status` prints where), then run `install`.          |
+| `gateway-shared`                                                          | Another HAL-C2 environment uses this gateway. Give each one its own.         |
 | `intel-mac`, `unsupported-os`, `unsupported-arch`                         | This machine cannot run OpenShell.                                           |
 | `glibc-too-old`, `kernel-too-old`, `landlock-missing`                     | Update the system, or enable Landlock in the kernel's `lsm=` boot parameter. |
 | `podman-missing`, `podman-too-old`, `runtime-not-rootless`, `root-docker` | Set up rootless Podman 5, or a rootless Docker daemon.                       |

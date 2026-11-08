@@ -152,6 +152,10 @@ defmodule HalC2.OpenShell.Command do
 
   def problem_message("gateway-unhealthy"), do: "The gateway reports itself unhealthy."
 
+  def problem_message("gateway-shared"),
+    do:
+      "Another HAL-C2 environment has sandboxes on this gateway, so this MC makes none there. Give each environment a gateway of its own (`hal-c2-service openshell install`)."
+
   def problem_message("version-mismatch"),
     do: "The gateway runs another version than the #{Manifest.version()} this MC pins."
 

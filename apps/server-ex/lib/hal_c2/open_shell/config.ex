@@ -7,8 +7,9 @@ defmodule HalC2.OpenShell.Config do
 
   What it fixes, whatever the gateway's defaults or the user's environment say:
 
-    * TLS on, with client certificates required; no unauthenticated users, no
-      operator identities (`OPENSHELL_DISABLE_TLS` and
+    * TLS on, with client certificates required, only from the CA that signed the
+      MC's own (not the one that signed the gateway's certificate); no
+      unauthenticated users, no operator identities (`OPENSHELL_DISABLE_TLS` and
       `OPENSHELL_ENABLE_OPERATOR_AUTH` are pinned false in its environment).
     * Loopback only.
     * One compute driver, the runtime socket `HalC2.OpenShell.Platform` chose,
@@ -92,7 +93,7 @@ defmodule HalC2.OpenShell.Config do
     [openshell.gateway.tls]
     cert_path = #{toml(Path.join([pki, "server", "tls.crt"]))}
     key_path = #{toml(Path.join([pki, "server", "tls.key"]))}
-    client_ca_path = #{toml(Path.join(pki, "ca.crt"))}
+    client_ca_path = #{toml(OpenShell.client_ca_path())}
 
     [openshell.gateway.gateway_jwt]
     signing_key_path = #{toml(Path.join([pki, "jwt", "signing.pem"]))}

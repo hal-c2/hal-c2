@@ -44,9 +44,16 @@ backed up, and put back if the new gateway fails its check.
 
 ## Traps
 
-- The gateway accepts any client certificate its CA signed, and in 0.1.7 any authenticated
-  identity sees every workspace. The MC keeps the CA's key off disk after issuing the
-  certificates for that reason; `rotate` is the only way to issue new ones.
+- The gateway accepts any client certificate its client CA signed, and in 0.1.7 any
+  authenticated identity sees every workspace. The MC's client certificate comes from a CA
+  of its own (`pki/client-ca.crt`, the gateway's `client_ca_path`), separate from the CA of the
+  gateway's server certificate, so the gateway's own certificate does not authenticate as a
+  client. Both CAs' keys are deleted after issuing; `rotate` is the only way to issue new ones
+  and replaces both.
+- Identities are not scoped by workspace in 0.1.7, so HAL-C2 keeps one gateway per
+  environment. The sandboxes carry the `halc2.github.io/environment` label, and a gateway
+  that holds another environment's is refused by `reuse` and on each `connect`, and reported
+  as `gateway-shared`. The MC only reads those sandboxes (a listing across all workspaces).
 - OTP's `ssl` caches PEM files by path. The client hands certificates to `ssl` as DER, so a
   rotation that replaces the files in place takes effect on the next connection.
 - The service unit and launch agent are the gateway's own (`hal-c2-openshell.service`,
