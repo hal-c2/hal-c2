@@ -1,10 +1,15 @@
 # Sandboxes for code reviews (OpenShell)
 
-HAL-C2 can run the agents of a code review inside sandboxes, so a review of
-untrusted code cannot reach your files, your credentials or the rest of your
-machine. The sandboxes come from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell):
-the MC installs OpenShell's gateway at a version HAL-C2 has checked, runs it as a
-service of your own user, and talks to it only over mutual TLS.
+HAL-C2 is preparing to run the agents of a code review inside sandboxes, so that a
+review of untrusted code cannot reach your files, your credentials or the rest of
+your machine. The sandboxes will come from
+[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell). This page sets up its
+gateway: the MC installs it at a version HAL-C2 has checked, runs it as a service of
+your own user, and talks to it only over mutual TLS.
+
+> **Code reviews do not run in the gateway yet.** Installing it gets the machine
+> ready, but a review's agents still run directly on your machine, with your files
+> and credentials in reach. Review untrusted code with that in mind.
 
 ## What your machine needs
 
@@ -83,10 +88,11 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 ## What to know
 
 - Telemetry is off: the gateway sends no usage data and exports no traces or logs.
-- A review sandbox reaches only the model's API and this MC. It cannot download
-  packages, so a review uses the tools its image already has.
-- Claude in a sandbox needs an Anthropic API key. A Claude subscription sign-in does
-  not work there.
+- Once reviews run in sandboxes, a review sandbox will reach only the model's API
+  and this MC. It cannot download packages, so a review will use the tools its image
+  already has.
+- Claude in a sandbox will need an Anthropic API key. A Claude subscription sign-in
+  does not work there.
 
 ## When status reports a problem
 
