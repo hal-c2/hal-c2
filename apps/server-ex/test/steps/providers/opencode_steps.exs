@@ -4681,14 +4681,104 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
-  step(~r/^the OpenCode 2 subagent "A" runs in the background$/, context, do: started_a(context))
+  # --- OpenCode 2.2's own subagent shapes ------------------------------------------------------
+  #
+  # As `opencode acp` 2.2 sends them (packages/cli/src/acp: tool.ts, translate.ts, child.ts): the
+  # call is OpenCode's `subagent` tool, it names the child session in `rawOutput.metadata`, and a
+  # child's end reaches the client only in OpenCode's `opencode/session/child_update` notification.
 
-  # The child's own turn fails and nothing reports back to the parent.
+  @session "ses_3c1e2b345a67b89c0d1e2f3a4b"
+
+  defp subagent_tool(id, input, status, text) do
+    [
+      %{
+        "update" => %{
+          "sessionUpdate" => "tool_call",
+          "toolCallId" => id,
+          "title" => "subagent",
+          "kind" => "think",
+          "status" => "pending",
+          "rawInput" => %{}
+        }
+      },
+      %{
+        "update" => %{
+          "sessionUpdate" => "tool_call_update",
+          "toolCallId" => id,
+          "title" => "subagent",
+          "kind" => "think",
+          "status" => "in_progress",
+          "rawInput" => input
+        }
+      },
+      %{
+        "update" => %{
+          "sessionUpdate" => "tool_call_update",
+          "toolCallId" => id,
+          "title" => "subagent",
+          "kind" => "think",
+          "status" => status,
+          "rawInput" => input,
+          "content" => [
+            %{"type" => "content", "content" => %{"type" => "text", "text" => text}}
+          ],
+          "rawOutput" => %{"metadata" => %{"sessionID" => @session, "status" => "running"}}
+        }
+      }
+    ]
+  end
+
+  # The subagent tool's answer to a background start.
+  @in_background "The subagent is working in the background (sessionID: #{@session}). " <>
+                   "You will be notified automatically when it finishes."
+
+  defp start_in_background(id, input \\ %{}) do
+    input =
+      Map.merge(
+        %{"agent" => "general", "description" => "Explore", "prompt" => "Explore the codebase"},
+        Map.put(input, "background", true)
+      )
+
+    subagent_tool(id, input, "completed", @in_background)
+  end
+
+  defp started_in_background(context, more \\ []) do
+    context = background_thread(context, start_in_background("call-1"), more)
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  defp steer_in(steps),
+    do: %{"match" => "steer it", "steps" => steps ++ [%{"text" => "Steered."}]}
+
+  step(~r/^the OpenCode 2 subagent "A" runs in the background$/, context,
+    do: started_in_background(context)
+  )
+
+  # OpenCode 2 sends the child's failed run (`session.execution.failed`) as the child's status,
+  # and nothing to the parent session.
   step ~r/^the turn of "A" fails without reporting back$/, context do
-    says(context, %{
-      "sessionId" => @child,
-      "update" => %{"sessionUpdate" => "turn_failed"}
-    })
+    pid = runtime_pid(context)
+    root = root_session(context)
+
+    params = %{
+      "rootSessionId" => root,
+      "childSessionId" => @session,
+      "parentSessionId" => root,
+      "depth" => 1,
+      "title" => "Explore",
+      "type" => "status",
+      "status" => "failed",
+      "error" => %{"type" => "provider.quota", "message" => "Rate limit exceeded."}
+    }
+
+    send(
+      pid,
+      {:json_rpc, :sys.get_state(pid).conn,
+       {:notification, "opencode/session/child_update", params}}
+    )
+
+    context
   end
 
   step ~r/^the call to "A" ends as failed$/, context do
@@ -4697,21 +4787,32 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  # A second background call joins the running child (upstream's `callAgain`).
+  step ~r/^an OpenCode 2 background subagent "A" that a later turn steers in the background$/,
+       context do
+    again =
+      start_in_background("call-2", %{"description" => "Again", "sessionID" => @session})
+
+    started_in_background(context, [steer_in(again)])
+  end
+
   step "both the subagent call and the steer end as failed", context do
     await_no_background(context)
     assert [%{"status" => "failed"}, %{"status" => "failed"}] = subagents(context)
     context
   end
 
+  # A steer OpenCode could not send to the child fails on its own; the child keeps running.
   step ~r/^an OpenCode 2 background subagent "A" is running and a steer of it fails$/, context do
-    failed = %{
-      "match" => "steer it",
-      "steps" =>
-        task_call("task-2", "Steer failed.\nsubagent_id: #{@child}", "failed") ++
-          [%{"text" => "Steered."}]
+    input = %{
+      "agent" => "general",
+      "description" => "Again",
+      "prompt" => "also this",
+      "sessionID" => @session
     }
 
-    started_a(context, [failed])
+    failed = subagent_tool("call-2", input, "failed", "Failed to prompt subagent: #{@session}")
+    started_in_background(context, [steer_in(failed)])
   end
 
   step(~r/^the agent steers "A" and the steer fails$/, context, do: steer(context))

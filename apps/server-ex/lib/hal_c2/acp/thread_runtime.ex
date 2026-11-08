@@ -46,6 +46,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
   @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
 
+  # OpenCode 2's report of a child session (`opencode_child/2`).
+  @opencode_child ["opencode/session/child_update", "_opencode/session/child_update"]
+
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
   @xai_plan ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"]
@@ -705,6 +708,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @opencode_child,
+      do: {:noreply, opencode_child(params || %{}, state)}
+
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
       when method in ["mcp/message", "_mcp/message"] do
     params = params || %{}
     {bridge, state} = mcp_bridge(state)
@@ -1195,17 +1202,19 @@ defmodule HalC2.Acp.ThreadRuntime do
          {:ok, init} <-
            Connection.call(conn, "initialize", %{
              "protocolVersion" => 1,
-             "clientCapabilities" => %{
-               # Antigravity edits workspace files through HAL-C2 in chat
-               # sessions; no agent gets a terminal.
-               "fs" => %{
-                 "readTextFile" => true,
-                 "writeTextFile" => Antigravity.antigravity?(instance)
-               },
-               "terminal" => false,
-               # A sign-in page the agent asks for shows on the provider (`HalC2.Acp.UrlAuth`).
-               "elicitation" => %{"url" => %{}}
-             },
+             "clientCapabilities" =>
+               %{
+                 # Antigravity edits workspace files through HAL-C2 in chat
+                 # sessions; no agent gets a terminal.
+                 "fs" => %{
+                   "readTextFile" => true,
+                   "writeTextFile" => Antigravity.antigravity?(instance)
+                 },
+                 "terminal" => false,
+                 # A sign-in page the agent asks for shows on the provider (`HalC2.Acp.UrlAuth`).
+                 "elicitation" => %{"url" => %{}}
+               }
+               |> Map.merge(opencode_capabilities(instance)),
              "clientInfo" => %{"name" => "hal-c2", "version" => "0.1.0"}
            }) do
       # The thread now runs on the instance's sign-in, which a sign-out closes
@@ -2184,6 +2193,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   @uuid "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
   @child_session [
+    # OpenCode 2's session ids, in its subagent's answer, background start or failure.
+    ~r/<subagent sessionID="(ses_[A-Za-z0-9]+)"/,
+    ~r/\(sessionID:\s*(ses_[A-Za-z0-9]+)\)/,
     ~r/(?:^|\n)\s*Agent ID:\s*(#{@uuid})\b/i,
     ~r/(?:^|\n)\s*subagent_id:\s*(#{@uuid})\b/i,
     ~r/===\s*Task\s+(#{@uuid})\s*===/i
@@ -2203,15 +2215,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # Cursor's and OpenCode's `task` tool runs a subagent to its end inside the tool
-  # call: cursor-acp names the call after the SDK's tool, and OpenCode's input names
+  # call: cursor-acp names the call after the SDK's tool, and OpenCode 1's input names
   # the subagent it picked.
   defp subagent_call?(call, %{turn: %{ids: %{driver: driver}}}) do
     input = call["rawInput"] || %{}
 
-    HalC2.Acp.driver(driver) in ["cursor", "opencode"] and
-      (String.downcase(call["title"] || "") == "task" or
-         (is_binary(input["subagent_type"]) and input["subagent_type"] != ""))
+    title = String.downcase(call["title"] || "")
+
+    case HalC2.Acp.driver(driver) do
+      # OpenCode 2's tool is `subagent`, its input naming the agent it picked.
+      "opencode" when title == "subagent" -> true
+      d when d in ["cursor", "opencode"] -> title == "task" or present?(input["subagent_type"])
+      _ -> false
+    end
   end
+
+  defp present?(value), do: is_binary(value) and value != ""
 
   # Cursor's `createPlan` tool hands the user a plan (cursor-acp names the call after
   # the SDK's tool and repeats its input when it ends). It is a proposed plan once
@@ -2243,14 +2262,29 @@ defmodule HalC2.Acp.ThreadRuntime do
       is_binary(session) and state.subagents != %{} and state.session_id != nil and
         session != state.session_id
 
-  # A background child whose own turn failed never reports back to its parent (upstream
-  # pingdotgg/t3code#21979): every call attached to its session ends failed, not only
-  # the last one that joined it.
-  defp child_update(
-         %{"sessionId" => session, "update" => %{"sessionUpdate" => "turn_failed"}},
+  # OpenCode 2 reports a child session in its own notification once the client asks
+  # for them (`opencode/child-session-updates`): the child's updates, and how its run
+  # ended. That end is the only word of a background child that fails: it never
+  # reports back to its parent (upstream pingdotgg/t3code#21979), so every call
+  # attached to the child ends with it, a steer that joined its run included. A
+  # grandchild's updates are its parent subagent's work, not a call the MC names.
+  defp opencode_child(%{"type" => "update", "update" => %{} = update} = params, state) do
+    session = params["childSessionId"]
+
+    if not state.replaying and params["parentSessionId"] == state.session_id and
+         child_session?(session, state),
+       do: child_update(%{"sessionId" => session, "update" => update}, state),
+       else: state
+  end
+
+  defp opencode_child(
+         %{"type" => "status", "childSessionId" => session, "status" => status},
          state
-       ),
-       do: end_task(state, session, "failed")
+       )
+       when is_binary(session) and status in ["completed", "failed", "interrupted"],
+       do: end_task(state, session, status)
+
+  defp opencode_child(_params, state), do: state
 
   defp child_update(%{"sessionId" => session, "update" => update}, state) do
     case Enum.find(state.subagents, fn {_id, entry} -> entry.session == session end) do
@@ -2332,21 +2366,37 @@ defmodule HalC2.Acp.ThreadRuntime do
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
     input = call["rawInput"] || %{}
 
-    entry =
-      state.subagents[id] ||
-        %{
-          sub:
-            NativeSubagent.start(state.turn.ids, id, %{
-              "prompt" => input["prompt"],
-              "title" => input["description"],
-              # A subagent the call names no model for ran on the session's own.
-              "model" => input["model"] || state.model
-            }),
-          session: nil,
-          done: false
-        }
+    prompt = if is_binary(input["prompt"]), do: input["prompt"]
 
-    fresh = entry.session == nil && child_session(output)
+    entry =
+      case state.subagents[id] do
+        nil ->
+          %{
+            sub:
+              NativeSubagent.start(state.turn.ids, id, %{
+                "prompt" => prompt,
+                "title" => input["description"],
+                # A subagent the call names no model for ran on the session's own.
+                "model" => input["model"] || state.model
+              }),
+            session: nil,
+            done: false,
+            named: prompt != nil
+          }
+
+        # OpenCode 2 opens its call before its input has streamed in.
+        %{named: false} = entry when prompt != nil ->
+          %{
+            entry
+            | sub: NativeSubagent.prompt(entry.sub, prompt, input["description"]),
+              named: true
+          }
+
+        entry ->
+          entry
+      end
+
+    fresh = entry.session == nil && (reported_session(call["rawOutput"]) || child_session(output))
     entry = if fresh, do: %{entry | session: fresh}, else: entry
 
     {waiting, orphans} =
@@ -2703,6 +2753,19 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # OpenCode 2 names a subagent's session on its call's end (`metadata.sessionID`).
+  defp reported_session(%{"metadata" => %{"sessionID" => session}}) when is_binary(session),
+    do: session
+
+  defp reported_session(_raw), do: nil
+
+  # OpenCode asks for its child sessions' own reports (`opencode_child/2`).
+  defp opencode_capabilities(instance) do
+    if HalC2.Acp.driver(instance) == "opencode",
+      do: %{"_meta" => %{"opencode/child-session-updates" => true}},
+      else: %{}
+  end
+
   defp child_session(nil), do: nil
 
   defp child_session(output) do
@@ -2717,14 +2780,21 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp spawn_ack?(nil), do: false
 
   defp spawn_ack?(output) do
+    # OpenCode 2: "The subagent is working in the background (sessionID: ses_…)".
     output =~ ~r/subagent started in background/i or
+      output =~ ~r/subagent is working in the background \(sessionID:/i or
       (output =~ ~r/subagent_id:\s*#{@uuid}/i and output =~ ~r/get_command_or_subagent_output/i)
   end
 
   defp subagent_result(nil), do: nil
 
+  # OpenCode 2 wraps a subagent's answer: `<subagent sessionID="…" state="…">…</subagent>`.
   defp subagent_result(output) do
     output
+    |> String.replace(
+      ~r/\A\s*<subagent sessionID="[^"]*"[^>]*>\n?(.*?)\n?<\/subagent>\s*\z/s,
+      "\\1"
+    )
     |> String.replace(~r/(?:^|\n)\s*(?:Agent ID|subagent_id):\s*#{@uuid}[^\n]*(?:\n|$)/i, "\n")
     |> String.trim()
     |> then(&if(&1 == "", do: nil, else: &1))

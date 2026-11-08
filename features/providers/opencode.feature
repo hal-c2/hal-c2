@@ -1303,7 +1303,7 @@ Feature: OpenCode
   # Upstream #21979: the child's failure settles every call attached to it, a joined steer included.
   @mc @plugin-opencode @priority-low
   Scenario: A failed OpenCode 2 subagent ends the steer that joined its run as well
-    Given an OpenCode 2 turn started the background subagent "A"
+    Given an OpenCode 2 background subagent "A" that a later turn steers in the background
     When the agent steers "A" while it is still running
     And the turn of "A" fails without reporting back
     Then both the subagent call and the steer end as failed
