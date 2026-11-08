@@ -183,6 +183,23 @@ defmodule HalC2.TextGenerationTest do
       assert after_flag(argv, "--model") == "claude-haiku-5-5"
     end
 
+    test "a writer whose check only warned keeps generating", %{repo: repo} do
+      install([:claude, :codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      on_exit(fn -> HalC2.Codex.Provider.record_check("codex", nil) end)
+
+      # A signed-in Codex with no model list: probe/1 records a warning, not a failure.
+      :ok =
+        HalC2.Codex.Provider.record_check("codex", %{"warning" => "Codex returned no models."})
+
+      assert HalC2.Codex.Provider.check_state("codex") == :ok
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+    end
+
     test "an ACP agent writes through one prompt in an empty directory", %{repo: repo} do
       install([])
       Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})

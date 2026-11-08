@@ -152,6 +152,8 @@ defmodule HalC2.Codex.Provider do
     case check(id) do
       nil -> :pending
       :ok -> :ok
+      # A check that only warned (a slow model list) still found a usable Codex.
+      %{"warning" => _} -> :ok
       %{} -> :failed
     end
   end
