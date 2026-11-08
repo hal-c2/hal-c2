@@ -63,6 +63,9 @@ struct Shell {
       for (const QJsonObject& session : sessions) {
         rows.append(QJsonArray{QStringLiteral("provider-session"), session.value(QLatin1String("id")), session});
       }
+      for (const QJsonObject& run : runs.value(shape.value(QLatin1String("stream")).toString())) {
+        rows.append(QJsonArray{QStringLiteral("run"), run.value(QLatin1String("id")), run});
+      }
       mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
                {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), 0},
                {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
@@ -173,6 +176,8 @@ struct Shell {
   QHash<QString, QList<QJsonObject>> messages;
   // The thread's provider sessions, as its stream sends them.
   QList<QJsonObject> sessions;
+  // Each thread's runs, as its stream's snapshot sends them.
+  QHash<QString, QList<QJsonObject>> runs;
   // While set, what the MC answers never reached it.
   bool losing = false;
 };
@@ -395,6 +400,38 @@ private slots:
     row.insert(QStringLiteral("worktreePath"), QStringLiteral("/work/worktrees/other"));
     shell.mc.sendRow(QStringLiteral("t1"), row);
     QTRY_COMPARE(files.searches, 2);
+  }
+
+  // Moving a thread while one of its queued messages was being edited carried
+  // the queued message's text to the other machine as the thread's draft, and
+  // the draft the user had set aside for the edit was lost. The edit now ends
+  // first, so the set-aside draft is what moves.
+  void aMovedThreadTakesTheDraftSetAsideForItsQueuedEdit() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.messages[QStringLiteral("t1")].append(QJsonObject{{QStringLiteral("id"), QStringLiteral("message:q")},
+                                                            {QStringLiteral("role"), QStringLiteral("user")},
+                                                            {QStringLiteral("createdBy"), QStringLiteral("user")},
+                                                            {QStringLiteral("text"), QStringLiteral("queued text")},
+                                                            {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T10:00:00.000Z")}});
+    shell.runs[QStringLiteral("t1")].append(QJsonObject{{QStringLiteral("id"), QStringLiteral("run-q")},
+                                                        {QStringLiteral("status"), QStringLiteral("queued")},
+                                                        {QStringLiteral("queuePosition"), 0},
+                                                        {QStringLiteral("userMessageId"), QStringLiteral("message:q")}});
+    QVERIFY(QTest::qWaitFor([&] { return shell.native->store()->threadOnline(shell.key); }));
+    QVERIFY(shell.open());
+    shell.type(QStringLiteral("my own draft"));
+    QVERIFY(QTest::qWaitFor([&] { return shell.composer()->draft(shell.key) == QLatin1String("my own draft"); }));
+    shell.bridge->dispatch(QStringLiteral("composer.queue.edit"), QVariantMap{{QStringLiteral("runId"), QStringLiteral("run-q")}});
+    QVERIFY(QTest::qWaitFor([&] { return shell.composerState().value(QStringLiteral("text")).toString() == QLatin1String("queued text"); }));
+
+    QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+    row.insert(QStringLiteral("movedTo"), QJsonObject{{QStringLiteral("environmentId"), QStringLiteral("env-b")}, {QStringLiteral("mc"), QStringLiteral("mc-b")}});
+    shell.mc.threads.insert(QStringLiteral("t1"), row);
+    shell.mc.sendRow(QStringLiteral("t1"), row);
+    const QString there = QStringLiteral("env-b:t1");
+    QVERIFY(QTest::qWaitFor([&] { return shell.composer()->draft(there) == QLatin1String("my own draft"); }));
+    QVERIFY(shell.composerState().value(QStringLiteral("editingQueuedRunId")).isNull());
   }
 
   // A queued run that arrived before its message was listed as a blank row;

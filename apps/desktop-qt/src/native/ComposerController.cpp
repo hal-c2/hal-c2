@@ -240,6 +240,8 @@ void ComposerController::activate() {
   connect(shell->controller<DraftController>(), &DraftController::started, this, &ComposerController::carryInto);
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, [this] {
+    // A moved thread's edit ends first, so the draft it set aside is carried.
+    recoverQueuedEdits();
     carryDrafts();
     reconcileUnsent();
     settleRuntimeModes();
@@ -3011,26 +3013,28 @@ void ComposerController::endQueuedEdit(const QString& thread, bool keepEdit) {
 }
 
 void ComposerController::recoverQueuedEdits() {
+  // Rows read from the cache or held for an MC are not the MC's word: a
+  // missing row there says nothing about the thread.
+  if (!m_store->synchronized()) return;
   ThreadStore* threads = NativeShell::of(this)->controller<ThreadStore>();
   for (const QString& thread : m_queuedEdits.keys()) {
     const QueuedEdit* edit = queuedEdit(thread);
     if (!edit || edit->saving) continue;
     const std::optional<sidebar::Thread> row = m_store->thread(thread);
-    // A deleted thread takes its edit with it.
+    // A deleted thread takes its edit with it; a moved one ends it, so the
+    // draft set aside for it comes back and carryDrafts() takes it along.
     if (!row) {
-      disconnect(edit->watch);
-      m_queuedEdits.remove(thread);
+      endQueuedEdit(thread);
       continue;
     }
     // The thread's queue is known while its stream is live.
     const TimelineModel* timeline = threads->timeline(thread);
     if (!timeline || timeline->status() != QLatin1String("live")) continue;
-    const QVariantList queue =
-        composer::queued(timeline->entities(QStringLiteral("run")).values(), timeline->entities(QStringLiteral("message"))).queue;
-    const bool queued = std::any_of(queue.cbegin(), queue.cend(), [edit](const QVariant& item) {
-      return item.toMap().value(QStringLiteral("runId")) == edit->runId;
-    });
-    if (queued) continue;
+    // Still queued: its run waits and its message is there to edit.
+    const QJsonObject run = timeline->entities(QStringLiteral("run")).value(edit->runId);
+    if (run.value(QLatin1String("status")).toString() == QLatin1String("queued") &&
+        timeline->entities(QStringLiteral("message")).contains(run.value(QLatin1String("userMessageId")).toString()))
+      continue;
     const bool dirty = draft(thread) != edit->original || edit->sentChanged || !m_drafts.value(thread).attachments.isEmpty();
     const bool keep = dirty && edit->saved.trimmed().isEmpty();
     endQueuedEdit(thread, keep);

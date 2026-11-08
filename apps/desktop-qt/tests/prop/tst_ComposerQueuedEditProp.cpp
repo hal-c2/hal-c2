@@ -8,7 +8,8 @@
 // open, and saving again stores none of its images a second time. Saves go
 // one at a time, and of those made while one is unanswered only the newest goes.
 // Each thread keeps its own edit: going to another thread and back finds it
-// open, unless its message left the queue meanwhile.
+// open, unless its message left the queue meanwhile. A thread that moves to
+// another machine ends its edit, and takes the draft set aside for it along.
 
 #include <algorithm>
 
@@ -53,6 +54,7 @@ QString png() {
 struct Queued {
   QString runId;
   QStringList attachments;  // ids, as the MC holds them
+  QString text;             // the message's text, as the MC holds it
 };
 
 struct Model {
@@ -70,6 +72,10 @@ struct Model {
   int counter = 0;
   int stored = 0;  // images the MC has stored (stored-<n>)
   int files = 0;   // files the MC took (file-<n>)
+  bool moved = false;  // the thread lives on another machine now; nothing follows
+  QString text;        // the draft's text while no edit is open
+  QString saved;       // the draft's text, set aside for the edit
+  QString shown;       // the edited message's text, in the composer
 
   static inline const QString kUnstored = QStringLiteral("?");
 
@@ -80,7 +86,20 @@ struct Model {
     }
   }
 
+  // The edit ends: the draft set aside comes back.
   void end() {
+    text = saved;
+    close();
+  }
+
+  // The edited message started: a changed edit stays in an empty composer.
+  void left() {
+    const bool dirty = sentChanged || !added.isEmpty();
+    text = dirty && saved.trimmed().isEmpty() ? shown : saved;
+    close();
+  }
+
+  void close() {
     draftImages = setAside + int(added.size());
     editing.reset();
     sent.clear();
@@ -292,14 +311,14 @@ using Command = rc::state::Command<Model, Sut>;
 
 struct Enqueue : Command {
   int count = *rc::gen::inRange(0, 3);
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.queue.size() < 3); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(m.queue.size() < 3); }
   QStringList ids(const Model& m) const {
     QStringList made;
     for (int i = 0; i < count; ++i) made.append(QStringLiteral("sent-%1-%2").arg(m.counter + 1).arg(i));
     return made;
   }
   void apply(Model& m) const override {
-    m.queue.append({QStringLiteral("run-%1").arg(m.counter + 1), ids(m)});
+    m.queue.append({QStringLiteral("run-%1").arg(m.counter + 1), ids(m), QStringLiteral("queued %1").arg(m.counter + 1)});
     ++m.counter;
   }
   void run(const Model& m0, Sut& sut) const override {
@@ -310,7 +329,7 @@ struct Enqueue : Command {
 };
 
 struct Attach : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE((m.editing ? int(m.added.size()) : m.draftImages) < 2); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE((m.editing ? int(m.added.size()) : m.draftImages) < 2); }
   void apply(Model& m) const override {
     if (m.editing) {
       m.added.append(Model::kUnstored);
@@ -330,7 +349,7 @@ struct Attach : Command {
 
 // A file added to the edit, uploaded before anything else happens.
 struct AttachFile : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing && m.added.size() < 3); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(m.editing && m.added.size() < 3); }
   void apply(Model& m) const override { m.added.append(QStringLiteral("file-%1").arg(++m.files)); }
   void run(const Model& m0, Sut& sut) const override {
     const QString path = sut.home.filePath(QStringLiteral("notes-%1.md").arg(m0.files + 1));
@@ -354,17 +373,19 @@ struct AttachFile : Command {
 
 struct Edit : Command {
   int at = *rc::gen::inRange(0, 3);
-  void checkPreconditions(const Model& m) const override { RC_PRE(at < m.queue.size()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(at < m.queue.size()); }
   void apply(Model& m) const override {
     if (!m.editing) {
       m.setAside = m.draftImages;
       m.draftImages = 0;
+      m.saved = m.text;
     } else if (*m.editing != m.queue.at(at).runId) {
       // What was added for the message left goes aside with the draft.
       m.setAside += int(m.added.size());
       m.added.clear();
     }
     m.editing = m.queue.at(at).runId;
+    m.shown = m.queue.at(at).text;
     m.sent = m.queue.at(at).attachments;
     m.sentChanged = false;
   }
@@ -377,7 +398,7 @@ struct Edit : Command {
 
 struct RemoveSent : Command {
   int at = *rc::gen::inRange(0, 2);
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing && at < m.sent.size()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(m.editing && at < m.sent.size()); }
   void apply(Model& m) const override {
     m.sent.removeAt(at);
     m.sentChanged = true;
@@ -390,7 +411,7 @@ struct RemoveSent : Command {
 };
 
 struct Cancel : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing.has_value()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(m.editing.has_value()); }
   void apply(Model& m) const override { m.end(); }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.queue.edit.cancel"), QVariantMap());
@@ -401,7 +422,7 @@ struct Cancel : Command {
 
 // Sending saves the edit; the MC takes it.
 struct Save : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing.has_value()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(m.editing.has_value()); }
   void apply(Model& m) const override {
     ++m.edits;
     for (Queued& queued : m.queue) {
@@ -427,7 +448,7 @@ struct Save : Command {
 // The MC refuses the save: the edit stays open with what it had, and the
 // images stored for it are kept for the next save.
 struct SaveRefused : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing.has_value()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(m.editing.has_value()); }
   void apply(Model& m) const override {
     ++m.edits;
     if (m.sentChanged || !m.added.isEmpty()) m.storeAdded();
@@ -451,9 +472,12 @@ struct SaveWhileSaving : Command {
   int more = *rc::gen::inRange(1, 3);
   bool refused = *rc::gen::arbitrary<bool>();
   // Text alone: what a save stores is SaveRefused's to prove.
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.editing && !m.sentChanged && m.added.isEmpty()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(m.editing && !m.sentChanged && m.added.isEmpty()); }
   void apply(Model& m) const override {
     m.edits += 2;
+    for (Queued& queued : m.queue) {
+      if (queued.runId == *m.editing) queued.text = QStringLiteral("save %1").arg(more);
+    }
     m.end();
   }
   void run(const Model& m0, Sut& sut) const override {
@@ -481,10 +505,10 @@ struct SaveWhileSaving : Command {
 
 // The first queued run starts: an edit of it ends, and the composer keeps what was added.
 struct Leave : Command {
-  void checkPreconditions(const Model& m) const override { RC_PRE(!m.queue.isEmpty()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(!m.queue.isEmpty()); }
   void apply(Model& m) const override {
     const QString runId = m.queue.takeFirst().runId;
-    if (m.editing == runId) m.end();
+    if (m.editing == runId) m.left();
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.leave(m0.queue.constFirst().runId);
@@ -497,11 +521,11 @@ struct Leave : Command {
 // start meanwhile: the edit waits for them unless its message left the queue.
 struct Away : Command {
   bool starts = *rc::gen::arbitrary<bool>();
-  void checkPreconditions(const Model& m) const override { RC_PRE(!starts || !m.queue.isEmpty()); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); RC_PRE(!starts || !m.queue.isEmpty()); }
   void apply(Model& m) const override {
     if (!starts) return;
     const QString runId = m.queue.takeFirst().runId;
-    if (m.editing == runId) m.end();
+    if (m.editing == runId) m.left();
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.open(sut.mc.environmentId + QLatin1Char(':') + kOther);
@@ -511,6 +535,36 @@ struct Away : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "Away(" << (starts ? "starts" : "") << ")"; }
+};
+
+// The thread moves to another machine whose rows have not come yet: the edit
+// ends, and the draft set aside for it, its text and attachments, is the
+// thread's draft there, not the queued message's text.
+struct Move : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.moved); }
+  void apply(Model& m) const override {
+    if (m.editing) m.end();
+    m.queue.clear();
+    m.moved = true;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    QJsonObject row = sut.mc.threads.value(kThread);
+    row.insert(QStringLiteral("movedTo"), QJsonObject{{QStringLiteral("environmentId"), QStringLiteral("env-b")}, {QStringLiteral("mc"), QStringLiteral("mc-b")}});
+    sut.mc.threads.insert(kThread, row);
+    sut.mc.sendRow(kThread, row);
+    // The thread's draft is kept under its new key.
+    const QString there = QStringLiteral("env-b:") + kThread;
+    const auto* composer = sut.native->controller<ComposerController>();
+    const Model m = nextState(m0);
+    RC_ASSERT(prop::until([&] {
+      return sut.native->store()->located(kKey) == there && composer->attachments(there).size() == m.draftImages &&
+             composer->attachments(kKey).isEmpty() && sut.composer().value(QStringLiteral("editingQueuedRunId")).isNull();
+    }));
+    RC_ASSERT(composer->draft(there) == m.text);
+    RC_ASSERT(sut.edits().size() == m.edits);
+    RC_ASSERT(sut.stored == m.stored);
+  }
+  void show(std::ostream& os) const override { os << "Move"; }
 };
 
 }  // namespace
@@ -525,7 +579,7 @@ private slots:
       Model model;
       verify(model, sut);
       const auto commands = *rc::gen::scale(
-          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, AttachFile, Edit, Edit, RemoveSent, Cancel, Save, SaveRefused, SaveWhileSaving, Leave, Away>()));
+          0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<Enqueue, Enqueue, Attach, AttachFile, Edit, Edit, RemoveSent, Cancel, Save, SaveRefused, SaveWhileSaving, Leave, Away, Move>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

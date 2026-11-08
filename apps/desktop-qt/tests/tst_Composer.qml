@@ -554,7 +554,8 @@ Item {
             // it is the window's (send the first queued message).
             Shell.state = Object.assign({}, Shell.state, {
                 composer: Object.assign({}, Shell.state.composer, {
-                    enterIntents: { singleLine: { "": "foreground", "ctrl+shift": "alternate" } }
+                    enterIntents: { singleLine: { "": "foreground", "ctrl+shift": "alternate" } },
+                    canSend: false
                 })
             });
             input.text = "tweak";
@@ -567,6 +568,16 @@ Item {
             const stolen = root.stolenChords;
             keyClick(Qt.Key_Return, ctrl | Qt.ShiftModifier);
             verify(Shell.dispatchedActions.slice(empty).every(entry => entry.action !== "composer.submit"));
+            compare(root.stolenChords, stolen + 1);
+            // A message of chips alone (a terminal excerpt, say) is the
+            // controller's to count: it is sent, not left to the window.
+            Shell.state = Object.assign({}, Shell.state, {
+                composer: Object.assign({}, Shell.state.composer, { canSend: true })
+            });
+            keyClick(Qt.Key_Return, ctrl | Qt.ShiftModifier);
+            sent = Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+            compare(sent.action, "composer.submit");
+            compare(sent.payload.intent, "alternate");
             compare(root.stolenChords, stolen + 1);
         }
 

@@ -561,9 +561,16 @@ Rectangle {
         const intent = intents[held.join("+")] ?? "";
         // A shifted chord that sends is a window shortcut too (mod+Shift+Enter
         // sends the first queued message): with nothing to send it stays theirs.
-        if (intent !== "" && held.includes("shift") && input.text.trim().length === 0 && composer.attachments.length === 0)
+        if (intent !== "" && held.includes("shift") && !composer.hasMessage())
             return "";
         return intent;
+    }
+
+    // Whether there is something to send: the controller's canSend counts every
+    // chip (excerpts, review comments, context, citations) and the open queued
+    // edit, but lags this input by the debounce, so local text and attachments count too.
+    function hasMessage() {
+        return composer.model.canSend || input.text.trim().length > 0 || composer.attachments.length > 0 || (composer.model.editingQueuedRunId ?? null) !== null;
     }
 
     function submit(intent) {
@@ -573,7 +580,7 @@ Rectangle {
         // canSend reflects the text the controller has seen, which lags this
         // input by the debounce; with local text, let the controller validate
         // the send (it echoes the prompt back if it declines).
-        if (!composer.model.canSend && input.text.trim().length === 0 && composer.attachments.length === 0 && (composer.model.editingQueuedRunId ?? null) === null) {
+        if (!composer.hasMessage()) {
             return;
         }
         textDebounce.stop();
