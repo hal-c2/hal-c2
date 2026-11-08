@@ -5,7 +5,8 @@ defmodule HalC2.JsonRpc.Connection do
   Callers use `call/4`, `request/5` and `notify/3`. Incoming notifications and server-to-client
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
-  `{:error, :closed}` and the connection stops; with `:program` (the subprocess's
+  `{:error, :closed}` and the connection stops (so does a call that reaches it once
+  it has stopped, and `stop/1` of it is then a no-op); with `:program` (the subprocess's
   name, as its user knows it) they fail with the exit instead, in the words that
   program's own client used (`"Codex App Server process exited with code 1"`). With `:log` (a thread id), every
   line the subprocess sends also goes to `HalC2.ProviderLog`. With `:stderr_prefix`,
@@ -47,8 +48,13 @@ defmodule HalC2.JsonRpc.Connection do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, hibernate_after: 15_000)
 
   @spec call(GenServer.server(), String.t(), term, timeout) :: {:ok, term} | {:error, term}
-  def call(conn, method, params, timeout \\ 30_000),
-    do: GenServer.call(conn, {:call, method, params}, timeout)
+  def call(conn, method, params, timeout \\ 30_000) do
+    GenServer.call(conn, {:call, method, params}, timeout)
+  catch
+    # A subprocess that dies at once can stop its connection before the first call
+    # gets there: that call has met a closed connection, not a crash.
+    :exit, {reason, _} when reason in [:noproc, :normal] -> {:error, :closed}
+  end
 
   @doc """
   Sends a call without waiting for its reply, adding it to `reqids` under `label`.
@@ -72,7 +78,11 @@ defmodule HalC2.JsonRpc.Connection do
   def os_pid(conn), do: GenServer.call(conn, :os_pid)
 
   @spec stop(GenServer.server()) :: :ok
-  def stop(conn), do: GenServer.stop(conn)
+  def stop(conn) do
+    GenServer.stop(conn)
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal] -> :ok
+  end
 
   @impl true
   def init(opts) do
