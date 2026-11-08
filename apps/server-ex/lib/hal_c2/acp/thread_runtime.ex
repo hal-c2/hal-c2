@@ -39,12 +39,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 17
+  @state_version 18
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
   @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
   @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
+
+  # Grok's notices that a prompt finished, in either spelling: the direct
+  # prompt-complete notice, and a session notice carrying a `turn_completed`
+  # update. A prompt Grok never answers still ends by these.
+  @xai_prompt_complete ["x.ai/session/prompt_complete", "_x.ai/session/prompt_complete"]
+  @xai_session_notice [
+    "x.ai/session_notification",
+    "_x.ai/session_notification",
+    "_x.ai/session/update"
+  ]
 
   # Grok's own requests (`x.ai/...`), bare or wrapped in `{method, params}`.
   @xai_questions ["x.ai/ask_user_question", "_x.ai/ask_user_question"]
@@ -205,6 +215,12 @@ defmodule HalC2.Acp.ThreadRuntime do
        # Grok's background tasks: task id -> the tool call's id while its turn runs,
        # then its turn item (`%{id, node}`).
        tasks: %{},
+       # Grok's prompt completion: the id this turn's prompt carries, the next
+       # one's number, and the ids of prompts already completed (newest last),
+       # so a repeated notice cannot end a later turn.
+       grok_prompt: nil,
+       grok_seq: 0,
+       grok_done: [],
        # Child-session updates that arrived before their subagent named its session.
        orphans: %{},
        # The session's config options (`configId` -> current value).
@@ -365,7 +381,17 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
   def handle_call(:interrupt, _from, %{prompt: prompt} = state) when prompt != nil do
-    Connection.notify(state.conn, "session/cancel", %{"sessionId" => state.session_id})
+    # Grok treats a Ctrl+C cancel as a barrier against stale background-task
+    # wake prompts until the next genuine user turn.
+    params =
+      if grok?(state),
+        do: %{
+          "sessionId" => state.session_id,
+          "_meta" => %{"cancelTrigger" => "ctrl_c"}
+        },
+        else: %{"sessionId" => state.session_id}
+
+    Connection.notify(state.conn, "session/cancel", params)
     state = %{cancel_requests(state) | interrupted: true}
 
     # Antigravity gets fifteen seconds to confirm the stop; after that its
@@ -571,13 +597,40 @@ defmodule HalC2.Acp.ThreadRuntime do
         else: update
 
     cond do
-      state.replaying -> {:noreply, state}
-      child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
-      subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
-      commands = available_commands(update) -> {:noreply, offer(state, commands)}
-      state.turn == nil -> {:noreply, state}
-      state.kimi -> {:noreply, update(Kimi.update(update), state)}
-      true -> {:noreply, update(update, state)}
+      state.replaying ->
+        {:noreply, state}
+
+      child_session?(params["sessionId"], state) ->
+        {:noreply, child_update(params, state)}
+
+      # Grok also persists a root turn's end as a `turn_completed` update.
+      grok?(state) && update["sessionUpdate"] == "turn_completed" ->
+        prompt = update["prompt_id"] || update["promptId"]
+
+        if is_binary(prompt) && String.starts_with?(prompt, "task-completed-") do
+          {:noreply, state}
+        else
+          grok_prompt_completed(state, %{
+            session: params["sessionId"],
+            prompt: prompt,
+            stop: update["stop_reason"] || update["stopReason"]
+          })
+        end
+
+      subagent_ended?(update) ->
+        {:noreply, subagent_ended(state, update)}
+
+      commands = available_commands(update) ->
+        {:noreply, offer(state, commands)}
+
+      state.turn == nil ->
+        {:noreply, state}
+
+      state.kimi ->
+        {:noreply, update(Kimi.update(update), state)}
+
+      true ->
+        {:noreply, update(update, state)}
     end
   end
 
@@ -595,8 +648,41 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
       when method in @xai_completed do
     update = xai_params(params)["update"] || %{}
-    task = get_in(update, ["task_snapshot", "task_id"]) || update["task_id"]
-    {:noreply, if(is_binary(task), do: end_task(state, task, "completed"), else: state)}
+    snapshot = update["task_snapshot"] || %{}
+    task = snapshot["task_id"] || update["task_id"]
+    status = task_end_status(snapshot["status"] || update["status"], task_exit(snapshot, update))
+    {:noreply, if(is_binary(task), do: end_task(state, task, status), else: state)}
+  end
+
+  # Grok says the turn is complete although its prompt request may never be
+  # answered: the notice ends the turn the prompt's answer would have.
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @xai_prompt_complete do
+    params = xai_params(params)
+
+    grok_prompt_completed(state, %{
+      session: params["sessionId"],
+      prompt: params["promptId"] || params["prompt_id"],
+      stop: params["stopReason"] || params["stop_reason"]
+    })
+  end
+
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in @xai_session_notice do
+    params = xai_params(params)
+    update = params["update"] || %{}
+    prompt = update["prompt_id"] || update["promptId"]
+
+    if update["sessionUpdate"] == "turn_completed" && is_binary(prompt) &&
+         not String.starts_with?(prompt, "task-completed-") do
+      grok_prompt_completed(state, %{
+        session: params["sessionId"],
+        prompt: prompt,
+        stop: update["stop_reason"] || update["stopReason"]
+      })
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:json_rpc, conn, {:request, id, "session/request_permission", params}}, state) do
@@ -886,6 +972,47 @@ defmodule HalC2.Acp.ThreadRuntime do
       else: {:noreply, %{state | answer: answer}}
   end
 
+  # A Grok completion notice settles the turn's prompt when it names that
+  # prompt (or names none while exactly one prompt waits) on this session,
+  # and the prompt did not already complete. A subagent session's notice, a
+  # background task's, and a repeated one settle nothing. The prompt request
+  # is abandoned like a steer's: its late answer matches no request here.
+  defp grok_prompt_completed(state, notice) do
+    waiting = state.turn != nil and state.prompt not in [nil, false]
+    named = notice.prompt
+
+    if waiting && grok?(state) && notice.session == state.session_id &&
+         named not in state.grok_done &&
+         (named == state.grok_prompt ||
+            (named in [nil, ""] && :gen_server.reqids_size(state.prompts) == 1)) do
+      result =
+        if notice.stop == "rate_limit" do
+          {:error, %{"code" => -32003, "message" => "Grok usage limit reached. Try again later."}}
+        else
+          {:ok, %{"stopReason" => grok_stop_reason(notice.stop)}}
+        end
+
+      answer(%{state | prompts: :gen_server.reqids_new()}, :prompt, result)
+    else
+      {:noreply, state}
+    end
+  end
+
+  defp grok_stop_reason(reason)
+       when reason in ["cancelled", "end_turn", "max_tokens", "max_turn_requests", "refusal"],
+       do: reason
+
+  defp grok_stop_reason(_reason), do: "end_turn"
+
+  # A Grok failure that is not its usage limit keeps Grok's own message and
+  # code; only xAI's rate-limit code (-32003, above) reads as a usage limit,
+  # never a message that merely mentions one.
+  defp grok_failure(state, error, message) do
+    if grok?(state) and is_integer(error["code"]),
+      do: "#{message} (#{error["code"]})",
+      else: message
+  end
+
   defp answered(state, result) do
     {status, failure} =
       case result do
@@ -903,7 +1030,9 @@ defmodule HalC2.Acp.ThreadRuntime do
           {"failed", "Grok usage limit reached. Try again later."}
 
         {:error, %{"message" => message} = error} ->
-          {"failed", usage_limit(state, error) || cursor_failure(state, error) || message}
+          {"failed",
+           usage_limit(state, error) || cursor_failure(state, error) ||
+             grok_failure(state, error, message)}
 
         # The agent's process went away before it answered.
         {:error, :closed} ->
@@ -1087,6 +1216,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> migrate()
 
   defp migrate(%{v: 16} = state), do: state |> Map.merge(%{v: 17, titled: nil}) |> migrate()
+
+  defp migrate(%{v: 17} = state),
+    do:
+      state
+      |> Map.merge(%{v: 18, grok_prompt: nil, grok_seq: 0, grok_done: []})
+      |> migrate()
 
   # --- session -------------------------------------------------------------------
 
@@ -2649,8 +2784,54 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp subagent_ended(state, %{"content" => %{"text" => text}}) do
     [_, session, rest] = Regex.run(~r/Background subagent\s+["']?(#{@uuid})["']?(.*)/is, text)
-    status = if rest =~ ~r/\bfail/i, do: "failed", else: "completed"
+
+    # Only the outcome sentence after the id says how it ended: the quoted
+    # name ("fix failed tests", "handle cancel errors"), the parenthesised
+    # type, and any result text after that sentence may all carry failure
+    # words of their own.
+    outcome =
+      rest
+      |> notice_sentence()
+      |> String.split(".", parts: 2)
+      |> hd()
+
+    status =
+      if outcome =~ ~r/\b(fail|crash|cancel|interrupt|error|timed?\s*out)/i,
+        do: "failed",
+        else: "completed"
+
     end_task(state, session, status)
+  end
+
+  # What follows the notice's id with its leading parenthesised and quoted
+  # parts (the subagent's name, its type) stripped off. A parenthesised part
+  # may hold quoted text and parentheses of its own: `("handle (cancel) errors")`.
+  defp notice_sentence(rest) do
+    stripped =
+      Regex.replace(
+        ~r/^\s*(?:(?<group>\((?:"[^"]*"|'[^']*'|[^()"']|(?&group))*\))|"[^"]*"|'[^']*')/s,
+        rest,
+        ""
+      )
+
+    if stripped == rest, do: rest, else: notice_sentence(stripped)
+  end
+
+  # How a background task Grok reports ended is shown: its reported status
+  # when it gives one, else its exit code.
+  defp task_end_status(status, _exit) when status in ["completed", "success"], do: "completed"
+  defp task_end_status(status, _exit) when status in ["failed", "error"], do: "failed"
+  defp task_end_status(status, _exit) when status in ["killed", "cancelled"], do: "cancelled"
+  defp task_end_status(_status, 0), do: "completed"
+  defp task_end_status(_status, exit) when is_integer(exit), do: "failed"
+  defp task_end_status(_status, _exit), do: "completed"
+
+  defp task_exit(snapshot, update) do
+    Enum.find_value([snapshot, update], fn source ->
+      Enum.find_value(["exit_code", "exitCode", "exit"], fn key ->
+        if is_integer(source[key]), do: source[key]
+      end)
+    end)
   end
 
   # Ends the background task or subagent Grok knows as `task`: a subagent by its
@@ -3443,12 +3624,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     end)
   end
 
-  # `/compact` alone in an Antigravity, OpenCode 1 or Cursor thread compacts its
+  # `/compact` alone in an Antigravity, OpenCode 1, Cursor or Grok thread compacts its
   # conversation, and none of them says so; the work log does, when the turn completes.
   defp compacted(state, "completed") do
     turn = state.turn
 
-    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode", "cursor"] &&
+    if turn && Entities.driver(turn.ids) in ["antigravity", "opencode", "cursor", "grok"] &&
          String.trim(turn.text || "") == "/compact" &&
          Map.get(turn, :attachments, []) == [],
        do: compaction(state),
@@ -3502,7 +3683,20 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> cancel_requests()
 
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, prompts: :gen_server.reqids_new(), answer: nil}
+
+    %{
+      state
+      | turn: nil,
+        items: %{},
+        prompts: :gen_server.reqids_new(),
+        answer: nil,
+        grok_prompt: nil,
+        grok_done:
+          if(state.grok_prompt,
+            do: Enum.take(state.grok_done ++ [state.grok_prompt], -128),
+            else: state.grok_done
+          )
+    }
   end
 
   @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
@@ -3551,6 +3745,19 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  defp grok?(state), do: HalC2.Acp.driver(state.agent) == "grok"
+
+  # Grok reports at start-up that it takes no images, but it does.
+  defp prompt_capabilities(state) do
+    if grok?(state) do
+      capabilities = state.capabilities || %{}
+      prompt = Map.put(capabilities["promptCapabilities"] || %{}, "image", true)
+      Map.put(capabilities, "promptCapabilities", prompt)
+    else
+      state.capabilities
+    end
+  end
+
   # Sends the turn's prompt; its answer ends the turn (`answer/3`). It is in the
   # connection's mailbox before this returns, and a steer or a cancel this process sends
   # the same connection later lands behind it, so the agent reads the prompt first.
@@ -3570,9 +3777,25 @@ defmodule HalC2.Acp.ThreadRuntime do
         do: text <> HalC2.Mcp.workers_only_note(),
         else: text
 
-    case acp_prompt(turn, state.capabilities, text) do
+    case acp_prompt(turn, prompt_capabilities(state), text) do
       {:ok, prompt} ->
-        params = %{"sessionId" => state.session_id, "prompt" => prompt}
+        # Grok's prompt carries an id of its own, which its completion notice
+        # names when the prompt request itself is never answered. The
+        # previous turn's id is already retired: every turn ends through
+        # `end_turn/3`, which moves it to `grok_done`.
+        {params, state} =
+          if grok?(state) do
+            id = "hal-c2-xai-prompt-#{state.grok_seq + 1}"
+
+            {%{
+               "sessionId" => state.session_id,
+               "prompt" => prompt,
+               "_meta" => %{"promptId" => id, "requestId" => id}
+             }, %{state | grok_prompt: id, grok_seq: state.grok_seq + 1}}
+          else
+            {%{"sessionId" => state.session_id, "prompt" => prompt}, state}
+          end
+
         prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
 
         %{

@@ -45,6 +45,9 @@ bool modelPickerLists(World& world, const QString& name, bool listed);
 bool modelPickerShows(World& world, const QString& name, const QString& reason);
 // "the user chooses X": the row named X of the open model picker.
 bool modelPickerChooses(World& world, const QString& name);
+// "the user chooses it" while the model picker offers a provider's setup:
+// clicks that offer and returns true.
+bool modelPickerChoosesSetup(World& world);
 // "the conversation says X" while something is dragged over the composer's
 // conversation: checks that its drop hint says X and returns true. False
 // leaves the step to its own domain (the worktree setup card).

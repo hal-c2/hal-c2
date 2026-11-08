@@ -901,11 +901,28 @@ defmodule HalC2.Steps.Providers.Cursor do
   end
 
   step "the command is shown as failed", context do
-    assert [%{"input" => "nosuchtool --version", "status" => "failed", "output" => output}] =
-             commands(context)
+    if Map.has_key?(context, :fakes) do
+      # The same words on a FakeAcp thread of another provider (Grok): its
+      # background command's turn item is the failed one.
+      title = context[:current_thread] || context[:thread]
 
-    assert output =~ "ENOENT"
-    context
+      item =
+        World.await_value(context, title, fn state ->
+          Enum.find(
+            HalC2.StreamState.list(state, "turn-item"),
+            &(&1["status"] == "failed" and get_in(&1, ["nativeItemRef", "nativeId"]) == "sh-1")
+          )
+        end)
+
+      assert item["status"] == "failed"
+      context
+    else
+      assert [%{"input" => "nosuchtool --version", "status" => "failed", "output" => output}] =
+               commands(context)
+
+      assert output =~ "ENOENT"
+      context
+    end
   end
 
   step "the user sends a message to Cursor", context do

@@ -538,6 +538,53 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["completed", "failed", "completed"])
   end
 
+  # A turn Claude only compacts in has no assistant message, so its compact boundary
+  # is where a rollback to it resumes. The boundary is on the provider turn by the
+  # time anything sees the run end: a resume read on that end would otherwise miss it.
+  # (A thread's first `/compact` has nothing to compact and is refused, so it talks first.)
+  test "a compact-only Claude turn records its boundary as the head before its run ends",
+       %{work: work} do
+    thread_id = create_thread(work, "claudeAgent", "claude-haiku-4-5")
+    {:ok, _} = send_message(thread_id, "m1", "hello")
+    [%{"id" => first}] = await_statuses(thread_id, ["completed"])
+
+    {:ok, _} = send_message(thread_id, "m2", "/compact")
+    {ended, head} = await_end(thread_id, first, nil)
+
+    assert %{"s" => %{"status" => "completed"}} = ended.patch
+    assert %{patch: %{"s" => %{"nativeTurnRef" => %{"nativeId" => "compact-2"}}}} = head
+    assert head.seq < ended.seq
+  end
+
+  # The event that ended a run other than `done`, and the event before it that
+  # recorded that run's provider turn head (nil if none had), as the stream published them.
+  defp await_end(thread_id, done, head) do
+    receive do
+      {:hal_c2_stream, ^thread_id, {:events, events}} ->
+        head =
+          Enum.find(
+            events,
+            head,
+            &(&1.kind == "provider-turn" and &1.entity != "provider-turn:claudeAgent:#{done}" and
+                is_map(&1.patch["s"]["nativeTurnRef"]))
+          )
+
+        ended =
+          Enum.find(
+            events,
+            &(&1.kind == "run" and &1.entity != done and
+                &1.patch["s"]["status"] in ["completed", "failed", "interrupted"])
+          )
+
+        if ended, do: {ended, head}, else: await_end(thread_id, done, head)
+
+      {:hal_c2_stream, ^thread_id, _} ->
+        await_end(thread_id, done, head)
+    after
+      5_000 -> flunk("the run never ended")
+    end
+  end
+
   # The replacement stand-in in the credential test above: answers a release
   # `:busy` at once (see that test's ordering note) and keeps waiting for `:stop`.
   defp replacement_loop(thread_id, test) do
