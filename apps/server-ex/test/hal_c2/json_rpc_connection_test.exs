@@ -84,4 +84,27 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     assert {:error, error} = Connection.call(conn, "start", %{})
     assert error == %{"message" => "Peer process exited with code 1"}
   end
+
+  # A refused OpenCode (macOS quarantine) dies before its first call; the read stops
+  # its connection afterwards all the same.
+  test "stopping a connection whose subprocess already closed it is a no-op" do
+    {:ok, conn} = GenServer.start(Connection, cmd: ["sh", "-c", "exit 137"], handler: self())
+    ref = Process.monitor(conn)
+    assert_receive {:DOWN, ^ref, :process, ^conn, :normal}, 5_000
+
+    assert Connection.stop(conn) == :ok
+  end
+
+  # One that is still dying has closed its stdin, so the call's write fails with
+  # `:epipe`; that read showed ":epipe" as OpenCode's message.
+  test "a call written after the subprocess closed its stdin fails as closed" do
+    conn =
+      start_supervised!(
+        {Connection, cmd: ["sh", "-c", "exec 0<&-; echo ready; exec sleep 30"], handler: self()},
+        id: :closed_stdin
+      )
+
+    assert_receive {:json_rpc, ^conn, {:invalid, "ready"}}, 5_000
+    assert Connection.call(conn, "initialize", %{}) == {:error, :closed}
+  end
 end
