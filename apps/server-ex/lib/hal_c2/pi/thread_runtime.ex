@@ -26,7 +26,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 4
+  @state_version 5
+  # Extension failures queued between turns: only the newest are kept, so an
+  # extension failing on a timer while idle cannot grow state without bound.
+  @queued_extension_errors 20
   @registry HalC2.Pi.Registry
 
   # How long a call to Pi waits on its answer; the session's stats, read as a turn
@@ -153,8 +156,10 @@ defmodule HalC2.Pi.ThreadRuntime do
        leaf: nil,
        skills: [],
        turn: nil,
-       # A `/compact` runs as a call rather than a prompt.
+       # A `/compact` runs as a call rather than a prompt. One steered into a
+       # running turn also holds its caller until the compaction answers.
        compact: nil,
+       compact_steer: nil,
        items: %{},
        buffer: %{},
        flush_timer: nil,
@@ -278,11 +283,13 @@ defmodule HalC2.Pi.ThreadRuntime do
     case compact_command(steer.text) do
       {:ok, params} ->
         # Steering with `/compact` compacts instead of prompting: it is not sent
-        # to the model as a message.
-        case call(state, "compact", params) do
-          {:ok, _} -> {:reply, :ok, state}
-          {:error, reason} -> {:reply, {:error, compact_failure(reason)}, state}
-        end
+        # to the model as a message. It runs as a task like a turn-level
+        # `/compact`, so a long compaction neither blocks this runtime (Pi's
+        # events, respond and interrupt keep moving) nor hits the call budget;
+        # the caller hears when the task answers (`handle_info` for `compact`).
+        conn = state.conn
+        task = Task.async(fn -> Connection.call(conn, "compact", params, :infinity) end)
+        {:noreply, %{state | compact: task.ref, compact_steer: from}}
 
       :error ->
         {state, payload} = prompt_payload(state, steer.text, steer.attachments)
@@ -400,25 +407,50 @@ defmodule HalC2.Pi.ThreadRuntime do
 
       # An extension that fails between turns is shown on the next turn.
       type == "extension_error" ->
-        {:noreply, %{state | extension_errors: state.extension_errors ++ [event]}}
+        queued = Enum.take(state.extension_errors ++ [event], -@queued_extension_errors)
+        {:noreply, %{state | extension_errors: queued}}
 
       true ->
         {:noreply, state}
     end
   end
 
-  # A `/compact` came back.
+  # A `/compact` came back. One steered into a running turn only answers its
+  # caller; the turn runs on and settles as it would have (a settle Pi sent
+  # meanwhile is owed, in `settled`). A turn-level one is the turn, so it settles.
   def handle_info({ref, result}, %{compact: ref} = state) do
     Process.demonitor(ref, [:flush])
     state = %{state | compact: nil}
 
-    state =
-      case result do
-        {:error, reason} when not state.interrupted -> %{state | failure: compact_failure(reason)}
-        _ -> state
-      end
+    case state.compact_steer do
+      nil ->
+        state =
+          case result do
+            {:error, reason} when not state.interrupted ->
+              %{state | failure: compact_failure(reason)}
 
-    {:noreply, settle(state)}
+            _ ->
+              state
+          end
+
+        {:noreply, settle(state)}
+
+      from ->
+        case result do
+          {:ok, _} -> GenServer.reply(from, :ok)
+          {:error, reason} -> GenServer.reply(from, {:error, compact_failure(reason)})
+          _ -> GenServer.reply(from, {:error, "Pi compact failed."})
+        end
+
+        {:noreply, settle_held(%{state | compact_steer: nil})}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{compact: ref} = state) do
+    # The compaction task went away without its result (its result is flushed
+    # in the clause above): treat as a failed compact so no caller waits.
+    send(self(), {ref, {:error, "Pi compact failed."}})
+    {:noreply, state}
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
@@ -439,7 +471,9 @@ defmodule HalC2.Pi.ThreadRuntime do
           ),
         else: %{state | steers: unanswered(state.steers, "failed")}
 
-    {:noreply, %{state | conn: nil, compact: nil}}
+    if state.compact_steer, do: GenServer.reply(state.compact_steer, {:error, "Pi exited"})
+
+    {:noreply, %{state | conn: nil, compact: nil, compact_steer: nil}}
   end
 
   def handle_info(:flush, state),
@@ -473,6 +507,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp migrate(%{v: 1} = state),
     do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  defp migrate(%{v: 4} = state),
+    do: state |> Map.merge(%{v: 5, compact_steer: nil}) |> migrate()
 
   defp migrate(%{v: 3} = state) do
     state
@@ -515,7 +552,8 @@ defmodule HalC2.Pi.ThreadRuntime do
         baseline_model: nil,
         baseline_thinking: nil,
         session_name: nil,
-        compact: nil
+        compact: nil,
+        compact_steer: nil
     }
   end
 
@@ -814,40 +852,30 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   # The Pi `prompt` params for a message: HAL-C2's `$skill`s as Pi's own commands,
-  # images Pi takes natively inline, every other file as the path it is saved at,
+  # images Pi takes natively inline (still named by their saved path, so Pi can
+  # read, copy or edit the file), every other file as the path it is saved at,
   # and a file whose saved copy cannot be found named as unavailable. An attachment's
   # `path` is the MC's own saved copy (`HalC2.Attachments`), never a client's path.
-  # sobelow_skip ["Traversal.FileModule"]
   defp prompt_payload(state, text, attachments) do
     {state, skills} = prompt_skills(state, text)
     expanded = HalC2.Pi.expand_skills(text || "", skills)
+    attachments = attachments || []
 
-    {images, lines} =
-      Enum.reduce(attachments || [], {[], []}, fn attachment, {images, lines} ->
-        path = Map.get(attachment, :path)
-        mime = String.downcase(Map.get(attachment, :mime_type) || "")
+    images =
+      for {mime, data} <- HalC2.Attachments.native_images(attachments),
+          do: %{"type" => "image", "data" => data, "mimeType" => mime}
 
+    lines =
+      Enum.flat_map(attachments, fn attachment ->
         cond do
-          not is_binary(path) ->
-            name = Map.get(attachment, :name)
+          is_binary(Map.get(attachment, :path)) ->
+            ["[Attachment saved at #{attachment.path}]"]
 
-            if is_binary(name),
-              do: {images, lines ++ [~s([Attachment "#{name}" is unavailable])]},
-              else: {images, lines}
-
-          mime in ~w(image/gif image/jpeg image/png image/webp) ->
-            case File.read(path) do
-              {:ok, bytes} ->
-                {images ++
-                   [%{"type" => "image", "data" => Base.encode64(bytes), "mimeType" => mime}],
-                 lines}
-
-              _ ->
-                {images, lines ++ ["[Attachment saved at #{path}]"]}
-            end
+          is_binary(Map.get(attachment, :name)) ->
+            [~s([Attachment "#{attachment.name}" is unavailable])]
 
           true ->
-            {images, lines ++ ["[Attachment saved at #{path}]"]}
+            []
         end
       end)
 
@@ -1081,6 +1109,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp event("extension_ui_request", %{"id" => ui_id, "method" => method} = request, state) do
     dialog(method, ui_id, request, state)
   end
+
+  # A settle while a steered compaction runs is owed until it answers.
+  defp event("agent_settled", _event, %{compact_steer: from} = state) when from != nil,
+    do: if(state.interrupted, do: settle(state), else: %{state | settled: true})
 
   # A steer Pi has not answered may have reached it after this settle, and start new
   # work: the turn waits for the answer (`steered/3`). An interrupted turn ends here.

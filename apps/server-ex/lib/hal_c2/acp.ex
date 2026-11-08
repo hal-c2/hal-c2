@@ -816,15 +816,25 @@ defmodule HalC2.Acp do
   # fail every turn without saying why.
   defp pi_pinned_model_notice(id, args, models) do
     pinned =
-      args
-      |> Enum.chunk_every(2, 1, :discard)
-      |> Enum.find_value(fn
-        ["--model", value] -> value
+      Enum.find_value(args, fn
+        "--model=" <> value -> value
         _ -> nil
-      end)
+      end) ||
+        args
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.find_value(fn
+          ["--model", value] -> value
+          _ -> nil
+        end)
+
+    # Pi resolves a bare id against its own models, so the id part of a
+    # discovered `provider/id` slug counts as offered too.
+    offered? = fn slug ->
+      slug == pinned or slug |> to_string() |> String.split("/") |> List.last() == pinned
+    end
 
     if is_binary(pinned) and models != [] and
-         not Enum.any?(models, &(&1["slug"] == pinned)) do
+         not Enum.any?(models, &offered?.(&1["slug"])) do
       stage(
         id,
         :notice,
