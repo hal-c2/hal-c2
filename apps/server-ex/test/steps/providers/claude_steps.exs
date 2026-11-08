@@ -6952,7 +6952,7 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "the thread says full access is not available and runs in the mode Claude allows",
        context do
-    assert flag_value(last_argv(context), "--permission-mode") == "default"
+    assert flag_value(last_argv(context), "--permission-mode") == "auto"
     assert [notice] = bypass_notices(context)
     assert notice =~ "turn off bypassing permissions"
     context
@@ -8736,7 +8736,8 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the user is asked for permission", context do
-    assert flag_value(last_argv(context), "--permission-mode") == "default"
+    # Those settings leave Auto allowed, so Full access falls back to it.
+    assert flag_value(last_argv(context), "--permission-mode") == "auto"
 
     World.await_value(context, @thread, fn state ->
       match?([%{"status" => "pending"}], StreamState.list(state, "runtime-request"))
@@ -8782,6 +8783,45 @@ defmodule HalC2.Steps.Providers.Claude do
     context = World.post_message(context, @thread, "which mode")
     World.await_runs(context, @thread, ["completed", "completed"])
     assert World.replies(context, @thread) == ["mode default", "mode bypassPermissions"]
+    context
+  end
+
+  step ~r/^Claude has bypass turned off and (?<auto>Auto turned on|Auto turned off too)$/,
+       %{args: [auto]} = context do
+    {context, _home} = skills_home(context)
+    path = settings_file(context, "the project's Claude settings")
+    File.mkdir_p!(Path.dirname(path))
+
+    settings =
+      if auto == "Auto turned off too",
+        do: %{"disableAutoMode" => "disable"},
+        else: %{}
+
+    settings = Map.put(settings, "permissions", %{"disableBypassPermissionsMode" => "disable"})
+    File.write!(path, Jason.encode!(settings))
+    context
+  end
+
+  step "a Claude thread runs in Full access", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "which mode")
+
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :thread, @thread)
+  end
+
+  step ~r/^Claude runs in (?<mode>Auto|its default mode, with approvals)$/,
+       %{args: [mode]} = context do
+    expected = if mode == "Auto", do: "auto", else: "default"
+    argv = last_argv(context)
+    assert flag_value(argv, "--permission-mode") == expected
+    refute Enum.any?(argv, &String.contains?(&1, "dangerously-skip-permissions"))
+    assert World.replies(context, @thread) == ["mode #{expected}"]
+    assert [notice] = bypass_notices(context)
+    assert notice =~ "Claude's settings turn off bypassing permissions"
+    assert notice =~ "Auto mode" == (mode == "Auto")
     context
   end
 
@@ -9049,6 +9089,54 @@ defmodule HalC2.Steps.Providers.Claude do
   step "the approval does not say which Full access check asked", context do
     refute Map.has_key?(approval_item(context), "fullAccessOverride")
     context
+  end
+
+  step "a Claude thread in Supervised mode", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{
+        "runtimeMode" => "approval-required"
+      })
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+    assert :sys.get_state(runtime(context)).permission_mode == "default"
+    Map.put(context, :thread, @thread)
+  end
+
+  # Claude's ordinary ask outside Full access: a rule of its default mode.
+  step ~r/^Claude asks to run "(?<command>[^"]+)"$/, %{args: [command]} = context do
+    send(
+      runtime(context),
+      {:claude, :sys.get_state(runtime(context)).session,
+       {:permission, "perm-plain", "Bash", %{"command" => command},
+        %{
+          "title" => "Claude wants to run #{command}",
+          # An ask rule, which in Full access would explain why it still asked.
+          "decision_reason" => "Bash(touch:*) is an ask rule",
+          "decision_reason_type" => "rule"
+        }}}
+    )
+
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+    end)
+
+    Map.put(context, :command, command)
+  end
+
+  step "the approval reads as an ordinary approval with no explanation of why Full access asked",
+       context do
+    approval = approval_item(context)
+    assert approval["prompt"] == "Claude wants to run #{context.command}"
+    refute Map.has_key?(approval, "fullAccessOverride")
+    context
+  end
+
+  defp runtime(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    pid
   end
 
   defp approval_item(context) do

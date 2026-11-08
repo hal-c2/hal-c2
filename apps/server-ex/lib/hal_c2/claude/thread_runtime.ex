@@ -1374,7 +1374,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # A permission flag in the launch arguments, else plan mode, else a read-only
   # run's never-ask, else the thread's runtime mode: Full access asks as the default
-  # mode does when Claude's settings forbid bypassing (`bypass_policy/1`).
+  # mode does, or in Auto where that is allowed, when Claude's settings forbid
+  # bypassing (`bypass_policy/1`).
   defp permission_mode(turn) do
     launch = Map.get(turn, :launch) || %{}
 
@@ -1382,14 +1383,17 @@ defmodule HalC2.Claude.ThreadRuntime do
       launch[:permission_override] -> launch[:permission_override]
       Map.get(turn, :interaction_mode) == "plan" -> "plan"
       Map.get(turn, :read_only) -> "dontAsk"
+      Map.get(turn, :bypass_limited) == :auto -> "auto"
       Map.get(turn, :bypass_limited) -> "default"
       true -> Map.get(@permission_modes, turn.runtime_mode, "default")
     end
   end
 
   # Claude refuses bypass mode when its settings disable it, so a Full access turn
-  # there runs in the default mode, asking the user before the tools those settings
-  # guard. Settings that cannot be read limit only this turn: each turn reads them again.
+  # there runs in Auto (`:auto`), or in the default mode when they turn Auto off too
+  # (`:disabled`), asking the user before the tools those settings guard. Settings
+  # that cannot be read limit only this turn to the default mode: each turn reads
+  # them again.
   defp bypass_policy(turn) do
     if permission_mode(turn) == "bypassPermissions" and turn.launch[:permission_override] == nil do
       instance = Entities.instance(turn.ids)
@@ -1397,15 +1401,24 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       # The switches that turn bypass off are read from the `--settings` launch
       # argument too: it is merged into the settings the session runs with.
-      cond do
-        HalC2.Claude.Skills.bypass_disabled_in?(turn.launch.settings) ->
-          Map.put(turn, :bypass_limited, :disabled)
+      bypass =
+        if HalC2.Claude.Skills.bypass_disabled_in?(turn.launch.settings),
+          do: :disabled,
+          else: HalC2.Claude.Skills.bypass_permissions(config_dir, turn.cwd)
 
-        true ->
-          case HalC2.Claude.Skills.bypass_permissions(config_dir, turn.cwd) do
-            :allowed -> turn
-            limited -> Map.put(turn, :bypass_limited, limited)
-          end
+      case bypass do
+        :allowed ->
+          turn
+
+        :disabled ->
+          auto_off =
+            HalC2.Claude.Skills.auto_disabled_in?(turn.launch.settings) or
+              HalC2.Claude.Skills.auto_mode(config_dir, turn.cwd) != :allowed
+
+          Map.put(turn, :bypass_limited, if(auto_off, do: :disabled, else: :auto))
+
+        :unreadable ->
+          Map.put(turn, :bypass_limited, :unreadable)
       end
     else
       turn
@@ -1413,6 +1426,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   @bypass_notices %{
+    auto:
+      "Claude's settings turn off bypassing permissions here, so this Full access thread runs in Auto mode and asks before the tools they guard run.",
     disabled:
       "Claude's settings turn off bypassing permissions here, so this Full access thread asks before the tools they guard run.",
     unreadable:

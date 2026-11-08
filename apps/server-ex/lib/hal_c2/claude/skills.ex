@@ -361,11 +361,33 @@ defmodule HalC2.Claude.Skills do
   A missing file is no layer, nor is a blank one, which Claude reads as `{}`.
   """
   @spec bypass_permissions(String.t(), String.t() | nil) :: :allowed | :disabled | :unreadable
-  def bypass_permissions(config_dir, cwd) do
+  def bypass_permissions(config_dir, cwd), do: policy(config_dir, cwd, &bypass_disabled_in?/1)
+
+  @doc """
+  Whether Claude lets a session at `cwd` run in Auto mode, read from the same layers
+  as `bypass_permissions/2`: `:disabled` when one sets `disableAutoMode` to `"disable"`,
+  at its top level or under `permissions`.
+  """
+  @spec auto_mode(String.t(), String.t() | nil) :: :allowed | :disabled | :unreadable
+  def auto_mode(config_dir, cwd), do: policy(config_dir, cwd, &auto_disabled_in?/1)
+
+  @doc "Whether a decoded Claude settings map turns bypassing permissions off."
+  @spec bypass_disabled_in?(term) :: boolean
+  def bypass_disabled_in?(settings),
+    do: match?(%{"permissions" => %{"disableBypassPermissionsMode" => "disable"}}, settings)
+
+  @doc "Whether a decoded Claude settings map turns Auto mode off."
+  @spec auto_disabled_in?(term) :: boolean
+  def auto_disabled_in?(settings),
+    do:
+      match?(%{"disableAutoMode" => "disable"}, settings) or
+        match?(%{"permissions" => %{"disableAutoMode" => "disable"}}, settings)
+
+  defp policy(config_dir, cwd, disabled?) do
     paths = settings_paths(config_dir, cwd) ++ [Path.join(config_dir, "remote-settings.json")]
 
     Enum.reduce_while(paths, :allowed, fn path, verdict ->
-      case read_bypass(path) do
+      case read_policy(path, disabled?) do
         :disabled -> {:halt, :disabled}
         :unreadable -> {:cont, :unreadable}
         :allowed -> {:cont, verdict}
@@ -373,19 +395,14 @@ defmodule HalC2.Claude.Skills do
     end)
   end
 
-  @doc "Whether a decoded Claude settings map turns bypassing permissions off."
-  @spec bypass_disabled_in?(term) :: boolean
-  def bypass_disabled_in?(settings),
-    do: match?(%{"permissions" => %{"disableBypassPermissionsMode" => "disable"}}, settings)
-
   # Reads only Claude's own settings files: fixed names under its config dir and
   # the project's root, never a path a client sent.
   # sobelow_skip ["Traversal.FileModule"]
-  defp read_bypass(path) do
+  defp read_policy(path, disabled?) do
     with {:ok, text} <- File.read(path),
          false <- String.trim(text) == "",
          {:ok, settings} when is_map(settings) <- decode_lenient(text) do
-      if bypass_disabled_in?(settings), do: :disabled, else: :allowed
+      if disabled?.(settings), do: :disabled, else: :allowed
     else
       {:error, :enoent} -> :allowed
       {:error, :enotdir} -> :allowed

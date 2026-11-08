@@ -5219,6 +5219,15 @@ defmodule HalC2.Orchestration do
         },
         else: %{}
 
+    # A `/compact` or `/logout` reaches a conversation the provider already has as the
+    # command it is, with nothing put before it: what the thread owes that conversation
+    # (`HalC2.Orchestration.Handoff.plan/5`) waits for the next turn, which reads it
+    # from the same `lastRunOrdinal`.
+    bare =
+      maintenance(command) != nil and not foreign and
+        get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]) != nil and
+        is_integer(provider_thread["lastRunOrdinal"])
+
     provider_changes =
       if provider_thread || foreign do
         [
@@ -5230,7 +5239,7 @@ defmodule HalC2.Orchestration do
             # A rolled-back head is where this run resumes the conversation.
             &(&1
               |> Map.merge(%{
-                "lastRunOrdinal" => ordinal,
+                "lastRunOrdinal" => if(bare, do: &1["lastRunOrdinal"], else: ordinal),
                 "providerSessionId" => session_id,
                 "nativeConversationHeadRef" => nil
               })
@@ -5357,7 +5366,9 @@ defmodule HalC2.Orchestration do
         if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
 
     handoff =
-      HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
+      if bare,
+        do: %{fork: nil, fallback: nil, context: nil, changes: []},
+        else: HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
 
     provider_text = HalC2.ComposerContext.for_provider(text, command["context"])
 

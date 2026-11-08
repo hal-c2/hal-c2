@@ -185,4 +185,32 @@ defmodule HalC2.ClaudeSkillsTest do
              })
     end
   end
+
+  describe "auto_mode/2" do
+    @describetag :tmp_dir
+
+    test "any layer turns Auto off, at its top level or under permissions", %{tmp_dir: dir} do
+      config = Path.join(dir, "config")
+      project = Path.join(dir, "project")
+      File.mkdir_p!(config)
+      File.mkdir_p!(Path.join(project, ".claude"))
+      local = Path.join([project, ".claude", "settings.local.json"])
+      remote = Path.join(config, "remote-settings.json")
+
+      File.write!(local, ~s({"permissions": {"disableBypassPermissionsMode": "disable"}}))
+      assert Skills.auto_mode(config, project) == :allowed
+
+      for off <- [
+            ~s({"disableAutoMode": "disable"}),
+            ~s({"permissions": {"disableAutoMode": "disable"}})
+          ] do
+        File.write!(remote, off)
+        assert Skills.auto_mode(config, project) == :disabled
+        assert Skills.bypass_permissions(config, project) == :disabled
+      end
+
+      File.write!(remote, ~s({"disableAutoMode": false}))
+      assert Skills.auto_mode(config, project) == :allowed
+    end
+  end
 end

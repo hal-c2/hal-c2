@@ -2369,7 +2369,6 @@ Feature: Claude
     And not all at once when Claude wakes the parent
 
   # Upstream #21805: Full access sent bypass flags Claude had disabled, leaving its fallback unapproved.
-  @backlog
   Scenario Outline: Full access on a Claude without bypass falls back to what it allows
     Given Claude has bypass turned off and <auto>
     When a Claude thread runs in Full access
@@ -2637,7 +2636,7 @@ Feature: Claude
     Then the pending approval includes Claude's reason
 
   # Upstream #22546: an ordinary approval outside Full access looks as before.
-  @backlog @shared @plugin-claude
+  @shared @plugin-claude @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Claude approval in Supervised mode carries no Full access explanation
     Given a Claude thread in Supervised mode
     When Claude asks to run "touch notes.txt"
