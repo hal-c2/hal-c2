@@ -46,9 +46,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   @xai_backgrounded ["x.ai/task_backgrounded", "_x.ai/task_backgrounded"]
   @xai_completed ["x.ai/task_completed", "_x.ai/task_completed"]
 
-  # The conversation a `session/load` replays, history rather than the turn's: the
-  # session's commands, options and mode it sends meanwhile are its state now (Grok
-  # replays a turn's end as `turn_completed`).
+  # The conversation a `session/load` replays (Grok's turn ends, as `turn_completed`,
+  # with it), history rather than the turn's; the commands, options and mode the agent
+  # sends meanwhile are the session's state now.
   @replayed ~w(user_message_chunk agent_message_chunk agent_thought_chunk tool_call tool_call_update
                 plan turn_completed)
 
@@ -3483,9 +3483,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     # A subagent's session keeps its own limit of not delegating further:
     # its ask to start a subagent is refused where it stands, never raised
     # to the user (its other asks follow the thread's access mode as usual).
-    if HalC2.Acp.driver(state.agent) == "opencode" and is_binary(params["sessionId"]) and
-         params["sessionId"] != state.session_id and
-         String.downcase(call["name"] || call["title"] || "") == "task" do
+    # OpenCode 2 asks for a child on the thread's own session and names the
+    # child in `_meta` (only past its default depth limit, which fails the
+    # call without asking).
+    if HalC2.Acp.driver(state.agent) == "opencode" and
+         is_map(get_in(call, ["_meta", "opencode/child-session"])) and
+         String.downcase(call["name"] || "") == "subagent" do
       Connection.respond(conn, id, {:ok, %{"outcome" => outcome(options, "decline")}})
       state
     else

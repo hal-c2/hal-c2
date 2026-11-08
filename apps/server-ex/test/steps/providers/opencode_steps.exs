@@ -3669,9 +3669,25 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   # --- access mode, subagents and their limits -------------------------------------------------
 
-  @child "3c1e2b34-5a67-4b89-9c0d-1e2f3a4b5c6d"
+  # OpenCode 2's session ids: the thread's own, and its subagent's.
+  @root "ses_2b1a0f9e8d7c6b5a4f3e2d1c0b"
+  @session "ses_3c1e2b345a67b89c0d1e2f3a4b"
 
-  # A `task` call that names a subagent session, as OpenCode reports it.
+  # The subagent tool's answer to a background start.
+  @in_background "The subagent is working in the background (sessionID: #{@session}). " <>
+                   "You will be notified automatically when it finishes."
+
+  # An OpenCode 2 whose sessions the steps can name: a new session is `@root`.
+  defp opencode_2(context, turns),
+    do:
+      FakeAcp.install(
+        context,
+        "opencode",
+        %{"version" => "2.2.0", "sessionId" => @root, "turns" => turns ++ FakeAcp.turns()},
+        enabled: true
+      )
+
+  # OpenCode 1's `task` call, as far as its start and end.
   defp task_call(id, output, status \\ "completed") do
     [
       %{
@@ -3697,7 +3713,17 @@ defmodule HalC2.Steps.Providers.Opencode do
     ]
   end
 
-  defp command_permission(id, session) do
+  # OpenCode 2 asks for its subagent's permissions on the thread's own session, naming the
+  # child in `_meta` and its title (packages/cli/src/acp: permission.ts).
+  defp child_permission(call) do
+    child = %{"id" => @session, "parentID" => @root, "depth" => 1, "title" => "Explore"}
+
+    call
+    |> Map.update!("title", &"Explore: #{&1}")
+    |> Map.put("_meta", %{"opencode/child-session" => child})
+  end
+
+  defp command_permission(id, child?) do
     call = %{
       "toolCallId" => id,
       "name" => "bash",
@@ -3706,38 +3732,65 @@ defmodule HalC2.Steps.Providers.Opencode do
       "rawInput" => %{"command" => "ls"}
     }
 
-    %{"permission" => if(session, do: Map.put(call, "sessionId", session), else: call)}
+    %{"permission" => if(child?, do: child_permission(call), else: call)}
   end
 
-  defp nested_permission(id, session) do
+  # The subagent's own `subagent` call: OpenCode 2 fails it past its depth limit (1 unless
+  # `experimental.subagent_depth` raises it) before asking anything.
+  defp nested_permission(id) do
     %{
-      "permission" => %{
-        "toolCallId" => id,
-        "sessionId" => session,
-        "name" => "task",
-        "title" => "task",
-        "kind" => "other",
-        "rawInput" => %{"description" => "Deeper", "prompt" => "go deeper"}
-      }
+      "permission" =>
+        child_permission(%{
+          "toolCallId" => id,
+          "name" => "subagent",
+          "title" => "subagent",
+          "kind" => "think",
+          "rawInput" => %{
+            "agent" => "general",
+            "description" => "Deeper",
+            "prompt" => "go deeper"
+          }
+        })
     }
+  end
+
+  defp edit_permission do
+    %{
+      "permission" =>
+        child_permission(%{
+          "toolCallId" => "edit-1",
+          "name" => "edit",
+          "title" => "edit src/app.ts",
+          "kind" => "edit",
+          "rawInput" => %{"filePath" => "src/app.ts", "oldString" => "a", "newString" => "b"}
+        })
+    }
+  end
+
+  # The `subagent` call of a subagent that ran in the foreground and answered.
+  defp finished_subagent(id, answer \\ "Explored.") do
+    input = %{
+      "agent" => "general",
+      "description" => "Explore",
+      "prompt" => "Explore the codebase"
+    }
+
+    text = ~s(<subagent sessionID="#{@session}" state="completed">\n#{answer}\n</subagent>)
+    subagent_tool(id, input, "completed", text)
   end
 
   defp full_access_thread(context, extra_turns) do
     two = %{
       "match" => "approve",
       "steps" => [
-        command_permission("cmd-2", @child),
-        nested_permission("nested-2", @child),
+        command_permission("cmd-2", true),
+        nested_permission("nested-2"),
         %{"text" => "Done."}
       ]
     }
 
     context
-    |> FakeAcp.install(
-      "opencode",
-      %{"turns" => extra_turns ++ [two | FakeAcp.turns()]},
-      enabled: true
-    )
+    |> opencode_2(extra_turns ++ [two])
     |> FakeAcp.thread(@thread, %{full_access: true})
     |> Map.put(:thread, @thread)
     |> Map.put(:runs_total, 2)
@@ -3751,9 +3804,8 @@ defmodule HalC2.Steps.Providers.Opencode do
     two = %{
       "match" => "approve",
       "steps" =>
-        [command_permission("cmd-1", nil)] ++
-          task_call("task-1", "Subagent started in background. subagent_id: #{@child}") ++
-          [nested_permission("nested-1", @child), %{"text" => "Done."}]
+        [command_permission("cmd-1", false)] ++
+          start_in_background("task-1") ++ [nested_permission("nested-1"), %{"text" => "Done."}]
     }
 
     context = full_access_thread(context, [two])
@@ -3766,7 +3818,7 @@ defmodule HalC2.Steps.Providers.Opencode do
        context do
     one = %{
       "match" => "start the subagent",
-      "steps" => task_call("task-1", "Finished. subagent_id: #{@child}") ++ [%{"text" => "Done."}]
+      "steps" => finished_subagent("task-1") ++ [%{"text" => "Done."}]
     }
 
     context = full_access_thread(context, [one])
@@ -3779,9 +3831,7 @@ defmodule HalC2.Steps.Providers.Opencode do
        context do
     one = %{
       "match" => "start the subagent",
-      "steps" =>
-        task_call("task-1", "Subagent started in background. subagent_id: #{@child}") ++
-          [%{"text" => "Started."}]
+      "steps" => start_in_background("task-1") ++ [%{"text" => "Started."}]
     }
 
     context = full_access_thread(context, [one])
@@ -3827,22 +3877,11 @@ defmodule HalC2.Steps.Providers.Opencode do
   # --- a subagent under the thread's access mode -------------------------------------------------
 
   step "an OpenCode subagent wants to edit a file", context do
-    edit = %{
-      "permission" => %{
-        "toolCallId" => "edit-1",
-        "sessionId" => @child,
-        "name" => "edit",
-        "title" => "edit src/app.ts",
-        "kind" => "edit",
-        "rawInput" => %{"filePath" => "src/app.ts", "oldString" => "a", "newString" => "b"}
-      }
-    }
-
     turn = %{
       "match" => "let the subagent edit",
       "steps" =>
-        task_call("task-1", "Subagent started in background. subagent_id: #{@child}") ++
-          [edit, nested_permission("nested-1", @child), %{"text" => "Done."}]
+        start_in_background("task-1") ++
+          [edit_permission(), nested_permission("nested-1"), %{"text" => "Done."}]
     }
 
     context =
@@ -3864,26 +3903,13 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   step "an OpenCode subagent asks for approval before OpenCode says which run it belongs to",
        context do
-    edit = %{
-      "permission" => %{
-        "toolCallId" => "edit-1",
-        "sessionId" => @child,
-        "name" => "edit",
-        "title" => "edit src/app.ts",
-        "kind" => "edit",
-        "rawInput" => %{"filePath" => "src/app.ts", "oldString" => "a", "newString" => "b"}
-      }
-    }
-
     turn = %{
       "match" => "let the subagent edit",
-      "steps" =>
-        [edit] ++
-          task_call("task-1", "Finished. subagent_id: #{@child}") ++ [%{"text" => "Done."}]
+      "steps" => [edit_permission() | finished_subagent("task-1")] ++ [%{"text" => "Done."}]
     }
 
     context
-    |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+    |> opencode_2([turn])
     |> FakeAcp.thread(@thread, "approval-required")
     |> FakeAcp.send_message("let the subagent edit")
     |> Map.put(:thread, @thread)
@@ -3902,32 +3928,25 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   # --- a subagent's own thread -------------------------------------------------------------------------
 
-  defp subagents(context) do
-    World.thread_id(context, @thread)
-    |> HalC2.Streams.state()
-    |> StreamState.list("subagent")
-  end
-
+  # The child streams while its call runs, before the call's end names its session.
   step "OpenCode starts a subagent with a task", context do
-    turn = %{
-      "match" => "explore it",
-      "steps" =>
-        task_call("task-1", "Explored. subagent_id: #{@child}") ++
-          [
-            %{
-              "update" => %{
-                "sessionUpdate" => "agent_message_chunk",
-                "messageId" => "child-1",
-                "content" => %{"type" => "text", "text" => "Found it."}
-              },
-              "sessionId" => @child
-            },
-            %{"text" => "Done."}
-          ]
+    said = %{
+      "send" => %{
+        "method" => "opencode/session/child_update",
+        "params" =>
+          child_update(@session, %{
+            "sessionUpdate" => "agent_message_chunk",
+            "messageId" => "child-1",
+            "content" => %{"type" => "text", "text" => "Found it."}
+          })
+      }
     }
 
+    {opened, [ended]} = Enum.split(finished_subagent("task-1", "Found it."), 2)
+    turn = %{"match" => "explore it", "steps" => opened ++ [said, ended, %{"text" => "Done."}]}
+
     context
-    |> FakeAcp.install("opencode", %{"turns" => [turn | FakeAcp.turns()]}, enabled: true)
+    |> opencode_2([turn])
     |> FakeAcp.thread(@thread, %{full_access: true})
     |> FakeAcp.send_message("explore it")
     |> Map.put(:thread, @thread)
@@ -4512,38 +4531,34 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   # --- background subagents of OpenCode 2 ---------------------------------------------------------------------------
 
-  # OpenCode 2 runs a subagent in the background and acknowledges the spawn in the
-  # turn; the subagent's session keeps streaming under its own id after the root
-  # turn ended, and the root session reports its end.
-  defp child_says(text, session \\ @child) do
+  # OpenCode 2 runs a subagent in the background and acknowledges the spawn in the turn; the
+  # child's own updates and its end reach the client after the root turn ended, in OpenCode's
+  # `opencode/session/child_update` (packages/cli/src/acp/child.ts).
+  defp child_update(child, update) do
     %{
-      "sessionId" => session,
-      "update" => %{
-        "sessionUpdate" => "agent_message_chunk",
-        "messageId" => "child-late",
-        "content" => %{"type" => "text", "text" => text}
-      }
+      "rootSessionId" => @root,
+      "childSessionId" => child,
+      "parentSessionId" => @root,
+      "depth" => 1,
+      "title" => "Explore",
+      "type" => "update",
+      "update" => update
     }
   end
 
-  defp report(session, how \\ "completed successfully") do
-    %{
-      "update" => %{
-        "sessionUpdate" => "user_message_chunk",
-        "content" => %{
-          "type" => "text",
-          "text" => ~s[Background subagent "#{session}" (type: "general") #{how}.]
-        }
-      }
-    }
+  defp child_said(text, child \\ @session) do
+    child_update(child, %{
+      "sessionUpdate" => "agent_message_chunk",
+      "messageId" => "child-late",
+      "content" => %{"type" => "text", "text" => text}
+    })
   end
 
   defp background_thread(context, steps, more \\ []) do
     turn = %{"match" => "work in the background", "steps" => steps ++ [%{"text" => "Started."}]}
-    turns = [turn | more] ++ FakeAcp.turns()
 
     context
-    |> FakeAcp.install("opencode", %{"version" => "2.2.0", "turns" => turns}, enabled: true)
+    |> opencode_2([turn | more])
     |> FakeAcp.thread(@thread)
     |> Map.put(:thread, @thread)
     |> FakeAcp.send_message("work in the background")
@@ -4554,10 +4569,18 @@ defmodule HalC2.Steps.Providers.Opencode do
     pid
   end
 
-  # A frame the agent sends after its turn, as the agent's connection delivers it.
-  defp says(context, params) do
+  # OpenCode's `opencode/session/child_update` after the turn, as the agent's connection
+  # delivers it, once the runtime has handled it.
+  defp child_reports(context, params) do
     pid = runtime_pid(context)
-    send(pid, {:json_rpc, :sys.get_state(pid).conn, {:notification, "session/update", params}})
+
+    send(
+      pid,
+      {:json_rpc, :sys.get_state(pid).conn,
+       {:notification, "opencode/session/child_update", params}}
+    )
+
+    :sys.get_state(pid)
     context
   end
 
@@ -4566,24 +4589,24 @@ defmodule HalC2.Steps.Providers.Opencode do
   defp background_subagents(row),
     do: for(%{"taskType" => "subagent"} = task <- row["runningBackgroundTasks"] || [], do: task)
 
+  # The child's own tool call, as OpenCode 2 names it for the client: under the child's id
+  # and title.
   step "an OpenCode 2 subagent queued a background continuation of its nested work", context do
-    nested = %{
-      "sessionId" => @child,
-      "update" => %{
+    nested =
+      child_update(@session, %{
         "sessionUpdate" => "tool_call",
-        "toolCallId" => "nested-1",
-        "title" => "task",
-        "kind" => "other",
+        "toolCallId" => "#{@session}:read-1",
+        "title" => "Explore: read",
+        "kind" => "read",
         "status" => "in_progress",
-        "rawInput" => %{"description" => "Deeper", "prompt" => "go deeper"}
-      }
-    }
+        "rawInput" => %{"filePath" => "lib/app.ex"}
+      })
 
-    background_thread(
-      context,
-      task_call("task-1", "Subagent started in background.\nsubagent_id: #{@child}") ++
-        [%{"update" => nested["update"], "sessionId" => @child}]
-    )
+    steps =
+      start_in_background("task-1") ++
+        [%{"send" => %{"method" => "opencode/session/child_update", "params" => nested}}]
+
+    background_thread(context, steps)
   end
 
   step "the root turn ends", context do
@@ -4602,8 +4625,8 @@ defmodule HalC2.Steps.Providers.Opencode do
 
   step "the continuation runs and its result reaches the subagent's caller", context do
     context
-    |> says(child_says("The nested work is done."))
-    |> says(%{"sessionId" => root_session(context)} |> Map.merge(report(@child)))
+    |> child_reports(child_said("The nested work is done."))
+    |> child_reports(child_status(@root, @session, "completed"))
 
     World.await_row(World.thread_id(context, @thread), &(background_subagents(&1) == []))
 
@@ -4613,18 +4636,21 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
-  defp spawn_a, do: task_call("task-1", "Subagent started in background.\nsubagent_id: #{@child}")
+  # The agent calls the subagent it already started again, to steer it: OpenCode sends the
+  # prompt to the child's run and answers as for a background start, asked for one or not.
+  defp steer_turn(background?) do
+    input = %{
+      "agent" => "general",
+      "description" => "Again",
+      "prompt" => "also this",
+      "sessionID" => @session
+    }
 
-  # The agent calls the subagent it already started again, to steer it.
-  defp steer_turn(output) do
-    %{"match" => "steer it", "steps" => task_call("task-2", output) ++ [%{"text" => "Steered."}]}
+    input = if background?, do: Map.put(input, "background", true), else: input
+    steer_in(subagent_tool("task-2", input, "completed", @in_background))
   end
 
-  defp started_a(context, more \\ []) do
-    context = background_thread(context, spawn_a(), more)
-    FakeAcp.await_run(context, "completed")
-    context
-  end
+  defp started_a(context, more), do: started_in_background(context, more)
 
   defp steer(context) do
     context = FakeAcp.send_message(context, "steer it")
@@ -4632,10 +4658,10 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
-  defp a_reports(context, how \\ "completed successfully") do
+  defp a_reports(context) do
     context
-    |> says(child_says("A's report."))
-    |> says(Map.put(report(@child, how), "sessionId", root_session(context)))
+    |> child_reports(child_said("A's report."))
+    |> child_reports(child_status(@root, @session, "completed"))
   end
 
   defp await_no_background(context) do
@@ -4644,7 +4670,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step ~r/^an OpenCode 2 turn started the background subagent "A"$/, context do
-    started_a(context, [steer_turn("Steering.\nsubagent_id: #{@child}")])
+    started_a(context, [steer_turn(true)])
   end
 
   step(~r/^the agent steers "A" while it is still running$/, context, do: steer(context))
@@ -4662,7 +4688,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   end
 
   step ~r/^an OpenCode 2 background subagent "A" is running$/, context do
-    started_a(context, [steer_turn("Running.\nsubagent_id: #{@child}")])
+    started_a(context, [steer_turn(false)])
   end
 
   step(~r/^the agent steers "A" without asking for it to run in the background$/, context,
@@ -4686,8 +4712,6 @@ defmodule HalC2.Steps.Providers.Opencode do
   # As `opencode acp` 2.2 sends them (packages/cli/src/acp: tool.ts, translate.ts, child.ts): the
   # call is OpenCode's `subagent` tool, it names the child session in `rawOutput.metadata`, and a
   # child's end reaches the client only in OpenCode's `opencode/session/child_update` notification.
-
-  @session "ses_3c1e2b345a67b89c0d1e2f3a4b"
 
   defp subagent_tool(id, input, status, text) do
     [
@@ -4722,15 +4746,16 @@ defmodule HalC2.Steps.Providers.Opencode do
           "content" => [
             %{"type" => "content", "content" => %{"type" => "text", "text" => text}}
           ],
-          "rawOutput" => %{"metadata" => %{"sessionID" => @session, "status" => "running"}}
+          "rawOutput" => %{
+            "metadata" => %{
+              "sessionID" => @session,
+              "status" => if(text =~ ~r/\A<subagent /, do: "completed", else: "running")
+            }
+          }
         }
       }
     ]
   end
-
-  # The subagent tool's answer to a background start.
-  @in_background "The subagent is working in the background (sessionID: #{@session}). " <>
-                   "You will be notified automatically when it finishes."
 
   defp start_in_background(id, input \\ %{}) do
     input =
@@ -4773,24 +4798,12 @@ defmodule HalC2.Steps.Providers.Opencode do
     )
   end
 
-  defp child_says_status(context, params) do
-    pid = runtime_pid(context)
-
-    send(
-      pid,
-      {:json_rpc, :sys.get_state(pid).conn,
-       {:notification, "opencode/session/child_update", params}}
-    )
-
-    context
-  end
-
   # OpenCode 2 sends the child's failed run (`session.execution.failed`) as the child's status,
   # and nothing to the parent session.
   step ~r/^the turn of "A" fails without reporting back$/, context do
     error = %{"type" => "provider.quota", "message" => "Rate limit exceeded."}
     params = child_status(root_session(context), @session, "failed", nil, %{"error" => error})
-    child_says_status(context, params)
+    child_reports(context, params)
   end
 
   # A runtime mode change relaunches OpenCode, which loads the session (this one cannot resume
@@ -4827,7 +4840,7 @@ defmodule HalC2.Steps.Providers.Opencode do
   step ~s/OpenCode reports a finished child status from a subagent that "A" started/, context do
     grandchild = "ses_9f8e7d6c5b4a39281706f5e4d3"
     params = child_status(root_session(context), grandchild, "completed", @session)
-    context = child_says_status(context, params)
+    context = child_reports(context, params)
     :sys.get_state(runtime_pid(context))
     context
   end
