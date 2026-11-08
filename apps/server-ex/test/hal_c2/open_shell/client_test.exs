@@ -1,0 +1,338 @@
+defmodule HalC2.OpenShell.ClientTest do
+  # The environment id (the owner label) comes from the app env's `:home`.
+  use ExUnit.Case, async: false
+
+  alias HalC2.OpenShell
+  alias HalC2.OpenShell.Client
+  alias HalC2.OpenShell.Exec
+  alias HalC2.Test.FakeOpenShell
+
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} = context do
+    FakeOpenShell.put_env(home: Path.join(dir, "mc"))
+    opts = Map.get(context, :gateway, [])
+    opts = if run = context[:exec], do: [exec: handler(run, self())] ++ opts, else: opts
+    gateway = FakeOpenShell.start(Path.join(dir, "pki"), [notify: self()] ++ opts)
+    {:ok, conn} = Client.connect(gateway.endpoint, gateway.credentials)
+    on_exit(fn -> Client.disconnect(conn) end)
+    %{gateway: gateway, conn: conn}
+  end
+
+  describe "connecting" do
+    test "a plaintext or malformed endpoint is refused before anything is sent", %{gateway: g} do
+      for url <- ["http://127.0.0.1:#{g.port}", "grpc://127.0.0.1:#{g.port}", "h2c://localhost:1"],
+          do: assert({:error, :plaintext_refused} = Client.connect(url, g.credentials))
+
+      for url <- ["127.0.0.1:#{g.port}", "https://", "https://127.0.0.1:#{g.port}/x"],
+          do: assert({:error, :bad_endpoint} = Client.connect(url, g.credentials))
+
+      assert {:error, :credentials_missing} =
+               Client.connect(g.endpoint, Keyword.put(g.credentials, :key, "/nonexistent"))
+    end
+
+    test "the MC is who its certificate says, and not an operator", %{conn: conn} do
+      assert {:ok, %{status: :healthy, version: "0.1.7"}} = Client.health(conn)
+
+      # The fake answers with the subject of the certificate it was shown.
+      assert {:ok,
+              %{subject: "client Peer cert", roles: ["openshell-user"], identity_provider: "mtls"}} =
+               Client.current_user(conn)
+
+      assert {:ok, %{version: "0.1.7", drivers: ["podman"]}} = Client.gateway_info(conn)
+    end
+
+    test "certificates replaced in place are read again, as after a rotation", %{
+      gateway: g,
+      tmp_dir: dir
+    } do
+      assert {:ok, _} =
+               Client.connect(g.endpoint, g.credentials) |> elem(1) |> Client.current_user()
+
+      # A new CA and identities at the same paths, and a gateway that trusts only them.
+      File.rm_rf!(Path.join(dir, "pki"))
+      rotated = FakeOpenShell.start(Path.join(dir, "pki"))
+      assert rotated.credentials == g.credentials
+
+      {:ok, conn} = Client.connect(rotated.endpoint, rotated.credentials)
+      assert {:ok, %{subject: "client Peer cert"}} = Client.current_user(conn)
+      Client.disconnect(conn)
+    end
+
+    test "without a certificate only Health answers", %{gateway: g} do
+      {:ok, anon} = Client.connect(g.endpoint, ca: g.credentials[:ca], anonymous: true)
+      assert {:ok, %{status: :healthy}} = Client.health(anon)
+      assert {:error, %{status: :unauthenticated}} = Client.current_user(anon)
+      Client.disconnect(anon)
+    end
+
+    test "a gateway the MC's CA did not sign is not trusted", %{gateway: g, tmp_dir: dir} do
+      other = FakeOpenShell.stranger(Path.join(dir, "other"))
+
+      refused =
+        case Client.connect(g.endpoint, Keyword.put(g.credentials, :ca, other[:ca])) do
+          {:error, _} -> true
+          {:ok, conn} -> match?({:error, _}, Client.health(conn))
+        end
+
+      assert refused
+    end
+
+    test "a certificate the gateway's CA did not sign gets nothing", %{gateway: g, tmp_dir: dir} do
+      other = FakeOpenShell.stranger(Path.join(dir, "other"))
+
+      refused =
+        case Client.connect(g.endpoint, Keyword.put(other, :ca, g.credentials[:ca])) do
+          {:error, _} -> true
+          {:ok, conn} -> match?({:error, _}, Client.current_user(conn))
+        end
+
+      assert refused
+    end
+  end
+
+  describe "sandboxes" do
+    test "the workspace is created once", %{conn: conn} do
+      assert :ok = Client.ensure_workspace(conn)
+      assert_received {:openshell_request, "CreateWorkspace", "hal-c2"}
+      assert :ok = Client.ensure_workspace(conn)
+      refute_received {:openshell_request, "CreateWorkspace", _}
+    end
+
+    test "a created sandbox carries the owner label, its limits and no restarts", %{conn: conn} do
+      assert {:ok, %{name: "review-42", phase: :ready, labels: labels}} =
+               Client.create_sandbox(conn, "review-42",
+                 labels: %{"halc2.github.io/review" => "42"},
+                 limits: %{cpu: "2", memory: "4Gi", disk: "ignored"}
+               )
+
+      assert labels == %{
+               "halc2.github.io/review" => "42",
+               OpenShell.owner_label() => OpenShell.owner()
+             }
+
+      assert_received {:openshell_request, "CreateSandbox", request}
+      assert request.spec.restart_policy == :SANDBOX_RESTART_POLICY_NEVER
+      assert {:workspace, "hal-c2"} = request.workspace_scope.selection
+
+      assert request.request_id =~
+               ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
+
+      limits = Google.Protobuf.to_map(request.spec.template.resources)
+
+      assert limits == %{
+               "limits" => %{"cpu" => "2", "memory" => "4Gi"},
+               "requests" => %{"cpu" => "2", "memory" => "4Gi"}
+             }
+    end
+
+    test "the owner label cannot be taken over, and bad labels fail with their name", %{
+      conn: conn
+    } do
+      assert {:error, :owner_label_reserved} =
+               Client.create_sandbox(conn, "x",
+                 labels: %{OpenShell.owner_label() => "someone-else"}
+               )
+
+      assert {:error, {:bad_label, "bad key!"}} =
+               Client.create_sandbox(conn, "x", labels: %{"bad key!" => "1"})
+
+      assert {:error, {:bad_label, "k"}} =
+               Client.create_sandbox(conn, "x", labels: %{"k" => "has space"})
+
+      refute_received {:openshell_request, "CreateSandbox", _}
+    end
+
+    @tag gateway: [ignore_selector: true]
+    test "listing returns only this MC's sandboxes, even when the gateway returns more",
+         %{conn: conn, gateway: g} do
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "another-mc"})
+      FakeOpenShell.put_sandbox(g, "unlabelled", %{})
+      {:ok, _} = Client.create_sandbox(conn, "mine-1", labels: %{"halc2.github.io/review" => "1"})
+      {:ok, _} = Client.create_sandbox(conn, "mine-2", labels: %{"halc2.github.io/review" => "2"})
+
+      assert {:ok, all} = Client.list_sandboxes(conn)
+      assert Enum.map(all, & &1.name) == ["mine-1", "mine-2"]
+
+      assert_received {:openshell_request, "ListSandboxes", request}
+      assert request.label_selector == "#{OpenShell.owner_label()}=#{OpenShell.owner()}"
+
+      Client.list_sandboxes(conn, %{"halc2.github.io/review" => "1"})
+      assert_received {:openshell_request, "ListSandboxes", request}
+
+      assert request.label_selector ==
+               "#{OpenShell.owner_label()}=#{OpenShell.owner()},halc2.github.io/review=1"
+    end
+
+    test "a sandbox the MC did not create is neither read nor deleted", %{conn: conn, gateway: g} do
+      FakeOpenShell.put_sandbox(g, "theirs", %{OpenShell.owner_label() => "another-mc"})
+      assert {:error, :not_owned} = Client.get_sandbox(conn, "theirs")
+      assert {:error, :not_owned} = Client.delete_sandbox(conn, "theirs")
+      refute_received {:openshell_request, "DeleteSandbox", _}
+      assert Map.has_key?(FakeOpenShell.sandboxes(g), "theirs")
+    end
+
+    test "deleting its own sandbox, or one already gone, is :ok", %{conn: conn, gateway: g} do
+      {:ok, _} = Client.create_sandbox(conn, "mine")
+      assert :ok = Client.delete_sandbox(conn, "mine")
+      assert_received {:openshell_request, "DeleteSandbox", %{name: "mine", allow_missing: true}}
+      refute Map.has_key?(FakeOpenShell.sandboxes(g), "mine")
+
+      assert :ok = Client.delete_sandbox(conn, "mine")
+      assert {:error, %{status: :not_found}} = Client.get_sandbox(conn, "mine")
+    end
+  end
+
+  describe "exec" do
+    setup %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      :ok
+    end
+
+    test "stdin comes back on stdout and the exit status ends the stream", %{conn: conn} do
+      {:ok, exec} =
+        Client.exec(conn, "box", ["cat"], workdir: "/sandbox", environment: %{"A" => "1"})
+
+      assert_receive {:openshell_request, "ExecSandboxInteractive", start}
+      assert start.command == ["cat"]
+      assert start.environment == %{"A" => "1"}
+      refute start.tty
+
+      ref = Process.monitor(exec)
+      assert :ok = Exec.send_stdin(exec, "hello ")
+      assert :ok = Exec.send_stdin(exec, ["wor", "ld"])
+      assert :ok = Exec.close_stdin(exec)
+
+      assert collect(exec) == {"hello world", {:exit, 0}}
+      assert_receive {:DOWN, ^ref, :process, ^exec, :normal}
+      assert {:error, :closed} = Exec.send_stdin(exec, "late")
+    end
+
+    test "a megabyte of binary stdin arrives whole and in order before the half-close", %{
+      conn: conn
+    } do
+      data = :crypto.strong_rand_bytes(1_048_576 + 17)
+      {:ok, exec} = Client.exec(conn, "box", ["cat"])
+      assert :ok = Exec.send_stdin(exec, data)
+      assert :ok = Exec.close_stdin(exec)
+      assert {:error, :stdin_closed} = Exec.send_stdin(exec, "more")
+      assert {^data, {:exit, 0}} = collect(exec)
+    end
+
+    @tag exec: :fails
+    test "stderr and a non-zero exit come through", %{conn: conn} do
+      {:ok, exec} = Client.exec(conn, "box", ["false"])
+      assert_receive {:openshell_exec, ^exec, {:stderr, "warning\n"}}
+      assert_receive {:openshell_exec, ^exec, {:stdout, "out\n"}}
+      assert_receive {:openshell_exec, ^exec, {:exit, 3}}
+    end
+
+    @tag exec: :hangs
+    test "cancelling ends the stream with :cancelled, once", %{conn: conn} do
+      {:ok, exec} = Client.exec(conn, "box", ["sleep", "infinity"])
+      assert_receive {:openshell_exec, ^exec, {:stdout, "started"}}
+      ref = Process.monitor(exec)
+      assert :ok = Exec.cancel(exec)
+      assert_receive {:openshell_exec, ^exec, {:error, :cancelled}}
+      assert_receive {:DOWN, ^ref, :process, ^exec, :normal}
+      assert :ok = Exec.cancel(exec)
+      refute_received {:openshell_exec, ^exec, _}
+    end
+
+    @tag exec: :waits
+    test "the stream stops when its owner exits", %{conn: conn} do
+      test = self()
+
+      owner =
+        spawn(fn ->
+          {:ok, exec} = Client.exec(conn, "box", ["sleep", "infinity"])
+          send(test, {:exec, exec})
+          receive do: (:stop -> :ok)
+        end)
+
+      assert_receive {:exec, exec}
+      ref = Process.monitor(exec)
+      send(owner, :stop)
+      assert_receive {:DOWN, ^ref, :process, ^exec, :normal}
+    end
+
+    test "a sandbox that does not exist ends the stream with the gateway's error", %{conn: conn} do
+      {:ok, exec} = Client.exec(conn, "missing", ["true"])
+      assert_receive {:openshell_exec, ^exec, {:error, %{status: :not_found}}}
+    end
+  end
+
+  describe "upload" do
+    @tag exec: :untar
+    test "streams the archive into tar in the sandbox", %{conn: conn, tmp_dir: dir} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+      tar = :crypto.strong_rand_bytes(200_000)
+      path = Path.join(dir, "src.tar")
+      File.write!(path, tar)
+
+      assert :ok = Client.upload(conn, "box", "/sandbox/src", {:file, path})
+
+      assert_receive {:command, ["tar", "-x", "--no-same-owner", "-C", "/sandbox/src", "-f", "-"],
+                      ^tar}
+    end
+
+    @tag exec: :bad_tar
+    test "tar's failure is the upload's", %{conn: conn} do
+      {:ok, _} = Client.create_sandbox(conn, "box")
+
+      assert {:error, {:upload_failed, 2, "tar: not a tar archive\n"}} =
+               Client.upload(conn, "box", "/sandbox", "garbage")
+    end
+  end
+
+  # What the fake gateway runs for a test's `@tag exec:`.
+  defp handler(:fails, _test) do
+    fn _command, io ->
+      io.stderr.("warning\n")
+      io.stdout.("out\n")
+      io.exit.(3)
+    end
+  end
+
+  defp handler(:hangs, _test) do
+    fn _command, io ->
+      io.stdout.("started")
+      # Waits for input that never comes.
+      io.read.()
+    end
+  end
+
+  defp handler(:waits, _test), do: fn _command, io -> io.read.() end
+
+  defp handler(:untar, test) do
+    fn command, io ->
+      send(test, {:command, command, read_all(io, [])})
+      io.exit.(0)
+    end
+  end
+
+  defp handler(:bad_tar, _test) do
+    fn _command, io ->
+      read_all(io, [])
+      io.stderr.("tar: not a tar archive\n")
+      io.exit.(2)
+    end
+  end
+
+  defp read_all(io, acc) do
+    case io.read.() do
+      {:stdin, data} -> read_all(io, [acc, data])
+      :eof -> IO.iodata_to_binary(acc)
+      _ -> read_all(io, acc)
+    end
+  end
+
+  defp collect(exec, acc \\ []) do
+    receive do
+      {:openshell_exec, ^exec, {:stdout, data}} -> collect(exec, [acc, data])
+      {:openshell_exec, ^exec, ending} -> {IO.iodata_to_binary(acc), ending}
+    after
+      10_000 -> {IO.iodata_to_binary(acc), :timeout}
+    end
+  end
+end

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Run the OpenShell gateway review sandboxes use, in the foreground"
+#MISE dir="{{config_root}}/apps/server-ex"
+#MISE depends=["install:mc-deps"]
+#USAGE flag "--home <dir>" help="The MC home it belongs to (HAL_C2_MC_HOME), as for `mise run mc --home`"
+#USAGE flag "--archive <file>" help="A local copy of the pinned gateway archive, for a machine without network access"
+set -euo pipefail
+
+[[ -n ${usage_home:-} ]] && export HAL_C2_MC_HOME="$usage_home"
+
+# The gateway gets the MC's files (HalC2.OpenShell.Install), then replaces this
+# shell, so Ctrl-C stops it and nothing outlives the task.
+script="$(mktemp -t hal-c2-openshell.XXXXXX)"
+trap 'rm -f "$script"' EXIT
+args=(run --script "$script")
+[[ -n ${usage_archive:-} ]] && args+=(--archive "$usage_archive")
+mix hal_c2.openshell "${args[@]}"
+line="$(cat "$script")"
+rm -f "$script"
+trap - EXIT
+eval "$line"

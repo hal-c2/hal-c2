@@ -371,7 +371,8 @@ defmodule HalC2.Service do
 
   # `{:ok, trimmed output}` when a read-only question to the service manager
   # succeeded, `:error` otherwise.
-  defp probe(exe, args) do
+  @doc false
+  def probe(exe, args) do
     with path when is_binary(path) <- executable(exe),
          {out, 0} <- System.cmd(path, args) do
       {:ok, String.trim(out)}
@@ -382,7 +383,8 @@ defmodule HalC2.Service do
 
   # --- platform ----------------------------------------------------------------------
 
-  defp manager do
+  @doc false
+  def manager do
     case Application.get_env(:hal_c2, :service_platform) || :os.type() do
       {:unix, :linux} -> :systemd
       {:unix, :darwin} -> :launchd
@@ -392,7 +394,8 @@ defmodule HalC2.Service do
 
   defp unsupported, do: "Background services are supported on Linux (systemd) and macOS only."
 
-  defp user_home, do: Application.get_env(:hal_c2, :service_user_home) || System.user_home!()
+  @doc false
+  def user_home, do: Application.get_env(:hal_c2, :service_user_home) || System.user_home!()
 
   defp name(:systemd), do: @unit
   defp name(:launchd), do: @label
@@ -443,7 +446,8 @@ defmodule HalC2.Service do
   defp deactivate(:launchd, label),
     do: [{"launchctl", ["bootout", "gui/#{uid()}/#{label}"], :ignore}]
 
-  defp uid do
+  @doc false
+  def uid do
     {out, 0} = System.cmd("id", ["-u"])
     String.trim(out)
   end
@@ -541,14 +545,16 @@ defmodule HalC2.Service do
     """
   end
 
-  defp quote_value(value) do
+  @doc false
+  def quote_value(value) do
     if String.match?(value, ~r/[\s"\\]/),
       do: ~s("#{value |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")}"),
       else: value
   end
 
   # Runs each step in order, stopping at the first failure (`:ignore` steps may fail).
-  defp run_all(steps) do
+  @doc false
+  def run_all(steps) do
     Enum.reduce_while(steps, :ok, fn step, :ok ->
       {exe, args, mode} =
         case step do

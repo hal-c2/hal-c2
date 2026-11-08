@@ -70,12 +70,16 @@ defmodule HalC2.MixProject do
       {:erlexec, "~> 2.5"},
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
+      # The OpenShell gateway's gRPC API (HalC2.OpenShell.Client), over Mint with mTLS.
+      {:grpc, "~> 1.0"},
       {:mint_web_socket, "~> 1.0"},
       # The security ratchet in CI (`mix deps.audit`, `mix sobelow.check`), never
       # compiled into a release.
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       # GPL-3.0, for the property tests in prop/ only: never compiled into the MC.
       {:propcheck, "~> 1.5", only: :prop},
+      # The messages generated from OpenShell's proto/ (lib/hal_c2/open_shell/proto).
+      {:protobuf, "~> 0.17"},
       # The Slack connection plugins borrow (HalC2.Slack): the Web API.
       {:slack_elixir, "~> 1.2"},
       {:sobelow, "~> 0.18.1", only: [:dev, :test], runtime: false},
