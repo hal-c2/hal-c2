@@ -69,6 +69,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^O", description: "Runtime access picker", chords: ["ctrl+o"] },
       { keys: "Ctrl+Shift+M", description: "Model picker", chords: ["ctrl+shift+m"] },
       { keys: "Ctrl+Shift+E", description: "Effort picker", chords: ["ctrl+shift+e"] },
+      {
+        keys: "unbound",
+        description:
+          "Step the effort up / down: bind composer.increaseEffort / composer.decreaseEffort in keymap.json",
+      },
       { keys: "^Y", description: "Implement the proposed plan", chords: ["ctrl+y"] },
       { keys: "^A / ^R", description: "Approve / decline a request", chords: ["ctrl+a", "ctrl+r"] },
       {

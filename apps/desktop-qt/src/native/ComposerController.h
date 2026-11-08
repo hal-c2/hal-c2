@@ -207,6 +207,8 @@ public:
   // Whether `target`'s draft has files still on their way to the MC, or a
   // send in flight that carries the draft's attachments.
   bool attachmentsPending(const QString& target) const;
+  // Whether `target`'s draft has a file attached: it went to the draft's machine.
+  bool holdsFiles(const QString& target) const;
   // The draft key of a Space page; never a thread key (env:id) or a draft id (a uuid).
   static QString pageKey(const QString& pageId) { return QStringLiteral("page#") + pageId; }
   // The draft key of a Space's images prompt.
@@ -459,6 +461,7 @@ private:
   // whether its thread exists. Sends still on their way take the open
   // thread's newest message as their `after` once it is known.
   void reconcileUnsent();
+  void forgetTakenPicks();
   // Sends the outbox's waiting messages of each thread whose environment is
   // connected, in the order they were written; drops those of a thread the
   // environment no longer has. One window drains it.
@@ -601,6 +604,8 @@ private:
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
   bool m_previewing = false;
+  // holdsFiles() of the target, as last published.
+  bool m_heldFiles = false;
   // What every window's composer keeps.
   struct Kept {
     QHash<QString, Draft> drafts;

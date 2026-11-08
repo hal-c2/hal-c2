@@ -178,7 +178,7 @@ constexpr qsizetype kMaxStashEntries = 20;
 constexpr qsizetype kMaxAttachments = 100;
 constexpr qsizetype kMaxContextRecords = 200;
 constexpr qsizetype kMaxContextChars = 16000000;
-// What Claude's ultrathink choice puts at the start of a prompt.
+// How a prompt the user typed asks Claude to ultrathink.
 const QString kUltrathinkPrefix = QStringLiteral("Ultrathink:\n");
 
 // What the user typed of a sent message:
@@ -239,6 +239,7 @@ void ComposerController::activate() {
   // The row says whether a turn runs, which decides follow-ups and the plan.
   connect(m_store, &ShellStore::changed, this, [this] {
     carryDrafts();
+    forgetTakenPicks();
     reconcileUnsent();
     settleRuntimeModes();
     refreshPathSearch();
@@ -1890,6 +1891,21 @@ std::optional<QString> ComposerController::newestBefore(const QString& thread) c
 // rest come back to the draft: into it when it is empty, else behind a toast
 // that restores them once it is. A new thread's first send waits for the
 // shell to know whether the thread exists.
+// A model picked in a started thread's draft that the thread now runs is the
+// thread's again, so a change made on another client shows here; a pick the
+// thread has not taken stays (upstream #20886).
+void ComposerController::forgetTakenPicks() {
+  bool forgot = false;
+  for (auto it = m_drafts.begin(); it != m_drafts.end(); ++it) {
+    if (!it->modelSelection || it->multipleModels) continue;
+    const auto thread = m_store->thread(it.key());
+    if (!thread || !composer::pickMatchesThread(*it->modelSelection, thread->modelSelection)) continue;
+    it->modelSelection.reset();
+    forgot = true;
+  }
+  if (forgot) save();
+}
+
 void ComposerController::reconcileUnsent() {
   // A send made before its thread's messages were known measures from when
   // they are, so a newer message from elsewhere still drops it.
@@ -2519,6 +2535,11 @@ bool ComposerController::addReviewComment(const QVariantMap& comment) {
   NativeShell::of(this)->controller<ToastController>()->show(QStringLiteral("success"), QStringLiteral("Comment added to the prompt"),
                                                              reviewLabel(filePath, first, last));
   return true;
+}
+
+bool ComposerController::holdsFiles(const QString& target) const {
+  const QList<Attachment> attachments = m_drafts.value(target).attachments;
+  return std::any_of(attachments.cbegin(), attachments.cend(), [](const Attachment& a) { return a.file; });
 }
 
 bool ComposerController::attachmentsPending(const QString& target) const {
@@ -3324,6 +3345,13 @@ void ComposerController::publish() {
   if (composerState != m_publishedComposer) {
     m_publishedComposer = composerState;
     m_bridge->publish(QStringLiteral("composer"), composerState);
+    // A file ties the draft to its machine, so the machine picker stops
+    // reading "Auto balance" (WorkspaceController::autoBalanced).
+    const bool files = holdsFiles(target());
+    if (files != m_heldFiles) {
+      m_heldFiles = files;
+      if (auto* workspace = NativeShell::of(this)->controller<WorkspaceController>()) workspace->publish();
+    }
   }
   const QVariantMap picker = pickerState();
   if (picker != m_publishedPicker) {
@@ -3866,6 +3894,7 @@ bool ComposerController::selectModel(const QString& target, const QString& insta
   kept.modelSelection = chosen;
   kept.multipleModels.reset();
   kept.carried = false;
+  forgetTakenPicks();
   NativeShell::of(this)->controller<WorkspaceController>()->publish();
   save();
   publish();
@@ -3879,23 +3908,15 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
   const QJsonArray descriptors =
       composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
-  // A choice the provider takes from the prompt (Claude's ultrathink) is put
-  // there instead; any other choice takes it out.
+  // A choice the provider takes from the prompt (Claude's ultrathink) is only
+  // typed, never picked; any other choice takes a typed one out.
   static const QRegularExpression prefix(QStringLiteral("^Ultrathink:\\s*"));
-  static const QRegularExpression slashCommand(QStringLiteral("^/[^\\s/]+(?:\\s|$)"));
   for (const QJsonValue& entry : descriptors) {
     const QJsonObject descriptor = entry.toObject();
     const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
     if (str(descriptor, QLatin1String("id")) != id || injected.isEmpty()) continue;
     const QString text = draft(target).trimmed();
-    if (effortLocked(descriptor, text)) return false;
-    if (injected.contains(QJsonValue::fromVariant(value))) {
-      if (!text.startsWith(kUltrathinkPrefix.trimmed()) && !slashCommand.match(text).hasMatch()) {
-        const QString next = kUltrathinkPrefix + text;
-        setText(target, next, int(next.size()));
-      }
-      return true;
-    }
+    if (effortLocked(descriptor, text) || injected.contains(QJsonValue::fromVariant(value))) return false;
     if (prefix.match(text).hasMatch()) {
       const QString next = QString(text).remove(prefix);
       setText(target, next, int(next.size()));
@@ -3909,6 +3930,7 @@ bool ComposerController::setOption(const QString& target, const QString& id, con
                              *options);
   m_drafts[target].modelSelection = chosen;
   m_drafts[target].carried = false;
+  forgetTakenPicks();
   save();
   publish();
   return true;
@@ -3930,11 +3952,9 @@ bool ComposerController::stepEffort(const QString& target, int direction) {
   const QJsonArray descriptors =
       composer::descriptors(composer::findModel(*instance, chosen.value(QLatin1String("model")).toString()),
                             chosen.value(QLatin1String("options")).toArray(), planModeOn(instance));
-  const auto effort = std::find_if(descriptors.begin(), descriptors.end(), [](const QJsonValue& entry) {
-    return str(entry.toObject(), QLatin1String("type")) == QLatin1String("select");
-  });
-  if (effort == descriptors.end()) return false;
-  QJsonObject descriptor = effort->toObject();
+  const qsizetype effort = composer::effortIndex(descriptors);
+  if (effort < 0) return false;
+  QJsonObject descriptor = descriptors.at(effort).toObject();
   const QString text = draft(target);
   if (effortLocked(descriptor, text)) return false;
   // The step starts from the effort shown: Ultrathink while the prompt
@@ -4346,26 +4366,39 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   auto* keys = NativeShell::of(this)->controller<KeybindingController>();
   const QString selectedInstance = chosen.value(QLatin1String("instanceId")).toString();
   const QString selectedModel = chosen.value(QLatin1String("model")).toString();
-  const QVariantList options =
-      instance ? composer::shellOptions(composer::descriptors(composer::findModel(*instance, selectedModel),
-                                                              chosen.value(QLatin1String("options")).toArray(), planOn))
-               : QVariantList();
-  // An effort the prompt asks for (Ultrathink) is the one shown; asked for in
-  // the prompt's own words, it cannot be changed until they go.
+  const QJsonArray described =
+      instance ? composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn)
+               : QJsonArray();
+  const QVariantList options = composer::shellOptions(described);
+  // An effort the prompt asks for (Ultrathink) is only typed: the choices
+  // leave it out unless the prompt asks for it, when it is the one shown.
+  // Asked for in the prompt's own words, it cannot be changed until they go.
   QVariantList shownOptions = options;
-  const bool prefixed = text.trimmed().startsWith(kUltrathinkPrefix.trimmed());
-  if (instance && (prefixed || composer::ultrathinkInWords(text))) {
-    const QJsonArray described = composer::descriptors(composer::findModel(*instance, selectedModel), chosen.value(QLatin1String("options")).toArray(), planOn);
-    for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
-      const QJsonArray injected = described.at(i).toObject().value(QLatin1String("promptInjectedValues")).toArray();
-      if (injected.isEmpty()) continue;
-      QVariantMap option = shownOptions.at(i).toMap();
-      option.insert(QStringLiteral("value"), injected.first().toVariant());
-      if (effortLocked(described.at(i).toObject(), text)) {
-        option.insert(QStringLiteral("lockedReason"), QStringLiteral("Your prompt contains \"ultrathink\" in the text. Remove it to change this option."));
-      }
-      shownOptions[i] = option;
+  const bool asked = text.trimmed().startsWith(kUltrathinkPrefix.trimmed()) || composer::ultrathinkInWords(text);
+  for (qsizetype i = 0; i < described.size() && i < shownOptions.size(); ++i) {
+    const QJsonArray injected = described.at(i).toObject().value(QLatin1String("promptInjectedValues")).toArray();
+    if (injected.isEmpty()) continue;
+    QVariantMap option = shownOptions.at(i).toMap();
+    if (asked) option.insert(QStringLiteral("value"), injected.first().toVariant());
+    QVariantList choices;
+    for (const QVariant& choice : option.value(QStringLiteral("choices")).toList()) {
+      const QString choiceId = choice.toMap().value(QStringLiteral("id")).toString();
+      if (!injected.contains(QJsonValue(choiceId)) || (asked && choiceId == injected.first().toString())) choices.append(choice);
     }
+    option.insert(QStringLiteral("choices"), choices);
+    if (effortLocked(described.at(i).toObject(), text)) {
+      option.insert(QStringLiteral("lockedReason"), QStringLiteral("Your prompt contains \"ultrathink\" in the text. Remove it to change this option."));
+    }
+    shownOptions[i] = option;
+  }
+  // The effort is marked, with its bars for the composer to draw when
+  // Appearance asks for them.
+  if (const qsizetype at = composer::effortIndex(described); at >= 0 && at < shownOptions.size()) {
+    QVariantMap option = shownOptions.at(at).toMap();
+    option.insert(QStringLiteral("effort"), true);
+    const QVariantMap bars = composer::effortBars(described.at(at).toObject(), option.value(QStringLiteral("value")).toString());
+    if (!bars.isEmpty()) option.insert(QStringLiteral("bars"), bars);
+    shownOptions[at] = option;
   }
   const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
   // A page's ask: the project it runs in and the ones it could.
@@ -4430,6 +4463,7 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
       {QStringLiteral("selectedInstanceId"), orNull(selectedInstance)},
       {QStringLiteral("selectedModel"), orNull(selectedModel)},
       {QStringLiteral("options"), shownOptions},
+      {QStringLiteral("effortDisplay"), setting(QStringLiteral("effortDisplay")).toString()},
       {QStringLiteral("runtimeMode"), composer::shownRuntimeMode(instance, runtimeModeOf(target))},
       {QStringLiteral("defaultRuntimeMode"), composer::shownRuntimeMode(instance, defaultRuntimeModeOf(target))},
       {QStringLiteral("runtimeModes"), composer::runtimeModes(instance)},

@@ -193,6 +193,21 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:Stepping the effort does nothing*"),
     QStringLiteral("composer/model-and-mode.feature:An effort outside the model's levels*"),
     QStringLiteral("composer/model-and-mode.feature:Stepping the effort leaves Ultrathink*"),
+    QStringLiteral("composer/model-and-mode.feature:The composer names the model's effort*"),
+    QStringLiteral("composer/model-and-mode.feature:A provider's older models are shown in place*"),
+    QStringLiteral("composer/model-and-mode.feature:Every saved custom model is offered"),
+    QStringLiteral("composer/model-and-mode.feature:A draft follows a model change made on another client"),
+    QStringLiteral("composer/model-and-mode.feature:At the default chat width*"),
+    QStringLiteral("composer/model-and-mode.feature:A project that is not a Git repository*"),
+    QStringLiteral("composer/model-and-mode.feature:A thread still preparing its worktree*"),
+    QStringLiteral("composer/model-and-mode.feature:Checkouts of one repository*"),
+    QStringLiteral("composer/model-and-mode.feature:The user lets a new thread's machine*"),
+    QStringLiteral("composer/model-and-mode.feature:The user takes a new thread off Auto balance"),
+    QStringLiteral("composer/model-and-mode.feature:Auto balance is refused*"),
+    QStringLiteral("composer/model-and-mode.feature:A machine is named the way*"),
+    QStringLiteral("composer/model-and-mode.feature:The only connected machine is still shown*"),
+    QStringLiteral("composer/model-and-mode.feature:A started thread names its machine*"),
+    QStringLiteral("composer/model-and-mode.feature:The machine is left out*"),
     QStringLiteral("composer/model-and-mode.feature:A composer that falls back to another account*"),
     QStringLiteral("composer/model-and-mode.feature:A fallback account takes no options*"),
     QStringLiteral("composer/model-and-mode.feature:A fallback keeps the effort of a model saved under an alias"),
@@ -216,7 +231,13 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:A thread whose saved permissions its provider no longer offers*"),
     QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
     QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
+    QStringLiteral("composer/model-and-mode.feature:One control chooses the model*"),
+    QStringLiteral("composer/model-and-mode.feature:A key opens the model control*"),
+    QStringLiteral("composer/model-and-mode.feature:The model control stays open*"),
+    QStringLiteral("composer/model-and-mode.feature:An agent's own options do not crowd*"),
+    QStringLiteral("composer/model-and-mode.feature:Confirming input-method text*"),
     QStringLiteral("navigation/toasts.feature"),
+    QStringLiteral("preview/automation.feature"),
     QStringLiteral("preview/devices.feature"),
     QStringLiteral("preview/remote.feature"),
     QStringLiteral("plugins/ui-plugins.feature"),
@@ -825,6 +846,14 @@ int main(int argc, char** argv) {
   qputenv("TZ", "UTC");
   tzset();
   // Before the application, as main.cpp does: the browser scenarios' pages.
+  // A fake camera and microphone, so a page asking for one is refused by the
+  // app and not for want of a device; and pages off this machine go to a proxy
+  // that is not there (the loopback goes direct), so no scenario reaches the
+  // network. No leading space: the engine takes an empty flag as an argument,
+  // and back from a page's source then stops.
+  QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+  qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
+          flags + (flags.isEmpty() ? "" : " ") + "--use-fake-device-for-media-stream --proxy-server=127.0.0.1:9");
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
   tst_Features test;

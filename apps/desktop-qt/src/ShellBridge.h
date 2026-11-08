@@ -47,7 +47,10 @@ public:
   Q_INVOKABLE void publish(const QString& key, const QVariant& value);
   // False when nothing could open it.
   Q_INVOKABLE bool openExternal(const QUrl& url);
-  // Where openExternal sends a URL; the system browser unless tests say otherwise.
+  // Hands a link to another app (slack:, mailto:) to the system, the user having agreed; never a web, local or inline
+  // address (PagePermissions::engineScheme). False when it is one, or nothing could open it.
+  Q_INVOKABLE bool openApp(const QUrl& url);
+  // Where openExternal and openApp send a URL; the system browser unless tests say otherwise.
   void setUrlOpener(std::function<bool(const QUrl&)> open) { m_openUrl = std::move(open); }
   // Where setClipboardText writes instead of the system clipboard (tests).
   void setClipboardWriter(std::function<bool(const QString&)> write) { m_writeClipboard = std::move(write); }

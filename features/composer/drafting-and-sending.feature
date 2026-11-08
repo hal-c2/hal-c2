@@ -302,12 +302,13 @@ Feature: Drafting and sending a message
     When the user presses the model picker shortcut
     Then the composer is back at its full size with the model picker open
 
+  # Upstream #28057: the reasoning effort moved into the model control, so plan is what folds.
   @desktop
   Scenario: A narrow composer folds its controls into one menu instead of wrapping
-    Given the composer offers its reasoning effort, plan and access controls
+    Given the composer offers its plan and access controls
     When the composer is too narrow to show all its controls
     Then its toolbar is still one line
-    And the reasoning effort is offered in its menu of further controls
+    And plan is offered in its menu of further controls
     And the model can still be chosen beside it
     When the user chooses "Plan" in that menu
     Then plan mode is requested
