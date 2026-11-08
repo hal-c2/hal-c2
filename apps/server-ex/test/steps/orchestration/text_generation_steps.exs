@@ -10,6 +10,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   import ExUnit.Assertions
 
   alias HalC2.Acp.Antigravity
+  alias HalC2.Test.AcpFixtures, as: Acp
   alias HalC2.Test.FakeAcp
   alias HalC2.TextGeneration
   alias HalC2.TextGeneration.Style
@@ -252,26 +253,46 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
-  step "Cursor wrote a title while one account was signed in", context do
-    context =
-      context
-      |> install(["cursor"])
-      |> World.update_settings(%{"textGenerationModelSelection" => selection("cursor")})
+  # The fake Cursor SDK (`fake_cursor.mjs`) runs the MC's own command for Cursor, so the
+  # credential is read from the instance's `cursor.json` as in production.
+  defp cursor_key(key) do
+    path =
+      Path.join([
+        Application.fetch_env!(:hal_c2, :home),
+        "provider-auth",
+        "cursor",
+        "cursor.json"
+      ])
 
-    World.put_env("FAKE_CURSOR_ACCOUNT", "first")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, JSON.encode!(%{"apiKey" => key}))
+  end
+
+  step "Cursor wrote a title while one account was signed in", context do
+    context = context |> Acp.ready() |> World.text_writers([])
+    Acp.put_provider("cursor", %{"enabled" => true})
+    cursor_key("key-of-first-account")
+
+    context =
+      World.update_settings(context, %{"textGenerationModelSelection" => selection("cursor")})
+
     context = title(context, "Fix the login redirect loop")
     assert {:ok, _} = context.reply
     context
   end
 
   step "the user signs in with another account and a title is generated", context do
-    World.put_env("FAKE_CURSOR_ACCOUNT", "second")
+    cursor_key("key-of-second-account")
     title(context, "Fix the login redirect loop")
   end
 
   step "Cursor is called with the other account's credential", context do
     assert {:ok, _} = context.reply
-    assert ["first", "second"] = for(%{"account" => account} <- calls(context), do: account)
+
+    keys =
+      for %{"event" => "agent", "apiKey" => key} <- Acp.log(context, "cursor-cursor"), do: key
+
+    assert keys == ["key-of-first-account", "key-of-second-account"]
     context
   end
 
