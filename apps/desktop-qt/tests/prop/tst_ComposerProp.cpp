@@ -37,6 +37,7 @@
 #include "SpaceController.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
+#include "SlowRequestController.h"
 #include "ToastController.h"
 
 namespace prop = halc2::prop;
@@ -719,6 +720,8 @@ struct Sut {
     native->controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
     // Toasts stay until the user closes them.
     native->controller<ToastController>()->setClock([] { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); });
+    // A request the MC holds through a slow run is never "slow": that warning's toast is not the composer's.
+    native->controller<SlowRequestController>()->setClock([] { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); });
     // The blocks a page's prompt writes, which SpacePage would put on the page.
     QObject::connect(bridge.get(), &ShellBridge::actionRequested, [this](const QString& action, const QVariant& payload) {
       if (action != QLatin1String("space.prompt.write")) return;
