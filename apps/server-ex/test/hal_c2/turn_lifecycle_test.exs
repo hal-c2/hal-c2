@@ -666,6 +666,93 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["completed", "completed", "failed", "completed"])
   end
 
+  # A Pi exit at wake A, then the new Pi's wake B joins it: A's run takes the cut part,
+  # and B's delivery is refused. Nothing is left that could show B's work, so it shows
+  # in no turn, and Pi's next wake is a wake of its own.
+  test "a Pi wake refused after its earlier part ran shows in no turn", %{work: work} do
+    {thread_id, runtime, first, second} = cut_and_woken(work)
+
+    send(first, {:answer, :ok})
+    await_statuses(thread_id, ["completed", "completed", "failed"])
+    refuse_every_try(second)
+    assert %{wake: %{open: true, buffer: nil, ids: []}} = :sys.get_state(runtime)
+
+    {^runtime, conn} = pi_runtime(thread_id)
+    send(runtime, {:json_rpc, conn, {:notification, "agent_settled", %{}}})
+    assert %{wake: nil} = :sys.get_state(runtime)
+    assert_wakes_again(thread_id, runtime, conn, ["completed", "completed", "failed"])
+  end
+
+  # As above, with A's delivery refused and B's run taking the cut part: the new Pi's
+  # work, which no delivery is left for, asks for a run of its own.
+  test "a Pi wake whose run took an earlier cut part asks for a run for the rest",
+       %{work: work} do
+    {thread_id, runtime, first, second} = cut_and_woken(work)
+
+    refuse_every_try(first)
+    send(second, {:answer, :ok})
+    assert_receive {:wake_try, third}, 5_000
+    send(third, {:answer, :ok})
+    await_statuses(thread_id, ["completed", "completed", "failed", "running"])
+
+    {^runtime, conn} = pi_runtime(thread_id)
+    send(runtime, {:json_rpc, conn, {:notification, "agent_settled", %{}}})
+    await_statuses(thread_id, ["completed", "completed", "failed", "completed"])
+    assert Orchestration.release_session(thread_id) == :ok
+  end
+
+  # A settled wake's delivery refused while a turn runs: the wake is gone, and Pi's next
+  # wake is a wake of its own (hal-c2/hal-c2#1371).
+  test "a Pi wake refused while a turn runs shows in no turn", %{work: work, dir: dir} do
+    thread_id = create_thread(work, "pi", "default")
+    {:ok, _} = send_message(thread_id, "m1", "hello")
+    await_statuses(thread_id, ["completed"])
+    {runtime, conn} = pi_runtime(thread_id)
+    answer_wakes()
+
+    send(runtime, {:json_rpc, conn, {:notification, "agent_start", %{}}})
+    assert_receive {:wake_try, first}, 5_000
+    send(runtime, {:json_rpc, conn, {:notification, "agent_settled", %{}}})
+    assert %{wake: %{open: false}} = :sys.get_state(runtime)
+
+    hold = %{"match" => "hold", "steps" => [%{"text" => "Working."}, %{"waitAbort" => true}]}
+    File.write!(Path.join(dir, "config.json"), Jason.encode!(%{"turns" => [hold]}))
+    {:ok, _} = send_message(thread_id, "m2", "hold m2")
+    await_statuses(thread_id, ["completed", "running"])
+    assert %{turn: %{}} = :sys.get_state(runtime)
+
+    refuse_every_try(first)
+    assert %{wake: nil} = :sys.get_state(runtime)
+
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    await_statuses(thread_id, ["completed", "interrupted"])
+    assert_wakes_again(thread_id, runtime, conn, ["completed", "interrupted"])
+  end
+
+  # Pi exits at a wake whose delivery is held, a turn runs on a new Pi, and that Pi
+  # starts work by itself: the second wake joins the cut first one, its delivery held too.
+  defp cut_and_woken(work) do
+    thread_id = create_thread(work, "pi", "default")
+    {:ok, _} = send_message(thread_id, "m1", "hello")
+    await_statuses(thread_id, ["completed"])
+    {runtime, conn} = pi_runtime(thread_id)
+    answer_wakes()
+
+    send(runtime, {:json_rpc, conn, {:notification, "agent_start", %{}}})
+    assert_receive {:wake_try, first}, 5_000
+    ref = Process.monitor(conn)
+    Process.exit(conn, :kill)
+    assert_receive {:DOWN, ^ref, _, _, _}, 5_000
+    assert %{conn: nil} = :sys.get_state(runtime)
+
+    {:ok, _} = send_message(thread_id, "m2", "hello again")
+    await_statuses(thread_id, ["completed", "completed"])
+    {^runtime, conn} = pi_runtime(thread_id)
+    send(runtime, {:json_rpc, conn, {:notification, "agent_start", %{}}})
+    assert_receive {:wake_try, second}, 5_000
+    {thread_id, runtime, first, second}
+  end
+
   # Every try of a wake's run waits for the test's answer (`{:answer, result}`), with no
   # pause between tries.
   defp answer_wakes do

@@ -14,11 +14,39 @@ defmodule HalC2.Pi.ThreadRuntime do
   its context usage. Extension dialogs are approvals (`confirm`) and questions
   (`select`, `input`, `editor`). Interrupt is `abort`.
 
-  Work Pi starts by itself between turns (an extension waking it) is a "wake": its
-  events wait for a run of their own, which the runtime asks the thread for
-  (`wake/3`); that run replays them and follows Pi to its settle. A message sent
-  while Pi is at that work takes it over: the work so far joins the message's turn,
-  and the message goes in as a `followUp`, as does one Pi turns back for being busy.
+  Work Pi starts by itself between turns (an extension waking it) is a "wake". A
+  message sent while Pi is at that work takes it over: the work so far joins the
+  message's turn, and the message goes in as a `followUp`, as does one Pi turns back
+  for being busy.
+
+  ## Wakes
+
+  A wake (`state.wake`, `%{open, buffer, ids}`) is Pi's work by itself, from the
+  `agent_start` no turn asked for to Pi's settle (`open` until then), kept as events
+  (`buffer`, newest first) for a run to show. The runtime asks the thread for that run
+  with a *delivery* (`deliver_wake/1`): a wake message whose id is its run's
+  `turn.ids.message`. `ids` lists the deliveries still pending, sent or still trying,
+  neither run nor refused; each could still bring a run for this wake.
+
+  - A wake settled before its run came may never get one (the user can cancel it from
+    the queue, which the runtime does not hear). Pi starting by itself again adds that
+    work, less the old settle, to the same wake with a delivery of its own.
+  - Pi exiting cuts an open wake short: an `:exited` mark closes its part so far, and
+    a new Pi's work after it is the next part.
+  - A run of a pending delivery takes the wake's oldest part, up to the first mark (and
+    ends failed there) or all of it (and follows Pi to its settle), and its id leaves
+    `ids`. A run of any other delivery shows nothing.
+  - A user turn takes over an open wake's part after the last mark (`take_wake/1`);
+    what is before it waits for its runs.
+  - A refusal (`{:wake_refused, id}`, at any time, a turn running or not) drops `id`.
+  - A run stopped before it started drops its part unseen, and stops Pi if that part
+    is Pi's work in progress.
+
+  The invariant: a wake with work in `buffer` has a nonempty `ids` naming only its
+  pending deliveries. Once its last delivery is refused, or stopped work is given up,
+  its work shows in no turn: a settled wake goes, and one Pi is still at keeps
+  `buffer: nil, ids: []` to swallow Pi's events until its settle. A run that leaves a
+  part and no delivery asks for another (`left_wake/2`).
   """
 
   use GenServer, restart: :temporary
@@ -32,7 +60,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 12
+  @state_version 13
   # Extension failures queued between turns: only the newest are kept, so an
   # extension failing on a timer while idle cannot grow state without bound.
   @queued_extension_errors 20
@@ -241,9 +269,7 @@ defmodule HalC2.Pi.ThreadRuntime do
        # unanswered as it exited, with their answers: they hear once the turn ends, or
        # runs on (`steered/3`).
        refused: [],
-       # Pi at work by itself between turns (`wake/3`): `%{open, buffer, refs}`, the
-       # events (newest first) its run replays, or `buffer: nil` once the thread refused
-       # it, and the deliveries whose runs may show it.
+       # Pi at work by itself between turns: `%{open, buffer, ids}` (see Wakes above).
        wake: nil
      }}
   end
@@ -270,21 +296,24 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   @impl true
-  # The run of a wake: nothing is sent to Pi. What it did so far is replayed into the
-  # run, which then follows it to its settle.
+  # The run of a wake: nothing is sent to Pi. The part of the wake it takes (Wakes,
+  # above) is replayed into it, and it follows Pi to its settle.
   def handle_call({:start_turn, %{wake: true} = turn}, _from, state) do
-    wake = state.wake || %{open: false, buffer: [], refs: []}
+    {part, left} = wake_part(state.wake, turn.ids.message)
     state = %{begin_turn(state, turn) | wake: nil, turn_active: true}
 
     case started(state) do
       :ok ->
-        {:reply, :ok, replay_wake(state, wake)}
+        {:reply, :ok, state |> replay_wake(part) |> left_wake(left)}
 
-      # The run ended before it started: Pi stops the work, and what is left of it
-      # shows in no turn.
+      # The run ended before it started: its part shows in no turn, and Pi stops it
+      # if it is still at it.
+      :ended when part != nil and part.open ->
+        if state.conn, do: Connection.notify(state.conn, "abort", %{})
+        {:reply, :ok, %{state | turn: nil, wake: %{open: true, buffer: nil, ids: []}}}
+
       :ended ->
-        if wake.open and state.conn, do: Connection.notify(state.conn, "abort", %{})
-        {:reply, :ok, %{state | turn: nil, wake: if(wake.open, do: %{wake | buffer: nil})}}
+        {:reply, :ok, left_wake(%{state | turn: nil}, left)}
     end
   end
 
@@ -544,18 +573,23 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  # The thread would not run a delivery of the wake (`wake/3`). Once none is left that
-  # could, the rest of Pi's work shows in no turn. A refusal of a wake already replaced
-  # or run is nobody's.
-  def handle_info({:wake_refused, ref}, %{turn: nil, wake: %{buffer: [_ | _]} = wake} = state) do
+  # The thread would not run delivery `id` (Wakes, above), whether a turn runs or not.
+  # Once none is left that could show the wake, its work shows in no turn. A refusal of
+  # a delivery no wake waits on is nobody's.
+  def handle_info({:wake_refused, id}, %{wake: %{ids: ids} = wake} = state) do
     cond do
-      ref not in wake.refs -> {:noreply, state}
-      wake.refs == [ref] -> {:noreply, %{state | wake: if(wake.open, do: %{wake | buffer: nil})}}
-      true -> {:noreply, %{state | wake: %{wake | refs: List.delete(wake.refs, ref)}}}
+      id not in ids ->
+        {:noreply, state}
+
+      ids == [id] ->
+        {:noreply, %{state | wake: if(wake.open, do: %{wake | buffer: nil, ids: []})}}
+
+      true ->
+        {:noreply, %{state | wake: %{wake | ids: List.delete(ids, id)}}}
     end
   end
 
-  def handle_info({:wake_refused, _ref}, state), do: {:noreply, state}
+  def handle_info({:wake_refused, _id}, state), do: {:noreply, state}
 
   # A `/compact` came back. One steered into a running turn only answers its
   # caller; the turn runs on and settles as it would have (a settle Pi sent
@@ -768,6 +802,8 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp migrate(%{v: @state_version} = state), do: state
 
   defp migrate(%{v: 11} = state), do: state |> Map.merge(%{v: 12, wake: nil}) |> migrate()
+  # A wake's deliveries were refs, which name nothing once the runtime is gone.
+  defp migrate(%{v: 12} = state), do: state |> Map.merge(%{v: 13, wake: nil}) |> migrate()
 
   # Steers out at the upgrade are labelled with no steer: one Pi rejects is not resent.
   defp migrate(%{v: 10} = state) do
@@ -1382,12 +1418,18 @@ defmodule HalC2.Pi.ThreadRuntime do
     }
   end
 
-  # Pi started work by itself: the thread gets a message for it, from the agent, whose
-  # run (`handle_call({:start_turn, %{wake: true}})`) queues behind any other. Off
-  # this process, since starting the run calls back into it.
+  # Pi started work by itself: a wake of its own, whose run its delivery asks for.
   defp wake(state, type, event) do
+    {state, id} = deliver_wake(state)
+    %{state | wake: %{open: true, buffer: [{type, event}], ids: [id]}}
+  end
+
+  # Asks the thread for a run of the wake: a message from the agent, whose run
+  # (`handle_call({:start_turn, %{wake: true}})`) queues behind any other and carries
+  # the message's id. Off this process, since starting the run calls back into it.
+  defp deliver_wake(state) do
     runtime = self()
-    ref = make_ref()
+    id = HalC2.Orchestration.Entities.new_id("message")
 
     HalC2.Orchestration.Wake.deliver(
       state.thread_id,
@@ -1402,21 +1444,23 @@ defmodule HalC2.Pi.ThreadRuntime do
         }
       },
       instance: state.instance,
-      on_dropped: fn -> send(runtime, {:wake_refused, ref}) end
+      message_id: id,
+      on_dropped: fn -> send(runtime, {:wake_refused, id}) end
     )
 
-    %{state | wake: %{open: true, buffer: [{type, event}], refs: [ref]}}
+    {state, id}
   end
 
-  # Pi at work by itself again after a wake that ended before its run came (which may
-  # never come: the user can cancel it from the queue) is a wake of its own, with a run
-  # of its own. It keeps the earlier work, less its settle, so whichever run comes first
-  # shows both up to Pi's next settle; the other shows nothing. Work Pi exiting cut
-  # short keeps its end (`exited_wake/1`), so its part of the run still fails.
+  # Pi at work by itself again after a wake that ended before its run came: the work
+  # joins that wake, less its settle, with a delivery of its own.
   defp buffer_wake(%{wake: %{open: false} = earlier} = state, "agent_start", event) do
-    kept = Enum.reject(earlier.buffer || [], &match?({"agent_settled", _}, &1))
-    %{wake: wake} = state = wake(state, "agent_start", event)
-    %{state | wake: %{wake | buffer: wake.buffer ++ kept, refs: wake.refs ++ earlier.refs}}
+    kept = Enum.reject(earlier.buffer, &match?({"agent_settled", _}, &1))
+    {state, id} = deliver_wake(state)
+
+    %{
+      state
+      | wake: %{open: true, buffer: [{"agent_start", event} | kept], ids: [id | earlier.ids]}
+    }
   end
 
   # Pi's settle ends the work; a wake the thread refused keeps nothing of it.
@@ -1433,45 +1477,67 @@ defmodule HalC2.Pi.ThreadRuntime do
         }
     }
 
-  # Pi exited: a wake it was at ends there, cut short (`replay_wake/2`); one with
-  # nothing for its run to show is gone.
+  # Pi exited: a wake it was at is cut short there; one with nothing for a run to show
+  # is gone.
   defp exited_wake(%{open: true, buffer: [_ | _] = buffer} = wake),
     do: %{wake | open: false, buffer: [:exited | buffer]}
 
   defp exited_wake(%{buffer: [_ | _]} = wake), do: wake
   defp exited_wake(_wake), do: nil
 
-  # Replayed to its settle, or Pi is still at it. A wake cut short by Pi exiting
-  # fails, and work a new Pi started by itself after that waits for a run of its own;
-  # one a turn took over, or a rewind discarded, leaves its run nothing to show.
-  defp replay_wake(state, wake) do
-    {shown, rest} = (wake.buffer || []) |> Enum.reverse() |> Enum.split_while(&(&1 != :exited))
+  # The part of the wake delivery `id`'s run takes: `%{events, open, cut}`, the oldest
+  # events up to the first `:exited` mark (`cut`) or all of them, or nil for a run no
+  # wake waits on. Returns it with the wake left for the other deliveries, if any.
+  defp wake_part(%{ids: ids, buffer: [_ | _] = buffer} = wake, id) do
+    if id in ids do
+      {events, rest} = buffer |> Enum.reverse() |> Enum.split_while(&(&1 != :exited))
+      part = %{events: events, open: wake.open and rest == [], cut: rest != []}
+
+      case rest do
+        [:exited, _ | _] ->
+          {part, %{wake | buffer: Enum.reverse(tl(rest)), ids: List.delete(ids, id)}}
+
+        _ ->
+          {part, nil}
+      end
+    else
+      {nil, wake}
+    end
+  end
+
+  defp wake_part(wake, _id), do: {nil, wake}
+
+  # Puts back the wake a run left: one with work but no delivery left asks for another.
+  defp left_wake(state, %{ids: [], buffer: [_ | _]} = wake) do
+    {state, id} = deliver_wake(state)
+    %{state | wake: %{wake | ids: [id]}}
+  end
+
+  defp left_wake(state, wake), do: %{state | wake: wake}
+
+  # Shows the run's part of the wake (nothing, for a run no wake waits on): to its
+  # settle, or to where Pi exited, which fails the run, or Pi is still at it.
+  defp replay_wake(state, part) do
+    part = part || %{events: [], open: false, cut: false}
 
     state =
-      Enum.reduce(shown, state, fn {type, event}, state ->
+      Enum.reduce(part.events, state, fn {type, event}, state ->
         if state.turn, do: event(type, event, state), else: state
       end)
 
-    state =
-      cond do
-        state.turn == nil -> state
-        rest != [] -> end_turn(state, "failed", "Pi process exited unexpectedly.")
-        wake.open and state.conn != nil -> state
-        true -> end_turn(state, "completed", nil)
-      end
-
-    case rest do
-      [:exited, _ | _] -> %{state | wake: %{wake | buffer: Enum.reverse(tl(rest))}}
-      _ -> state
+    cond do
+      state.turn == nil -> state
+      part.cut -> end_turn(state, "failed", "Pi process exited unexpectedly.")
+      part.open and state.conn != nil -> state
+      true -> end_turn(state, "completed", nil)
     end
   end
 
   # A turn that starts while Pi is at work by itself takes the work over: what Pi did
-  # so far joins the turn, and its message follows the work (`send_prompt/3`). The
-  # wake is gone: its own run, if it still comes, has nothing to show, and work Pi
-  # starts by itself after the turn is a wake of its own. A wake that already settled
-  # keeps its events for its own run, and so does one Pi exiting cut short, which that
-  # run ends as failed (`replay_wake/2`).
+  # so far joins the turn, and its message follows the work (`send_prompt/3`). Work Pi
+  # did before an exit mark stays, with its deliveries, for its own run; with none, the
+  # wake is gone, its runs show nothing, and work Pi starts by itself after the turn is
+  # a wake of its own. A settled wake is left alone.
   defp take_wake(%{wake: %{open: true} = wake} = state) do
     {taken, cut} = Enum.split_while(wake.buffer || [], &(&1 != :exited))
 

@@ -30,7 +30,10 @@ defmodule HalC2.PiSteerPropTest do
   next wake still gets a run; or which settles while its run's delivery still tries,
   after which Pi wakes again, and the first delivery is refused, so the second run
   shows both; or which Pi exits at before its run comes, after which a new Pi wakes,
-  and the first run still ends failed); or one after which Pi
+  and the first run still ends failed; or whose delivery the thread refuses while a
+  later turn runs; or which Pi exits at, after which a new Pi's wake joins it, and one
+  of the two deliveries is refused, the later once the earlier's run took the cut part,
+  or the earlier before the later's run takes it); or one after which Pi
   resumes an extension's work without a word, so the next message Pi turns back as
   busy and HAL-C2 queues it behind that work, in the same turn. Send two messages,
   then an extension command that moves Pi's session back to before the second
@@ -44,7 +47,9 @@ defmodule HalC2.PiSteerPropTest do
   shows in a turn except that turn's own, that an image a tool returned is stored
   with the thread and listed on that turn's tool item, and that each task a turn
   handed Pi's own subagents shows the way it ended, or, still working, ends with
-  its turn. Messages resent on their own
+  its turn, and that a wake the runtime keeps work for waits only on deliveries still
+  pending (none once a command has run; the wake commands also check as they go).
+  Messages resent on their own
   at once may run in either order, so runs and replies compare as sets. After each command the test
   waits on the thread's stream until the runs it ended have ended and a running turn
   began saying "Working on it.".
@@ -238,6 +243,12 @@ defmodule HalC2.PiSteerPropTest do
         }
       }
     },
+    # A turn after which a Pi extension wakes Pi to say something else.
+    %{
+      "match" => "dozes",
+      "steps" => [%{"text" => "Done."}],
+      "wake" => %{"text" => "Continue.", "steps" => [%{"text" => "Dozed off."}]}
+    },
     # A turn after which Pi resumes an extension's work, saying nothing until a
     # prompt reaches it.
     %{
@@ -341,9 +352,12 @@ defmodule HalC2.PiSteerPropTest do
   # `:replied`: Pi answered it with a failure and no events, so the task's reply
   # alone ended the abandonment and nothing is left to drop);
   # compactions: the compaction summaries shown, in order; images: the turns whose
-  # tool returned an image.
+  # tool returned an image; pending: the ids of the wake deliveries still pending
+  # (sent or trying, neither run nor refused), none once a command has run, since each
+  # resolves the deliveries it started (the wake commands check them as they go).
   def initial_state,
     do: %{
+      pending: [],
       runs: [],
       turn: nil,
       how: nil,
@@ -391,7 +405,12 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :send_wake_settled, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_refused, [id(next), id(next + 1)]}},
       {1, {:call, __MODULE__, :send_wake_superseded, [id(next), id(next + 1)]}},
-      {1, {:call, __MODULE__, :send_wake_cut, [id(next), id(next + 1)]}}
+      {1, {:call, __MODULE__, :send_wake_cut, [id(next), id(next + 1)]}},
+      {1,
+       {:call, __MODULE__, :send_wake_refused_in_turn, [id(next), id(next + 1), id(next + 2)]}},
+      {1,
+       {:call, __MODULE__, :send_wake_cut_refused,
+        [id(next), id(next + 1), id(next + 2), oneof([:later, :earlier])]}}
     ])
   end
 
@@ -472,7 +491,9 @@ defmodule HalC2.PiSteerPropTest do
              :send_wake_settled,
              :send_wake_refused,
              :send_wake_superseded,
-             :send_wake_cut
+             :send_wake_cut,
+             :send_wake_refused_in_turn,
+             :send_wake_cut_refused
            ],
       do: state.turn == nil and state.abandoned == :none
 
@@ -589,6 +610,27 @@ defmodule HalC2.PiSteerPropTest do
   def next_state(state, _result, {:call, _, :send_wake_cut, [a, c]}) do
     runs = [{a, "completed"}, {:woken, "failed"}, {c, "completed"}, {:woken, "completed"}]
     %{state | next: state.next + 2, runs: state.runs ++ runs}
+  end
+
+  # The wake after `a` settled before its run came, and its delivery was refused while
+  # `b` ran, and `b` was stopped: no turn shows the wake, and Pi's next wake, after `c`,
+  # runs as a turn of its own.
+  def next_state(state, _result, {:call, _, :send_wake_refused_in_turn, [a, b, c]}) do
+    woke = [{a, "completed"}, {b, "interrupted"}]
+    runs = state.runs ++ woke ++ [{c, "completed"}, {:woken, "completed"}]
+    %{state | next: state.next + 3, runs: runs}
+  end
+
+  # Pi exited at the wake after `a`, and a new Pi's wake after `c` joined it. With the
+  # later delivery refused once the earlier's run took the cut part (which ends
+  # failed), the new Pi's work shows in no turn; with the earlier delivery refused, the
+  # later's run takes the cut part, and the new Pi's work gets a run of its own. Either
+  # way, Pi's next wake, after `d`, runs as a turn of its own.
+  def next_state(state, _result, {:call, _, :send_wake_cut_refused, [a, c, d, which]}) do
+    rest = if which == :earlier, do: [{:woken, "completed"}], else: []
+    woke = [{a, "completed"}, {:woken, "failed"}, {c, "completed"}] ++ rest
+    runs = state.runs ++ woke ++ [{d, "completed"}, {:woken, "completed"}]
+    %{state | next: state.next + 3, runs: runs}
   end
 
   # Once its tool returned the image, a "shows" turn works as a "joins" turn.
@@ -794,7 +836,7 @@ defmodule HalC2.PiSteerPropTest do
         _ -> reply == :ok
       end
 
-    replied? and
+    replied? and wakes_ok?(model.pending) and
       Enum.sort(projection.runs) == Enum.sort(model.runs) and
       Enum.sort(projection.replies) == Enum.sort(model.replies) and
       projection.compactions == model.compactions and
@@ -1163,9 +1205,9 @@ defmodule HalC2.PiSteerPropTest do
     again = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "wake-again")
     woke = woken_runs(current())
     first = Orchestration.dispatch(message(a, "twice #{a}", "queue_after_active", "auto"))
-    earlier = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+    earlier = receive(do: ({:wake_try, task, _id} -> task), after: (@wait_ms -> nil))
     File.touch!(again)
-    later = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+    later = receive(do: ({:wake_try, task, _id} -> task), after: (@wait_ms -> nil))
     File.rm(again)
 
     refused =
@@ -1218,7 +1260,7 @@ defmodule HalC2.PiSteerPropTest do
     Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :answer_wake, [self()]})
     woke = woken_runs(current())
     first = Orchestration.dispatch(message(a, "strays #{a}", "queue_after_active", "auto"))
-    earlier = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+    earlier = receive(do: ({:wake_try, task, _id} -> task), after: (@wait_ms -> nil))
 
     exited =
       with true <- is_pid(earlier),
@@ -1234,7 +1276,7 @@ defmodule HalC2.PiSteerPropTest do
 
     File.rm(exit_now)
     second = Orchestration.dispatch(message(c, "wakes #{c}", "queue_after_active", "auto"))
-    later = receive(do: ({:wake_try, task} -> task), after: (@wait_ms -> nil))
+    later = receive(do: ({:wake_try, task, _id} -> task), after: (@wait_ms -> nil))
     if earlier, do: Kernel.send(earlier, {:answer, :ok})
     cut = woken(woke + 1, deadline.())
     if later, do: Kernel.send(later, {:answer, :ok})
@@ -1259,9 +1301,204 @@ defmodule HalC2.PiSteerPropTest do
     {reply, projection}
   end
 
-  # The wake hook: each try waits for the test's answer (`{:answer, result}`).
-  def answer_wake(test, _command) do
-    Kernel.send(test, {:wake_try, self()})
+  # Sends `a`, after which Pi works on by itself and settles while the wake's delivery is
+  # held, then `b`, which runs while the delivery is refused at every try, and is
+  # stopped. Then `c`, after which Pi wakes again: that wake must get a run that shows
+  # nothing of the refused one, and once it ended the idle runtime must let Pi go.
+  def send_wake_refused_in_turn(a, b, c) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :answer_wake, [self()]})
+    Application.put_env(:hal_c2, :wake_pause, {__MODULE__, :no_pause, []})
+    before = run_ids()
+    first = Orchestration.dispatch(message(a, "dozes #{a}", "queue_after_active", "auto"))
+
+    {held, id} =
+      receive(do: ({:wake_try, task, id} -> {task, id}), after: (@wait_ms -> {nil, nil}))
+
+    settled_wake = if held, do: wake_settled(deadline.()), else: :timeout
+    waiting = wakes_ok?([id])
+    second = Orchestration.dispatch(message(b, "joins #{b}", "queue_after_active", "auto"))
+
+    started =
+      await(
+        fn state ->
+          run = Enum.find(runs(state), &(&1["userMessageId"] == b))
+          run["status"] == "running" and working?(state, run)
+        end,
+        deadline.()
+      )
+
+    refused = if held && started != :timeout, do: refuse_every_try(held), else: :timeout
+    # The runtime has had the refusal.
+    refused_kept = wakes_ok?([])
+    Application.delete_env(:hal_c2, :wake_hook)
+    Application.delete_env(:hal_c2, :wake_pause)
+    stop = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
+    stopped = settled(unfinished_runs(), deadline.())
+    {reply, projection} = wakes_again(c, deadline)
+
+    reply =
+      cond do
+        held == nil ->
+          {:error, "#{a}'s wake never asked the thread for a run"}
+
+        settled_wake != :ok ->
+          {:error, "Pi never settled the wake after #{a}"}
+
+        started == :timeout ->
+          {:error, "#{b} never ran"}
+
+        refused != :ok ->
+          {:error, "the wake's delivery was never refused"}
+
+        match?({:timeout, _}, stopped) ->
+          {:error, "#{b} never ended"}
+
+        shown?("Dozed off.", before) ->
+          {:error, "the refused wake after #{a} shows in a turn"}
+
+        not waiting ->
+          {:error, "the settled wake waits on no delivery of its own"}
+
+        not refused_kept ->
+          {:error, "the runtime kept the wake refused while #{b} ran"}
+
+        true ->
+          [first, second, stop] |> Enum.map(&answer/1) |> Enum.reduce(&both/2) |> both(reply)
+      end
+
+    {reply, projection}
+  end
+
+  # Sends `a`, after which Pi works on by itself, and holds the wake's delivery while Pi
+  # exits at that work. Then `c`, whose turn a new Pi runs, after which it wakes and
+  # settles, its delivery held too: that wake joins the cut one. With `which` :later,
+  # the first delivery's run takes the cut part (it ends failed), and the second
+  # delivery is refused: the new Pi's work must show in no turn. With :earlier, the
+  # first delivery is refused, and the second's run takes the cut part: the new Pi's
+  # work must get a run of its own. The runtime's wake must wait only on pending
+  # deliveries throughout. Then `d`, after which Pi wakes again: that wake must get a
+  # run, and once it ended the idle runtime must let Pi go.
+  def send_wake_cut_refused(a, c, d, which) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    exit_now = Path.join(Application.get_env(:hal_c2, :pi_prop_fake_dir), "exit-now")
+    Application.put_env(:hal_c2, :wake_hook, {__MODULE__, :answer_wake, [self()]})
+    Application.put_env(:hal_c2, :wake_pause, {__MODULE__, :no_pause, []})
+    woke = woken_runs(current())
+    before = run_ids()
+    first = Orchestration.dispatch(message(a, "strays #{a}", "queue_after_active", "auto"))
+    {earlier, a_id} = next_wake_try()
+
+    exited =
+      with true <- is_pid(earlier),
+           [{runtime, _}] <- Registry.lookup(HalC2.Pi.Registry, @tid),
+           %{conn: conn} when is_pid(conn) <- :sys.get_state(runtime) do
+        ref = Process.monitor(conn)
+        File.touch!(exit_now)
+        receive(do: ({:DOWN, ^ref, _, _, _} -> :ok))
+        # The runtime has had the connection's exit.
+        :sys.get_state(runtime)
+        :ok
+      end
+
+    File.rm(exit_now)
+    checks = [cut: wakes_ok?([a_id])]
+    second = Orchestration.dispatch(message(c, "dozes #{c}", "queue_after_active", "auto"))
+    {later, c_id} = next_wake_try()
+    checks = checks ++ [joined: wakes_ok?([a_id, c_id])]
+
+    {ran, checks} =
+      cond do
+        later == nil ->
+          {:timeout, checks}
+
+        which == :later ->
+          Kernel.send(earlier, {:answer, :ok})
+          cut = woken(woke + 1, deadline.())
+          checks = checks ++ [ran_cut: wakes_ok?([c_id])]
+          refused = if match?({:timeout, _}, cut), do: :timeout, else: refuse_every_try(later)
+          {refused, checks ++ [refused: wakes_ok?([])]}
+
+        which == :earlier ->
+          refused = refuse_every_try(earlier)
+          checks = checks ++ [refused: wakes_ok?([c_id])]
+          Kernel.send(later, {:answer, :ok})
+          # The run took the cut part, and the rest asks for a run of its own.
+          {again, again_id} = next_wake_try()
+          checks = checks ++ [asked_again: again != nil and wakes_ok?([again_id])]
+          if again, do: Kernel.send(again, {:answer, :ok})
+          rest = woken(woke + 2, deadline.())
+          {if(refused == :ok and again != nil, do: rest, else: :timeout), checks}
+      end
+
+    Application.delete_env(:hal_c2, :wake_hook)
+    Application.delete_env(:hal_c2, :wake_pause)
+    {reply, projection} = wakes_again(d, deadline)
+    failed = for {name, false} <- checks, do: name
+
+    reply =
+      cond do
+        exited != :ok ->
+          {:error, "Pi never exited at the wake after #{a}"}
+
+        later == nil ->
+          {:error, "the new Pi never woke after #{c}"}
+
+        ran == :timeout or match?({:timeout, _}, ran) ->
+          {:error, "a wake after #{a} got no run"}
+
+        which == :later and shown?("Dozed off.", before) ->
+          {:error, "the refused wake after #{c} shows"}
+
+        which == :earlier and not shown?("Dozed off.", before) ->
+          {:error, "the wake after #{c} is lost"}
+
+        failed != [] ->
+          {:error, "the wake waited on deliveries not pending at #{inspect(failed)}"}
+
+        true ->
+          answer(first) |> both(answer(second)) |> both(reply)
+      end
+
+    {reply, projection}
+  end
+
+  defp next_wake_try,
+    do: receive(do: ({:wake_try, task, id} -> {task, id}), after: (@wait_ms -> {nil, nil}))
+
+  # Whether a run of the thread other than the runs `before` says `text`.
+  defp shown?(text, before) do
+    state = current()
+
+    Enum.any?(
+      StreamState.list(state, "message"),
+      &(&1["runId"] not in [nil | before] and &1["text"] =~ text)
+    )
+  end
+
+  defp run_ids, do: Enum.map(runs(current()), & &1["id"])
+
+  # The wake invariant (`HalC2.Pi.ThreadRuntime`, Wakes): a wake the runtime keeps work
+  # for waits on deliveries, all of them among `pending`; one with none shows nothing.
+  defp wakes_ok?(pending) do
+    wake =
+      case Registry.lookup(HalC2.Pi.Registry, @tid) do
+        [{runtime, _}] -> :sys.get_state(runtime).wake
+        [] -> nil
+      end
+
+    case wake do
+      nil -> true
+      %{buffer: nil, ids: []} -> true
+      %{buffer: [_ | _], ids: [_ | _] = ids} -> ids -- pending == []
+      _ -> false
+    end
+  end
+
+  # The wake hook: each try, named by the wake message's id, waits for the test's answer
+  # (`{:answer, result}`).
+  def answer_wake(test, command) do
+    Kernel.send(test, {:wake_try, self(), command["messageId"]})
 
     receive do
       {:answer, result} -> result
@@ -1280,7 +1517,7 @@ defmodule HalC2.PiSteerPropTest do
     Kernel.send(task, {:answer, {:error, "refused"}})
 
     receive do
-      {:wake_try, ^task} -> refuse_tries(task, ref)
+      {:wake_try, ^task, _id} -> refuse_tries(task, ref)
       {:DOWN, ^ref, _, _, _} -> :ok
     after
       @wait_ms -> :timeout
