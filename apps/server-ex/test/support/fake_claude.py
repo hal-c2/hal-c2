@@ -164,6 +164,14 @@ if sys.argv[1:] == ["auth", "status"]:
     sys.exit(0)
 # The start also traces where it was pointed: its config directory, its account and any router.
 trace({"argv": sys.argv[1:], "pid": os.getpid(), "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_TOOL_USE_ID", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SHELL")}})
+# Claude's safety check asks to run a command and forbids an always-allow rule
+# (`suppressAlwaysAllowRule`), though its suggestions would allow every Bash command.
+def ask_once():
+    send({"type": "control_request", "request_id": "perm-once", "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "rm -rf build"},
+          "decision_reason": "rm -rf on a path Claude could not verify always asks", "decision_reason_type": "safetyCheck", "suppressAlwaysAllowRule": True,
+          "permission_suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash"}], "behavior": "allow", "destination": "session"}]}})
+
+
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -302,6 +310,11 @@ for line in sys.stdin:
         else:
             images = sum(1 for b in content if b.get("type") == "image")
             steer_text = "".join(b.get("text", "") for b in content) + f" (+{images} image)"
+        # A steer "ask once": the running turn's next tool call trips Claude's safety
+        # check, which asks and forbids remembering the answer (Upstream #22546).
+        if steer_text.startswith("ask once"):
+            ask_once()
+            continue
         # A steer saying "fold" is folded into the running turn instead: no result
         # cuts that turn short, and the one result answers both.
         # Claude does not run the tool call a steer cuts off, and marks it so.
@@ -620,6 +633,10 @@ for line in sys.stdin:
         send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tool-{turn}", "content": "", "is_error": False}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
+    # "approve once": the safety check's ask, which a session rule does not skip.
+    if text.startswith("approve once"):
+        ask_once()
+        continue
     if "approve" in text:
         cmd = text.split("run: ", 1)[1] if "run: " in text else "touch x"
         if cmd in session_rules or None in session_rules:
@@ -682,6 +699,19 @@ for line in sys.stdin:
              "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": ""}]},
             {"question": "How big?", "multiSelect": False,
              "options": [{"label": "Small", "description": ""}, {"label": "Large", "description": ""}]}]}}})
+        continue
+    # "ask skip": a choice whose description is blank (Upstream #21762).
+    if text.startswith("ask skip"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "What should we add?", "header": "Scope", "multiSelect": False,
+             "options": [{"label": "Docs", "description": "Write the docs"}, {"label": "Skip", "description": "   "}]}]}}})
+        continue
+    # "ask preview": an option with a preview (Upstream #21932).
+    if text.startswith("ask preview"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "Which database?", "header": "Store", "multiSelect": False,
+             "options": [{"label": "Postgres", "description": "Relational", "preview": "```sql\nCREATE TABLE orders (id serial);\n```"},
+                         {"label": "SQLite", "description": "Embedded"}]}]}}})
         continue
     # "ask multi": one question that takes several answers.
     if text.startswith("ask multi"):

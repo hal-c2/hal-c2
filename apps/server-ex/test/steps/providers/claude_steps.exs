@@ -3019,6 +3019,38 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Claude gave up on repeated API errors and said why in its result.
+  step "Claude ends a turn on an API error with the result {string}",
+       %{args: [text]} = context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "terminal_reason" => "api_error",
+      "result" => text <> String.duplicate(".", 600)
+    })
+
+    World.await_runs(context, @thread, ["failed"])
+    Map.put(context, :error_text, text)
+  end
+
+  # The failure is Claude's text, cut to 500 characters.
+  step "the thread's failure reads {string}", %{args: [text]} = context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    %{"failure" => %{"message" => message}} = Enum.find(items, &(&1["type"] == "error"))
+    assert String.starts_with?(message, text)
+    assert String.length(message) == 500
+    context
+  end
+
+  step "not a generic message about repeated API errors", context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+    refute inspect(items) =~ "repeated API errors"
+    context
+  end
+
   step "the last Claude turn of a thread failed with an API error", context do
     context = api_error_turn(context, 529)
     World.await_runs(context, @thread, ["failed"])
@@ -3079,11 +3111,19 @@ defmodule HalC2.Steps.Providers.Claude do
       "terminal_reason" => "tool_deferred_unavailable"
     },
     "the turn could not be set up" => %{"terminal_reason" => "turn_setup_failed"},
-    "a usage limit blocked the request" => %{"terminal_reason" => "blocking_limit"},
+    "a blocking limit came with no rate-limit evidence" => %{
+      "terminal_reason" => "blocking_limit"
+    },
     "the context refilled straight after compaction" => %{
       "terminal_reason" => "rapid_refill_breaker"
     },
     "the prompt is larger than the context window" => %{"terminal_reason" => "prompt_too_long"},
+    # Claude ends a turn on a full context window as a blocking limit.
+    "the prompt is too long for the context window" => %{
+      "terminal_reason" => "blocking_limit",
+      "is_error" => true,
+      "result" => "Prompt is too long"
+    },
     "an image could not be processed" => %{"terminal_reason" => "image_error"},
     "the model returned an error" => %{"terminal_reason" => "model_error"},
     "the API was overloaded" => %{"api_error_status" => 529},
@@ -3091,7 +3131,7 @@ defmodule HalC2.Steps.Providers.Claude do
   }
 
   step ~r/^Claude ends a turn because (?<reason>.+)$/, %{args: [reason]} = context do
-    context = running_turn(context)
+    context = if context[:turn_running], do: context, else: running_turn(context)
 
     result =
       Map.merge(
@@ -3399,6 +3439,74 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Claude's refused answer repeats the window in its `api_error_params`; only the first
+  # turn also sends the rate-limit event.
+  defp refused_turn(context, event?) do
+    context =
+      if event? do
+        running_turn(context)
+      else
+        context = World.send_turn(context, @thread, "wait again")
+
+        World.await_provider_log(
+          context,
+          "claude",
+          &(get_in(&1, ["in", "type"]) == "user" and inspect(&1) =~ "wait again")
+        )
+
+        context
+      end
+
+    info = %{"status" => "rejected", "rateLimitType" => "five_hour", "resetsAt" => at_o_clock(14)}
+
+    if event?,
+      do: claude_says(context, %{"type" => "rate_limit_event", "rate_limit_info" => info})
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "error" => "rate_limit",
+      "api_error_params" => %{"rate_limit_info" => info},
+      "message" => %{
+        "id" => "m-limit-#{System.unique_integer([:positive])}",
+        "content" => [%{"type" => "text", "text" => "You've hit your limit"}]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => true})
+    context
+  end
+
+  step "a Claude turn was refused by a limit that resets at 14:00", context do
+    context = refused_turn(context, true)
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the user retries at once and Claude refuses it with the same limit", context do
+    context = refused_turn(context, false)
+    World.await_runs(context, @thread, ["failed", "failed"])
+    context
+  end
+
+  step "the thread's reset time is still 14:00", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["lastErrorClass"] == "usage_limit" and
+          &1["usageLimitResetAt"] == "2026-09-24T14:00:00.000Z")
+    )
+
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert [_, _] =
+             for(
+               %{"type" => "error", "failure" => %{"resetAt" => "2026-09-24T14:00:00.000Z"}} <-
+                 items,
+               do: true
+             )
+
+    context
+  end
+
   step "the thread's reset time is 18:00", context do
     World.await_row(
       World.thread_id(context, @thread),
@@ -3515,6 +3623,40 @@ defmodule HalC2.Steps.Providers.Claude do
       end
 
     context |> at_13_00() |> gateway_503(body)
+  end
+
+  step "Claude's latest rate-limit report allows requests", context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "rate_limit_event",
+      "rate_limit_info" => %{"status" => "allowed", "rateLimitType" => "five_hour"}
+    })
+
+    Map.put(context, :turn_running, true)
+  end
+
+  step "the turn fails saying the context window is full and to run /compact or start a new thread",
+       context do
+    World.await_runs(context, @thread, ["failed"])
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert %{"failure" => %{"class" => "provider_error", "message" => message}} =
+             Enum.find(items, &(&1["type"] == "error"))
+
+    assert message =~ "context window is full"
+    assert message =~ "/compact"
+    assert message =~ "new thread"
+    context
+  end
+
+  step "the thread is not marked as limited", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["lastErrorClass"] == "provider_error" and &1["usageLimitResetAt"] == nil)
+    )
+
+    context
   end
 
   step "the run fails with a provider error and the thread is not marked as limited", context do
@@ -4178,6 +4320,64 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- notebook edits ------------------------------------------------------------------------
+
+  # Claude's NotebookEdit names its file `notebook_path`, never `file_path`.
+  step "Claude edits the notebook {string} with its NotebookEdit tool",
+       %{args: [path]} = context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-notebook",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "tool-notebook",
+            "name" => "NotebookEdit",
+            "input" => %{"notebook_path" => path, "cell_id" => "c1", "new_source" => "print(1)"}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "tool-notebook",
+            "content" => "Updated cell c1"
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  defp file_changes(context) do
+    for item <- StreamState.list(World.stream(context, @thread), "turn-item"),
+        item["type"] == "file_change",
+        do: item
+  end
+
+  step "the timeline shows a file change to {string}", %{args: [path]} = context do
+    assert [%{"fileName" => ^path}] = file_changes(context)
+    context
+  end
+
+  # A client's Open diff asks for the file the change names.
+  step "opening its diff opens {string}", %{args: [path]} = context do
+    refute Enum.any?(file_changes(context), &(inspect(&1) =~ "NotebookEdit result"))
+    assert Enum.all?(file_changes(context), &(&1["fileName"] == path))
+    context
+  end
+
   # --- questions ------------------------------------------------------------------------------
 
   defp questions(context) do
@@ -4217,6 +4417,56 @@ defmodule HalC2.Steps.Providers.Claude do
       })
 
     World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude asks a question with a choice {string} that has a blank description",
+       %{args: [label]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask skip")
+
+    context = Map.put(context, :request, World.await_request(context, @thread))
+    [question] = questions(context)
+
+    assert %{"label" => ^label, "description" => ^label} =
+             Enum.find(question["options"], &(&1["label"] == label))
+
+    Map.put(context, :question, question)
+  end
+
+  step "the user picks {string}", %{args: [label]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{context.question["id"] => label}
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the run does not fail", context do
+    assert ["completed"] = context |> World.runs(@thread) |> Enum.map(& &1["status"])
+    context
+  end
+
+  step "Claude asks a question whose option {string} has a preview", %{args: [label]} = context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask preview")
+
+    World.await_request(context, @thread)
+    Map.put(context, :option, label)
+  end
+
+  # What a client subscribed to the thread renders the question from.
+  step "the question the clients receive carries the preview of {string}",
+       %{args: [label]} = context do
+    [question] = questions(context)
+    options = Map.new(question["options"], &{&1["label"], &1})
+    assert options[label]["preview"] == "```sql\nCREATE TABLE orders (id serial);\n```"
+    refute Map.has_key?(options["SQLite"], "preview")
     context
   end
 
@@ -7729,6 +7979,103 @@ defmodule HalC2.Steps.Providers.Claude do
     end)
 
     Map.put(context, :ask_reason, reason)
+  end
+
+  defp safety_check_asks(context, request_context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    {_type, reason} = @full_access_causes["Claude's own safety check on a recursive delete"]
+
+    send(
+      pid,
+      {:claude, :sys.get_state(pid).session,
+       {:permission, "perm-once", "Bash", %{"command" => "rm -rf build"},
+        Map.merge(
+          %{"decision_reason" => reason, "decision_reason_type" => "safetyCheck"},
+          request_context
+        )}}
+    )
+
+    item =
+      World.await_value(context, @thread, fn state ->
+        Enum.find(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+      end)
+
+    context |> Map.put(:ask_reason, reason) |> Map.put(:approval, item)
+  end
+
+  # The fake's safety check asks during the running turn, as the CLI does.
+  step "Claude's safety check asks to run a command and forbids an always-allow rule", context do
+    [%{"id" => run_id}] = World.runs(context, @thread)
+
+    context =
+      World.send_turn(context, @thread, "ask once", %{
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => run_id}
+      })
+
+    item =
+      World.await_value(context, @thread, fn state ->
+        Enum.find(StreamState.list(state, "turn-item"), &(&1["type"] == "approval_request"))
+      end)
+
+    Map.put(context, :approval, item)
+  end
+
+  step "the user can only decline or approve it", context do
+    assert ["decline", "accept"] = Enum.map(context.approval["options"], & &1["decision"])
+    context
+  end
+
+  # A client that still sends a session grant gets no rule written: the request is
+  # declined.
+  step "there is no way to always allow it for the session", context do
+    request = World.await_request(context, @thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => request["id"],
+        "decision" => "acceptForSession"
+      })
+
+    entry =
+      World.await_provider_log(
+        context,
+        "claude",
+        &(get_in(&1, ["in", "type"]) == "control_response" and
+            get_in(&1, ["in", "response", "request_id"]) == "perm-once")
+      )
+
+    answer = get_in(entry, ["in", "response", "response"])
+    assert answer["behavior"] == "deny"
+    refute Map.has_key?(answer, "updatedPermissions")
+    context
+  end
+
+  step "a Claude thread in Full access is waiting on an approval Claude's safety check raised",
+       context do
+    context |> running_turn() |> safety_check_asks(%{})
+  end
+
+  step "an agent reads the thread", context do
+    context = World.create_thread(context, "Reader", "shop")
+
+    {:ok, read} =
+      World.mcp_tool(context, "Reader", "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, @thread),
+        "view" => "activity"
+      })
+
+    Map.put(context, :mcp_read, read)
+  end
+
+  step "the pending approval includes Claude's reason", context do
+    assert %{"status" => "waiting", "reason" => reason, "text" => text} =
+             Enum.find(context.mcp_read["items"], &(&1["type"] == "approval_request"))
+
+    assert reason == context.ask_reason
+    assert text =~ "rm -rf build"
+    context
   end
 
   # --- skill calls --------------------------------------------------------------------------------

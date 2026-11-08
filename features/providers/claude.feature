@@ -382,7 +382,6 @@ Feature: Claude
       | WebFetch  | web            |
 
   # Upstream #22130: a notebook edit was named "NotebookEdit result" instead of the notebook.
-  @backlog
   Scenario: A Claude notebook edit names the notebook it changed
     When Claude edits the notebook "analysis.ipynb" with its NotebookEdit tool
     Then the timeline shows a file change to "analysis.ipynb"
@@ -912,7 +911,6 @@ Feature: Claude
       | 529    |
 
   # Upstream #19136: Claude's final-result text starting "API Error:" is kept as the failure, cut to 500 characters.
-  @backlog
   Scenario: A Claude turn that ends on an API error shows Claude's own message
     Given Claude ends a turn on an API error with the result "API Error: Request timed out while streaming"
     Then the thread's failure reads "API Error: Request timed out while streaming"
@@ -1283,20 +1281,20 @@ Feature: Claude
     Then the run fails with "<message>"
 
     Examples:
-      | reason                                         | message                                                                        |
-      | it kept getting API errors                     | Claude gave up after repeated API errors.                                      |
-      | its tool calls kept coming out malformed       | Claude gave up after repeated malformed tool calls.                            |
-      | the turn's token budget ran out                | Claude stopped: the turn's token budget was exhausted.                         |
-      | it could not produce the structured output     | Claude could not produce the requested structured output.                      |
-      | a deferred tool is no longer available         | Claude could not resume a deferred tool call: the tool is no longer available. |
-      | the turn could not be set up                   | Claude could not start the turn.                                               |
-      | a usage limit blocked the request              | Claude stopped: a usage limit blocked the request.                             |
-      | the context refilled straight after compaction | Claude stopped: the context refilled too quickly after compaction.             |
-      | the prompt is larger than the context window   | Claude stopped: the prompt exceeds the model's context window.                 |
-      | an image could not be processed                | Claude stopped: an image in the conversation could not be processed.           |
-      | the model returned an error                    | Claude stopped: the model returned an error.                                   |
-      | the API was overloaded                         | Claude API is overloaded (529). Try again shortly.                             |
-      | the API rate limit was reached                 | Claude API rate limit reached. Try again later.                                |
+      | reason                                            | message                                                                          |
+      | it kept getting API errors                        | Claude gave up after repeated API errors.                                        |
+      | its tool calls kept coming out malformed          | Claude gave up after repeated malformed tool calls.                              |
+      | the turn's token budget ran out                   | Claude stopped: the turn's token budget was exhausted.                           |
+      | it could not produce the structured output        | Claude could not produce the requested structured output.                        |
+      | a deferred tool is no longer available            | Claude could not resume a deferred tool call: the tool is no longer available.   |
+      | the turn could not be set up                      | Claude could not start the turn.                                                 |
+      | a blocking limit came with no rate-limit evidence | Claude's context window is full. Run /compact or start a new thread to continue. |
+      | the context refilled straight after compaction    | Claude stopped: the context refilled too quickly after compaction.               |
+      | the prompt is larger than the context window      | Claude stopped: the prompt exceeds the model's context window.                   |
+      | an image could not be processed                   | Claude stopped: an image in the conversation could not be processed.             |
+      | the model returned an error                       | Claude stopped: the model returned an error.                                     |
+      | the API was overloaded                            | Claude API is overloaded (529). Try again shortly.                               |
+      | the API rate limit was reached                    | Claude API rate limit reached. Try again later.                                  |
 
   @mc
   Scenario: A failed Claude turn does not show Claude's internal diagnostics
@@ -1392,7 +1390,6 @@ Feature: Claude
     Then the thread is marked as limited without a reset time
 
   # Upstream #18616: Claude does not repeat an unchanged limit event, so a quick retry lost the reset.
-  @backlog
   Scenario: A quick retry after a Claude usage limit keeps the reset time
     Given a Claude turn was refused by a limit that resets at 14:00
     When the user retries at once and Claude refuses it with the same limit
@@ -1400,7 +1397,6 @@ Feature: Claude
 
   # Upstream #19848: a blocking limit is a usage limit only with rate-limit evidence (a 429, a
   # rejected rate-limit event, a rate-limit error); otherwise the context window is full.
-  @backlog
   Scenario: A Claude turn that fills the context window is not a usage limit
     Given Claude's latest rate-limit report allows requests
     When Claude ends a turn because the prompt is too long for the context window
@@ -1465,7 +1461,6 @@ Feature: Claude
     Then Claude receives "Unit tests, Docs" as the answer
 
   # Upstream #21762: a Claude question option without a description no longer fails the run
-  @backlog
   Scenario: A Claude question whose choices have no description can still be answered
     Given Claude asks a question with a choice "Skip" that has a blank description
     When the user picks "Skip"
@@ -2391,7 +2386,7 @@ Feature: Claude
 
   # Upstream #21932: option previews were dropped; the MC now keeps them on the question.
   # Showing them was reverted from the clients (#22229), so only the MC owes this.
-  @backlog @mc
+  @mc
   Scenario: A Claude question keeps its options' previews
     When Claude asks a question whose option "Postgres" has a preview
     Then the question the clients receive carries the preview of "Postgres"
@@ -2631,7 +2626,7 @@ Feature: Claude
 
   # Upstream #22546: when Claude forbids remembering the answer, the approval offers only decline
   # and approve.
-  @backlog @mc @shared @plugin-claude
+  @mc @shared @plugin-claude @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Claude approval that may not be remembered offers no "always allow"
     Given a Claude thread in Full access
     When Claude's safety check asks to run a command and forbids an always-allow rule
@@ -2639,7 +2634,7 @@ Feature: Claude
     And there is no way to always allow it for the session
 
   # Upstream #22546: an agent reading the thread over MCP sees the approval's reason too.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: An agent reading a thread sees why Claude asked for approval
     Given a Claude thread in Full access is waiting on an approval Claude's safety check raised
     When an agent reads the thread

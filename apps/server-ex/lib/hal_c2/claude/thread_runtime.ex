@@ -93,7 +93,8 @@ defmodule HalC2.Claude.ThreadRuntime do
     "tool_deferred_unavailable" =>
       "Claude could not resume a deferred tool call: the tool is no longer available.",
     "turn_setup_failed" => "Claude could not start the turn.",
-    "blocking_limit" => "Claude stopped: a usage limit blocked the request.",
+    "blocking_limit" =>
+      "Claude's context window is full. Run /compact or start a new thread to continue.",
     "rapid_refill_breaker" =>
       "Claude stopped: the context refilled too quickly after compaction.",
     "prompt_too_long" => "Claude stopped: the prompt exceeds the model's context window.",
@@ -262,7 +263,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        placed: nil,
        interrupted: false,
        # Open prompts: request id -> `{:permission, control id, tool, suggested rules}`
-       # or `{:question, control id, input}`.
+       # (`:once` for rules when Claude forbids remembering the answer) or
+       # `{:question, control id, input}`.
        requests: %{},
        # The session's permission mode, switched before a turn that needs another.
        permission_mode: nil,
@@ -651,7 +653,18 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:reply, :ok, state}
 
       {{:permission, control_id, tool, suggestions}, requests} ->
-        decision = response["decision"] || "decline"
+        # Claude forbade remembering this one (`suppressAlwaysAllowRule`): a session
+        # grant the card did not offer declines.
+        decision =
+          case response["decision"] || "decline" do
+            session
+            when session in ["acceptForSession", "acceptAlways"] and suggestions == :once ->
+              "decline"
+
+            decision ->
+              decision
+          end
+
         cancelled? = decision == "cancel" or response["dismissed"] == true
 
         answer =
@@ -793,10 +806,30 @@ defmodule HalC2.Claude.ThreadRuntime do
             context["description"] || context["decision_reason"] || summarize_tool(tool, input)
         )
 
-    {state, request_id} =
-      open_request(flush(state), id, kind, prompt, nil, request_reason(state, prompt, context))
+    # When Claude forbids an always-allow rule, the approval offers only decline and
+    # approve (Upstream #22546).
+    once? = context["suppressAlwaysAllowRule"] == true
 
-    request = {:permission, id, tool, context["permission_suggestions"]}
+    options =
+      if once?,
+        do: [
+          %{"decision" => "decline", "label" => "Decline"},
+          %{"decision" => "accept", "label" => "Approve"}
+        ]
+
+    {state, request_id} =
+      open_request(
+        flush(state),
+        id,
+        kind,
+        prompt,
+        options,
+        request_reason(state, prompt, context)
+      )
+
+    request =
+      {:permission, id, tool, if(once?, do: :once, else: context["permission_suggestions"])}
+
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
 
@@ -1037,11 +1070,19 @@ defmodule HalC2.Claude.ThreadRuntime do
               label = String.trim(option["label"] || ""),
               label != "" do
             %{"label" => label, "description" => non_empty(option["description"], label)}
+            |> with_preview(option["preview"])
           end,
         "multiSelect" => question["multiSelect"] == true
       }
     end
   end
+
+  # An option's preview, kept verbatim (Upstream #21932); an option without one keeps its
+  # shape.
+  defp with_preview(option, preview) when is_binary(preview) and preview != "",
+    do: Map.put(option, "preview", preview)
+
+  defp with_preview(option, _preview), do: option
 
   @resume_compact "Compact and continue"
   @resume_never "Don't ask again"
@@ -2018,7 +2059,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       if message["error"] == "rate_limit" and message["parent_tool_use_id"] == nil and
            state.turn != nil,
-         do: put_in(state.turn[:rate_limited], true),
+         do: state |> put_in([:turn, :rate_limited], true) |> embedded_limit(message),
          else: state
 
     # An answer after a retry means the request went through.
@@ -2579,6 +2620,19 @@ defmodule HalC2.Claude.ThreadRuntime do
     if blocked?, do: announce_limit(state, type, info["resetsAt"]), else: state
   end
 
+  # Claude does not repeat an unchanged `rate_limit_event`, so a quick retry learns its
+  # window only from the refused answer's `api_error_params` (Upstream #18616). A window
+  # an event already named keeps the event's reset.
+  defp embedded_limit(state, message) do
+    with %{"api_error_params" => %{"rate_limit_info" => %{"status" => "rejected"} = info}} <-
+           message,
+         false <- Map.has_key?(Map.get(state.turn, :limits, %{}), info["rateLimitType"]) do
+      rate_limit(info, state)
+    else
+      _ -> state
+    end
+  end
+
   # A window that refused the turn pauses it: the thread says so once per window
   # and reset in the turn, with the wait when the reset can be trusted (a time
   # still ahead, within thirty days). Warnings never announce a pause.
@@ -2685,8 +2739,12 @@ defmodule HalC2.Claude.ThreadRuntime do
     gateway_reset = gateway_reset(result, api_status)
     limits = if gateway_reset, do: %{gateway: gateway_reset}, else: limits
 
+    # Claude ends a turn on a full context window as a `blocking_limit` too: that is a
+    # usage limit only with rate-limit evidence (Upstream #19848).
+    evidence? = api_status == 429 or limits != %{} or turn[:rate_limited] == true
+
     limited? =
-      gateway_reset != nil or reason == "blocking_limit" or
+      gateway_reset != nil or (reason == "blocking_limit" and evidence?) or
         (result["subtype"] == "success" and api_status == 429) or
         ((limits != %{} or turn[:rate_limited] == true) and
            (result["subtype"] != "success" or api_status in [nil, 429]) and
@@ -2698,7 +2756,8 @@ defmodule HalC2.Claude.ThreadRuntime do
       %{
         "class" => "usage_limit",
         "message" =>
-          shown || structured || api_status_message(api_status) ||
+          shown || if(reason != "blocking_limit", do: structured) ||
+            api_status_message(api_status) ||
             "Claude usage limit reached. Send the message again once the limit resets.",
         "code" =>
           if(api_status, do: "api_error_#{api_status}", else: reason || result["subtype"]),
@@ -2709,8 +2768,9 @@ defmodule HalC2.Claude.ThreadRuntime do
       %{
         "class" => "provider_error",
         "message" =>
-          shown || structured || api_status_message(api_status) || result["result"] ||
-            joined_errors(result) || result["subtype"] || "Claude reported an error.",
+          shown || api_error_text(result) || structured || api_status_message(api_status) ||
+            result["result"] || joined_errors(result) || result["subtype"] ||
+            "Claude reported an error.",
         "code" =>
           cond do
             api_status -> "api_error_#{api_status}"
@@ -2763,6 +2823,11 @@ defmodule HalC2.Claude.ThreadRuntime do
       _ -> false
     end)
   end
+
+  # Claude's own "API Error: ..." result says more than a generic line about repeated API
+  # errors (Upstream #19136); a long one is cut to 500 characters.
+  defp api_error_text(%{"result" => "API Error:" <> _ = text}), do: String.slice(text, 0, 500)
+  defp api_error_text(_result), do: nil
 
   defp joined_errors(result) do
     case List.wrap(result["errors"]) |> Enum.filter(&is_binary/1) do

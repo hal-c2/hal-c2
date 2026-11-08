@@ -803,10 +803,12 @@ defmodule HalC2.Mcp.Tools do
       "completedAt" => run["completedAt"]
     }
 
+  # An approval reads as what it asks, with the provider's reason for asking when it
+  # gave one (Upstream #22546).
   defp timeline_item(item, position, messages, max_chars, offset) do
     text =
       (item["messageId"] && get_in(messages, [item["messageId"], "text"])) || item["text"] ||
-        item["title"] || item["markdown"] || ""
+        item["title"] || item["markdown"] || item["prompt"] || ""
 
     rest = String.slice(text, offset, String.length(text))
 
@@ -821,6 +823,11 @@ defmodule HalC2.Mcp.Tools do
       "text" => String.slice(rest, 0, max_chars),
       "truncated" => String.length(rest) > max_chars
     }
+    |> then(fn read ->
+      if is_binary(item["reason"]),
+        do: Map.put(read, "reason", String.slice(item["reason"], 0, max_chars)),
+        else: read
+    end)
   end
 
   defp project(row),
