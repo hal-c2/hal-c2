@@ -19,6 +19,8 @@ defmodule HalC2.TextGeneration do
   `pi --mode rpc --no-session` without extensions or tools.
   """
 
+  require Logger
+
   alias HalC2.Acp.Antigravity
   alias HalC2.Acp.Antigravity.Session, as: AntigravitySession
   alias HalC2.JsonRpc.Connection
@@ -143,6 +145,7 @@ defmodule HalC2.TextGeneration do
            run(selection, cwd, prompt, schema,
              isolate: true,
              images: images(attachments),
+             attachments: attachments,
              operation: "a thread title"
            ) do
       {:ok,
@@ -331,20 +334,36 @@ defmodule HalC2.TextGeneration do
     end
   end
 
-  # A CLI the user chose for text that is not on PATH, with nothing else to fall back to.
+  # Why the provider the user chose for text cannot write, when nothing else can:
+  # its CLI is not on PATH, or Cursor is signed out.
   defp missing_cli(settings, %{"instanceId" => id}) do
     chosen = settings["textGenerationModelSelection"]
 
-    if match?(%{"instanceId" => ^id}, chosen) and enabled?(settings, id) do
+    if match?(%{"instanceId" => ^id}, chosen) do
       case driver(id) do
-        "codex" -> missing_cli_message("Codex", codex_command(id))
-        "claudeAgent" -> missing_cli_message("Claude", claude_command(id))
-        _ -> nil
+        "codex" ->
+          enabled?(settings, id) && missing_cli_message("Codex", codex_command(id))
+
+        "claudeAgent" ->
+          enabled?(settings, id) && missing_cli_message("Claude", claude_command(id))
+
+        "cursor" ->
+          acp_on?(settings, id) && acp_installed?(id) && signed_out_cursor(id)
+
+        _ ->
+          nil
       end
     end
   end
 
   defp missing_cli(_settings, _selection), do: nil
+
+  # Cursor is not asked to write without a sign-in or key.
+  defp signed_out_cursor(id) do
+    if HalC2.Acp.unauthenticated?(id),
+      do:
+        "Cursor is not signed in. Sign in with Cursor or add CURSOR_API_KEY in provider settings."
+  end
 
   defp missing_cli_message(label, command) do
     unless executable?(command),
@@ -379,7 +398,14 @@ defmodule HalC2.TextGeneration do
 
         driver when driver in @acp_drivers ->
           label = HalC2.Acp.label(selection["instanceId"])
-          {label, acp(selection, prompt, label)}
+
+          {label,
+           acp(
+             selection,
+             prompt,
+             label,
+             if(driver(selection) == "opencode", do: opts[:attachments] || [], else: [])
+           )}
 
         plugin ->
           {plugin, HalC2.Plugins.generate(plugin, prompt, json_schema)}
@@ -629,7 +655,7 @@ defmodule HalC2.TextGeneration do
   end
 
   # One ACP prompt in its own process, which outlives neither the agent nor the timeout.
-  defp acp(selection, prompt, label) do
+  defp acp(selection, prompt, label, attachments) do
     id = selection["instanceId"]
     antigravity = driver(id) == "antigravity"
 
@@ -661,7 +687,9 @@ defmodule HalC2.TextGeneration do
                 HalC2.Acp.with_agent(
                   id,
                   dir,
-                  fn conn, _init -> acp_prompt(conn, dir, selection["model"], prompt) end,
+                  fn conn, _init ->
+                    acp_prompt(conn, dir, selection["model"], prompt, false, attachments)
+                  end,
                   mode
                 )
             end
@@ -677,6 +705,13 @@ defmodule HalC2.TextGeneration do
           {:ok, %{} = out} -> {:ok, out}
           _ -> {:error, "#{label} returned invalid structured output."}
         end
+
+      # Cursor's run that ended badly gives nothing, whatever it printed first.
+      {:ok, {:error, "The request was cancelled."}} when label == "Cursor" ->
+        {:error, "Cursor SDK request was cancelled."}
+
+      {:ok, {:error, %{}}} when label == "Cursor" ->
+        {:error, "Cursor SDK request finished with an error."}
 
       {:ok, {:error, reason}} when is_binary(reason) ->
         {:error, reason}
@@ -695,15 +730,28 @@ defmodule HalC2.TextGeneration do
     end
   end
 
-  defp acp_prompt(conn, dir, model, prompt, antigravity \\ false) do
+  defp acp_prompt(conn, dir, model, prompt, antigravity, attachments) do
     with {:ok, %{"sessionId" => session_id} = session} <-
            Connection.call(conn, "session/new", %{"cwd" => dir, "mcpServers" => []}, 60_000),
          :ok <- acp_mode(conn, session_id, antigravity),
          :ok <- acp_model(conn, session_id, session, model, antigravity) do
-      params = %{"sessionId" => session_id, "prompt" => [%{"type" => "text", "text" => prompt}]}
+      blocks = [%{"type" => "text", "text" => prompt} | acp_images(attachments)]
+      params = %{"sessionId" => session_id, "prompt" => blocks}
       task = Task.async(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
       acp_collect(conn, task.ref, [], antigravity)
     end
+  end
+
+  # Only the images that can be opened go with the prompt; any other attachment is
+  # described in its text, never sent.
+  @acp_image_types ~w(image/gif image/jpeg image/png image/webp)
+  defp acp_images(attachments) do
+    for %{"type" => "image", "mimeType" => mime} = attachment <- attachments,
+        mime in @acp_image_types,
+        path = HalC2.Attachments.path(attachment),
+        is_binary(path),
+        {:ok, bytes} <- [File.read(path)],
+        do: %{"type" => "image", "mimeType" => mime, "data" => Base.encode64(bytes)}
   end
 
   # Antigravity runs in its default (asking) mode, never a thread's access mode.
@@ -829,7 +877,7 @@ defmodule HalC2.TextGeneration do
       result =
         HalC2.Acp.with_agent(id, dir, fn conn, _init ->
           with :ok <- AntigravitySession.authenticate(conn, id),
-               do: acp_prompt(conn, dir, model, prompt, true)
+               do: acp_prompt(conn, dir, model, prompt, true, [])
         end)
 
       remove_antigravity_session(id, dir)
@@ -1058,6 +1106,11 @@ defmodule HalC2.TextGeneration do
         {:failed, out, failure_message(command, opts[:label], failure(err), status)}
 
       {:ok, {:raised, error}} ->
+        # The user sees only the general failure; a bad binary path or a vanished
+        # working folder is for the log.
+        if opts[:unexpected],
+          do: Logger.warning("#{command} could not run: #{Exception.message(error)}")
+
         {:error, opts[:unexpected] || Exception.message(error)}
 
       nil ->

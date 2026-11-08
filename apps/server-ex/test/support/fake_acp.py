@@ -253,16 +253,23 @@ def answer_title():
     # Text generation: log what the agent was allowed, then answer the schema's keys.
     global titling
     pid, sid, text, answers = titling["pid"], titling["sid"], titling["text"], titling["answers"]
+    titling_images = titling.get("images", [])
     titling = None
     cwd = cwds.get(sid, os.getcwd())
     with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
         f.write(json.dumps({"acp": INSTANCE, "argv": sys.argv[1:], "cwd": cwd, "listing": os.listdir(cwd),
-                            "prompt": text, "model": model, "refused": answers}) + "\n")
+                            "prompt": text, "model": model, "refused": answers,
+                            "images": titling_images}) + "\n")
     out = {"title": "%s title" % INSTANCE, "needsRefinement": False}
     out.update(json.loads(os.environ.get("FAKE_TEXT_ANSWER") or "{}"))
     update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1",
                  "content": {"type": "text", "text": json.dumps(out)}})
-    send({"id": pid, "result": {"stopReason": "end_turn"}})
+    # $FAKE_TEXT_STOP ends the run badly after the answer: "cancelled", or "error".
+    ending = os.environ.get("FAKE_TEXT_STOP")
+    if ending == "error":
+        send({"id": pid, "error": {"code": -32000, "message": "internal failure"}})
+    else:
+        send({"id": pid, "result": {"stopReason": ending or "end_turn"}})
 
 trace({"argv": sys.argv[1:]})
 for line in sys.stdin:
@@ -347,6 +354,8 @@ for line in sys.stdin:
     elif method == "session/prompt":
         sid = params["sessionId"]
         text = params["prompt"][0]["text"]
+        prompt_images = [{"mimeType": b.get("mimeType"), "bytes": len(b.get("data") or "")}
+                         for b in params["prompt"] if b.get("type") == "image"]
         # FAKE_ACP_INPUT_LOG names a file each prompt's text is appended to, as JSON.
         if os.environ.get("FAKE_ACP_INPUT_LOG"):
             with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as input_log:
@@ -395,7 +404,7 @@ for line in sys.stdin:
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending", "rawInput": {}})
         if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG"):
             # A title writer that tries a command and a file read first.
-            titling = {"pid": mid, "sid": sid, "text": text, "answers": {}}
+            titling = {"pid": mid, "sid": sid, "text": text, "answers": {}, "images": prompt_images}
             send({"id": "tg-perm", "method": "session/request_permission", "params": {"sessionId": sid,
                   "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
                   "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},

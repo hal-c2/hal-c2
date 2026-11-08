@@ -1260,6 +1260,131 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     generate.(context)
   end
 
+  # --- Cursor ----------------------------------------------------------------------------
+
+  step "{string} writes a title and the run ends with an error after printing a valid title",
+       %{args: [provider]} = context do
+    ended_title(context, provider, "error")
+  end
+
+  step "{string} writes a title and the run ends cancelled after printing a valid title",
+       %{args: [provider]} = context do
+    ended_title(context, provider, "cancelled")
+  end
+
+  defp ended_title(context, provider, ending) do
+    context = install(context, [provider])
+    World.put_env("FAKE_TEXT_STOP", ending)
+
+    context
+    |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
+    |> title("Fix the login redirect loop")
+  end
+
+  step "Cursor is not signed in and has no API key", context do
+    context =
+      context
+      |> install(["cursor"])
+      |> World.update_settings(%{"textGenerationModelSelection" => selection("cursor")})
+
+    key = {HalC2.Acp, "cursor", :unauthenticated}
+    :persistent_term.put(key, true)
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase(key) end)
+    context
+  end
+
+  step "it fails saying to sign in with Cursor or add CURSOR_API_KEY in provider settings",
+       context do
+    assert {:error, error, _} = context.reply
+    assert error =~ "Sign in with Cursor or add CURSOR_API_KEY in provider settings"
+    context
+  end
+
+  step "Cursor is not called", context do
+    assert calls(context) == []
+    context
+  end
+
+  # --- OpenCode's images, and cuts that keep an emoji whole -----------------------------------
+
+  step "a message with an image and a PDF attached", context do
+    [image] = persist_images(["shot.png"])
+
+    # Only images are stored as attachments; a PDF is described, never sent.
+    pdf = %{
+      "type" => "file",
+      "id" => "t-opencode-spec",
+      "name" => "spec.pdf",
+      "mimeType" => "application/pdf",
+      "sizeBytes" => 13
+    }
+
+    Map.put(context, :attachments, [image, pdf])
+  end
+
+  step "the writer receives the message and the image", context do
+    assert {:ok, _} = context.reply
+    assert [%{"acp" => "opencode", "prompt" => prompt, "images" => images}] = calls(context)
+    assert prompt =~ "Fix the login redirect loop"
+    assert [%{"mimeType" => "image/png"}] = images
+    context
+  end
+
+  step "the PDF is not sent", context do
+    assert [%{"images" => [_]}] = calls(context)
+    context
+  end
+
+  @family "👨‍👩‍👧"
+
+  step "the staged patch has an emoji where its cut falls", context do
+    context
+    |> install()
+    |> Map.put(:staged_patch, String.duplicate("x", 39_998) <> String.duplicate(@family, 20))
+  end
+
+  step "a thread's first message, at its start has an emoji where its cut falls", context do
+    install(context)
+    |> Map.put(:messages, [message("user", "START " <> String.duplicate(@family, 10_000))])
+  end
+
+  step "a thread's first message, at its end has an emoji where its cut falls", context do
+    install(context)
+    |> Map.put(:messages, [message("user", String.duplicate(@family, 10_000) <> " END")])
+  end
+
+  step "a commit message is written", context do
+    context = install(context)
+    Map.put(context, :reply, commit_with(context, Map.get(context, :staged_patch, "diff")))
+  end
+
+  step "a thread title is written", context do
+    regenerate(context, context.messages)
+  end
+
+  defp commit_with(context, patch) do
+    cwd = root(context)
+
+    World.normalize_reply(
+      TextGeneration.commit_message(cwd, "main", "M README.md", patch, false,
+        policy: Style.policy(cwd)
+      )
+    )
+  end
+
+  step "the writer receives the text cut before the emoji or after it, not through it",
+       context do
+    prompt = List.last(calls(context))["prompt"]
+    assert String.valid?(prompt)
+    # Every emoji that reaches the writer is a whole one.
+    pieces =
+      for g <- String.graphemes(prompt), g =~ ~r/[\x{1F468}\x{1F469}\x{1F467}\x{200D}]/u, do: g
+
+    assert pieces != []
+    assert Enum.all?(pieces, &(&1 == @family))
+    context
+  end
+
   # --- slash commands, aliases and wrapped titles ----------------------------------------
 
   step "a first message {string}", %{args: [message]} = context do

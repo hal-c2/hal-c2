@@ -381,7 +381,7 @@ Feature: Generated titles, branch names and source control text
     And the token is not in the failure
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (run status checks, credential lookup), CursorTextGeneration.test.ts
-  @backlog @mc
+  @mc
   Scenario Outline: A Cursor run that did not finish well gives no title even if it printed one
     When "cursor" writes a title and the run ends <ending> after printing a valid title
     Then it fails with "<message>"
@@ -392,7 +392,7 @@ Feature: Generated titles, branch names and source control text
       | cancelled         | Cursor SDK request was cancelled.          |
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (requires a key or sign-in), CursorTextGeneration.test.ts
-  @backlog @mc
+  @mc
   Scenario: Cursor is not asked to write text without a sign-in or key
     Given Cursor is not signed in and has no API key
     When "cursor" is asked to write a title
@@ -414,7 +414,7 @@ Feature: Generated titles, branch names and source control text
     And the SDK's resources are released even if they only become available late
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (image parts only), OpenCodeTextGeneration.test.ts
-  @backlog @mc
+  @mc
   Scenario: Only images are sent with a title request to OpenCode
     Given a message with an image and a PDF attached
     When "opencode" writes a title
@@ -508,7 +508,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #29653: shortening long context for commit, pull request, branch and title writers
   # could cut an emoji in half, which Grok refused outright.
-  @backlog @mc
+  @mc
   Scenario Outline: Context cut for a writer does not split an emoji
     Given <what> has an emoji where its cut falls
     When <writer> is written
