@@ -143,4 +143,27 @@ defmodule HalC2.Acp.CursorChildThreadTest do
     [%{"output" => output}] = Enum.filter(items(state), &(&1["type"] == "command_execution"))
     assert byte_size(output) <= HalC2.Orchestration.CommandTail.kept() + 200
   end
+
+  test "a final summary that repeats the end of the streamed text adds no message", %{
+    state: state
+  } do
+    text =
+      &%{
+        "sessionUpdate" => "agent_message_chunk",
+        "messageId" => &1,
+        "content" => %{"text" => &2}
+      }
+
+    state =
+      state
+      |> update(text.("m1", "Reading lib/a.ex. "))
+      |> update(text.("m1", "Summary: lib has three modules"))
+
+    NativeSubagent.finish(state.subagents["task-1"].sub, "completed", "lib has three modules")
+
+    assert ["Reading lib/a.ex. Summary: lib has three modules"] =
+             items(state)
+             |> Enum.filter(&(&1["type"] == "assistant_message"))
+             |> Enum.map(& &1["text"])
+  end
 end

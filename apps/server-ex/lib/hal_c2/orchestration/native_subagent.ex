@@ -417,8 +417,11 @@ defmodule HalC2.Orchestration.NativeSubagent do
         # What the subagent said (`item/5`) is in its thread, the latest its answer,
         # which the provider's result repeats with more around it (Claude adds the
         # agent's id and usage); a result that does not repeat it follows as its answer.
+        # A summary that only repeats the end of what was said (a message per message
+        # id keeps all of it in one) is already in the thread.
         said != nil and result != nil and not Keyword.get(opts, :summary, false) and
-            not String.contains?(result, String.trim(said)) ->
+          not String.contains?(result, String.trim(said)) and
+            not String.contains?(said, String.trim(result)) ->
           item(sub, "#{sub.native}:message:result", "assistant_message", "completed", %{
             "text" => result
           })
