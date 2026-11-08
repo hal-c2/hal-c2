@@ -975,6 +975,28 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  step "Codex gets the conversation ahead of the prompt for the goal {string}",
+       %{args: [objective]} = context do
+    # The goal's first turn is under way once the new instance's Codex named it.
+    World.await_state(
+      context,
+      context.thread,
+      fn state ->
+        Enum.any?(
+          HalC2.StreamState.list(state, "provider-turn"),
+          &String.starts_with?(get_in(&1, ["nativeTurnRef", "nativeId"]) || "", "codex-work-")
+        )
+      end,
+      30_000
+    )
+
+    prompt = hd(List.last(World.codex_requests(context, "turn/start"))["input"])["text"]
+    assert transcript(prompt) =~ "User: repeat one\n\nAssistant: repeat one"
+    goal = HalC2.Codex.Goals.first_prompt(objective)
+    assert String.ends_with?(prompt, @history_end <> "\n\n" <> goal)
+    context
+  end
+
   # The skill is the project's and Claude's home the scenario's own, so Claude would run it.
   step "{string} mentioned the Claude skill {string} before the switch",
        %{args: [thread, name]} = context do

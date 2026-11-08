@@ -349,6 +349,16 @@ Feature: Changing model and provider mid-thread
     Then Claude gets the conversation in a block ahead of "/goal make the tests pass"
     And the command is the last block of the message
 
+  # Codex's `/goal <objective>` sends its own prompt for the goal's first turn, and the
+  # conversation goes ahead of it: the turn starting confirms the handoff, so history
+  # left out then would never be sent.
+  @mc @plugin-codex
+  Scenario: A goal that is the first message on another Codex gets the conversation
+    Given a second Codex instance "codex-work" with its own home
+    And the user switches "t1" to "codex-work" with model "gpt-5.4"
+    When the user sends the command "/goal fix the tests" to "t1"
+    Then Codex gets the conversation ahead of the prompt for the goal "fix the tests"
+
   # Claude's skill mentions were read in the whole prompt, history included, so a skill
   # the thread mentioned before the switch ran again on the next message.
   @mc
