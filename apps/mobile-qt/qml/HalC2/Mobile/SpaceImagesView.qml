@@ -163,6 +163,8 @@ ColumnLayout {
 
     Composer {
         objectName: "spaceImagesComposer"
+        // The phone keeps the effort and options as chips.
+        optionsInModelControl: false
         Layout.fillWidth: true
         imagesHost: true
         visible: !view.trashShown && ready

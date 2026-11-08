@@ -3,7 +3,8 @@
 // behind the running turn (composer::queued) and the rich text drawing
 // (ComposerHighlighter), whose limits "/usage-limits" shows
 // (composer::usageLimitsReport), and stepping the effort from the keyboard
-// (composer::steppedChoice).
+// (composer::steppedChoice), drawing it as bars (composer::effortBars) or
+// finding it among the model's options (composer::effortIndex).
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -371,6 +372,111 @@ private slots:
         descriptor.insert(QStringLiteral("currentValue"), *stepped);
         RC_ASSERT(composer::steppedChoice(descriptor, -direction) == current);
       }
+    }));
+  }
+  void effortBarsCountTheOrdinaryLevels() {
+    QVERIFY(rc::check("bars are one per ordinary level, filled to the current one; named levels keep their names", [] {
+      const std::vector<QString> pool{QStringLiteral("off"), QStringLiteral("low"), QStringLiteral("medium"), QStringLiteral("high"),
+                                      QStringLiteral("xhigh"), QStringLiteral("max"), QStringLiteral("ultracode"), QStringLiteral("ultrathink")};
+      QJsonArray options;
+      QStringList ids;
+      for (const QString& id : pool) {
+        if (!*rc::gen::arbitrary<bool>()) continue;
+        ids.append(id);
+        options.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), id.toUpper()}});
+      }
+      const QString descriptorId = *rc::gen::elementOf(std::vector<QString>{QStringLiteral("effort"), QStringLiteral("reasoningEffort"), QStringLiteral("contextWindow"),
+                                                                            QStringLiteral("thought_level")});
+      // An agent's own id is the effort once the agent marks it as reasoning.
+      const bool marked = *rc::gen::arbitrary<bool>();
+      QJsonObject descriptor{{QStringLiteral("id"), descriptorId}, {QStringLiteral("type"), QStringLiteral("select")}, {QStringLiteral("options"), options},
+                             {QStringLiteral("promptInjectedValues"), QJsonArray{QStringLiteral("ultrathink")}}};
+      if (marked) descriptor.insert(QStringLiteral("role"), QStringLiteral("reasoning"));
+      const bool reasoning = marked || descriptorId == QLatin1String("effort") || descriptorId == QLatin1String("reasoningEffort");
+      const QString current = *rc::gen::elementOf(pool);
+      const QVariantMap bars = composer::effortBars(descriptor, current);
+
+      const auto named = [](const QString& id) { return id == QLatin1String("max") || id == QLatin1String("ultracode") || id == QLatin1String("ultrathink"); };
+      QStringList levels = ids;
+      levels.removeIf(named);
+      if (!reasoning || levels.size() < 2 || (!levels.contains(current) && !named(current))) {
+        RC_ASSERT(bars.isEmpty());
+        return;
+      }
+      const bool startsAtOff = levels.first() == QLatin1String("off");
+      const int count = int(levels.size()) - (startsAtOff ? 1 : 0);
+      if (levels.contains(current)) {
+        RC_ASSERT(bars.value(QStringLiteral("count")).toInt() == count);
+        RC_ASSERT(bars.value(QStringLiteral("filled")).toInt() == int(levels.indexOf(current)) + (startsAtOff ? 0 : 1));
+        RC_ASSERT(bars.value(QStringLiteral("special")).toString().isEmpty());
+      } else {
+        // Max, Ultracode and Ultrathink: every bar, and their name.
+        RC_ASSERT(bars.value(QStringLiteral("count")).toInt() == count);
+        RC_ASSERT(bars.value(QStringLiteral("filled")).toInt() == count);
+        RC_ASSERT(bars.value(QStringLiteral("special")).toString() == (ids.contains(current) ? current.toUpper() : current));
+      }
+    }));
+  }
+  void aPickMatchesTheThreadThatRunsIt() {
+    QVERIFY(rc::check("a pick matches the thread only on its account, model and options, in any order, fast mode off as unset", [] {
+      const auto option = [](const QString& id, const QJsonValue& value) { return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("value"), value}}; };
+      const std::vector<QJsonObject> pool{option(QStringLiteral("effort"), QStringLiteral("low")), option(QStringLiteral("effort"), QStringLiteral("high")),
+                                          option(QStringLiteral("fastMode"), true), option(QStringLiteral("fastMode"), false),
+                                          option(QStringLiteral("contextWindow"), QStringLiteral("1m"))};
+      // One value per option id, so a selection reads as a map.
+      const auto selection = [&](const QString& instance, const QString& model) {
+        QList<QJsonObject> chosen;
+        QMap<QString, QJsonValue> byId;
+        for (const QJsonObject& entry : pool) {
+          const QString id = entry.value(QLatin1String("id")).toString();
+          if (byId.contains(id) || !*rc::gen::arbitrary<bool>()) continue;
+          byId.insert(id, entry.value(QLatin1String("value")));
+          chosen.append(entry);
+        }
+        if (*rc::gen::arbitrary<bool>()) std::reverse(chosen.begin(), chosen.end());
+        QJsonArray options;
+        for (const QJsonObject& entry : chosen) options.append(entry);
+        return std::pair{QJsonObject{{QStringLiteral("instanceId"), instance}, {QStringLiteral("model"), model}, {QStringLiteral("options"), options}}, byId};
+      };
+      const std::vector<QString> instances{QStringLiteral("codex"), QStringLiteral("claudeAgent")};
+      const std::vector<QString> models{QStringLiteral("gpt-5"), QStringLiteral("claude-opus")};
+      const auto [pick, picked] = selection(*rc::gen::elementOf(instances), *rc::gen::elementOf(models));
+      const auto [thread, runs] = selection(*rc::gen::elementOf(instances), *rc::gen::elementOf(models));
+      const auto withoutFastOff = [](QMap<QString, QJsonValue> byId) {
+        if (byId.value(QStringLiteral("fastMode")) == QJsonValue(false)) byId.remove(QStringLiteral("fastMode"));
+        return byId;
+      };
+      const bool same = pick.value(QLatin1String("instanceId")) == thread.value(QLatin1String("instanceId")) &&
+                        pick.value(QLatin1String("model")) == thread.value(QLatin1String("model")) && withoutFastOff(picked) == withoutFastOff(runs);
+      RC_ASSERT(composer::pickMatchesThread(pick, thread) == same);
+      RC_ASSERT(composer::pickMatchesThread(thread, pick) == same);
+      RC_ASSERT(composer::pickMatchesThread(pick, pick));
+    }));
+  }
+  void theEffortIsTheMarkedReasoningSelect() {
+    QVERIFY(rc::check("the effort is the first reasoning select, else the first select, and never a switch", [] {
+      const std::vector<QString> pool{QStringLiteral("mode"), QStringLiteral("contextWindow"), QStringLiteral("effort"), QStringLiteral("thought_level"),
+                                      QStringLiteral("fastMode")};
+      const int size = *rc::gen::inRange(0, 6);
+      QJsonArray descriptors;
+      for (int i = 0; i < size; ++i) {
+        const QString id = *rc::gen::elementOf(pool);
+        QJsonObject descriptor{{QStringLiteral("id"), id},
+                               {QStringLiteral("type"), id == QLatin1String("fastMode") ? QStringLiteral("boolean") : QStringLiteral("select")}};
+        if (id == QLatin1String("thought_level") && *rc::gen::arbitrary<bool>()) descriptor.insert(QStringLiteral("role"), QStringLiteral("reasoning"));
+        descriptors.append(descriptor);
+      }
+      const auto isSelect = [&](qsizetype i) { return descriptors.at(i).toObject().value(QLatin1String("type")) == QLatin1String("select"); };
+      const auto isReasoning = [&](qsizetype i) {
+        const QJsonObject descriptor = descriptors.at(i).toObject();
+        return isSelect(i) && (descriptor.value(QLatin1String("id")) == QLatin1String("effort") || descriptor.value(QLatin1String("role")) == QLatin1String("reasoning"));
+      };
+      qsizetype expected = -1;
+      for (qsizetype i = 0; i < descriptors.size() && expected < 0; ++i)
+        if (isReasoning(i)) expected = i;
+      for (qsizetype i = 0; i < descriptors.size() && expected < 0; ++i)
+        if (isSelect(i)) expected = i;
+      RC_ASSERT(composer::effortIndex(descriptors) == expected);
     }));
   }
 };

@@ -155,8 +155,13 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
     await_themes(context, &(id in &1))
   end
 
+  # With `context.no_longer_offered` (a fun of the context and the name), that checks
+  # it: a registry agent's command in providers/acp-registry.feature.
   step "{string} is no longer offered", %{args: [id]} = context do
-    await_themes(context, &(id not in &1))
+    case context do
+      %{no_longer_offered: check} when is_function(check, 2) -> check.(context, id)
+      _ -> await_themes(context, &(id not in &1))
+    end
   end
 
   step "the themes folder has a file named {string}", %{args: [name]} = context do

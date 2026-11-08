@@ -26,17 +26,12 @@ defmodule HalC2.ProviderCompatibility do
 
   @doc "Adds the advisory to an enabled, installed provider entry a policy covers."
   def put(%{"driver" => driver} = entry) do
-    policies =
-      Application.get_env(:hal_c2, :provider_compatibility) || HalC2.ModelManifest.policies()
-
-    release = to_string(Application.spec(:hal_c2, :vsn))
-
     with true <- entry["enabled"] != false and entry["installed"] != false,
-         %{} = advisory <- advisory(policies, driver, entry["version"], release) do
+         %{} = advisory <- for_version(driver, entry["version"]) do
       latest = get_in(entry, ["versionAdvisory", "latestVersion"])
 
       advisory =
-        case is_binary(latest) && advisory(policies, driver, latest, release) do
+        case is_binary(latest) && for_version(driver, latest) do
           %{"status" => status} -> Map.put(advisory, "latestVersionStatus", status)
           _ -> advisory
         end
@@ -48,6 +43,14 @@ defmodule HalC2.ProviderCompatibility do
   end
 
   def put(entry), do: entry
+
+  @doc "The advisory for `version` of `driver` on this HAL-C2 release, under the policies in use."
+  def for_version(driver, version) do
+    policies =
+      Application.get_env(:hal_c2, :provider_compatibility) || HalC2.ModelManifest.policies()
+
+    advisory(policies, driver, version, to_string(Application.spec(:hal_c2, :vsn)))
+  end
 
   @doc """
   The advisory for `version` of `driver` on HAL-C2 `release`, or nil when no policy

@@ -129,7 +129,7 @@ Feature: In-app preview browser
       Then the thread has a new idle tab
       And the tab fills the space it is given
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-tui
     Scenario Outline: A typed address gets the web scheme that fits the host it names
       When a client opens a browser tab for the thread at "<typed>"
       Then the thread has a new tab loading "<loaded>"
@@ -140,7 +140,7 @@ Feature: In-app preview browser
         | 127.0.0.1:8080 | http://127.0.0.1:8080 |
         | example.com    | https://example.com   |
 
-    @backlog @desktop @tui
+    @desktop @tui @backlog-tui
     Scenario: A typed address with a scheme other than web is refused
       When a client opens a browser tab for the thread at "ftp://example.com/file"
       Then no tab opens
@@ -1006,7 +1006,7 @@ Feature: In-app preview browser
       When the user submits a form on the page that posts to a new window
       Then the form's result loads in the same browser tab
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A page that opens a blank window keeps its own page
       When the page opens a blank window
       Then no tab or window opens and the page is told it was refused
@@ -1014,7 +1014,7 @@ Feature: In-app preview browser
 
     # Upstream #24866: a popup to a data: address replaced the page, past the browser's own block
     # on pages moving themselves to such addresses.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario Outline: A page cannot open a local or inline address as a popup
       When the page opens a window at "<address>"
       Then no tab or window opens and the page is told it was refused
@@ -1037,7 +1037,7 @@ Feature: In-app preview browser
     # in the app's name; notifications are now refused like the other unlisted permissions.
     # Upstream #22835: tabs reported loopback access as denied, which stopped Okta FastPass sign-in.
     # Upstream #25275: browser games and 3D viewers could not capture the mouse; Escape releases it.
-    @backlog @desktop
+    @desktop
     Scenario Outline: A page may ask for some things and not others
       Given a page in a browser tab asks for <permission>
       Then the request is <outcome>
@@ -1050,14 +1050,25 @@ Feature: In-app preview browser
         | the camera                         | refused |
         | the microphone                     | refused |
         | the list of installed fonts        | refused |
+        | anything else a page can ask for   | refused |
+
+    # Upstream #22835. QtWebEngine, the desktop's engine, has no local network permission
+    # to grant or refuse. Upstream #25275: the desktop grants the pointer lock, but Chromium asks
+    # for it only from a focused window, which the offscreen runner never has.
+    @backlog @desktop
+    Scenario Outline: A page may lock the pointer and reach this computer but not the rest of the local network
+      Given a page in a browser tab asks for <permission>
+      Then the request is <outcome>
+
+      Examples:
+        | permission                         | outcome |
         | to lock the mouse pointer          | allowed |
         | this computer's own addresses      | allowed |
         | other devices on the local network | refused |
-        | anything else a page can ask for   | refused |
 
     # Upstream #26173: every page could read the clipboard without asking, the user's tabs and an
     # agent's alike.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario Outline: A page asks before it reads the clipboard
       Given a page from "https://example.com" in a browser tab asks to read the clipboard
       Then the user is asked whether "https://example.com" may see what was copied
@@ -1071,14 +1082,14 @@ Feature: In-app preview browser
         | blocks it | gets nothing        |
 
     # Upstream #26173
-    @backlog @desktop
+    @desktop
     Scenario: Each site is asked on its own whether it may read the clipboard
       Given the user allowed "https://example.com" to read the clipboard
       When a page from "https://other.example" asks to read the clipboard
       Then the user is asked about "https://other.example"
 
     # Upstream #26173: Enter typed into the page could otherwise accept a prompt the page raised.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario Outline: A page's prompt starts on its refusing choice
       When a page <asks>
       Then the prompt's default choice refuses it
@@ -1090,7 +1101,7 @@ Feature: In-app preview browser
         | asks to open an outside link |
 
     # Upstream #20237: refusing a page notifications leaves the app's own notifications alone.
-    @backlog @desktop @priority-high
+    @desktop @priority-high
     Scenario: A page cannot raise a system notification in the app's name
       Given a page in a browser tab asks to show notifications
       When the page tries to raise a system notification
@@ -1168,7 +1179,7 @@ Feature: In-app preview browser
       And the field no longer has focus
 
     # Upstream #23577: an address the browser could not open was silently put back.
-    @backlog @desktop
+    @desktop
     Scenario Outline: An address that is not a web page says what to type instead
       Given a browser tab showing the thread's dev server
       When the user types "<typed>" in the address field and presses Enter
@@ -1186,7 +1197,7 @@ Feature: In-app preview browser
       When the user focuses the address field
       Then the whole address is selected, ready to be replaced
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Back and forward are offered only where the tab can go
       Given a browser tab whose page <history>
       Then going back is <back>
@@ -1198,7 +1209,7 @@ Feature: In-app preview browser
         | follows an earlier page                      | available   | unavailable |
         | is the first page, reached by going back     | unavailable | available   |
 
-    @backlog @desktop
+    @desktop
     Scenario: Reloading becomes stopping while the page loads
       Given a browser tab whose page is still loading
       Then the tab offers to stop loading instead of reloading
@@ -1231,14 +1242,27 @@ Feature: In-app preview browser
         | toggle the right panel        | toggles the right panel                  |
         | maximise the right panel      | maximises or restores the right panel    |
 
-    @backlog @desktop
+    @desktop
     Scenario: A page's link to another app asks before opening it
       When a page in a browser tab follows the link "slack://channel?team=T1"
       Then the user is asked whether to open this slack link
       And the link opens in the system only if the user agrees
       And a second such link waits until the first question is answered
 
-    @backlog @desktop
+    # A tab kept while another shows still runs its page; a question from it
+    # would wait where nobody sees it and hold up every other.
+    @desktop
+    Scenario: A browser tab that is not shown puts no question to the user
+      Given a page asks to open an outside link
+      When the user switches to the Diff tab
+      Then the question is withdrawn and the link does not open
+      When the page in the hidden tab follows the link "slack://channel?team=T4"
+      Then the user is not asked about it and the system is not asked to open it
+      When the user switches back to the browser tab
+      And a page from "https://example.com" asks to read the clipboard
+      Then the user is asked whether "https://example.com" may see what was copied
+
+    @desktop
     Scenario Outline: A page's link to a local or inline scheme is never handed to the system
       When a page in a browser tab follows a link with the scheme "<scheme>" to another app
       Then the system is not asked to open it
@@ -1927,19 +1951,30 @@ Feature: In-app preview browser
       When the user closes the device toolbar
       Then the page fills the tab again
 
-    @backlog @desktop
+    @desktop
     Scenario: A new browser tab with nothing to suggest says how to start
       Given the thread's project has no running dev server and no recent pages
       When the user opens a new browser tab
-      Then the tab says "No preview yet"
+      Then the new tab says "No preview yet"
       And it says to type a URL above or run a dev script and that localhost servers will show up automatically
 
-    @backlog @desktop
+    @desktop
     Scenario: A recent page can be taken off the new tab's list
       Given a new browser tab lists the recent page "http://localhost:5173"
       When the user removes "http://localhost:5173" from the recent pages
-      Then it is no longer listed
+      Then the page is no longer listed
       And it does not come back when the user opens another new tab
+      When "http://localhost:5173" is visited again on an MC whose clock is behind this device's
+      Then a new tab lists "http://localhost:5173" again
+
+    @desktop
+    Scenario: A page taken off is timed by its own MC's clock, not another MC's
+      Given a new browser tab lists the recent page "http://localhost:5173"
+      And a thread on another MC, whose clock is ahead, has a page open
+      When the user goes back to the thread
+      And the user removes "http://localhost:5173" from the recent pages
+      And "http://localhost:5173" is visited again on an MC whose clock is behind this device's
+      Then a new tab lists "http://localhost:5173" again
 
     # Dropped: contradicts the passing "A new browser tab offers local servers and recent pages"
     # (apps/desktop-qt/src/native/ThreadPreviews.h maxRecents = 10). The web's empty state showed
@@ -1962,28 +1997,37 @@ Feature: In-app preview browser
         | vite    | vite      |
         | unknown | Listening |
 
-    @backlog @desktop
+    @desktop
     Scenario: A recent page shows its title, its address and when it was visited
       Given the user visited "http://localhost:5173/docs?page=2" titled "Docs" a few minutes ago
       When the user opens a new browser tab
       Then the page is listed as "Docs"
       And beneath it are "localhost:5173/docs?page=2" and how long ago it was visited
       And the row offers to remove it from history
+      When another browser tab of the thread showing that page is resized
+      Then the row still says when the page was visited, not when the tab was resized
 
-    @backlog @desktop
+    @desktop
+    Scenario: Recent pages kept before they were kept per project go to the first project shown
+      Given the device kept the recent pages "http://localhost:5173/a" and "http://localhost:5173/b" before it kept them per project
+      When the user opens a new browser tab
+      Then the pages are listed as "localhost:5173/a" then "localhost:5173/b", with no time to show
+      And the device keeps them under the project from now on
+
+    @desktop
     Scenario: A recent page without a title is listed by its address
       Given the user visited "http://localhost:5173/" which has no title
       When the user opens a new browser tab
       Then the page is listed as "localhost:5173"
 
-    @backlog @desktop
+    @desktop
     Scenario: Opening a suggested server visits it and shows it beside the thread
       Given a new browser tab suggests a dev server on port 5173
       When the user opens the suggestion
       Then the page opens in a browser tab beside the thread
       And the server is remembered among the recent pages
 
-    @backlog @desktop
+    @desktop
     Scenario: Two configured addresses that differ only by their anchor are one suggestion
       Given the project configures "http://localhost:3000/app#a" and "http://localhost:3000/app#b" as preview addresses
       When the user opens a new browser tab
@@ -2011,14 +2055,14 @@ Feature: In-app preview browser
       When 30 seconds pass and the page crashes again
       Then the tab reloads it once more
 
-    @backlog @desktop
+    @desktop
     Scenario: Pages the user visits are remembered per project for new tabs
       Given the user visits "http://localhost:5173" in a browser tab of a project
       When the user opens a new browser tab in another thread of that project
       Then "http://localhost:5173" is among the recent pages
 
     # Upstream #25491: visits were not filed under the thread's project, so Recently used stayed empty.
-    @backlog @desktop
+    @desktop
     Scenario Outline: Pages visited in a draft or a thread are remembered with their titles
       Given the user visits "http://localhost:5173/docs" titled "Docs" in a browser tab of <thread>
       When the user restarts HAL-C2 and opens a new browser tab in that project
@@ -2027,10 +2071,15 @@ Feature: In-app preview browser
       Examples:
         | thread                        |
         | a thread of the project       |
+
+      # The desktop's drafts have no browser tabs yet: the side panel's tabs belong to a thread.
+      @backlog
+      Examples:
+        | thread                        |
         | a new thread's draft          |
 
     # Upstream #25462: titles were recorded only while the panel was open.
-    @backlog @desktop
+    @desktop
     Scenario: A page's title is remembered while its browser is not shown
       Given an agent loads "http://localhost:5173/docs" titled "Docs" in a thread's browser tab
       And the browser is not shown for that thread
@@ -2038,7 +2087,7 @@ Feature: In-app preview browser
       Then "Docs" is the title of "http://localhost:5173/docs" among the recent pages
 
     # Upstream #25521: returning to a thread replayed the title it last saw for a shared page.
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: Returning to a thread keeps a page's newest title
       Given thread "A" loaded "http://localhost:5173/x" titled "Old"
       And thread "B" of the same project later loaded it titled "New"
@@ -2053,13 +2102,13 @@ Feature: In-app preview browser
       Then the page takes the new size
       And "No visible browser viewport handler" is not shown
 
-    @backlog @desktop
+    @desktop
     Scenario: The history of one project does not appear in another
       Given the user visited "http://localhost:5173" in a project's browser tab
       When the user opens a new browser tab in a different project
       Then "http://localhost:5173" is not among the recent pages
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Recent pages are kept tidy
       Given the user visits <visit>
       Then the recent pages list <listed>
@@ -2070,12 +2119,12 @@ Feature: In-app preview browser
         | "https://user:secret@example.com/docs"                         | "https://example.com/docs" without credentials   |
         | the same page twice                                            | the page once, as the most recent                |
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A project remembers its last fifty pages
       Given the user has visited fifty one different pages in a project
       Then the recent pages remember the fifty most recent ones
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: The desktop remembers the history of the twenty most recently used projects
       Given the user has browsed in twenty one projects
       Then the history of the project used longest ago is forgotten

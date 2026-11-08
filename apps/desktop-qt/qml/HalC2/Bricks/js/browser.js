@@ -54,23 +54,28 @@ function preset(id) {
 
 // The address a user typed, as a URL: {url} or {error}. A loopback host
 // (localhost, 127.0.0.1, 0.0.0.0, [::1]) gets http, anything else https;
-// only http and https pages open.
+// only http and https pages open, and a refusal says what to type instead.
+// A name and a colon not followed by a port ("mailto:", "about:") is a scheme.
 function normalizeAddress(input) {
     var trimmed = String(input === undefined || input === null ? "" : input).trim();
     if (trimmed.length === 0)
         return { error: "Enter a web address." };
+    var instead = "Enter an http or https URL, such as https://example.com.";
     var withScheme = trimmed;
     if (trimmed.indexOf("://") < 0) {
+        var other = /^([a-z][a-z0-9+.-]*):(?![0-9])/i.exec(trimmed);
+        if (other)
+            return { error: other[1].toLowerCase() + ": addresses do not open here. " + instead };
         var loopback = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::|\/|$)/i.test(trimmed);
         withScheme = (loopback ? "http://" : "https://") + trimmed;
     }
     var named = /^([a-z][a-z0-9+.-]*):\/\//i.exec(withScheme);
     var scheme = named ? named[1].toLowerCase() : "";
     if (named && scheme !== "http" && scheme !== "https")
-        return { error: "Only http and https pages open here." };
+        return { error: "Only http and https pages open here. " + instead };
     var match = /^([a-z][a-z0-9+.-]*):\/\/([^/?#\s]+)(.*)$/i.exec(withScheme);
     if (!match || /\s/.test(match[3]))
-        return { error: "\"" + trimmed + "\" is not a web address." };
+        return { error: "\"" + trimmed + "\" is not a web address. " + instead };
     var rest = match[3].length === 0 ? "/" : match[3];
     return { url: scheme + "://" + match[2] + rest };
 }

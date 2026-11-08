@@ -403,6 +403,8 @@ ColumnLayout {
         id: composer
 
         objectName: "spaceComposer"
+        // The phone keeps the effort and options as chips.
+        optionsInModelControl: false
         Layout.fillWidth: true
         pageHost: true
         visible: !view.trashed && ready
