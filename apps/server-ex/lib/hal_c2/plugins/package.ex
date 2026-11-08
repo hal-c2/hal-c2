@@ -142,7 +142,8 @@ defmodule HalC2.Plugins.Package do
     end
   end
 
-  defp stays?({:ok, json}), do: json["threadsStay"] == true
+  # A `threadsStay` that is no boolean fails the manifest's validation, so it says nothing.
+  defp stays?({:ok, json}), do: Map.get(json, "threadsStay", false) != false
   defp stays?(:unreadable), do: true
 
   # The manifest of the package at `dir`: `:absent` when there is no such package, and

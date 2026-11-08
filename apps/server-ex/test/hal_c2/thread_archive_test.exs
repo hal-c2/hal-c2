@@ -152,8 +152,11 @@ defmodule HalC2.ThreadArchiveTest do
     package = Path.join(HalC2.Paths.data_dir(), "plugins/broken-keeper")
     File.mkdir_p!(package)
 
-    # The manifest is missing, not valid JSON, not an object or unreadable (a directory).
-    for manifest <- [:missing, "{ \"id\": ", "[]", "\"threadsStay\"", :directory] do
+    # The manifest is missing, not valid JSON, not an object, unreadable (a directory), or
+    # fails validation with a `threadsStay` that is no boolean.
+    invalid = JSON.encode!(%{"id" => "broken-keeper", "threadsStay" => "yes"})
+
+    for manifest <- [:missing, "{ \"id\": ", "[]", "\"threadsStay\"", :directory, invalid] do
       File.rm_rf!(Path.join(package, "plugin.json"))
 
       case manifest do
