@@ -469,6 +469,7 @@ defmodule HalC2.Test.Machines do
         "env",
         "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(home, "claude-argv.jsonl"),
         "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(home, "claude-inputs.jsonl"),
+        "FAKE_CLAUDE_MCP_LOG=" <> Path.join(home, "claude-mcp.jsonl"),
         "python3",
         "-u",
         fake.("fake_claude.py")

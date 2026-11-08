@@ -4,7 +4,8 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   CLI in `test/support/fake_claude.py`, covering two promises the feature scenarios
   make one case at a time:
 
-  - The pending-approval lifecycle. Claude asks ("approve"), and then, in any
+  - The pending-approval lifecycle, for a command's approval and for an MCP
+    tool's elicitation. Claude asks ("approve", "mcp confirm"), and then, in any
     order: the user answers (`ThreadRuntime.respond/3` with accept, decline or
     cancel), Claude withdraws the request (its `control_cancel_request`, which the
     session forwards as `{:permission_cancelled, id}`), withdrawal or an answer
@@ -12,7 +13,8 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     stops the run. The promise: the first thing that closes a request wins — a
     withdrawn approval closes as cancelled, one the user already answered stays
     answered, and nothing after that changes its status or decision. An answer
-    for a request that is not pending is an error.
+    for a request that is not pending is an error, and an elicitation answered
+    with a decision its card does not offer ("acceptForSession") is declined.
   - The resume head a turn records (its provider turn's `nativeTurnRef`, where a
     rollback to that turn resumes). A `/compact` turn has no assistant message,
     so its compact boundary is its head (a thread's first `/compact` has no
@@ -31,7 +33,11 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   @moduletag timeout: :infinity
 
   @tid "claude-approvals-thread"
-  @request "runtime-request:claudeAgent:perm-1"
+  # Each kind's request, and the control id Claude asks it under.
+  @requests %{
+    permission: {"runtime-request:claudeAgent:perm-1", "perm-1"},
+    elicitation: {"runtime-request:claudeAgent:mcp-elicitation:elicit-1", "elicit-1"}
+  }
   @fake_claude Path.expand("../../test/support/fake_claude.py", __DIR__)
   @wait_ms 15_000
 
@@ -112,51 +118,76 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   # --- model ----------------------------------------------------------------------
 
   # phase: :idle (no turn), :pending (an approval is open), :withdrawn (Claude
-  #   withdrew it; the turn still runs). status/decision: what the request the
-  #   fake keeps opening as perm-1 shows now, or nil before the first ask.
+  #   withdrew it; the turn still runs). kind: the latest ask's kind. reqs: per
+  #   kind, the status and decision of the request the fake keeps opening under
+  #   that kind's id (perm-1, elicit-1), or nil before its first ask.
   #   msgs: user messages that reached the fake, which numbers its uuid- and
   #   compact- ids by. head: the resume head the last finished turn recorded.
   #   talked: a turn has reached Claude, so the thread has a conversation.
-  def initial_state,
-    do: %{phase: :idle, status: nil, decision: nil, msgs: 0, n: 1, head: nil, talked: false}
+  def initial_state do
+    unasked = %{status: nil, decision: nil}
 
-  def command(%{phase: :idle, n: n}) do
+    %{
+      phase: :idle,
+      kind: :permission,
+      reqs: %{permission: unasked, elicitation: unasked},
+      msgs: 0,
+      n: 1,
+      head: nil,
+      talked: false
+    }
+  end
+
+  @control_ids ["perm-1", "elicit-1", "perm-nope"]
+
+  def command(%{phase: :idle, n: n, kind: kind}) do
     frequency([
-      {3, {:call, __MODULE__, :ask, [n]}},
+      {3, {:call, __MODULE__, :ask, [n, oneof([:permission, :elicitation])]}},
       {2, {:call, __MODULE__, :plain, [n]}},
       {2, {:call, __MODULE__, :compact_only, [n]}},
       {2, {:call, __MODULE__, :grow, [n]}},
-      {1, {:call, __MODULE__, :withdraw, [oneof(["perm-1", "perm-nope"])]}},
-      {1, {:call, __MODULE__, :answer, [oneof(["accept", "decline"])]}}
+      {1, {:call, __MODULE__, :withdraw, [oneof(@control_ids)]}},
+      {1, {:call, __MODULE__, :answer, [kind, oneof(["accept", "decline"])]}}
     ])
   end
 
-  def command(%{phase: :pending}) do
+  def command(%{phase: :pending, kind: kind}) do
+    # A command's "always allow" writes session rules the next ask would skip on.
+    offered =
+      if kind == :elicitation,
+        do: ["accept", "decline", "acceptForSession"],
+        else: ["accept", "decline"]
+
     frequency([
-      {3, {:call, __MODULE__, :answer, [oneof(["accept", "decline"])]}},
-      {1, {:call, __MODULE__, :answer, ["cancel"]}},
-      {3, {:call, __MODULE__, :withdraw, ["perm-1"]}},
-      {1, {:call, __MODULE__, :withdraw, ["perm-nope"]}},
+      {3, {:call, __MODULE__, :answer, [kind, oneof(offered)]}},
+      {1, {:call, __MODULE__, :answer, [kind, "cancel"]}},
+      {3, {:call, __MODULE__, :withdraw, [control_id(kind)]}},
+      {1, {:call, __MODULE__, :withdraw, [oneof(@control_ids)]}},
       {1, {:call, __MODULE__, :stop, []}}
     ])
   end
 
-  def command(%{phase: :withdrawn}) do
+  def command(%{phase: :withdrawn, kind: kind}) do
     frequency([
-      {2, {:call, __MODULE__, :answer, [oneof(["accept", "decline", "cancel"])]}},
-      {1, {:call, __MODULE__, :withdraw, [oneof(["perm-1", "perm-nope"])]}},
+      {2, {:call, __MODULE__, :answer, [kind, oneof(["accept", "decline", "cancel"])]}},
+      {1, {:call, __MODULE__, :withdraw, [oneof(@control_ids)]}},
       {3, {:call, __MODULE__, :stop, []}}
     ])
   end
 
+  # Shrinking keeps an answer naming the kind of request that was asked.
+  def precondition(%{phase: :pending, kind: kind}, {:call, _, :answer, [answered, _]}),
+    do: answered == kind
+
   def precondition(_state, _call), do: true
 
-  # A new ask reopens perm-1 as pending, whatever an earlier turn closed it as.
+  # A new ask reopens its kind's request as pending, whatever an earlier turn
+  # closed it as.
   # The reopened entity keeps the last decision it was closed with until this
   # ask is itself closed, so the model keeps it too (and the postcondition does
   # not read a pending request's decision).
-  def next_state(state, _result, {:call, _, :ask, [_n]}),
-    do: %{sent(state) | phase: :pending, status: "pending"}
+  def next_state(state, _result, {:call, _, :ask, [_n, kind]}),
+    do: %{close(sent(state), kind, "pending", :kept) | phase: :pending, kind: kind}
 
   def next_state(state, _result, {:call, _, :plain, [_n]}),
     do: %{sent(state) | head: "uuid-#{state.msgs + 1}"}
@@ -175,18 +206,30 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   # An accepted or declined approval lets the turn finish; cancelling one stops
   # it. Either way the thread is idle and the answer stands.
-  def next_state(%{phase: :pending} = state, _result, {:call, _, :answer, ["cancel"]}),
-    do: %{state | phase: :idle, status: "cancelled", decision: "cancel"}
+  def next_state(%{phase: :pending} = state, _result, {:call, _, :answer, [kind, "cancel"]}),
+    do: %{close(state, kind, "cancelled", "cancel") | phase: :idle}
 
-  def next_state(%{phase: :pending} = state, _result, {:call, _, :answer, [decision]}),
-    do: %{state | phase: :idle, status: "resolved", decision: decision}
+  # An elicitation's card offers no "always allow": answering with it declines.
+  def next_state(
+        %{phase: :pending} = state,
+        _result,
+        {:call, _, :answer, [:elicitation, "acceptForSession"]}
+      ),
+      do: %{close(state, :elicitation, "resolved", "decline") | phase: :idle}
+
+  def next_state(%{phase: :pending} = state, _result, {:call, _, :answer, [kind, decision]}),
+    do: %{close(state, kind, "resolved", decision) | phase: :idle}
 
   # No pending request to answer: an error, and the last close stands.
-  def next_state(state, _result, {:call, _, :answer, [_decision]}), do: state
+  def next_state(state, _result, {:call, _, :answer, [_kind, _decision]}), do: state
 
   # Withdrawing the open request closes it as cancelled; the turn runs on.
-  def next_state(%{phase: :pending} = state, _result, {:call, _, :withdraw, ["perm-1"]}),
-    do: %{state | phase: :withdrawn, status: "cancelled", decision: "cancel"}
+  def next_state(%{phase: :pending, kind: kind} = state, _result, {:call, _, :withdraw, [id]})
+      when id == "perm-1" or id == "elicit-1" do
+    if id == control_id(kind),
+      do: %{close(state, kind, "cancelled", "cancel") | phase: :withdrawn},
+      else: state
+  end
 
   # A withdrawal with nothing open by that name changes nothing: an answered
   # request stays answered, a withdrawn one stays cancelled.
@@ -194,18 +237,29 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   # Stopping the run closes a still-pending request as cancelled with it, and
   # leaves an already-withdrawn one as Claude's withdrawal closed it.
-  def next_state(%{phase: :pending} = state, _result, {:call, _, :stop, []}),
-    do: %{state | phase: :idle, status: "cancelled"}
+  def next_state(%{phase: :pending, kind: kind} = state, _result, {:call, _, :stop, []}),
+    do: %{close(state, kind, "cancelled", :kept) | phase: :idle}
 
   def next_state(state, _result, {:call, _, :stop, []}), do: %{state | phase: :idle}
 
   defp sent(state), do: %{state | msgs: state.msgs + 1, n: state.n + 1, talked: true}
 
+  # Sets `kind`'s request status, and its decision unless `:kept`.
+  defp close(state, kind, status, decision) do
+    update_in(state.reqs[kind], fn req ->
+      %{req | status: status, decision: if(decision == :kept, do: req.decision, else: decision)}
+    end)
+  end
+
+  defp control_id(kind), do: elem(@requests[kind], 1)
+
   def postcondition(state, {:call, _, fun, args}, seen) do
     next = next_state(state, seen, {:call, nil, fun, args})
 
-    seen.status == next.status and
-      (next.status == "pending" or seen.decision == next.decision) and
+    Enum.all?(next.reqs, fn {kind, req} ->
+      seen.reqs[kind].status == req.status and
+        (req.status == "pending" or seen.reqs[kind].decision == req.decision)
+    end) and
       seen.head == next.head and respond_ok?(state, fun, args, seen) and
       ended_ok?(state, fun, seen)
   end
@@ -225,10 +279,11 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   # --- commands -------------------------------------------------------------------
 
-  # A turn that asks for a command's approval and waits on it.
-  def ask(n) do
-    send_message(n, "approve run: touch x")
-    await(fn -> match?(%{status: "pending"}, snapshot()) && snapshot() end)
+  # A turn that asks for a command's approval, or an MCP tool's confirmation, and
+  # waits on it.
+  def ask(n, kind) do
+    send_message(n, if(kind == :permission, do: "approve run: touch x", else: "mcp confirm"))
+    await(fn -> match?(%{status: "pending"}, snapshot().reqs[kind]) && snapshot() end)
   end
 
   # A turn Claude answers (uuid-N) without asking anything.
@@ -248,11 +303,12 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   # The user's answer. An accepted/declined turn finishes on the fake's reply;
   # a cancelled one is interrupted; with nothing pending nothing more happens.
-  def answer(decision) do
+  def answer(kind, decision) do
     runs = StreamState.list(current(), "run")
+    {request, _control_id} = @requests[kind]
 
     respond =
-      case ThreadRuntime.respond(@tid, @request, %{"decision" => decision}) do
+      case ThreadRuntime.respond(@tid, request, %{"decision" => decision}) do
         :ok -> :ok
         {:error, _} -> :error
       end
@@ -293,13 +349,17 @@ defmodule HalC2.ClaudeApprovalsPropTest do
 
   # --- the runtime ------------------------------------------------------------------
 
-  # What is read back: perm-1's status and decision, and the resume head the
-  # newest provider turn recorded (its newest nativeTurnRef).
+  # What is read back: each kind's request's status and decision, and the resume
+  # head the newest provider turn recorded (its newest nativeTurnRef).
   defp snapshot do
     state = current()
+    requests = StreamState.list(state, "runtime-request")
 
-    request =
-      Enum.find(StreamState.list(state, "runtime-request"), &(&1["id"] == @request))
+    reqs =
+      Map.new(@requests, fn {kind, {id, _control_id}} ->
+        request = Enum.find(requests, &(&1["id"] == id))
+        {kind, %{status: request && request["status"], decision: request && request["decision"]}}
+      end)
 
     # `list/2` is in creation order, so the last head recorded wins.
     head =
@@ -309,8 +369,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
       |> List.last()
 
     %{
-      status: request && request["status"],
-      decision: request && request["decision"],
+      reqs: reqs,
       head: head && get_in(head, ["nativeTurnRef", "nativeId"])
     }
   end
