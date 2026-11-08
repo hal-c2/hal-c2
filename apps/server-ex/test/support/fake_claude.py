@@ -24,7 +24,7 @@
 # answers with what it printed.
 # Each turn's message text is appended to
 # $FAKE_CLAUDE_LOG when it is set.
-import json, os, re, sys, threading, time, uuid
+import json, os, re, subprocess, sys, threading, time, uuid
 
 # With FAKE_CLAUDE_TRACE set, the argv and every message read are appended to it as JSON lines.
 TRACE = os.environ.get("FAKE_CLAUDE_TRACE")
@@ -107,6 +107,19 @@ goal = None  # the objective "/goal OBJECTIVE" set, until "/goal clear"
 pending_elicit = None  # (request id, asks again after an accept) of an MCP elicitation waiting on its answer
 dialogs = []  # the dialog kinds the host said it can show (initialize)
 mcp_servers = {}  # the MCP servers the host handed over stdin (mcp_set_servers)
+
+def prompt_blocked(text):
+    try:
+        with open(os.path.join(os.getcwd(), ".claude", "settings.json")) as f:
+            groups = json.load(f).get("hooks", {}).get("UserPromptSubmit", [])
+    except (OSError, ValueError):
+        return None
+    for hook in (h for group in groups for h in group.get("hooks", [])):
+        run = subprocess.run(hook["command"], shell=True, input=json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": text}),
+                             capture_output=True, text=True)
+        if run.returncode == 2:
+            return f"Prompt dropped by a hook: {run.stderr.strip()}"
+    return None
 
 def answer_mcp_servers(msg):
     global mcp_servers
@@ -364,6 +377,18 @@ for line in sys.stdin:
             lifecycle("started")
         orphaned = None
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku", "permissionMode": mode})
+    # The project's UserPromptSubmit hooks (.claude/settings.json) run on the prompt; one
+    # that exits 2 drops it, and Claude reports the hook's reason as a warning, then
+    # again as the result of a turn that ran nothing (Claude Code 2.1.302).
+    blocked = prompt_blocked(text)
+    if blocked:
+        send({"type": "system", "subtype": "informational", "level": "info", "content": "Running UserPromptSubmit hooks",
+              "session_id": session, "uuid": str(uuid.uuid4())})
+        send({"type": "system", "subtype": "informational", "level": "warning", "prevent_continuation": True,
+              "content": blocked, "session_id": session, "uuid": str(uuid.uuid4())})
+        send({"type": "result", "subtype": "success", "is_error": False, "num_turns": 0, "result": blocked, "session_id": session,
+              **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
+        continue
     record("user", text)
     # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
     # automatic resume with a 429 naming no reset.

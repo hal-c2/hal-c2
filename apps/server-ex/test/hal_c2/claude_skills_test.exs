@@ -5,7 +5,7 @@ defmodule HalC2.ClaudeSkillsTest do
 
   describe "dispatch/2" do
     test "the last known mention runs, earlier ones become /name" do
-      names = MapSet.new(["review", "ship"])
+      names = skills(["review", "ship"])
 
       assert {"/review the diff, then", "/ship it"} =
                Skills.dispatch("$review the diff, then $ship it", names)
@@ -15,7 +15,7 @@ defmodule HalC2.ClaudeSkillsTest do
     end
 
     test "amounts, variables, and embedded mentions stay typed" do
-      names = MapSet.new(["review", "20k"])
+      names = skills(["review", "20k"])
 
       for text <- [
             "echo $HOME",
@@ -31,18 +31,36 @@ defmodule HalC2.ClaudeSkillsTest do
     end
 
     test "digit-starting names and other currency signs mention" do
-      names = MapSet.new(["5k-report"])
+      names = skills(["5k-report"])
       assert {nil, "/5k-report for March"} = Skills.dispatch("$5k-report for March", names)
       assert {nil, "/5k-report for March"} = Skills.dispatch("€5k-report for March", names)
     end
 
+    # Upstream #19485: Claude's Skill tool refuses an earlier skill only the user may invoke.
+    test "an earlier user-only skill names its instructions once, the dispatched one runs as is" do
+      names =
+        Map.merge(skills(["review"]), %{
+          "interrogate" => %{"path" => "/c/interrogate/SKILL.md", "userInvocationOnly" => true},
+          "implement" => %{"path" => "/c/implement/SKILL.md", "userInvocationOnly" => true}
+        })
+
+      assert {"/interrogate [The user invoked this skill. Follow the instructions at: /c/interrogate/SKILL.md] then /review then /interrogate then /implement and",
+              "/implement the fixes"} =
+               Skills.dispatch(
+                 "$interrogate then $review then $interrogate then $implement and $implement the fixes",
+                 names
+               )
+    end
+
     test "unknown mentions stay literal among known ones" do
-      names = MapSet.new(["ship"])
+      names = skills(["ship"])
 
       assert {"Use $review then", "/ship now"} =
                Skills.dispatch("Use $review then $ship now", names)
     end
   end
+
+  defp skills(names), do: Map.new(names, &{&1, %{"name" => &1}})
 
   describe "frontmatter/1" do
     test "no header is fine; an unreadable one drops the skill" do

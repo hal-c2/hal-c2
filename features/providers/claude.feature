@@ -1329,7 +1329,7 @@ Feature: Claude
 
   # Upstream #21231: a hook's notice that is above info level is shown as a notice, once; the
   # same text repeated as the turn's result is not shown again as Claude's answer.
-  @backlog
+  @mc
   Scenario: A Claude hook that blocks a prompt shows its reason once
     Given a Claude hook blocks prompts that mention "production" with the reason "Prompts about production need a ticket"
     When the user sends "deploy to production"
@@ -2336,7 +2336,7 @@ Feature: Claude
     And the offer to continue with less context still counts those tokens
 
   # Upstream #16287: a turn refused because Claude is still busy with background work.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: A Claude turn refused for background work keeps the session
     Given a Claude thread whose background subagent is still working
     And Claude refuses the user's next turn because of that work
@@ -2397,7 +2397,7 @@ Feature: Claude
     Then the composer and settings show thinking On for Claude Haiku 4.5
 
   # Upstream #19485: earlier skills only the user may invoke were refused when one prompt named several.
-  @backlog @mc @plugin-claude
+  @mc @plugin-claude
   Scenario: Every skill the user names in one message reaches Claude
     Given the project has the Claude skills "review" and "deploy", which only the user may invoke
     When the user sends "$review the diff, then $deploy it" to Claude

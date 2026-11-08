@@ -188,7 +188,9 @@ defmodule HalC2.Orchestration.Handoff do
 
   # A provider thread the thread comes back to (the user switched to another agent
   # and back) gets only the turns other provider threads ran since it last ran
-  # (`delta_since_target_last_seen`).
+  # (`delta_since_target_last_seen`). Its own failed runs after that are ones the
+  # provider refused before reading them, whose start handed `lastRunOrdinal` back
+  # (Claude's `unsent/2`, Upstream #16287), so they go along too.
   defp delta(state, provider_thread, run_id, ordinal, at) do
     own = provider_thread["id"]
     runs = StreamState.list(state, "run")
@@ -198,7 +200,8 @@ defmodule HalC2.Orchestration.Handoff do
       runs
       |> Enum.filter(
         &(&1["ordinal"] > seen and &1["ordinal"] < ordinal and &1["status"] in @finished and
-            &1["providerThreadId"] not in [nil, own])
+            (&1["providerThreadId"] not in [nil, own] or
+               (&1["providerThreadId"] == own and &1["status"] == "failed")))
       )
 
     case Enum.min_max_by(unseen, & &1["ordinal"], fn -> nil end) do

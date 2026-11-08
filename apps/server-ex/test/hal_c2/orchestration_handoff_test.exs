@@ -338,4 +338,44 @@ defmodule HalC2.Orchestration.HandoffTest do
     refute (plan.context || "") =~ "<server_restart>"
     assert consumes_note?(plan.changes)
   end
+
+  # A turn the provider refused before reading it (Claude's `unsent/2`) leaves the
+  # provider thread's `lastRunOrdinal` before it, so the next turn hands it over.
+  test "an own run refused before it was read is handed to the next turn, one read is not" do
+    run = fn n, status ->
+      [
+        {"run",
+         %{"id" => "run-#{n}", "ordinal" => n, "status" => status, "providerThreadId" => "pt"}},
+        {"message",
+         %{
+           "id" => "user-#{n}",
+           "runId" => "run-#{n}",
+           "role" => "user",
+           "text" => "message #{n}",
+           "createdAt" => "2026-10-01T10:0#{n}:00Z"
+         }}
+      ]
+    end
+
+    thread = fn seen ->
+      [
+        {"thread", %{"id" => "t"}},
+        {"provider-thread",
+         %{
+           "id" => "pt",
+           "appThreadId" => "t",
+           "lastRunOrdinal" => seen,
+           "nativeThreadRef" => %{"driver" => "claudeAgent", "nativeId" => "n"}
+         }}
+      ]
+    end
+
+    assert plan(state(thread.(0) ++ run.(1, "failed")), "message:user-2").context =~ "message 1"
+
+    refute (plan(state(thread.(1) ++ run.(1, "failed")), "message:user-2").context || "") =~
+             "message 1"
+
+    refute (plan(state(thread.(0) ++ run.(1, "completed")), "message:user-2").context || "") =~
+             "message 1"
+  end
 end

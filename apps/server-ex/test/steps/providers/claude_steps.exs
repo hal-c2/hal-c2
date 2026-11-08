@@ -3222,6 +3222,61 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # Upstream #21231. A UserPromptSubmit hook in the project's Claude settings, which the
+  # fake CLI runs on each prompt: exit 2 drops the prompt with the hook's reason.
+  step "a Claude hook blocks prompts that mention {string} with the reason {string}",
+       %{args: [word, reason]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    root = World.project(context).root
+    hook = Path.join(Mc.tmp_dir(context.mc, "claude-hooks"), "block.sh")
+    File.write!(hook, "#!/bin/sh\nif grep -q '#{word}'; then echo '#{reason}' >&2; exit 2; fi\n")
+    File.chmod!(hook, 0o755)
+
+    settings = %{
+      "UserPromptSubmit" => [%{"hooks" => [%{"type" => "command", "command" => hook}]}]
+    }
+
+    File.mkdir_p!(Path.join(root, ".claude"))
+
+    File.write!(
+      Path.join([root, ".claude", "settings.json"]),
+      JSON.encode!(%{"hooks" => settings})
+    )
+
+    Map.put(context, :current, @thread)
+  end
+
+  step "the thread shows Claude's notice {string}", %{args: [text]} = context do
+    World.await_runs(context, @thread, ["completed", "completed"])
+
+    assert [notice] =
+             World.stream(context, @thread)
+             |> StreamState.list("turn-item")
+             |> Enum.filter(&(&1["type"] == "system_notice"))
+
+    assert notice["message"] =~ text
+    assert notice["status"] == "completed"
+    Map.put(context, :notice, notice)
+  end
+
+  step "the notice is not shown a second time as Claude's answer", context do
+    state = World.stream(context, @thread)
+    [_, run] = World.runs(context, @thread)
+
+    refute Enum.any?(
+             StreamState.list(state, "turn-item"),
+             &(&1["runId"] == run["id"] and &1["type"] == "assistant_message")
+           )
+
+    refute Enum.any?(World.replies(context, @thread), &(&1 == context.notice["message"]))
+    context
+  end
+
   step "the turn carries on", context do
     assert [%{"status" => "running"}] = World.runs(context, @thread)
 
@@ -3815,6 +3870,47 @@ defmodule HalC2.Steps.Providers.Claude do
     background_running?(context) and
       :sys.get_state(context.runtime).session == context.first_session and
       Process.alive?(context.first_session)
+  end
+
+  # Upstream #16287: the refused message never reached Claude, so the next turn on the
+  # same session carries it.
+  step "a Claude thread whose background subagent is still working", context do
+    left_running(context)
+  end
+
+  step "Claude refuses the user's next turn because of that work", context do
+    context = send_on(context, [%{"id" => "fastMode", "value" => true}], ["completed", "failed"])
+    assert refused?(context)
+    context
+  end
+
+  step "the user sends another message", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-opus-4-6", "options" => []}
+    context = World.post_message(context, @thread, "what next?", %{"modelSelection" => selection})
+    World.await_runs(context, @thread, ["completed", "failed", "completed"])
+    context
+  end
+
+  step "Claude resumes the same session", context do
+    assert :sys.get_state(context.runtime).session == context.first_session
+    assert length(for(%{"argv" => _} <- World.provider_log(context, "claude"), do: 1)) == 1
+    context
+  end
+
+  step "it reads the messages it missed before the new one", context do
+    assert [sent] =
+             for(
+               %{"in" => %{"type" => "user"} = message} <- World.provider_log(context, "claude"),
+               text = inspect(message["message"]["content"]),
+               text =~ "what next?",
+               do: text
+             )
+
+    assert [{missed, _}, {new, _}] =
+             Enum.map(["and now?", "what next?"], &:binary.match(sent, &1))
+
+    assert missed < new
+    context
   end
 
   # The fake finishes "never start a turn" without a turn; "the turn fails with {string}"
@@ -7509,6 +7605,25 @@ defmodule HalC2.Steps.Providers.Claude do
        %{args: [first, second]} = context do
     context = World.fake_providers(context)
     context |> project_skill(first) |> project_skill(second)
+  end
+
+  step "the project has the Claude skills {string} and {string}, which only the user may invoke",
+       %{args: [first, second]} = context do
+    context = World.fake_providers(context)
+    body = "---\ndescription: Only on request\ndisable-model-invocation: true\n---\nDo it.\n"
+    context |> project_skill(first, body) |> project_skill(second, body)
+  end
+
+  # Upstream #19485: the earlier skill is named with where its instructions are.
+  step "Claude is told the user asked for {string} and where its instructions are",
+       %{args: [name]} = context do
+    root = World.project(context).root
+    path = Path.join([root, ".claude", "skills", name, "SKILL.md"])
+
+    assert hd(last_user_texts(context)) ==
+             "/#{name} [The user invoked this skill. Follow the instructions at: #{path}] the diff, then"
+
+    context
   end
 
   step "the project has the Claude skills {string} and {string}, and the header of {string} is malformed",

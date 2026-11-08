@@ -1173,13 +1173,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     # the last block (where Claude expands it), after any leading text and the
     # message's images. Skills are re-read at each send, as they change
     # mid-session; one that may not run for the user stays plain text.
-    names =
-      HalC2.Claude.Skills.user_invocable_names(
+    skills =
+      HalC2.Claude.Skills.user_invocable(
         turn.launch[:instance] || Entities.instance(turn[:ids] || %{}),
         Map.get(turn, :cwd)
       )
 
-    case HalC2.Claude.Skills.dispatch(turn.text, names) do
+    case HalC2.Claude.Skills.dispatch(turn.text, skills) do
       nil ->
         text =
           turn.text
@@ -2214,15 +2214,18 @@ defmodule HalC2.Claude.ThreadRuntime do
          %{"type" => "system", "subtype" => "model_refusal_fallback"} = message,
          %{turn: turn} = state
        )
-       when turn != nil do
-    text = non_empty(message["content"], "Claude switched models after a refusal.")
-    native = message["uuid"] || "model-fallback:#{turn.ids.provider_turn}"
+       when turn != nil,
+       do: notice(state, message, "model-fallback", "Claude switched models after a refusal.")
 
-    state
-    |> flush()
-    |> ensure_item(native, :notice, %{"title" => text, "message" => text})
-    |> finish_item(native, "completed", & &1)
-  end
+  # Claude's notices above info level, such as a hook's reason for blocking the prompt
+  # (Upstream #21231). Info-level ones are for the transcript only.
+  defp claude_message(
+         %{"type" => "system", "subtype" => "informational", "level" => level, "content" => text} =
+           message,
+         %{turn: turn} = state
+       )
+       when turn != nil and level != "info" and is_binary(text) and text != "",
+       do: notice(state, message, "notice", text)
 
   # Claude is retrying a failed API request: one work-log entry for the turn, which
   # every later attempt of that request updates.
@@ -2763,11 +2766,22 @@ defmodule HalC2.Claude.ThreadRuntime do
     state
   end
 
+  # The turn's notices are kept: Claude repeats one that ended the prompt as its result.
+  defp notice(%{turn: turn} = state, message, kind, default) do
+    text = non_empty(message["content"], default)
+    native = message["uuid"] || "#{kind}:#{turn.ids.provider_turn}"
+
+    %{state | turn: Map.update(turn, :notices, [text], &[text | &1])}
+    |> flush()
+    |> ensure_item(native, :notice, %{"title" => text, "message" => text})
+    |> finish_item(native, "completed", & &1)
+  end
+
   defp result_answer(state, result) do
     text = non_empty(result["result"], "")
     answered? = Enum.any?(state.items, fn {_, item} -> item.kind == :assistant end)
 
-    if text == "" or answered? do
+    if text == "" or answered? or text in Map.get(state.turn, :notices, []) do
       state
     else
       id = result["uuid"] || "result:#{state.turn.ids.provider_turn}"

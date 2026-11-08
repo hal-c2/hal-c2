@@ -112,16 +112,16 @@ defmodule HalC2.Claude.Skills do
     end
   end
 
-  @doc "The names a `$mention` may run: offered, on, and not kept from the user."
-  @spec user_invocable_names(String.t(), String.t() | nil) :: MapSet.t()
-  def user_invocable_names(instance \\ "claudeAgent", cwd \\ nil) do
+  @doc "The skills a `$mention` may run, by name: offered, on, and not kept from the user."
+  @spec user_invocable(String.t(), String.t() | nil) :: %{String.t() => map()}
+  def user_invocable(instance \\ "claudeAgent", cwd \\ nil) do
     if HalC2.Settings.instance_enabled?(instance, "claudeAgent") do
       instance
       |> discover(cwd)
       |> Enum.filter(&(&1["enabled"] and &1["userInvocable"] != false))
-      |> MapSet.new(& &1["name"])
+      |> Map.new(&{&1["name"], &1})
     else
-      MapSet.new()
+      %{}
     end
   end
 
@@ -494,27 +494,42 @@ defmodule HalC2.Claude.Skills do
   own `/skill` command (the last text block, where Claude expands it), earlier
   known mentions are rewritten to `/name` in the leading text, and everything
   else stays as typed. `nil` when the message runs no skill.
+
+  `skills` are `user_invocable/2`'s. Claude's Skill tool refuses an earlier skill
+  only the user may invoke, so the first mention of each such skill also names
+  its instructions (Upstream #19485).
   """
-  @spec dispatch(String.t(), MapSet.t()) :: {String.t() | nil, String.t()} | nil
-  def dispatch(text, names) do
+  @spec dispatch(String.t(), %{String.t() => map()}) :: {String.t() | nil, String.t()} | nil
+  def dispatch(text, skills) do
     known =
       text
       |> mentions()
-      |> Enum.filter(fn {_at, _length, _currency_at, name} -> MapSet.member?(names, name) end)
+      |> Enum.filter(fn {_at, _length, _currency_at, name} -> Map.has_key?(skills, name) end)
 
     case List.last(known) do
       nil ->
         nil
 
       {at, length, _currency_at, name} ->
-        leading =
+        {earlier, _} =
           known
           |> Enum.drop(-1)
+          |> Enum.map_reduce(MapSet.new([name]), fn {_, _, _, m_name} = mention, noted ->
+            skill = skills[m_name]
+
+            if skill["userInvocationOnly"] == true and not MapSet.member?(noted, m_name),
+              do: {{mention, skill["path"]}, MapSet.put(noted, m_name)},
+              else: {{mention, nil}, noted}
+          end)
+
+        leading =
+          earlier
           |> Enum.reverse()
-          |> Enum.reduce(binary_part(text, 0, at), fn {m_at, m_length, m_currency, m_name}, acc ->
+          |> Enum.reduce(binary_part(text, 0, at), fn {{m_at, m_length, m_currency, m_name}, path},
+                                                      acc ->
             # Right to left, so an earlier mention's offsets still hold after
             # a later one (whose currency sign may be wider than `/`) is rewritten.
-            replace_mention(acc, m_at, m_length, m_currency, m_name)
+            replace_mention(acc, m_at, m_length, m_currency, invoked(m_name, path))
           end)
 
         command =
@@ -525,6 +540,11 @@ defmodule HalC2.Claude.Skills do
         {if(leading == "", do: nil, else: leading), command}
     end
   end
+
+  defp invoked(name, nil), do: name
+
+  defp invoked(name, path),
+    do: "#{name} [The user invoked this skill. Follow the instructions at: #{path}]"
 
   defp replace_mention(leading, at, length, currency_at, name) do
     head = binary_part(leading, 0, currency_at)
