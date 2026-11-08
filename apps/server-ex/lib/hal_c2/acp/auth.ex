@@ -293,7 +293,11 @@ defmodule HalC2.Acp.Auth do
 
       {:error, reason} ->
         fail(
-          failure_message(instance, "The provider could not create a session after sign-in.", reason),
+          failure_message(
+            instance,
+            "The provider could not create a session after sign-in.",
+            reason
+          ),
           reason
         )
     end
