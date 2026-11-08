@@ -546,7 +546,6 @@ Feature: ACP registry agents
 
   # Upstream #30719: the tool bridge also ended a line at U+2028 and U+2029, so a tool call holding
   # text pasted from a PDF or web page was cut apart and hung until the agent timed out.
-  @backlog @priority-high
   Scenario Outline: A HAL-C2 tool call holding a <separator> reaches HAL-C2 whole
     Given "acme" reaches HAL-C2's tools through the bridge that reads its standard input
     When the agent sends a tool call whose arguments hold a <separator>
