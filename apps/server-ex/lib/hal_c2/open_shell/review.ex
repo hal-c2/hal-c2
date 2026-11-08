@@ -33,6 +33,7 @@ defmodule HalC2.OpenShell.Review do
   @role_label "halc2.github.io/role"
   @expires_label "halc2.github.io/expires"
   @thread_label "halc2.github.io/thread"
+  @home_label "halc2.github.io/home"
   @workdir "/sandbox/review"
   @bundle "/sandbox/review.bundle"
   @limits %{cpu: "2", memory: "4Gi"}
@@ -280,16 +281,16 @@ defmodule HalC2.OpenShell.Review do
   def reconcile, do: GenServer.cast(__MODULE__, :reconcile)
 
   @doc """
-  Deletes this MC's review sandboxes whose lease ended by `now` (unix seconds), with
+  Deletes this home's review sandboxes whose lease ended by `now` (unix seconds), with
   their providers, over `conn`, and any provider past its lease whose sandbox never
   came. Run by `hal-c2-service openshell reap` without the MC. `{:ok, names}` of the
   sandboxes deleted.
   """
   def reap(conn, now) do
-    with {:ok, sandboxes} <- Client.list_sandboxes(conn, %{@role_label => "review"}),
+    with {:ok, sandboxes} <- Client.list_sandboxes(conn, selector()),
          names = for(sandbox <- expired(sandboxes, now), do: sandbox.name),
          :ok <- Enum.each(names, &remove(conn, &1)),
-         {:ok, providers} <- Client.providers(conn, %{@role_label => "review"}) do
+         {:ok, providers} <- Client.providers(conn, selector()) do
       for %{name: name} <- expired(providers, now), do: Client.delete_provider(conn, name)
       {:ok, names}
     end
@@ -305,10 +306,17 @@ defmodule HalC2.OpenShell.Review do
     end)
   end
 
-  @doc "The labels of thread `thread_id`'s sandbox with its lease ending at `deadline`."
+  @doc """
+  The labels of thread `thread_id`'s sandbox with its lease ending at `deadline`.
+  Beside the MC's owner label (`HalC2.OpenShell.owner_label/0`, which `Client` adds),
+  the home label names this HAL-C2 home (`HalC2.OpenShell.instance/0`): two homes
+  that share an environment id, as a copied one does, never reap or reconcile each
+  other's sandboxes on a gateway they share.
+  """
   def labels(thread_id, deadline),
     do: %{
       @role_label => "review",
+      @home_label => OpenShell.instance(),
       @thread_label => thread_id,
       @expires_label => to_string(deadline)
     }
@@ -411,13 +419,13 @@ defmodule HalC2.OpenShell.Review do
         # so only what was left from before is deleted; deleted off the server, as
         # `end_sandbox/3` deletes.
         sandboxes =
-          case Client.list_sandboxes(conn, %{@role_label => "review"}) do
+          case Client.list_sandboxes(conn, selector()) do
             {:ok, sandboxes} -> for %{name: name} <- sandboxes, name not in bound, do: name
             _ -> []
           end
 
         providers =
-          case Client.list_providers(conn, %{@role_label => "review"}) do
+          case Client.list_providers(conn, selector()) do
             {:ok, providers} -> for name <- providers, name not in bound, do: name
             _ -> []
           end
@@ -697,8 +705,13 @@ defmodule HalC2.OpenShell.Review do
 
   defp now, do: System.os_time(:second)
 
+  # This home's review sandboxes and providers: what reap and reconcile list.
+  defp selector, do: %{@role_label => "review", @home_label => OpenShell.instance()}
+
   @doc false
   def role_label, do: @role_label
+  @doc false
+  def home_label, do: @home_label
   @doc false
   def expires_label, do: @expires_label
   @doc false

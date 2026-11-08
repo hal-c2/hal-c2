@@ -239,17 +239,32 @@ defmodule HalC2.OpenShell.ReviewTest do
     FakeOpenShell.put_sandbox(g, "review-old", owned(Review.labels("old", now - 1)))
     FakeOpenShell.put_sandbox(g, "review-new", owned(Review.labels("new", now + 600)))
     FakeOpenShell.put_sandbox(g, "other", owned(%{"halc2.github.io/role" => "workspace"}))
+    # Another home's, past its time, with this MC's environment id (a copied home).
+    FakeOpenShell.put_sandbox(g, "review-home", owned(other_home(Review.labels("h", now - 1))))
+    FakeOpenShell.put_provider(g, "review-home", owned(other_home(Review.labels("h", now - 1))))
     # A provider whose sandbox never came, the MC gone between the two.
     FakeOpenShell.put_provider(g, "review-orphan", owned(Review.labels("orphan", now - 1)))
     FakeOpenShell.put_provider(g, "review-new", owned(Review.labels("new", now + 600)))
 
+    # A reaper written for another home's directory reaps nothing here.
+    assert {:error, "[reaper-wrong-home] " <> _} =
+             OpenShell.Command.command(["reap", "--root", Path.join(OpenShell.root(), "other")])
+
+    assert Map.has_key?(FakeOpenShell.sandboxes(g), "review-old")
+
     # What the reaper's timer runs, the MC up or not.
     assert {:ok, "Deleted review sandboxes past their time: review-old"} =
-             OpenShell.Command.command(["reap"])
+             OpenShell.Command.command(["reap", "--root", OpenShell.root()])
 
     assert {:ok, "No review sandbox is past its time."} = OpenShell.Command.command(["reap"])
-    assert Map.keys(FakeOpenShell.sandboxes(g)) |> Enum.sort() == ["other", "review-new"]
-    assert Map.keys(FakeOpenShell.providers(g)) == ["review-new"]
+
+    assert Map.keys(FakeOpenShell.sandboxes(g)) |> Enum.sort() == [
+             "other",
+             "review-home",
+             "review-new"
+           ]
+
+    assert Map.keys(FakeOpenShell.providers(g)) |> Enum.sort() == ["review-home", "review-new"]
   end
 
   @tag before: [&__MODULE__.left_behind/1]
@@ -257,6 +272,7 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-left"}}, 5_000
     assert_receive {:openshell_request, "DeleteProvider", %{name: "review-left"}}, 5_000
     refute Map.has_key?(FakeOpenShell.sandboxes(g), "review-left")
+    assert Map.has_key?(FakeOpenShell.sandboxes(g), "review-home")
   end
 
   test "a sandboxed program past its output limit is cancelled", %{repo: repo} do
@@ -283,11 +299,10 @@ defmodule HalC2.OpenShell.ReviewTest do
   end
 
   def left_behind(gateway) do
-    FakeOpenShell.put_sandbox(
-      gateway,
-      "review-left",
-      owned(Review.labels("left", System.os_time(:second) + 600))
-    )
+    labels = Review.labels("left", System.os_time(:second) + 600)
+    FakeOpenShell.put_sandbox(gateway, "review-left", owned(labels))
+    # Another home's, on a gateway the two share: not this MC's to reconcile.
+    FakeOpenShell.put_sandbox(gateway, "review-home", owned(other_home(labels)))
   end
 
   defp assert_gone(g) do
@@ -298,6 +313,7 @@ defmodule HalC2.OpenShell.ReviewTest do
   end
 
   defp owned(labels), do: Map.put(labels, OpenShell.owner_label(), OpenShell.owner())
+  defp other_home(labels), do: Map.put(labels, Review.home_label(), "0123456789ab")
 
   defp spec(repo) do
     %{

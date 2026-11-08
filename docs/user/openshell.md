@@ -99,7 +99,9 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 - A review sandbox is deleted once its time limit has passed, even while the MC is
   not running: `install` adds a timer beside the gateway's service that runs
   `hal-c2-service openshell reap` every minute. When the MC starts, it deletes the
-  review sandboxes it left behind.
+  review sandboxes it left behind. Each HAL-C2 home on the machine has a timer of its
+  own, which deletes only that home's sandboxes. If the timer's log shows
+  `reaper-wrong-home`, run `install` again from that home.
 
 ## When status reports a problem
 

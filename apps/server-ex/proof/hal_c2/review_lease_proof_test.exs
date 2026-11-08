@@ -60,6 +60,8 @@ defmodule HalC2.ReviewLeaseProofTest do
       "HalC2.OpenShell.Review.name/1" => @pure,
       "HalC2.OpenShell.Review.role_label/0" => @pure,
       "HalC2.OpenShell.Review.expires_label/0" => @pure,
+      "HalC2.OpenShell.Review.home_label/0" =>
+        "names the home a sandbox is of; the model is one home, whose reap and reconcile list by it",
       "HalC2.OpenShell.Review.owner/0" => @pure,
       "HalC2.OpenShell.Review handle_call :conn" =>
         "connects to the gateway once; the model's gateway is always reachable",
