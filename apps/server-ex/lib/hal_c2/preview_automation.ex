@@ -770,7 +770,7 @@ defmodule HalC2.PreviewAutomation do
 
     cond do
       mine >= limits.session ->
-        {:error, tagged("PreviewAutomationTabLimitError", tab_limit(fields, "session", limits))}
+        {:error, tagged("PreviewAutomationTabLimitError", tab_limit(fields, :session, limits))}
 
       map_size(state.owners) + length(making) < limits.mc ->
         {:ok, state}
@@ -780,7 +780,7 @@ defmodule HalC2.PreviewAutomation do
         {:ok, drop_owned(state, [idle])}
 
       true ->
-        {:error, tagged("PreviewAutomationTabLimitError", tab_limit(fields, "mc", limits))}
+        {:error, tagged("PreviewAutomationTabLimitError", tab_limit(fields, :mc, limits))}
     end
   end
 
@@ -793,8 +793,8 @@ defmodule HalC2.PreviewAutomation do
   defp tab_limit(fields, within, limits),
     do:
       Map.merge(fields, %{
-        "within" => within,
-        "limit" => Map.fetch!(limits, String.to_atom(within))
+        "within" => Atom.to_string(within),
+        "limit" => Map.fetch!(limits, within)
       })
 
   defp tab_limits,
