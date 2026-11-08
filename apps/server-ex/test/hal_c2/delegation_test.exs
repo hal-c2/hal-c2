@@ -309,6 +309,23 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert [%{"number" => 7, "source" => "agent", "heard" => @heard}] = links("p")
     end
 
+    # Found by prop/hal_c2/delegation_prop_test.exs: with every run rolled back no
+    # run speaks for the child, yet its links are handed over, so the result names them.
+    test "names it when the boot settles a task whose runs were all rolled back" do
+      :ok = delegate("completed")
+      :ok = link_child()
+      :ok = end_child("rolled_back")
+
+      assert Delegation.reconcile("p") == 1
+
+      assert %{"status" => "cancelled", "result" => result} = task()
+
+      assert result ==
+               "Pull requests handed to you to watch: acme/app#7 at abc123 (checks pending)."
+
+      assert [%{"number" => 7}] = links("p")
+    end
+
     test "keeps it when the caller is deleted" do
       :ok = delegate("completed")
       :ok = link_child()

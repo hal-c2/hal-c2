@@ -380,13 +380,11 @@ defmodule HalC2.Orchestration.Delegation do
           parent_id,
           task,
           ended,
-          if(
-            run,
-            do:
-              child_id
-              |> result_for(run, ended)
-              |> with_pull_requests(stream(child_id), child_id, parent_id)
-          ),
+          # Named also when no run is left to speak for the child (every one rolled
+          # back): its pull requests are handed over all the same.
+          child_id
+          |> result_for(run, ended)
+          |> with_pull_requests(stream(child_id), child_id, parent_id),
           "disposed",
           :once,
           ended_at
@@ -472,7 +470,10 @@ defmodule HalC2.Orchestration.Delegation do
             "#{link["repository"]}##{link["number"]}#{head}#{checks}"
           end)
 
-        "#{result}\n\nPull requests handed to you to watch: #{named}."
+        Enum.join(
+          Enum.reject([result, "Pull requests handed to you to watch: #{named}."], &is_nil/1),
+          "\n\n"
+        )
     end
   end
 
@@ -1717,7 +1718,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   # A failed run's own word on why: its latest error item, which outranks any
   # answer it gave before failing (upstream `subagentResultForRun`).
-  defp failure_text(_child, _run, status) when status != "failed", do: nil
+  defp failure_text(_child, run, status) when status != "failed" or run == nil, do: nil
 
   defp failure_text(child, %{"id" => run_id}, "failed") do
     child

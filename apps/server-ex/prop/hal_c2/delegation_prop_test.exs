@@ -481,8 +481,16 @@ defmodule HalC2.DelegationPropTest do
       (task["subagent"]["status"] == ended_as(child) and
          task["subagent"]["completedAt"] == ended_at(child) and
          task["subagent"]["result"] ==
-           "#{prepared(child) || last_answer(child) || no_answer(ended_as(child))}" <>
-             "\n\nPull requests handed to you to watch: acme/app#7 at abc123 (checks pending).")
+           Enum.join(
+             Enum.reject(
+               [
+                 prepared(child) || last_answer(child) || no_answer(ended_as(child)),
+                 "Pull requests handed to you to watch: acme/app#7 at abc123 (checks pending)."
+               ],
+               &is_nil/1
+             ),
+             "\n\n"
+           ))
   end
 
   defp no_answer("completed"), do: "Child task completed without an assistant result."
