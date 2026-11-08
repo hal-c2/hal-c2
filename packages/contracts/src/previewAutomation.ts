@@ -681,6 +681,9 @@ export const PreviewAutomationResponse = Schema.Struct({
       _tag: TrimmedNonEmptyString,
       message: Schema.String,
       detail: Schema.optional(Schema.Unknown),
+      // The tab a failed open reached (one it made, or reused), so the MC
+      // can close a tab it made that the agent never hears of.
+      tabId: Schema.optional(PreviewTabId),
     }),
   ),
 });

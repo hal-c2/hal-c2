@@ -1258,10 +1258,12 @@ defmodule HalC2.Steps.Preview.Automation do
     |> answer("open", fn request, context ->
       {:ok, %{"tabId" => tab}} = made.(request, context)
 
+      # The desktop names the tab a failed open reached, as PreviewAutomationHost does.
       {:error,
        %{
          "_tag" => "PreviewAutomationExecutionError",
-         "message" => "The browser failed to launch the tab #{tab}."
+         "message" => "The browser failed to launch the tab #{tab}.",
+         "tabId" => tab
        }}
     end)
     |> tool("preview_open", new_tab_args())
@@ -1276,6 +1278,8 @@ defmodule HalC2.Steps.Preview.Automation do
   # Room for the whole limit afterwards shows the failed open took none of it.
   step "the tab is not listed and does not count toward the tab limit", context do
     assert agent_tabs(context) == []
+    {:ok, listed} = HalC2.Preview.list(%{"threadId" => caller(context).thread_id})
+    assert listed["sessions"] == []
     context = context |> desktop_makes_tabs()
     context = Enum.reduce(1..8, context, fn _, context -> new_tab(context) end)
     assert length(agent_tabs(context)) == 8
