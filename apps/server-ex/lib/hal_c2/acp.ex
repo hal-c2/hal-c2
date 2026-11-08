@@ -676,8 +676,17 @@ defmodule HalC2.Acp do
   # A probe's call, answering the agent meanwhile: a sign-in page it asks for waits
   # for a user (`HalC2.Acp.UrlAuth`), so the call may take as long as that allows.
   defp call_serving(conn, id, method, params) do
-    task = Task.async(fn -> Connection.call(conn, method, params, :timer.minutes(11)) end)
+    task = Task.async(fn -> call_open(conn, method, params, :timer.minutes(11)) end)
     serve(conn, id, task)
+  end
+
+  # An agent that dies at once (an OpenCode macOS refuses) can stop its connection
+  # before a call reaches it; that call has met a closed connection, not a crash.
+  # Caught here because `Connection.call/4` stays a tail call (see there).
+  defp call_open(conn, method, params, timeout) do
+    Connection.call(conn, method, params, timeout)
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal] -> {:error, :closed}
   end
 
   defp serve(conn, id, task) do
@@ -1520,7 +1529,7 @@ defmodule HalC2.Acp do
            Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2) do
       try do
         with {:ok, init} <-
-               Connection.call(
+               call_open(
                  conn,
                  "initialize",
                  initialize_params(),
