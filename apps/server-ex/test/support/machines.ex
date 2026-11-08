@@ -80,7 +80,7 @@ defmodule HalC2.Test.Machines do
 
     app_env =
       [start_mc: true, home: home, port: 0, agent_sessions_home: user_home(home)] ++
-        fakes(home)
+        fakes(home) ++ trust()
 
     for {key, value} <- app_env,
         do: :ok = call(machine, Application, :put_env, [:hal_c2, key, value])
@@ -502,4 +502,9 @@ defmodule HalC2.Test.Machines do
 
     :ok
   end
+
+  # A machine's reviews trust pull requests as this MC's do (`config/test.exs`):
+  # the scenarios of reviews in a sandbox say so themselves (#1412).
+  defp trust,
+    do: [code_review_trust_all: Application.get_env(:hal_c2, :code_review_trust_all, false)]
 end
