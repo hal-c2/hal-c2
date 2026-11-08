@@ -350,9 +350,9 @@ Feature: In-app preview browser
       And every client is told they closed
 
       Examples:
-        | deletion                          |
-        | the thread is deleted             |
-        | the thread's project is deleted   |
+        | deletion                                |
+        | the thread with browser tabs is deleted |
+        | the thread's project is deleted         |
 
     @mc
     Scenario Outline: Acting on a tab the thread does not have is refused

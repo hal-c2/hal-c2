@@ -573,7 +573,7 @@ defmodule HalC2.Steps.Preview.Surfaces do
     Map.put(context, :tabs, [first, context.tab])
   end
 
-  step "the thread is deleted", context do
+  step "the thread with browser tabs is deleted", context do
     {reply, context} =
       World.dispatch(context, %{"type" => "thread.delete", "threadId" => context.real_thread})
 
