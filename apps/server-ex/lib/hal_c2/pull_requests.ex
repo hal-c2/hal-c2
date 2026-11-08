@@ -957,6 +957,13 @@ defmodule HalC2.PullRequests do
 
   def activity(ref), do: read(ref, "activity", fn _project, ctx -> GitHub.activity(ctx) end)
 
+  @doc """
+  Who stands behind a pull request and who asked for its review (`GitHub.trust/2`),
+  for a plugin deciding whether to act on it. `ref` may carry the `label` whose last
+  adder to read. Not a client method: only `HalC2.Plugins.Host` calls it.
+  """
+  def trust(ref), do: read(ref, "trust", fn _project, ctx -> GitHub.trust(ctx, ref["label"]) end)
+
   def thread_comments(input),
     do:
       read(input, "threadComments", fn _project, ctx ->

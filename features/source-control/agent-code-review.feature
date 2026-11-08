@@ -2,8 +2,9 @@
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
-#   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
-#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers)
+#   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, trust, submitReview through gh)
+#   apps/server-ex/lib/hal_c2/pull_requests/github.ex (who opened a pull request, commented on it, labeled it and asked for its review, and their standing in the repository)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers, pull request trust)
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 #   https://github.com/pingdotgg/t3code/pull/15427
@@ -204,6 +205,105 @@ Feature: Agent code review
       When the watch looks for new remarks
       Then replies on later pages count too, and a failed page holds the watermark
 
+  Rule: Only people the user trusts get reviews or start them
+
+    @mc
+    Scenario: A pull request from someone who is not a member or collaborator is not reviewed on its own
+      Given "code-review" watches "acme/api" automatically
+      When #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      Then no review starts
+      And #12 is listed as not reviewed, saying "Opened by stranger, who is not a member or collaborator"
+
+    @mc
+    Scenario: A login the user trusts is reviewed like a collaborator
+      Given "code-review" watches "acme/api" automatically and trusts "stranger"
+      When #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      Then a review of #12 starts
+
+    @mc
+    Scenario: A pull request whose commits come from someone else's fork is not reviewed on its own
+      Given "code-review" watches "acme/api" automatically
+      When #12, whose commits come from the fork of "stranger", is opened on "acme/api"
+      Then no review starts
+      And #12 is listed as not reviewed, saying "Its commits come from stranger"
+
+    @mc
+    Scenario Outline: Only someone trusted starts a review with a trigger
+      Given "code-review" watches "acme/api" selectively with the trigger "<trigger>"
+      When <event>
+      Then no review starts
+
+      Examples:
+        | trigger         | event                                                                             |
+        | comment command | someone who is not a member or collaborator comments "/review" on #12             |
+        | label           | someone who is not a member or collaborator adds the label "agent-review" to #12 |
+
+    @mc
+    Scenario: Asking for a review of a pull request nobody trusted needs the user's approval
+      Given "code-review" watches "acme/api" selectively
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      When the user asks for a review of #12 they have not approved
+      Then the user is told "Approve it on the Reviews page to review this commit."
+      And no review starts
+
+    @mc
+    Scenario: The user approves one untrusted pull request at the commit they looked at
+      Given "code-review" watches "acme/api" automatically
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      When the user approves #12 at its head commit
+      Then a review of #12 starts
+
+    @mc
+    Scenario: An approval of a commit the user did not look at is refused
+      Given "code-review" watches "acme/api" automatically
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      When the user approves #12 at an older commit
+      Then the user is told "has new commits since you looked at it"
+      And no review starts
+
+    @mc
+    Scenario: An approval does not carry over to a new push
+      Given "code-review" reviews new pushes
+      And the user approved #12 by "stranger", who is not a member or collaborator, and it was reviewed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      Then no new review of #12 starts
+      And the review of #12 says "Opened by stranger"
+
+    @mc
+    Scenario: The user withdraws an approval before its review starts
+      Given "code-review" runs at most 1 reviews at once
+      And a review of #13 is running
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      And the user approves #12 at its head commit
+      When the user withdraws the approval of #12
+      Then #12 is listed as not reviewed, saying "Opened by stranger"
+      And #12 is no longer waiting its turn
+
+    @mc
+    Scenario: An author's pull requests get at most the reviews a day the user allows
+      Given "code-review" watches "acme/api" automatically with at most 1 review of each author a day
+      And #12 is reviewed
+      When the pull request #13 is opened on "acme/api"
+      Then #13 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day"
+      When the user asks for a review of #13
+      Then a review of #13 starts
+
+    @mc
+    Scenario: Reviews on the user's other machines count toward the limits
+      Given "code-review" watches "acme/api" automatically with at most 1 review of each author a day
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" reviewed #12
+      When the pull request #13 is opened on "acme/api"
+      Then #13 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page says why a pull request is not reviewed and lets the user approve it
+      Given #13 by "stranger", who is not a member or collaborator, is listed
+      When the user opens the review of #13 on the "Reviews" page
+      Then it says "stranger" is not a member or collaborator
+      And the user can approve #13 at the commit shown, and withdraw the approval
+
   Rule: The agent and its prompt are the user's to set
 
     @mc
@@ -307,6 +407,35 @@ Feature: Agent code review
       When the agent reports the verdict "changes requested" with no summary and no comments
       Then the agent is told its report needs a summary or a comment on the change
       And the review of #12 is still running in the same thread
+
+    @mc
+    Scenario: A run's first report is final
+      Given a review of #12 is running
+      When the agent reports the verdict "changes requested" with two comments on "src/limits.ts"
+      And the agent reports again
+      Then the report is refused saying "the first report is final"
+      And the review of #12 is finished with that verdict, summary and comments
+
+    @mc
+    Scenario Outline: A report over a limit is sent back to the agent
+      Given a review of #12 is running
+      When the agent reports <too much>
+      Then the report is refused saying "<limit>"
+      And the review of #12 is still running in the same thread
+
+      Examples:
+        | too much                          | limit                       |
+        | 31 comments                       | at most 30 comments         |
+        | a summary of 5000 bytes           | summary is over 4096 bytes  |
+        | a comment of 3000 bytes           | at most 2048 bytes          |
+        | a comment on a path with a newline | on one line                |
+
+    @mc
+    Scenario: What the agent writes mentions nobody and loads nothing
+      Given a review of #12 is running
+      When the agent reports a summary that mentions "@acme/security" and "@octocat", shows an image and hides an HTML comment
+      And the user publishes the review of #12
+      Then the review posted to #12 mentions nobody and has no image or HTML
 
     @mc
     Scenario: A review whose agent never reports is finished as failed
@@ -442,6 +571,22 @@ Feature: Agent code review
         | local     | nothing can be posted to "acme/api" and the review stays in HAL-C2                       |
         | draft     | the review waits for the user to publish it                                              |
         | automatic | the review is posted to #12 as a review with both line comments and the agent is told so |
+
+    @mc
+    Scenario: A review of a pull request nobody trusted is not posted on its own
+      Given the publishing mode for "acme/api" is "automatic"
+      And the user approved #12 by "stranger", who is not a member or collaborator, and its review is running
+      When the agent of #12 reports two comments
+      Then the review waits for the user to publish it
+
+    @mc
+    Scenario: A review that changed since the user looked at it is not published
+      Given the review of #12 is waiting with three comments
+      And the user looked at the review of #12
+      When one comment is dismissed from another of the user's clients
+      And the user publishes the review of #12 as they saw it
+      Then the user is told "changed since you looked at it"
+      And nothing is posted to #12
 
     @mc
     Scenario: The user publishes a draft review with the comments they kept

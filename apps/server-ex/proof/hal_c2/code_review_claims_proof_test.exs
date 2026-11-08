@@ -16,6 +16,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   @look "the parts of a look the model leaves out: which pull requests, their sizes and comments; it has one pull request, automatically reviewed"
   @agent "the review thread and its agent; the model's runs end when they claim or step back"
   @host "a host function no claim or post goes through"
+  @trust "who stands behind a pull request and the user's approval of one; the model's pull request is trusted"
+  @limit "the review limits, which hold a start back for a day and never let two machines start one review; the model has none"
 
   use HalC2.Proof,
     model: "code_review_claims.maude",
@@ -35,7 +37,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.claims/1" => ~w(peers started defer post peer-claims restartingBy),
       "HalC2Plugins.CodeReview.claims_changed/0" => ~w(note peer-claims),
       "HalC2Plugins.CodeReview handle_call {:looked, _}" => ~w(polled pump),
-      "HalC2Plugins.CodeReview handle_call {:publish, _}" =>
+      "HalC2Plugins.CodeReview handle_call {:publish, _, _}" =>
         ~w(publish post-lock post refused covered),
       "HalC2Plugins.CodeReview handle_call {:published, _, _, _}" => "published",
       "HalC2Plugins.CodeReview handle_call {:report, _, _}" => "report",
@@ -71,6 +73,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_call {:review_thread?, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:start, _, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:dismiss, _, _, _}" => @user,
+      "HalC2Plugins.CodeReview handle_call {:approve, _, _}" => @trust,
+      "HalC2Plugins.CodeReview handle_call {:unapprove, _}" => @trust,
+      "HalC2Plugins.CodeReview handle_call {:budget, _, _, _}" => @limit,
+      "HalC2Plugins.CodeReview.starts/0" => @limit,
+      "HalC2Plugins.CodeReview.neutral/1" => @agent,
       "HalC2Plugins.CodeReview handle_call {:discard, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:settings, _}" =>
         "a save applies from the next step: the model looks at any time, starts a queued review in the step that queues it and has no display",
@@ -92,6 +99,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview state :timer" =>
         "when the next look is; the model looks at any time",
       "HalC2Plugins.CodeReview state :lister" => @shown,
+      "HalC2Plugins.CodeReview state :starts" => @limit,
       "HalC2Plugins.CodeReview.Checkout.read/4" => @agent,
       "HalC2Plugins.CodeReview.Checkout.diff_lines/3" => @agent,
       "HalC2Plugins.CodeReview.Checkout.position/4" => @agent,
@@ -106,7 +114,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.launch_thread/4" => @agent,
       "HalC2.Plugins.Host.organize_thread/3" => @shown,
       "HalC2.Plugins.Host.granted?/2" => @host,
-      "HalC2.Plugins.Host.slack/3" => @host
+      "HalC2.Plugins.Host.slack/3" => @host,
+      "HalC2.Plugins.Host.pull_request_trust/2" => @trust
     },
     environment: %{
       "push" => "a commit is pushed to the pull request",

@@ -295,11 +295,89 @@ defmodule HalC2.CodeReviewTest do
            |> Enum.all?(&(&1["name"] != "code_review_report"))
   end
 
+  test "the first report of a run is final", _context do
+    review = start_review()
+    first = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", first, review["threadId"])
+    settle()
+    again = %{first | "verdict" => "request_changes", "summary" => "Wait, no."}
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool("code_review_report", again, review["threadId"])
+
+    assert message =~ "the first report is final"
+    assert %{"verdict" => "approve", "summary" => "Looks right."} = review()
+  end
+
+  test "a review that changed since the user looked at it is not published", context do
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "comment",
+      "summary" => "Two things.",
+      "comments" => [
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "One."},
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "Two."}
+      ]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    looked = seen()
+    {:ok, _} = call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert {:error, %{"message" => message}} = call("publish", looked)
+    assert message =~ "changed since you looked at it"
+    assert {:error, _} = call("publish", %{"key" => @key})
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+  end
+
+  test "a pull request nobody trusted is reviewed only at the commit the user approved, and never posted on its own",
+       context do
+    rules!(context, head: 1, association: "NONE")
+    {:ok, _} = put_settings(%{"publishing" => "automatic"})
+    settle()
+
+    assert {:error, %{"message" => message}} =
+             call("start", %{"repository" => "acme/api", "number" => 1})
+
+    assert message =~ "Approve it on the Reviews page"
+    assert %{"status" => "ready", "untrusted" => why} = review = review()
+    refute review["threadId"]
+    assert why =~ "not a member or collaborator"
+
+    assert {:error, _} = call("approve", %{"key" => @key, "headSha" => context.shas[2]})
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+    settle()
+
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+  end
+
+  test "what an agent writes mentions nobody, loads nothing and hides nothing", _context do
+    _ = start_review()
+    neutral = &apply(@server, :neutral, [&1])
+
+    assert neutral.("ask @acme/security and @octocat, not me@example.com") ==
+             "ask @\u200Bacme/security and @\u200Boctocat, not me@example.com"
+
+    assert neutral.("![x](https://example.com/p.png) <img src=x> <!-- hi --> a < b") ==
+             "!\u200B[x](https://example.com/p.png) <\u200Bimg src=x> <\u200B!-- hi --> a < b"
+
+    refute neutral.("<!-- hal-c2-code-review:acme/api#1@abc -->") =~ "hal-c2-code-review:"
+  end
+
   test "a thread whose review is published is told so when it reports again", _context do
     review = start_review()
     arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
     {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
-    {:ok, _} = call("publish", %{"key" => @key})
+    {:ok, _} = call("publish", seen())
     settle()
 
     assert {:error, "plugin_failed", message} =
@@ -937,7 +1015,7 @@ defmodule HalC2.CodeReviewTest do
   test "a review GitHub already has under the login gh uses is published without posting it again",
        context do
     rules!(context, head: 1, reviews: [reviewed_by("monalisa")])
-    assert {:ok, _} = call("publish", %{"key" => @key})
+    assert {:ok, _} = call("publish", seen())
 
     assert %{"status" => "published", "publishError" => nil, "publishNote" => note} = review()
     assert note =~ "already on the pull request"
@@ -947,7 +1025,7 @@ defmodule HalC2.CodeReviewTest do
   test "a review of the same commit under another login does not stop the post",
        context do
     rules!(context, head: 1, reviews: [reviewed_by("octocat")])
-    assert {:ok, _} = call("publish", %{"key" => @key})
+    assert {:ok, _} = call("publish", seen())
     assert %{"status" => "published", "publishNote" => nil} = review()
     assert [_] = posts(context)
   end
@@ -1010,7 +1088,7 @@ defmodule HalC2.CodeReviewTest do
   # Asks to publish #1 without waiting for GitHub. Returns the ref its reply comes with.
   defp publishing do
     ref = make_ref()
-    send(@server, {:"$gen_call", {self(), ref}, {:publish, @key}})
+    send(@server, {:"$gen_call", {self(), ref}, {:publish, @key, review()["version"]}})
     :sys.get_state(@server)
     ref
   end
@@ -1282,6 +1360,9 @@ defmodule HalC2.CodeReviewTest do
     GenServer.call(@server, :snapshot)["reviews"] |> Enum.find(&(&1["key"] == @key))
   end
 
+  # The review as the user sees it, to publish: its key and the version of its findings.
+  defp seen, do: %{"key" => @key, "version" => review()["version"]}
+
   # Returns once the plugin has nothing in flight but the processes `held`, and has
   # heard from what ended.
   defp settle(held \\ []) do
@@ -1330,7 +1411,8 @@ defmodule HalC2.CodeReviewTest do
   end
 
   # The fake GitHub: pull request #1 of acme/api open at head commit `head`, listed
-  # unless `listed: false`; `list` runs while it is listed.
+  # unless `listed: false`; `list` runs while it is listed. Its author is a member of
+  # the repository unless `association` says otherwise.
   defp rules!(context, opts) do
     pr = %{
       "number" => 1,
@@ -1366,6 +1448,27 @@ defmodule HalC2.CodeReviewTest do
 
     rules = [
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
+      # Who stands behind pull request #1: octocat, a member unless `association` says.
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestTrust"],
+        "stdout" => %{
+          "data" => %{
+            "viewer" => %{"login" => "monalisa"},
+            "repository" => %{
+              "pullRequest" => %{
+                "author" => %{"__typename" => "User", "login" => "octocat"},
+                "authorAssociation" => opts[:association] || "MEMBER",
+                "isCrossRepository" => false,
+                "headRefOid" => context.shas[opts[:head]],
+                "headRepositoryOwner" => %{"login" => "acme"},
+                "comments" => %{"nodes" => []},
+                "timelineItems" => %{"nodes" => []}
+              }
+            }
+          }
+        }
+      },
       list,
       # The pull request's reviews, read before a post, and the post.
       %{

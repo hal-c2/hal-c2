@@ -495,6 +495,43 @@ ColumnLayout {
             hint: qsTr("Review a pull request again when its head changes after a review.")
         }
 
+        Field {
+            label: qsTr("Trusted logins")
+            hint: qsTr("Logins, separated by commas. Besides the repository's members and collaborators, these may have their pull requests reviewed and ask for reviews. Approve anyone else's pull request on the Reviews page.")
+
+            ShellTextField {
+                objectName: "codeReviewSetting:trustedLogins"
+                Layout.fillWidth: true
+                text: (settings.values.trustedLogins ?? []).join(", ")
+                onTextEdited: settings.set("trustedLogins", text.split(",").map(each => each.trim()).filter(each => each.length > 0))
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 24
+
+            Field {
+                Layout.fillWidth: false
+                label: qsTr("Reviews per author a day")
+                hint: qsTr("Across your machines. 0 for no limit.")
+
+                Count {
+                    key: "reviewsPerAuthorPerDay"
+                }
+            }
+
+            Field {
+                Layout.fillWidth: false
+                label: qsTr("Reviews per repository a day")
+                hint: qsTr("Reviews you start yourself are never held back.")
+
+                Count {
+                    key: "reviewsPerRepositoryPerDay"
+                }
+            }
+        }
+
         Heading {
             text: qsTr("The agent")
         }

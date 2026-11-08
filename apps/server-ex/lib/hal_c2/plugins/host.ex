@@ -116,6 +116,14 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  Who opened a pull request and who asked for its review, with the standing GitHub
+  gives each (`HalC2.PullRequests.trust/1`). Needs `pullRequests:read`.
+  """
+  def pull_request_trust(id, ref) do
+    with :ok <- permit(id, "pullRequests:read"), do: HalC2.PullRequests.trust(ref)
+  end
+
+  @doc """
   Opens a pull request of `cwd`'s checkout with `gh pr create` from `fields`:
   `repository`, `base`, `head`, `title` and `body`. Needs `pullRequests:write`. It is
   something asked for, so it goes through a rate limit pause (`HalC2.GitHub.asked/1`). `{:ok, stdout}`, which names the new pull request,

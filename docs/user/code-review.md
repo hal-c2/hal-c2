@@ -47,6 +47,23 @@ later take its repository out of the watched list. Discarding its review stops
 following it. A re-review is told the previous review's findings, so it can say
 which of them the new commits address instead of raising them again.
 
+## Who can start a review
+
+Only pull requests from people the repository trusts are reviewed on their own:
+its owners, members and collaborators, and the logins you list under **Trusted
+logins**. A pull request from anyone else, or one whose commits come from
+someone else's fork, waits on the **Reviews** page, which says why. **Approve
+and review** reviews it at the commit shown there; a later push needs another
+approval, and **Withdraw approval** takes it back before the review starts.
+Asks on GitHub count only from trusted people: a review request or a label
+counts when GitHub shows who made it. A review you start in HAL-C2 is always
+yours to ask for.
+
+**Reviews per author a day** and **Reviews per repository a day** hold back
+reviews over the limit, across all your machines, until a day has passed since
+the first of them; the page says until when. Reviews you start yourself are
+never held back.
+
 A new review of a pull request stops the agent of the one before it if that agent
 is still working, and removes its checkout. Whatever that agent had not reported
 stays in its thread only; the new review covers the whole change again.
@@ -96,12 +113,19 @@ repository:
 - **Keep in HAL-C2** never posts, and its reviews cannot be published.
 - **Wait for me to publish** keeps the review until you publish it. Dismiss the
   comments you do not want first.
-- **Post automatically** posts it as soon as the agent is done.
+- **Post automatically** posts it as soon as the agent is done. A pull request
+  from someone the repository does not trust waits for you to publish instead.
 
 With **Post verdicts as comments**, a review is posted as a comment rather than
 an approval or a request for changes. On your own pull requests, which GitHub
 does not let you approve or request changes on, it always is. If GitHub refuses
 a review, you are told why and the review keeps waiting with its comments.
+
+**Publish** posts the review as you see it. If it changes in the meantime, say
+a comment is dismissed from another of your devices, nothing is posted and you
+are asked to look again. An agent reports once per review; what it writes
+mentions nobody on GitHub, shows no images and hides nothing, and a report too
+long to post is sent back for the agent to shorten.
 
 ## Where reviews show up
 

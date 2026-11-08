@@ -129,6 +129,11 @@ Item {
         }
     }
 
+    // A pull request nobody trusted is reviewed only at the commit the user approved.
+    function gated(review) {
+        return (review.untrusted ?? "").length > 0 && review.approved !== review.headSha && !["running", "queued", "publishing"].includes(review.status);
+    }
+
     // Why a review is where it is, in a few words.
     function note(review) {
         if (review.elsewhere)
@@ -139,6 +144,10 @@ Item {
             return qsTr("Publishing failed: %1").arg(review.publishError);
         if (review.status === "published" && review.publishNote)
             return review.publishNote;
+        if (page.gated(review))
+            return qsTr("%1 Approve it to review this commit.").arg(review.untrusted);
+        if (review.limited)
+            return qsTr("Held back until %1: %2").arg(page.time(review.limited.until)).arg(review.limited.reason);
         if (review.changed)
             return qsTr("Changed since its review");
         if (review.skipped)
@@ -393,6 +402,7 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
+                                    textFormat: Text.PlainText
                                     text: "#" + row.modelData.number + "  " + (row.modelData.title ?? "")
                                     color: page.foreground
                                     elide: Text.ElideRight
@@ -410,6 +420,7 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
+                                textFormat: Text.PlainText
                                 text: {
                                     const parts = [row.modelData.repository, row.modelData.author];
                                     if (page.several)
@@ -424,6 +435,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 visible: text.length > 0
+                                textFormat: Text.PlainText
                                 text: page.note(row.modelData)
                                 color: !row.modelData.elsewhere && (row.modelData.status === "failed" || row.modelData.publishError) ? page.errorColor : page.muted
                                 elide: Text.ElideRight
@@ -481,6 +493,7 @@ Item {
                     Text {
                         objectName: "codeReviewTitle"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         text: findings.review ? "#" + findings.review.number + "  " + (findings.review.title ?? "") : ""
                         color: page.foreground
                         wrapMode: Text.Wrap
@@ -490,6 +503,7 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         text: {
                             const review = findings.review;
                             if (!review)
@@ -547,18 +561,39 @@ Item {
                             primary: true
                             enabled: page.busy === 0
                             text: qsTr("Publish to GitHub")
-                            onClicked: page.ask("publish", { key: findings.review.key }, findings.review.environment)
+                            // What is posted is what the user sees here: the MC refuses a review changed since.
+                            onClicked: page.ask("publish", { key: findings.review.key, version: findings.review.version }, findings.review.environment)
                         }
 
                         ShellButton {
                             objectName: "codeReviewRetry"
                             // Another machine reviews this head; a review here would be a second one,
                             // unless that machine is out of reach and may not come back.
-                            visible: findings.review !== null && (!findings.review.elsewhere || findings.review.elsewhere.away === true) && !["running", "queued", "publishing"].includes(findings.status)
+                            visible: findings.review !== null && (!findings.review.elsewhere || findings.review.elsewhere.away === true) && !["running", "queued", "publishing"].includes(findings.status) && !page.gated(findings.review)
                             primary: findings.status === "ready" || findings.status === "failed"
                             enabled: page.busy === 0
                             text: findings.status === "ready" ? qsTr("Review") : findings.status === "failed" ? qsTr("Try again") : qsTr("Review again")
                             onClicked: page.ask("retry", { key: findings.review.key }, findings.review.environment)
+                        }
+
+                        // The user vouches for the commit shown, and only that one: a push
+                        // needs another approval.
+                        ShellButton {
+                            objectName: "codeReviewApprove"
+                            visible: findings.review !== null && page.gated(findings.review) && (!findings.review.elsewhere || findings.review.elsewhere.away === true)
+                            primary: true
+                            enabled: page.busy === 0
+                            text: qsTr("Approve and review")
+                            onClicked: page.ask("approve", { key: findings.review.key, headSha: findings.review.headSha }, findings.review.environment)
+                        }
+
+                        ShellButton {
+                            objectName: "codeReviewUnapprove"
+                            visible: findings.review !== null && (findings.review.untrusted ?? "").length > 0 && findings.review.approved === findings.review.headSha && !["running", "publishing"].includes(findings.status)
+                            subtle: true
+                            enabled: page.busy === 0
+                            text: qsTr("Withdraw approval")
+                            onClicked: page.ask("unapprove", { key: findings.review.key }, findings.review.environment)
                         }
 
                         ShellButton {
@@ -588,6 +623,7 @@ Item {
                     Text {
                         objectName: "codeReviewProblem"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         visible: text.length > 0
                         text: findings.review ? page.note(findings.review) : ""
                         color: !findings.review?.elsewhere && (findings.status === "failed" || findings.review?.publishError) ? page.errorColor : page.muted
@@ -624,6 +660,7 @@ Item {
                     Text {
                         objectName: "codeReviewHeadline"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         visible: text.length > 0
                         text: findings.review?.headline ?? ""
                         color: page.foreground
@@ -721,6 +758,7 @@ Item {
 
                                     Text {
                                         Layout.fillWidth: true
+                                        textFormat: Text.PlainText
                                         text: comment.modelData.path + ":" + comment.modelData.line + (comment.modelData.side === "old" ? " " + qsTr("(removed)") : "") + (comment.modelData.severity ? " · " + (({ high: "🔴 High", medium: "🟡 Medium", low: "🔵 Low", blocking: "🔴 High", suggestion: "🟡 Medium", nit: "🔵 Low" })[comment.modelData.severity] ?? comment.modelData.severity) : "")
                                         color: page.muted
                                         elide: Text.ElideMiddle

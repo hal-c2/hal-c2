@@ -390,7 +390,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   defp step(m, {:call, _, :report, [{key, k}]}) do
     case m.reviews[key] do
-      %{run: ^k, status: s} = r when s in [:running, :waiting, :failed] ->
+      # A run's first report is final: one waiting has reported.
+      %{run: ^k, status: s} = r when s in [:running, :failed] ->
         {m |> put_review(key, %{r | status: :waiting, publish_error: false}) |> pump(), :ok}
 
       _ ->
@@ -840,7 +841,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     # GitHub answers with what has been posted by now.
     put_world(Process.get(:cr_world))
 
-    case call("publish", %{"key" => key}) do
+    shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
+
+    case call("publish", %{"key" => key, "version" => shown && shown["version"]}) do
       {:ok, snapshot} ->
         note = Enum.find_value(snapshot["reviews"], &(&1["key"] == key && &1["publishNote"]))
 
@@ -1337,7 +1340,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           "publishing" => "draft",
           "concurrency" => 1,
           "reviewNewPushes" => true,
-          "readReviewMd" => false
+          "readReviewMd" => false,
+          # The model counts no reviews a day.
+          "reviewsPerAuthorPerDay" => 0,
+          "reviewsPerRepositoryPerDay" => 0
         }
       })
 
@@ -1450,12 +1456,39 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         }
       ] ++
         details ++
+        trust(world) ++
         activity ++
         [permissions, %{"args" => ["--method POST", "pulls/"], "stdout" => "{}"}]
 
     path = fx_path("rules.json")
     File.write!(path <> ".tmp", JSON.encode!(rules))
     File.rename!(path <> ".tmp", path)
+  end
+
+  # Who stands behind each pull request: octocat, a member of the repository.
+  defp trust(world) do
+    for key <- @keys do
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestTrust", ~s("number":#{@numbers[key]},)],
+        "stdout" => %{
+          "data" => %{
+            "viewer" => %{"login" => "monalisa"},
+            "repository" => %{
+              "pullRequest" => %{
+                "author" => %{"__typename" => "User", "login" => "octocat"},
+                "authorAssociation" => "MEMBER",
+                "isCrossRepository" => false,
+                "headRefOid" => pr_entry(world, key)["headRefOid"],
+                "headRepositoryOwner" => %{"login" => "acme"},
+                "comments" => %{"nodes" => []},
+                "timelineItems" => %{"nodes" => []}
+              }
+            }
+          }
+        }
+      }
+    end
   end
 
   defp pr_entry(world, key) do

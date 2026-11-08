@@ -40,7 +40,9 @@ Rectangle {
     function publish() {
         header.publishing = true;
         header.refusal = "";
-        header.plugin.call("publish", { key: header.review.key }, (result, error) => {
+        // The version names the findings this header was given; the MC refuses a review
+        // changed since.
+        header.plugin.call("publish", { key: header.review.key, version: header.review.version }, (result, error) => {
             header.publishing = false;
             if (error)
                 header.refusal = error;
@@ -111,6 +113,7 @@ Rectangle {
             Text {
                 objectName: "codeReviewPullRequest"
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: header.review ? qsTr("Review of #%1 %2").arg(header.review.number).arg(header.review.title ?? "") : ""
                 color: header.foreground
                 elide: Text.ElideRight
@@ -146,6 +149,7 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
+            textFormat: Text.PlainText
             text: {
                 const review = header.review;
                 if (review === null)
@@ -161,6 +165,7 @@ Rectangle {
         Text {
             objectName: "codeReviewProblem"
             Layout.fillWidth: true
+            textFormat: Text.PlainText
             visible: text.length > 0
             text: header.refusal || header.review?.publishError || (header.status === "failed" ? header.review?.error ?? "" : "")
             color: header.errorColor
