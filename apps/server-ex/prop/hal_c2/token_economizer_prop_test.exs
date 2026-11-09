@@ -636,7 +636,8 @@ defmodule HalC2.TokenEconomizerPropTest do
   end
 
   # Shell text up to a `#`: escapes, line continuations, quotes and what ends a word. No
-  # process substitution (`>(`), which the lexer does not read as one.
+  # process substitution (`>(`, or a `>\` and a newline before the `(`, which the shell
+  # joins into one), which the lexer does not read as one.
   defp comment_prefix do
     such_that prefix <-
                 let(
@@ -649,7 +650,7 @@ defmodule HalC2.TokenEconomizerPropTest do
                     ),
                   do: Enum.join(parts)
                 ),
-              when: not String.contains?(prefix, ">(")
+              when: not Regex.match?(~r/>(?:\\\n)*\(/, prefix)
   end
 
   # A command that writes SECRET into a.py: a writer, behind a wrapper, on a path spelt
