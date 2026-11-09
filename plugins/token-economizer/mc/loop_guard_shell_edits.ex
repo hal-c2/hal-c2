@@ -3,8 +3,9 @@
 # Ported from tokeneconomizer/loopguard/shell_edits.py (microsoft/TokenEconomizer@cb42207e3e09),
 # into Elixir for HAL-C2's MC. Changed: Python's `shlex` (non-POSIX, with punctuation
 # characters) is reimplemented here, quirks included, so commands split as upstream's do,
-# but for a run of operators (`)>`) and a word's quoted parts (`-e'a;b'`), read as the
-# shell reads them; `fold_shell_edits` lives in State; a heredoc ends where the shell's
+# but for a run of operators (`)>`), a word's quoted parts (`-e'a;b'`), escapes (`a\;b`,
+# `"a\"b"`, `$'a\'b'`) and a `#` inside a word, read as the shell reads them;
+# `fold_shell_edits` lives in State; a heredoc ends where the shell's
 # does, its delimiter any word (`<<'EOF-CODE'`, `<<123`), and every heredoc a line opens
 # is read; `dd`, `sponge`, `cp`, `mv`, `install`
 # and `truncate` write files too, as does `gawk -i inplace`; an editor behind a wrapper
@@ -303,8 +304,24 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp not_scratch(path),
     do: path != "" and not String.starts_with?(path, ["/dev/", "/proc/", "/tmp/"])
 
-  # A word without its quotes, whole (`'a.py'`) or in part (`a'.py'`, `-e's/a/b/'`).
-  defp unquote_word(t), do: Regex.replace(~r/'([^']*)'|"((?:\\.|[^"\\])*)"/, t, "\\1\\2")
+  # A word without its quotes and escapes, as the shell reads it: whole (`'a.py'`) or in
+  # part (`a'.py'`, `-e's/a/b/'`, `a\ b.py`, `"a\"b.py"`); `$'...'` keeps its escapes.
+  defp unquote_word(t), do: t |> String.to_charlist() |> unquote_chars(:word, [])
+
+  defp unquote_chars([], _, acc), do: acc |> Enum.reverse() |> List.to_string()
+  defp unquote_chars([?\\, c | rest], :word, acc), do: unquote_chars(rest, :word, [c | acc])
+  defp unquote_chars([?$, ?' | rest], :word, acc), do: unquote_chars(rest, :ansi, acc)
+  defp unquote_chars([q | rest], :word, acc) when q in [?', ?"], do: unquote_chars(rest, q, acc)
+
+  defp unquote_chars([?\\, c | rest], ?", acc) when c in ~c"$`\"\\\n",
+    do: unquote_chars(rest, ?", [c | acc])
+
+  defp unquote_chars([?\\, c | rest], :ansi, acc),
+    do: unquote_chars(rest, :ansi, [c, ?\\ | acc])
+
+  defp unquote_chars([?' | rest], :ansi, acc), do: unquote_chars(rest, :word, acc)
+  defp unquote_chars([q | rest], q, acc), do: unquote_chars(rest, :word, acc)
+  defp unquote_chars([c | rest], state, acc), do: unquote_chars(rest, state, [c | acc])
 
   @doc """
   The command's shell text without heredoc bodies, and the bodies: every heredoc a line
@@ -593,9 +610,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # whitespace " \t\r" and whitespace_split: shell words and operators, a run of operator
   # characters split into the shell's operators (shlex keeps it whole). Quotes stay on
   # quoted words, so a quoted `'>'` or `'|'` is never read as an operator; :error on
-  # unbalanced quotes. As in shlex, `#` starts a comment that runs to the end of the
-  # line, newline included; unlike it, a word's quoted parts are quoted wherever they
-  # are, as the shell's are (`-e'a;b'`, `x'|'y` is one word).
+  # unbalanced quotes. As in shlex, `#` at a word's start starts a comment that runs to
+  # the end of the line, newline included; unlike it, quotes and escapes are read as the
+  # shell reads them: a word's quoted parts are quoted wherever they are (`-e'a;b'`,
+  # `x'|'y` is one word), a backslash escapes the next character outside quotes and
+  # inside `$'...'` (`a\;b`, `it\'s`) and does not end double quotes (`"a\"b"`), a
+  # backslash before a newline continues the line, and `#` inside a word is the word's
+  # (`x#y`). Escapes and quotes stay on the word; :error on one left open.
 
   @punct ~c"();<>|&\n"
   @space ~c" \t\r"
@@ -612,6 +633,17 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp lex([], :punct, tok, acc), do: {:ok, Enum.reverse(emit_ops(tok, acc))}
 
   defp lex([], {:quote, _}, _, _), do: :error
+  defp lex([], :ansi, _, _), do: :error
+  defp lex([?\\], _, _, _), do: :error
+
+  defp lex([?\\, ?\n | rest], state, tok, acc) when state in [:space, :word],
+    do: lex(rest, state, tok, acc)
+
+  defp lex([?\\, c | rest], state, tok, acc) when state in [:space, :word],
+    do: lex(rest, :word, [c, ?\\ | tok], acc)
+
+  defp lex([?$, ?' | rest], state, tok, acc) when state in [:space, :word],
+    do: lex(rest, :ansi, [?', ?$ | tok], acc)
 
   defp lex([c | rest], :space, [], acc) do
     cond do
@@ -626,8 +658,6 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp lex([c | rest], :word, tok, acc) do
     cond do
       c in @space -> lex(rest, :space, [], emit(tok, acc))
-      # A comment inside a word drops the rest of the line and the word goes on.
-      c == ?# -> lex(drop_line(rest), :word, tok, acc)
       c in @punct -> lex([c | rest], :space, [], emit(tok, acc))
       c in @quotes -> lex(rest, {:quote, c}, [c | tok], acc)
       true -> lex(rest, :word, [c | tok], acc)
@@ -642,6 +672,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
       true -> lex([c | rest], :space, [], emit_ops(tok, acc))
     end
   end
+
+  defp lex([?\\, c | rest], {:quote, ?"} = state, tok, acc),
+    do: lex(rest, state, [c, ?\\ | tok], acc)
+
+  defp lex([?\\, c | rest], :ansi, tok, acc), do: lex(rest, :ansi, [c, ?\\ | tok], acc)
+  defp lex([?' | rest], :ansi, tok, acc), do: lex(rest, :word, [?' | tok], acc)
+  defp lex([c | rest], :ansi, tok, acc), do: lex(rest, :ansi, [c | tok], acc)
 
   defp lex([c | rest], {:quote, q}, tok, acc) do
     if c == q,

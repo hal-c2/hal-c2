@@ -884,6 +884,28 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "reads a backslash and a word's # as the shell does" do
+      # Escaped, an operator or a quote is part of the word; in double quotes, `\"` and
+      # `\\` do not end it; `#` starts a comment only at a word's start.
+      for cmd <- [
+            ~S{printf %s prefix\;PRIVATE_SOURCE > a.py},
+            ~S{sed -i -e"s/x/\";PRIVATE_SOURCE;\"/" a.py},
+            ~S{echo it\'s\;PRIVATE_SOURCE > a.py},
+            "printf %s x#;printf PRIVATE_SOURCE > a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], inspect(cmd)
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      assert ShellEdits.tokens(~S{a\;b "c\"d\\" e\ f x#y #z}) ==
+               {:ok, [~S{a\;b}, ~S{"c\"d\\"}, ~S{e\ f}, "x#y"]}
+
+      assert ShellEdits.tokens("a\\") == :error
+      assert ShellEdits.targets(~S{sed -i 's/x/y/' a\ b.py}) == ["a b.py"]
+      assert ShellEdits.targets(~S{echo x > "a\"b.py"}) == [~S{a"b.py}]
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",
