@@ -54,7 +54,11 @@ defmodule HalC2.OpenShell.Broker do
     end
   end
 
-  # The name the container runtime gives the machine a sandbox runs on.
+  # The name the container runtime gives the machine a sandbox runs on. On Docker it
+  # is the alias OpenShell's driver pins for the supervisor to the gateway's host
+  # (loopback on Linux's host network, Docker's host-gateway on a Mac's bridge), and
+  # the proxy connects an alias to that pinned address only, ahead of `ips`; so it
+  # holds on either network while the broker binds every interface.
   defp default_host do
     case HalC2.OpenShell.state() do
       %{"driver" => "docker"} -> "host.docker.internal"
