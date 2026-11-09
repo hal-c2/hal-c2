@@ -1482,7 +1482,11 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "uv run python -c 'x()'",
             "poetry run bash -c 'pytest -q'",
             "npx node -e 'x()'",
-            "env CI=1 nice -n 5 node -e 'x()'"
+            "env CI=1 nice -n 5 node -e 'x()'",
+            # An escaped space keeps the `#` in its word, as the shell reads it.
+            ~S{pytest a\ #$(bash -c 'pytest -q')},
+            # A backslash in a comment continues no line: the next is a command.
+            "pytest -q # note \\\nbash -c 'pytest -q'"
           ] do
         state =
           heard_turn([edited("/r/run.sh"), command(cmd, "1 failed in 0.02s", "completed")])

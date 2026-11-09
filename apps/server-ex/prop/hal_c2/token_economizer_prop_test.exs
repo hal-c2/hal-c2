@@ -460,6 +460,39 @@ defmodule HalC2.TokenEconomizerPropTest do
     end
   end
 
+  property "a `#` hides a command substitution after it exactly when the lexer reads a comment",
+    numtests: HalC2.Prop.numtests(500) do
+    forall prefix <- comment_prefix() do
+      # The lexer reads a comment when what follows the `#` makes no difference to it.
+      comment? =
+        match?({:ok, _}, ShellEdits.tokens(prefix <> "#y")) and
+          ShellEdits.tokens(prefix <> "#y") == ShellEdits.tokens(prefix <> "#z")
+
+      cmd = prefix <> "#$(bash -c 'pytest -q')"
+      expected = if comment?, do: ShellEdits.hides_check?(prefix <> "#y"), else: true
+
+      (ShellEdits.hides_check?(cmd) == expected)
+      |> when_fail(IO.puts("Command: #{inspect(cmd)}\nComment: #{comment?}"))
+    end
+  end
+
+  # Shell text up to a `#`: escapes, line continuations, quotes and what ends a word. No
+  # process substitution (`>(`), which the lexer does not read as one.
+  defp comment_prefix do
+    such_that prefix <-
+                let(
+                  parts <-
+                    list(
+                      elements(
+                        ["a", " ", "\t", "\n", "\\", "\\ ", "\\\n", "#", ";", "|", "&", ">"] ++
+                          ["(", ")", "{", "}", "'", "\""]
+                      )
+                    ),
+                  do: Enum.join(parts)
+                ),
+              when: not String.contains?(prefix, ">(")
+  end
+
   # A command that writes SECRET into a.py: a writer, behind a wrapper, on a path spelt
   # one of the ways a path is, inside a carrier (a list, a group, a nested shell, a line
   # continued).

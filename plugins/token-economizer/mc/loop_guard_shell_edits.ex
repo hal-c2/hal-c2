@@ -326,6 +326,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp subst([], _, _, _), do: :error
 
+  # A line continued is one line, as `tokens/1` reads it: `a \<newline># b` is a comment.
+  defp subst([?\\, ?\n | rest], :none, acc, w), do: subst(rest, :none, acc, w)
+
   defp subst([?\\, c | rest], quote, acc, w) when quote != ?',
     do: subst(rest, quote, [c, ?\\ | acc], w)
 
@@ -348,14 +351,25 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp subst([?$, q | rest], :none, acc, w) when q in [?', ?"],
     do: subst(rest, if(q == ?', do: :ansi, else: ?"), [q, ?$ | acc], w)
 
-  # A comment runs nothing to the end of its line, as `tokens/1` reads it: `# don't`.
-  defp subst([?# | rest], :none, acc, w) when acc == [] or hd(acc) in [?\n | @boundary],
-    do: subst(Enum.drop_while(rest, &(&1 != ?\n)), :none, acc, w)
+  # A comment runs nothing to the end of its line, as `tokens/1` reads it: `# don't`, but
+  # not `a\ #`, whose escaped space is in the word.
+  defp subst([?# | rest], :none, acc, w) do
+    if word_start?(acc),
+      do: subst(Enum.drop_while(rest, &(&1 != ?\n)), :none, acc, w),
+      else: subst(rest, :none, [?# | acc], w)
+  end
 
   defp subst([q | rest], :none, acc, w) when q in [?', ?"], do: subst(rest, q, [q | acc], w)
   defp subst([?' | rest], :ansi, acc, w), do: subst(rest, :none, [?' | acc], w)
   defp subst([q | rest], q, acc, w) when q in [?', ?"], do: subst(rest, :none, [q | acc], w)
   defp subst([c | rest], quote, acc, w), do: subst(rest, quote, [c | acc], w)
+
+  # Whether the text read so far (reversed) ends a word: it is empty, or ends in a newline
+  # or a character that ends a word, not escaped (an even run of backslashes before it).
+  defp word_start?([]), do: true
+
+  defp word_start?([c | before]),
+    do: c in [?\n | @boundary] and rem(length(Enum.take_while(before, &(&1 == ?\\))), 2) == 0
 
   defp substitution(:error, _, _, _), do: :error
 
@@ -642,7 +656,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
     do: {shell, bodies, placed and quote == :none and pending == []}
 
   defp shell_lines(lines, quote, pending, shell, bodies, placed) do
-    {line, rest} = logical_line(lines)
+    {line, rest} = logical_line(lines, "", quote)
     {docs, quote, found} = heredoc_starts(String.to_charlist(line), quote, true, [], true)
     pending = pending ++ docs
 
@@ -703,14 +717,30 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp heredoc_starts([_ | rest], quote, _, docs, found),
     do: heredoc_starts(rest, quote, false, docs, found)
 
-  defp logical_line([line | rest]) do
-    if rest != [] and Regex.match?(~r/(?<!\\)(?:\\\\)*\\$/, line) do
-      {next, rest} = logical_line(rest)
-      {binary_part(line, 0, byte_size(line) - 1) <> next, rest}
-    else
-      {line, rest}
-    end
+  # The next line with the lines a backslash continues it into, read from inside `quote`:
+  # not in a comment (`# a \`) nor a single quote, where the backslash is text.
+  defp logical_line([line | rest], read, quote) do
+    text = read <> line
+
+    if rest != [] and continued?(String.to_charlist(text), quote, true),
+      do: logical_line(rest, binary_part(text, 0, byte_size(text) - 1), quote),
+      else: {text, rest}
   end
+
+  # Whether a line ends in a backslash that continues it; `start` as `heredoc_starts/5`'s.
+  defp continued?([?\\], quote, _) when quote in [:none, ?"], do: true
+
+  defp continued?([?\\, _ | rest], quote, _) when quote in [:none, ?", :ansi],
+    do: continued?(rest, quote, false)
+
+  defp continued?([?$, ?' | rest], :none, _), do: continued?(rest, :ansi, false)
+  defp continued?([q | rest], :none, _) when q in [?', ?"], do: continued?(rest, q, false)
+  defp continued?([?# | _], :none, true), do: false
+  defp continued?([c | rest], :none, _), do: continued?(rest, :none, c in @boundary)
+  defp continued?([?' | rest], :ansi, _), do: continued?(rest, :none, false)
+  defp continued?([q | rest], q, _), do: continued?(rest, :none, false)
+  defp continued?([_ | rest], quote, _), do: continued?(rest, quote, false)
+  defp continued?([], _, _), do: false
 
   defp read_bodies([], lines, bodies, ended), do: {bodies, lines, ended}
 
