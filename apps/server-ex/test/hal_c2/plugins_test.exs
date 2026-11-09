@@ -288,6 +288,24 @@ defmodule HalC2.PluginsTest do
     refute Plugins.threads_stay?("busy")
   end
 
+  # A manifest that fails its validation might be one that meant to declare it.
+  test "a threadsStay that is no boolean keeps the threads on their machine" do
+    code_package("odd", "1", [{"a.ex", busy_source("1")}])
+    manifest = Path.join(plugins_dir(), "odd/plugin.json")
+    refute HalC2.Plugins.Package.threads_stay?("odd")
+
+    for value <- ["yes", nil, 1, %{}] do
+      manifest
+      |> File.read!()
+      |> JSON.decode!()
+      |> Map.put("threadsStay", value)
+      |> JSON.encode!()
+      |> then(&File.write!(manifest, &1))
+
+      assert HalC2.Plugins.Package.threads_stay?("odd"), inspect(value)
+    end
+  end
+
   # A release upgrade updates the host in place: `init/1` does not run again, so a host
   # from before `threadsStay` has no table of declarations. `code_change/3` makes it and
   # fills it from the versions loaded, and the scans after it keep working.

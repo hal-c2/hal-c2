@@ -142,7 +142,8 @@ defmodule HalC2.Plugins.Package do
     end
   end
 
-  # A `threadsStay` that is no boolean fails the manifest's validation, so it says nothing.
+  # Only a `threadsStay` that is absent or `false` frees the threads. Any other value fails
+  # the manifest's validation, and like an unreadable manifest it keeps them where they are.
   defp stays?({:ok, json}), do: Map.get(json, "threadsStay", false) != false
   defp stays?(:unreadable), do: true
 
@@ -195,7 +196,7 @@ defmodule HalC2.Plugins.Package do
     aside = aside_dir(plugins, id)
     target = Path.join(plugins, id)
 
-    if presence(target) == :absent, do: File.rename(aside, target)
+    if presence(target) == :absent, do: put_back(aside, target)
     File.rm_rf!(staged)
     if presence(target) == :present, do: File.rm_rf!(aside)
 
@@ -205,6 +206,25 @@ defmodule HalC2.Plugins.Package do
     File.rename!(staged, target)
     File.rm_rf!(aside)
     :ok
+  end
+
+  # Nothing aside is a first install. Any other failure stops the install with the
+  # package still aside, where `threads_stay?/1` reads it.
+  defp put_back(aside, target) do
+    case File.rename(aside, target) do
+      :ok ->
+        :ok
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        raise File.RenameError,
+          reason: reason,
+          action: "rename",
+          source: aside,
+          destination: target
+    end
   end
 
   @doc """
