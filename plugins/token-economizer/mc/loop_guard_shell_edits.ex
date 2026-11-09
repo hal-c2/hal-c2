@@ -168,6 +168,28 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   end
 
   @doc """
+  Whether this reads every character of a shell command as the shell does, so what it
+  says of the command can be shown: its quotes and escapes close, nothing in it opens a
+  quoting context this does not follow (`$(...)`, `${...}`, backticks, `$'...'`,
+  `$"..."`), and its words, spaces aside, are all its characters (a comment is dropped);
+  heredoc bodies aside, and of the script for one run as `bash -lc '<script>'`.
+  """
+  def legible?(cmd) when is_binary(cmd) do
+    {shell, _} = cmd |> script() |> split_heredocs()
+
+    with false <- Regex.match?(~r/`|\$['"({]/, shell),
+         {:ok, toks} <- tokens(shell) do
+      unspaced(Enum.join(toks)) == unspaced(shell)
+    else
+      _ -> false
+    end
+  end
+
+  def legible?(_), do: false
+
+  defp unspaced(text), do: String.replace(text, ~r/\s/u, "")
+
+  @doc """
   The programs a shell command runs, by name (`sed`, `printf`, `pytest`), without their
   arguments; of the script for one run as `bash -lc '<script>'`.
   """

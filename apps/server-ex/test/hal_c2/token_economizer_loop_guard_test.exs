@@ -906,6 +906,24 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert ShellEdits.targets(~S{echo x > "a\"b.py"}) == [~S{a"b.py}]
     end
 
+    test "shows a command it cannot read every character of as a shell command, never its words" do
+      for cmd <- [
+            ~S|printf "$(echo "x;PRIVATE_SOURCE")" > a.py|,
+            ~S|printf "${X:-"a;PRIVATE_SOURCE"}" > a.py|,
+            ~S{printf "`echo "a;PRIVATE_SOURCE"`" > a.py},
+            ~S{printf $'a\';PRIVATE_SOURCE' > a.py},
+            ~S{printf $"a;PRIVATE_SOURCE" > a.py}
+          ] do
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+        assert text =~ "$ <shell command>", inspect(cmd)
+      end
+
+      # A comment is dropped, so the command's characters no longer add up to its words.
+      assert digest("cat a.py # PRIVATE_SOURCE") =~ "$ <shell command>"
+      assert digest(~S{rg -n "foo\(" src}) =~ ~S{$ rg -n "foo\(" src}
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",
@@ -932,6 +950,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "env API_TOKEN=s3cr3t-xyz npm test",
             "cd src && API_TOKEN='s3cr3t xyz' ./run.sh",
             ~s(API_TOKEN="s3cr3t \\"xyz\\"" ./run.sh),
+            ~S(API_TOKEN=s3cr3t\ xyz pytest -q),
             "grep x <<< s3cr3t-xyz",
             ~s(grep x <<<"s3cr3t xyz"),
             ~s{python3 -c "print('s3cr3t-xyz')"},
