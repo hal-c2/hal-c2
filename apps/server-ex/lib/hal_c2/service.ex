@@ -557,7 +557,8 @@ defmodule HalC2.Service do
 
   - `:path`: a path setting (`WorkingDirectory=`, `StandardOutput=append:`), which
     systemd takes as written, quotes included.
-  - `:env`: an `Environment=` value, quoted when it has a space, quote or backslash.
+  - `:env`: an `Environment=` value, quoted when it has a space, a quote of either
+    kind or a backslash.
   - `:exec`: one word of `ExecStart=`, quoted likewise.
   """
   def unit_value(value, :path), do: String.replace(value, "%", "%%")
@@ -567,7 +568,7 @@ defmodule HalC2.Service do
     do: value |> unit_value(:path) |> String.replace("$", "$$") |> quoted()
 
   defp quoted(value) do
-    if String.match?(value, ~r/[\s"\\]/),
+    if String.match?(value, ~r/[\s"'\\]/),
       do: ~s("#{value |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")}"),
       else: value
   end
