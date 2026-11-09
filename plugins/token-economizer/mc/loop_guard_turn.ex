@@ -41,7 +41,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # `State.test_run_re/0` (the Python vocabulary the thresholds were tuned on); used only
   # for the ended-green proxy, never to change what `State` counts. A runner is often
   # named by path (`python tests/runtests.py`, `.venv/bin/pytest`).
-  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun|vp)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
+  # A package manager's own options before its check say which package's it runs (`pnpm
+  # --filter web test`, `npm --prefix web test`, `yarn workspace web test`).
+  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun|vp)(?:\s+(?:(?:--(?:filter|prefix|dir|workspace|cwd)|-[FCw])(?:=\S+|\s+(?!-)\S+)|-r|--recursive|--workspaces|-ws|--if-present|-s|--silent|workspace\s+\S+))*\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
 
   # A command line's exit status is its last command's, so it may not be the test run's:
   # `npm test 2>&1 | tail -n 8` exits with `tail`'s status, `npm test || true` with 0.
@@ -51,6 +53,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # reported, since their output is in the result too.
   @quoted ~r/'[^']*'|"(?:\\.|[^"\\])*"/
   @sep ~r/(&&|\|\||\|&|(?<!>)\||;|\n)/
+  # A package manager's check behind an option `@verify` does not know (`npm --dry-run
+  # test`), which may change what runs or whether anything does: a check, not read.
+  @opaque_run ~r/\A(?:^|[\s;&|(])(?:~?\/)?(?:[\w.\-]+\/)*(?:npm|pnpm|yarn|bun|vp)\s+(?:\S+\s+)*(?:run\s+)?test(?![\w.\-\/])/i
   # A runner asked for its help, version or test list, not to run the tests.
   @not_a_run ~r/\s(?:-h|--help|--version|--collect-only|--co|--list\S*)(?!\S)/
   # What may precede the command itself: `FOO=1 timeout 60 npm test`, and a launcher that
@@ -274,7 +279,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   `pipefail`); "hidden" when a pipe, `||` or a mere report of the status replaced it;
   "mixed" when other commands ran after, their output in the result too; "unknown" when
   the command is not plain (`ShellEdits.plain?/1`: `! pytest`, `(pytest)`, `(set -o
-  pipefail); pytest | tail`), whose status this does not scope.
+  pipefail); pytest | tail`), whose status this does not scope, or runs a package
+  manager's check behind an option this does not know (`npm --dry-run test`).
   """
   def status_of_tests(cmd) when is_binary(cmd) do
     {pieces, pipefail} = pieces(cmd)
@@ -291,10 +297,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         end
       end)
 
-    if status != nil and not ShellEdits.plain?(cmd), do: "unknown", else: status
+    cond do
+      Enum.any?(stages, fn {stage, _} -> opaque_run?(stage) end) -> "unknown"
+      status != nil and not ShellEdits.plain?(cmd) -> "unknown"
+      true -> status
+    end
   end
 
   def status_of_tests(_), do: nil
+
+  defp opaque_run?(stage) do
+    stage = Regex.replace(@prefix, stage, "")
+    Regex.match?(@opaque_run, stage) and not Regex.match?(@verify, stage)
+  end
 
   defp run?(stage),
     do:
@@ -323,6 +338,76 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         Enum.any?(ShellEdits.targets(tail), &(&1 in edits))
     end
   end
+
+  # Whether `cmd`, one `&&` chain that exited 0, ran its last check after every command in
+  # it that may hide one (`bash scripts/check.sh && pytest -q`): each of those exited 0,
+  # and the check after them is the last word. A hiding command after the check (`pytest
+  # -q && bash scripts/check.sh`) may have changed the tree, or run a check of its own that
+  # failed unread, so its pass is not taken, deliberately: a redirect there is the cost of
+  # not reading the script. A comment or an escape could hide where the chain ends, so
+  # neither is read as one. The commands before the check must also have run apart from
+  # it: an `eval`, or a `source`/`.` of anything but a file the turn did not write (a
+  # plain `venv/bin/activate`), runs in the check's own shell and may redefine the check.
+  defp checked_last?(cmd, "own", 0, written) do
+    {script, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
+    script = String.trim_trailing(script)
+    masked = Regex.replace(@quoted, script, &String.duplicate("Q", byte_size(&1)))
+    masked = Regex.replace(~r/[(){}]/, masked, " ")
+    cuts = for [{at, len} | _] <- Regex.scan(@sep, masked, return: :index), do: {at, at + len}
+    starts = [0 | Enum.map(cuts, &elem(&1, 1))]
+    ends = Enum.map(cuts, &elem(&1, 0)) ++ [byte_size(masked)]
+
+    last_run =
+      Enum.zip(starts, ends)
+      |> Enum.filter(fn {from, to} -> run?(binary_part(masked, from, to - from)) end)
+      |> List.last()
+
+    chain? =
+      not String.contains?(masked, ["#", "\\"]) and
+        Enum.all?(cuts, fn {from, to} -> binary_part(masked, from, to - from) == "&&" end)
+
+    case last_run do
+      {from, _} when chain? ->
+        before = Enum.take_while(Enum.zip(starts, ends), fn {at, _} -> at < from end)
+
+        not Enum.any?(before, fn {at, to} ->
+          same_shell?(binary_part(script, at, to - at), written)
+        end) and
+          not ShellEdits.hides_check?(
+            binary_part(script, from, byte_size(script) - from),
+            written
+          )
+
+      _ ->
+        false
+    end
+  end
+
+  defp checked_last?(_, _, _, _), do: false
+
+  # Whether one command of a chain runs code in the chain's own shell that this did not
+  # read: `eval`, a function definition (`function pytest [[ 1 ]]`, `pytest () ( ... )`),
+  # or a `source`/`.` of a file the turn wrote or of a word that is not a plain path. A
+  # group or subshell bracket is read as a space, so `(. x)` counts too.
+  defp same_shell?(segment, written) do
+    defines? = Regex.match?(~r/^\s*(?:function\s|[^\s()]+\s*\(\s*\))/, segment)
+
+    words =
+      Regex.replace(~r/[(){}]/, segment, " ")
+      |> String.split()
+      |> Enum.drop_while(&(&1 in ~w(builtin command) or Regex.match?(~r/^\w+=/, &1)))
+
+    case words do
+      _ when defines? -> true
+      ["eval" | _] -> true
+      [dot, file | _] when dot in ["source", "."] -> sourced_unread?(file, written)
+      [dot] when dot in ["source", "."] -> true
+      _ -> false
+    end
+  end
+
+  defp sourced_unread?(file, written),
+    do: not Regex.match?(~r{^[\w./-]+$}, file) or Path.basename(file) in written
 
   defp after_run(rest) do
     Enum.reduce_while(rest, "own", fn
@@ -370,10 +455,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         # A check whose status this does not scope verifies nothing, and may have failed.
         verifies = status not in [nil, "unknown"]
 
+        written = Map.keys(g.whole.edit_counts)
+
         g =
           if canon == "bash" and
-               (status == "unknown" or
-                  ShellEdits.hides_check?(cmd, Map.keys(g.whole.edit_counts))),
+               (status == "unknown" or ShellEdits.hides_check?(cmd, written)) and
+               not checked_last?(cmd, status, exit_code, written),
              do: %{g | unread: g.cum_turns},
              else: g
 

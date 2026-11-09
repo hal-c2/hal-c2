@@ -266,6 +266,10 @@ defmodule HalC2.TokenEconomizerPropTest do
       {"Bash", %{"command" => "pytest -q test_a.py"},
        "FAILED test_a.py::test_a\n1 failed in 0.02s", 1}
 
+  defp call({"pass", cmd}), do: {"Bash", %{"command" => cmd}, "Tests  1 passed (1)", 0}
+  defp call({"fail", cmd}), do: {"Bash", %{"command" => cmd}, "Tests  1 failed (1)", 1}
+  defp call({"opaque", cmd}), do: {"Bash", %{"command" => cmd}, "Tests  1 failed (1)", 0}
+
   defp call("pass"), do: {"Bash", %{"command" => "pytest -q test_a.py"}, "1 passed in 0.02s", 0}
   defp call("read"), do: {"Bash", %{"command" => "cat a.py"}, "x = 1", 0}
   defp call("bad_edit"), do: {"Edit", %{"path" => "a.py"}, "String to replace not found", 1}
@@ -293,6 +297,13 @@ defmodule HalC2.TokenEconomizerPropTest do
   # A check whose exit status this cannot scope reads passing and exits 0 whatever ran.
   defp call({"unscoped", cmd}), do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
 
+  # A passing check and a command that may hide one, in one `&&` chain that exited 0.
+  defp call({order, cmd})
+       when order in ~w(script_then_check check_then_script eval_then_check check_then_eval
+                        defined_then_check check_then_defined sourced_then_check
+                        check_then_sourced),
+       do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
+
   defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
 
   # Checks that hide nothing however they are spelt: a runner with flags, expansions, a
@@ -311,6 +322,53 @@ defmodule HalC2.TokenEconomizerPropTest do
     do:
       {"Bash", %{"command" => "set -o pipefail; pytest -q 2>&1 | tail -3"}, "1 passed in 0.02s",
        0}
+
+  # A passing check and a command that may hide one in one `&&` chain, in either order:
+  # a check after a script run apart is the last word, one before it is not (the command
+  # may have undone it, or failed a check of its own unread). An `eval`, a function
+  # definition, or a source of the `a.py` an edit writes, runs in the check's own shell
+  # and may redefine it, so a check after one is not the last word either.
+  defp ordered do
+    let {check_last, {how, hider}, runner, between} <-
+          {boolean(),
+           elements([
+             {"script", "node -e 'x()'"},
+             {"script", "perl -le 'system q(pytest)'"},
+             {"script", "python3 -c 'x()'"},
+             {"eval", ~s{eval "$CHECK"}},
+             {"defined", "function pytest [[ 1 ]]"},
+             {"sourced", "source ./a.py"},
+             {"sourced", ". ./a.py"}
+           ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"]),
+           elements([" && ", " && echo ok && "])} do
+      if check_last,
+        do: {how <> "_then_check", hider <> between <> runner},
+        else: {"check_then_" <> how, runner <> between <> hider}
+    end
+  end
+
+  # A package manager's check run in one package: a check like any other ("pass",
+  # "fail") behind the options this knows, a check not read ("opaque") behind one it
+  # does not.
+  defp filtered do
+    let {verdict, pm, option} <-
+          {elements(["pass", "fail", "opaque"]), elements(["npm", "pnpm", "yarn", "bun"]),
+           elements([
+             "--filter web",
+             "-F web",
+             "--filter=web",
+             "-r",
+             "-C web",
+             "--prefix web",
+             "-w web",
+             "--workspace=web",
+             "workspace web",
+             "--cwd web"
+           ])} do
+      option = if verdict == "opaque", do: "--frobnicate web", else: option
+      {verdict, Enum.join([pm, option, "test"], " ")}
+    end
+  end
 
   # A check negated, in a subshell or a group, under a branch, in the background, or piped
   # under a pipefail a subshell set: its status is not its own.
@@ -471,7 +529,9 @@ defmodule HalC2.TokenEconomizerPropTest do
                oneof([
                  elements(~w(read edit pass fail flagged expanded sourced pipefail) ++ @unread),
                  inline(),
-                 unscoped()
+                 unscoped(),
+                 ordered(),
+                 filtered()
                ])
              ) do
       g =
@@ -485,13 +545,27 @@ defmodule HalC2.TokenEconomizerPropTest do
       at = Enum.with_index(kinds, 1)
       last_edit = Enum.max([0 | for({"edit", i} <- at, do: i)])
       after_edit = for {kind, i} <- at, i > last_edit, do: kind
-      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail flagged expanded pipefail)))
-      hidden = ["unscoped" | @unread]
-      hidden = if last_edit > 0, do: ["sourced" | hidden], else: hidden
+
+      checks =
+        Enum.filter(
+          after_edit,
+          &(kind(&1) in ~w(pass fail flagged expanded pipefail script_then_check sourced_then_check
+                 check_then_sourced))
+        )
+
+      # A source of `a.py` hides a check only once an edit has written it.
+      hidden =
+        ~w(unscoped opaque check_then_script eval_then_check check_then_eval defined_then_check
+           check_then_defined) ++ @unread
+
+      hidden =
+        if last_edit > 0,
+          do: ~w(sourced sourced_then_check check_then_sourced) ++ hidden,
+          else: hidden
 
       green =
         kinds != [] and not Enum.any?(after_edit, &(kind(&1) in hidden)) and
-          List.last(checks) != "fail"
+          kind(List.last(checks)) != "fail"
 
       (Turn.resolved_proxy(g) == green)
       |> when_fail(
