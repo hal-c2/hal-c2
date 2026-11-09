@@ -967,23 +967,27 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # `shouldReturn404WhenIdIsMissing`): split where a word starts, after a
   # lowercase letter or digit or at an acronym's last capital, every piece
   # looks like a word. It is an acronym of four capitals at most, or known
-  # acronyms run together, with a version (`HTTP`, `V2`, `UTF8`, `K8s`), a
-  # word with its digits (`Parse`, `Auth2`) or a two-letter word (`At`,
-  # `is`); a mixed-case term (`IPv6`, `OAuth`) is one word. A word of three or
-  # more letters has a vowel or `y`, no four consonants in a row (a digraph is
-  # one) and no letter pair English never writes (`qz`, `jx`), unless it is a
-  # common abbreviation (`Ctx`, `Http`). Two words of two or more lowercase
-  # letters hold at least half its letters, no more of them lack a vowel than
-  # have one, its digits sit in three places at most, and at most two pieces
-  # are neither a word nor a known acronym (`V2`, `LRU`), one of them an
-  # unknown acronym. Keeping a credential is worse than redacting a name, so
-  # random base62 tokens of 20 to 40 characters never pass.
+  # acronyms run together, with a version (`HTTP`, `V2`, `UTF8`, `K8s`,
+  # `JSONV2`) or a plural (`IPs`), a word with its digits (`Parse`, `Auth2`),
+  # a letter with its digits (`v2`) or a two-letter word or abbreviation
+  # (`At`, `is`, `Ws`); a mixed-case term (`IPv6`, `OAuth`, `i18n`) is one
+  # word. A word of three or more letters has a vowel or `y`, four consonants
+  # in a row only where a syllable ends and the next starts (`Obstructed`,
+  # `Workspace`; a digraph is one) and no letter pair English never writes
+  # (`qz`, `jx`), unless it is a common abbreviation (`Ctx`, `Sdk`). Two words
+  # of two or more lowercase letters hold at least half its letters, no more
+  # of them lack a vowel than have one, its digits sit in three places at
+  # most, and at most two pieces are neither a word nor a known acronym (`V2`,
+  # `LRU`), one of them an unknown acronym. Keeping a credential is worse than
+  # redacting a name, so random base62 tokens of 20 to 40 characters never
+  # pass, and dense names (`BenchmarkC128AxpyIncN100000IncM1`) are redacted.
   @camel_split ~r/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/
-  @two_letter_words ~w(am an as at be by do go if in is it me my no of on or so to up us we id ok)
+  @two_letter_words ~w(am an as at be by do go if in is it me my no of on or so to up us we id ok
+                       db fs io js os rx ts tx ui ws)
   @abbreviations ~w(ctx cfg msg http html grpc src dst cmd pkg lib tmp std fmt str len mgr svc req
-                    res txn png jpg sql xml rpc cb fn)
+                    res txn png jpg sql xml rpc cb fn ctl cwd sdk xdg jsx tsx)
 
-  @mixed_case_terms ~r/IPv(?=\d)|OAuth|GraphQL|MySQL|PostgreSQL|NoSQL|macOS|iOS/
+  @mixed_case_terms ~r/IPv(?=\d)|OAuth|GraphQL|MySQL|PostgreSQL|NoSQL|macOS|iOS|[Ii]18n|[Ll]10n/
 
   @unwritten_pairs ~w(bk bq cj cw dx fq fv fx gq gv gx hj hx hz jb jc jd jf jg jh jj jk jl jm jn jp
                       jq jr jt jw jx jy jz kq kx kz lq mg mz pq px qb qd qf qh qi qj qk ql qm qn qo
@@ -991,8 +995,19 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
                    |> Enum.join("|")
                    |> Regex.compile!()
 
+  # A long consonant run is where a syllable ends and the next begins: two
+  # consonants at most, then a cluster a word can start with (`ob|str`,
+  # `rk|sp`, `rk|fl`).
+  @coda_onset ~r/^[^aeiouy]{1,2}(?:[bcdfgkpt][lr]|s[cklmnptw]|[dt]w|s[cpt]r|spl)$/
+
   defp camel_words?(run) do
-    pieces = Regex.split(@camel_split, Regex.replace(@mixed_case_terms, run, "Term"))
+    # An acronym's plural (`IPs`, `URLs`) is the acronym.
+    text =
+      run
+      |> String.replace(@mixed_case_terms, "Term")
+      |> String.replace(~r/(?<=[A-Z]{2})s(?=[A-Z\d]|$)/, "")
+
+    pieces = Regex.split(@camel_split, text)
     words = Enum.filter(pieces, &(lowercase(&1) >= 2))
     {voiced, mute} = Enum.split_with(words, &Regex.match?(~r/[aeiouy]/, &1))
 
@@ -1006,7 +1021,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # no two-letter word: a lone capital (`V2`), an unknown acronym (`LRU`).
   defp odd_piece?(piece) do
     known =
-      case Regex.run(~r/^([A-Z]{2,})(?:\d+s?)?$/, piece) do
+      case Regex.run(~r/^([A-Z]{2,}?)(?:V?\d+s?)?$/, piece) do
         [_, caps] -> known_acronyms?(caps)
         _ -> false
       end
@@ -1019,13 +1034,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
       (Regex.match?(~r/^[A-Za-z][a-z]{2,}\d*$/, piece) and spoken?(piece)) or
       (Regex.match?(~r/^[A-Za-z][a-z]\d+$/, piece) and
          not Regex.match?(@unwritten_pairs, String.downcase(piece))) or
-      String.downcase(piece) in @two_letter_words
+      String.downcase(piece) in @two_letter_words or
+      Regex.match?(~r/^[a-z]\d+$/, piece)
   end
 
   # Four capitals at most, or acronyms run together (`TLSURL`), with a
   # version.
   defp acronym?(piece) do
-    case Regex.run(~r/^([A-Z]+)(?:\d+s?)?$/, piece) do
+    case Regex.run(~r/^([A-Z]+?)(?:V?\d+s?)?$/, piece) do
       [_, caps] -> String.length(caps) <= 4 or known_acronyms?(caps)
       _ -> false
     end
@@ -1045,14 +1061,18 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         &(String.starts_with?(caps, &1) and known_acronyms?(String.replace_prefix(caps, &1, "")))
       )
 
-  # A word has a vowel or `y` and no run of four consonants, a digraph
-  # counting as one (`Benchmark`), or is a common abbreviation.
+  # A word has a vowel or `y` and a run of four consonants only across a
+  # syllable's edge, a digraph counting as one (`Benchmark`), or is a common
+  # abbreviation.
   defp spoken?(word) do
     letters = word |> String.replace(~r/\d+$/, "") |> String.downcase()
     sounds = String.replace(letters, ~r/ch|ck|gh|ng|ph|sh|th|wh/, "c")
 
     letters in @abbreviations or
-      (Regex.match?(~r/[aeiouy]/, letters) and not Regex.match?(~r/[^aeiouy]{4}/, sounds) and
+      (Regex.match?(~r/[aeiouy]/, letters) and
+         Enum.all?(Regex.scan(~r/[^aeiouy]{4,}/, sounds), fn [run] ->
+           Regex.match?(@coda_onset, run)
+         end) and
          not Regex.match?(@unwritten_pairs, letters))
   end
 

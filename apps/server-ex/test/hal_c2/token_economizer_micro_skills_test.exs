@@ -216,6 +216,19 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert Observe.test_labels(o) == ["tests/a.py", "testHandlesUtf8InputCorrectly"]
   end
 
+  # Names taken from real code (`test/fixtures/token_economizer/real_names.txt`)
+  # are not credentials, whatever their versions, acronyms and digits.
+  test "real identifiers are not credentials" do
+    names =
+      "test/fixtures/token_economizer/real_names.txt"
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.reject(&String.starts_with?(&1, "#"))
+
+    assert length(names) > 300
+    assert Enum.filter(names, &Observe.secret_value?/1) == []
+  end
+
   # Go, Java and Jest test names, made from words, acronyms with their
   # versions, two-letter words and a number, against random base62 tokens of
   # 20 to 40 characters: no name is taken for a credential and every one of
