@@ -14,6 +14,8 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # pairs with (`HalC2.Pair`); `hal-c2-service threads import` picks threads
 # of T3 Code or an older HAL-C2 on this machine to import (`HalC2.Import.Picker`);
 # `hal-c2-service doctor` checks and repairs a stopped MC's store (`HalC2.Doctor`).
+# `hal-c2-service openshell ...` installs and manages the OpenShell gateway review
+# sandboxes run in (`HalC2.OpenShell.Command`).
 case "${1:-}" in
   acp-mcp-bridge | acp-mcp-call) exec "$here/hal_c2" eval "HalC2.Mcp.BridgeCli.main(System.argv())" "$@" ;;
   install | status | restart | uninstall) exec "$here/hal_c2" eval "HalC2.Service.main([\"$1\"])" ;;
@@ -21,6 +23,7 @@ case "${1:-}" in
   pair) shift && exec "$here/hal_c2" eval "HalC2.Pair.main(System.argv())" "$@" ;;
   threads) shift && exec "$here/hal_c2" eval "HalC2.Import.Picker.main(System.argv())" "$@" ;;
   doctor) shift && exec "$here/hal_c2" eval "HalC2.Doctor.main(System.argv())" "$@" ;;
+  openshell) shift && exec "$here/hal_c2" eval "HalC2.OpenShell.Command.main(System.argv())" "$@" ;;
 esac
 
 releases="$here/../releases"

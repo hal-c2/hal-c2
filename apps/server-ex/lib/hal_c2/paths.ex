@@ -77,6 +77,61 @@ defmodule HalC2.Paths do
   end
 
   @doc """
+  Replaces the file at `path` with `content` and `mode`, through a new file beside
+  it renamed over it: a reader, or a crash, sees the old file or the new one whole,
+  and a link at `path` is replaced rather than written through. The new file is
+  created under the umask and set to `mode` before any of `content` is written, so
+  `path` never names it under a wider mode; one opened in that moment could still
+  read it, so keep a secret in a directory only the MC can enter (`mkdir_private!/1`).
+  """
+  # Callers name a file in this MC's own directories.
+  # sobelow_skip ["Traversal.FileModule"]
+  @spec write_replace(Path.t(), iodata, non_neg_integer) :: :ok | {:error, File.posix()}
+  def write_replace(path, content, mode) do
+    write_replace(path, content, mode, for(_ <- 1..4, do: tmp_name(path)))
+  end
+
+  # A name beside `path` no other writer picks, in this OS process or another.
+  defp tmp_name(path),
+    do: "#{path}.#{Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)}.tmp"
+
+  # Writes through the first of `tmps` (names beside `path`) it can create, trying
+  # the next while one is taken. Only a file this call created is removed, and
+  # never once it was renamed into place.
+  @doc false
+  # Callers name a file in this MC's own directories.
+  # sobelow_skip ["Traversal.FileModule"]
+  def write_replace(path, content, mode, [tmp | rest]) do
+    # :exclusive refuses a file, or a link, already at `tmp`.
+    case File.open(tmp, [:write, :exclusive, :binary]) do
+      {:ok, file} ->
+        written =
+          try do
+            with :ok <- File.chmod(tmp, mode),
+                 :ok <- IO.binwrite(file, content),
+                 :ok <- :file.sync(file),
+                 do: :ok
+          after
+            File.close(file)
+          end
+
+        with :ok <- written, :ok <- File.rename(tmp, path) do
+          :ok
+        else
+          error ->
+            File.rm(tmp)
+            error
+        end
+
+      {:error, :eexist} when rest != [] ->
+        write_replace(path, content, mode, rest)
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
   Where the MC keeps disposable files (`HalC2.Scratch`) given the folder the user chose,
   or `HAL_C2_TMPDIR` without one: a folder of this home's own in it, so MCs given the same
   one never meet, or with neither the cache directory.
@@ -279,6 +334,39 @@ defmodule HalC2.Paths do
   requested ones.
   """
   def real(path), do: resolve(Path.split(Path.expand(path)), "/", 0)
+
+  @doc """
+  `path` with every symlink in it resolved, existing or not: the longest prefix
+  that exists is resolved and the rest is kept as written. nil for a loop of links.
+  For a path's identity, where two spellings of one directory must agree.
+  """
+  def canonical(path), do: canonical(Path.split(Path.expand(path)), "/", 0)
+
+  defp canonical(_parts, _at, 40), do: nil
+  defp canonical([], at, _depth), do: at
+  defp canonical(["/" | rest], _at, depth), do: canonical(rest, "/", depth)
+
+  defp canonical([part | rest], at, depth) do
+    next = Path.join(at, part)
+
+    case File.lstat(next) do
+      {:ok, %{type: :symlink}} ->
+        case :file.read_link_all(next) do
+          {:ok, target} ->
+            target = Path.expand(to_string(target), at)
+            canonical(Path.split(target) ++ rest, "/", depth + 1)
+
+          _ ->
+            nil
+        end
+
+      {:ok, _} ->
+        canonical(rest, next, depth)
+
+      {:error, _} ->
+        Path.join([next | rest])
+    end
+  end
 
   defp resolve(_parts, _acc, links) when links > 40, do: {:error, :eloop}
 
