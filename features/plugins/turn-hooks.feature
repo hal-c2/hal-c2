@@ -3,7 +3,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/feed.ex (a running extension's feed of turns, dropped events counted)
 #   apps/server-ex/lib/hal_c2/plugins.ex (observe/1, shape_run/1: asked as a new conversation starts, each plugin apart from the asker, with its saved settings)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item with an answer's text, turn.finished; end_item/5: a background command that ended after its turn; the calls a stopped or abandoned turn closed; a turn's usage)
-#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (a Codex turn and a goal's run, started by Codex's own writer; end_background)
+#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (a Codex turn and a goal's run, started by Codex's own writer; end_background; a turn keeps only the usage Codex reports of it)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (end_work: a background command stopped between turns)
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread, a native fork's inherited)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (a native fork carries its source's shape; fresh_start/2: a resume that started afresh is a new conversation)
@@ -47,6 +47,14 @@ Feature: Plugins that watch and shape turns
       | Claude   |
       | Codex    |
       | OpenCode |
+
+  @mc
+  Scenario: A plugin hears a Codex turn end with only the usage Codex reported of it
+    Given a plugin that hears turns
+    And a Codex thread working on a turn
+    When Codex reports the turn used 5 tokens
+    And then reports the usage of an earlier turn and of another thread, and the turn ends
+    Then the plugin hears the turn end with 5 tokens used
 
   @mc
   Scenario: A plugin without turns:observe hears nothing of a turn
