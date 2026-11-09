@@ -7,7 +7,7 @@ defmodule HalC2.Test.FakeOpenShell do
   certificate into `dir`, laid out like `HalC2.OpenShell.pki_dir/0`.
 
   Sandboxes live in an Agent. `ExecSandboxInteractive` runs `opts[:exec]`, a
-  `fn command, io -> ... end` given the start request's command and an `io` it
+  `fn command, io -> ... end` (or `fn command, io, start`) given the start request's command and an `io` it
   reads stdin from (`read.(io)` gives `{:data, binary}` or `:eof`) and writes
   events to (`stdout.(data)`, `exit.(code)`). The default echoes stdin to stdout
   and exits 0. Every request is also sent to `opts[:notify]` as
@@ -24,16 +24,35 @@ defmodule HalC2.Test.FakeOpenShell do
   @doc """
   Starts the fake and returns `%{port, endpoint, credentials, server, store}`.
   Options: `:version` ("0.1.7"), `:roles` (["openshell-user"]), `:exec`,
-  `:notify`, `:get_sandbox` (a function GetSandbox runs before it answers), and
+  `:notify`, `:widen`, a `fn policy -> policy end` standing for a gateway-wide
+  policy that `GetSandboxConfig` answers with on top of a sandbox's own,
+  `:get_sandbox` (a function GetSandbox runs before it answers), and
   `:delete`: how DeleteSandbox answers, `:completed` (the default),
   `:unspecified`, `{:accepted, n}` (the sandbox goes after `n` more GetSandbox
-  calls, or never for `:never`) or `:replaced` (another sandbox takes its name).
+  calls, or never for `:never`) or `:replaced` (another sandbox takes its name), and
+  `:delete_provider`: how DeleteProvider answers, `:completed` (the default),
+  `:accepted` (the provider stays) or `:unspecified`.
+
+  As 0.1.7's, it starts with no provider profiles (`:profiles`, a list of
+  `%ProviderProfile{}`, puts some there as if imported), and CreateProvider refuses
+  a type no profile of the provider's workspace has, or a credential its profile
+  does not declare. ImportProviderProfiles refuses an id it has already, and
+  CreateSandbox a policy 0.1.7's validator refuses (`FakeOpenShell.Validator`).
   """
   def start(dir, opts \\ []) do
     credentials = issue(dir)
 
     {:ok, store} =
-      Agent.start_link(fn -> %{sandboxes: %{}, deleting: %{}, workspaces: MapSet.new()} end)
+      Agent.start_link(fn ->
+        %{
+          sandboxes: %{},
+          deleting: %{},
+          workspaces: MapSet.new(),
+          providers: %{},
+          profiles: Map.new(opts[:profiles] || [], &{&1.id, &1}),
+          policies: %{}
+        }
+      end)
 
     config = Map.new(opts) |> Map.put(:store, store)
 
@@ -97,6 +116,27 @@ defmodule HalC2.Test.FakeOpenShell do
         end
       end
     end)
+  end
+
+  @doc """
+  Installs `gateway` for review sandboxes: this home's state naming it, on Podman,
+  and its reaper's units (`HalC2.OpenShell.Service.reaper/1`) under the app env's
+  `:service_user_home`, which must be set: they are never written to the real one.
+  """
+  def install!(gateway) do
+    home = Application.fetch_env!(:hal_c2, :service_user_home)
+    manager = HalC2.OpenShell.Service.manager()
+
+    for {path, unit} <- HalC2.OpenShell.Service.reaper(manager) do
+      true = String.starts_with?(path, home <> "/")
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, unit)
+    end
+
+    File.write!(
+      HalC2.OpenShell.state_path(),
+      JSON.encode!(%{"endpoint" => gateway.endpoint, "driver" => "podman"})
+    )
   end
 
   @doc """
@@ -176,6 +216,29 @@ defmodule HalC2.Test.FakeOpenShell do
   end
 
   def sandboxes(%{store: store}), do: Agent.get(store, & &1.sandboxes)
+
+  @doc "Puts a provider in the fake's store as if someone had created it."
+  def put_provider(%{store: store}, name, labels) do
+    entry = %{type: "openai", credentials: %{}, labels: labels}
+    Agent.update(store, &put_in(&1, [:providers, name], entry))
+  end
+
+  @doc "Makes DeleteProvider answer as `:delete_provider` (`start/2`) says, from now on."
+  def provider_deletions(%{store: store}, mode),
+    do: Agent.update(store, &Map.put(&1, :delete_provider, mode))
+
+  @doc """
+  Makes each method of `methods` (gRPC names, "ListSandboxes") fail with UNAVAILABLE
+  from now on, as a gateway that answers some calls and not others; `[]` heals it.
+  """
+  def failing(%{store: store}, methods),
+    do: Agent.update(store, &Map.put(&1, :failing, methods))
+
+  @doc "The providers in the fake's store, by name: `%{type, credentials, labels}`."
+  def providers(%{store: store}), do: Agent.get(store, & &1.providers)
+
+  @doc "The provider profiles in the fake's store, by id."
+  def profiles(%{store: store}), do: Agent.get(store, & &1.profiles)
 
   @doc "A certificate chain from a CA of its own, for a client the gateway must not trust."
   def stranger(dir) do
@@ -335,6 +398,9 @@ defmodule HalC2.Test.FakeOpenShell do
         method != "Health" and get_peer_data(conn)[:ssl_cert] == nil ->
           error(conn, 16, "no client certificate")
 
+        method in (Agent.get(config.store, & &1[:failing]) || []) ->
+          error(conn, 14, "#{method} is unavailable")
+
         method == "ExecSandboxInteractive" ->
           exec(conn, config)
 
@@ -396,16 +462,189 @@ defmodule HalC2.Test.FakeOpenShell do
     defp unary(conn, "CreateSandbox", body, config) do
       request = Pb.CreateSandboxRequest.decode(body)
       notify(config, "CreateSandbox", request)
+      sandbox = FakeOpenShell.sandbox(request.name, request.labels)
+      policy = request.spec && request.spec.policy
+      resources = request.spec && request.spec.template && request.spec.template.resources
+      # As 0.1.7's, a policy its validator refuses makes no sandbox.
+      violations = (policy && FakeOpenShell.Validator.violations(policy)) || []
 
-      case request.spec && request.spec.template && request.spec.template.resources do
-        %Google.Protobuf.Struct{fields: %{"requests" => _}} ->
+      cond do
+        match?(%Google.Protobuf.Struct{fields: %{"requests" => _}}, resources) ->
           error(conn, 9, "docker compute driver does not support resources.requests.cpu")
 
-        _ ->
-          sandbox = FakeOpenShell.sandbox(request.name, request.labels)
-          Agent.update(config.store, &put_in(&1, [:sandboxes, request.name], sandbox))
+        violations != [] ->
+          error(conn, 3, "policy contains unsafe content: " <> Enum.join(violations, "; "))
+
+        true ->
+          Agent.update(config.store, fn store ->
+            store
+            |> put_in([:sandboxes, request.name], sandbox)
+            |> put_in([:policies, request.name], policy)
+          end)
+
           reply(conn, %Pb.SandboxResponse{sandbox: sandbox})
       end
+    end
+
+    defp unary(conn, "GetSandboxConfig", body, config) do
+      alias HalC2.OpenShell.Proto.Openshell.Sandbox.V1, as: SandboxPb
+      %{name: name} = SandboxPb.GetSandboxConfigRequest.decode(body)
+      widen = Map.get(config, :widen, & &1)
+
+      case Agent.get(config.store, & &1.policies[name]) do
+        nil ->
+          error(conn, 5, "sandbox not found")
+
+        policy ->
+          reply(conn, %SandboxPb.GetSandboxConfigResponse{policy: widen.(policy), version: 1})
+      end
+    end
+
+    defp unary(conn, "CreateProvider", body, config) do
+      %{provider: provider} = request = Pb.CreateProviderRequest.decode(body)
+      notify(config, "CreateProvider", request)
+
+      entry = %{
+        type: provider.type,
+        credentials: provider.credentials,
+        labels: provider.metadata.labels
+      }
+
+      profile =
+        if provider.profile_workspace == workspace(request.workspace_scope),
+          do: Agent.get(config.store, & &1.profiles[provider.type])
+
+      declared = if profile, do: Enum.flat_map(profile.credentials, & &1.env_vars), else: []
+
+      cond do
+        # As the real one, a type is a profile imported where the provider looks.
+        profile == nil ->
+          error(
+            conn,
+            3,
+            "provider profile '#{provider.type}' was not found in the requested scope"
+          )
+
+        Enum.any?(Map.keys(provider.credentials), &(&1 not in declared)) ->
+          error(conn, 3, "provider credential key is not declared by its profile")
+
+        # A name already taken is refused.
+        Agent.get(config.store, &Map.has_key?(&1.providers, provider.metadata.name)) ->
+          error(conn, 6, "provider already exists")
+
+        true ->
+          Agent.update(config.store, &put_in(&1, [:providers, provider.metadata.name], entry))
+          reply(conn, %Pb.ProviderResponse{provider: provider})
+      end
+    end
+
+    defp unary(conn, "GetProviderProfile", body, config) do
+      request = Pb.GetProviderProfileRequest.decode(body)
+      notify(config, "GetProviderProfile", request)
+
+      case Agent.get(config.store, & &1.profiles[request.id]) do
+        nil -> error(conn, 5, "provider profile not found")
+        profile -> reply(conn, %Pb.ProviderProfileResponse{profile: profile})
+      end
+    end
+
+    defp unary(conn, "ImportProviderProfiles", body, config) do
+      request = Pb.ImportProviderProfilesRequest.decode(body)
+      notify(config, "ImportProviderProfiles", request)
+      profiles = Enum.map(request.profiles, & &1.profile)
+      taken = Agent.get(config.store, & &1.profiles)
+
+      case Enum.filter(profiles, &Map.has_key?(taken, &1.id)) do
+        [] ->
+          Agent.update(config.store, fn store ->
+            Map.update!(store, :profiles, &Enum.into(profiles, &1, fn p -> {p.id, p} end))
+          end)
+
+          reply(conn, %Pb.ImportProviderProfilesResponse{imported: true, profiles: profiles})
+
+        conflicts ->
+          diagnostics =
+            for p <- conflicts,
+                do: %Pb.ProviderProfileDiagnostic{
+                  profile_id: p.id,
+                  field: "id",
+                  message: "provider profile #{p.id} already exists",
+                  severity: "error"
+                }
+
+          reply(conn, %Pb.ImportProviderProfilesResponse{
+            imported: false,
+            diagnostics: diagnostics
+          })
+      end
+    end
+
+    defp unary(conn, "ListProviders", body, config) do
+      request = Pb.ListProvidersRequest.decode(body)
+
+      wanted =
+        for pair <- String.split(request.label_selector, ",", trim: true), into: %{} do
+          [k, v] = String.split(pair, "=", parts: 2)
+          {k, v}
+        end
+
+      providers =
+        for {name, entry} <- Agent.get(config.store, & &1.providers),
+            Enum.all?(wanted, fn {k, v} -> entry.labels[k] == v end),
+            do: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.Provider{
+              metadata: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.ObjectMeta{
+                name: name,
+                labels: entry.labels
+              },
+              type: entry.type
+            }
+
+      reply(conn, %Pb.ListProvidersResponse{providers: providers})
+    end
+
+    # As the real one, with the provider's credentials left out.
+    defp unary(conn, "GetProvider", body, config) do
+      %{name: name} = Pb.GetProviderRequest.decode(body)
+      notify(config, "GetProvider", %{name: name})
+
+      case Agent.get(config.store, & &1.providers[name]) do
+        nil ->
+          error(conn, 5, "provider not found")
+
+        entry ->
+          reply(conn, %Pb.ProviderResponse{
+            provider: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.Provider{
+              metadata: %ObjectMeta{name: name, labels: entry.labels},
+              type: entry.type
+            }
+          })
+      end
+    end
+
+    defp unary(conn, "DeleteProvider", body, config) do
+      request = Pb.DeleteProviderRequest.decode(body)
+      mode = Agent.get(config.store, & &1[:delete_provider])
+
+      outcome =
+        case mode || config[:delete_provider] || :completed do
+          :completed ->
+            Agent.update(
+              config.store,
+              &Map.update!(&1, :providers, fn p -> Map.delete(p, request.name) end)
+            )
+
+            :DELETION_OUTCOME_COMPLETED
+
+          :accepted ->
+            :DELETION_OUTCOME_ACCEPTED
+
+          :unspecified ->
+            :DELETION_OUTCOME_UNSPECIFIED
+        end
+
+      # Told once the store has it, so what is waited on is there to read.
+      notify(config, "DeleteProvider", request)
+      reply(conn, %Pb.DeleteProviderResponse{outcome: outcome})
     end
 
     defp unary(conn, "GetSandbox", body, config) do
@@ -449,10 +688,11 @@ defmodule HalC2.Test.FakeOpenShell do
 
       case Map.get(config, :delete, :completed) do
         :completed ->
-          Agent.update(
-            config.store,
-            &update_in(&1.sandboxes, fn s -> Map.delete(s, request.name) end)
-          )
+          Agent.update(config.store, fn store ->
+            store
+            |> Map.update!(:sandboxes, &Map.delete(&1, request.name))
+            |> Map.update!(:policies, &Map.delete(&1, request.name))
+          end)
 
           reply(conn, %Pb.DeleteSandboxResponse{outcome: :DELETION_OUTCOME_COMPLETED})
 
@@ -526,8 +766,13 @@ defmodule HalC2.Test.FakeOpenShell do
 
           io = %{conn: conn, buffer: buffer, pending: rest, eof: false}
           Process.put(:fake_io, io)
-          run = Map.get(config, :exec, &echo/2)
-          run.(start.command, io_funs())
+          # A handler of three arguments also gets the start request (its workdir and
+          # environment).
+          case Map.get(config, :exec, &echo/2) do
+            run when is_function(run, 3) -> run.(start.command, io_funs(), start)
+            run -> run.(start.command, io_funs())
+          end
+
           Process.get(:fake_io).conn
       end
     end
@@ -635,6 +880,9 @@ defmodule HalC2.Test.FakeOpenShell do
       |> put_resp_header("content-type", "application/grpc")
       |> send_resp(200, frame(module.encode(message)))
     end
+
+    defp workspace(%{selection: {:workspace, name}}), do: name
+    defp workspace(_scope), do: ""
 
     defp error(conn, status, message) do
       conn

@@ -195,7 +195,7 @@ defmodule HalC2.JsonRpc.Connection do
 
         Subprocess.start(
           cmd,
-          Keyword.take(opts, [:cd, :env, :stderr_prefix, :stderr_tail, :durable])
+          Keyword.take(opts, [:cd, :env, :stderr_prefix, :stderr_tail, :durable, :sandbox])
         )
     end
   end

@@ -1508,7 +1508,13 @@ defmodule HalC2.Orchestration.TurnWriter do
       )
 
     cwd = (StreamState.get(stream, "provider-session")[session_id(stream, ids)] || %{})["cwd"]
-    %{thread_id: thread_id, turn: %{ids: ids, cwd: cwd, run_ordinal: run["ordinal"]}}
+    thread = StreamState.get(stream, "thread")[thread_id] || %{}
+    sandbox = get_in(thread, ["plugin", "sandboxed"]) == true
+
+    %{
+      thread_id: thread_id,
+      turn: %{ids: ids, cwd: cwd, run_ordinal: run["ordinal"], sandbox: sandbox}
+    }
   end
 
   # The session a run ran in, as its provider thread names it: one made before instances
@@ -1716,6 +1722,11 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   defp stopped_by(%{"stoppedBy" => "agent"}), do: "Stopped by an agent"
   defp stopped_by(_request), do: "Stopped by user"
+
+  # A sandboxed run has no checkpoint: its agent worked in the sandbox's copy of the
+  # folder, which is a pull request's checkout whose `.gitattributes` would have git
+  # here run this machine's filters on what the pull request holds.
+  defp capture_checkpoint(%{sandbox: true}, _at), do: nil
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
     # Its own lane: a finish can run inside the turn's own start (a wake

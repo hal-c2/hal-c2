@@ -66,6 +66,35 @@ defmodule HalC2.TurnWatchPropTest do
     end
   end
 
+  # Two recoveries in a row each resume the subagent, the second one already running.
+  test "a subagent resumed by a second recovery while it runs" do
+    m = __MODULE__
+
+    cmds = [
+      {:set, {:var, 1}, {:call, m, :start_run, []}},
+      {:set, {:var, 2}, {:call, m, :add_work, [:native]}},
+      {:set, {:var, 3}, {:call, m, :complete, []}},
+      {:set, {:var, 4}, {:call, m, :start_run, []}},
+      {:set, {:var, 5}, {:call, m, :stop_crashed, []}},
+      {:set, {:var, 6}, {:call, m, :start_run, []}},
+      {:set, {:var, 7}, {:call, m, :complete, []}},
+      {:set, {:var, 8}, {:call, m, :start_run, []}},
+      {:set, {:var, 9}, {:call, m, :refuse, []}},
+      {:set, {:var, 10}, {:call, m, :fail_unrecorded, [[]]}},
+      {:set, {:var, 11}, {:call, m, :recover, [:after_answer, :mid, [1]]}},
+      {:set, {:var, 12}, {:call, m, :refuse, []}},
+      {:set, {:var, 13}, {:call, m, :fail_unrecorded, [[]]}},
+      {:set, {:var, 14}, {:call, m, :recover, [:during_try, :mid, [1]]}},
+      {:set, {:var, 15}, {:call, m, :exit_runtime, [:crash]}}
+    ]
+
+    Process.flag(:trap_exit, true)
+    start()
+    {_history, _state, result} = run_commands(__MODULE__, cmds)
+    stop()
+    assert result == :ok
+  end
+
   defp start do
     flush_traces()
     for key <- [:runs, :work, :runtime, :spawned], do: Process.delete({__MODULE__, key})
@@ -781,9 +810,11 @@ defmodule HalC2.TurnWatchPropTest do
     HalC2.Orchestration.NativeSubagent.resume(%{run: run_id(ordinal)}, entity, "go on")
     item = &Map.merge(&1, %{"status" => "running", "completedAt" => nil})
 
+    # A second recovery can resume a subagent whose item is already running: upsert
+    # then has nothing to write.
     :ok =
       HalC2.Streams.transact(child_id(id), :thread, fn stream ->
-        {[Orchestration.upsert(stream, "turn-item", child_item(id), item)], :ok}
+        {List.wrap(Orchestration.upsert(stream, "turn-item", child_item(id), item)), :ok}
       end)
   end
 

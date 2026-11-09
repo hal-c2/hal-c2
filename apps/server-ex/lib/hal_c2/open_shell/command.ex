@@ -10,6 +10,9 @@ defmodule HalC2.OpenShell.Command do
       reuse URL --ca FILE --cert FILE --key FILE
                                            use a gateway you run yourself
       uninstall [--drain] [--force]        remove the gateway (or forget a reused one)
+      reap [--root DIR]                    delete review sandboxes past their time (the
+                                           reaper's timer runs it every minute, naming
+                                           the OpenShell directory it was written for)
       run --script FILE [--archive FILE]   (dev) stage it, and write the line that runs
                                            it in the foreground to FILE
 
@@ -26,7 +29,8 @@ defmodule HalC2.OpenShell.Command do
          hal-c2-service openshell status | check
          hal-c2-service openshell rotate [--drain] [--force]
          hal-c2-service openshell reuse https://HOST:PORT --ca FILE --cert FILE --key FILE
-         hal-c2-service openshell uninstall [--drain] [--force]\
+         hal-c2-service openshell uninstall [--drain] [--force]
+         hal-c2-service openshell reap [--root DIR]\
   """
 
   @doc "Runs a subcommand and prints its outcome; exits 1 on failure."
@@ -55,6 +59,7 @@ defmodule HalC2.OpenShell.Command do
              ca: :string,
              cert: :string,
              key: :string,
+             root: :string,
              script: :string
            ]
          ) do
@@ -98,6 +103,9 @@ defmodule HalC2.OpenShell.Command do
         with {:ok, _} <- Install.reuse(endpoint, Keyword.take(opts, [:ca, :cert, :key])),
              do: {:ok, "This MC now uses the OpenShell gateway at #{endpoint}."}
 
+      {opts, ["reap"], []} ->
+        with :ok <- reaps_here(opts[:root]), do: reap()
+
       {opts, ["uninstall"], []} ->
         with :ok <- Install.uninstall(Keyword.take(opts, [:drain, :force])),
              do: {:ok, "OpenShell removed."}
@@ -106,6 +114,51 @@ defmodule HalC2.OpenShell.Command do
         {:error, @usage}
     end
   end
+
+  # A reaper's unit names the OpenShell directory of the home it was written for. One
+  # whose environment no longer reaches that home reaps nothing rather than another
+  # home's gateway.
+  defp reaps_here(nil), do: :ok
+
+  defp reaps_here(root) do
+    if (HalC2.Paths.canonical(root) || Path.expand(root)) == OpenShell.root(),
+      do: :ok,
+      else:
+        {:error,
+         "[reaper-wrong-home] This reaper was written for the HAL-C2 home whose OpenShell directory is #{root}, but it reached #{OpenShell.root()}, so it reaped nothing. Run `hal-c2-service openshell install` from that home again to rewrite its reaper."}
+  end
+
+  # Only this MC's own sandboxes are listed and deleted, so a shared gateway is no
+  # reason to leave them running.
+  defp reap do
+    case OpenShell.Client.connect_unchecked() do
+      {:ok, conn} ->
+        result = HalC2.OpenShell.Review.reap(conn, System.os_time(:second))
+        OpenShell.Client.disconnect(conn)
+
+        case result do
+          {:ok, []} ->
+            {:ok, "No review sandbox is past its time."}
+
+          {:ok, names} ->
+            {:ok, "Deleted review sandboxes past their time: #{Enum.join(names, ", ")}"}
+
+          {:error, {:not_deleted, deleted, failed}} ->
+            left = Enum.map_join(failed, "; ", &left_behind/1)
+            done = if deleted == [], do: "", else: " Deleted: #{Enum.join(deleted, ", ")}."
+            {:error, "Reaping review sandboxes left some behind: #{left}.#{done}"}
+        end
+
+      {:error, :not_installed} ->
+        {:ok, "OpenShell is not installed; no review sandbox to reap."}
+
+      {:error, reason} ->
+        {:error, "Reaping review sandboxes failed: #{inspect(reason)}"}
+    end
+  end
+
+  defp left_behind({kind, why}) when is_atom(kind), do: "#{kind} not listed: #{inspect(why)}"
+  defp left_behind({name, why}), do: "#{name}: #{inspect(why)}"
 
   @doc "What `status` prints for an `HalC2.OpenShell.Install.status/0`."
   def format_status(status) do

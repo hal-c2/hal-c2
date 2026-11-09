@@ -62,6 +62,16 @@ backed up, and put back if the new gateway fails its check.
   refuses (`unit-not-ours`) a unit under its name that another home wrote. The instance
   hashes the home's path with every symlink resolved, so a home reached through a link is
   one home; one reached through a bind mount, or moved, is not, so installed.json records
-  the instance and a home refuses (`home-moved`) while the recorded one's service is still
-  there. Podman's driver never removes its network, so uninstall leaves `hal-c2-<instance>`
-  behind.
+  the instance and a home refuses (`home-moved`) while the recorded one's service or reaper
+  is still there. Podman's driver never removes its network, so uninstall leaves
+  `hal-c2-<instance>` behind.
+- The reaper beside it (`hal-c2-openshell-<instance>-reap.timer` and `.service`, launchd
+  `io.github.halc2.openshell.<instance>.reap`) is per home too, under the same ownership
+  check. It stops before the gateway, and both before their units are written or
+  removed, so a reaper that does not stop changes nothing (`gateway-stop-failed`), and
+  a gateway that does not stop gets its reaper started again. Its
+  units pin the home's variables and every XDG base, and its command names the home's
+  OpenShell directory (`reap --root`). A reaper that reaches another directory, symlinks
+  resolved, fails (`reaper-wrong-home`) instead of reaping there. It lists only sandboxes
+  labelled with its home's instance (`halc2.github.io/home`), as the MC's start-up cleanup
+  does, so homes that share an environment id never delete each other's.

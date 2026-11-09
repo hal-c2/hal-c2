@@ -27,7 +27,11 @@ defmodule HalC2.OpenShell.Manifest do
       "ghcr.io/nvidia/openshell/supervisor:0.1.7@sha256:a07864bd0c546716039c2000a919f50ce8f7f1f67ba37dda350cf64d3a7cfb06",
     # A sandbox created without an image of its own; reviews name theirs (#1412).
     default_workload:
-      "nvcr.io/nvidia/base/ubuntu:24.04@sha256:d9461f428eea54e553add3a5158a0f245c6e1ea73efc59fff8e98e3d4a38e378"
+      "nvcr.io/nvidia/base/ubuntu:24.04@sha256:d9461f428eea54e553add3a5158a0f245c6e1ea73efc59fff8e98e3d4a38e378",
+    # Code reviews (#1412): OpenShell Community's base image, with git, Claude Code at
+    # /usr/local/bin/claude and Codex at /usr/bin/codex, which the review policy names.
+    review_workload:
+      "ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e"
   }
 
   @provenance %{

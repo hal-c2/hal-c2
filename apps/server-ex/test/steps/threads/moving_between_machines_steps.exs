@@ -1155,6 +1155,13 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     World.patch_thread(context, title, %{"plugin" => mark})
   end
 
+  # A plugin whose manifest does not keep its threads, but which ran this one in a sandbox.
+  step "{string} runs in a review sandbox the plugin {string} opened on the machine",
+       %{args: [title, plugin]} = context do
+    mark = %{"id" => plugin, "kind" => "review", "listed" => false, "sandboxed" => true}
+    World.patch_thread(context, title, %{"plugin" => mark})
+  end
+
   # A thread from before the manifest said so: its mark has no `"stays"`.
   step "{string} was started by the plugin {string} before it kept its threads on the machine",
        %{args: [title, plugin]} = context do

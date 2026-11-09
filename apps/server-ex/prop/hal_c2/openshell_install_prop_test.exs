@@ -2,9 +2,10 @@ defmodule HalC2.OpenShellInstallPropTest do
   @moduledoc """
   `HalC2.OpenShell.Install` against a model of what an install promises, over any
   sequence of installs and updates (as a service or for the dev run, with the
-  gateway's preflight or its check after start failing, a service that will not
-  stop, or a backup that cannot be written), certificate rotations, uninstalls
-  (also of a service that will not stop), the gateway writing its database, and the gateway of a user (`reuse`)
+  gateway's preflight or its check after start failing, a service or its reaper
+  that will not stop, or a backup that cannot be written), certificate rotations,
+  uninstalls (also of a service or a reaper that will not stop),
+  the gateway writing its database, and the gateway of a user (`reuse`)
   that is clean or already holds another HAL-C2 environment's sandboxes, or comes
   to hold one later.
 
@@ -18,13 +19,14 @@ defmodule HalC2.OpenShellInstallPropTest do
 
     * an install, update or rotation that fails changes nothing: the installed
       state, the certificates, the database and the unit are what they were; one
-      over a service that will not stop fails, and one whose backup fails leaves
-      the service it stopped running again;
-    * an uninstall over a service that will not stop fails and removes nothing, and
-      the service's unit is not rewritten over one that will not stop;
+      over a service, or a reaper, that will not stop fails, and one whose backup
+      fails leaves the service it stopped running again;
+    * an uninstall over a service or a reaper that will not stop fails and removes
+      nothing, and the units are not rewritten over one that will not stop;
     * one that succeeds installs what was asked, and only a fresh install or a
       rotation brings new certificates;
-    * a gateway run as a service has its current unit, running; any other has none;
+    * a gateway run as a service has its current unit, running, and its reaper
+      running beside it, also after a stop that failed; any other has neither;
     * uninstalling removes the certificates and the database with the gateway;
     * the CA's key never stays on disk, the MC's client certificate comes from a CA
       of its own that is not the gateway's, keys and the configuration are
@@ -37,8 +39,9 @@ defmodule HalC2.OpenShellInstallPropTest do
       never touches the other environment's;
     * another HAL-C2 home on the machine installing, updating or uninstalling its
       gateway as a service changes none of this home's: it never names this home's
-      unit to the service manager, and this home's unit, certificates, database and
-      installed state are what they were. It has a service manager stand-in of its
+      units, the gateway's or its reaper's, to the service manager, and this home's
+      units, certificates, database and installed state are what they were; a home
+      with no gateway unit has no reaper either. It has a service manager stand-in of its
       own, so this home's unit keeps running whatever the other home's does;
     * this home reached by another spelling, through a link to it or to its parent,
       is the same home: every step through it is the step through the home itself;
@@ -190,9 +193,10 @@ defmodule HalC2.OpenShellInstallPropTest do
          {:call, __MODULE__, :install,
           [oneof(["0.1.6", "0.1.7"]), oneof(["managed", "foreground"]), outcome()]}},
         {2,
-         {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails, :stop_fails, :backup_fails])]}},
+         {:call, __MODULE__, :rotate,
+          [oneof([:ok, :smoke_fails, :stop_fails, :reap_stop_fails, :backup_fails])]}},
         {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
-        {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails])]}},
+        {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails, :reap_stop_fails])]}},
         {2, {:call, __MODULE__, :other_home, [oneof([:install, :update, :uninstall])]}},
         {1, {:call, __MODULE__, :spell, [oneof([:direct, :linked_home, :linked_parent])]}},
         {1,
@@ -200,7 +204,11 @@ defmodule HalC2.OpenShellInstallPropTest do
           [oneof(["0.1.6", "0.1.7"]), oneof([:install, :rotate, :reuse, :uninstall, :check])]}}
       ] ++
         if(managed?(state),
-          do: [{1, {:call, __MODULE__, :rewrite_unit_stop_fails, [oneof(["0.1.6", "0.1.7"])]}}],
+          do: [
+            {1,
+             {:call, __MODULE__, :rewrite_unit_stop_fails,
+              [oneof(["0.1.6", "0.1.7"]), oneof([:stop_fails, :reap_stop_fails])]}}
+          ],
           else: []
         ) ++
         if(writable?(state),
@@ -233,8 +241,12 @@ defmodule HalC2.OpenShellInstallPropTest do
         {1, :smoke_fails},
         {1, :preflight_fails},
         {1, :stop_fails},
+        {1, :reap_stop_fails},
         {1, :backup_fails}
       ])
+
+  # The reaper stops before the gateway, so either not stopping fails the same way.
+  defguardp stop_fails(outcome) when outcome in [:stop_fails, :reap_stop_fails]
 
   def precondition(state, {:call, _, :write_db, _}), do: writable?(state)
   def precondition(state, {:call, _, :rewrite_unit_stop_fails, _}), do: managed?(state)
@@ -275,14 +287,14 @@ defmodule HalC2.OpenShellInstallPropTest do
         seen(state, :preflight)
 
       # Only a gateway that runs as a service is stopped before an update.
-      outcome == :stop_fails and match?({"managed", _, _}, state.installed) ->
+      stop_fails(outcome) and match?({"managed", _, _}, state.installed) ->
         seen(state, :stop_failed)
 
       # Any gateway of its own is backed up before an update; a fresh install has none.
       outcome == :backup_fails and state.installed != nil ->
         seen(state, :backup_failed)
 
-      outcome in [:ok, :stop_fails, :backup_fails] or mode == "foreground" ->
+      outcome in [:ok, :backup_fails] or stop_fails(outcome) or mode == "foreground" ->
         previous = with {_, v, _} <- state.installed, do: v
         seen(%{state | installed: {mode, version, previous}}, :ok)
 
@@ -304,7 +316,7 @@ defmodule HalC2.OpenShellInstallPropTest do
       nil -> seen(state, :not_installed)
       {"external", _, _} -> seen(state, :external)
       {"managed", _, _} when outcome == :smoke_fails -> seen(state, :smoke)
-      {"managed", _, _} when outcome == :stop_fails -> seen(state, :stop_failed)
+      {"managed", _, _} when stop_fails(outcome) -> seen(state, :stop_failed)
       _ when outcome == :backup_fails -> seen(state, :backup_failed)
       _ -> seen(%{state | pki: gen}, :ok)
     end
@@ -313,8 +325,9 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp step(%{installed: nil} = state, {:call, _, :uninstall, _}),
     do: seen(state, :not_installed)
 
-  defp step(%{installed: {"managed", _, _}} = state, {:call, _, :uninstall, [:stop_fails]}),
-    do: seen(state, :stop_failed)
+  defp step(%{installed: {"managed", _, _}} = state, {:call, _, :uninstall, [outcome]})
+       when stop_fails(outcome),
+       do: seen(state, :stop_failed)
 
   defp step(state, {:call, _, :uninstall, _}),
     do: seen(%{state | installed: nil, pki: nil, db: nil, shared: false, retained: false}, :ok)
@@ -390,7 +403,7 @@ defmodule HalC2.OpenShellInstallPropTest do
   end
 
   defp seen(state, result) do
-    unit = if match?({"managed", _, _}, state.installed), do: {true, true}, else: :absent
+    unit = if match?({"managed", _, _}, state.installed), do: {true, true, true}, else: :absent
 
     {state,
      %{
@@ -411,7 +424,7 @@ defmodule HalC2.OpenShellInstallPropTest do
     {release, archive} = releases[version]
     preflight(outcome == :preflight_fails)
 
-    stop_fails(outcome == :stop_fails, fn ->
+    failing(outcome, fn ->
       backup_fails(outcome == :backup_fails, fn ->
         Install.install(
           release: release,
@@ -468,7 +481,7 @@ defmodule HalC2.OpenShellInstallPropTest do
     next_certificates()
     preflight(false)
 
-    stop_fails(outcome == :stop_fails, fn ->
+    failing(outcome, fn ->
       backup_fails(outcome == :backup_fails, fn ->
         Install.rotate(smoke: smoke(outcome == :smoke_fails))
       end)
@@ -491,15 +504,21 @@ defmodule HalC2.OpenShellInstallPropTest do
     end
   end
 
-  # Runs `fun` with the service manager failing every stop, or not.
-  defp stop_fails(fails, fun) do
-    path = Path.join([Process.get(:openshell).home, "bin", "stop-fails"])
-    if fails, do: File.write!(path, "")
+  # Runs `fun` with the service manager failing every stop of the gateway
+  # (`:stop_fails`) or of its reaper (`:reap_stop_fails`), or neither.
+  defp failing(outcome, fun) do
+    bin = Path.join(Process.get(:openshell).home, "bin")
+
+    paths =
+      for {^outcome, file} <- [stop_fails: "stop-fails", reap_stop_fails: "reap-stop-fails"],
+          do: Path.join(bin, file)
+
+    Enum.each(paths, &File.write!(&1, ""))
 
     try do
       fun.()
     after
-      File.rm_rf!(path)
+      Enum.each(paths, &File.rm_rf!/1)
     end
   end
 
@@ -530,17 +549,17 @@ defmodule HalC2.OpenShellInstallPropTest do
   end
 
   # Writes the unit of `version` over the running gateway while it will not stop.
-  def rewrite_unit_stop_fails(version) do
+  def rewrite_unit_stop_fails(version, outcome) do
     state = %{OpenShell.state() | "version" => version, "driver" => "docker"}
 
-    case stop_fails(true, fn -> Service.install(state) end) do
+    case failing(outcome, fn -> Service.install(state) end) do
       {:error, _} -> observe(:stop_failed)
       other -> observe(other)
     end
   end
 
   def uninstall(outcome) do
-    result = stop_fails(outcome == :stop_fails, fn -> Install.uninstall() end)
+    result = failing(outcome, fn -> Install.uninstall() end)
     drop_retained()
     Process.put(:openshell, %{Process.get(:openshell) | current: nil})
     observe(result)
@@ -551,9 +570,10 @@ defmodule HalC2.OpenShellInstallPropTest do
   def other_home(op) do
     ctx = Process.get(:openshell)
     manager = Service.manager()
-    unit = Service.unit_path(manager)
-    name = Service.name(manager)
-    before = File.read(unit)
+    units = [Service.unit_path(manager) | Service.reaper_paths(manager)]
+    reaper = if manager == :systemd, do: [:systemd, :timer], else: [:launchd]
+    names = [Service.name(manager) | Enum.map(reaper, &Service.reap_name/1)]
+    before = Enum.map(units, &File.read/1)
     log = Path.join(ctx.other.bin, "calls.log")
     File.write!(log, "")
 
@@ -572,8 +592,8 @@ defmodule HalC2.OpenShellInstallPropTest do
       end)
 
     calls = Storage.service_calls(log)
-    named = Enum.filter(calls, &String.contains?(&1, name))
-    unchanged = File.read(unit) == before
+    named = Enum.filter(calls, fn call -> Enum.any?(names, &String.contains?(call, &1)) end)
+    unchanged = Enum.map(units, &File.read/1) == before
 
     observe(
       {:other, if(named == [] and unchanged, do: classify(result), else: {:touched, named})}
@@ -752,7 +772,8 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp observe(result, count? \\ false) do
     state = OpenShell.state()
     ca = OpenShell.credentials(state)[:ca]
-    unit = Service.unit_path(Service.manager())
+    manager = Service.manager()
+    unit = Service.unit_path(manager)
 
     %{
       result: classify(result),
@@ -768,15 +789,29 @@ defmodule HalC2.OpenShellInstallPropTest do
           _ -> nil
         end,
       unit:
-        if File.exists?(unit) do
-          status = Service.status(state)
-          {status["current"], status["running"]}
-        else
-          :absent
+        cond do
+          File.exists?(unit) ->
+            status = Service.status(state)
+            {status["current"], status["running"], reaping?()}
+
+          Enum.any?(Service.reaper_paths(manager), &File.exists?/1) ->
+            :reaper_left
+
+          reaping?() ->
+            :reaper_running
+
+          true ->
+            :absent
         end,
       clean: clean?(state),
       safe: safe?(count?)
     }
+  end
+
+  # The stand-in's reaper runs (systemd's timer is active, launchd's agent loaded).
+  defp reaping? do
+    bin = Path.join(Process.get(:openshell).home, "bin")
+    Enum.any?(["reap-active", "reap-loaded"], &File.exists?(Path.join(bin, &1)))
   end
 
   defp classify({:ok, _}), do: :ok

@@ -302,6 +302,27 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
+  step "the gateway's reaper will not stop", context do
+    File.write!(Path.join(context.openshell.bin, "reap-stop-fails"), "")
+    context
+  end
+
+  # systemd's reap timer stops; the service it starts does not.
+  step "the gateway's reap service will not stop", context do
+    File.write!(Path.join(context.openshell.bin, "reap-service-stop-fails"), "")
+    context
+  end
+
+  # The service manager stand-in's reaper: systemd's timer active, launchd's agent loaded.
+  step "its reaper runs", context do
+    assert Enum.any?(
+             ["reap-active", "reap-loaded"],
+             &File.exists?(Path.join(context.openshell.bin, &1))
+           )
+
+    context
+  end
+
   step "the gateway's backup cannot be written", context do
     backups = Path.join(OpenShell.root(), "backups")
     HalC2.Paths.mkdir_private!(backups)
@@ -388,12 +409,16 @@ defmodule HalC2.Steps.Platform.OpenShell do
     assert state["endpoint"] == "https://127.0.0.1:#{port}"
     assert File.read!(OpenShell.config_path()) =~ ~s(bind_address = "127.0.0.1:#{port}")
     assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, state)
+    for {path, unit} <- Service.reaper(:systemd), do: assert(File.read!(path) == unit)
 
     assert Storage.service_calls(context.openshell.log) == [
+             "systemctl --user stop #{Service.reap_name(:timer)}",
+             "systemctl --user stop #{Service.reap_name(:systemd)}",
              "systemctl --user stop #{Service.name(:systemd)}",
              "systemctl --user daemon-reload",
              "systemctl --user enable #{Service.name(:systemd)}",
-             "systemctl --user restart #{Service.name(:systemd)}"
+             "systemctl --user restart #{Service.name(:systemd)}",
+             "systemctl --user enable --now #{Service.reap_name(:timer)}"
            ]
 
     context
@@ -782,8 +807,9 @@ defmodule HalC2.Steps.Platform.OpenShell do
       Map.put(context, :before, %{
         state: OpenShell.state(),
         unit: File.read!(Service.unit_path(:systemd)),
+        reaper: Service.reaper(:systemd),
         ca: ca(),
-        name: Service.name(:systemd)
+        names: [Service.name(:systemd), Service.reap_name(:systemd), Service.reap_name(:timer)]
       })
 
     FakeOpenShell.queue_certificates(context.openshell.control)
@@ -802,16 +828,19 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
-  step "the other home never asked the service manager about this home's service", context do
+  step "the other home never asked the service manager about this home's service or its reaper",
+       context do
     calls = Storage.service_calls(context.openshell.log)
     assert Enum.any?(calls, &(&1 =~ "restart"))
-    for call <- calls, do: refute(call =~ context.before.name, call)
+    assert Enum.any?(calls, &(&1 =~ "-reap.timer"))
+    for call <- calls, name <- context.before.names, do: refute(call =~ name, call)
     context
   end
 
-  step "this home's gateway, service and certificates are as they were", context do
+  step "this home's gateway, service, reaper and certificates are as they were", context do
     assert OpenShell.state() == context.before.state
     assert File.read!(Service.unit_path(:systemd)) == context.before.unit
+    for {path, unit} <- context.before.reaper, do: assert(File.read!(path) == unit)
     assert ca() == context.before.ca
     context
   end
@@ -821,6 +850,17 @@ defmodule HalC2.Steps.Platform.OpenShell do
     other = in_other_home(context, fn -> Service.render(:systemd, state) end)
     File.write!(Service.unit_path(:systemd), other)
     reset_calls(context)
+    context
+  end
+
+  step "the reaper runs naming another home's OpenShell directory", context do
+    root = Path.join(OpenShell.root(), "elsewhere")
+    Map.put(context, :result, OpenShell.Command.command(["reap", "--root", root]))
+  end
+
+  step "the reap is refused because {string}", %{args: [code]} = context do
+    assert {:error, "[" <> rest} = context.result
+    assert String.starts_with?(rest, code <> "]"), inspect(context.result)
     context
   end
 

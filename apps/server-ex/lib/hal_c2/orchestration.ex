@@ -1599,6 +1599,16 @@ defmodule HalC2.Orchestration do
       refusal = Map.get(turn, :refusal) ->
         HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", refusal)
 
+      # A sandboxed thread whose driver cannot run there, or whose sandbox is gone.
+      reason =
+          Map.get(turn, :sandbox) && HalC2.OpenShell.Review.refusal(thread_id, turn.ids.driver) ->
+        HalC2.Orchestration.TurnWriter.abandon(thread_id, turn.ids.run, "failed", %{
+          "class" => "provider_error",
+          "code" => "sandbox_unavailable",
+          "message" => reason,
+          "retryable" => false
+        })
+
       true ->
         start_turn_now(thread_id, turn)
     end
@@ -1669,7 +1679,11 @@ defmodule HalC2.Orchestration do
 
     case restore_worktree(thread_id) do
       :ok ->
-        :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
+        # A sandboxed agent changes its sandbox's copy, never this folder, and git here
+        # would run the filters the folder's own attributes pick (`TurnWriter`).
+        unless Map.get(turn, :sandbox),
+          do: :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
+
         # A run that starts a new conversation first stops the provider's idle session,
         # which would go on in the conversation it holds.
         :ok = leave_conversation(thread_id, turn)
@@ -5687,6 +5701,9 @@ defmodule HalC2.Orchestration do
       command_refusal:
         compact_refusal(state, ordinal, command, provider_thread, handoff) ||
           goal_refusal(command, driver),
+      # The thread's agent runs in its review sandbox, never on this machine
+      # (`HalC2.OpenShell.Review`): what the runtimes and `begin_turn_now/2` read.
+      sandbox: get_in(thread, ["plugin", "sandboxed"]) == true,
       run_ordinal: ordinal,
       started_ms: System.system_time(:millisecond),
       text: provider_text,

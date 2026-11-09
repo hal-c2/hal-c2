@@ -8,6 +8,8 @@ defmodule HalC2.CodeReviewTest do
   """
   use ExUnit.Case, async: false
 
+  alias HalC2.Test.{FakeOpenShell, FakeSandbox}
+
   @moduletag :tmp_dir
   @id "code-review"
   @server HalC2Plugins.CodeReview
@@ -15,6 +17,15 @@ defmodule HalC2.CodeReviewTest do
   @package Path.expand("../../../../plugins/code-review", __DIR__)
   @support Path.expand("../support", __DIR__)
   @git_config ~w(GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_GLOBAL)
+
+  defmodule Dropped do
+    # A test conn whose answer cannot be sent, as Bandit raises once its peer has gone.
+    def wrap(%Plug.Conn{adapter: {Plug.Adapters.Test.Conn, state}} = conn),
+      do: %{conn | adapter: {__MODULE__, state}}
+
+    def read_req_body(state, opts), do: Plug.Adapters.Test.Conn.read_req_body(state, opts)
+    def send_resp(_state, _status, _headers, _body), do: raise("the connection is closed")
+  end
 
   setup %{tmp_dir: dir} do
     restore = [
@@ -485,6 +496,20 @@ defmodule HalC2.CodeReviewTest do
            |> Enum.all?(&(&1["name"] != "code_review_report"))
   end
 
+  # Its checkout went with the stop, so comments on its lines would land in the summary.
+  test "a review stopped on this machine takes no report from its agent", _context do
+    review = start_review()
+    {:ok, _} = call("stop", %{"key" => @key})
+    arguments = %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
+
+    assert {:error, _, message} =
+             HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+
+    assert message =~ "no longer running"
+    settle()
+    assert %{"status" => "failed", "error" => "Stopped.", "verdict" => nil} = review()
+  end
+
   test "the first report of a run is final", _context do
     review = start_review()
     first = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
@@ -531,7 +556,7 @@ defmodule HalC2.CodeReviewTest do
 
   test "a pull request nobody trusted is reviewed only at the commit the user approved, and never posted on its own",
        context do
-    rules!(context, head: 1, association: "NONE")
+    sandboxed!(context)
     {:ok, _} = put_settings(%{"publishing" => "automatic"})
     settle()
 
@@ -545,27 +570,23 @@ defmodule HalC2.CodeReviewTest do
 
     assert {:error, _} = call("approve", %{"key" => @key, "headSha" => context.shas[2]})
     {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
-    settle()
-    assert %{"status" => "running", "threadId" => thread_id} = review()
 
-    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
-    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+    # It runs in a sandbox, whose agent reports an approval.
+    assert_receive {:sandbox_reported, 200, _}, 15_000
+    assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
     settle()
-
-    assert %{"status" => "waiting"} = review()
+    assert %{"status" => "waiting", "sandboxed" => true} = review()
     assert posts(context) == []
   end
 
   test "a push takes back the approval of a pull request nobody trusted, even pushed back",
        context do
-    rules!(context, head: 1, association: "NONE")
+    sandboxed!(context)
     settle()
     {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
     {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
-    settle()
-    assert %{"status" => "running", "threadId" => thread_id} = review()
-    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
-    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+    assert_receive {:sandbox_reported, 200, _}, 15_000
+    assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
     settle()
     first = context.shas[1]
     assert %{"status" => "waiting", "approved" => ^first} = review()
@@ -1298,13 +1319,14 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  @tag sandbox: [hang: true]
   test "an approval given again after a run stopped at a usage limit queues the review again",
        context do
-    rules!(context, head: 1, association: "NONE")
+    context = Map.merge(context, sandboxed!(context))
     settle()
     {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
     {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
-    settle()
+    assert_receive {:sandbox_turn, _}, 15_000
     assert %{"status" => "running", "threadId" => thread_id} = review()
     reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
 
@@ -1324,6 +1346,9 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "queued", "reviewedSha" => sha} = review()
     assert sha == context.shas[1]
+    # Its sandbox was deleted, files and all; the fake's directory outlives it.
+    assert_receive {:openshell_request, "DeleteSandbox", _}, 5_000
+    File.rm_rf!(Path.join(context.sandbox_root, "review"))
 
     {:ok, _} = call("unapprove", %{"key" => @key})
     assert %{"status" => "ready"} = review()
@@ -1767,6 +1792,658 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running"} = review()
   end
 
+  # A run whose thread could not be made left its checkout for the review's next run,
+  # which a review stopped, or failed and never started again, does not get.
+  test "a review whose thread cannot be made keeps no checkout", context do
+    fetch = Path.join(context.dir, "fetch.hold")
+    hold = Path.join(context.dir, "detail.hold")
+    on_exit(fn -> Enum.each([fetch, hold], &File.rm/1) end)
+    rules!(context, head: 1, detail: "while [ -e '#{hold}' ]; do sleep 0.05; done")
+    # Held at the fetch first, so the launch reads the pull request only once claimed.
+    File.write!(fetch, "")
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+    File.write!(hold, "")
+    File.rm!(fetch)
+    await_review(&is_binary(&1["checkout"]))
+    assert File.dir?(review()["checkout"])
+
+    put_instance("codex", %{"enabled" => false})
+    File.rm!(hold)
+    settle()
+
+    assert %{"status" => "failed", "error" => error} = review()
+    assert error =~ "turned off"
+    checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+    assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+  end
+
+  # Stop reaches a run past its claim only through the server, so a launch reading the
+  # pull request as Stop came went on to start the agent of a review shown as stopped.
+  test "a review stopped between its claim and its launch never starts its agent", context do
+    fetch = Path.join(context.dir, "fetch.hold")
+    hold = Path.join(context.dir, "detail.hold")
+    on_exit(fn -> Enum.each([fetch, hold], &File.rm/1) end)
+
+    rules!(context,
+      head: 1,
+      detail: "while [ -e '#{hold}' ]; do sleep 0.05; done"
+    )
+
+    # Held at the fetch first, so the launch reads the pull request only once claimed.
+    File.write!(fetch, "")
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+    File.write!(hold, "")
+    File.rm!(fetch)
+    await_review(&is_binary(&1["checkout"]))
+
+    %{"checkout" => checkout, "threadId" => thread_id} = review()
+    assert File.dir?(checkout)
+    {:ok, _} = call("stop", %{"key" => @key})
+    File.rm!(hold)
+    settle()
+
+    assert %{"status" => "failed", "error" => "Stopped."} = review()
+    assert thread(thread_id) == nil
+    checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+    assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+  end
+
+  # Sandboxed reviews (#1412).
+  describe "an untrusted pull request" do
+    setup context, do: sandboxed!(context)
+
+    test "is reviewed by an agent in a sandbox, which reports through the broker and is then deleted",
+         %{gateway: g} do
+      start_untrusted()
+
+      # Codex runs in the sandbox's checkout, with none of this machine's environment.
+      assert_receive {:sandbox_exec, ["codex", "app-server"],
+                      %{workdir: "/sandbox/review", environment: env}},
+                     15_000
+
+      refute Map.has_key?(env, "OPENAI_API_KEY")
+      refute Map.has_key?(env, "PATH")
+      assert env["HOME"] == "/sandbox/home"
+
+      assert_receive {:sandbox_reported, 200, body}, 15_000
+      refute JSON.decode!(body)["result"]["isError"]
+      assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-" <> _ = name}}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", %{name: ^name}}, 15_000
+
+      settle()
+      assert %{"sandboxed" => true, "verdict" => "approve", "status" => status} = review()
+      assert status != "failed"
+      assert FakeOpenShell.sandboxes(g) == %{}
+      assert FakeOpenShell.providers(g) == %{}
+    end
+
+    test "is reviewed by Claude in a sandbox too, given the broker and no other tool of HAL-C2",
+         %{gateway: g} do
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+      start_untrusted()
+
+      assert_receive {:sandbox_exec, ["claude" | args],
+                      %{workdir: "/sandbox/review", environment: env}},
+                     15_000
+
+      refute Map.has_key?(env, "ANTHROPIC_API_KEY")
+      assert ["--allowedTools", "mcp__hal-c2"] in Enum.chunk_every(args, 2, 1)
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+
+      settle()
+      assert %{"sandboxed" => true, "verdict" => "approve"} = review()
+      assert FakeOpenShell.sandboxes(g) == %{}
+    end
+
+    # A sandboxed agent has no HAL-C2 workers, so keeping agents to them takes nothing.
+    test "keeps the subagents of Claude in a sandbox while agents here are kept to the workers of HAL-C2" do
+      {:ok, _} = HalC2.Settings.update(&Map.put(&1, "nativeSubagents", "hal-c2"))
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+      start_untrusted()
+
+      assert_receive {:sandbox_exec, ["claude" | args], _}, 15_000
+      refute "--disallowedTools" in args
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+    end
+
+    test "keeps the subagents of Codex in a sandbox while agents here are kept to the workers of HAL-C2" do
+      {:ok, _} = HalC2.Settings.update(&Map.put(&1, "nativeSubagents", "hal-c2"))
+      start_untrusted()
+
+      assert_receive {:sandbox_thread_start, params}, 15_000
+      refute get_in(params, ["config", "features"])
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+    end
+
+    # Claude's launch arguments and home are this machine's: none of them reach the
+    # sandbox or the agent's argv.
+    test "gives Claude in a sandbox none of the launch arguments of this machine",
+         %{tmp_dir: dir} do
+      prompt = Path.join(dir, "host-prompt.txt")
+      File.write!(prompt, "host-only instructions")
+
+      launch_args =
+        Enum.join(
+          [
+            ~s(--settings '{"env":{"HOST_TOKEN":"sk-host-token"},"apiKeyHelper":"host-helper"}'),
+            "--mcp-config #{Path.join(dir, "host-mcp.json")}",
+            "--add-dir #{dir}",
+            "--append-system-prompt-file #{prompt}",
+            "--dangerously-skip-permissions"
+          ],
+          " "
+        )
+
+      put_claude(%{"launchArgs" => launch_args, "homePath" => Path.join(dir, "claude-home")})
+      assert_receive {:sandbox_exec, ["claude" | args], %{environment: env}}, 15_000
+      argv = Enum.join(args, " ")
+
+      for host <- [dir, "sk-host-token", "host-helper", "host-only", "--mcp-config"],
+          do: refute(argv =~ host, "#{host} reached the sandbox's argv")
+
+      refute "--dangerously-skip-permissions" in args
+      refute Map.has_key?(env, "CLAUDE_CONFIG_DIR")
+      refute Map.has_key?(env, "HOST_TOKEN")
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+    end
+
+    # Loading it runs or reads the checkout's own configuration on this machine.
+    test "loads no project environment for Claude in a sandbox", %{tmp_dir: dir} do
+      HalC2.Settings.update(
+        &Map.merge(&1, %{
+          "projectEnvironment" => "dotenv",
+          "projectEnvironmentFile" => Path.join(dir, "host.env")
+        })
+      )
+
+      put_claude(%{})
+      assert_receive {:sandbox_exec, ["claude" | _], _}, 15_000
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+      settle()
+
+      # A file that is not there would have said so on the thread.
+      %{"threadId" => thread_id} = review()
+      items = HalC2.StreamState.get(HalC2.Streams.state(thread_id), "turn-item") || %{}
+      refute Enum.any?(Map.keys(items), &String.starts_with?(&1, "turn-item:project-environment"))
+    end
+
+    # The sandbox runs the review image's Claude, not the one installed here.
+    test "runs Claude in a sandbox on a model the Claude installed here is too old for",
+         %{tmp_dir: dir} do
+      claude = Path.join(dir, "old-claude")
+      File.write!(claude, "#!/bin/sh\necho '2.1.0 (Claude Code)'\n")
+      File.chmod!(claude, 0o755)
+      put_instance("claudeAgent", %{"binaryPath" => claude})
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-opus-5-5"})
+      start_untrusted()
+
+      assert_receive {:sandbox_exec, ["claude" | _], _}, 15_000
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+    end
+
+    # The sandbox runs the review image's Codex, not the one installed here.
+    test "runs Codex in a sandbox while this release marks the Codex installed here broken" do
+      FakeOpenShell.put_env(
+        provider_compatibility: [
+          %{
+            "driver" => "codex",
+            "halC2Range" => ">=0",
+            "ranges" => [%{"range" => ">=0", "status" => "broken"}]
+          }
+        ]
+      )
+
+      start_untrusted()
+      assert_receive {:sandbox_exec, ["codex", "app-server"], _}, 15_000
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+    end
+
+    # This machine's skills, and where they are, are not the sandbox's.
+    test "sends Claude in a sandbox its message as written, with none of the skills of this machine",
+         %{tmp_dir: dir} do
+      home = Path.join(dir, "claude-home")
+
+      for {name, frontmatter} <- [
+            {"host-skill", "disable-model-invocation: true\n"},
+            {"other-skill", ""}
+          ] do
+        skill = Path.join([home, "skills", name])
+        File.mkdir_p!(skill)
+
+        File.write!(
+          Path.join(skill, "SKILL.md"),
+          "---\ndescription: Here only.\n#{frontmatter}---\nDo it.\n"
+        )
+      end
+
+      put_instance("claudeAgent", %{"homePath" => home})
+      prompt = "Review with $host-skill and then $other-skill as asked"
+
+      save_settings(%{
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5",
+        "prompt" => prompt
+      })
+
+      start_untrusted()
+      assert_receive {:sandbox_prompt, content}, 15_000
+
+      text =
+        content
+        |> List.wrap()
+        |> Enum.map_join("\n", &if(is_map(&1), do: &1["text"], else: &1))
+
+      assert text =~ prompt
+      refute text =~ home
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+    end
+
+    # Claude keeps its task list in its own config folder, which in a sandbox is the
+    # sandbox's: this machine's lists, whatever they are called, are not read.
+    @tag sandbox: [task_update: %{"taskId" => "1", "status" => "in_progress"}]
+    test "keeps the task list of Claude in a sandbox apart from the lists on this machine",
+         %{tmp_dir: dir} do
+      home = Path.join(dir, "claude-home")
+
+      for list <- ["sandboxed-session", "host-list"] do
+        tasks = Path.join([home, "tasks", list])
+        File.mkdir_p!(tasks)
+
+        File.write!(
+          Path.join(tasks, "1.json"),
+          JSON.encode!(%{"id" => "1", "subject" => "A task here", "status" => "pending"})
+        )
+      end
+
+      put_instance("claudeAgent", %{
+        "homePath" => home,
+        "env" => %{"CLAUDE_CODE_TASK_LIST_ID" => "host-list"}
+      })
+
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+      start_untrusted()
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+      thread_id = review()["threadId"]
+      await_idle(thread_id)
+
+      plans = HalC2.StreamState.list(HalC2.Streams.state(thread_id), "plan")
+      refute inspect(plans) =~ "A task here"
+    end
+
+    # An agent of the sandbox's needs no CLI here: its driver comes from the settings,
+    # and its model and options from the review's settings.
+    test "reviews on an agent that is not installed on this machine, with the model and options picked" do
+      FakeOpenShell.put_env(claude_command: ["hal-c2-test-no-claude"])
+
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), "claude-review"], %{
+          "driver" => "claudeAgent"
+        })
+      )
+
+      {:ok, providers} = HalC2.Plugins.Host.providers(@id)
+      refute Enum.any?(providers, &(&1["instanceId"] == "claude-review"))
+
+      save_settings(%{
+        "provider" => "claude-review",
+        "model" => "claude-haiku-4-5",
+        "modelOptions" => %{"effort" => "high"}
+      })
+
+      start_untrusted()
+      assert_receive {:sandbox_exec, ["claude" | args], _}, 15_000
+      assert ["--model", "claude-haiku-4-5"] in Enum.chunk_every(args, 2, 1)
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+    end
+
+    test "asks for a model to be named when the agent that reviews is not installed on this machine" do
+      FakeOpenShell.put_env(claude_command: ["hal-c2-test-no-claude"])
+      save_settings(%{"provider" => "claudeAgent", "model" => ""})
+      start_untrusted()
+      await_review(&(&1["status"] == "failed"))
+
+      assert review()["error"] =~
+               "Install it here, or name the model to review with in the settings"
+    end
+
+    @tag sandbox: [reports: 2]
+    test "takes one report of the two its agent sends at once", _context do
+      start_untrusted()
+      assert_receive {:sandbox_reported, first, one}, 15_000
+      assert_receive {:sandbox_reported, second, other}, 15_000
+
+      taken =
+        for {200, body} <- [{first, one}, {second, other}],
+            get_in(JSON.decode!(body), ["result", "structuredContent", "reported"]) == true,
+            do: body
+
+      assert length(taken) == 1
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+    end
+
+    # Git here would run this machine's filters on what the pull request's attributes
+    # route through them, and the agent changed only the sandbox's copy anyway.
+    test "a sandboxed review takes no checkpoint of its checkout", _context do
+      start_untrusted()
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+      thread_id = review()["threadId"]
+      await_idle(thread_id)
+
+      assert HalC2.StreamState.list(HalC2.Streams.state(thread_id), "checkpoint") == []
+
+      repos = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "repos")
+      [clone] = Path.wildcard(Path.join(repos, "**/*.git"))
+
+      assert {"", 0} =
+               System.cmd("git", ~w(for-each-ref refs/hal-c2/orchestration-v2/checkpoints),
+                 cd: clone
+               )
+    end
+
+    # A run stopped as its sandbox was made fails to open it, which for a review no
+    # longer running removed nothing from its checkout.
+    @tag sandbox: [hold: "tar"]
+    test "a review stopped while its sandbox is made keeps no checkout", _context do
+      start_untrusted()
+      assert_receive {:sandbox_held, handler}, 15_000
+      {:ok, _} = call("stop", %{"key" => @key})
+      send(handler, :release)
+      settle()
+      assert %{"status" => "failed", "error" => "Stopped."} = review()
+      checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+      assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+    end
+
+    @tag sandbox: [report: nil, tokens: 1_000]
+    test "a review past its token budget fails, saying so", _context do
+      save_settings(%{"sandboxTokens" => 500})
+      start_untrusted()
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [report: nil, tokens: 10, cached: 1_000]
+    test "cache reads count against the budget of a Claude review", _context do
+      save_settings(%{
+        "sandboxTokens" => 500,
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      })
+
+      start_untrusted()
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [report: nil, tokens: 10, subagent_tokens: 1_000]
+    test "what subagents use counts against the budget of a Claude review", _context do
+      save_settings(%{
+        "sandboxTokens" => 500,
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      })
+
+      start_untrusted()
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [report: nil, tokens: 10, subagent_tokens: 10, subagent_progress: 1_000]
+    test "what a subagent writes counts against the budget of a Claude review", _context do
+      save_settings(%{
+        "sandboxTokens" => 500,
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      })
+
+      start_untrusted()
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [report: nil, tokens: 10, cli_tokens: 1_000]
+    test "what only the CLI counts goes against the budget of a Claude review", _context do
+      save_settings(%{
+        "sandboxTokens" => 500,
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      })
+
+      start_untrusted()
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [report: nil, tokens: 10, subagent_tokens: 1_000]
+    test "what subagents use counts against the budget of a Codex review", _context do
+      save_settings(%{"sandboxTokens" => 500})
+      start_untrusted()
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    # The spend was counted only while a turn ran, so usage Codex told after it ended
+    # never reached the budget.
+    @tag sandbox: [hang: true, late_tokens: 1_000]
+    test "what a Codex review spends after its turn ended counts against its budget",
+         _context do
+      save_settings(%{"sandboxTokens" => 500})
+      start_untrusted()
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+      # The plugin, held, cannot close the sandbox as the turn ends: only the spend can.
+      plugin = Process.whereis(@server)
+      :sys.suspend(plugin)
+
+      try do
+        {:ok, _} =
+          HalC2.Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "threadId" => thread_id,
+            "holdQueue" => false
+          })
+
+        assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+        assert HalC2.OpenShell.Review.ended(thread_id) == "tokens"
+      after
+        :sys.resume(plugin)
+      end
+    end
+
+    @tag sandbox: [hang: true]
+    test "a report taken whose answer cannot be sent still loses its sandbox", _context do
+      start_untrusted()
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+      %{mcp: %{authorization: authorization}} = HalC2.OpenShell.Review.binding(thread_id)
+
+      body =
+        JSON.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "code_review_report",
+            "arguments" => %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
+          }
+        })
+
+      conn =
+        Plug.Test.conn(:post, "/report", body)
+        |> Plug.Conn.put_req_header("authorization", authorization)
+        |> Dropped.wrap()
+
+      assert_raise RuntimeError, fn -> HalC2.OpenShell.Broker.call(conn, []) end
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      assert HalC2.OpenShell.Review.binding(thread_id) == nil
+    end
+
+    @tag sandbox: [hang: true]
+    test "a review stopped from its row loses its sandbox", _context do
+      start_untrusted()
+      assert_receive {:sandbox_turn, _}, 15_000
+      assert {:ok, _} = call("stop", %{"key" => @key})
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      settle()
+      assert %{"status" => "failed", "error" => "Stopped."} = review()
+    end
+
+    @tag sandbox: [hang: true]
+    test "only the plugin that opened a sandbox closes it, launches in it or reads it",
+         _context do
+      alias HalC2.OpenShell.Review
+      alias HalC2.Plugins.Host
+
+      start_untrusted()
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id, "projectId" => project} = review()
+
+      assert {:error, _} = Review.close(thread_id, "stopped", "other")
+      assert Review.binding(thread_id)
+
+      # A sandbox another plugin opened or closed first is that plugin's.
+      :ok = Review.close("other-thread", "time", "other")
+      assert {:error, _} = Host.close_sandbox(@id, "other-thread")
+      assert Host.sandbox_ended(@id, "other-thread") == nil
+
+      assert {:error, _} =
+               Host.launch_thread(
+                 @id,
+                 "review",
+                 %{"threadId" => "other-thread", "projectId" => project, "title" => "Other"},
+                 sandboxed: true
+               )
+
+      assert HalC2.Streams.get("other-thread", "thread", "other-thread") == nil
+
+      # So is the sandbox of a thread another plugin started, which the review process
+      # does not remember after a restart.
+      {:ok, _} =
+        HalC2.Orchestration.launch_thread(
+          %{"threadId" => "other-started", "projectId" => project, "title" => "Other"},
+          plugin: %{"id" => "other", "kind" => "other", "listed" => false}
+        )
+
+      assert {:error, _} = Host.close_sandbox(@id, "other-started")
+      assert Review.ended("other-started") == nil
+    end
+
+    @tag sandbox: [hang: true]
+    test "a stopped review takes no report from its sandbox", _context do
+      start_untrusted()
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+      assert {:ok, _} = call("stop", %{"key" => @key})
+
+      arguments = %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
+
+      assert {:error, _, message} =
+               HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+
+      assert message =~ "no longer running"
+      settle()
+      assert %{"status" => "failed", "error" => "Stopped.", "verdict" => nil} = review()
+    end
+
+    test "a review stopped before its sandbox is made gets none", %{dir: dir, gateway: g} do
+      File.write!(Path.join(dir, "fetch.hold"), "")
+      start_untrusted()
+      await_file(Path.join(dir, "fetch.held"))
+      %{"threadId" => thread_id} = review()
+      assert {:ok, _} = call("stop", %{"key" => @key})
+      # Closed by the time Stop returns, so the sandbox the run asks for next is refused.
+      assert HalC2.OpenShell.Review.ended(thread_id) == "closed"
+      File.rm!(Path.join(dir, "fetch.hold"))
+
+      settle()
+      refute_received {:openshell_request, "CreateSandbox", _}
+      refute_received {:sandbox_exec, _, _}
+      assert FakeOpenShell.sandboxes(g) == %{}
+      assert %{"status" => "failed", "error" => "Stopped."} = review()
+      # The run's claim is refused, and the checkout it fetched goes with it.
+      checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+      assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+    end
+
+    @tag sandbox: [hang: true]
+    test "a review paused until its agent can work again loses its sandbox", %{gateway: g} do
+      start_untrusted()
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+
+      event = %{
+        "type" => "turn.finished",
+        "threadId" => thread_id,
+        "status" => "failed",
+        "errorClass" => "usage_limit",
+        "error" => "Subscription quota exhausted.",
+        "resetAt" => "2999-01-01T00:00:00Z"
+      }
+
+      apply(@server, :handle_event, [event, %{}])
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      settle()
+      assert %{"status" => "queued"} = review()
+      assert HalC2.OpenShell.Review.binding(thread_id) == nil
+      assert FakeOpenShell.sandboxes(g) == %{}
+    end
+
+    test "a review whose agent cannot run in a sandbox fails before anything starts", %{
+      gateway: g
+    } do
+      save_settings(%{"provider" => "cursor", "model" => "auto"})
+      start_untrusted()
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "cannot run in yet"
+      assert FakeOpenShell.sandboxes(g) == %{}
+    end
+  end
+
+  # From the property: an untrusted pull request on an MC with no OpenShell kept the
+  # checkout of its failed run until the next run of it.
+  test "an untrusted pull request whose sandbox cannot open fails and keeps no checkout",
+       context do
+    rules!(context, head: 1, association: "NONE")
+    start_untrusted()
+    await_review(&(&1["status"] == "failed"))
+    assert review()["error"] =~ "sandboxes are not running"
+    checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+    assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+  end
+
+  test "a trusted pull request is reviewed on this machine unless every review is sandboxed",
+       context do
+    sandboxed? = &apply(@server, :sandboxed?, [&1, &2])
+    review = start_review()
+    assert %{"author" => %{"login" => "octocat"}} = review["trust"]
+    assert sandboxed?.(%{}, review) == false
+    assert sandboxed?.(%{"sandboxEveryReview" => true}, review) == true
+
+    # Nor is one whose author was not read yet, or is no member or collaborator.
+    assert sandboxed?.(%{}, Map.delete(review, "trust")) == true
+    rules!(context, head: 1, association: "NONE")
+    refresh()
+    assert sandboxed?.(%{}, review()) == true
+  end
+
   # A comment dismissed while its review was being posted changed what the page showed
   # as posted, though GitHub had the comment.
   test "a comment of a review being posted stays as it was posted", context do
@@ -2122,6 +2799,74 @@ defmodule HalC2.CodeReviewTest do
     end
   end
 
+  # An MC with OpenShell installed, whose pull request was opened by someone who is not
+  # a member or collaborator (`start_untrusted/0`): the fake gateway, whose sandbox runs
+  # `HalC2.Test.FakeSandbox` with the test's `:sandbox` tag.
+  defp sandboxed!(context) do
+    rules!(context, head: 1, association: "NONE")
+
+    FakeOpenShell.put_env(
+      service_user_home: Path.join(context.tmp_dir, "user"),
+      service_platform: {:unix, :linux},
+      openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
+    )
+
+    restore = env(~w(OPENAI_API_KEY ANTHROPIC_API_KEY))
+    on_exit(restore)
+
+    System.put_env(%{
+      "OPENAI_API_KEY" => "sk-test-openai",
+      "ANTHROPIC_API_KEY" => "sk-test-anthropic"
+    })
+
+    root = FakeSandbox.root()
+
+    gateway =
+      FakeOpenShell.start(HalC2.OpenShell.pki_dir(),
+        notify: self(),
+        exec: FakeSandbox.exec(root, self(), Map.get(context, :sandbox, []))
+      )
+
+    FakeOpenShell.install!(gateway)
+
+    start_supervised!(HalC2.OpenShell.Review)
+    :sys.get_state(HalC2.OpenShell.Review)
+    %{gateway: gateway, sandbox_root: root}
+  end
+
+  # Reviews with Claude, whose instance has `config` in HAL-C2's settings.
+  defp put_claude(config) do
+    put_instance("claudeAgent", config)
+
+    save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+    start_untrusted()
+  end
+
+  # Starts the review of a pull request nobody trusted, as the user does: asking for it
+  # reads it, and approving its head starts it.
+  defp start_untrusted do
+    assert {:error, %{"message" => message}} =
+             call("start", %{"repository" => "acme/api", "number" => 1})
+
+    assert message =~ "Approve it on the Reviews page"
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => review()["headSha"]})
+  end
+
+  defp put_instance(instance, config),
+    do: HalC2.Settings.update(&put_in(&1, [Access.key("providers", %{}), instance], config))
+
+  defp await_review(done?) do
+    HalC2.Plugins.subscribe_topic(self(), @id, "reviews")
+    await_reviews(done?)
+  end
+
+  defp await_reviews(done?) do
+    unless done?.(review() || %{}) do
+      assert_receive {:hal_c2_plugin_topic, _, @id, "reviews", _}, 15_000
+      await_reviews(done?)
+    end
+  end
+
   defp start_review do
     {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
     settle()
@@ -2295,6 +3040,7 @@ defmodule HalC2.CodeReviewTest do
       %{
         "args" => ["api graphql"],
         "stdin" => ["viewerCanUpdateBranch"],
+        "run" => opts[:detail] || "true",
         "stdout" => %{
           "data" => %{
             "repository" => %{
