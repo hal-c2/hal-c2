@@ -156,13 +156,7 @@ defmodule HalC2.Mcp do
     if Process.whereis(HalC2.Settings) == nil do
       MapSet.new()
     else
-      project =
-        case HalC2.Shell.row(node(), thread_id) do
-          {"thread", row} -> row["projectId"]
-          _ -> nil
-        end
-
-      settings = HalC2.Settings.for_project(project)
+      settings = HalC2.Settings.for_project(project(thread_id))
 
       MapSet.new(
         Enum.reject(
@@ -179,6 +173,17 @@ defmodule HalC2.Mcp do
     _ -> MapSet.new()
   catch
     :exit, _ -> MapSet.new()
+  end
+
+  # The thread's project from its own stream, not its sidebar row: the row is put a
+  # moment after the events (`@shell_debounce` in `HalC2.Streams.Server`), so a new
+  # thread's first turn would read the environment's settings and its second turn
+  # its project's, launching differently (#1452). Without streams (tools, some
+  # tests) there is no thread to read, so the environment's settings apply.
+  defp project(thread_id) do
+    if Process.whereis(HalC2.Streams.Registry) do
+      (HalC2.Streams.get(thread_id, "thread", thread_id) || %{})["projectId"]
+    end
   end
 
   @doc """

@@ -8,8 +8,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   Claude acknowledges without ever starting a turn for; and the user stopping the
   thread between turns. Every resumed process first runs a turn of its own, reporting a
   background task the previous one left behind. Each process is handed HAL-C2's MCP
-  server over stdin, which Claude takes or refuses (`HalC2.Claude.Session`), and a
-  turn can ask which tools it has. A turn on a new process can find Claude slow to
+  server over stdin when the thread's project lets agents reach the browser (a choice
+  made per run, opposite to the environment's, so a turn that read the environment's
+  would launch differently from the next), which Claude takes or refuses
+  (`HalC2.Claude.Session`), and a turn can ask which tools it has. A turn on a new process can find Claude slow to
   answer about that server, so its message is held: meanwhile the MC can go down and
   the next one adopt the process (it runs durable), and the user can stop the turn,
   until Claude answers. Between turns Claude's settings in the project can turn
@@ -25,7 +27,9 @@ defmodule HalC2.ClaudeSessionPropTest do
   and `/compact` once its compaction is in. A `/compact` before any turn has started
   Claude's session has nothing to compact, and is refused without starting Claude.
   Every user message reaches Claude, whether its process took HAL-C2's server or
-  refused it, and the process has HAL-C2's tools exactly when it took them. A held
+  refused it, and the process has HAL-C2's tools exactly when the project let it have
+  them and it took them; the thread's first turn honours the project as every later
+  one does (#1452), so the second does not relaunch Claude and end its background work. A held
   message reaches Claude once it answers, across an MC that went down meanwhile, and a
   stop sent while it is held ends its turn as interrupted. A Full access turn runs in
   bypass mode, in Auto when Claude's settings turn bypass off, and in the default
@@ -64,28 +68,30 @@ defmodule HalC2.ClaudeSessionPropTest do
   property "a Claude thread keeps its background work across the turns it allows",
     numtests: HalC2.Prop.numtests(20),
     max_size: 20 do
-    forall cmds <- commands(__MODULE__) do
-      trap_exit do
-        start()
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        HalC2.Prop.stop_services()
-        Application.delete_env(:hal_c2, :claude_command)
-        System.delete_env("FAKE_CLAUDE_ORPHANED")
-        System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
-        System.delete_env("FAKE_CLAUDE_MCP_HOLD")
-        System.delete_env("CLAUDE_CONFIG_DIR")
-        System.delete_env("FAKE_CLAUDE_INPUT_LOG")
-        Application.put_env(:hal_c2, :durable_programs, false)
-        Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
+    forall access <- boolean() do
+      forall cmds <- commands(__MODULE__, %{initial_state() | access: access}) do
+        trap_exit do
+          start(access)
+          {history, state, result} = run_commands(__MODULE__, cmds)
+          HalC2.Prop.stop_services()
+          Application.delete_env(:hal_c2, :claude_command)
+          System.delete_env("FAKE_CLAUDE_ORPHANED")
+          System.delete_env("FAKE_CLAUDE_MCP_REFUSE")
+          System.delete_env("FAKE_CLAUDE_MCP_HOLD")
+          System.delete_env("CLAUDE_CONFIG_DIR")
+          System.delete_env("FAKE_CLAUDE_INPUT_LOG")
+          Application.put_env(:hal_c2, :durable_programs, false)
+          Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
 
-        (result == :ok)
-        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
-        |> aggregate(command_names(cmds))
+          (result == :ok)
+          |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+          |> aggregate(command_names(cmds))
+        end
       end
     end
   end
 
-  defp start do
+  defp start(access) do
     home = HalC2.Prop.scratch_home("claude-session")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
@@ -124,6 +130,18 @@ defmodule HalC2.ClaudeSessionPropTest do
       HalC2.Mcp
     ])
 
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        settings
+        |> Map.put("enableAgentBrowserAccess", not access)
+        |> Map.put("projectSettingsOverrides", %{
+          "project-1" => %{"enableAgentBrowserAccess" => access}
+        }),
+        version
+      )
+
     :ok = HalC2.Streams.subscribe(@tid, self(), nil)
 
     {:ok, _} =
@@ -149,7 +167,8 @@ defmodule HalC2.ClaudeSessionPropTest do
   #   process started now refuses HAL-C2's server; tools: whether the thread's process
   #   took it; held: the turn whose message waits on Claude's answer about the
   #   server (%{n, text, interrupted}), or nil; policy: what Claude's settings turn
-  #   off (`policy/1`); missed: the texts of turns refused since a message last reached
+  #   off (`policy/1`); access: whether the thread's project lets agents reach
+  #   HAL-C2's server (`HalC2.Mcp.agent_access/1`); missed: the texts of turns refused since a message last reached
   #   Claude, oldest first; n: a counter.
   def initial_state,
     do: %{
@@ -160,6 +179,7 @@ defmodule HalC2.ClaudeSessionPropTest do
       tools: false,
       held: nil,
       policy: :allowed,
+      access: true,
       missed: [],
       n: 1
     }
@@ -199,9 +219,11 @@ defmodule HalC2.ClaudeSessionPropTest do
   # A held turn starts a new process; one half-answered runs until it is stopped. The
   # fake answers a message by what it finds in it, so a refused "never start a turn"
   # would fail every turn that carries it, and a held turn's answer is checked whole.
+  # Only a process handed HAL-C2's server is asked about it, so only one can hold.
   def precondition(%{held: nil} = state, {:call, _, :held_turn, [_n, model, fast, _text]}),
     do:
-      not reused?(state, model, fast) and not refused?(state, model, fast) and state.missed == []
+      state.access and not reused?(state, model, fast) and not refused?(state, model, fast) and
+        state.missed == []
 
   def precondition(%{held: nil} = state, {:call, _, :turn, [_n, model, fast, text]}),
     do: not (refused?(state, model, fast) and text == :never_start)
@@ -238,7 +260,7 @@ defmodule HalC2.ClaudeSessionPropTest do
         background:
           state.background or text == :background or
             (text != :never_start and carries?(state, :background, text)),
-        tools: if(reused?(state, model, fast), do: state.tools, else: not state.refusing),
+        tools: if(reused?(state, model, fast), do: state.tools, else: takes_tools?(state)),
         missed: if(text == :compact, do: state.missed, else: [])
     }
 
@@ -253,7 +275,7 @@ defmodule HalC2.ClaudeSessionPropTest do
       | n: state.n + 1,
         launch: {model, fast == true},
         session: true,
-        tools: not state.refusing,
+        tools: takes_tools?(state),
         held: %{n: n, text: text, interrupted: false}
     }
 
@@ -271,6 +293,9 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   # Whether this turn hands Claude the refused message `missed` along with its own.
   defp carries?(state, missed, text), do: text != :compact and missed in state.missed
+
+  # Whether a process started now has HAL-C2's tools: handed them, and not refusing them.
+  defp takes_tools?(state), do: state.access and not state.refusing
 
   defp reused?(state, model, fast), do: state.session and state.launch == {model, fast == true}
 
