@@ -61,6 +61,8 @@ defmodule HalC2.ThreadFilesProofTest do
       "HalC2.Attachments.read/1" => @files,
       "HalC2.Attachments.folded_into/2" => @files,
       "HalC2.Attachments.left_behind/4" => @files,
+      "HalC2.Attachments.copy/2" =>
+        "copies an MCP app's document or a tool output's image into a fork, which drops the item's reference when the copy fails, so the fork names no file of its source; the model's files are a message's",
       "HalC2.Attachments.release/2" =>
         "removes the copies a refused message made, which no message names; the model's sends are not refused",
       "HalC2.Orchestration.Fork.merge_back/1" =>
@@ -77,6 +79,7 @@ defmodule HalC2.ThreadFilesProofTest do
       "HalC2.ThreadArchive.files/1" => @archive,
       "HalC2.ThreadArchive.files_on_disk/2" => @archive,
       "HalC2.ThreadArchive.find_thread/1" => @archive,
+      "HalC2.ThreadArchive.item_attachment_refs/1" => @archive,
       "HalC2.ThreadArchive.import_file/2" =>
         "a thread file a user imports, which import_archive/2 takes as a move does",
       "HalC2.ThreadArchive.kinds/1" => @archive,
