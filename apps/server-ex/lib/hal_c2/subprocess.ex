@@ -396,7 +396,8 @@ defmodule HalC2.Subprocess do
     end
   end
 
-  def stop(%__MODULE__{proc: %Sandboxed{} = proc}, timeout), do: Sandboxed.stop(proc, timeout)
+  def stop(%__MODULE__{proc: %Sandboxed{} = proc, reader: reader}, timeout),
+    do: Sandboxed.stop(proc, reader, timeout)
 
   def stop(%__MODULE__{proc: proc}, timeout) do
     Proc.close_stdin(proc)

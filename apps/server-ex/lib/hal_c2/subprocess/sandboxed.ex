@@ -14,15 +14,27 @@ defmodule HalC2.Subprocess.Sandboxed do
   Stderr is counted and dropped. More than `output_limit` bytes of output in all
   cancels the command (exit 137) and calls `on_limit`, since the stream does not hold
   output back while the owner is busy.
+
+  The exit status is kept past that message: an owner that took it (as
+  `HalC2.Subprocess.exit_status/2` lets it) still gets it from `exited/2` and `stop/2`,
+  at once.
   """
 
   alias HalC2.OpenShell.{Client, Exec}
   alias HalC2.Subprocess
 
-  @enforce_keys [:exec, :exit_ref]
-  defstruct [:exec, :exit_ref]
+  import Bitwise
 
-  @type t :: %__MODULE__{exec: pid, exit_ref: reference}
+  # `status` is a one-slot `:atomics`, `@running` until the reader sets the exit status
+  # in it, which it does before it mails the owner: it is never set while that message
+  # is still to come.
+  @enforce_keys [:exec, :exit_ref, :status]
+  defstruct [:exec, :exit_ref, :status]
+
+  @type t :: %__MODULE__{exec: pid, exit_ref: reference, status: :atomics.atomics_ref()}
+
+  # Not an exit status, which the gateway sends as an int32.
+  @running 1 <<< 40
 
   # Exec gives no output backpressure, so a run's output is capped instead.
   @output_limit 268_435_456
@@ -30,6 +42,8 @@ defmodule HalC2.Subprocess.Sandboxed do
   @doc false
   def start(argv, sandbox, owner) do
     ref = make_ref()
+    status = :atomics.new(1, signed: true)
+    :atomics.put(status, 1, @running)
     limit = Map.get(sandbox, :output_limit, @output_limit)
     on_limit = Map.get(sandbox, :on_limit, fn -> :ok end)
 
@@ -42,13 +56,14 @@ defmodule HalC2.Subprocess.Sandboxed do
     # The reader starts the stream itself: the gateway calls leave processes linked
     # to their caller, and an owner that traps exits must not hear them end.
     exec = {sandbox.conn, sandbox.name, argv, opts}
-    reader = spawn_link(__MODULE__, :reader_init, [owner, ref, limit, on_limit, exec])
+    reader = spawn_link(__MODULE__, :reader_init, [owner, {ref, status}, limit, on_limit, exec])
     monitor = Process.monitor(reader)
 
     receive do
       {^ref, {:started, exec}} ->
         Process.demonitor(monitor, [:flush])
-        {:ok, %Subprocess{proc: %__MODULE__{exec: exec, exit_ref: ref}, reader: reader}}
+        proc = %__MODULE__{exec: exec, exit_ref: ref, status: status}
+        {:ok, %Subprocess{proc: proc, reader: reader}}
 
       # Nothing runs here instead: the agent does not start, saying why.
       {^ref, {:failed, reason}} ->
@@ -80,38 +95,70 @@ defmodule HalC2.Subprocess.Sandboxed do
   end
 
   @doc false
-  def exited(%__MODULE__{exit_ref: ref}, timeout) do
-    receive do
-      {^ref, {:ok, status}} -> {:ok, status}
-    after
-      timeout -> :running
+  def exited(%__MODULE__{exit_ref: ref} = proc, timeout) do
+    with nil <- ended(proc) do
+      receive do
+        {^ref, {:ok, status}} -> {:ok, status}
+      after
+        timeout -> :running
+      end
     end
   end
 
+  # Closes stdin, and cancels the command if it has not exited `timeout` later. A
+  # cancel always ends in an exit status from `reader`, unless the reader is gone.
   @doc false
-  def stop(%__MODULE__{exec: exec, exit_ref: ref}, timeout) do
-    try do
-      Exec.close_stdin(exec)
-    catch
-      :exit, _ -> :ok
+  def stop(%__MODULE__{exec: exec, exit_ref: ref} = proc, reader, timeout) do
+    with nil <- ended(proc) do
+      try do
+        Exec.close_stdin(exec)
+      catch
+        :exit, _ -> :ok
+      end
+
+      receive do
+        {^ref, status} -> status
+      after
+        timeout ->
+          monitor = Process.monitor(reader)
+          Exec.cancel(exec)
+
+          receive do
+            {^ref, status} ->
+              Process.demonitor(monitor, [:flush])
+              status
+
+            {:DOWN, ^monitor, :process, ^reader, _} ->
+              receive do
+                {^ref, status} -> status
+              after
+                0 -> ended(proc) || {:ok, 137}
+              end
+          end
+      end
     end
+  end
 
-    receive do
-      {^ref, status} -> status
-    after
-      timeout ->
-        Exec.cancel(exec)
+  # The exit status once the reader has mailed it, and that message taken if the owner
+  # has not yet.
+  defp ended(%__MODULE__{exit_ref: ref, status: status}) do
+    case :atomics.get(status, 1) do
+      @running ->
+        nil
 
+      code ->
         receive do
-          {^ref, status} -> status
+          {^ref, {:ok, _}} -> :ok
         after
-          1_000 -> {:ok, 137}
+          0 -> :ok
         end
+
+        {:ok, code}
     end
   end
 
   @doc false
-  def reader_init(owner, ref, limit, on_limit, {conn, name, argv, opts}) do
+  def reader_init(owner, {ref, status}, limit, on_limit, {conn, name, argv, opts}) do
     case Client.exec(conn, name, argv, Keyword.put(opts, :owner, self())) do
       {:error, reason} ->
         send(owner, {ref, {:failed, reason}})
@@ -122,6 +169,7 @@ defmodule HalC2.Subprocess.Sandboxed do
         __MODULE__.reader_loop(%{
           owner: owner,
           ref: ref,
+          status: status,
           exec: exec,
           limit: limit,
           on_limit: on_limit,
@@ -192,6 +240,7 @@ defmodule HalC2.Subprocess.Sandboxed do
   defp exit_with(%{ended: true} = s, _code), do: s
 
   defp exit_with(s, code) do
+    :atomics.put(s.status, 1, code)
     send(s.owner, {s.ref, {:ok, code}})
     %{s | ended: true}
   end
