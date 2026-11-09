@@ -94,6 +94,70 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert Prune.seeded_run(prune, "gone") == nil
   end
 
+  test "a segment the feed dropped some of that folds unread is read back at the thread's next turn, though a later segment folds whole",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    # Run r2 used CronCreate; the feed dropped all of it, and says so on another thread.
+    ended(thread, "r2", 2, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+
+    state =
+      observe(
+        state,
+        started("other", "o1", p, %{"newConversation" => true, "dropped" => 1, "waiting" => 0})
+      )
+
+    # The segment folds while the history cannot be read.
+    grant([])
+    state = observe(state, started(thread, "r3", p, %{"newConversation" => true}))
+    refute "CronCreate" in state.prunes[project]["used"]
+
+    grant(["turns:observe"])
+    ended(thread, "r3", 3, [])
+    state = observe(state, finished(thread, "r3", 3))
+    state = observe(state, started(thread, "r4", p, %{"newConversation" => true}))
+
+    prune = state.prunes[project]
+    assert "CronCreate" in prune["used"]
+    # r1 and r2 read back, r3 heard: each once.
+    assert prune["prompts"] == 3
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r3", "ordinal" => 3}
+  end
+
+  test "a segment the feed dropped some of that a quiet project folds unread is read back at the thread's next turn",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    ended(thread, "r2", 2, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+    # r1's end tells of r2, which the feed dropped all of.
+    state =
+      observe(state, Map.merge(finished(thread, "r1", 1), %{"dropped" => 1, "waiting" => 0}))
+
+    grant([])
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    refute "CronCreate" in state.prunes[project]["used"]
+
+    grant(["turns:observe"])
+    state = observe(state, started(thread, "r3", p, %{}))
+    assert "CronCreate" in state.prunes[project]["used"]
+  end
+
+  defp grant(granted) do
+    {settings, version} = HalC2.Settings.get()
+
+    plugins = %{
+      "token-economizer" => %{"enabled" => true, "granted" => granted, "settings" => %{}}
+    }
+
+    {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
+  end
+
   defp ended(thread, run, ordinal, items) do
     rows =
       for {item, i} <- Enum.with_index(items, 1) do

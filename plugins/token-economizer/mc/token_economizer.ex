@@ -496,7 +496,7 @@ defmodule HalC2Plugins.TokenEconomizer do
           put_in(state.convs[thread_id], %{conv | prompts: conv.prompts + 1, active: true})
 
         _ ->
-          state = close_conv(state, thread_id)
+          state = state |> close_conv(thread_id) |> cut_unread(thread_id, project, event["runId"])
 
           state =
             if new?,
@@ -594,6 +594,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     # watermark stays, so a restart reads its runs back.
     partial? = Map.get(conv, :partial, false)
     prompts = if partial?, do: 0, else: conv.prompts
+    # Nor does a later fold of the thread: its runs are read back at its next turn.
+    state =
+      if read? and partial?,
+        do: put_in(state.seeded[{conv.thread, conv.project}], :partial),
+        else: state
 
     prune =
       prune
@@ -607,6 +612,16 @@ defmodule HalC2Plugins.TokenEconomizer do
     |> put_prune(conv.project, prune, true)
     |> publish_prune()
     |> schedule_tick(conv.project)
+  end
+
+  # A segment that folded unread (`fold_conv/3`) as `run_id` starts the thread's next:
+  # the runs before it are read back, not it nor those after, heard as they run.
+  defp cut_unread(state, thread_id, project, run_id) do
+    key = {thread_id, project}
+
+    if state.seeded[key] == :partial and is_binary(run_id),
+      do: put_in(state.seeded[key], {:unread, run_id}),
+      else: state
   end
 
   # A segment heard only in part, as its thread's history has it: its provider's runs
@@ -716,7 +731,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   #
   # A read that fails is tried again at the thread's next turn, up to the run first
   # heard since, and until it succeeds no fold moves the watermark (`fold_conv/3`):
-  # the runs it could not read are still to fold, and those heard live already did.
+  # the runs it could not read are still to fold, and those heard live already did. A
+  # segment heard in part that folds unread is read so too, up to the turn after it.
   defp seed_history(state, thread_id, run_id, project, unit) do
     key = {thread_id, project}
 
@@ -732,7 +748,8 @@ defmodule HalC2Plugins.TokenEconomizer do
             fold_history(put_in(state.seeded[key], :read), history, key, before, unit)
 
           :error ->
-            put_in(state.seeded[key], seeded || {:unread, run_id})
+            unread = with {:unread, _} <- seeded, do: seeded, else: (_ -> {:unread, run_id})
+            put_in(state.seeded[key], unread)
         end
     end
   end
