@@ -34,8 +34,8 @@ API: copy the folder into an MC's `plugins` folder to install it.
   a fact's formation and retirement (`lifecycle`) and the facts themselves
   (`envfacts`). The plugin calls `microSkills`, `microSkills.drop` and
   `microSkills.restore` show a project's facts with their evidence, drop one so
-  it is never learned again, and restore it; the `microSkills` topic carries the
-  same listing as facts change.
+  it is never learned again, and restore it; a project's entry in that listing
+  is published on `microSkills:<project id>` as its facts change.
 - `assets/`: the icon.
 
 ## Tests

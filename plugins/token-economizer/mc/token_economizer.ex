@@ -193,9 +193,10 @@ defmodule HalC2Plugins.TokenEconomizer do
        # The projects with micro-skills of their own, read from disk once
        # (nil until then) and added to as facts are saved.
        known_skills: nil,
-       # The shape of the listing last published, turn counts aside: the
-       # topic is republished only when what a person would see changes.
-       published_skills: nil,
+       # project id => the shape of its entry last published, turn counts
+       # aside: a project's topic is republished only when what a person would
+       # see in it changes.
+       published_skills: %{},
        # {thread id, provider instance} => the fact ids staged for that
        # conversation, oldest first in staged_order and capped, so it cannot
        # grow for good. Kept on disk too: a conversation staged before the MC
@@ -230,7 +231,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     # The level and pinned thresholds shape each tracker: read them afresh. The
     # micro-skills' caps shape only what is staged, so the projects' learning
     # stays as it is, some of it maybe never saved, and takes the new caps.
-    state = %{state | settings: settings, trackers: %{}, published_skills: nil}
+    state = %{state | settings: settings, trackers: %{}}
     caps = EnvFacts.new(skills_caps(state))
 
     state = %{
@@ -276,7 +277,7 @@ defmodule HalC2Plugins.TokenEconomizer do
           state
       end
 
-    {:reply, :ok, state |> publish() |> publish_skills()}
+    {:reply, :ok, state |> publish() |> publish_loaded_skills()}
   end
 
   def handle_call(:status, _from, state), do: {:reply, status(state), state}
@@ -596,7 +597,7 @@ defmodule HalC2Plugins.TokenEconomizer do
           state
           |> know_skill(project_id)
           |> put_in([:skills, project_id], skills)
-          |> publish_skills()
+          |> publish_skills(project_id)
       end
     else
       state
@@ -942,8 +943,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   defp project_id(%{"projectId" => project_id}) when is_binary(project_id), do: project_id
   defp project_id(_input), do: nil
 
-  # What the `microSkills` call and topic carry: one project's facts when it is
-  # named, else every project's, each in `EnvFacts.view/1`'s shape.
+  # What the `microSkills` call answers: one project's facts when it is named,
+  # else every project's, each an `entry/2`.
   defp micro_skills_view(state, nil) do
     {known, state} = known_skills(state)
     ids = known |> MapSet.union(MapSet.new(Map.keys(state.skills))) |> Enum.sort()
@@ -951,7 +952,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     {projects, state} =
       Enum.map_reduce(ids, state, fn project_id, state ->
         {skills, state} = skills_for(state, project_id)
-        {Map.merge(%{"projectId" => project_id}, EnvFacts.view(skills)), state}
+        {entry(project_id, skills), state}
       end)
 
     {%{"mode" => micro_mode(state), "projects" => projects}, state}
@@ -960,32 +961,32 @@ defmodule HalC2Plugins.TokenEconomizer do
   defp micro_skills_view(state, project_id) do
     {skills, state} = skills_for(state, project_id)
 
-    {%{
-       "mode" => micro_mode(state),
-       "projects" => [Map.merge(%{"projectId" => project_id}, EnvFacts.view(skills))]
-     }, state}
+    {%{"mode" => micro_mode(state), "projects" => [entry(project_id, skills)]}, state}
   end
 
-  # Publishes the listing when what a person would see in it changed: a
-  # turn that taught nothing new only moves a turn count, and clients are
-  # not sent every project's facts again for that.
-  defp publish_skills(state) do
-    {view, state} = micro_skills_view(state, nil)
-    shape = listing_shape(view)
+  defp entry(project_id, skills),
+    do: Map.merge(%{"projectId" => project_id}, EnvFacts.view(skills))
 
-    if shape == state.published_skills do
+  # Publishes a project's entry on its own topic, `microSkills:<project id>`,
+  # when what a person would see in it changed: a turn that taught nothing new
+  # only moves a turn count. One project's turn never rebuilds or resends the
+  # others'; the whole listing is the `microSkills` call's.
+  defp publish_skills(state, project_id) do
+    entry = entry(project_id, state.skills[project_id])
+    shape = Map.delete(entry, "turns")
+
+    if state.published_skills[project_id] == shape do
       state
     else
-      Host.publish(@id, @skills_topic, view)
-      %{state | published_skills: shape}
+      Host.publish(@id, "#{@skills_topic}:#{project_id}", entry)
+      put_in(state.published_skills[project_id], shape)
     end
   end
 
-  defp listing_shape(view) do
-    Map.update!(view, "projects", fn projects ->
-      Enum.map(projects, &Map.delete(&1, "turns"))
-    end)
-  end
+  # New caps change what each loaded project stages; one never loaded has
+  # published nothing since the plugin started.
+  defp publish_loaded_skills(state),
+    do: state.skills |> Map.keys() |> Enum.reduce(state, &publish_skills(&2, &1))
 
   defp drop_or_restore(state, input, action) do
     with %{"projectId" => project_id, "id" => id} when is_binary(project_id) and is_binary(id) <-
@@ -1000,7 +1001,7 @@ defmodule HalC2Plugins.TokenEconomizer do
                 state
                 |> know_skill(project_id)
                 |> put_in([:skills, project_id], skills)
-                |> publish_skills()
+                |> publish_skills(project_id)
 
               {view, state} = micro_skills_view(state, project_id)
               {:reply, {:ok, view}, state}

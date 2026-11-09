@@ -1379,6 +1379,31 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert fired(state) == 1
     end
 
+    test "a project's change publishes that project's entry alone, on its own topic" do
+      project = "seam-#{System.unique_integer([:positive])}"
+      on_exit(fn -> File.rm(TokenEconomizer.micro_skills_path(project)) end)
+
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = put_in(state.skills[project], state.skills["seam"])
+
+      # The test stands in for the plugin host, which publishes what it is cast.
+      Process.register(self(), HalC2.Plugins)
+      topic = "microSkills:#{project}"
+
+      {:reply, {:ok, _view}, _state} =
+        TokenEconomizer.handle_call(
+          {:micro_skill_drop, %{"projectId" => project, "id" => @pytest}},
+          nil,
+          state
+        )
+
+      assert_receive {:"$gen_cast", {:publish, "token-economizer", ^topic, entry}}
+      assert entry["projectId"] == project
+      assert entry["dropped"] == [@pytest]
+      refute_received {:"$gen_cast", {:publish, "token-economizer", "microSkills", _}}
+    end
+
     test "what a conversation was staged outlives a restart, and an unreadable file is none" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
