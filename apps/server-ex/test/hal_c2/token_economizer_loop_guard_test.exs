@@ -802,6 +802,19 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert ShellEdits.targets("timeout 60 pytest -q") == []
     end
 
+    test "counts a file gawk edits in place" do
+      for {cmd, files} <- [
+            {"awk -i inplace '{print \"SECRET\"}' a.py", ["a.py"]},
+            {"gawk -i inplace -v x=1 -f fix.awk a.py b.py", ["a.py", "b.py"]},
+            {"gawk --include=inplace '{print}' a.py", ["a.py"]}
+          ] do
+        assert ShellEdits.targets(cmd) == files, cmd
+        refute shell_edit(cmd) =~ "SECRET", cmd
+      end
+
+      assert ShellEdits.targets("awk '{print}' a.py > /dev/null") == []
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",

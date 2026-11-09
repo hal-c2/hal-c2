@@ -6,10 +6,10 @@
 # but for a run of operators (`)>`), split as the shell splits it; `fold_shell_edits` lives
 # in State; a heredoc ends where the shell's does, its delimiter any word (`<<'EOF-CODE'`,
 # `<<123`), and every heredoc a line opens is read; `dd`, `sponge`, `cp`, `mv`, `install`
-# and `truncate` write files too; an editor behind a wrapper (`sudo -u me`, `timeout 10`,
-# `xargs`, `find -exec`), in a nested shell or `eval`, with its script attached
-# (`-e's/a/b/'`) or after git's global options is read; `programs/1` and `writes?/1` are
-# new; QML counts as source.
+# and `truncate` write files too, as does `gawk -i inplace`; an editor behind a wrapper
+# (`sudo -u me`, `timeout 10`, `xargs`, `find -exec`), in a nested shell or `eval`, with
+# its script attached (`-e's/a/b/'`) or after git's global options is read;
+# `programs/1` and `writes?/1` are new; QML counts as source.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @moduledoc """
@@ -36,7 +36,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # Programs that run another, given after their own words, and the programs this reads
   # writes off, which a wrapper is unwrapped to.
   @wrappers ~w(sudo doas command env time nohup timeout nice ionice stdbuf chronic flock xargs find)
-  @writers ~w(sed perl tee dd sponge truncate cp mv install patch git apply_patch eval) ++ @shells
+  @writers ~w(sed perl awk gawk tee dd sponge truncate cp mv install patch git apply_patch eval) ++
+             @shells
   # The operands `find -exec` and `xargs -I` put file names in place of.
   @fed ["{}", "+", ";", "\\"]
   # Input, heredoc tags, fd duplication.
@@ -186,6 +187,21 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   end
 
   defp written_by("eval", [_ | args], _), do: writes(Enum.join(args, " "))
+
+  # `gawk -i inplace` rewrites its file operands; the program is the first operand,
+  # unless `-f` names its file.
+  defp written_by(awk, [_ | args], _) when awk in ~w(awk gawk) do
+    inplace? =
+      Enum.any?(args, &(&1 in ["-iinplace", "--include=inplace"])) or
+        Enum.any?(
+          Enum.chunk_every(args, 2, 1),
+          &(&1 in [["-i", "inplace"], ["--include", "inplace"]])
+        )
+
+    files = operands(args, ~w(-i -v -f -F -E --include --assign --file --field-separator))
+    files = if Enum.any?(args, &(&1 in ~w(-f -E --file))), do: files, else: Enum.drop(files, 1)
+    if inplace?, do: edits(files), else: []
+  end
 
   defp written_by("patch", _, _), do: [{:edit, "(patch)"}]
   defp written_by("git", [_, "apply" | _], _), do: [{:edit, "(patch)"}]
