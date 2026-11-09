@@ -10,13 +10,28 @@ defmodule HalC2.Orchestration.TurnWatch do
   does a process killed while the MC stops, as one stuck in a call to its provider is
   at its shutdown limit: this outlives the runtimes, and a failed run is one boot
   recovery would skip, leaving a steer it cut off pending.
+
+  An end the store could not record (a full disk) waits here, in memory, and is tried
+  again until the store takes it, with the time the run failed
+  (`unrecorded/3`): a provider runtime hands over the end of a turn whose events it
+  could not record (`HalC2.Orchestration.Unrecorded`), and a crash's end is kept the
+  same way. Until it is recorded the run reads as running and nothing else ends it,
+  and the runtime stays watched: one that goes first took its app-server with it, so
+  the work it kept running ends with the run, and a provider turn it could not stop
+  reads as interrupted. One that goes while a try runs leaves that try's end short of
+  what went with it: the try after ends that too, the run already recorded.
+  An MC that stops first loses it: the next boot settles the run
+  (`HalC2.Orchestration.Recovery`), with its own time.
   """
 
   use GenServer
 
   require Logger
 
+  alias HalC2.Orchestration.Entities
   alias HalC2.Orchestration.TurnWriter
+
+  @endings __MODULE__.Endings
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -43,57 +58,261 @@ defmodule HalC2.Orchestration.TurnWatch do
     :exit, _ -> true
   end
 
-  @impl true
-  def init(nil), do: {:ok, %{}}
+  @doc """
+  Run `run_id` of `thread_id` failed with an end the store did not record: `at`, when
+  it failed, and `failure`, why. `provider_turn` is how its provider turn ended:
+  `:pending` while the runtime still drives it to an end (the run is not recorded
+  until it says), a status, `"running"` for one the provider did not stop, or nil
+  for the run's own status. `ended`, with how it ended, is the work the runtime ended,
+  and `leftover`, a left-over provider turn's end it heard, as `{id, status}`
+  (`TurnWriter.abandon/5`). Recorded once, as soon as the store takes it.
+  """
+  def unrecorded(thread_id, run_id, %{at: _, failure: _, provider_turn: _} = ending),
+    do: GenServer.cast(__MODULE__, {:unrecorded, thread_id, run_id, ending})
+
+  @doc """
+  The end run `run_id` takes, `{status, failure, at}`: the first one asked for since
+  its end last recorded (`ended/1`). An end the store refused partway (the work in a
+  subagent's thread ended, the run not) stands, so another end of the run that comes
+  before the try after it ends the run as that one did. Kept in a table this process
+  owns, so an end never waits behind the watch's own messages; the ends of a run take
+  turns (`TurnWriter.abandon/5`). An MC upgraded in place, where this process has not
+  started yet, takes `ending`.
+  """
+  def ending(run_id, {_status, _failure, _at} = ending) do
+    if :ets.insert_new(@endings, {run_id, ending}) do
+      ending
+    else
+      case :ets.lookup(@endings, run_id) do
+        [{_, kept}] -> kept
+        [] -> ending
+      end
+    end
+  rescue
+    ArgumentError -> ending
+  end
+
+  @doc "Run `run_id`'s end recorded: the next end asked for is its own (`ending/2`)."
+  def ended(run_id) do
+    :ets.delete(@endings, run_id)
+    :ok
+  rescue
+    ArgumentError -> :ok
+  end
+
+  @doc """
+  Waits for the next try at recording run `run_id`'s unrecorded end to fail, or for
+  it to be recorded: `{:unrecorded, at}` or `{:recorded, at}`, `at` the time the run
+  failed. One already failed answers at once. For tests.
+  """
+  def attempted(run_id, timeout \\ 5_000),
+    do: GenServer.call(__MODULE__, {:attempted, run_id}, timeout)
 
   @impl true
-  def handle_cast({:release, run_id}, runs), do: {:noreply, forget(runs, run_id)}
+  def init(nil) do
+    endings()
+    {:ok, %{claims: %{}, pending: %{}, waiters: %{}}}
+  end
 
   @impl true
-  def handle_call({:claim, pid, thread_id, run_id}, _from, runs) do
-    runs = forget(runs, run_id)
-    {:reply, :ok, Map.put(runs, run_id, {Process.monitor(pid), pid, thread_id})}
+  # A run whose end is held keeps its runtime watched until the end records
+  # (`recorded/3`): the try that ends it releases it before its answer is heard, and a
+  # runtime that goes in between takes its work with it.
+  def handle_cast({:release, run_id}, state) do
+    if Map.has_key?(state.pending, run_id),
+      do: {:noreply, state},
+      else: {:noreply, forget(state, run_id)}
+  end
+
+  def handle_cast({:unrecorded, thread_id, run_id, ending}, state) do
+    ending =
+      state.pending
+      |> Map.get(run_id, %{thread: thread_id, failures: 0, trying: false})
+      # The first `at` and `failure` stand; how the provider turn ended comes later.
+      |> Map.merge(Map.take(ending, [:provider_turn, :ended, :leftover]))
+      |> Map.put_new(:at, ending.at)
+      |> Map.put_new(:failure, ending.failure)
+
+    {:noreply, try_record(put_in(state.pending[run_id], ending), run_id)}
+  end
+
+  @impl true
+  def handle_call({:claim, pid, thread_id, run_id}, _from, state) do
+    state = forget(state, run_id)
+    {:reply, :ok, put_in(state.claims[run_id], {Process.monitor(pid), pid, thread_id})}
   end
 
   # A process that has exited no longer drives its run, though its `:DOWN` may still
-  # be queued behind this call.
-  def handle_call({:driven?, run_id}, _from, runs) do
-    case runs do
-      %{^run_id => {_, pid, _}} -> {:reply, Process.alive?(pid), runs}
-      _ -> {:reply, false, runs}
+  # be queued behind this call. A run whose end waits on the store is driven here.
+  def handle_call({:driven?, run_id}, _from, state) do
+    case state do
+      %{pending: %{^run_id => _}} -> {:reply, true, state}
+      %{claims: %{^run_id => {_, pid, _}}} -> {:reply, Process.alive?(pid), state}
+      _ -> {:reply, false, state}
+    end
+  end
+
+  def handle_call({:attempted, run_id}, from, state) do
+    case state.pending do
+      %{^run_id => %{failures: failures, at: at}} when failures > 0 ->
+        {:reply, {:unrecorded, at}, state}
+
+      _ ->
+        {:noreply, update_in(state.waiters[run_id], &[from | &1 || []])}
     end
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, reason}, runs) do
-    case Enum.find(runs, fn {_run_id, {run_ref, _, _}} -> run_ref == ref end) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Enum.find(state.claims, fn {_run_id, {run_ref, _, _}} -> run_ref == ref end) do
       {run_id, {_, _, thread_id}} ->
-        if crashed?(reason) and not HalC2.Orchestration.Recovery.stopping?() do
+        state = %{state | claims: Map.delete(state.claims, run_id)}
+
+        # A runtime that went after the store failed its turn keeps that failure,
+        # whatever it went by; its provider turn went with it, and so did the work
+        # it kept running (`lost`).
+        if (crashed?(reason) or Map.has_key?(state.pending, run_id)) and
+             not HalC2.Orchestration.Recovery.stopping?() do
           Logger.warning("run #{run_id} lost its runtime: #{inspect(reason)}")
 
-          # Off this process: ending a run writes to the thread and starts the next one.
-          Task.start(fn ->
-            TurnWriter.abandon(
-              thread_id,
-              run_id,
-              "failed",
-              "The provider's session ended unexpectedly."
-            )
-          end)
+          ending =
+            Map.get(state.pending, run_id, %{
+              thread: thread_id,
+              failures: 0,
+              trying: false,
+              at: Entities.now(),
+              failure: "The provider's session ended unexpectedly."
+            })
+            |> gone()
+
+          {:noreply, try_record(put_in(state.pending[run_id], ending), run_id)}
+        else
+          {:noreply, state}
         end
 
-        {:noreply, Map.delete(runs, run_id)}
-
       nil ->
-        {:noreply, runs}
+        {:noreply, state}
     end
   end
 
-  defp forget(runs, run_id) do
-    {claim, runs} = Map.pop(runs, run_id)
-    if claim, do: Process.demonitor(elem(claim, 0), [:flush])
-    runs
+  def handle_info({:retry, run_id}, state), do: {:noreply, try_record(state, run_id)}
+
+  def handle_info({:attempted, run_id, result}, state) do
+    case {result, state.pending} do
+      {:ok, %{^run_id => ending}} ->
+        claim = state.claims[run_id]
+        ending = if claim && lost?(elem(claim, 1)), do: gone(ending), else: ending
+
+        # The runtime went while the try ran, its `:DOWN` heard or not: the work it
+        # kept running went with it, which the next try ends, the run recorded.
+        if ending[:lost] == true and ending[:tried_lost] != true,
+          do:
+            {:noreply,
+             try_record(put_in(state.pending[run_id], %{ending | trying: false}), run_id)},
+          else: {:noreply, recorded(state, run_id, ending)}
+
+      {{:error, error}, %{^run_id => ending}} ->
+        failures = ending.failures + 1
+        Logger.warning("run #{run_id}'s end is not recorded yet (try #{failures}): #{error}")
+        {waiters, state} = pop_in(state.waiters[run_id])
+        for from <- waiters || [], do: GenServer.reply(from, {:unrecorded, ending.at})
+        base = Application.get_env(:hal_c2, :unrecorded_retry_ms, 1_000)
+        delay = min(base * Integer.pow(2, min(failures - 1, 10)), 30_000)
+        Process.send_after(self(), {:retry, run_id}, delay)
+        ending = %{ending | failures: failures, trying: false}
+        {:noreply, put_in(state.pending[run_id], ending)}
+
+      _ ->
+        {:noreply, state}
+    end
   end
+
+  # An MC upgraded in place carries the claims alone.
+  @impl true
+  def code_change(_old, %{claims: _} = state, _extra) do
+    endings()
+    {:ok, Map.delete(state, :endings)}
+  end
+
+  def code_change(_old, claims, _extra) do
+    endings()
+    {:ok, %{claims: claims, pending: %{}, waiters: %{}}}
+  end
+
+  defp endings do
+    if :ets.whereis(@endings) == :undefined,
+      do: :ets.new(@endings, [:named_table, :public, :set])
+  end
+
+  defp recorded(state, run_id, ending) do
+    {waiters, state} = pop_in(state.waiters[run_id])
+    for from <- waiters || [], do: GenServer.reply(from, {:recorded, ending.at})
+    forget(%{state | pending: Map.delete(state.pending, run_id)}, run_id)
+  end
+
+  # One try at a time, off this process: ending a run writes to the thread and starts
+  # the next one. A run whose provider turn has not ended yet waits for it. What the
+  # try took of its runtime (`tried_lost`) is kept for when it is answered.
+  defp try_record(state, run_id) do
+    case state.pending do
+      %{^run_id => %{trying: false, provider_turn: provider_turn} = ending}
+      when provider_turn != :pending ->
+        watch = self()
+        claim = state.claims[run_id]
+        # A runtime that went before its `:DOWN` reached here went as one that had.
+        ending = if claim && lost?(elem(claim, 1)), do: gone(ending), else: ending
+
+        Task.start(fn ->
+          result =
+            try do
+              TurnWriter.abandon(ending.thread, run_id, "failed", ending.failure,
+                at: ending.at,
+                provider_turn: ending.provider_turn,
+                ended: ending[:ended],
+                lost: ending[:lost],
+                leftover: ending[:leftover]
+              )
+
+              :ok
+            rescue
+              error -> {:error, Exception.message(error)}
+            catch
+              kind, reason -> {:error, Exception.format(kind, reason)}
+            end
+
+          send(watch, {:attempted, run_id, result})
+        end)
+
+        put_in(
+          state.pending[run_id],
+          Map.merge(ending, %{trying: true, tried_lost: ending[:lost] == true})
+        )
+
+      _ ->
+        state
+    end
+  end
+
+  # A run claimed again, or released once it ended, starts from no end of its own.
+  defp forget(state, run_id) do
+    {claim, claims} = Map.pop(state.claims, run_id)
+    if claim, do: Process.demonitor(elem(claim, 0), [:flush])
+    :ets.delete(@endings, run_id)
+    %{state | claims: claims}
+  end
+
+  defp lost?(pid),
+    do: not Process.alive?(pid) and not HalC2.Orchestration.Recovery.stopping?()
+
+  # A run whose runtime went: its app-server went too, and the work it kept running.
+  defp gone(ending),
+    do: ending |> Map.update(:provider_turn, nil, &gone_turn/1) |> Map.put(:lost, true)
+
+  # How a runtime's provider turn reads once the runtime went: as the run, if it had not
+  # said; one it could not stop went with its app-server.
+  defp gone_turn(:pending), do: nil
+  defp gone_turn("running"), do: "interrupted"
+  defp gone_turn(provider_turn), do: provider_turn
 
   defp crashed?(reason),
     do: not (reason in [:normal, :shutdown] or match?({:shutdown, _}, reason))

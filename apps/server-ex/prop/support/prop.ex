@@ -87,7 +87,12 @@ defmodule HalC2.Prop do
       do: Process.put({__MODULE__, :env}, [{key, prior} | saved])
   end
 
-  @doc "Undoes what `put_env/2`, `put_system_env/2` and `scratch_home/1` set in this case."
+  @doc """
+  Undoes what `put_env/2`, `put_system_env/2` and `scratch_home/1` set in this case, and
+  takes back a store refusing changes (`:store_hook`), however the case set it
+  (`HalC2.Test.Machines.refuse_changes/1` included): a store left refusing fails every
+  case after it before its first command.
+  """
   def restore_env do
     for {key, prior} <- Process.delete({__MODULE__, :env}) || [] do
       case {key, prior} do
@@ -98,7 +103,7 @@ defmodule HalC2.Prop do
       end
     end
 
-    :ok
+    Application.delete_env(:hal_c2, :store_hook)
   end
 
   @doc """
@@ -108,9 +113,21 @@ defmodule HalC2.Prop do
   is not available, so a case starts its services with this and stops them with
   `stop_services/0` before it returns. The supervisor is kept in the process
   dictionary, where the commands of the case find it (`restart_service/1`).
+
+  Cases run one at a time, so services still running are an earlier case's that never
+  reached `stop_services/0` (its setup raised): they are stopped first, or every case
+  after it would fail to start its own.
   """
   def start_services(specs) do
-    {:ok, sup} = Supervisor.start_link(specs, strategy: :one_for_one, max_restarts: 0)
+    if sup = Process.whereis(__MODULE__.Services), do: stop_supervisor(sup)
+
+    {:ok, sup} =
+      Supervisor.start_link(specs,
+        strategy: :one_for_one,
+        max_restarts: 0,
+        name: __MODULE__.Services
+      )
+
     Process.unlink(sup)
     Process.put({__MODULE__, :services}, sup)
     sup
@@ -119,19 +136,27 @@ defmodule HalC2.Prop do
   @doc """
   Stops what `start_services/1` started, waiting for every child to exit, then
   `restore_env/0`: the case is over, and a `scratch_home/1` it set must not outlive it.
+  Services that already went (a crash past `max_restarts: 0`) are stopped already.
   """
   def stop_services do
     case Process.delete({__MODULE__, :services}) do
-      nil ->
-        :ok
+      nil -> :ok
+      sup -> stop_supervisor(sup)
+    end
+  after
+    restore_env()
+  end
 
-      sup ->
-        plugins = plugins_supervisor()
-        Supervisor.stop(sup)
-        if plugins, do: await_down(plugins)
+  defp stop_supervisor(sup) do
+    plugins = plugins_supervisor()
+
+    try do
+      Supervisor.stop(sup)
+    catch
+      :exit, :noproc -> :ok
     end
 
-    restore_env()
+    if plugins, do: await_down(plugins)
   end
 
   # What runs the plugins hangs off `HalC2.Plugins` and ends after it, so stopping the

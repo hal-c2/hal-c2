@@ -25,7 +25,9 @@ protocol across machines goes wrong, and where sampling rarely looks. A proof ch
 - liveness under fairness: what starts eventually ends, given that the code's steps
   are taken while they can be and that crashes restart and partitions heal
   (`assert_ltl`);
-- deadlock freedom: no reachable state is stuck with work left (`refute_deadlock`).
+- deadlock freedom: no reachable state is stuck with work left (`refute_deadlock`);
+- that each part of a fix is needed: with it switched off in the model, the bad state
+  is reachable (`assert_reachable`), so a property does not pass for want of a path.
 
 A model is only as good as its likeness to the code, so a proof also checks that it
 still covers the code (below). Use a proof for a protocol between processes or
