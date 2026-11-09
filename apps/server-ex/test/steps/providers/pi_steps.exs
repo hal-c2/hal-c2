@@ -3163,7 +3163,12 @@ defmodule HalC2.Steps.Providers.Pi do
       |> Enum.find(&(&1["runId"] == run["id"] and &1["type"] == "command_execution"))
     end)
 
-    refute Enum.any?(FakeAcp.log(context), &match?(%{"accepted" => "back on Pi"}, &1))
+    # Pi logs a follow-up as queued when it gets it and accepted only when it answers.
+    # The prompt is the handed-over history with the message in it.
+    log = FakeAcp.log(context)
+    prompt? = &(is_binary(&1) and String.contains?(&1, "back on Pi"))
+    assert Enum.any?(log, &(&1["followUp"] == true and prompt?.(&1["queued"])))
+    refute Enum.any?(log, &prompt?.(&1["accepted"]))
     context
   end
 
