@@ -1901,6 +1901,12 @@ Feature: In-app preview browser
       Then the toolbar's size controls cannot be used until it does
 
     @desktop
+    Scenario: A second size picked while one waits is turned away
+      Given the user has just picked a device size for a tab
+      When the user picks another size from the tab's Device size menu
+      Then the desktop asks the MC for no other size and the tab keeps the first
+
+    @desktop
     Scenario: A size the desktop cannot apply says so and is undone
       Given a browser tab with the device toolbar shown
       When the desktop cannot resize the page to the size the user picked

@@ -27,7 +27,8 @@
 // the page the MC says its tab is at. The user picks the page's device size
 // (`preview.resize`, held too): the page shows the size picked at once and
 // waits on the MC, and once every answer is in it waits on nothing and shows
-// the size the MC has. The connection can go down for a while, the MC taking
+// the size the MC has; one size at a time, a pick made meanwhile is turned
+// away. A report may time out after the MC took it. The connection can go down for a while, the MC taking
 // some of the reports on their way first: the page stays where it is (nothing
 // asks its view to load, unless its tab went and came back), and once back
 // the MC hears where it went. Nothing ever takes the page back to where its
@@ -400,7 +401,12 @@ struct Sut {
     const int index = indexOf(tabId);
     if (index < 0) return false;
     tabs[index].insert(QStringLiteral("navStatus"), call.rpc.payload.value(QLatin1String("navStatus")));
-    if (call.view == views) reportedTabs.insert(tabId);
+    // The MC is where the view is only once the view's last report is taken: while a later
+    // one is still held, this one is a stale place the MC was put.
+    const bool later = std::any_of(held.cbegin(), held.cend(), [&](const Held& other) {
+      return other.rpc.method == QLatin1String("preview.reportStatus") && other.rpc.payload.value(QLatin1String("tabId")).toString() == tabId && other.view == call.view;
+    });
+    if (call.view == views && !later) reportedTabs.insert(tabId);
     else reportedTabs.remove(tabId);
     return true;
   }
@@ -425,7 +431,9 @@ struct Sut {
       }
       take(call);
       emitEvent(tabs.at(index), QStringLiteral("navigated"), {{QStringLiteral("snapshot"), tabs.at(index)}});
-      mc.reply(call.rpc, QJsonValue::Null);
+      // Refused, it timed out: after the MC took it (web/socket.ex).
+      if (!ok) mc.refuse(call.rpc, QStringLiteral("preview.reportStatus timed out"));
+      else mc.reply(call.rpc, QJsonValue::Null);
       return;
     }
     // A size is taken while its tab is there.
@@ -542,8 +550,7 @@ struct Sut {
     }
     // Away from the MC, nothing takes the page anywhere, and what it shows is
     // what the MC said last, not what it has now.
-    // Several sizes picked and unanswered: the page shows the last, whichever
-    // answers have come.
+    // A size picked and unanswered is the one shown, whatever else was picked since.
     if (page->resizing()) RC_ASSERT(QJsonObject::fromVariantMap(page->viewport()) == lastPick);
     RC_ASSERT(pulledWhileDown.isEmpty());
     RC_ASSERT(pulledBack.isEmpty());
@@ -636,10 +643,13 @@ struct PageResize : Step {
       ++sut.views;
       if (!sut.page->exists()) return;
     }
+    // One size at a time: a pick while the MC has not answered the last is
+    // turned away, and the page keeps showing the one waiting.
+    const bool turnedAway = sut.page->resizing();
     sut.page->setViewport(viewport().toVariantMap());
-    sut.lastPick = viewport();
+    if (!turnedAway) sut.lastPick = viewport();
     RC_ASSERT(sut.page->resizing());
-    RC_ASSERT(QJsonObject::fromVariantMap(sut.page->viewport()) == viewport());
+    RC_ASSERT(QJsonObject::fromVariantMap(sut.page->viewport()) == sut.lastPick);
   }
   void show(std::ostream& os) const override { os << "PageResize(" << QJsonDocument(viewport()).toJson(QJsonDocument::Compact).toStdString() << ")"; }
 };
@@ -727,7 +737,15 @@ struct Answer : Step {
   bool ok = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override {
-    if (!sut.held.isEmpty()) sut.answer(at % int(sut.held.size()), ok);
+    if (sut.held.isEmpty()) return;
+    int index = at % int(sut.held.size());
+    // The page's reports reach the MC in the order they were sent (one socket,
+    // one reader): an answer to a later one never comes before an earlier's.
+    if (sut.held.at(index).rpc.method == QLatin1String("preview.reportStatus")) {
+      index = int(std::find_if(sut.held.cbegin(), sut.held.cend(), [](const Sut::Held& call) { return call.rpc.method == QLatin1String("preview.reportStatus"); }) -
+                  sut.held.cbegin());
+    }
+    sut.answer(index, ok);
   }
   void show(std::ostream& os) const override { os << "Answer(" << at << (ok ? "" : ", refused") << ")"; }
 };
@@ -784,6 +802,8 @@ struct McFail : Step {
     sut.tabs[at].insert(QStringLiteral("navStatus"), QJsonObject{{QStringLiteral("_tag"), QStringLiteral("LoadFailed")},
                                                                  {QStringLiteral("url"), url},
                                                                  {QStringLiteral("description"), QStringLiteral("refused")}});
+    // No longer where a report of the view's put it.
+    sut.reportedTabs.remove(tab);
     sut.emitEvent(sut.tabs.at(at), QStringLiteral("failed"), {{QStringLiteral("url"), url}, {QStringLiteral("description"), QStringLiteral("refused")}});
   }
   void show(std::ostream& os) const override { os << "McFail(" << tab.toStdString() << ")"; }

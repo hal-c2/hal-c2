@@ -88,7 +88,7 @@ struct Fixture {
     fields.insert(QStringLiteral("type"), type);
     fields.insert(QStringLiteral("threadId"), kThread);
     fields.insert(QStringLiteral("tabId"), tabId);
-    fields.insert(QStringLiteral("serverEpoch"), QStringLiteral("epoch-1"));
+    if (!fields.contains(QStringLiteral("serverEpoch"))) fields.insert(QStringLiteral("serverEpoch"), QStringLiteral("epoch-1"));
     fields.insert(QStringLiteral("revision"), revision);
     for (const int id : mc.subscribers(QStringLiteral("preview"))) {
       mc.send({{QStringLiteral("t"), QStringLiteral("preview")}, {QStringLiteral("id"), id}, {QStringLiteral("event"), fields}});
@@ -535,9 +535,10 @@ private slots:
     QCOMPARE(f.tabIds(), QStringList());
   }
 
-  // Two sizes picked one after the other (the Device size menu stays enabled):
-  // the MC's event for the first is not the second's, and did not end it.
-  void anEarlierSizesEventDoesNotEndTheLaterPick() {
+  // One size at a time (the Device size menu, the toolbar and the handles are
+  // all turned away while one is outstanding): A, B, A before the MC answers
+  // sent A once, and the pick shown is A's.
+  void aSizePickedWhileOneIsOutstandingIsTurnedAway() {
     Fixture f;
     QVERIFY(f.show());
     QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
@@ -546,21 +547,95 @@ private slots:
     page.setTabId(QStringLiteral("tab-1"));
     page.setViewport(phone().toVariantMap());
     page.setViewport(tablet().toVariantMap());
-    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.resize")).size() == 2; }));
+    page.setViewport(phone().toVariantMap());
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
+    QVERIFY(f.barrier());
+    QCOMPARE(f.held.value(QStringLiteral("preview.resize")).size(), 1);
+    QVERIFY(page.resizing());
+    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), phone());
     QJsonObject first = tab(QStringLiteral("tab-1"));
     first.insert(QStringLiteral("viewport"), phone());
     f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), first}});
-    QVERIFY(f.barrier());
-    QVERIFY(page.resizing());
-    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), tablet());
-    QJsonObject second = tab(QStringLiteral("tab-1"));
-    second.insert(QStringLiteral("viewport"), tablet());
-    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 3, {{QStringLiteral("snapshot"), second}});
     f.mc.reply(f.held[QStringLiteral("preview.resize")].takeFirst(), first);
-    f.mc.reply(f.held[QStringLiteral("preview.resize")].takeFirst(), second);
     QVERIFY(f.barrier());
     QVERIFY(!page.resizing());
-    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), tablet());
+    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), phone());
+    // Answered, the next pick goes.
+    page.setViewport(tablet().toVariantMap());
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
+    QVERIFY(page.resizing());
+  }
+
+  // The user's close of the last tab, the list reloaded meanwhile: the MC's
+  // `closed` at the list's own revision still told that the tab is gone, so the
+  // close failing later does not bring it back.
+  void aCloseConfirmedAtTheListsRevisionStaysClosed() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    f.previews->close(QStringLiteral("tab-1"));
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.close")).isEmpty(); }));
+    // The MC restarted: the list is read again, and the empty rows are loading.
+    f.emitEvent(QStringLiteral("opened"), QStringLiteral("tab-9"), 1, {{QStringLiteral("serverEpoch"), QStringLiteral("epoch-2")}});
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.list")).isEmpty(); }));
+    f.emitEvent(QStringLiteral("closed"), QStringLiteral("tab-1"), 2, {{QStringLiteral("serverEpoch"), QStringLiteral("epoch-2")}});
+    QVERIFY(f.barrier());
+    f.mc.reply(f.held[QStringLiteral("preview.list")].takeFirst(), list({}, 2, QStringLiteral("epoch-2")));
+    QVERIFY(f.barrier());
+    f.mc.refuse(f.held[QStringLiteral("preview.close")].takeFirst(), QStringLiteral("no such tab"));
+    QVERIFY(f.barrier());
+    QCOMPARE(f.tabIds(), QStringList());
+  }
+
+  // The MC's event for a size, at the address the tab already had, is not the
+  // echo of a report still on its way: the report's own event, coming after
+  // the agent moved the tab on, would be taken for news and pull the page back.
+  void aSizeEventDoesNotTakeTheEchoOfAReportStillOnItsWay() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 1);
+    // The page reports where it went; the MC has not taken it yet.
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    QJsonObject sized = tab(QStringLiteral("tab-1"), loadedAt(kPageB));
+    sized.insert(QStringLiteral("viewport"), phone());
+    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 3, {{QStringLiteral("snapshot"), sized}});
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 4, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageA))}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 2);
+    // The MC takes the report now: the page's own address said back.
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 5, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 2);
+  }
+
+  // A timeout, or a failed call, can come after the MC took the report
+  // (web/socket.ex): it was not refused, so the page stays where it went and its
+  // echo stays for the MC saying it back.
+  void aReportThatTimedOutIsNotRefused() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.reportStatus")).isEmpty(); }));
+    f.mc.refuse(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QStringLiteral("preview.reportStatus timed out"));
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 0);
+    // The MC had taken it after all: its event says the address back, and the
+    // page, which went on from there, is not taken back to it.
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 0);
   }
 
   // A report the connection dropped, the MC may have taken: its echo is its

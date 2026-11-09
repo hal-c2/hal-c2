@@ -501,9 +501,15 @@ void ThreadPreviews::reload() {
                        continue;
                      }
                      const QString tabId = event.value(QLatin1String("tabId")).toString();
-                     if (revision <= m_revision) continue;
+                     const bool closed = event.value(QLatin1String("type")).toString() == QLatin1String("closed");
+                     // The list covering the event leaves the rows right, but a close
+                     // the user is waiting on was still confirmed by it.
+                     if (revision <= m_revision) {
+                       if (closed) m_closing.remove(tabId);
+                       continue;
+                     }
                      if (m_closing.contains(tabId)) {
-                       if (event.value(QLatin1String("type")).toString() == QLatin1String("closed")) m_closing.remove(tabId);
+                       if (closed) m_closing.remove(tabId);
                        continue;
                      }
                      m_revision = revision;
@@ -613,16 +619,19 @@ void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, 
                              {QStringLiteral("canGoForward"), canGoForward}},
                  [this, unheard](const QJsonValue&, const std::optional<QString>& error) {
                    if (!error || !unheard) return;
-                   // McClient's own errors: the socket was not there to carry it,
-                   // or went with the report already written to it. Or the MC
-                   // could not reach the thread's environment: not carried either,
-                   // and the next word from it lists the tabs again.
-                   if (McClient::unreachable(*error)) {
-                     m_unreached = true;
-                     return unheard(Unheard::Unsent);
-                   }
+                   // Only "not connected" (McClient had no socket) proves the MC
+                   // never had it. A connection that went with it written, a
+                   // cluster member that could not be reached, a failed erpc and a
+                   // timeout can all come after the MC took it (web/socket.ex): the
+                   // report and its echo stay, and the next word from the
+                   // environment lists the tabs again.
                    if (*error == QLatin1String("not connected")) return unheard(Unheard::Unsent);
-                   if (*error == QLatin1String("disconnected")) return unheard(Unheard::Dropped);
+                   const QString method = QStringLiteral("preview.reportStatus");
+                   if (*error == QLatin1String("disconnected") || McClient::unreachable(*error) || error->startsWith(QLatin1String("MC unavailable:")) ||
+                       *error == method + QStringLiteral(" timed out")) {
+                     m_unreached = true;
+                     return unheard(Unheard::Dropped);
+                   }
                    unheard(Unheard::Refused);
                  });
 }

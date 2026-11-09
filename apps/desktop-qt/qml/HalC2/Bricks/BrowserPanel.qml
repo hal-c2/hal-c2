@@ -467,6 +467,7 @@ Rectangle {
         ShellMenuItem {
             text: qsTr("Fill the panel")
             iconName: "monitor"
+            enabled: !page.resizing
             current: !root.framed
             onTriggered: deviceToolbar.pick("fill")
         }
@@ -483,6 +484,7 @@ Rectangle {
                 text: modelData.label
                 detail: modelData.width + " × " + modelData.height
                 iconName: modelData.kind === "tablet" ? "tablet" : "smartphone"
+                enabled: !page.resizing
                 current: root.viewport.presetId === modelData.id
                 onTriggered: deviceToolbar.pick(modelData.id)
             }
@@ -494,6 +496,7 @@ Rectangle {
             text: BrowserJs.desktop.label
             detail: BrowserJs.desktop.width + " × " + BrowserJs.desktop.height
             iconName: "monitor"
+            enabled: !page.resizing
             current: root.viewport._tag === "freeform" && root.viewport.width === BrowserJs.desktop.width && root.viewport.height === BrowserJs.desktop.height
             onTriggered: deviceToolbar.pick("desktop")
         }
@@ -552,6 +555,7 @@ Rectangle {
             objectName: "browserDeviceToolbarItem"
             text: root.framed ? qsTr("Hide device toolbar") : qsTr("Show device toolbar")
             iconName: "smartphone"
+            enabled: !page.resizing
             onTriggered: root.framed ? deviceToolbar.apply(BrowserJs.viewportOf("fill"), 0) : root.showDeviceToolbar()
         }
 

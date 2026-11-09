@@ -131,8 +131,9 @@ public:
   // The tab as the MC last said, or {} when there is none.
   QJsonObject tab(const QString& tabId) const;
   // Why the MC did not take a report: it said no (Refused), the connection
-  // was down so it never went (Unsent), or the connection dropped with it on
-  // the way, so the MC may have it anyway (Dropped).
+  // was down so it never went (Unsent), or the answer did not come (the
+  // connection dropped, the cluster member was unreachable, the call timed
+  // out), so the MC may have it anyway (Dropped).
   enum class Unheard { Refused, Unsent, Dropped };
   // What the page showing the tab did: `preview.reportStatus`, navStatus a
   // PreviewNavStatus. `unheard` runs when the MC did not answer that it took it.

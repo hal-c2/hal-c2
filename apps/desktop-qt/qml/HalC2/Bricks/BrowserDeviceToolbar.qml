@@ -21,7 +21,7 @@ Rectangle {
     property real ratio: 0
     // What the user is typing ({width, height} as text), until it is applied.
     property var draft: null
-    // The size picked and the ratio it changed from and to, until the MC answers.
+    // The one size picked and the ratio it changed from and to, until the MC answers.
     property var picking: null
     // What the other controls of the row take, spacing included.
     readonly property real restWidth: widthField.width + times.implicitWidth + heightField.width + aspectButton.width + rotateButton.width + 5 * controls.spacing
@@ -34,7 +34,12 @@ Rectangle {
     implicitHeight: 32
     color: Theme.palette.color("surface", "#0f0f11")
 
+    // One size at a time: while the MC has not confirmed the last, every entry
+    // point (this toolbar, the tab's menus, the handles) is turned away here or
+    // disabled, so the ratio to go back to is always the confirmed one.
     function apply(next, nextRatio) {
+        if (busy)
+            return;
         draft = null;
         picking = { viewport: next, ratio: nextRatio, before: ratio };
         ratio = nextRatio;

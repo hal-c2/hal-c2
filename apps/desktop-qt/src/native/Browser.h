@@ -103,8 +103,8 @@ private:
 // it (loadRequested). The device size is the MC's (`viewport`): setViewport
 // shows the new size at once (`resizing` until the MC answers) and sends
 // `preview.resize`; refused or timed out, the size the MC has is the size;
-// taken, the size picked is, until the MC's tab says otherwise. A newer pick
-// outlives an older one's answer.
+// taken, the size picked is, until the MC's tab says otherwise. One size at a
+// time: setViewport does nothing while `resizing`.
 // Zoom, appearance, mute and DevTools are the page's own, not the MC's.
 //
 // For drivers in C++: `view` is the WebEngineView (a QQuickItem; call its
@@ -234,9 +234,6 @@ private:
   // A size picked that the MC's tab does not show yet, whether the MC is yet
   // to answer it, and which pick it was.
   QJsonObject m_pendingViewport;
-  // Earlier picks the MC has not shown yet: their events are not news of the
-  // current one.
-  QList<QJsonObject> m_olderViewports;
   bool m_resizing = false;
   int m_viewportPick = 0;
   qreal m_zoom = 1.0;

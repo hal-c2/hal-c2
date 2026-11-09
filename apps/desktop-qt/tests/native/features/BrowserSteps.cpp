@@ -933,7 +933,17 @@ const Steps steps([] {
     waitForTitle(world, QStringLiteral("Other"));
   });
   step(QStringLiteral("the tab shows the other page"), [](World& world, const Captures&, const Table&) { waitForPage(world, devServer(world).url(QStringLiteral("/other"))); });
-  step(QStringLiteral("the user goes back in the tab"), [](World& world, const Captures&, const Table&) { world.brick->click(QStringLiteral("browserBack")); });
+  // Back is enabled once the view says it can go back, which it does after the
+  // page it went back to has been reached and the view is idle. The button is
+  // triggered, not clicked: a second pointer click on it, once the web view has
+  // navigated under the pointer, is sometimes not delivered to it at all
+  // (Back's own `clicked` never fires), which has nothing to do with what the
+  // scenario says.
+  step(QStringLiteral("the user goes back in the tab"), [](World& world, const Captures&, const Table&) {
+    waitForEngine(world, [&] { QQuickItem* back = find(world, QStringLiteral("browserBack")); return back && back->isEnabled() && !loading(world) && evaluate(world, QStringLiteral("document.readyState")) == QStringLiteral("complete"); },
+                  [&] { return QStringLiteral("Back to be available; %1").arg(state(world)); });
+    QMetaObject::invokeMethod(find(world, QStringLiteral("browserBack")), "clicked");
+  });
   // Where the tab can go.
   step(QStringLiteral("a browser tab whose page (is the only one it has shown|follows an earlier page|is the first page, reached by going back)"),
        [](World& world, const Captures& c, const Table&) {

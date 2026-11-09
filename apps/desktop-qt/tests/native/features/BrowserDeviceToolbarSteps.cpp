@@ -404,6 +404,17 @@ const Steps steps([] {
     waitFor(world, [&] { return std::all_of(kSizeControls.cbegin(), kSizeControls.cend(), [&](const QString& control) { return item(world, control)->isEnabled(); }); },
             [&] { return QStringLiteral("the controls to be usable; ") + describe(world); });
   });
+  step(QStringLiteral("the user picks another size from the tab's Device size menu"), [](World& world, const Captures&, const Table&) {
+    waitFor(world, [&] { return world.mc.heldAnswers() > 0; }, [] { return QStringLiteral("the desktop to ask the MC for the size"); });
+    toolbar(world).resizes = resizes(world);
+    QMetaObject::invokeMethod(item(world, QStringLiteral("browserDeviceToolbar")), "pick", Q_ARG(QVariant, QStringLiteral("ipad-mini")));
+  });
+  step(QStringLiteral("the desktop asks the MC for no other size and the tab keeps the first"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    waitFor(world, [&] { return !page(world)->resizing(); }, [&] { return QStringLiteral("the size to be confirmed; ") + describe(world); });
+    expect(resizes(world) == toolbar(world).resizes, QStringLiteral("the desktop asked the MC for %1 more sizes").arg(resizes(world) - toolbar(world).resizes));
+    expect(page(world)->viewport().value(QStringLiteral("presetId")).toString() == QLatin1String("iphone-se"), describe(world));
+  });
   step(QStringLiteral("the desktop cannot resize the page to the size the user picked"), [](World& world, const Captures&, const Table&) {
     remember(world);
     world.mc.refusals.insert(QStringLiteral("preview.resize"), QStringLiteral("The page could not be resized"));

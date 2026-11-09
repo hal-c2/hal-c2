@@ -210,11 +210,7 @@ void BrowserPage::refresh() {
   // The MC's tab showing the size picked, or another, ends the pick.
   const bool resized = m_tab.value(QLatin1String("viewport")) != before;
   const QJsonObject shown = m_tab.value(QLatin1String("viewport")).toObject();
-  // An earlier pick's event, in order before the current one's, is not it.
-  const qsizetype older = shown == m_pendingViewport ? -1 : m_olderViewports.indexOf(shown);
-  if (!m_pendingViewport.isEmpty() && older >= 0) {
-    m_olderViewports.remove(0, older + 1);
-  } else if (!m_pendingViewport.isEmpty() && (resized || shown == m_pendingViewport)) {
+  if (!m_pendingViewport.isEmpty() && (resized || shown == m_pendingViewport)) {
     setPending({}, false);
     emit viewportChanged();
   } else if (resized && m_pendingViewport.isEmpty()) {
@@ -232,7 +228,10 @@ void BrowserPage::refresh() {
   }
   // The MC saying back where the page went, in order (the page is where it
   // went last).
-  const auto echoed = std::find_if(m_echoes.cbegin(), m_echoes.cend(), [&](const Echo& echo) { return echo.url == at; });
+  // A size taken at the address the tab already had is the size's event, not
+  // the echo of a report still on its way: it leaves the echoes for that one.
+  const bool sizeOnly = resized && at == was;
+  const auto echoed = sizeOnly ? m_echoes.cend() : std::find_if(m_echoes.cbegin(), m_echoes.cend(), [&](const Echo& echo) { return echo.url == at; });
   if (const qsizetype echo = echoed - m_echoes.cbegin(); echoed != m_echoes.cend()) {
     m_echoes.remove(0, echo + 1);
     return;
@@ -249,7 +248,6 @@ void BrowserPage::refresh() {
 
 void BrowserPage::setPending(const QJsonObject& viewport, bool waiting) {
   m_pendingViewport = viewport;
-  if (viewport.isEmpty()) m_olderViewports.clear();
   if (waiting == m_resizing) return;
   m_resizing = waiting;
   emit resizingChanged();
@@ -391,20 +389,16 @@ void BrowserPage::navigate(const QString& url) {
 }
 
 void BrowserPage::setViewport(const QVariantMap& viewport) {
-  if (!m_previews || m_tabId.isEmpty()) return;
+  // One size at a time: until the MC answers the last, the size it has (or the
+  // one picked) is the size, and a second request could not be told from the
+  // first's events.
+  if (!m_previews || m_tabId.isEmpty() || m_resizing) return;
   const QJsonObject next = QJsonObject::fromVariantMap(viewport);
   const int pick = ++m_viewportPick;
-  // A pick still outstanding is older now: its event is not this one's.
-  if (!m_pendingViewport.isEmpty() && m_pendingViewport != next && !m_olderViewports.contains(m_pendingViewport)) {
-    m_olderViewports.append(m_pendingViewport);
-    if (m_olderViewports.size() > kEchoes) m_olderViewports.removeFirst();
-  }
-  const QJsonObject before = m_pendingViewport;
   setPending(next, true);
-  if (before != next) m_olderViewports.removeAll(next);
   emit viewportChanged();
   m_previews->resizeTab(m_tabId, next, [this, pick, guard = QPointer<BrowserPage>(this)](const std::optional<QString>& error) {
-    // Answered, unless the user has picked another since: refused, the MC's
+    // Answered, unless the tab changed or the wait timed out: refused, the MC's
     // size is the size; taken, the size picked stays shown until the MC's tab
     // has it (its event may come after the answer, or not at all).
     if (!guard || pick != m_viewportPick || !m_resizing) return;
