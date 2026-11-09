@@ -124,6 +124,21 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       tick: [],
       thread_gone: ["b"],
       start: ["a", "r4", 3, true, false]
+    ],
+    away: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      finish: ["a", "r1", 1],
+      start: ["b", "r2", 1, true, true],
+      use: ["b", "r2", 1, "CronCreate", true, :own],
+      start: ["a", "r3", 2, false, false],
+      finish: ["a", "r3", 2],
+      tick: [],
+      thread_moved: ["b", "r2", 1],
+      start: ["a", "r4", 3, true, false],
+      finish: ["a", "r4", 3],
+      thread_returned: ["b"],
+      start: ["a", "r5", 4, true, false]
     ]
   ]
 
@@ -232,7 +247,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # `%{thread, run, tool, period, told}`, `told` once the feed said it dropped them.
   # `named`: the tools the person last turned off by name, which turns go on to use
   # more often than others (a conversation shaped before still has them). `gone`: the
-  # deleted threads.
+  # deleted threads. `away`: those moved to another MC, which may come back.
   def initial_state,
     do: %{
       up: true,
@@ -249,28 +264,30 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       used: [],
       runs: 0,
       forked: false,
-      gone: []
+      gone: [],
+      away: []
     }
 
   def command(s) do
-    threads = (@threads ++ if(s.forked, do: ["f"], else: [])) -- s.gone
+    threads = (@threads ++ if(s.forked, do: ["f"], else: [])) -- (s.gone ++ s.away)
     open = Map.keys(s.open)
     idle = threads -- open
     live = Map.keys(s.threads) -- s.gone
+    here = live -- s.away
 
     rollbackable =
-      for {t, %{runs: runs}} <- s.threads, t in live, t not in open, ended(runs) != [], do: t
+      for {t, %{runs: runs}} <- s.threads, t in here, t not in open, ended(runs) != [], do: t
 
     forkable =
       if s.forked,
         do: [],
-        else: for({t, _} <- s.threads, t in @threads, t in live, t not in open, do: t)
+        else: for({t, _} <- s.threads, t in @threads, t in here, t not in open, do: t)
 
     tools = oneof([nil, elements(Enum.map(@tools, &[&1]))])
 
     # Turns that ended, also of threads the plugin has heard nothing of since it started.
     closed =
-      for {t, %{runs: runs}} <- s.threads, t in live, s.up, run <- ended(runs), do: {t, run}
+      for {t, %{runs: runs}} <- s.threads, t in here, s.up, run <- ended(runs), do: {t, run}
 
     [
       idle != [] and s.runs < @max_runs and {6, start_call(s, idle)},
@@ -287,7 +304,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       {1, {:call, __MODULE__, :history, [not s.history]}},
       rollbackable != [] and {1, rollback_call(s, rollbackable)},
       forkable != [] and {1, fork_call(s, forkable)},
-      live != [] and {1, {:call, __MODULE__, :thread_gone, [elements(live)]}}
+      live != [] and {1, {:call, __MODULE__, :thread_gone, [elements(live)]}},
+      here != [] and {1, moved_call(s, here)},
+      s.away != [] and {2, {:call, __MODULE__, :thread_returned, [elements(s.away)]}}
     ]
     |> Enum.filter(& &1)
     |> frequency()
@@ -303,6 +322,14 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   # A turn that ends before the feed tells of it starting, the quiet timer perhaps
   # firing between.
+  # Its turn under way, if any, ends on the other MC.
+  defp moved_call(s, threads) do
+    let thread <- elements(threads) do
+      run = s.open[thread] && List.last(s.threads[thread].runs)
+      {:call, __MODULE__, :thread_moved, [thread, run && run.id, run && run.ordinal]}
+    end
+  end
+
   defp late_call(s, idle) do
     let [{:call, m, :start, args} <- start_call(s, idle), tick? <- boolean()] do
       {:call, m, :late, args ++ [tick?]}
@@ -365,7 +392,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   end
 
   def precondition(s, {:call, _, :start, [thread | _]}),
-    do: not Map.has_key?(s.open, thread) and s.runs < @max_runs and thread not in s.gone
+    do:
+      not Map.has_key?(s.open, thread) and s.runs < @max_runs and
+        thread not in (s.gone ++ s.away)
 
   def precondition(s, {:call, m, :late, [thread, run, ordinal, new?, first?, _]}),
     do: precondition(s, {:call, m, :start, [thread, run, ordinal, new?, first?]})
@@ -374,7 +403,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def precondition(s, {:call, _, :finish, [thread, run, _]}), do: s.open[thread] == run
 
   def precondition(s, {:call, _, :late_use, [thread, run, n | _]}) do
-    s.up and thread not in s.gone and
+    s.up and thread not in (s.gone ++ s.away) and
       Enum.any?(
         ended(s.threads[thread][:runs] || []),
         &(&1.id == run and length(&1.tools) + 1 == n)
@@ -385,17 +414,24 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def precondition(s, {:call, _, :up, _}), do: not s.up
 
   def precondition(s, {:call, _, :rollback, [thread, runs]}) do
-    not Map.has_key?(s.open, thread) and thread not in s.gone and runs != [] and
+    not Map.has_key?(s.open, thread) and thread not in (s.gone ++ s.away) and runs != [] and
       Enum.all?(runs, fn {id, _} ->
         id in Enum.map(ended(s.threads[thread][:runs] || []), & &1.id)
       end)
   end
 
   def precondition(s, {:call, _, :fork, [source, _]}),
-    do: not s.forked and not Map.has_key?(s.open, source) and source not in s.gone
+    do: not s.forked and not Map.has_key?(s.open, source) and source not in (s.gone ++ s.away)
 
   def precondition(s, {:call, _, :thread_gone, [thread]}),
     do: Map.has_key?(s.threads, thread) and thread not in s.gone
+
+  def precondition(s, {:call, _, :thread_moved, [thread, run, _]}),
+    do:
+      Map.has_key?(s.threads, thread) and thread not in (s.gone ++ s.away) and
+        s.open[thread] == run
+
+  def precondition(s, {:call, _, :thread_returned, [thread]}), do: thread in s.away
 
   def precondition(_s, _call), do: true
 
@@ -520,7 +556,27 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   # A turn under way never ends here.
   def next_state(s, _res, {:call, _, :thread_gone, [thread]}),
-    do: %{s | gone: [thread | s.gone], open: Map.delete(s.open, thread)}
+    do: %{
+      s
+      | gone: [thread | s.gone],
+        away: List.delete(s.away, thread),
+        open: Map.delete(s.open, thread)
+    }
+
+  # Its turn under way ends there, unheard here; the history it comes back with has it.
+  def next_state(s, _res, {:call, _, :thread_moved, [thread, run, _]}) do
+    s = %{s | away: [thread | s.away], open: Map.delete(s.open, thread)}
+
+    if run,
+      do:
+        update_in(s.threads[thread].runs, fn runs ->
+          List.replace_at(runs, -1, %{List.last(runs) | status: "completed"})
+        end),
+      else: s
+  end
+
+  def next_state(s, _res, {:call, _, :thread_returned, [thread]}),
+    do: %{s | away: List.delete(s.away, thread)}
 
   def next_state(s, _res, _call), do: s
 
@@ -554,7 +610,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     recovered =
       for {t, ids} <- partial,
-          t not in s.gone,
+          t not in (s.gone ++ s.away),
           run <- s.threads[t].runs,
           run.id in ids and run.status != "rolled_back",
           {tool, _period, :own} <- run.tools,
@@ -568,7 +624,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   end
 
   # A deleted thread's segments heard in part neither hold a conversation's shape off
-  # nor stay to be read back, once the history can be read.
+  # nor stay to be read back, once the history can be read. Those of a thread on
+  # another MC hold nothing off either, but stay: once it is back, `lost/1` and
+  # `shaped_whole?/3` count them again.
   defp gone_holds_nothing?(s, %{shaped: true} = res) do
     partial = for {t, _} <- res.partial, do: t
 
@@ -581,18 +639,18 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
       true ->
         disjoint?(res.unresolved, s.gone) and
-          (not subset?(partial, s.gone) or res.denied == res.deniable)
+          (not subset?(partial, s.gone ++ s.away) or res.denied == res.deniable)
     end
   end
 
   defp gone_holds_nothing?(_s, _res), do: true
 
   # The uses dropped from the conversations the plugin holds that the feed said it
-  # dropped, of turns not rolled back, nor of a deleted thread.
+  # dropped, of turns not rolled back, nor of a thread deleted or, for now, away.
   defp lost(s) do
     for %{told: true, period: period, thread: t, run: id, tool: tool} <- s.lost,
         period == s.period,
-        t not in s.gone,
+        t not in (s.gone ++ s.away),
         Enum.any?(s.threads[t].runs, &(&1.id == id and &1.status != "rolled_back")),
         do: tool
   end
@@ -849,6 +907,20 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # The thread is deleted, a turn under way perhaps, which then never ends here.
   def thread_gone(thread) do
     commit(thread, [{"thread", thread, %{"s" => %{"deletedAt" => "2026-11-09T00:00:00Z"}}}])
+    snapshot()
+  end
+
+  # The thread moves to another MC, which ends its turn under way.
+  def thread_moved(thread, run, ordinal) do
+    moved = %{"mc" => "elsewhere@host", "label" => "Elsewhere", "at" => "2026-11-09T00:00:00Z"}
+    ended = if run, do: [run_row(thread, run, ordinal, "completed")], else: []
+    commit(thread, [{"thread", thread, %{"s" => %{"movedTo" => moved}}} | ended])
+    snapshot()
+  end
+
+  # It is imported back, with all it ran there.
+  def thread_returned(thread) do
+    commit(thread, [{"thread", thread, %{"s" => %{"movedTo" => nil}}}])
     snapshot()
   end
 

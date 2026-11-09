@@ -792,6 +792,48 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert [%{"unresolved" => []}] = TokenEconomizer.prune_status(state)["projects"]
   end
 
+  test "a segment heard in part whose thread moves away holds nothing off, and is read back when it returns",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose", "toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    state = observe(state, started(thread, "r2", p, %{}))
+
+    # The feed drops some of r2, and the project goes quiet while r2 runs on.
+    state = observe(state, started("other", "o1", p, %{"dropped" => 1, "waiting" => 0}))
+    ended("other", "o1", 1, [])
+    state = observe(state, finished("other", "o1", 1))
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    assert {nil, state} = shape(state, "other", "o2", p)
+
+    # It moves to another MC, which ends r2 there.
+    moved = %{"mc" => "elsewhere@host", "label" => "Elsewhere", "at" => "2026-11-09T00:00:00Z"}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [{"thread", thread, %{"s" => %{"movedTo" => moved}}}])
+
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, "other", "o2", p)
+    assert Map.has_key?(state.unresolved, {thread, project})
+
+    assert [%{"unresolved" => [], "away" => [^thread]}] =
+             TokenEconomizer.prune_status(state)["projects"]
+
+    # Imported back, it brings r2, which used CronCreate: the project's next
+    # conversation reads it back before denying anything, as does the thread's own.
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [{"thread", thread, %{"s" => %{"movedTo" => nil}}}])
+
+    ended(thread, "r2", 2, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+    assert {nil, state} = shape(state, "other", "o3", p)
+    assert state.unresolved == %{}
+    assert {nil, state} = shape(state, thread, "r3", p)
+    assert [%{"unresolved" => [], "away" => []}] = TokenEconomizer.prune_status(state)["projects"]
+  end
+
   defp subagent(thread) do
     case HalC2.Streams.state(thread) |> HalC2.StreamState.list("subagent") do
       [entity] -> {:ok, entity}

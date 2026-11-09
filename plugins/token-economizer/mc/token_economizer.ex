@@ -211,6 +211,9 @@ defmodule HalC2Plugins.TokenEconomizer do
        # (`recover_uses/5`, `heard/4`), a use the feed dropped from them may be any tool,
        # so the project's conversations are denied nothing
        unresolved: %{},
+       # The {thread id, project} keys of those whose thread has moved to another MC: kept,
+       # for it may come back, but holding nothing off while it is away
+       away: MapSet.new(),
        # {project id, provider} => the timer that folds its idle conversations
        prune_timers: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
@@ -364,14 +367,14 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       {prune, denied, state} =
         case recover_uses(prune, state, project, unit, run) do
-          {:ok, prune, recovered} ->
+          {:ok, prune, recovered, away} ->
             {prune, _} = Prune.apply_pending(prune, cfg, now_s(), active?(state, project))
+            state = update_in(state.unresolved, &Map.drop(&1, recovered))
+            {prune, Prune.denied(prune, cfg), put_away(state, project, away)}
 
-            {prune, Prune.denied(prune, cfg),
-             update_in(state.unresolved, &Map.drop(&1, recovered))}
-
-          {:error, gone} ->
-            {prune, [], update_in(state.unresolved, &Map.drop(&1, gone))}
+          {:error, gone, away} ->
+            state = update_in(state.unresolved, &Map.drop(&1, gone))
+            {prune, [], put_away(state, project, away)}
         end
 
       changed? = prune != state.prunes[project]
@@ -448,15 +451,19 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # `"unresolved"`: the threads whose segments heard in part could not be read back
   # yet (`recover_uses/5`); while there are any, the project's conversations are denied
-  # nothing.
+  # nothing. `"away"`: those of them on another MC, which hold nothing off until they
+  # come back.
   defp project_summary(state, {project_id, provider} = project, prune, cfg, extra) do
-    unresolved = for {{thread_id, ^project}, _} <- state.unresolved, do: thread_id
+    {away, unresolved} =
+      for({{thread_id, ^project} = key, _} <- state.unresolved, do: {key, thread_id})
+      |> Enum.split_with(fn {key, _} -> MapSet.member?(state.away, key) end)
 
     Prune.summary(prune, cfg)
     |> Map.merge(%{
       "projectId" => project_id,
       "provider" => provider,
-      "unresolved" => Enum.sort(unresolved)
+      "unresolved" => unresolved |> Enum.map(&elem(&1, 1)) |> Enum.sort(),
+      "away" => away |> Enum.map(&elem(&1, 1)) |> Enum.sort()
     })
     |> Map.merge(extra)
   end
@@ -501,6 +508,8 @@ defmodule HalC2Plugins.TokenEconomizer do
     if unit == nil or not is_binary(event["projectId"]) do
       state
     else
+      # Running here, it is back.
+      state = update_in(state.away, &MapSet.delete(&1, {thread_id, project}))
       state = seed_history(state, thread_id, event["runId"], project, unit)
       {prune, state} = prune(state, project, unit)
       state = touch(state, project, prune)
@@ -679,8 +688,8 @@ defmodule HalC2Plugins.TokenEconomizer do
     # as no evidence: its uses are still noted, its silences grow no streak, and the
     # watermark stays, so a restart reads its runs back.
     partial? = Map.get(conv, :partial, false)
-    # A thread no longer here (deleted, or moved to another MC) leaves nothing to read
-    # back: its runs reach no conversation here.
+    # A deleted thread leaves nothing to read back: its runs reach no conversation. One
+    # moved away stays to read back, should it come back.
     gone? = Map.get(conv, :gone, false)
 
     runs =
@@ -777,10 +786,12 @@ defmodule HalC2Plugins.TokenEconomizer do
   # have dropped, read back from their threads' histories and noted (`Prune.note_used/3`)
   # before a conversation is shaped: those under way, which still fold as they end,
   # their runs read back then as they are now, and those that folded unresolved, which
-  # are then resolved, or dropped once their thread is gone. `{:error, gone}` while a
-  # history cannot be read, or does not have all of a segment's runs yet: a run still
-  # going (the history has only those that ended) may have used any tool. A run that
-  # ended and is not there was rolled back. Those of `gone`'s threads drop either way.
+  # are then resolved, or dropped once their thread is gone (deleted). A thread moved to
+  # another MC is `away`: its marks stay, for it may come back, which the next read
+  # finds, but hold nothing off meanwhile. `{:error, gone, away}` while a history
+  # cannot be read, or does not have all of a segment's runs yet: a run still going
+  # (the history has only those that ended) may have used any tool. A run that ended
+  # and is not there was rolled back. Those of `gone`'s threads drop either way.
   defp recover_uses(prune, state, project, unit, run) do
     open =
       for {thread_id, %{project: ^project, partial: true} = conv} <- state.convs,
@@ -790,7 +801,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     (open ++ folded)
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
-    |> Enum.reduce({:ok, prune, [], []}, fn {thread_id, marks}, {ok, acc, recovered, gone} ->
+    |> Enum.reduce({:ok, prune, [], [], []}, fn {thread_id, marks},
+                                                {ok, acc, recovered, gone, away} ->
       before = if thread_id == run["threadId"], do: run["runId"]
       marks = marks |> Enum.concat() |> Enum.reject(&(&1["run"] == run["runId"]))
 
@@ -804,18 +816,24 @@ defmodule HalC2Plugins.TokenEconomizer do
         {_, runs} = unfolded(acc, history, thread_id, project, before)
         used = Enum.flat_map(runs, &uses(&1, unit))
         noted = Prune.note_used(acc, used, prune_cfg(state))
-        {ok, noted, [{thread_id, project} | recovered], gone}
+        {ok, noted, [{thread_id, project} | recovered], gone, away}
       else
-        # Gone from this MC (deleted, or moved away): nothing it ran reaches a
-        # conversation here any more.
-        :gone -> {ok, acc, recovered, [{thread_id, project} | gone]}
-        _ -> {:error, acc, recovered, gone}
+        # Deleted: nothing it ran reaches a conversation any more.
+        :gone -> {ok, acc, recovered, [{thread_id, project} | gone], away}
+        :away -> {ok, acc, recovered, gone, [{thread_id, project} | away]}
+        _ -> {:error, acc, recovered, gone, away}
       end
     end)
     |> case do
-      {:ok, prune, recovered, gone} -> {:ok, prune, recovered ++ gone}
-      {:error, _prune, _recovered, gone} -> {:error, gone}
+      {:ok, prune, recovered, gone, away} -> {:ok, prune, recovered ++ gone, away}
+      {:error, _prune, _recovered, gone, away} -> {:error, gone, away}
     end
+  end
+
+  # The project's threads away on another MC, as its last shape found them.
+  defp put_away(state, project, away) do
+    kept = MapSet.reject(state.away, &(elem(&1, 1) == project))
+    %{state | away: MapSet.union(kept, MapSet.new(away))}
   end
 
   # The provider's runs of `thread_id`'s history that are still to fold, before
@@ -964,13 +982,14 @@ defmodule HalC2Plugins.TokenEconomizer do
   # The 50 runs that ended before `run_id` started, however late the feed tells of it
   # (the last 50 to end with no `run_id`).
   # Each names the driver it ran on, which is what a project's evidence is kept by, even
-  # once its instance is deleted. `:gone` when the thread is no longer here (deleted,
-  # or moved to another MC): its runs never will be. `:error` when they could not be
-  # read this time.
+  # once its instance is deleted. `:gone` when the thread is deleted, or never was:
+  # its runs never will be read. `:away` while it is on another MC, which it may come
+  # back from. `:error` when they could not be read this time.
   defp history(thread_id, run_id) do
     case Host.history(@id, thread_id, limit: 50, before: run_id) do
       {:ok, runs} when is_list(runs) -> {:ok, runs}
       {:error, {:gone, _}} -> :gone
+      {:error, {:away, _}} -> :away
       _ -> :error
     end
   rescue

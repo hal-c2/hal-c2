@@ -40,8 +40,10 @@ apply or restore just those), carry what is off, proposed and kept per project,
 with the evidence for each tool — what the plugin's page and settings show and
 drive. Their `unresolved` lists the threads whose turns the plugin heard only in
 part and could not read back yet: while there are any, the project's new
-conversations are turned off nothing. A thread deleted or moved to another
-machine leaves that list.
+conversations are turned off nothing. A deleted thread leaves that list. One
+moved to another machine is listed under `away` instead, and holds nothing off
+while it is there; once it is moved back, its turns are read back before
+anything is turned off again.
 
 ## Tests
 

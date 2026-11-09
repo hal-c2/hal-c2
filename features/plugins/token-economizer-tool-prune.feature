@@ -108,3 +108,10 @@ Feature: TokenEconomizer's tool pruning
     And it could not read that turn back from the thread
     When the person opens TokenEconomizer's page
     Then the page shows that nothing is turned off for the project's new conversations until that thread is read back
+
+  @backlog
+  Scenario: The plugin's page shows a thread moved away apart from those holding pruning off
+    Given tool pruning heard only part of a turn of a Claude thread in a project
+    And the thread moved to another machine before that turn could be read back
+    When the person opens TokenEconomizer's page
+    Then the page lists the thread as away, not as holding pruning off

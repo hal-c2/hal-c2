@@ -838,6 +838,16 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert {:ok, [^two]} = Host.history("reader", thread_id, limit: 1)
     assert {:error, {:gone, _}} = Host.history("reader", "thread-none")
 
+    # Moved to another MC, the thread may come back with its turns: it is away.
+    moved = %{"mc" => "elsewhere@host", "label" => "Elsewhere", "at" => "2026-11-09T00:00:00Z"}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"thread", thread_id, %{"s" => %{"movedTo" => moved}}}
+      ])
+
+    assert {:error, {:away, _}} = Host.history("reader", thread_id)
+
     # A deleted thread runs no more turns: it is gone, not unreadable.
     {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
     assert {:error, {:gone, _}} = Host.history("reader", thread_id)

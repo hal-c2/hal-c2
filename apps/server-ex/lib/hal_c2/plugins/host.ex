@@ -441,9 +441,9 @@ defmodule HalC2.Plugins.Host do
   "startedAt", "completedAt", "tokenUsage", "items"}`, each item as plugins hear it
   (`HalC2.Orchestration.TurnWriter.observed_item/1`), in the turn's order. What a
   plugin that hears turns missed while it was not running. Needs `turns:observe`.
-  `{:error, {:gone, message}}` when the thread is not on this MC, and never will be
-  again: there is no such thread, it was deleted, or it moved to another MC (which
-  keeps its turns from then on).
+  `{:error, {:gone, message}}` when there is no such thread or it was deleted: its
+  turns will never be read. `{:error, {:away, message}}` while it is on another MC,
+  which keeps its turns until it moves back here (`HalC2.ThreadMove`).
 
   `"subagents"` says whether a provider's own subagent worked during the turn, started
   in it or before: plugins hear a subagent's calls as its parent turn's
@@ -468,7 +468,7 @@ defmodule HalC2.Plugins.Host do
         case HalC2.StreamState.get(stream, "thread")[thread_id] do
           nil -> {:error, {:gone, "There is no thread #{thread_id}."}}
           %{"deletedAt" => at} when at != nil -> {:error, {:gone, "#{thread_id} was deleted."}}
-          %{"movedTo" => %{}} -> {:error, {:gone, "#{thread_id} moved to another machine."}}
+          %{"movedTo" => %{}} -> {:error, {:away, "#{thread_id} is on another machine."}}
           _thread -> {:ok, turns(stream, limit, before)}
         end
       end)
