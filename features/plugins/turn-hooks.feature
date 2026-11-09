@@ -2,7 +2,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/kinds.ex (Extension observe/2 and shape_run/2)
 #   apps/server-ex/lib/hal_c2/plugins/feed.ex (a running extension's feed of turns, dropped events counted)
 #   apps/server-ex/lib/hal_c2/plugins.ex (observe/1, shape_run/1: asked as a new conversation starts, each plugin apart from the asker, with its saved settings)
-#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item, turn.finished; the calls a stopped or abandoned turn closed; a turn's usage)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item with an answer's text, turn.finished; the calls a stopped or abandoned turn closed; a turn's usage)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (a Codex turn and a goal's run, started by Codex's own writer)
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread, a native fork's inherited)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (a native fork carries its source's shape; fresh_start/2: a resume that started afresh is a new conversation)
@@ -32,6 +32,7 @@ Feature: Plugins that watch and shape turns
     When a Claude thread runs a turn that calls a tool
     Then the plugin hears the turn start as a new conversation
     And it hears the tool call by Claude's own name for the tool, with what it returned
+    And it hears what Claude answered
     And it hears the turn end last
 
   @mc

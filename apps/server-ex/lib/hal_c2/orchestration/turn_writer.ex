@@ -358,11 +358,12 @@ defmodule HalC2.Orchestration.TurnWriter do
   What a plugin hears or reads of a turn item (`HalC2.Plugins.Extension`'s `observe/2`,
   `HalC2.Plugins.Host.history/2`): `"itemId", "itemType", "tool"` (the provider's own
   name for the tool, where it has one), `"title", "status"` (`"completed"`, `"failed"`,
-  `"interrupted"` or `"cancelled"` once it ended), `"input", "output", "exitCode",
-  "path"`, the input and output cut to their last #{@observed_chars}
-  characters, a value that is not text as its JSON. A file edit's output is its diff
-  (`diffStr`), and a web call's input what it searched for or fetched (`patterns`); its
-  result is heard as the call ends (`finish_item/5`), and not kept for history.
+  `"interrupted"` or `"cancelled"` once it ended), `"input", "output", "text"` (an
+  assistant message's), `"exitCode", "path"`, the input, output and text cut to their
+  last #{@observed_chars} characters, a value that is not text as its JSON. A file
+  edit's output is its diff (`diffStr`), and a web call's input what it searched for or
+  fetched (`patterns`); its result is heard as the call ends (`finish_item/5`), and not
+  kept for history.
   """
   def observed_item(item) do
     %{
@@ -373,6 +374,7 @@ defmodule HalC2.Orchestration.TurnWriter do
       "status" => heard_status(item["status"]),
       "input" => observed(item["input"] || nonempty(item["patterns"])),
       "output" => observed(item["output"] || nonempty(item["diffStr"])),
+      "text" => if(item["type"] == "assistant_message", do: observed(item["text"])),
       "exitCode" => item["exitCode"],
       "path" => item["fileName"]
     }

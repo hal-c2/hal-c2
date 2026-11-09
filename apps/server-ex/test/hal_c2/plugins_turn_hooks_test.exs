@@ -124,11 +124,17 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert_receive {:observed, %{"type" => "turn.item", "tool" => "Bash"} = item}, 5_000
     assert %{"runId" => ^run_id, "itemType" => "command_execution"} = item
 
+    assert_receive {:observed,
+                    %{"type" => "turn.item", "itemType" => "assistant_message"} = said},
+                   5_000
+
+    assert %{"runId" => ^run_id, "text" => "Hello from claude"} = said
+
     assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id} = finished}, 5_000
     assert finished["status"] == "completed"
   end
 
-  test "a plugin hears which file a file change wrote, and a long output's end" do
+  test "a plugin hears which file a file change wrote, and a long output's or answer's end" do
     item = %{
       "id" => "i1",
       "type" => "file_change",
@@ -142,6 +148,12 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"tool" => "Edit", "path" => "/r/lib/a.ex", "itemType" => "file_change"} = observed
     assert String.length(observed["output"]) == 4_000
     assert String.ends_with?(observed["output"], "tail")
+    assert observed["text"] == nil
+
+    said = %{"type" => "assistant_message", "text" => String.duplicate("y", 5_000) <> "end"}
+    text = Orchestration.TurnWriter.observed_item(said)["text"]
+    assert String.length(text) == 4_000
+    assert String.ends_with?(text, "end")
   end
 
   test "a plugin not granted turns:observe hears nothing of a turn", %{thread_id: thread_id} do

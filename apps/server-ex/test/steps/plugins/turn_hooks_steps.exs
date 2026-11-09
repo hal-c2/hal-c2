@@ -188,6 +188,18 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     context
   end
 
+  step "it hears what Claude answered", context do
+    assert %{"text" => "Hello from claude"} =
+             said =
+             Enum.find(
+               context.events,
+               &(&1["type"] == "turn.item" and &1["itemType"] == "assistant_message")
+             )
+
+    assert said["runId"] == context.run_id
+    context
+  end
+
   step ~r/^the plugin hears the command end (?<status>\w+), then the turn end$/,
        %{args: [status]} = context do
     events = heard([])
