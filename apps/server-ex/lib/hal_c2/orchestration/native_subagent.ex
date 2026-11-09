@@ -17,8 +17,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
   @doc """
   Records a subagent the provider started as `native` (its tool call id) in the turn
-  `ids`; `task` has `prompt`, `title`, `model`. Returns the handle `append/2` and
-  `finish/3` take.
+  `ids`; `task` has `prompt`, `title`, `model`, and `reasoningEffort` from a provider
+  that reports a subagent's effort (nil when it named none). Returns the handle
+  `append/2` and `finish/3` take.
   """
   def start(ids, native, task) do
     driver = Entities.driver(ids)
@@ -97,7 +98,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
           "threadId" => child_id,
           "projectId" => parent["projectId"],
           "title" => title(parent["title"] || "", task["title"], prompt, ordinal),
-          "modelSelection" => subagent_selection(parent["modelSelection"], task["model"]),
+          "modelSelection" => child_selection(parent["modelSelection"], task),
           "runtimeMode" => parent["runtimeMode"],
           "interactionMode" => parent["interactionMode"],
           "createdBy" => "agent",
@@ -638,4 +639,24 @@ defmodule HalC2.Orchestration.NativeSubagent do
   defp nilify(text), do: text
 
   defp stream(thread_id), do: HalC2.Streams.state(thread_id)
+
+  # The child runs on the model the provider names, else the parent's. A provider
+  # that reports a subagent's effort gives the child that effort, and one that named
+  # none leaves it unset rather than copying the parent's (pingdotgg/t3code#24467).
+  defp child_selection(%{} = selection, %{"reasoningEffort" => effort} = task) do
+    selection = child_selection(selection, Map.delete(task, "reasoningEffort"))
+    options = Enum.reject(selection["options"] || [], &(&1["id"] == "reasoningEffort"))
+
+    options =
+      if is_binary(effort),
+        do: options ++ [%{"id" => "reasoningEffort", "value" => effort}],
+        else: options
+
+    Map.put(selection, "options", options)
+  end
+
+  defp child_selection(selection, %{"model" => model}),
+    do: subagent_selection(selection, model)
+
+  defp child_selection(selection, _task), do: selection
 end

@@ -484,7 +484,7 @@ Feature: Codex
     And a reasoning level the user picks is used instead, in plan mode too
 
   # Upstream #27931: with ChatGPT sign-in, models newer than the installed CLI came without reasoning choices.
-  @backlog @priority-high
+  @priority-high
   Scenario: A model newer than the installed Codex still offers its reasoning levels
     Given Codex is signed in with a ChatGPT account
     And the account's model catalog lists a model the installed Codex does not know yet
@@ -497,7 +497,7 @@ Feature: Codex
     And the user can open the subagent's own thread
 
   # Upstream #24467: a native Codex child thread copied its parent's reasoning effort.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A Codex subagent's thread shows its own reasoning effort
     Given a Codex thread with reasoning effort "high"
     When Codex starts a subagent <reported>
@@ -542,7 +542,6 @@ Feature: Codex
 
   # Codex's check starts its app server and reads the account, models and skills, so it
   # gets twice the budget other providers' checks get (pingdotgg/t3code#15945).
-  @backlog
   Scenario Outline: A slow but healthy Codex is not shown as unavailable
     Given the Codex command answers its status check after <seconds> seconds
     When the MC checks Codex
@@ -589,7 +588,7 @@ Feature: Codex
 
   # Upstream #23361: a turn stopped by a ChatGPT sharing limit showed Codex's raw error. OpenAI's
   # partner guidelines give each limit its own recovery.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A turn stopped by a ChatGPT plan limit says how to recover
     Given Codex is signed in with <plan>
     When a turn stops because the plan's limit for other apps is reached
@@ -651,7 +650,7 @@ Feature: Codex
     When Codex's account is read
     Then Codex shows as signed in and its plan is shown by the plan's own name
 
-  @backlog @shared @priority-low
+  @shared @priority-low @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: The Ultrafast service tier is offered for a model that lists it
     Given the selected Codex model lists the "ultrafast" service tier
     When the user opens the service tier choices
@@ -660,7 +659,7 @@ Feature: Codex
   # Upstream #18200. Codex shares one model catalog cache between every client on the
   # machine, and the plain CLI's catalog has no Ultrafast. Codex started by the MC asks for
   # HAL-C2's own catalog, and the probe waits briefly for that refresh before it lists.
-  @backlog @mc @plugin-codex @priority-low
+  @mc @plugin-codex @priority-low
   Scenario: Ultrafast stays offered after another Codex client refreshes the catalog
     Given the ChatGPT account is entitled to the Ultrafast tier
     And another Codex client on the machine wrote a model catalog without it
@@ -668,14 +667,14 @@ Feature: Codex
     Then the models still list the Ultrafast tier
     And a thread set to Ultrafast stays on Ultrafast
 
-  @backlog @mc @plugin-codex @priority-low
+  @mc @plugin-codex @priority-low
   Scenario: Ultrafast is no longer offered once the account loses it
     Given the ChatGPT account was entitled to the Ultrafast tier and no longer is
     When the MC checks Codex's models
     Then the models no longer list the Ultrafast tier
 
   # Upstream #15623: Codex inheriting Fast from its global config showed the catalog's Standard default.
-  @backlog @shared @priority-low
+  @shared @priority-low @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A Fast tier set in Codex's own config shows as selected
     Given Codex's global config sets the service tier to fast
     When the user opens the service tier choices for a model that offers Fast
@@ -691,14 +690,14 @@ Feature: Codex
     And the last model list Codex gave is still offered
 
   # Upstream #19154: a bare Codex binary passed its probes while every Code Mode call failed.
-  @backlog @priority-low
+  @priority-low
   Scenario: A Codex on the path without its Code Mode host is passed over for the managed install
     Given the codex command on the MC's path has no "codex-code-mode-host" beside it
     When the MC picks the Codex to run
     Then it runs the managed Codex installation instead
 
   # Upstream #22308: a failed managed Codex download was reported as a disk problem.
-  @backlog @priority-low
+  @priority-low
   Scenario Outline: A managed Codex download that fails over the network says to check the connection
     Given the MC is installing its managed Codex
     When the download <failure>
@@ -713,7 +712,7 @@ Feature: Codex
 
   # Upstream #30004: a raised managed Codex pin never reached existing installs, and the old
   # Codex compacted after every tool call on a model its catalog did not know.
-  @backlog @priority-high
+  @priority-high
   Scenario: A managed Codex older than the MC's pinned version is updated in the background
     Given the managed Codex installed is older than the version the MC pins
     When the MC starts
@@ -728,44 +727,45 @@ Feature: Codex
 
   # A ChatGPT account signed in through HAL-C2 rather than the Codex CLI. Its credentials
   # move to the environment the user picks; the primary environment runs the sign-in.
-  # Contradicts provider-setup.feature "Only providers that support it sign in from HAL-C2"
-  # (Codex "does not sign in here"), which is untagged and passes today. Reconcile when
-  # this backlog item is cleared.
-  @backlog @mc
+  # Connecting makes the instance HAL-C2's to sign in; a Codex on the CLI's own login still
+  # does not sign in here (provider-setup.feature "Only providers that support it sign in from HAL-C2").
+  @mc
   Scenario: Codex connects a ChatGPT account from HAL-C2 without a Codex CLI login
     Given the user has a ChatGPT plan and Codex is not signed in on the environment
     When the user connects ChatGPT to Codex
     And the user approves the sign-in with OpenAI
     Then Codex on the environment is signed in with that account
 
-  @backlog @mc
+  @mc
   Scenario: A ChatGPT account connected on one environment can be moved to another
     Given the user connected a ChatGPT account on the primary environment
     When the user chooses another environment for that Codex account
     Then the other environment's Codex is signed in with the account
 
-  @backlog @mc
+  @mc
   Scenario: Disconnecting a ChatGPT account signs its Codex out
     Given Codex is connected with a ChatGPT account
     When the user disconnects the account
     Then Codex on that environment is no longer signed in with it
 
   # Upstream #23160: a signed-out HAL-C2-managed Codex can switch to the Codex CLI's own login from Settings.
-  @backlog @shared @mc
+  @shared @mc @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A signed-out managed Codex can switch to the Codex CLI's own login
     Given a Codex instance whose ChatGPT account was connected through HAL-C2
     And its account is remembered but no longer signed in
     When the user chooses to use the existing Codex CLI in its provider settings
     Then the instance uses the Codex CLI's own login from then on
 
-  @backlog @shared @priority-low
+  # The MC carries the email apart from every text a client shows as is (the account's
+  # `email`, the sign-in method's `accountEmail`), so the clients can hide it.
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: A connected ChatGPT account's email is hidden until the user reveals it
     Given Codex is connected with a ChatGPT account
     Then the account's email is not shown
     When the user asks to show it
     Then the email is shown
 
-  @backlog @shared @priority-low
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
   Scenario: The first ChatGPT connection explains that plan usage counts against the plan
     Given the user has never connected a ChatGPT account
     When the user connects one
@@ -794,7 +794,7 @@ Feature: Codex
     Then connecting a new ChatGPT account is offered
 
   # Upstream #21750: a callback address pasted without its scheme still finishes the sign-in.
-  @backlog @mc
+  @mc
   Scenario Outline: A pasted ChatGPT sign-in callback address is checked by where it points
     Given the user is connecting ChatGPT to Codex and the browser could not reach the sign-in callback
     When the user pastes the callback address <pasted>
@@ -1174,7 +1174,6 @@ Feature: Codex
     Then the thread shows both messages
 
   # Upstream #19066: images Codex generated were saved but never shown in the reply.
-  @backlog @priority-high
   Scenario: An image Codex generates is shown under its reply
     Given Codex generates an image with its image tool during a turn
     When the turn finishes
@@ -1182,14 +1181,13 @@ Feature: Codex
     And an image the reply already shows is not shown twice
 
   # Upstream #19066: an image that finished after the turn ended was lost.
-  @backlog
   Scenario: An image Codex finishes after its last message still joins the reply
     Given Codex is still generating an image when it sends its final reply
     When the image is saved
     Then the image is shown under that reply
 
   # Upstream #19066: images saved on a Windows host did not load on other devices.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario Outline: A Codex image saved on a Windows MC loads on every client
     Given the MC runs on Windows
     And Codex saved a generated image at "<path>"
@@ -1202,7 +1200,7 @@ Feature: Codex
       | \\fileserver\share\images\fox.png     |
 
   # Upstream #23284: an image a Codex tool returned as a data address was saved but not shown.
-  @backlog @shared
+  @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: An image a Codex tool returns is shown with the tool call
     Given a Codex tool call returns an image as embedded image data
     When the user expands the tool call
@@ -1210,14 +1208,12 @@ Feature: Codex
     And no image data text is shown
 
   # Upstream #23388: newer Codex builds send partial answers, which were dropped.
-  @backlog
   Scenario: A partial answer from Codex is kept apart from its final answer
     When Codex sends a partial answer and then a final answer with the same text in one turn
     Then the thread keeps the partial answer
     And the final answer is shown once
 
   # Upstream #23388: a Codex history holding a partial answer could not be read.
-  @backlog @priority-high
   Scenario Outline: The user <action> a Codex thread whose history holds a partial answer
     Given a Codex thread's history holds a partial answer
     When the user <action> the thread
@@ -1709,7 +1705,7 @@ Feature: Codex
   Rule: An MCP app a Codex tool returns runs inside the thread
 
     # Upstream #16236: a tool result pointing at a ui:// resource is an MCP app.
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: An MCP app opens inline in the thread
       Given a Codex tool call returned an MCP app
       When the user looks at the tool call
@@ -1717,47 +1713,53 @@ Feature: Codex
       And the user can open it full screen and close it again
 
     # Upstream #25225: Codex marks a write deferred to an app's form as a failed tool result.
-    @backlog @shared
+    @shared @backlog-desktop @backlog-mobile @backlog-tui
     Scenario: An MCP app from a tool call marked failed is still shown
       Given a Codex tool call returned an MCP app with a result marked as an error
       When the user looks at the tool call
       Then the app is shown and running in the thread
       And the tool call still shows that it failed
 
-    @backlog @shared
+    @shared
     Scenario Outline: An MCP app asks before it does anything that is not reading
       Given an MCP app is open in a Codex thread
       When the app <action>
       Then the user is asked to approve it first
 
+      @backlog-desktop @backlog-mobile @backlog-tui
       Examples:
         | action                                  |
         | calls a tool that is not read only      |
+
+      # A message or a download never reaches the MC; the client asks for them.
+      @backlog
+      Examples:
+        | action                                  |
         | sends a message to the thread           |
         | downloads a file                        |
 
-    @backlog @shared @priority-low
+    @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: What an MCP app tells the model goes with the next message
       Given an MCP app in a Codex thread gave the model some context
       When the user sends the next message
       Then that context goes with it, cut to 16 KiB
       And a fork of the thread keeps it and a rollback past it drops it
 
-    @backlog @shared @priority-low
+    @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: An MCP app in a thread whose session stopped says so
       Given the Codex session of a thread with an MCP app has stopped
       When the user opens the app
       Then the app says the session has stopped
       And no session is started for it
 
-    @backlog @priority-low
+    @priority-low
     Scenario: Deleting a thread removes its MCP apps' documents
       Given a Codex thread with an MCP app
       When the user deletes the thread
       Then the app's stored documents are removed with it
 
     # Upstream #17026: a Confluence result's canvas stayed white under dark text.
-    @backlog @shared @mc @priority-low
+    @shared @mc @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: An MCP app follows the app's light or dark appearance
       Given an MCP app is open in a Codex thread
       When the user switches the app between light and dark
@@ -1765,7 +1767,7 @@ Feature: Codex
       And an MCP app stored in the thread before this works the same
 
     # Upstream #17027: Jira's app threw on reading cookies in its sandbox and vanished.
-    @backlog @shared @mc @priority-low
+    @shared @mc @backlog-desktop @backlog-mobile @backlog-tui @priority-low
     Scenario: An MCP app that reads cookies in its sandbox still shows
       Given a Codex tool call returned an MCP app that reads its cookies while it starts
       When the user looks at the tool call

@@ -234,9 +234,91 @@ function viewportOf(id, width, height) {
     return { _tag: "freeform", width: w, height: h };
 }
 
+// Whether two PreviewViewportSettings are the same size.
+function sameViewport(a, b) {
+    if (!a || !b || a._tag !== b._tag)
+        return false;
+    return a._tag === "fill" || (a.width === b.width && a.height === b.height && (a.presetId || "") === (b.presetId || ""));
+}
+
+// The aspect ratio a size pick leaves once the MC has answered it, the pick
+// being {viewport, ratio, before}: the one it came with while the size shown
+// is the one picked, else (refused, or never answered) the one before.
+function ratioAnswered(pick, shown) {
+    return sameViewport(pick.viewport, shown) ? pick.ratio : pick.before;
+}
+
 // A start page suggestion's label: the server's process, else the host.
 function suggestionLabel(suggestion) {
     if (suggestion.label)
         return suggestion.label;
     return hostOf(suggestion.url);
+}
+
+// Whether `width` x `height` CSS pixels is a size the preview can render:
+// whole numbers within the contract's bounds.
+function sizeAllowed(width, height) {
+    return Number.isInteger(width) && Number.isInteger(height) && width >= minSide && width <= maxSide && height >= minSide && height <= maxSide && width * height <= maxArea;
+}
+
+// A size `desired` along `axis` ("width" or "height") at `ratio` (width over
+// height), held to the bounds: {width, height}.
+function sizeAtRatio(desired, ratio, axis) {
+    var byWidth = axis === "width";
+    var low = Math.ceil(Math.max(minSide, byWidth ? minSide * ratio : minSide / ratio));
+    var high = Math.floor(Math.min(maxSide, byWidth ? maxSide * ratio : maxSide / ratio, Math.sqrt(byWidth ? maxArea * ratio : maxArea / ratio)));
+    var lead = Math.min(high, Math.max(low, Math.round(desired)));
+    var follow = Math.round(byWidth ? lead / ratio : lead * ratio);
+    while (lead * follow > maxArea && lead > low) {
+        lead -= 1;
+        follow = Math.round(byWidth ? lead / ratio : lead * ratio);
+    }
+    return byWidth ? { width: lead, height: follow } : { width: follow, height: lead };
+}
+
+// The size when `value` is typed for `axis` ("width" or "height") with the
+// ratio (width over height) locked: the other side follows, not held to the
+// bounds, so a pair outside them fails `sizeAllowed`.
+function typedAtRatio(axis, value, ratio) {
+    return axis === "width" ? { width: value, height: Math.round(value / ratio) } : { width: Math.round(value * ratio), height: value };
+}
+
+// The locked ratio after picking `preset` while `ratio` (0 when unlocked) was held.
+function presetRatio(preset, ratio) {
+    return ratio > 0 ? preset.width / preset.height : 0;
+}
+
+// `start` ({width, height}) grown by `dx` and `dy` CSS pixels, held to the
+// bounds. With a `ratio` the axis that moved leads and the other follows.
+function resized(start, dx, dy, ratio) {
+    var width = start.width + dx;
+    var height = start.height + dy;
+    if (ratio > 0) {
+        var byWidth = dy === 0 || (dx !== 0 && Math.abs(dx) / start.width >= Math.abs(dy) / start.height);
+        return sizeAtRatio(byWidth ? width : height, ratio, byWidth ? "width" : "height");
+    }
+    width = Math.max(minSide, Math.min(maxSide, Math.round(width)));
+    height = Math.max(minSide, Math.min(maxSide, Math.round(height)));
+    if (width * height > maxArea) {
+        if (Math.abs(dx) >= Math.abs(dy))
+            width = Math.max(minSide, Math.floor(maxArea / height));
+        else
+            height = Math.max(minSide, Math.floor(maxArea / width));
+    }
+    return { width: width, height: height };
+}
+
+// The size a centred page of `start` CSS pixels, drawn at `scale` in a room
+// `room` ({width, height}) wide, takes when its right (`dx`) or bottom (`dy`)
+// edge is dragged by that many of the room's pixels: the edge follows the
+// pointer, so the page grows on both sides while it fits the room.
+function dragged(start, dx, dy, room, scale, ratio) {
+    function edge(size, by, space) {
+        var target = (size < space ? (space + size) / 2 : size) + by;
+        return target <= space ? target * 2 - space : target;
+    }
+    var shownWidth = start.width * scale;
+    var shownHeight = start.height * scale;
+    return resized(start, dx === 0 ? 0 : (edge(shownWidth, dx, room.width) - shownWidth) / scale,
+                   dy === 0 ? 0 : (edge(shownHeight, dy, room.height) - shownHeight) / scale, ratio);
 }

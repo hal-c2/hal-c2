@@ -6,6 +6,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include <algorithm>
+
 #include "Brick.h"
 #include "Harness.h"
 #include "NavigationController.h"
@@ -195,8 +197,12 @@ const Steps steps([] {
   });
 
   step(QStringLiteral("the user sees %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    // The archive's page title, or the welcome wizard's (or its recovery page's).
-    world.waitFor([&] { return at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("title")) == c[0] || onboardingShows(world, c[0]) || (world.brick && world.brick->shows(c[0])); },
+    // The archive's page title, or the welcome wizard's (or its recovery page's), or a toast's.
+    const auto toasted = [&] {
+      const QVariantList toasts = world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
+      return std::any_of(toasts.cbegin(), toasts.cend(), [&](const QVariant& toast) { return toast.toMap().value(QStringLiteral("title")) == c[0]; });
+    };
+    world.waitFor([&] { return at(world.state(QStringLiteral("archivedThreads")), QStringLiteral("title")) == c[0] || onboardingShows(world, c[0]) || (world.brick && world.brick->shows(c[0])) || toasted(); },
                   [&] { return QStringLiteral("\"%1\"; the archive shows %2").arg(c[0], show(world.state(QStringLiteral("archivedThreads")))); });
   });
   // The page only narrows a list, so a connected environment is never asked to reconnect.

@@ -161,6 +161,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call {:upload_feedback, _}" =>
         "sends feedback; no run changes",
       "HalC2.Codex.ThreadRuntime handle_call :settle" => "a barrier for tests; changes nothing",
+      "HalC2.Codex.ThreadRuntime handle_call :mcp_session" =>
+        "reads the connection an MCP app's requests use; changes nothing",
       # A turn held for a left-over one is between turns for what Codex asks meanwhile.
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, _, _}}" => @items,
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, \"item/tool/requestUserInput\", _}}" =>
