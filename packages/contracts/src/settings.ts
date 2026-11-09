@@ -621,6 +621,11 @@ export const CodexSettings = makeProviderSettingsSchema(
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
     ),
+    // "managed": a ChatGPT account HAL-C2 connects signs Codex in, in a home
+    // the MC keeps. "existing" (or absent): the Codex CLI's own login.
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -1570,6 +1575,7 @@ const CodexSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   shadowHomePath: Schema.optionalKey(TrimmedString),
   launchArgs: Schema.optionalKey(TrimmedString),
+  setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 

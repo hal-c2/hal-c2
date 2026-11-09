@@ -131,8 +131,6 @@ defmodule HalC2.TurnsProofTest do
         "answers a call into a session that stopped mid-call as a lookup that found none would; it changes no run",
       "HalC2.Orchestration.TurnWriter.commit/2" => @items,
       "HalC2.Orchestration.TurnWriter.observed_item/1" => @observe,
-      "HalC2.Orchestration.TurnWriter.with_usage/3" =>
-        "the usage a provider turn keeps as it settles; no run changes",
       "HalC2.Orchestration.TurnWriter.new_conversation?/1" => @observe,
       "HalC2.Orchestration.TurnWriter.observe_started/1" => @observe,
       "HalC2.Orchestration.TurnWriter.buffer/4" => @items,
@@ -158,6 +156,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call {:upload_feedback, _}" =>
         "sends feedback; no run changes",
       "HalC2.Codex.ThreadRuntime handle_call :settle" => "a barrier for tests; changes nothing",
+      "HalC2.Codex.ThreadRuntime handle_call :mcp_session" =>
+        "reads the connection an MCP app's requests use; changes nothing",
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, _, _}}" => @items,
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, \"item/tool/requestUserInput\", _}}" =>
         @items,

@@ -62,6 +62,9 @@ public:
   // / "disconnected" when the socket was not there to carry it. A cluster
   // member the MC cannot reach is "<name> is not connected." (environmentNames).
   using Reply = std::function<void(const QJsonValue& result, const std::optional<QString>& error)>;
+  // Whether `error` says the MC could not reach the cluster member the call
+  // was for (the call never got there), however it was worded for the user.
+  static bool unreachable(const QString& error);
 
   explicit McClient(QObject* parent = nullptr);
   ~McClient() override;

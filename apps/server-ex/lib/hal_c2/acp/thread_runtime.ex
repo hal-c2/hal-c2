@@ -2596,6 +2596,9 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     ids = state.turn.ids
+    # The provider turn it came in keeps it too, with when it came: a turn the agent
+    # reports nothing in keeps none, never an earlier turn's.
+    reported = Map.put(usage, "updatedAt", Entities.now())
 
     commit(state, fn stream ->
       [
@@ -2604,7 +2607,14 @@ defmodule HalC2.Acp.ThreadRuntime do
           "provider-thread",
           ids.provider_thread,
           &Map.put(&1, "contextUsage", usage)
-        )
+        ),
+        HalC2.StreamState.get(stream, "provider-turn")[ids[:provider_turn]] &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            ids.provider_turn,
+            &Map.put(&1, "tokenUsage", reported)
+          )
       ]
     end)
 
