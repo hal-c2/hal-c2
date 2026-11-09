@@ -3,7 +3,7 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
   # the still-running work in its provider subagents' child threads ends too.
   use ExUnit.Case, async: false
 
-  alias HalC2.Orchestration.NativeSubagent
+  alias HalC2.Orchestration.{NativeSubagent, TurnWriter}
   alias HalC2.StreamState
 
   @moduletag :tmp_dir
@@ -74,5 +74,93 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
     assert items["turn-item:codex:cmd-1"]["status"] == "cancelled"
     assert items["turn-item:codex:cmd-1"]["streaming"] == false
     assert items["turn-item:codex:done-1"]["status"] == "completed"
+  end
+
+  # Review of #1398: a runtime that went leaves a try at its run's end to end the work it
+  # kept running, of its run and its instance's earlier runs (`TurnWriter.abandon/5`'s
+  # `lost:`). Before that try, the next run's runtime resumed a subagent an earlier
+  # run started (Claude's SendMessage), and the try ended it under that runtime.
+  test "a lost runtime's end leaves the subagent a later run resumed running" do
+    run = fn ordinal, status ->
+      id = "run-#{ordinal}"
+
+      {"run", id,
+       %{
+         "s" => %{
+           "id" => id,
+           "threadId" => "p",
+           "status" => status,
+           "ordinal" => ordinal,
+           "providerInstanceId" => "claudeAgent",
+           "rootNodeId" => "node-root-#{ordinal}"
+         }
+       }}
+    end
+
+    done = %{"runId" => "run-1", "status" => "completed", "completedAt" => @at}
+
+    {:ok, _} =
+      HalC2.Streams.commit("p", :thread, [
+        {"thread", "p", %{"s" => %{"id" => "p", "title" => "p"}}},
+        run.(1, "completed"),
+        run.(2, "failed"),
+        run.(3, "running"),
+        {"subagent", "sub",
+         %{
+           "s" =>
+             Map.merge(done, %{
+               "id" => "sub",
+               "threadId" => "p",
+               "origin" => "provider_native",
+               "childThreadId" => "c",
+               "nativeTaskRef" => %{"nativeId" => "task-1"}
+             })
+         }},
+        {"node", "sub", %{"s" => Map.put(done, "id", "sub")}},
+        {"turn-item", "turn-item:subagent:sub",
+         %{
+           "s" =>
+             Map.merge(done, %{
+               "id" => "turn-item:subagent:sub",
+               "type" => "subagent",
+               "nodeId" => "sub"
+             })
+         }}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit("c", :thread, [
+        {"thread", "c", %{"s" => %{"id" => "c", "title" => "c"}}}
+      ])
+
+    entity = StreamState.get(HalC2.Streams.state("p"), "subagent")["sub"]
+    ids = %{thread: "p", run: "run-3", driver: "claudeAgent", instance: "claudeAgent"}
+    NativeSubagent.resume(ids, entity, "go on")
+
+    command = %{
+      "id" => "turn-item:claudeAgent:cmd-1",
+      "type" => "command_execution",
+      "status" => "running",
+      "createdAt" => @at
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit("c", :thread, [{"turn-item", command["id"], %{"s" => command}}])
+
+    # The lost runtime drove run 2, whose end already recorded.
+    assert :ok = TurnWriter.abandon("p", "run-2", "failed", "gone", lost: true)
+
+    parent = HalC2.Streams.state("p")
+
+    assert %{"status" => "running", "runId" => "run-1"} =
+             StreamState.get(parent, "subagent")["sub"]
+
+    assert %{"status" => "running"} = StreamState.get(parent, "node")["sub"]
+
+    assert %{"status" => "running"} =
+             StreamState.get(parent, "turn-item")["turn-item:subagent:sub"]
+
+    assert %{"status" => "running"} =
+             StreamState.get(HalC2.Streams.state("c"), "turn-item")[command["id"]]
   end
 end

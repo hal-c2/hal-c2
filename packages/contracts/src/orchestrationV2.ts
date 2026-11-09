@@ -592,6 +592,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
+  // The run that last resumed a provider subagent, whose runtime drives it now.
+  resumedRunId: Schema.optional(RunId),
   parentNodeId: NodeId,
   origin: Schema.Literals(["provider_native", "app_owned"]),
   createdBy: OrchestrationV2Actor,

@@ -1075,7 +1075,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   # with its node and item (`NativeSubagent.start/3`'s ids; an earlier run's may be
   # cold), and background items in memory with their nodes, as `{kind, id}`s. A later
   # run's is a later runtime's: the run's first end can start the next before a try
-  # after it ends what its own runtime took.
+  # after it ends what its own runtime took. So is a subagent a later run resumed
+  # (`NativeSubagent.resume/3`), whatever run started it.
   defp held(stream, run_id) do
     runs = StreamState.get(stream, "run")
     own = runs[run_id] || %{}
@@ -1087,24 +1088,28 @@ defmodule HalC2.Orchestration.TurnWriter do
           into: MapSet.new(),
           do: id
 
+    # A task delegated through HAL-C2 runs in its own thread, not in the runtime, and a
+    # subagent runs in the runtime of the run that last resumed it, if one did.
+    {own_subagents, elsewhere} =
+      StreamState.get(stream, "subagent")
+      |> Enum.split_with(fn {_id, sub} ->
+        sub["origin"] == "provider_native" and
+          (sub["resumedRunId"] || sub["runId"]) in of_instance
+      end)
+
     subagents =
-      for {id, %{"origin" => "provider_native", "status" => status, "runId" => run}} <-
-            StreamState.get(stream, "subagent"),
-          status in @open and run in of_instance,
+      for {id, %{"status" => status}} <- own_subagents,
+          status in @open,
           key <- [{"subagent", id}, {"node", id}, {"turn-item", "turn-item:subagent:#{id}"}],
           do: key
 
-    # A task delegated through HAL-C2 runs in its own thread, not in the runtime.
-    delegated =
-      for {id, %{"origin" => "app_owned"}} <- StreamState.get(stream, "subagent"),
-          into: MapSet.new(),
-          do: id
+    elsewhere = MapSet.new(elsewhere, &elem(&1, 0))
 
     items =
       for {id, %{"type" => type, "status" => status, "runId" => run} = item} <-
             StreamState.get(stream, "turn-item"),
           type in @background_work and status in @open and run in of_instance and
-            item["nodeId"] not in delegated,
+            item["nodeId"] not in elsewhere,
           key <- [{"turn-item", id}, {"node", item["nodeId"]}],
           do: key
 

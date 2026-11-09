@@ -154,7 +154,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
   subagent it started earlier): the subagent `entity` runs again, and the message is
   the next thing its child thread says, where the answer to it will follow. Works from
   the thread's record alone, so a runtime that has forgotten the subagent can resume
-  it. Returns the handle `append/2` and `finish/3` take.
+  it. It keeps the run that started it, and records the run that resumed it
+  (`"resumedRunId"`), whose runtime drives it now (`TurnWriter.abandon/5`'s `lost:`).
+  Returns the handle `append/2` and `finish/3` take.
   """
   def resume(ids, %{"id" => id, "childThreadId" => child} = entity, message) do
     driver = Entities.driver(ids)
@@ -186,9 +188,11 @@ defmodule HalC2.Orchestration.NativeSubagent do
         "updatedAt" => at
       })
 
+    resumed = if is_binary(ids[:run]), do: &Map.put(&1, "resumedRunId", ids.run), else: & &1
+
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
-         Orchestration.upsert(state, "subagent", id, open),
+         Orchestration.upsert(state, "subagent", id, &(&1 |> open.() |> resumed.())),
          Orchestration.upsert(
            state,
            "node",
