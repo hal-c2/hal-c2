@@ -121,12 +121,19 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert outcomes.("make build || cargo build", "Finished dev", 0) ==
              [{"make build", nil}, {"cargo build", nil}]
 
-    # A passing run's zero count of failures does not show it failed.
+    # A passing run's zero count of failures, or the words in a title, a
+    # warning or a compound, do not show it failed.
     for output <- [
           "test result: ok. 4 passed; 0 failed; 0 ignored",
+          "test result: ok. 3 passed; 0 failed",
           "Tests: 4 passed, 0 failed",
           "failed: 0\npassed: 4",
-          "Ran 4 tests, 0 errors"
+          "Ran 4 tests, 0 errors",
+          "  Error handling\n    ✓ returns 400 (3 ms)\n\n  1 passing (5ms)",
+          " PASS  src/errors.test.js\n  Error\n    ✓ wraps the cause (2 ms)\n\nTests:       1 passed, 1 total",
+          "warning: failed to remove .tmp",
+          "build: error-free",
+          "npm WARN cleanup Failed to remove some directories"
         ] do
       assert outcomes.("cargo test || cargo test --offline", output, 0) ==
                [{"cargo test", nil}, {"cargo test", nil}],

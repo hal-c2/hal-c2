@@ -143,11 +143,15 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @env_incode_re ~r/os\.environ(?:\.setdefault\(\s*|\[\s*)['"]([A-Z][A-Z0-9_]{2,})['"]\s*(?:,|\]\s*=)\s*['"]([\w.\-\/:]+)['"]/
   @failed_re ~r/(?m)Traceback \(most recent call last\)|^\w*Error\b|\b[Ee]xit [Cc]ode[:=\s]+[1-9]/
   # Output that shows something failed, whatever its kind: make's `***`,
-  # `error`, `fatal` or `failed` opening a line, indented or not, or after a
-  # compiler's location (`src/a.c:3:5: error:`), `BUILD FAILED`, `npm ERR!`,
-  # or a count of failures above zero. A zero count (`0 failed`, `failed: 0`,
-  # `0 errors`), which a passing run prints, shows nothing.
-  @failure_shown_re ~r/(?im)\*\*\*|(?:^\s*|:\s*)(?:error|fatal|failed)\b(?!\s*[:=]?\s*0\b)|\bBUILD FAILED\b|^npm ERR!|\b[1-9]\d*\s+(?:failed|failures?|errors?)\b|\b(?:failed|failures?|errors?)\s*[:=]\s*[1-9]/
+  # `error`, `fatal` or `failed` followed by `:`, `!` or rustc's `[` and
+  # opening a line, indented or not (`  error[E0425]:`), or after a colon
+  # (`src/a.c:3:5: error:`) but not a `warning:` or `note:`, where it may also
+  # end the line (`status: failed`); `BUILD FAILED`, `npm ERR!`, or a count of
+  # failures above zero. A passing run prints the words too (a describe title
+  # `Error` or `Error handling`, `build: error-free`, `warning: failed to
+  # remove`, `0 failed`, `failed: 0`), and crediting a fallback that never ran
+  # is worse than missing a failure, so those show nothing.
+  @failure_shown_re ~r/(?im)\*\*\*|^[ \t]*(?:error|fatal|failed)(?![ \t]*[:=]?[ \t]*0\b)(?=[:!\[])|(?<!warning|note):[ \t]*(?:error|fatal|failed)(?![ \t]*[:=]?[ \t]*0\b)(?=[:!\[]|[ \t]*$)|\bBUILD FAILED\b|^npm ERR!|\b[1-9]\d*\s+(?:failed|failures?|errors?)\b|\b(?:failed|failures?|errors?)\s*[:=]\s*[1-9]/
   @label_token_re ~r/^[A-Za-z_][\w.\-\/]*(?:::[\w.\-\[\]]+)*$/
 
   @doc "The error classes a network produces."
