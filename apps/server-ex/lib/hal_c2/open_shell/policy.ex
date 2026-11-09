@@ -164,7 +164,15 @@ defmodule HalC2.OpenShell.Policy do
 
     paths.(got) == paths.(want) and Enum.all?(got.binaries, &exact?(&1.path)) and
       length(got.endpoints) == length(want.endpoints) and
-      Enum.all?(Enum.zip(got.endpoints, want.endpoints), fn {g, w} -> same_endpoint?(g, w) end)
+      Enum.all?(Enum.zip(endpoints(got), endpoints(want)), fn {g, w} -> same_endpoint?(g, w) end)
+  end
+
+  # Endpoints, their ports and their addresses in any order, as a gateway may keep
+  # them. A rule's L7 rules keep theirs.
+  defp endpoints(rule) do
+    rule.endpoints
+    |> Enum.map(&%{&1 | ports: Enum.sort(&1.ports), allowed_ips: Enum.sort(&1.allowed_ips)})
+    |> Enum.sort_by(&{&1.host, &1.port, &1.ports, &1.path})
   end
 
   # The fields that decide what an endpoint lets through, compared whole.

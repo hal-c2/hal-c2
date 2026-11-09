@@ -120,9 +120,19 @@ defmodule HalC2.OpenShell.Exec do
     Process.flag(:trap_exit, true)
 
     case dial.() do
-      {:ok, channel} -> open(channel, start, owner)
+      {:ok, channel} -> opened(channel, start, owner)
       {:error, reason} -> {:stop, reason}
     end
+  end
+
+  # The connection is the gRPC supervisor's, not this process's, and a stop from
+  # `init/1` runs no `terminate/2`: a stream that fails to open closes it here.
+  defp opened(channel, start, owner) do
+    open(channel, start, owner)
+  catch
+    kind, reason ->
+      quietly(fn -> GRPC.Stub.disconnect(channel) end)
+      {:stop, Exception.normalize(kind, reason, __STACKTRACE__)}
   end
 
   defp open(channel, start, owner) do

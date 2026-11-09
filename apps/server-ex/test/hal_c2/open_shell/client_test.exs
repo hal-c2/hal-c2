@@ -403,6 +403,18 @@ defmodule HalC2.OpenShell.ClientTest do
       :ok
     end
 
+    # The exec's connection is the gRPC supervisor's: a stream that fails to open in
+    # `init/1` closes it, as no `terminate/2` runs then.
+    test "an exec that fails to start leaves no connection open", %{conn: conn} do
+      before = connections()
+      assert {:error, _} = Client.exec(conn, "box", ["cat"], owner: "nobody")
+
+      for pid <- connections() -- before do
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+      end
+    end
+
     test "stdin comes back on stdout and the exit status ends the stream", %{conn: conn} do
       {:ok, exec} =
         Client.exec(conn, "box", ["cat"], workdir: "/sandbox", environment: %{"A" => "1"})
@@ -692,5 +704,11 @@ defmodule HalC2.OpenShell.ClientTest do
     after
       10_000 -> {IO.iodata_to_binary(acc), :timeout}
     end
+  end
+
+  defp connections do
+    for {_, pid, _, _} <- DynamicSupervisor.which_children(GRPC.Client.Supervisor),
+        is_pid(pid),
+        do: pid
   end
 end

@@ -28,6 +28,25 @@ defmodule HalC2.OpenShell.PolicyTest do
     assert Policy.check(policy, policy) == :ok
   end
 
+  # A gateway may keep a rule's endpoints, ports and addresses in its own order; what
+  # they let through is what decides.
+  test "a policy kept in another order is the one asked for, and one wider is not" do
+    review = put_in(@review.broker.ips, ["172.17.0.1", "169.254.1.2"])
+    wanted = Policy.review(review)
+
+    reorder = fn policy, fun ->
+      update_in(policy.network_policies["report"].endpoints, fn endpoints ->
+        endpoints |> Enum.map(fun) |> Enum.reverse()
+      end)
+    end
+
+    kept = reorder.(wanted, &%{&1 | allowed_ips: Enum.reverse(&1.allowed_ips)})
+    assert Policy.check(kept, wanted) == :ok
+
+    wider = reorder.(wanted, &%{&1 | allowed_ips: ["10.0.0.9" | &1.allowed_ips]})
+    assert Policy.check(wider, wanted) == {:error, "network rule report is not the one asked for"}
+  end
+
   test "the model's TLS is left to OpenShell to terminate, never skipped" do
     assert model(Policy.review(@review)).tls == :NETWORK_TLS_MODE_UNSPECIFIED
   end
