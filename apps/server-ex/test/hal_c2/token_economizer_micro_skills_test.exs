@@ -133,7 +133,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
           " PASS  src/errors.test.js\n  Error\n    ✓ wraps the cause (2 ms)\n\nTests:       1 passed, 1 total",
           "warning: failed to remove .tmp",
           "build: error-free",
-          "npm WARN cleanup Failed to remove some directories"
+          "npm WARN cleanup Failed to remove some directories",
+          "Tests FAILED to compile? no"
         ] do
       assert outcomes.("cargo test || cargo test --offline", output, 0) ==
                [{"cargo test", nil}, {"cargo test", nil}],
@@ -147,6 +148,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
           "src/a.c:3:5: error: x",
           "  error[E0425]: cannot find value",
           "npm ERR! code ELIFECYCLE",
+          "npm error code ELIFECYCLE",
+          "FAILED tests/test_a.py::test_a - AssertionError: assert 1 == 2",
           "status: failed"
         ] do
       assert outcomes.("make build || cargo build", output, 0) ==

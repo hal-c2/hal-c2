@@ -146,12 +146,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # `error`, `fatal` or `failed` followed by `:`, `!` or rustc's `[` and
   # opening a line, indented or not (`  error[E0425]:`), or after a colon
   # (`src/a.c:3:5: error:`) but not a `warning:` or `note:`, where it may also
-  # end the line (`status: failed`); `BUILD FAILED`, `npm ERR!`, or a count of
-  # failures above zero. A passing run prints the words too (a describe title
+  # end the line (`status: failed`); `BUILD FAILED`, `npm ERR!` or npm 10's
+  # `npm error`, pytest's `FAILED tests/a.py::test_a`, or a count of failures
+  # above zero. A passing run prints the words too (a describe title
   # `Error` or `Error handling`, `build: error-free`, `warning: failed to
   # remove`, `0 failed`, `failed: 0`), and crediting a fallback that never ran
   # is worse than missing a failure, so those show nothing.
-  @failure_shown_re ~r/(?im)\*\*\*|^[ \t]*(?:error|fatal|failed)(?![ \t]*[:=]?[ \t]*0\b)(?=[:!\[])|(?<!warning|note):[ \t]*(?:error|fatal|failed)(?![ \t]*[:=]?[ \t]*0\b)(?=[:!\[]|[ \t]*$)|\bBUILD FAILED\b|^npm ERR!|\b[1-9]\d*\s+(?:failed|failures?|errors?)\b|\b(?:failed|failures?|errors?)\s*[:=]\s*[1-9]/
+  @failure_shown_re ~r/(?im)\*\*\*|^[ \t]*(?:error|fatal|failed)(?![ \t]*[:=]?[ \t]*0\b)(?=[:!\[])|(?<!warning|note):[ \t]*(?:error|fatal|failed)(?![ \t]*[:=]?[ \t]*0\b)(?=[:!\[]|[ \t]*$)|\bBUILD FAILED\b|^npm ERR!|(?-i:^npm error\b|^FAILED \S+::\S+)|\b[1-9]\d*\s+(?:failed|failures?|errors?)\b|\b(?:failed|failures?|errors?)\s*[:=]\s*[1-9]/
   @label_token_re ~r/^[A-Za-z_][\w.\-\/]*(?:::[\w.\-\[\]]+)*$/
 
   @doc "The error classes a network produces."
