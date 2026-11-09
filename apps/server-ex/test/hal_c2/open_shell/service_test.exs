@@ -7,6 +7,7 @@ defmodule HalC2.OpenShell.ServiceTest do
   alias HalC2.OpenShell.Service
   alias HalC2.Test.FakeOpenShell
   alias HalC2.Test.Storage
+  alias HalC2.Test.SystemdUnit
 
   @moduletag :tmp_dir
 
@@ -65,17 +66,11 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert exec =~ ~s("#{OpenShell.gateway_bin("0.1.7")}" --config "#{OpenShell.config_path()}")
 
       refute unit =~ "docker.sock"
-      refute Service.render(:systemd, %{@state | "driver" => "docker"}) =~ "podman.socket"
     end
 
-    test "the gateway waits for the runtime its driver dials" do
-      docker = String.split(Service.render(:systemd, %{@state | "driver" => "docker"}), "\n")
-      assert "Wants=docker.service" in docker
-      assert "After=docker.service" in docker
-
+    test "the gateway waits for Podman's socket" do
       podman = String.split(Service.render(:systemd, @state), "\n")
       assert "After=podman.socket" in podman
-      refute Enum.any?(podman, &(&1 =~ "docker.service"))
     end
 
     # Without lingering the user manager, and the gateway with it, stops at logout
@@ -163,6 +158,50 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert {:error, "[user-manager-unavailable] " <> _} = Service.install(@state)
       refute File.exists?(Service.unit_path(:systemd))
       assert Storage.service_calls(log) == []
+    end
+  end
+
+  # systemd expands `%` in each setting and `$` in ExecStart=, and takes a path
+  # setting's quotes as part of the path.
+  describe "a home with systemd's special characters in its path" do
+    setup %{tmp_dir: dir} do
+      FakeOpenShell.put_env(home: Path.join(dir, ~s(mc %i $HOME "q" \\b &<x>)))
+    end
+
+    test "the unit runs the gateway from that path, as written" do
+      unit = Service.render(:systemd, @state)
+
+      assert [dir] = SystemdUnit.values(unit, "WorkingDirectory")
+      assert SystemdUnit.path(dir) == OpenShell.root()
+
+      assert [exec] = SystemdUnit.values(unit, "ExecStart")
+      assert SystemdUnit.exec(exec) == Config.command(OpenShell.gateway_bin("0.1.7"))
+
+      for key <- ["StandardOutput", "StandardError"] do
+        assert ["append:" <> log] = SystemdUnit.values(unit, key)
+        assert SystemdUnit.path(log) == OpenShell.log_path()
+      end
+    end
+
+    test "the unit it installed is its own" do
+      assert :ok = Service.install(@state)
+      assert :ok = Service.owned()
+      assert %{"foreign" => false, "current" => true} = Service.status(@state)
+    end
+
+    test "the plist runs the gateway from that path, as written" do
+      Application.put_env(:hal_c2, :service_platform, {:unix, :darwin})
+      plist = Service.render(:launchd, @state)
+
+      {doc, _} = apply(:xmerl_scan, :string, [String.to_charlist(plist), [quiet: true]])
+      dict = dict(xpath(doc, "/plist/dict"))
+
+      assert dict["WorkingDirectory"] == OpenShell.root()
+      assert dict["ProgramArguments"] == Config.command(OpenShell.gateway_bin("0.1.7"))
+      assert dict["StandardOutPath"] == OpenShell.log_path()
+
+      assert :ok = Service.install(@state)
+      assert :ok = Service.owned()
     end
   end
 

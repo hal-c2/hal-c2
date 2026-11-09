@@ -96,7 +96,8 @@ defmodule HalC2.OpenShell.Service do
   end
 
   # The line of the unit `render/2` writes that names this home's directory.
-  defp home_line(:systemd), do: "\nWorkingDirectory=#{Service.quote_value(OpenShell.root())}\n"
+  defp home_line(:systemd),
+    do: "\nWorkingDirectory=#{Service.unit_value(OpenShell.root(), :path)}\n"
 
   defp home_line(:launchd),
     do: "\n  <key>WorkingDirectory</key>\n  <string>#{xml(OpenShell.root())}</string>\n"
@@ -278,28 +279,25 @@ defmodule HalC2.OpenShell.Service do
 
   @doc "The unit `install/1` writes for `state`."
   def render(:systemd, state) do
-    q = &Service.quote_value/1
-    log = OpenShell.log_path()
+    log = Service.unit_value(OpenShell.log_path(), :path)
     argv = Config.command(OpenShell.gateway_bin(state["version"]))
-    podman = state["driver"] == "podman"
 
     Enum.join(
       List.flatten([
         "[Unit]",
         "Description=NVIDIA OpenShell gateway for HAL-C2",
-        # The runtime the gateway's driver dials: Podman's socket unit, or rootless
-        # Docker's daemon, so at boot the gateway does not spend its restarts on it.
-        if(podman,
-          do: ["Wants=podman.socket", "After=podman.socket"],
-          else: ["Wants=docker.service", "After=docker.service"]
-        ),
+        # The runtime the gateway's driver dials (Linux runs Podman only,
+        # `HalC2.OpenShell.Platform`), so at boot the gateway does not spend its
+        # restarts on it.
+        "Wants=podman.socket",
+        "After=podman.socket",
         "StartLimitIntervalSec=300",
         "StartLimitBurst=5",
         "",
         "[Service]",
         "Type=simple",
-        "WorkingDirectory=#{q.(OpenShell.root())}",
-        "ExecStart=#{Enum.map_join(argv, " ", q)}",
+        "WorkingDirectory=#{Service.unit_value(OpenShell.root(), :path)}",
+        "ExecStart=#{Enum.map_join(argv, " ", &Service.unit_value(&1, :exec))}",
         "UMask=0077",
         "NoNewPrivileges=yes",
         "Restart=on-failure",
