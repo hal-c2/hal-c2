@@ -469,6 +469,14 @@ for line in sys.stdin:
             name = text.split()[1]
             change = {"path": name, "kind": {"type": "update"}, "diff": "@@ -1 +1 @@\n-old\n+new\n"}
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "fileChange", "id": "file-1", "status": "completed", "changes": [change]}}})
+        # "edit-around NAME" starts a change to NAME, runs a command, then ends the change.
+        if text.startswith("edit-around "):
+            name = text.split()[1]
+            change = {"path": name, "kind": {"type": "update"}, "diff": "@@ -1 +1 @@\n-old\n+new\n"}
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "fileChange", "id": "file-2", "status": "inProgress", "changes": [change]}}})
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-2", "command": "true", "status": "inProgress"}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-2", "command": "true", "status": "completed", "aggregatedOutput": "", "exitCode": 0}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "fileChange", "id": "file-2", "status": "completed", "changes": [change]}}})
         # "indent NAME" re-indents every line of NAME; "fill NAME" writes 11 MB to it.
         if text.startswith("indent "):
             name = text.split()[1]

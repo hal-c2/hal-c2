@@ -2925,6 +2925,9 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  // For a steer: false when the provider's runtime did not answer in time. The message
+  // stays in the turn, since the runtime may still hand it on, but nobody heard it taken.
+  confirmed: Schema.optional(Schema.Boolean),
   // For an access change: the version of the MC's shell rows that holds it.
   shell: Schema.optional(
     Schema.Struct({ mc: Schema.String, epoch: Schema.String, rev: NonNegativeInt }),

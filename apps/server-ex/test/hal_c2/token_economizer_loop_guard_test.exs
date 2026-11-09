@@ -727,7 +727,13 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "npm --workspaces --if-present test",
             "yarn workspace web test",
             "yarn --cwd web test",
-            "bun --cwd web test"
+            "bun --cwd web test",
+            # Whether an option takes a value is the manager's: pnpm's `-w` is
+            # `--workspace-root` and yarn's `-W` takes none, npm's `-w` names a workspace.
+            "pnpm -w test",
+            "pnpm -w run test",
+            "yarn -W test",
+            "npm -w web test"
           ] do
         assert Turn.status_of_tests(cmd) == "own", cmd
 
@@ -748,7 +754,17 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       # An option this does not know may change what runs, or whether anything does: the
       # check is there, but not read.
-      for cmd <- ["pnpm --frobnicate web test", "npm --dry-run test", "yarn -X run test"] do
+      # An option another manager knows is one this manager does not: bun's `-r` preloads
+      # a module, and `pnpm -w web` runs the root's `web` script.
+      for cmd <- [
+            "pnpm --frobnicate web test",
+            "npm --dry-run test",
+            "yarn -X run test",
+            "pnpm -w web test",
+            "npm -W test",
+            "bun -r test",
+            "yarn -r test"
+          ] do
         assert Turn.status_of_tests(cmd) == "unknown", cmd
 
         passing =
@@ -1336,6 +1352,39 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute state.turns["c"].partial
     end
 
+    test "drop a turn whose run ended unheard once two sweeps found it so, learning nothing from it" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      # The MC says run-a ended: its `turn.finished` was lost, or is still on its way.
+      state = %{state | active?: fn _thread, run -> run != "run-a" end}
+      state = state |> observe(started("a")) |> observe(started("b"))
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["a", "b"]
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["b"]
+      assert state.stats["turns"] == 1
+      assert state.trackers == %{}
+
+      # A turn that started on the thread since is the MC's to answer for afresh.
+      state = observe(state, started("a", %{"runId" => "run-a2"}))
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["a", "b"]
+      Process.cancel_timer(state.sweep)
+    end
+
+    test "count a turn whose run the MC could not answer for as ended, so a failing MC keeps none for good" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = %{state | active?: fn _thread, _run -> raise "no stream" end}
+      state = observe(state, started("a"))
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert state.turns == %{}
+      Process.cancel_timer(state.sweep)
+    end
+
     test "count what was waiting, which a full queue does not bound" do
       {:ok, state} = TokenEconomizer.init(%{})
       # Senders that found room together put more than the limit in the queue.
@@ -1506,6 +1555,20 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       guard = state.turns["a"].guard
       refute guard.redirecting
       assert guard.segment == 0 and guard.redirects == 0
+      assert [%{"action" => "nudge", "delivered" => false}] = state.recent
+    end
+
+    # A steer its runtime still held when its budget ran out may reach the agent later, or
+    # never: the agent is not known to have the redirect, so it starts no segment and
+    # names no place, and the turn's judge job runs on.
+    test "a redirect the MC sent but did not hear taken has not landed" do
+      {judge, state} = sleeper(redirecting("a"), "a", :judge)
+      state = delivered(state, "a", {:ok, %{"ordinal" => 7, "confirmed" => false}})
+
+      guard = state.turns["a"].guard
+      refute guard.redirecting
+      assert guard.segment == 0 and guard.redirects == 0 and guard.since == nil
+      assert Process.alive?(judge)
       assert [%{"action" => "nudge", "delivered" => false}] = state.recent
     end
 
@@ -1743,8 +1806,35 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             # A body with no brackets: `[[ 1 ]]` makes `pytest` succeed.
             {"function pytest [[ 1 ]] && bash run.sh && pytest -q", false},
             {"function pytest [[ 1 ]] && pytest -q", false},
-            # A file the turn did not write sources nothing it changed.
-            {". venv/bin/activate && bash run.sh && pytest -q", true}
+            # A group's `;` already cuts the `&&` chain; pinned so the group stays unread.
+            {"{ function pytest [[ 1 ]]; } && bash run.sh && pytest -q", false},
+            {"{ pytest() [[ 1 ]]; } && bash run.sh && pytest -q", false},
+            # Only a simple command runs apart from the check: a builtin that may change what
+            # `pytest` runs is not one, nor is a bare assignment.
+            {"hash -p /bin/true pytest && bash run.sh && pytest -q", false},
+            {"export PATH=./bin:$PATH && bash run.sh && pytest -q", false},
+            {"printf -v PATH %s ./bin && bash run.sh && pytest -q", false},
+            # An expansion assigns in the chain's own shell, quoted or not.
+            {~s|: "${PATH:=./bin}" && bash run.sh && pytest -q|, false},
+            {~s|echo "$((PATH=1))" && bash run.sh && pytest -q|, false},
+            # A `cd` changes which file any path names, and which config a runner reads,
+            # whatever the check's words: one after it is not read.
+            {"cd web && bash run.sh && ./bin/test", false},
+            {"cd web && bash run.sh && pytest ./tests", false},
+            {"cd web && bash run.sh && pytest tests", false},
+            {"cd web && bash run.sh && pytest tests/test_a.py", false},
+            {"cd web && bash run.sh && pytest -q", false},
+            {"cd web && FOO=1 bash run.sh && pytest -q", false},
+            {"pushd web && bash run.sh && bin/pytest -q", false},
+            {"popd && bash run.sh && pytest tests", false},
+            {"PATH=./bin && bash run.sh && pytest -q", false},
+            {"set -f && bash run.sh && pytest -q", false},
+            {~s{"$RUN" && bash run.sh && pytest -q}, false},
+            # A file the turn did not write sources nothing it changed, and a program or an
+            # assignment to a program's environment runs apart.
+            {". venv/bin/activate && bash run.sh && pytest -q", true},
+            {"FOO=1 bash run.sh && pytest tests", true},
+            {"./run.sh && echo ok && pytest -q", true}
           ] do
         state =
           heard_turn([edited("/r/run.sh"), command(cmd, "1 passed in 0.02s", "completed")])

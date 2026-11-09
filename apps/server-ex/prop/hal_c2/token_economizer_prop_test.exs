@@ -301,7 +301,7 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp call({order, cmd})
        when order in ~w(script_then_check check_then_script eval_then_check check_then_eval
                         defined_then_check check_then_defined sourced_then_check
-                        check_then_sourced),
+                        check_then_sourced moved_then_check check_then_moved),
        do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
 
   defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
@@ -326,8 +326,10 @@ defmodule HalC2.TokenEconomizerPropTest do
   # A passing check and a command that may hide one in one `&&` chain, in either order:
   # a check after a script run apart is the last word, one before it is not (the command
   # may have undone it, or failed a check of its own unread). An `eval`, a function
-  # definition, or a source of the `a.py` an edit writes, runs in the check's own shell
-  # and may redefine it, so a check after one is not the last word either.
+  # definition, a builtin or an expansion that assigns, or a source of the `a.py` an edit
+  # writes, runs in the check's own shell and may redefine it, so a check after one is
+  # not the last word either, nor is one after a `cd`, `pushd` or `popd`, whatever it
+  # names: the directory it runs in is not the one the turn's paths were read from.
   defp ordered do
     let {check_last, {how, hider}, runner, between} <-
           {boolean(),
@@ -337,8 +339,16 @@ defmodule HalC2.TokenEconomizerPropTest do
              {"script", "python3 -c 'x()'"},
              {"eval", ~s{eval "$CHECK"}},
              {"defined", "function pytest [[ 1 ]]"},
+             {"defined", "{ function pytest [[ 1 ]]; }"},
+             {"defined", "{ pytest() [[ 1 ]]; }"},
+             {"defined", "hash -p /bin/true pytest && bash -c 'x'"},
+             {"defined", "printf -v PATH %s ./bin && bash -c 'x'"},
+             {"defined", ~s|: "${PATH:=./bin}" && bash -c 'x'|},
              {"sourced", "source ./a.py"},
-             {"sourced", ". ./a.py"}
+             {"sourced", ". ./a.py"},
+             {"moved", "cd web && bash -c 'x'"},
+             {"moved", "pushd web && node -e 'x()'"},
+             {"moved", "popd && python3 -c 'x()'"}
            ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"]),
            elements([" && ", " && echo ok && "])} do
       if check_last,
@@ -348,24 +358,23 @@ defmodule HalC2.TokenEconomizerPropTest do
   end
 
   # A package manager's check run in one package: a check like any other ("pass",
-  # "fail") behind the options this knows, a check not read ("opaque") behind one it
-  # does not.
+  # "fail") behind an option its manager knows, a check not read ("opaque") behind one it
+  # does not, such as another manager's (`bun -r` preloads a module, `npm -w` takes a
+  # value that pnpm's does not).
+  @pm_options %{
+    "npm" => ["--prefix web", "-w web", "-w run", "--workspace=web", "--workspaces"],
+    "pnpm" => ["--filter web", "-F web", "--filter=web", "-r", "-C web", "-w", "-w run"],
+    "yarn" => ["workspace web", "--cwd web", "-W"],
+    "bun" => ["--filter web", "-F web", "--filter=web", "--cwd web"]
+  }
+
   defp filtered do
+    options = @pm_options |> Map.values() |> List.flatten() |> Enum.uniq()
+
     let {verdict, pm, option} <-
-          {elements(["pass", "fail", "opaque"]), elements(["npm", "pnpm", "yarn", "bun"]),
-           elements([
-             "--filter web",
-             "-F web",
-             "--filter=web",
-             "-r",
-             "-C web",
-             "--prefix web",
-             "-w web",
-             "--workspace=web",
-             "workspace web",
-             "--cwd web"
-           ])} do
-      option = if verdict == "opaque", do: "--frobnicate web", else: option
+          {elements(["pass", "fail"]), elements(Map.keys(@pm_options)),
+           elements(["--frobnicate web" | options])} do
+      verdict = if option in @pm_options[pm], do: verdict, else: "opaque"
       {verdict, Enum.join([pm, option, "test"], " ")}
     end
   end
@@ -556,7 +565,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       # A source of `a.py` hides a check only once an edit has written it.
       hidden =
         ~w(unscoped opaque check_then_script eval_then_check check_then_eval defined_then_check
-           check_then_defined) ++ @unread
+           check_then_defined moved_then_check check_then_moved) ++ @unread
 
       hidden =
         if last_edit > 0,
@@ -633,7 +642,8 @@ defmodule HalC2.TokenEconomizerPropTest do
   end
 
   # Shell text up to a `#`: escapes, line continuations, quotes and what ends a word. No
-  # process substitution (`>(`), which the lexer does not read as one.
+  # process substitution (`>(`, or a `>\` and a newline before the `(`, which the shell
+  # joins into one), which the lexer does not read as one.
   defp comment_prefix do
     such_that prefix <-
                 let(
@@ -646,7 +656,7 @@ defmodule HalC2.TokenEconomizerPropTest do
                     ),
                   do: Enum.join(parts)
                 ),
-              when: not String.contains?(prefix, ">(")
+              when: not Regex.match?(~r/>(?:\\\n)*\(/, prefix)
   end
 
   # A command that writes SECRET into a.py: a writer, behind a wrapper, on a path spelt

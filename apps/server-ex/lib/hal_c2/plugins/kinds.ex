@@ -118,8 +118,9 @@ defmodule HalC2.Plugins.ProviderAdapter do
   `run_id`, or answers `{:error, reason}` when the provider does not take it. The
   message is already recorded in the turn when `steer/3` is called and only an
   `{:error, _}` (or an exit) takes it back out, so an adapter whose own call times
-  out after the request reached the provider answers `:ok` itself; a timeout exit
-  out of `steer/3` counts as a refusal.
+  out after the request reached the provider answers `:held` itself (the provider
+  may still take it, but nobody heard it do so); a timeout exit out of `steer/3`
+  counts as a refusal.
   """
   use HalC2.Plugins.Kind
 
@@ -133,7 +134,7 @@ defmodule HalC2.Plugins.ProviderAdapter do
               run_id :: String.t(),
               message :: %{text: String.t(), attachments: [map]}
             ) ::
-              :ok | {:error, String.t()}
+              :ok | :held | {:error, String.t()}
   @callback respond(thread_id :: String.t(), request_id :: String.t(), response :: map) ::
               :ok | {:error, String.t()}
   @callback rollback(thread_id :: String.t(), plan :: map) :: {:ok, map} | {:error, String.t()}
