@@ -162,6 +162,16 @@ under the plugin's **Settings**, set **Micro-skills** to **Learn environment
 facts**. Two settings there bound what a new conversation is told: **Most
 facts stated** and the facts' **token budget**.
 
+A project starts out knowing nothing. To have it learn from the threads it
+already has, also turn on **Learn from earlier threads** there. The first
+conversation in a project that has learned nothing yet then starts reading the
+project's earlier threads in the background, oldest first, and the
+conversations after it are told what they taught. It asks no model and says
+nothing in any thread. **Earlier threads from the last (days)** and **Most
+earlier threads** bound what it reads. A project that already learned from its
+own turns is left as it is. Turning the setting off stops a read under way, and
+turning it back on resumes it where it stopped.
+
 ## Connect Slack for plugins
 
 Plugins on an MC reach Slack through that MC's one Slack connection, and only

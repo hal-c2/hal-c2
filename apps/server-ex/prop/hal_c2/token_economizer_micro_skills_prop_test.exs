@@ -1,5 +1,5 @@
 for file <-
-      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge token_economizer),
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
@@ -853,5 +853,407 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
     after
       0 -> :ok
     end
+  end
+end
+
+defmodule HalC2.TokenEconomizerHistoryPropTest do
+  @moduledoc """
+  A state machine model of the first fold from history
+  (`plugins/token-economizer/mc/micro_skills_history.ex`), driven as the
+  plugin's process drives it: one read asked at a time and answered later,
+  or failing; turns ending in the project's threads before the fold starts
+  and while it runs; the import turned off and on under it; and the MC
+  restarting, the fold and the turns folded saved together. Whatever the
+  order:
+
+    * no turn is folded twice, and the fold counts exactly the turns it
+      folded itself, not those folded as they ended while it was stopped;
+    * only turns that ended are folded: those of the threads before the fold
+      started, and those heard live;
+    * the turns heard live are folded in the order they ended, and, for a
+      fold never stopped, after every turn it imported;
+    * a read lost to a restart is asked again from where the fold was saved,
+      and what it folded before stands;
+    * driven to its end, with the import on, the fold is done and has folded
+      every turn, but those of a thread or a held-back turn it could not read.
+
+  The envelope it seeds is `HalC2.TokenEconomizerHistorySeedPropTest`, below.
+  """
+  use ExUnit.Case, async: true
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.History
+
+  @threads ~w(a b c)
+  @page 2
+  @base ~U[2026-11-01 00:00:00Z]
+
+  property "the first fold from history folds every turn once, the live ones after it, in order",
+    numtests: HalC2.Prop.numtests(300) do
+    forall cmds <- more_commands(4, commands(__MODULE__)) do
+      Process.put(:world, %{
+        clock: 0,
+        runs: [],
+        fold: nil,
+        offered: [],
+        reading: nil,
+        lost: [],
+        direct: 0,
+        stopped: false
+      })
+
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      drained = drain()
+
+      (result == :ok and drained == :ok)
+      |> when_fail(
+        IO.puts("""
+        History: #{inspect(history, pretty: true, limit: 60)}
+        State: #{inspect(state, pretty: true)}
+        Result: #{inspect(result, pretty: true)}
+        Drained: #{inspect(drained, pretty: true)}
+        World: #{inspect(Process.get(:world), pretty: true, limit: :infinity)}
+        """)
+      )
+      |> aggregate(command_names(cmds))
+    end
+  end
+
+  # The model: whether the fold started. The rest is the world's, checked
+  # after every step.
+  def initial_state, do: %{started: false}
+
+  def command(%{started: false}) do
+    frequency([
+      {5, {:call, __MODULE__, :turn, [elements(@threads)]}},
+      {1, {:call, __MODULE__, :start, []}}
+    ])
+  end
+
+  def command(_state) do
+    frequency([
+      {3, {:call, __MODULE__, :turn, [elements(@threads)]}},
+      {4, {:call, __MODULE__, :ask, []}},
+      {4, {:call, __MODULE__, :answer, []}},
+      {1, {:call, __MODULE__, :fail, []}},
+      {1, {:call, __MODULE__, :stop, []}},
+      {1, {:call, __MODULE__, :resume, []}},
+      {1, {:call, __MODULE__, :restart, []}}
+    ])
+  end
+
+  def precondition(%{started: started}, {:call, _, :start, []}), do: not started
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :start, []}), do: %{state | started: true}
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(_state, _call, world), do: laws(world) == :ok
+
+  # --- the laws ------------------------------------------------------------------------------
+
+  # A fold once stopped, by the import turned off or its threads not listed,
+  # imports after the live turns folded while it was stopped.
+  defp laws(world) do
+    live = for {run, _thread, :live} <- world.runs, do: run
+    ended = MapSet.new(world.runs, &elem(&1, 0))
+    offered = world.offered
+    folded_live = Enum.filter(offered, &(&1 in live))
+    turns = world.fold && History.view(world.fold)["turns"]
+
+    cond do
+      offered != Enum.uniq(offered) -> {:twice, offered}
+      not Enum.all?(offered, &(&1 in ended)) -> {:never_ended, offered}
+      turns not in [nil, length(offered) - world.direct] -> {:counted, turns, offered}
+      folded_live != Enum.filter(live, &(&1 in folded_live)) -> {:live_order, folded_live}
+      not world.stopped and not live_last?(offered, live) -> {:live_before_import, offered}
+      true -> :ok
+    end
+  end
+
+  defp live_last?(offered, live) do
+    offered |> Enum.drop_while(&(&1 not in live)) |> Enum.all?(&(&1 in live))
+  end
+
+  # Turns the import on and reads until nothing is left; the fold is then
+  # done, having folded every turn but those it could not read.
+  defp drain do
+    world = Process.get(:world)
+
+    if world.fold == nil do
+      :ok
+    else
+      resume()
+      Enum.reduce_while(1..500, nil, fn _, _ -> drain_step() end)
+      world = Process.get(:world)
+      all = MapSet.new(world.runs, &elem(&1, 0))
+      expected = MapSet.difference(all, MapSet.new(world.lost))
+
+      cond do
+        History.view(world.fold)["state"] != "done" -> {:not_done, world.fold}
+        laws(world) != :ok -> laws(world)
+        not MapSet.subset?(expected, MapSet.new(world.offered)) -> {:missed, expected}
+        true -> :ok
+      end
+    end
+  end
+
+  defp drain_step do
+    world = Process.get(:world)
+
+    cond do
+      world.reading != nil ->
+        answer()
+        {:cont, nil}
+
+      History.next(world.fold) == nil ->
+        {:halt, nil}
+
+      true ->
+        ask()
+        {:cont, nil}
+    end
+  end
+
+  # --- the commands, on the world ---------------------------------------------------------
+
+  # A turn ends in `thread`: before the fold, one it will import; while it
+  # runs, one it holds back; else one folded as it ends.
+  def turn(thread) do
+    world = tick(Process.get(:world))
+    run = "r#{world.clock}"
+
+    case world.fold do
+      nil ->
+        put(%{world | runs: world.runs ++ [{run, thread, :old}]})
+
+      fold ->
+        world = %{world | runs: world.runs ++ [{run, thread, :live}]}
+
+        if History.running?(fold),
+          do: put(%{world | fold: History.hold(fold, [thread, run, []])}),
+          else: put(%{world | offered: world.offered ++ [run], direct: world.direct + 1})
+    end
+  end
+
+  def start do
+    world = tick(Process.get(:world))
+    put(%{world | fold: History.new("f", at(world.clock))})
+  end
+
+  # Asks the read the fold awaits, if none is under way; the answer is read
+  # now, against the threads as they are, and applied by `answer/0`.
+  def ask do
+    world = Process.get(:world)
+
+    case world.reading == nil and History.next(world.fold) do
+      :finish ->
+        put(%{world | fold: History.finish(world.fold, at(world.clock))})
+
+      what when what not in [false, nil] ->
+        put(%{world | reading: {world.fold["step"], what, read(world, what)}})
+
+      _ ->
+        world
+    end
+  end
+
+  def answer do
+    world = Process.get(:world)
+
+    case world.reading do
+      {step, what, result} -> put(apply_read(%{world | reading: nil}, step, what, result))
+      nil -> world
+    end
+  end
+
+  # The read under way fails.
+  def fail do
+    world = Process.get(:world)
+
+    case world.reading do
+      {step, what, _result} -> put(apply_read(%{world | reading: nil}, step, what, :error))
+      nil -> world
+    end
+  end
+
+  def stop, do: change(&History.stop(&1, "the history import was turned off"))
+  def resume, do: change(&History.resume/1)
+
+  # The MC restarts: the fold loads back from what was saved, and the read
+  # under way is lost.
+  def restart do
+    world = Process.get(:world)
+    fold = world.fold && History.load(world.fold |> JSON.encode!() |> JSON.decode!())
+    put(%{world | fold: fold, reading: nil})
+  end
+
+  defp change(fun) do
+    world = Process.get(:world)
+    put(%{world | fold: world.fold && fun.(world.fold)})
+  end
+
+  # --- reading, as `HalC2Plugins.TokenEconomizer.read_history/6` does ------------------------
+
+  defp read(world, :plan) do
+    threads =
+      world.runs
+      |> Enum.group_by(&elem(&1, 1), &elem(&1, 0))
+      |> Enum.map(fn {thread, [first | _]} ->
+        created = at(String.to_integer(String.trim_leading(first, "r")))
+        %{"id" => thread, "createdAt" => created, "latestUserMessageAt" => created}
+      end)
+
+    History.plan(threads, DateTime.add(@base, world.clock, :second), 3650, 200)
+  end
+
+  defp read(world, {:page, thread, after_run}) do
+    runs = for {run, ^thread, _} <- world.runs, do: run
+
+    runs =
+      if after_run, do: Enum.drop(runs, Enum.find_index(runs, &(&1 == after_run)) + 1), else: runs
+
+    page = Enum.take(runs, @page)
+    {page, length(page) == @page}
+  end
+
+  defp read(_world, {:pending, entries}), do: entries
+
+  # The answer applied to the fold that asked it, if it still awaits it.
+  defp apply_read(world, step, what, result) do
+    fold = world.fold
+
+    if History.running?(fold) and fold["step"] == step,
+      do: applied(world, what, result),
+      else: world
+  end
+
+  defp applied(world, :plan, :error),
+    do: %{world | fold: History.stop(world.fold, "the project's threads could not be listed")}
+
+  defp applied(world, :plan, {ids, skipped}),
+    do: %{world | fold: History.planned(world.fold, ids, skipped)}
+
+  defp applied(world, {:page, thread, _after}, :error) do
+    lost = for {run, ^thread, :old} <- world.runs, run not in world.offered, do: run
+    %{world | fold: History.unreadable(world.fold), lost: world.lost ++ lost}
+  end
+
+  defp applied(world, {:page, _thread, _after}, {runs, more}) do
+    fold = world.fold
+    held = History.held(fold)
+    ended = Map.new(world.runs, fn {run, _thread, _} -> {run, at(clock_of(run))} end)
+    kept = Enum.filter(runs, &(&1 not in held and History.imported?(fold, ended[&1])))
+
+    %{
+      world
+      | offered: world.offered ++ kept,
+        fold: History.paged(fold, length(kept), List.last(runs), more)
+    }
+  end
+
+  defp applied(world, {:pending, entries}, :error) do
+    lost = Enum.map(entries, fn [_thread, run, _ids] -> run end)
+    %{world | fold: History.drained(world.fold, entries, 0), lost: world.lost ++ lost}
+  end
+
+  defp applied(world, {:pending, entries}, entries) do
+    runs = Enum.map(entries, fn [_thread, run, _ids] -> run end)
+
+    %{
+      world
+      | offered: world.offered ++ runs,
+        fold: History.drained(world.fold, entries, length(runs))
+    }
+  end
+
+  defp clock_of("r" <> n), do: String.to_integer(n)
+
+  defp tick(world), do: %{world | clock: world.clock + 1}
+  defp at(clock), do: @base |> DateTime.add(clock, :second) |> DateTime.to_iso8601()
+
+  defp put(world) do
+    fold = world.fold || %{}
+
+    world = %{
+      world
+      | stopped: world.stopped or fold["state"] == "stopped" or Map.has_key?(fold, "stop")
+    }
+
+    Process.put(:world, world)
+    world
+  end
+end
+
+defmodule HalC2.TokenEconomizerHistorySeedPropTest do
+  @moduledoc """
+  What the first fold from history seeds the loop guard's envelope with
+  (`History.claim/2`, `seed/4`, `record_turn/3`, `unseed/2`), over pages of
+  imported green turns, pages read again after a crash, live turns recorded
+  meanwhile, and the tracker saved and loaded back, in any order. Whatever
+  the order, the envelope holds each page's turns once, in the order read,
+  ahead of the live turns, in the order they ended; and taking the seed back
+  out leaves exactly the live turns.
+  """
+  use ExUnit.Case, async: true
+  use PropCheck
+
+  alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Turn}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.History
+
+  property "the envelope holds the imported turns once, ahead of the live ones, until unseeded",
+    numtests: HalC2.Prop.numtests(300) do
+    forall ops <- list(frequency([{3, :page}, {2, :again}, {3, :live}, {1, :restart}])) do
+      fold = History.new("f", "2026-11-09T12:00:00Z")
+
+      {tracker, _step, seeded, live} =
+        Enum.reduce(ops, {Envelope.new(), -1, [], []}, fn
+          :page, {tracker, step, seeded, live} ->
+            samples = samples(step + 1)
+            tracker = History.seed(tracker, "f", step + 1, samples)
+            {tracker, step + 1, seeded ++ Enum.map(samples, & &1["turns"]), live}
+
+          :again, {tracker, step, seeded, live} ->
+            {History.seed(tracker, "f", max(step, 0), samples(max(step, 0))), step, seeded, live}
+
+          :live, {tracker, step, seeded, live} ->
+            {g, _, _} = Turn.fold(Turn.new(), "Bash", %{"command" => "pytest -q"}, "3 passed", 0)
+            tracker = tracker |> History.claim(fold) |> History.record_turn(g, true)
+            {tracker, step, seeded, live ++ [1]}
+
+          :restart, {tracker, step, seeded, live} ->
+            saved = tracker[:seed] |> JSON.encode!() |> JSON.decode!()
+            {Map.put(tracker, :seed, History.load_seed(saved)), step, seeded, live}
+        end)
+
+      unseeded = History.unseed(tracker, "f")
+
+      (tracker.resolved_turns == seeded ++ live and
+         length(tracker.resolved_snaps) == length(tracker.resolved_turns) and
+         unseeded.resolved_turns == live and History.seedable(tracker, "f") == :seeding)
+      |> when_fail(
+        IO.puts("""
+        Ops: #{inspect(ops)}
+        Turns: #{inspect(tracker.resolved_turns)}
+        Seed: #{inspect(tracker[:seed])}
+        Unseeded: #{inspect(unseeded.resolved_turns)}
+        """)
+      )
+    end
+  end
+
+  # A page's green turns: told apart from the live ones (1) and from each
+  # other page's, and the same each time the page is read.
+  defp samples(step) do
+    sample =
+      History.replay(
+        [{"Bash", %{"command" => "pytest -q"}, "3 passed", 0}],
+        "completed",
+        "default",
+        %{}
+      )
+
+    for n <- 1..rem(step, 3)//1, do: %{sample | "turns" => 100 + step * 10 + n}
   end
 end

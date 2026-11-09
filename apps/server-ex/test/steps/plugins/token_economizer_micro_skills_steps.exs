@@ -313,7 +313,149 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     context
   end
 
+  # --- the history import (features/plugins/token-economizer-history-import.feature) ---------------
+
+  step "the loop guard is off", context do
+    save(context, %{"loopGuard" => "off"})
+  end
+
+  step "the loop guard only watches", context do
+    save(context, %{"loopGuard" => "watch"})
+  end
+
+  # The plugin hears none of these turns, so its turn count, which the other
+  # steps wait on, does not move: the runs are waited on instead.
+  step "Claude ran {int} turns repairing the test command in the thread {string}, with nothing listening",
+       %{args: [turns, title]} = context do
+    context =
+      Enum.reduce(1..turns, context, fn turn, context ->
+        context =
+          if turn == 1,
+            do: World.launch_on(context, title, @instance, "repair the test command"),
+            else: World.post_message(context, title, "repair the test command")
+
+        World.await_runs(context, title, List.duplicate("completed", turn), 15_000)
+        context
+      end)
+
+    context
+  end
+
+  # The threads so far are in the shell the import lists them from, and the
+  # project's topic is watched from here on: the receipt the import's end is
+  # reached by (`await_history/2`).
+  step "the history import is on", context do
+    for {title, _} <- context[:threads] || %{},
+        do: :ok = HalC2.Streams.flush_shell(World.thread_id(context, title))
+
+    context = save(context, %{"historyImport" => true})
+    sub = System.unique_integer([:positive])
+
+    shape = %{
+      "type" => "plugin",
+      "environment" => context.mc.environment,
+      "id" => @id,
+      "topic" => "microSkills:#{project_id(context)}"
+    }
+
+    client = context |> World.client("token-economizer-history") |> Mc.sub(sub, shape)
+
+    context
+    |> World.put_client("token-economizer-history", client)
+    |> Map.put(:history_watched, sub)
+  end
+
+  step "TokenEconomizer's history import is done, the project having learned from {int} turns",
+       %{args: [turns]} = context do
+    {_entry, context} = await_history(context, "done")
+    {view, context} = micro_skills(context)
+    assert view["history"]["state"] == "done"
+    assert view["turns"] == turns
+    assert view["history"]["pending"] == 0
+    context
+  end
+
+  step "the import left the loop guard's envelope as it was, having learned already", context do
+    {view, context} = micro_skills(context)
+    assert [%{"left" => reason}] = Map.values(view["history"]["envelopes"])
+    assert reason =~ "already learned"
+    context
+  end
+
+  step "the import seeded the loop guard's envelope with {int} turns",
+       %{args: [turns]} = context do
+    {view, context} = micro_skills(context)
+    assert Map.values(view["history"]["envelopes"]) == [%{"seeded" => turns}]
+    context
+  end
+
+  step "TokenEconomizer skipped the history import, the project having learned already",
+       context do
+    {view, context} = micro_skills(context)
+    assert view["history"]["state"] == "skipped"
+    assert view["history"]["reason"] =~ "already learned"
+    context
+  end
+
+  # With the import on, forgetting starts it again at once: its first
+  # publication says so, past what the topic carried before.
+  step "the person forgets what TokenEconomizer learned on the project", context do
+    {view, context} =
+      World.call!(context, "plugins.call", %{
+        "id" => @id,
+        "method" => "microSkills.forget",
+        "input" => %{"projectId" => project_id(context)}
+      })
+
+    [project] = view["projects"]
+    assert project["skills"] == []
+
+    if context[:history_watched] do
+      assert project["history"]["state"] == "running"
+      {_entry, context} = await_history(context, "running")
+      context
+    else
+      context
+    end
+  end
+
+  step "TokenEconomizer has learned nothing on the project and imported nothing", context do
+    {view, context} = micro_skills(context)
+    assert view["skills"] == []
+    assert view["turns"] == 0
+    assert view["history"] == %{"state" => "none"}
+    context
+  end
+
+  step "the person sets {string} to 0", %{args: [key]} = context do
+    {reply, context} =
+      World.call(context, "plugins.saveSettings", %{"id" => @id, "settings" => %{key => 0}})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the settings are refused, naming {string}", %{args: [key]} = context do
+    assert {:error, message, _} = context.reply
+    assert message =~ key
+    context
+  end
+
   # --- helpers -------------------------------------------------------------------------------------------
+
+  # The next publication of the project's entry whose import is in `state`.
+  defp await_history(context, state) do
+    sub = context.history_watched
+
+    {frame, client} =
+      Mc.await(
+        World.client(context, "token-economizer-history"),
+        &(&1["t"] == "plugin" and &1["id"] == sub and
+            get_in(&1, ["value", "history", "state"]) == state),
+        15_000
+      )
+
+    {frame["value"], World.put_client(context, "token-economizer-history", client)}
+  end
 
   defp repair(context, title, turns) do
     expected = context.folded + turns

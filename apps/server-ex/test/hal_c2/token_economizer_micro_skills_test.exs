@@ -7,7 +7,8 @@
 # directory cases (the MC gives no directory per call) are left out, as are
 # the distiller's (a later part of the port).
 
-for file <- ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts),
+for file <-
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope micro_skills_history),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerMicroSkillsTest do

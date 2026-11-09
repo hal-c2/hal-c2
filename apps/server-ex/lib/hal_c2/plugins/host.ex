@@ -510,17 +510,50 @@ defmodule HalC2.Plugins.Host do
   ordinal), whether that run ended or not, and takes `limit` of those: a plugin that
   hears of a turn late, after more turns ended, still gets the turns before it. A run
   the thread does not have cuts nothing off.
+
+  `after: run_id` keeps only the turns that started after run `run_id` (a higher
+  ordinal) and takes the oldest `limit` of those, `after: nil` the oldest `limit` of
+  all: a plugin reads a thread's whole history forwards a page at a time, each page
+  after the last turn of the one before. A run the thread does not have cuts nothing
+  off.
   """
   def history(id, thread_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
-    before = Keyword.get(opts, :before)
+
+    cut =
+      if Keyword.has_key?(opts, :after),
+        do: {:after, opts[:after]},
+        else: {:before, opts[:before]}
 
     with :ok <- permit(id, "turns:observe") do
       HalC2.Streams.read(thread_id, fn stream ->
         if HalC2.StreamState.get(stream, "thread")[thread_id],
-          do: {:ok, turns(stream, limit, before)},
+          do: {:ok, turns(stream, limit, cut)},
           else: {:error, "There is no thread #{thread_id}."}
       end)
+    end
+  end
+
+  @doc """
+  The threads of project `project_id` on this MC that are not deleted, oldest first:
+  `%{"id", "createdAt", "updatedAt", "latestUserMessageAt", "latestRunCompletedAt"}`,
+  `latestUserMessageAt` nil for a thread never sent a message. For a plugin that learns
+  from a project's earlier turns (`history/3` reads each thread's). A thread moved to
+  another machine is that machine's. Needs `turns:observe`.
+  """
+  def project_threads(id, project_id) do
+    with :ok <- permit(id, "turns:observe") do
+      {:ok,
+       for(
+         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+         mc == node() and row["projectId"] == project_id and row["deletedAt"] == nil,
+         do:
+           Map.take(
+             row,
+             ~w(id createdAt updatedAt latestUserMessageAt latestRunCompletedAt)
+           )
+       )
+       |> Enum.sort_by(&{&1["createdAt"] || "", &1["id"]})}
     end
   end
 
@@ -552,7 +585,7 @@ defmodule HalC2.Plugins.Host do
 
   @ended ~w(completed interrupted failed cancelled)
 
-  defp turns(stream, limit, before) do
+  defp turns(stream, limit, cut) do
     alias HalC2.StreamState
 
     attempts = StreamState.get(stream, "run-attempt")
@@ -561,8 +594,9 @@ defmodule HalC2.Plugins.Host do
     runs = StreamState.get(stream, "run")
 
     cutoff =
-      case runs[before] do
-        %{"ordinal" => ordinal} -> &(&1["ordinal"] < ordinal)
+      case {cut, runs[elem(cut, 1)]} do
+        {{:before, _}, %{"ordinal" => ordinal}} -> &(&1["ordinal"] < ordinal)
+        {{:after, _}, %{"ordinal" => ordinal}} -> &(&1["ordinal"] > ordinal)
         _ -> fn _run -> true end
       end
 
@@ -571,7 +605,7 @@ defmodule HalC2.Plugins.Host do
       |> Map.values()
       |> Enum.filter(&(&1["status"] in @ended and cutoff.(&1)))
       |> Enum.sort_by(& &1["ordinal"])
-      |> Enum.take(-limit)
+      |> Enum.take(if(elem(cut, 0) == :after, do: limit, else: -limit))
 
     # The items of those runs alone, an older run's read back from the store once it
     # has gone cold (`HalC2.StreamState`, "Hot and cold").
