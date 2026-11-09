@@ -1,4 +1,5 @@
-for file <- ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts),
+for file <-
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
@@ -30,7 +31,9 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
   The settings' mode gate (off learns and stages nothing) is the plugin
   process's two lines around these pure functions and is covered by
   `features/plugins/token-economizer-micro-skills.feature`; the caps a person
-  pins are state here and change mid-run like a settings save does.
+  pins are state here and change mid-run like a settings save does. What the
+  process keeps around them (the turns it hears, what it staged) is
+  `HalC2.TokenEconomizerMicroSkillsSeamPropTest`, below.
   """
   use ExUnit.Case, async: true
   use PropCheck
@@ -354,5 +357,290 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
       end)
 
     dropped_ok and facts_ok and skills.now == state.turns
+  end
+end
+
+defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
+  @moduledoc """
+  A state machine model of what TokenEconomizer's process
+  (`HalC2Plugins.TokenEconomizer`) keeps for the micro-skills: two threads'
+  turns, each on one of three provider instances (two accounts of one
+  driver among them), heard while the guard or learning is on; conversations
+  staged as they start; settings saves switching the guard and learning on
+  and off; and the MC restarting. Whatever the order, after every step:
+
+    * it holds exactly the turns under way it heard start while the guard or
+      learning was on, each on the instance it started on, and a settings
+      save drops them only when both are off;
+    * a turn is partial exactly when learning was switched under it, or the
+      guard was switched on under it;
+    * a turn keeps at most 256 calls in memory, all of those it heard
+      while learning, and past that none: it is read back whole at its end;
+    * what was staged is keyed by thread and instance, in the order staged,
+      and survives a restart, which forgets the turns;
+    * the guard watches no turn while it is off.
+
+  The laws of the facts themselves are `HalC2.TokenEconomizerMicroSkillsPropTest`,
+  above; the guard's are `prop/hal_c2/token_economizer_plugin_prop_test.exs`.
+  """
+  # The plugin keeps what it staged under the MC's home, which a scratch home
+  # sets for the whole VM.
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2Plugins.TokenEconomizer
+
+  @threads ~w(a b)
+  @instances [{"claude-work", "claudeAgent"}, {"claude-home", "claudeAgent"}, {"codex", "codex"}]
+  @calls_kept 256
+
+  property "the plugin keeps what the micro-skills fold and stage, over mode switches and restarts",
+    numtests: HalC2.Prop.numtests(200) do
+    forall cmds <- more_commands(6, commands(__MODULE__)) do
+      home = HalC2.Prop.scratch_home("token-economizer-seam")
+      {:ok, plugin} = TokenEconomizer.init(settings(initial_state()))
+      Process.put(:plugin, plugin)
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      stop(Process.delete(:plugin))
+      HalC2.Prop.restore_env()
+      File.rm_rf!(home)
+
+      (result == :ok)
+      |> when_fail(
+        IO.puts("""
+        History: #{inspect(history, pretty: true, limit: 60)}
+        State: #{inspect(state, pretty: true)}
+        Result: #{inspect(result, pretty: true)}
+        """)
+      )
+      |> aggregate(command_names(cmds))
+    end
+  end
+
+  # The model: the modes in force, the turns under way by thread (their
+  # instance, whether partial, the calls heard while learning), and the
+  # conversations staged, oldest first.
+  def initial_state, do: %{guard: "off", micro: "envfacts", turns: %{}, staged: []}
+
+  def command(_state) do
+    frequency([
+      {3, {:call, __MODULE__, :settings, [elements(~w(off watch)), elements(~w(off envfacts))]}},
+      {4, {:call, __MODULE__, :start, [elements(@threads), elements(@instances)]}},
+      {6, {:call, __MODULE__, :calls, [elements(@threads), integer(1, 200)]}},
+      {3, {:call, __MODULE__, :finish, [elements(@threads)]}},
+      {3, {:call, __MODULE__, :stage, [elements(@threads), elements(@instances)]}},
+      {1, {:call, __MODULE__, :restart, []}}
+    ])
+  end
+
+  def precondition(_state, _call), do: true
+
+  defp hears?(state), do: state.guard != "off" or state.micro != "off"
+
+  def next_state(state, _result, {:call, _, :settings, [guard, micro]}) do
+    was_on = state.guard != "off"
+    was_micro = state.micro != "off"
+    state = %{state | guard: guard, micro: micro}
+
+    turns =
+      cond do
+        not hears?(state) ->
+          %{}
+
+        micro != "off" != was_micro or (guard != "off" and not was_on) ->
+          Map.new(state.turns, fn {t, turn} -> {t, %{turn | partial: true}} end)
+
+        true ->
+          state.turns
+      end
+
+    %{state | turns: turns}
+  end
+
+  def next_state(state, _result, {:call, _, :start, [thread, {instance, _driver}]}) do
+    if hears?(state),
+      do: put_in(state.turns[thread], %{instance: instance, partial: false, heard: 0}),
+      else: state
+  end
+
+  def next_state(state, _result, {:call, _, :calls, [thread, n]}) do
+    if state.micro != "off" and Map.has_key?(state.turns, thread),
+      do: update_in(state.turns[thread].heard, &(&1 + n)),
+      else: state
+  end
+
+  def next_state(state, _result, {:call, _, :finish, [thread]}),
+    do: %{state | turns: Map.delete(state.turns, thread)}
+
+  def next_state(state, _result, {:call, _, :stage, [thread, {instance, _driver}]}) do
+    if state.micro != "off" do
+      key = {thread, instance}
+      %{state | staged: (state.staged -- [key]) ++ [key]}
+    else
+      state
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :restart, []}), do: %{state | turns: %{}}
+
+  def postcondition(state, call, view) do
+    state = next_state(state, view, call)
+
+    turns_ok =
+      Map.keys(view.turns) |> Enum.sort() == Map.keys(state.turns) |> Enum.sort() and
+        Enum.all?(state.turns, fn {thread, turn} ->
+          kept = view.turns[thread]
+
+          calls_ok =
+            if turn.heard > @calls_kept,
+              do: kept.calls == :history,
+              else: is_list(kept.calls) and length(kept.calls) == turn.heard
+
+          kept.instance == turn.instance and kept.partial == turn.partial and calls_ok
+        end)
+
+    staged_ok =
+      view.staged_order == state.staged and
+        Enum.sort(view.staged_keys) == Enum.sort(state.staged)
+
+    watching_ok =
+      view.watching == if(state.guard == "off", do: 0, else: map_size(state.turns))
+
+    turns_ok and staged_ok and watching_ok
+  end
+
+  # --- the commands, against the process's callbacks ---------------------------------------
+
+  defp settings(state), do: %{"loopGuard" => state.guard, "microSkills" => state.micro}
+
+  def settings(guard, micro) do
+    {:reply, :ok, plugin} =
+      TokenEconomizer.handle_call(
+        {:settings, settings(%{guard: guard, micro: micro})},
+        nil,
+        Process.get(:plugin)
+      )
+
+    put(plugin)
+  end
+
+  def start(thread, {instance, driver}) do
+    observe(%{
+      "type" => "turn.started",
+      "threadId" => thread,
+      "runId" => "run-#{System.unique_integer([:positive])}",
+      "projectId" => "p",
+      "instanceId" => instance,
+      "provider" => driver
+    })
+  end
+
+  def calls(thread, n) do
+    case Process.get(:plugin).turns[thread] do
+      nil ->
+        view(Process.get(:plugin))
+
+      turn ->
+        item = %{
+          "type" => "turn.item",
+          "threadId" => thread,
+          "runId" => turn.run,
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "ls",
+          "output" => "a.py"
+        }
+
+        Enum.reduce(1..n, nil, fn _, _ -> observe(item) end)
+    end
+  end
+
+  def finish(thread) do
+    case Process.get(:plugin).turns[thread] do
+      nil ->
+        view(Process.get(:plugin))
+
+      turn ->
+        observe(%{
+          "type" => "turn.finished",
+          "threadId" => thread,
+          "runId" => turn.run,
+          "status" => "completed"
+        })
+    end
+  end
+
+  def stage(thread, {instance, driver}) do
+    run = %{
+      "threadId" => thread,
+      "projectId" => "p",
+      "instanceId" => instance,
+      "provider" => driver
+    }
+
+    deadline = System.monotonic_time(:millisecond) + 60_000
+
+    plugin =
+      case TokenEconomizer.handle_call({:shape_run, run, deadline}, nil, Process.get(:plugin)) do
+        {:reply, _answer, plugin, {:continue, :save_staged}} ->
+          {:noreply, plugin} = TokenEconomizer.handle_continue(:save_staged, plugin)
+          plugin
+
+        {:reply, _answer, plugin} ->
+          plugin
+      end
+
+    put(plugin)
+  end
+
+  # The MC restarts: the process starts afresh from what it saved, with the
+  # settings it had.
+  def restart do
+    old = Process.get(:plugin)
+    stop(old)
+    {:ok, plugin} = TokenEconomizer.init(old.settings)
+    put(plugin)
+  end
+
+  defp observe(event) do
+    {:reply, :ok, plugin} =
+      TokenEconomizer.handle_call({:observe, event}, nil, Process.get(:plugin))
+
+    put(plugin)
+  end
+
+  defp put(plugin) do
+    Process.put(:plugin, plugin)
+    view(plugin)
+  end
+
+  defp view(plugin) do
+    %{
+      turns:
+        Map.new(plugin.turns, fn {thread, turn} ->
+          {thread, %{instance: turn.instance, partial: turn.partial, calls: turn.calls}}
+        end),
+      staged_order: plugin.staged_order,
+      staged_keys: Map.keys(plugin.staged),
+      watching: TokenEconomizer.status(plugin)["watching"]
+    }
+  end
+
+  # Ends the process's tasks, as its end would, and forgets what they sent.
+  defp stop(plugin) do
+    ref = Process.monitor(plugin.sup)
+    Process.unlink(plugin.sup)
+    Process.exit(plugin.sup, :shutdown)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+    flush()
+  end
+
+  defp flush do
+    receive do
+      {kind, _, _, _, _} when kind in [:verdict, :delivered, :DOWN] -> flush()
+    after
+      0 -> :ok
+    end
   end
 end
