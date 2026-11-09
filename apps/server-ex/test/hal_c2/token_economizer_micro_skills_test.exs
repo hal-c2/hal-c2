@@ -533,6 +533,29 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
                "`gradlew build …` fails here with command not found; `./gradlew build …` works."
     end
 
+    test "a run that shows neither its status nor its output proves nothing" do
+      hidden = ".venv/bin/ruff check . 2>&1 | head -n 0"
+      [o] = Observe.observe_turn([bash(hidden, "", nil)]).obs
+      assert o.outcome == nil
+
+      # A known failure still ran its first command; unknown with output did too.
+      [o] = Observe.observe_turn([bash(".venv/bin/ruff check .", "", 1)]).obs
+      assert o.outcome == "ran"
+      [o] = Observe.observe_turn([bash(".venv/bin/ruff check . | tail -1", "1 error", nil)]).obs
+      assert o.outcome == "ran"
+
+      task = fn i ->
+        [
+          edit("/r/pkg/m#{i}.py"),
+          bash("ruff check .", "Exit code 127\nbash: ruff: command not found", 127),
+          bash(hidden, "", nil)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..5, task))
+      refute Enum.any?(Map.keys(state.facts), &String.starts_with?(&1, "form_repair"))
+    end
+
     test "a directory change shared by two builds does not make one repair the other" do
       task = fn i ->
         [

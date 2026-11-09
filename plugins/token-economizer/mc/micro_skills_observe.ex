@@ -894,7 +894,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
             if obs == [] do
               {obs_all, env}
             else
-              {obs_all ++ outcomes(obs, cmd, out, success), env}
+              known = hint != nil or code != nil
+              {obs_all ++ outcomes(obs, cmd, out, success, known), env}
             end
           end
         else
@@ -910,7 +911,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     }
   end
 
-  defp outcomes(obs, cmd, out, success) do
+  defp outcomes(obs, cmd, out, success, known) do
     obs =
       Enum.map(obs, fn o ->
         if o.intent == "run_tests" do
@@ -951,6 +952,11 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
         success ->
           Enum.map(obs, &%{&1 | outcome: "ran"})
+
+        # Neither its status nor its output shows anything (`... | head -n 0`):
+        # what ran, if anything did, is unknown.
+        not known and String.trim(out) == "" ->
+          obs
 
         true ->
           {obs, _first} =
