@@ -7,7 +7,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   A state machine model of TokenEconomizer's tool pruning in its process
   (`HalC2Plugins.TokenEconomizer`): the Claude turns of two threads of one project,
   each written to the thread's stream as the MC writes it and heard through the feed,
-  which may drop a tool use and say so with its next event. The plugin stops and
+  which may drop a tool use and say so with its next event. A use may be a subagent's,
+  heard as its parent turn's but kept in the child's thread: the parent's history
+  shows only that a subagent worked in the turn. The plugin stops and
   starts again (missing whatever ran meanwhile), its history reads fail while it has
   no grant, a thread rolls turns back and is forked, the mode moves between off,
   propose and auto, and the person applies and restores tools. After every step:
@@ -15,9 +17,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   - every use the plugin must know of is in its evidence's used list: one it heard,
     and, once it read a thread's history after starting, any of the thread's turns
     that ended and are still in it, the uses dropped since it started aside (those
-    it reads back as their conversation folds, which the model does not follow);
+    it reads back as their conversation folds, which the model does not follow), and
+    the subagents' (which no history read shows);
   - it uses no tool no turn used;
   - no tool it must know is used is proposed, or turned off for a new conversation;
+  - no tool's streak counts more ended turns than those that did not use it, so a
+    use it missed and could not read back is no evidence the tool went unused;
   - it counts no turn twice, whatever a rollback or a fork did to the history;
   - what it holds is what its file keeps, so a restart loses nothing.
 
@@ -136,8 +141,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   # `threads`: thread => %{runs: [%{id, ordinal, status, tools}], base}, oldest run
   # first, its own runs alone (`base` is the last ordinal a fork copied in); a run's
-  # tools are `{tool, period}`, the plugin's run (`period`) in which the feed dropped
-  # the use, or nil. `open`: thread => its run under way. `heard`: the threads whose
+  # tools are `{tool, period, via}`, the plugin's run (`period`) in which the feed
+  # dropped the use, or nil, and whose use it was (`:own`, or a `:subagent`'s). `open`: thread => its run under way. `heard`: the threads whose
   # conversation the plugin holds, having heard a turn of it start since it started;
   # `read`: those whose history it read since. `owed`: the uses it must know of.
   def initial_state,
@@ -201,11 +206,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     let [
       thread <- elements(open),
       tool <- elements(@tools),
-      drop <- frequency([{3, false}, {1, true}])
+      drop <- frequency([{3, false}, {1, true}]),
+      via <- frequency([{3, :own}, {1, :subagent}])
     ] do
       run = s.open[thread]
       n = length(current(s, thread).tools) + 1
-      {:call, __MODULE__, :use, [thread, run, n, tool, drop]}
+      {:call, __MODULE__, :use, [thread, run, n, tool, drop, via]}
     end
   end
 
@@ -226,7 +232,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # A fork copies the source's history, under the source's provider thread.
   defp fork_call(s, threads) do
     let source <- elements(threads) do
-      copies = for run <- ended(s.threads[source].runs), do: {run.id, run.ordinal, tools(run)}
+      copies =
+        for run <- ended(s.threads[source].runs),
+            do: {run.id, run.ordinal, Enum.map(run.tools, &{elem(&1, 0), elem(&1, 2)})}
+
       {:call, __MODULE__, :fork, [source, copies]}
     end
   end
@@ -270,7 +279,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       s.history and thread not in s.read ->
         read =
           for run <- ended(s.threads[thread].runs),
-              {tool, period} <- run.tools,
+              {tool, period, :own} <- run.tools,
               period != s.period,
               do: tool
 
@@ -286,7 +295,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     end
   end
 
-  def next_state(s, _res, {:call, _, :use, [thread, _run, _n, tool, drop]}) do
+  def next_state(s, _res, {:call, _, :use, [thread, _run, _n, tool, drop, via]}) do
     period = if s.up and drop, do: s.period
     runs = s.threads[thread].runs
     last = List.last(runs)
@@ -294,7 +303,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     s =
       put_in(
         s.threads[thread].runs,
-        List.replace_at(runs, -1, %{last | tools: last.tools ++ [{tool, period}]})
+        List.replace_at(runs, -1, %{last | tools: last.tools ++ [{tool, period, via}]})
       )
 
     s = %{s | used: Enum.uniq(s.used ++ [tool])}
@@ -340,7 +349,21 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     subset?(next.owed, res.used) and subset?(res.used, next.used) and
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
-      res.prompts <= next.runs
+      res.prompts <= next.runs and
+      Enum.all?(@tools, &(streak(res, &1) <= unused_runs(next, &1)))
+  end
+
+  defp streak(res, tool),
+    do: max(res.streaks[tool]["prompts"] || 0, res.live_streaks[tool]["prompts"] || 0)
+
+  # The thread's turns that ended (or were rolled back after) without using `tool`.
+  defp unused_runs(s, tool) do
+    for {_t, %{runs: runs}} <- s.threads,
+        run <- runs,
+        run.status != "running",
+        tool not in tools(run),
+        reduce: 0,
+        do: (n -> n + 1)
   end
 
   defp subset?(a, b), do: Enum.all?(a, &(&1 in b))
@@ -389,9 +412,11 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     end
   end
 
-  # The turn uses a tool; the feed may drop the use, and says so with its next event.
-  def use(thread, run, n, tool, drop) do
-    commit(thread, [item_row(run, n, tool)])
+  # The turn uses a tool, or a subagent working in it does (kept in the child's thread,
+  # so the turn's history shows only the subagent); the feed may drop the use, and
+  # says so with its next event.
+  def use(thread, run, n, tool, drop, via) do
+    commit(thread, [item_row(run, n, {tool, via})])
 
     cond do
       Process.get(:plugin) == nil ->
@@ -401,14 +426,17 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         Process.put(:drop, true)
 
       true ->
-        deliver(%{
-          "type" => "turn.item",
-          "threadId" => thread,
-          "runId" => run,
-          "itemType" => "dynamic_tool_call",
-          "tool" => tool,
-          "status" => "completed"
-        })
+        deliver(
+          %{
+            "type" => "turn.item",
+            "threadId" => thread,
+            "runId" => run,
+            "itemType" => "dynamic_tool_call",
+            "tool" => tool,
+            "status" => "completed"
+          }
+          |> Map.merge(if(via == :subagent, do: %{"subagent" => true}, else: %{}))
+        )
     end
 
     snapshot()
@@ -487,7 +515,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       for {id, ordinal, tools} <- copies,
           row <- [
             run_row(source, "f-#{id}", ordinal, "completed")
-            | for({tool, n} <- Enum.with_index(tools, 1), do: item_row("f-#{id}", n, tool))
+            | for({use, n} <- Enum.with_index(tools, 1), do: item_row("f-#{id}", n, use))
           ],
           do: row
 
@@ -533,6 +561,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         Map.merge(extra, %{
           used: prune["used"],
           prompts: prune["prompts"],
+          streaks: prune["streaks"],
+          live_streaks: prune["liveStreaks"],
           proposal: Prune.proposal(prune, cfg)
         })
     end
@@ -570,17 +600,22 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
          }
        }}
 
-  defp item_row(run, n, tool),
-    do:
-      {"turn-item", "#{run}-i#{n}",
-       %{
-         "s" => %{
+  # A use the turn's own item records, or the item of the subagent that made it.
+  defp item_row(run, n, {tool, via}) do
+    use =
+      if via == :subagent,
+        do: %{"type" => "subagent", "subagentId" => "#{run}-s#{n}"},
+        else: %{"type" => "dynamic_tool_call", "providerToolName" => tool}
+
+    {"turn-item", "#{run}-i#{n}",
+     %{
+       "s" =>
+         Map.merge(use, %{
            "id" => "#{run}-i#{n}",
            "runId" => run,
            "ordinal" => n,
-           "type" => "dynamic_tool_call",
-           "providerToolName" => tool,
            "status" => "completed"
-         }
-       }}
+         })
+     }}
+  end
 end

@@ -518,9 +518,14 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   @doc """
   The tools of `unit` a run read back from its thread's history (`HalC2.Plugins.Host.history/3`)
   may have used without its items saying so, which a fold of it must not count as
-  unused (`fold_segment/7`): Codex's goal and image packages.
+  unused (`fold_segment/7`): every candidate when a subagent worked in it, whose calls
+  its child thread keeps (`"subagents"`), else Codex's goal and image packages.
   """
-  def unrecorded(_run, unit), do: @unrecorded[unit] || []
+  def unrecorded(run, unit) do
+    if run["subagents"] == true,
+      do: candidate_tools(unit),
+      else: @unrecorded[unit] || []
+  end
 
   @doc "Starts `thread_id`'s next conversation, whose first segment counts as a session."
   def new_conversation(state, thread_id) do

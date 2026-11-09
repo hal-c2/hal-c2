@@ -2,6 +2,7 @@
 #   plugins/token-economizer/mc/tool_prune_evidence.ex (the evidence, proposals, apply, restore)
 #   plugins/token-economizer/mc/token_economizer.ex (hears turns, shape_run/2, the toolPrune topic and calls)
 #   apps/server-ex/lib/hal_c2/orchestration/native_subagent.ex (a subagent's calls, heard as its parent turn's)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (a thread's history, which turns a subagent worked in)
 #   plugins/token-economizer/plugin.json (toolPrune, toolPruneEvidence, toolPruneMinSessions, toolPruneSessions, toolPruneQuietMinutes, toolPruneProtect)
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's tools, kept for the whole conversation)
 #   microsoft/TokenEconomizer@cb42207e3e09 tokeneconomizer/toolprune/, tokeneconomizer/plugin/fold.py, denylist.py, adapter.py (what this ports)
@@ -63,6 +64,14 @@ Feature: TokenEconomizer's tool pruning
     And the plugin missed a turn of that thread in which Claude used "CronCreate"
     When that thread runs another turn
     Then tool pruning lists "CronCreate" as used for the project
+
+  @mc
+  Scenario: Turns the plugin missed in which a Claude subagent worked are no evidence a tool went unused
+    Given tool pruning folds a project's conversations as soon as it is quiet
+    And a Claude thread in the project runs a turn
+    And the plugin missed a turn of that thread in which a Claude subagent worked
+    When that thread runs another turn
+    Then tool pruning counts all 3 turns, but at most the one it heard as leaving "CronCreate" unused
 
   @mc
   Scenario: A tool a Claude subagent used counts as used for the project

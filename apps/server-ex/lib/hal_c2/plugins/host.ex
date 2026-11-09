@@ -338,6 +338,11 @@ defmodule HalC2.Plugins.Host do
   plugin that hears turns missed while it was not running. Needs `turns:observe`.
   `{:error, message}` when there is no such thread.
 
+  `"subagents"` says whether a provider's own subagent worked during the turn, started
+  in it or before: plugins hear a subagent's calls as its parent turn's
+  (`HalC2.Orchestration.NativeSubagent.observe/2`), but its child thread keeps them,
+  so the turn's `"items"` do not have them.
+
   `"provider"` is the driver the turn ran on (`"claudeAgent"`, `"codex"`, ...), kept
   with the thread, so it is known after the instance the turn ran on is deleted and
   `providers/0` no longer lists it.
@@ -369,6 +374,10 @@ defmodule HalC2.Plugins.Host do
     provider_turns = StreamState.get(stream, "provider-turn")
     provider_threads = StreamState.get(stream, "provider-thread")
     runs = StreamState.get(stream, "run")
+
+    subagents =
+      for {_id, %{"origin" => "provider_native"} = sub} <- StreamState.get(stream, "subagent"),
+          do: sub
 
     cutoff =
       case runs[before] do
@@ -407,9 +416,21 @@ defmodule HalC2.Plugins.Host do
         "items" =>
           (items[run["id"]] || [])
           |> Enum.sort_by(& &1["ordinal"])
-          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1)
+          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1),
+        "subagents" =>
+          Enum.any?(items[run["id"]] || [], &(&1["type"] == "subagent")) or
+            Enum.any?(subagents, &worked_in?(&1, run))
       }
     end)
+  end
+
+  # A subagent worked during `run` if it started in it, or ran on or was resumed
+  # (`HalC2.Orchestration.NativeSubagent.resume/3`) while it did.
+  defp worked_in?(sub, run) do
+    sub["runId"] == run["id"] or
+      (is_binary(sub["startedAt"]) and is_binary(run["completedAt"]) and
+         sub["startedAt"] <= run["completedAt"] and
+         (sub["completedAt"] == nil or sub["completedAt"] >= (run["startedAt"] || "")))
   end
 
   @doc "Whether plugin `id` was granted `permission`."

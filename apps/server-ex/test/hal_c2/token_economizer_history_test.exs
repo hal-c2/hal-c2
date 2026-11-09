@@ -148,6 +148,38 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert "CronCreate" in state.prunes[project]["used"]
   end
 
+  test "a segment the feed dropped some of, in which a subagent worked, is no evidence any tool went unused",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+
+    {:ok, state} =
+      TokenEconomizer.init(%{
+        "toolPrune" => "propose",
+        "toolPruneEvidence" => 1,
+        "toolPruneMinSessions" => 1
+      })
+
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+
+    # Run r2's subagent used CronCreate, which its child thread keeps; the feed dropped it.
+    ended(thread, "r2", 2, [%{"type" => "subagent", "title" => "Schedule it"}])
+
+    state =
+      observe(
+        state,
+        started(thread, "r3", p, %{"newConversation" => true, "dropped" => 3, "waiting" => 0})
+      )
+
+    prune = state.prunes[project]
+    assert prune["prompts"] == 2
+    refute "CronCreate" in prune["used"]
+    # No tool's streak grew, so nothing is proposed, nor applied with the proposal.
+    assert Enum.all?(Map.values(prune["streaks"]), &(&1["prompts"] == 0))
+    assert Prune.proposal(prune, Prune.config(state.settings)) == []
+  end
+
   test "Codex turns the plugin missed are no evidence its goal and image packages went unused",
        %{project: p} do
     project = {p, "codex"}
@@ -173,6 +205,65 @@ defmodule HalC2.TokenEconomizerHistoryTest do
       assert prune["streaks"][package] in [nil, %{"sessions" => 0, "prompts" => 0}]
       assert prune["loadedSessions"][package] in [nil, 0]
     end
+  end
+
+  test "a thread's history says which turns a subagent worked in, also one it ran on into or was resumed in",
+       %{thread: thread} do
+    at = &"2026-11-09T10:0#{&1}:00.000Z"
+    run = &{"run", &1, %{"s" => %{"startedAt" => at.(&2), "completedAt" => at.(&3)}}}
+    ended(thread, "r1", 1, [])
+    ended(thread, "r2", 2, [])
+    ended(thread, "r3", 3, [])
+    ended(thread, "r4", 4, [])
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        run.("r1", 0, 1),
+        run.("r2", 2, 3),
+        run.("r3", 4, 5),
+        run.("r4", 6, 7),
+        # Started in r1 and ran on into r2.
+        {"subagent", "s1",
+         %{
+           "s" => %{
+             "origin" => "provider_native",
+             "runId" => "r1",
+             "startedAt" => at.(0),
+             "completedAt" => at.(2)
+           }
+         }},
+        # Resumed in r4, still running.
+        {"subagent", "s2",
+         %{
+           "s" => %{
+             "origin" => "provider_native",
+             "runId" => "r1",
+             "startedAt" => at.(1),
+             "completedAt" => nil
+           }
+         }},
+        # A thread of its own the agent delegated to, whose calls are its own turns'.
+        {"subagent", "s3",
+         %{
+           "s" => %{
+             "origin" => "app_owned",
+             "runId" => "r3",
+             "startedAt" => at.(4),
+             "completedAt" => at.(5)
+           }
+         }}
+      ])
+
+    assert {:ok, runs} = HalC2.Plugins.Host.history("token-economizer", thread)
+    assert Enum.map(runs, & &1["subagents"]) == [true, true, true, true]
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"subagent", "s2", %{"s" => %{"completedAt" => at.(3)}}}
+      ])
+
+    assert {:ok, runs} = HalC2.Plugins.Host.history("token-economizer", thread)
+    assert Enum.map(runs, & &1["subagents"]) == [true, true, false, false]
   end
 
   defp grant(granted) do

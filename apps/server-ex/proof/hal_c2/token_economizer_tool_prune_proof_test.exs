@@ -46,7 +46,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   #   - Without Partial, a conversation whose use of the tool the feed missed folds
   #     as one that left it unused, and grows the streak that proposes it.
   #   - Without Unrecorded, the same conversation read back from a history that
-  #     cannot show the use (a Codex goal or image call) folds as one
+  #     cannot show the use (a Codex goal or image call, a subagent's) folds as one
   #     that left the tool unused.
   @counts "the exact prompt and session counters and thresholds: prop/hal_c2/token_economizer_tool_prune_prop_test.exs and test/hal_c2/token_economizer_tool_prune_test.exs"
   @guard "the loop guard's, modelled in proof/hal_c2/token_economizer_loop_guard_proof_test.exs"

@@ -96,40 +96,13 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
   # say so on the next event it delivers.
   step "the plugin missed a turn of that thread in which Claude used {string}",
        %{args: [tool]} = context do
-    title = context.prune_thread
-    thread_id = World.thread_id(context, title)
-    [last | _] = context |> World.runs(title) |> Enum.reverse()
-    run = "run-missed-#{System.unique_integer([:positive])}"
+    miss_turn(context, %{"type" => "dynamic_tool_call", "providerToolName" => tool})
+  end
 
-    {:ok, _} =
-      HalC2.Streams.commit(thread_id, :thread, [
-        {"run", run,
-         %{
-           "s" =>
-             Map.merge(Map.take(last, ~w(providerThreadId providerInstanceId)), %{
-               "id" => run,
-               "ordinal" => last["ordinal"] + 1,
-               "status" => "completed"
-             })
-         }},
-        {"turn-item", run <> "-i1",
-         %{
-           "s" => %{
-             "id" => run <> "-i1",
-             "runId" => run,
-             "ordinal" => 1,
-             "type" => "dynamic_tool_call",
-             "providerToolName" => tool,
-             "status" => "completed"
-           }
-         }}
-      ])
-
-    [{_feed, %{dropped: dropped}}] =
-      for {_, %{id: @id}} = feed <- HalC2.Plugins.Feed.lookup(:observe), do: feed
-
-    :counters.add(dropped, 1, 2)
-    context
+  # The subagent's own calls are in its child thread: the parent's history shows only
+  # that it worked in the turn.
+  step "the plugin missed a turn of that thread in which a Claude subagent worked", context do
+    miss_turn(context, %{"type" => "subagent", "subagentId" => "subagent-missed"})
   end
 
   step "that thread runs another turn", context do
@@ -149,6 +122,20 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
       )
     end)
 
+    context
+  end
+
+  step "tool pruning counts all {int} turns, but at most the one it heard as leaving {string} unused",
+       %{args: [turns, tool]} = context do
+    project = World.project(context).id
+
+    {%{"value" => %{"projects" => projects}}, _client} =
+      await_prune(context, fn status ->
+        Enum.any?(status["projects"], &(&1["projectId"] == project and &1["prompts"] == turns))
+      end)
+
+    [summary] = for %{"projectId" => ^project} = p <- projects, do: p
+    assert summary["tools"][tool]["unusedPrompts"] <= 1
     context
   end
 
@@ -242,6 +229,42 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
   end
 
   # --- helpers ---------------------------------------------------------------------------
+
+  defp miss_turn(context, item) do
+    title = context.prune_thread
+    thread_id = World.thread_id(context, title)
+    [last | _] = context |> World.runs(title) |> Enum.reverse()
+    run = "run-missed-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", run,
+         %{
+           "s" =>
+             Map.merge(Map.take(last, ~w(providerThreadId providerInstanceId)), %{
+               "id" => run,
+               "ordinal" => last["ordinal"] + 1,
+               "status" => "completed"
+             })
+         }},
+        {"turn-item", run <> "-i1",
+         %{
+           "s" =>
+             Map.merge(item, %{
+               "id" => run <> "-i1",
+               "runId" => run,
+               "ordinal" => 1,
+               "status" => "completed"
+             })
+         }}
+      ])
+
+    [{_feed, %{dropped: dropped}}] =
+      for {_, %{id: @id}} = feed <- HalC2.Plugins.Feed.lookup(:observe), do: feed
+
+    :counters.add(dropped, 1, 2)
+    context
+  end
 
   defp seed(context, fields) do
     plugin = Module.concat(HalC2Plugins, TokenEconomizer)
