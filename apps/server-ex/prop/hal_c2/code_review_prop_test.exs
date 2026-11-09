@@ -7,7 +7,8 @@ defmodule HalC2.CodeReviewPropTest do
 
   Three pull requests (`acme/api#1`, `acme/api#2`, `acme/web#1`) each have two head
   commits to push between. The commands open and close them, push, break a head so its
-  checkout fails, hold checkouts at the fetch and posts at GitHub, refuse posts, look
+  checkout fails, turn Codex off so a review's thread is refused once it is checked
+  out, hold checkouts at the fetch and posts at GitHub, refuse posts, look
   for pull requests, start, retry, stop (once as a run reads the pull request), report,
   dismiss, discard and publish reviews, end turns (one of them stopped by the
   provider's usage limit, which parks its review in the queue and starts nothing else
@@ -28,7 +29,8 @@ defmodule HalC2.CodeReviewPropTest do
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
   - a review stopped while its checkout is fetched, or once claimed as it reads the
-    pull request, gets no thread and keeps no checkout, and one stopped later keeps
+    pull request, gets no thread and keeps no checkout, nor does one whose thread
+    Codex, turned off, refused, and one stopped later keeps
     its thread but not its checkout nor a turn running, and its agent's report is
     refused;
   - a new run stops the thread it replaces before its checkout goes, and a report from
@@ -379,6 +381,8 @@ defmodule HalC2.CodeReviewPropTest do
   def initial_state do
     look(%{
       enabled: true,
+      # Whether Codex, the reviews' provider, is on.
+      codex: true,
       settings: %{
         publishing: "draft",
         concurrency: 2,
@@ -516,6 +520,7 @@ defmodule HalC2.CodeReviewPropTest do
       {2, {:call, __MODULE__, :save, [trust_setting()]}},
       {2, {:call, __MODULE__, :toggle_open, [key]}},
       {1, {:call, __MODULE__, :break, [key]}},
+      {1, {:call, __MODULE__, :codex, [boolean()]}},
       {2, {:call, __MODULE__, :gate, [oneof([:open, :closed])]}},
       {1, {:call, __MODULE__, :refuse, [boolean()]}},
       {2, {:call, __MODULE__, :hold, [boolean()]}},
@@ -911,6 +916,8 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :break, [key]}),
     do: {update_pr(m, key, &%{&1 | broken: not &1.broken}), :ok}
 
+  defp step(m, {:call, _, :codex, [on]}), do: {%{m | codex: on}, :ok}
+
   defp step(m, {:call, _, :gate, [:closed]}), do: {%{m | gate: :closed}, :ok}
 
   defp step(m, {:call, _, :gate, [:open]}) do
@@ -1257,7 +1264,8 @@ defmodule HalC2.CodeReviewPropTest do
 
           # And runs in a sandbox (#1412), which this MC, with no OpenShell, cannot open:
           # checked out, it fails before its thread starts.
-          not trusted ->
+          # Codex turned off refuses its thread the same way, checked out.
+          not trusted or not m.codex ->
             r = %{r | status: :failed, reviewed: m.prs[key].head}
             m |> put_review(key, r) |> fail() |> pump()
 
@@ -1858,6 +1866,18 @@ defmodule HalC2.CodeReviewPropTest do
       else: git!(fx_dir(), ["--git-dir", bare(repo), "update-ref", "-d", ref])
 
     put_world(put_in(world.prs[key].broken, not pr.broken))
+    observe(:ok)
+  end
+
+  def codex(on) do
+    HalC2.Settings.update(fn settings ->
+      update_in(
+        settings,
+        [Access.key("providers", %{}), Access.key("codex", %{})],
+        &Map.put(&1, "enabled", on)
+      )
+    end)
+
     observe(:ok)
   end
 

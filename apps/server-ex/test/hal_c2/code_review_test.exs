@@ -1792,6 +1792,32 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running"} = review()
   end
 
+  # A run whose thread could not be made left its checkout for the review's next run,
+  # which a review stopped, or failed and never started again, does not get.
+  test "a review whose thread cannot be made keeps no checkout", context do
+    fetch = Path.join(context.dir, "fetch.hold")
+    hold = Path.join(context.dir, "detail.hold")
+    on_exit(fn -> Enum.each([fetch, hold], &File.rm/1) end)
+    rules!(context, head: 1, detail: "while [ -e '#{hold}' ]; do sleep 0.05; done")
+    # Held at the fetch first, so the launch reads the pull request only once claimed.
+    File.write!(fetch, "")
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+    File.write!(hold, "")
+    File.rm!(fetch)
+    await_review(&is_binary(&1["checkout"]))
+    assert File.dir?(review()["checkout"])
+
+    put_instance("codex", %{"enabled" => false})
+    File.rm!(hold)
+    settle()
+
+    assert %{"status" => "failed", "error" => error} = review()
+    assert error =~ "turned off"
+    checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+    assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+  end
+
   # Stop reaches a run past its claim only through the server, so a launch reading the
   # pull request as Stop came went on to start the agent of a review shown as stopped.
   test "a review stopped between its claim and its launch never starts its agent", context do
@@ -2104,6 +2130,20 @@ defmodule HalC2.CodeReviewTest do
 
       assert length(taken) == 1
       assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+    end
+
+    # A run stopped as its sandbox was made fails to open it, which for a review no
+    # longer running removed nothing from its checkout.
+    @tag sandbox: [hold: "tar"]
+    test "a review stopped while its sandbox is made keeps no checkout", _context do
+      start_untrusted()
+      assert_receive {:sandbox_held, handler}, 15_000
+      {:ok, _} = call("stop", %{"key" => @key})
+      send(handler, :release)
+      settle()
+      assert %{"status" => "failed", "error" => "Stopped."} = review()
+      checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+      assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
     end
 
     @tag sandbox: [report: nil, tokens: 1_000]

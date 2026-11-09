@@ -2118,7 +2118,11 @@ defmodule HalC2Plugins.CodeReview do
         else
           :over -> {:stopped, started}
           :finished -> {:stopped, started}
-          other -> other
+          # No agent will work in the checkout, so it does not wait for the review's
+          # next run, which a stopped or failed review may never get.
+          error ->
+            Checkout.remove(clone, checkout["path"])
+            error
         end
       end
 
