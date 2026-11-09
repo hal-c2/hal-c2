@@ -1809,6 +1809,29 @@ defmodule HalC2.CodeReviewTest do
     assert [_] = posts(context)
   end
 
+  # The code review property's model took a dismissal on a review kept under local
+  # publishing, which the plugin refuses: a kept review is never posted.
+  test "a comment of a review kept in HAL-C2 cannot be dismissed", context do
+    rules!(context, head: 1)
+    save_settings(%{"publishing" => "local"})
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "comment",
+      "summary" => "One thing.",
+      "comments" => [%{"path" => "src/limits.ts", "line" => 1, "body" => "One."}]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    assert {:error, %{"message" => message}} =
+             call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert message =~ "not waiting to be published"
+    assert %{"status" => "kept", "comments" => [%{"dismissed" => false}]} = review()
+  end
+
   # While the plugin started again, its claims table was up before the claims saved on
   # disk were in it, so a peer reading it then was told this machine claimed nothing.
   test "a plugin starting again holds its saved claims from the moment a peer can read them",

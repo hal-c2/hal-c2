@@ -215,6 +215,17 @@ defmodule HalC2.CodeReviewPropTest do
     ])
   end
 
+  # From hal-c2/hal-c2#1408's CI: the model took a dismissal on a review kept under
+  # local publishing, which the plugin refuses.
+  test "a comment of a review kept under local publishing cannot be dismissed" do
+    replay([
+      {:save, [{"publishing", "local"}]},
+      {:start, ["acme/web#1"]},
+      {:report, [{"acme/web#1", 1}, :findings]},
+      {:dismiss, ["acme/web#1", 2, false]}
+    ])
+  end
+
   defp replay(steps) do
     Process.flag(:trap_exit, true)
 
@@ -676,9 +687,11 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
+  # Only a review waiting to be published takes a dismissal: a kept one never posts,
+  # and one being or already posted stays as posted.
   defp step(m, {:call, _, :dismiss, [key, i, flag]}) do
     case m.reviews[key] do
-      %{comments: comments} = r when length(comments) >= i ->
+      %{status: :waiting, comments: comments} = r when length(comments) >= i ->
         {put_review(m, key, %{r | comments: List.replace_at(comments, i - 1, flag)}), :ok}
 
       _ ->
