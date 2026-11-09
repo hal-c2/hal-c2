@@ -1586,6 +1586,28 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       end
     end
 
+    test "a value the carried environment may not have passed on is never learned" do
+      for cmd <- [
+            "export APP_SETTINGS=conf.missing && APP_SETTINGS=conf.b && python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && unset APP_SETTINGS && python -c 'import app'",
+            "true | export APP_SETTINGS=conf.missing && python -c 'import app'",
+            "export APP_SETTINGS=conf.missing; python -c 'import app'",
+            "(export APP_SETTINGS=conf.missing) && python -c 'import app'"
+          ] do
+        tasks =
+          Enum.map(0..5, fn i ->
+            [
+              edit("/r/pkg/mod#{i}.py"),
+              bash("python -c 'import app'", @need, 1),
+              bash(cmd, "1", 0)
+            ]
+          end)
+
+        {state, _} = stream(tasks)
+        refute Map.has_key?(state.facts, "env_value:APP_SETTINGS"), cmd
+      end
+    end
+
     test "no value that worked means no fact" do
       tasks =
         Enum.map(0..5, fn i ->

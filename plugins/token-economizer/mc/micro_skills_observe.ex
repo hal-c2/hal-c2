@@ -764,32 +764,69 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # value, and proves nothing about it.
   defp env_calls(cmd, out, success) do
     out = out || ""
-    {texts, seps} = cmd |> unwrap() |> split() |> Enum.unzip()
+    command = unwrap(cmd)
+    {texts, seps} = command |> split() |> Enum.unzip()
     segs = Enum.map(texts, &env_segment/1)
 
-    {received, _exported} =
+    # The carried environment is trusted only down a plain `&&` chain of
+    # exports and assignments into workloads. A variable it carries is
+    # unconfirmed for the whole call when it is unset, reassigned bare, exported
+    # beside a `|` (a pipeline's segments run in subshells), or carried past a
+    # `;` or `||`, and every carried one is when a subshell runs.
+    {received, _exported, tainted, _before} =
       segs
       |> Enum.zip(seps)
       |> Enum.with_index()
-      |> Enum.reduce({[], %{}}, fn {{seg, sep}, j}, {received, exported} ->
+      |> Enum.reduce({[], %{}, MapSet.new(), nil}, fn {{seg, sep}, j},
+                                                      {received, exported, tainted, before} ->
         received =
           if seg.runs do
-            exported
-            |> Map.merge(Map.new(seg.assigns ++ seg.incode))
-            |> Enum.map(fn {var, value} -> {var, value, j} end)
-            |> then(&(received ++ &1))
+            carried = Enum.map(exported, fn {var, value} -> {var, value, j, true} end)
+
+            given =
+              Enum.map(seg.assigns ++ seg.incode, fn {var, value} -> {var, value, j, false} end)
+
+            received ++ carried ++ given
           else
             received
           end
 
-        # A pipeline's segments run in subshells: what one exports is lost.
+        piped = "|" in [before, sep]
+        names = Enum.map(seg.assigns, &elem(&1, 0))
+
+        mutated =
+          cond do
+            seg.exports and piped -> names
+            not seg.exports and not seg.runs -> Enum.filter(names, &Map.has_key?(exported, &1))
+            true -> []
+          end
+
         exported =
-          if seg.exports and sep != "|",
+          if seg.exports and not piped,
             do: Map.merge(exported, Map.new(seg.assigns)),
             else: exported
 
-        {received, exported}
+        exported = Map.drop(exported, seg.unsets)
+        tainted = MapSet.union(tainted, MapSet.new(seg.unsets ++ mutated))
+
+        tainted =
+          if sep in ["&&", nil],
+            do: tainted,
+            else: MapSet.union(tainted, MapSet.new(Map.keys(exported)))
+
+        {received, exported, tainted, sep}
       end)
+
+    subshell = Regex.match?(~r/(?:^|[;&|(]\s*)\(/, command)
+
+    # A value someone else gave the workload stands; one only carried stands
+    # where the carried environment is trusted.
+    received =
+      received
+      |> Enum.reject(fn {var, _value, _j, carried} ->
+        carried and (subshell or MapSet.member?(tainted, var))
+      end)
+      |> Enum.map(fn {var, value, j, _carried} -> {var, value, j} end)
 
     runs = Enum.any?(segs, & &1.runs)
 
@@ -836,8 +873,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
   # One segment's part in what a command sets: the `K=V`s it makes (after an
   # `export` or `env`, around an `rtk`), whether they outlive it (`export`),
-  # the values its code sets, and whether it runs anything that could read
-  # them. Text that only looks like an assignment, as in `echo K=V`, sets
+  # the values its code sets, whether it runs anything that could read them,
+  # and the variables it unsets. Text that only looks like an assignment, as in `echo K=V`, sets
   # nothing.
   defp env_segment(text) do
     seg = String.trim(text)
@@ -851,6 +888,11 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     # `export` runs nothing, whatever follows it (`export -p`).
     runs = not exports and rest != "" and not setup?(rest) and head not in @env_inert
 
+    unsets =
+      if head == "unset",
+        do: rest |> String.split() |> tl() |> Enum.reject(&String.starts_with?(&1, "-")),
+        else: []
+
     %{
       assigns:
         @env_prefix_re
@@ -863,7 +905,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
             @env_incode_re |> Regex.scan(rest) |> Enum.map(fn [_, var, value] -> {var, value} end),
           else: []
         ),
-      runs: runs
+      runs: runs,
+      unsets: unsets
     }
   end
 

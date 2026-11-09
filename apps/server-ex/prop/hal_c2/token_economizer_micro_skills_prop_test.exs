@@ -28,9 +28,10 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
     * every fact ever staged was learned from evidence, never invented: its
       fired count never exceeds the turns folded since it was created;
     * an environment value is vouched for only by a successful workload that
-      received it, inline or exported before it, and whose exit status speaks
-      for it: a value only an inert builtin, a later segment or a lost
-      pipeline export got is never learned as working.
+      received it, inline or exported before it down a plain `&&` chain, and
+      whose exit status speaks for it: a value only an inert builtin, a later
+      segment, an export beside a pipe or in a subshell got, or one unset or
+      reassigned, is never learned as working.
 
   The settings' mode gate (off learns and stages nothing) is the plugin
   process's two lines around these pure functions and is covered by
@@ -379,7 +380,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
 
       entries = Observe.observe_turn([bash(cmd, out, code)]).env
       received = env_received(segs)
-      workloads? = Enum.any?(segs, &match?({{:run, _}, _}, &1))
+      workloads? = Enum.any?(segs, fn {seg, _sep} -> env_run(seg) != nil end)
 
       lawful =
         Enum.all?(entries, fn entry ->
@@ -403,12 +404,15 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
   defp env_assigns,
     do: resize(2, list({elements(~w(APP_SETTINGS DEBUG_LEVEL)), elements(~w(conf.a conf.b))}))
 
-  defp env_segment do
+  defp env_segment, do: frequency([{4, env_simple()}, {1, {:subshell, env_simple()}}])
+
+  defp env_simple do
     oneof([
       {:run, env_assigns()},
       {:inert, env_assigns(), elements(["true", ":", "echo set", "cd .", "pwd", "set -e"])},
       {:export, non_empty(env_assigns())},
-      {:plain, non_empty(env_assigns())}
+      {:plain, non_empty(env_assigns())},
+      {:unset, elements(~w(APP_SETTINGS DEBUG_LEVEL))}
     ])
   end
 
@@ -423,6 +427,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
   defp env_text({:inert, assigns, head}), do: env_words(assigns, head)
   defp env_text({:export, assigns}), do: "export " <> env_words(assigns, "")
   defp env_text({:plain, assigns}), do: env_words(assigns, "")
+  defp env_text({:unset, var}), do: "unset #{var}"
+  defp env_text({:subshell, seg}), do: "(#{env_text(seg)})"
 
   defp env_words(assigns, tail),
     do:
@@ -430,24 +436,44 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
       |> Enum.reject(&(&1 == ""))
       |> Enum.join(" ")
 
-  # What each workload got, as the shell gives it: the values exported before
-  # it (a pipeline's export is lost with its subshell), then its own.
+  # What each workload surely got: its own values, and those exported before
+  # it that the shell passes on down a plain `&&` chain -- not an export beside
+  # a pipe (its subshell loses it), nor one past a `;`, `||` or `|`, nor one
+  # unset anywhere or reassigned after it, and none where a subshell runs.
   defp env_received(segs) do
-    {received, _} =
-      segs
-      |> Enum.with_index()
-      |> Enum.reduce({[], %{}}, fn
-        {{{:run, assigns}, _sep}, j}, {received, exported} ->
-          {[{j, exported |> Map.merge(Map.new(assigns)) |> Map.to_list()} | received], exported}
+    seps = Enum.map(segs, &elem(&1, 1))
+    subshell? = Enum.any?(segs, &match?({{:subshell, _}, _}, &1))
 
-        {{{:export, assigns}, sep}, _j}, {received, exported} when sep != "|" ->
-          {received, Map.merge(exported, Map.new(assigns))}
+    for {{seg, _sep}, j} <- Enum.with_index(segs), assigns = env_run(seg), assigns != nil do
+      carried = if subshell?, do: %{}, else: env_carried(segs, seps, j)
+      {j, carried |> Map.merge(Map.new(assigns)) |> Map.to_list()}
+    end
+  end
 
-        _, acc ->
-          acc
-      end)
+  defp env_run({:run, assigns}), do: assigns
+  defp env_run({:subshell, {:run, assigns}}), do: assigns
+  defp env_run(_seg), do: nil
 
-    received
+  defp env_carried(segs, seps, j) do
+    segs
+    |> Enum.take(j)
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn
+      {{{:export, assigns}, _sep}, i}, acc ->
+        Map.merge(acc, Map.new(assigns, fn {var, value} -> {var, {value, i}} end))
+
+      _, acc ->
+        acc
+    end)
+    |> Enum.filter(fn {var, {_value, i}} ->
+      seps |> Enum.slice(i..(j - 1)//1) |> Enum.all?(&(&1 == "&&")) and
+        (i == 0 or Enum.at(seps, i - 1) != "|") and
+        not Enum.any?(Enum.with_index(segs), fn {{seg, _sep}, k} ->
+          match?({:unset, ^var}, seg) or
+            (match?({:plain, _}, seg) and k > i and List.keymember?(elem(seg, 1), var, 0))
+        end)
+    end)
+    |> Map.new(fn {var, {value, _i}} -> {var, value} end)
   end
 
   # A call's status speaks for workload `j` when only `&&` follows it and it
