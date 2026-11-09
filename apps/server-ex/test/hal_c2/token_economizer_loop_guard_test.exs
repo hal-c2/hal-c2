@@ -386,6 +386,32 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "a command that may hide a check after a passing one leaves the turn unverified" do
+      tracker = Envelope.new("default", %{}, %{"resolved_turns" => [4, 4, 4, 4, 4]})
+      thr = Envelope.turn_thresholds(tracker)
+      thr = Map.merge(thr, %{"gate_over_envelope" => false, "gate_min_turns" => thr["min_turns"]})
+
+      opts = [
+        envelope: Envelope.envelope(tracker),
+        thr: thr,
+        judge: true,
+        nudge_budget: 1,
+        now: 0
+      ]
+
+      {g, []} = stuck_turn(Turn.new("t"), 12, opts)
+      passing = %{"command" => "pytest -q"}
+      {g, nil, nil} = Turn.fold(g, "Bash", passing, "3 passed in 0.10s", 0, opts)
+
+      # Heard only in part (the plugin blanks a capped command) or a nested shell: either
+      # may have run the checks again and failed, so the pass no longer covers the turn.
+      for cmd <- ["", "bash -c 'pytest -q'"] do
+        failing = %{"command" => cmd}
+        {_g, decision, _} = Turn.fold(g, "Bash", failing, "FAILED t - AssertionError", 1, opts)
+        assert decision != nil, inspect(cmd)
+      end
+    end
+
     test "an edit tried after a passing check, or after it in the same command, is unchecked" do
       tracker = Envelope.new("default", %{}, %{"resolved_turns" => [4, 4, 4, 4, 4]})
       thr = Envelope.turn_thresholds(tracker)

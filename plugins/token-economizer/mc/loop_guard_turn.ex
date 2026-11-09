@@ -586,7 +586,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # left in the budget, and none was refused.
   defp redirect_left?(g, budget), do: g.nudges_done < budget and not g.refused
 
-  defp verified?(g), do: g.verifications > 0 and not g.last_verify_failed and not g.unchecked
+  # Whether the turn's last check passed and nothing since may have undone it: an edit, or
+  # a command that may have hidden a check (a capped one, a nested shell's) that failed.
+  defp verified?(g) do
+    g.verifications > 0 and not g.last_verify_failed and not g.unchecked and
+      not (g.unread > 0 and g.unread >= g.last_verify)
+  end
 
   defp decide(g, envelope, thr, budget, opts) do
     backstop =
