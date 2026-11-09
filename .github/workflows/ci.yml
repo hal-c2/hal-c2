@@ -28,8 +28,6 @@ on:
 
 permissions:
   contents: read
-  # A failed job in the merge queue cancels its run (the stop-queue-run step).
-  actions: write
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
@@ -87,14 +85,6 @@ jobs:
             exit 1
           fi
 
-      # In the queue the first failure decides: stop the rest so the queue drops the entry now.
-      - &stop-queue-run
-        name: Stop the queue run
-        if: failure() && github.event_name == 'merge_group'
-        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
   # The ledger claims only what a runner selects: every @desktop/@mobile
   # scenario without a backlog tag must be named by that surface's
   # kDefaultGlobs. Cheap enough to run on every change, including ones
@@ -111,7 +101,6 @@ jobs:
       - name: Claimed desktop/mobile scenarios are selected by their runners
         run: python3 mise-tasks/features/check
 
-      - *stop-queue-run
 
   # The one job that saves the build every other MC job restores.
   mc_check:
@@ -165,8 +154,6 @@ jobs:
             apps/server-ex/_build
           key: ${{ steps.mc.outputs.cache-key }}
 
-      - *stop-queue-run
-
   # Its own job, so an advisory published against a dep fails this, not the tests; the
   # nightly run is what catches one between changes. Not on a merge to main, which runs
   # only mc_check: its pull request ran this.
@@ -199,7 +186,6 @@ jobs:
       - name: Sobelow against its baseline
         run: mix sobelow.check
 
-      - *stop-queue-run
 
   mc:
     name: MC tests
@@ -243,7 +229,6 @@ jobs:
       - name: Test
         run: mix test
 
-      - *stop-queue-run
 
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
   # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
@@ -257,7 +242,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      # In the queue one failure decides the entry; on a pull request, see them all.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         partition: [1, 2, 3]
     env:
@@ -286,7 +272,6 @@ jobs:
         env:
           MIX_TEST_PARTITION: ${{ matrix.partition }}
 
-      - *stop-queue-run
 
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
   # Only the proofs whose model changed (ci-changes.sh); mc_check holds every model to the
@@ -301,7 +286,8 @@ jobs:
     # slowest search may use 30 of them (its proof's `timeout`).
     timeout-minutes: 60
     strategy:
-      fail-fast: false
+      # In the queue one failure decides the entry; on a pull request, see them all.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         proof: ${{ fromJSON(needs.changes.outputs.proofs) }}
     env:
@@ -323,8 +309,6 @@ jobs:
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 
-      - *stop-queue-run
-
   # The @mc scenarios of features/, in the groups ci-changes.sh defines and selects.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);
   # naming scenarios_test.exs keeps the unit suite, which the mc job runs, out.
@@ -336,7 +320,8 @@ jobs:
     # The mc/orchestration shard runs about 1,650 scenarios in about 23 minutes; split it in .github/scripts/ci-changes.sh before this limit is reached.
     timeout-minutes: 40
     strategy:
-      fail-fast: false
+      # In the queue one failure decides the entry; on a pull request, see them all.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         dirs: ${{ fromJSON(needs.changes.outputs.scenarios) }}
     env:
@@ -403,7 +388,6 @@ jobs:
           echo "$globs"
           HAL_C2_FEATURES="$globs" mix test test/hal_c2/scenarios_test.exs
 
-      - *stop-queue-run
 
   tui:
     name: TUI
@@ -458,14 +442,66 @@ jobs:
           MISE_CONFIG_ROOT: ${{ github.workspace }}
         run: ../../mise-tasks/features/tui/all
 
-      - *stop-queue-run
+
+  # In the queue the first failure decides the entry: these stop the rest of the run so the
+  # queue drops it now, not when the slowest proof ends. They hold the run's only write
+  # permission, as they run no project code and no third-party action: every other job
+  # does, and setup-beam takes the token by default. Each waits only on the jobs it names.
+  stop_quick:
+    name: Stop the queue run
+    needs: [pr_assets, ledger, mc_audit, tui]
+    if: failure() && github.event_name == 'merge_group'
+    permissions: &stop-permissions
+      actions: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: &stop-steps
+      - run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  stop_mc:
+    name: Stop the queue run (MC tests)
+    needs: mc
+    if: failure() && github.event_name == 'merge_group'
+    permissions: *stop-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: *stop-steps
+
+  stop_props:
+    name: Stop the queue run (MC properties)
+    needs: mc_props
+    if: failure() && github.event_name == 'merge_group'
+    permissions: *stop-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: *stop-steps
+
+  stop_proofs:
+    name: Stop the queue run (MC proofs)
+    needs: mc_proofs
+    if: failure() && github.event_name == 'merge_group'
+    permissions: *stop-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: *stop-steps
+
+  stop_scenarios:
+    name: Stop the queue run (MC scenarios)
+    needs: mc_scenarios
+    if: failure() && github.event_name == 'merge_group'
+    permissions: *stop-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: *stop-steps
 
   # The check main's ruleset requires, since the jobs above vary with the change and matrix
   # entries change their names. A skipped job passes; a failed or cancelled one does not.
   result:
     name: CI result
     needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui]
-    # Also after a cancel in the queue, which stop-queue-run causes: the queue needs an answer.
+    # Also after a cancel in the queue, which the stop jobs cause: the queue needs an answer.
     if: ${{ always() && (github.event_name == 'merge_group' || !cancelled()) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
