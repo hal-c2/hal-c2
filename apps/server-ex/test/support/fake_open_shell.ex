@@ -36,7 +36,8 @@ defmodule HalC2.Test.FakeOpenShell do
   As 0.1.7's, it starts with no provider profiles (`:profiles`, a list of
   `%ProviderProfile{}`, puts some there as if imported), and CreateProvider refuses
   a type no profile of the provider's workspace has, or a credential its profile
-  does not declare. ImportProviderProfiles refuses an id it has already.
+  does not declare. ImportProviderProfiles refuses an id it has already, and
+  CreateSandbox a policy 0.1.7's validator refuses (`FakeOpenShell.Validator`).
   """
   def start(dir, opts \\ []) do
     credentials = issue(dir)
@@ -450,14 +451,22 @@ defmodule HalC2.Test.FakeOpenShell do
       request = Pb.CreateSandboxRequest.decode(body)
       notify(config, "CreateSandbox", request)
       sandbox = FakeOpenShell.sandbox(request.name, request.labels)
+      policy = request.spec && request.spec.policy
 
-      Agent.update(config.store, fn store ->
-        store
-        |> put_in([:sandboxes, request.name], sandbox)
-        |> put_in([:policies, request.name], request.spec && request.spec.policy)
-      end)
+      # As 0.1.7's, a policy its validator refuses makes no sandbox.
+      case policy && FakeOpenShell.Validator.violations(policy) do
+        [_ | _] = violations ->
+          error(conn, 3, "policy contains unsafe content: " <> Enum.join(violations, "; "))
 
-      reply(conn, %Pb.SandboxResponse{sandbox: sandbox})
+        _ ->
+          Agent.update(config.store, fn store ->
+            store
+            |> put_in([:sandboxes, request.name], sandbox)
+            |> put_in([:policies, request.name], policy)
+          end)
+
+          reply(conn, %Pb.SandboxResponse{sandbox: sandbox})
+      end
     end
 
     defp unary(conn, "GetSandboxConfig", body, config) do

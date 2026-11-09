@@ -9,6 +9,10 @@ defmodule HalC2.OpenShell.Policy do
   host, port and binary, and Landlock is a hard requirement, so a kernel without it
   fails the sandbox rather than running it open.
 
+  OpenShell 0.1.7 refuses a policy its validator does not take, and the fake gateway
+  of the tests runs a port of that validator (`HalC2.Test.FakeOpenShell.Validator`):
+  a policy change that 0.1.7 would refuse fails there too.
+
   `check/2` reads the policy the gateway says the sandbox runs (`GetSandboxConfig`),
   which a gateway-wide policy may have added to, and refuses anything wider than
   `review/1` asked for.
@@ -17,6 +21,9 @@ defmodule HalC2.OpenShell.Policy do
   alias HalC2.OpenShell.Proto.Openshell.Sandbox.V1, as: Sb
 
   @mcp_version "2025-06-18"
+  # The MCP methods an agent's client calls before and around its one tool call. An
+  # MCP endpoint lets through only the methods its rules name.
+  @mcp_methods ~w(initialize notifications/initialized ping tools/list)
   # The largest JSON-RPC body the broker takes: a report with many comments fits.
   @broker_body 262_144
   @home "/sandbox/home"
@@ -38,11 +45,15 @@ defmodule HalC2.OpenShell.Policy do
 
   @doc """
   The policy for a review: `model` is `%{host, port, binaries, provider}` (the API the
-  agent calls, the agent's executables, the OpenShell provider holding its key) and
+  agent calls, the agent's executables, the OpenShell provider holding its key),
   `broker` is `%{host, port, path, ips}` (where the report broker listens, as the
-  sandbox reaches it).
+  sandbox reaches it) and `tool` the one tool the broker takes a call of.
   """
-  def review(%{model: model, broker: broker}) do
+  def review(%{model: model, broker: broker, tool: tool}) do
+    # A tool name is matched as a glob, so one with a glob's characters would let more
+    # through than the one tool.
+    unless tool =~ ~r/\A[A-Za-z0-9_.-]+\z/, do: raise(ArgumentError, "not a tool name: #{tool}")
+
     binaries = Enum.map(model.binaries, &%Sb.NetworkBinary{path: &1})
 
     %Sb.SandboxPolicy{
@@ -63,7 +74,7 @@ defmodule HalC2.OpenShell.Policy do
               host: model.host,
               port: model.port,
               protocol: "rest",
-              tls: :NETWORK_TLS_MODE_TERMINATE,
+              # Unset: 0.1.7 terminates TLS by itself and takes no other mode but skip.
               enforcement: :NETWORK_ENFORCEMENT_MODE_ENFORCE,
               access: :NETWORK_ACCESS_PRESET_READ_WRITE,
               credential_binding: %Sb.NetworkCredentialBinding{provider: model.provider}
@@ -82,12 +93,26 @@ defmodule HalC2.OpenShell.Policy do
               enforcement: :NETWORK_ENFORCEMENT_MODE_ENFORCE,
               allowed_ips: broker.ips,
               json_rpc_max_body_bytes: @broker_body,
+              rules: report_rules(tool),
               mcp: %Sb.McpOptions{strict_tool_names: true, versions: [@mcp_version]}
             }
           ]
         }
       }
     }
+  end
+
+  # The handshake and listing, then `tools/call` of `tool` alone.
+  defp report_rules(tool) do
+    Enum.map(@mcp_methods, &%Sb.L7Rule{allow: %Sb.L7Allow{method: &1}}) ++
+      [
+        %Sb.L7Rule{
+          allow: %Sb.L7Allow{
+            method: "tools/call",
+            params: %{"name" => %Sb.L7QueryMatcher{glob: tool}}
+          }
+        }
+      ]
   end
 
   @doc """

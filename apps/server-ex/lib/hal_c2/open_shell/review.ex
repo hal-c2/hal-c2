@@ -212,7 +212,8 @@ defmodule HalC2.OpenShell.Review do
       policy =
         Policy.review(%{
           model: %{host: model.host, port: 443, binaries: model.binaries, provider: name},
-          broker: broker
+          broker: broker,
+          tool: spec.tool
         })
 
       # A provider this attempt could not make is not its to delete: its name may be
