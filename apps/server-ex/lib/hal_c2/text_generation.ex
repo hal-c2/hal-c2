@@ -617,26 +617,24 @@ defmodule HalC2.TextGeneration do
           {:error, _} -> []
         end
 
-      {isolation, env, scratch_home, launch} =
-        codex_isolation(selection["instanceId"], launch, cwd)
+      with {:ok, isolation, env, launch} <-
+             codex_isolation(selection["instanceId"], launch, cwd, dir) do
+        args =
+          ["exec"] ++
+            launch ++
+            isolation ++
+            ~w(--ephemeral --skip-git-repo-check -s read-only) ++
+            ["--model", model] ++
+            if(is_binary(effort),
+              do: ["--config", ~s(model_reasoning_effort="#{effort}")],
+              else: []
+            ) ++
+            if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++
+            ["--output-schema", schema_path, "--output-last-message", output_path] ++
+            Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-      args =
-        ["exec"] ++
-          launch ++
-          isolation ++
-          ~w(--ephemeral --skip-git-repo-check -s read-only) ++
-          ["--model", model] ++
-          if(is_binary(effort),
-            do: ["--config", ~s(model_reasoning_effort="#{effort}")],
-            else: []
-          ) ++
-          if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++
-          ["--output-schema", schema_path, "--output-last-message", output_path] ++
-          Enum.flat_map(images, &["--image", &1]) ++ ["-"]
+        cli = [label: "Codex", unexpected: unexpected(opts), env: env]
 
-      cli = [label: "Codex", unexpected: unexpected(opts), env: env]
-
-      try do
         with {:ok, _} <-
                run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
              {:ok, text} <- File.read(output_path),
@@ -646,8 +644,6 @@ defmodule HalC2.TextGeneration do
           {:error, reason} when is_binary(reason) -> {:error, reason}
           _ -> {:error, "Codex returned invalid structured output."}
         end
-      after
-        remove_scratch(scratch_home)
       end
     end)
   end
@@ -657,9 +653,10 @@ defmodule HalC2.TextGeneration do
   # come from `codex mcp list`. When it cannot answer, the run gets a scratch Codex home
   # with the account's login and no configuration, and the launch arguments lose their
   # `mcp_servers` overrides, so no MCP server is enabled at all.
-  # Returns `{args, env, scratch_home, launch}`; the caller removes `scratch_home` (nil
-  # when none) and runs with the returned `launch`.
-  defp codex_isolation(instance, launch, cwd) do
+  # Returns `{:ok, args, env, launch}`, the run using the returned `launch`; the scratch
+  # home is made inside `dir`, so it goes with the run's folder, also when the caller is
+  # killed. `{:error, message}` when the account's login cannot reach that home.
+  defp codex_isolation(instance, launch, cwd, dir) do
     list = [codex_command(instance) | launch] ++ ["mcp", "list", "--json"]
 
     with {:ok, out} <- run_cli(list, cwd, "", label: "Codex", timeout: 10_000),
@@ -668,13 +665,13 @@ defmodule HalC2.TextGeneration do
         for %{"name" => name} when is_binary(name) <- entries,
             do: ["--config", "mcp_servers.#{toml_key(name)}.enabled=false"]
 
-      {List.flatten(servers) ++ ~w(--disable plugins --disable apps), [], nil, launch}
+      {:ok, List.flatten(servers) ++ ~w(--disable plugins --disable apps), [], launch}
     else
       _ ->
-        home = bare_codex_home(instance)
-
-        {~w(--disable plugins --disable apps), [{"CODEX_HOME", home}], home,
-         without_mcp_overrides(launch)}
+        with {:ok, home} <- bare_codex_home(instance, dir) do
+          {:ok, ~w(--disable plugins --disable apps), [{"CODEX_HOME", home}],
+           without_mcp_overrides(launch)}
+        end
     end
   end
 
@@ -697,12 +694,6 @@ defmodule HalC2.TextGeneration do
 
   defp mcp_override?(value), do: String.trim_leading(value) =~ ~r/\Amcp_servers\b/
 
-  defp remove_scratch(nil), do: :ok
-
-  # The folder is one `bare_codex_home/1` made.
-  # sobelow_skip ["Traversal.FileModule"]
-  defp remove_scratch(dir), do: File.rm_rf(dir)
-
   # The home whose login a run of `instance` uses, by the precedence a normal run has: a
   # `CODEX_HOME` in the instance's environment, else its shadow home (or home setting),
   # else the MC's own `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made
@@ -722,16 +713,27 @@ defmodule HalC2.TextGeneration do
     end
   end
 
-  # A Codex home holding only the instance's login (`auth.json`) and an empty config.
-  # The paths are the instance's own home setting and a fresh scratch folder.
+  # A Codex home inside `dir` holding only the instance's login (`auth.json`) and an empty
+  # config. Codex keeps a login in the OS credential store under a key of the home's path,
+  # so a different home cannot reach it: an account without an `auth.json` cannot run here,
+  # and the error says how to get one (docs/user/providers-codex.md).
   # sobelow_skip ["Traversal.FileModule"]
-  defp bare_codex_home(instance) do
-    source = account_home(instance)
-
-    home = HalC2.Scratch.dir("hal-c2-codex-home")
+  defp bare_codex_home(instance, dir) do
+    source = Path.join(account_home(instance), "auth.json")
+    home = Path.join(dir, "codex-home")
+    File.mkdir_p!(home)
     File.write!(Path.join(home, "config.toml"), "")
-    _ = File.cp(Path.join(source, "auth.json"), Path.join(home, "auth.json"))
-    home
+
+    case File.cp(source, Path.join(home, "auth.json")) do
+      :ok ->
+        {:ok, home}
+
+      {:error, reason} ->
+        {:error,
+         "Codex text generation could not copy the login from #{source} " <>
+           "(#{:file.format_error(reason)}). Its MCP servers could not be listed, so it needs " <>
+           "a file-based login (auth.json); an account on the OS credential store cannot be used."}
+    end
   end
 
   defp toml_key(name),
@@ -773,15 +775,7 @@ defmodule HalC2.TextGeneration do
   # Runs `fun` in `dir`, or in a new temporary directory it removes afterwards.
   defp in_dir(dir, fun) when is_binary(dir), do: fun.(dir)
 
-  defp in_dir(nil, fun) do
-    dir = HalC2.Scratch.dir("hal-c2-text")
-
-    try do
-      fun.(dir)
-    after
-      File.rm_rf(dir)
-    end
-  end
+  defp in_dir(nil, fun), do: HalC2.Scratch.with_dir("hal-c2-text", fun)
 
   # The images a Codex prompt takes by path.
   defp images(attachments) do

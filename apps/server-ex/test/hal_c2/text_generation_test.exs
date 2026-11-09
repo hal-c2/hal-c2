@@ -72,6 +72,21 @@ defmodule HalC2.TextGenerationTest do
     end
   end
 
+  # A Codex whose MCP servers cannot be listed, with `home` as its home; both are put back.
+  defp put_codex_home(home) do
+    previous = System.get_env("CODEX_HOME")
+    System.put_env("CODEX_HOME", home)
+    System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("CODEX_HOME", previous),
+        else: System.delete_env("CODEX_HOME")
+
+      System.delete_env("FAKE_CODEX_MCP_FAIL")
+    end)
+  end
+
   defp after_flag(argv, flag), do: Enum.at(argv, Enum.find_index(argv, &(&1 == flag)) + 1)
 
   describe "model routing" do
@@ -230,13 +245,7 @@ defmodule HalC2.TextGenerationTest do
       File.write!(Path.join(home, "auth.json"), ~s({"token":"t"}))
       File.write!(Path.join(home, "config.toml"), "[mcp_servers.augmenter]\ncommand = \"x\"\n")
 
-      System.put_env("CODEX_HOME", home)
-      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
-
-      on_exit(fn ->
-        System.delete_env("CODEX_HOME")
-        System.delete_env("FAKE_CODEX_MCP_FAIL")
-      end)
+      put_codex_home(home)
 
       assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
 
@@ -244,6 +253,77 @@ defmodule HalC2.TextGenerationTest do
       assert scratch != home
       assert files == %{"auth.json" => ~s({"token":"t"}), "config.toml" => ""}
       refute File.exists?(scratch)
+    end
+
+    test "a Codex run whose caller is killed leaves no scratch home with a copied login behind",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      home = Path.join(dir, "user-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "auth.json"), ~s({"token":"t"}))
+      put_codex_home(home)
+
+      started = Path.join(dir, "started")
+      {_, 0} = System.cmd("mkfifo", [started])
+      # `cat` opens the fifo, so a call that never starts cannot block this test.
+      reader =
+        Port.open({:spawn_executable, System.find_executable("cat")}, [:binary, args: [started]])
+
+      System.put_env("FAKE_TEXT_STARTED", started)
+      System.put_env("FAKE_TEXT_HANG", "1")
+
+      on_exit(fn ->
+        System.delete_env("FAKE_TEXT_STARTED")
+        System.delete_env("FAKE_TEXT_HANG")
+      end)
+
+      test = self()
+
+      caller =
+        spawn(fn ->
+          Process.put(:scratch_notify, test)
+          TextGeneration.thread_title(repo, "Fix it")
+        end)
+
+      assert_receive {^reader, {:data, "started"}}, 10_000
+      assert [%{"codexHome" => scratch}] = calls(log)
+      assert File.read!(Path.join(scratch, "auth.json")) =~ "token"
+
+      ref = Process.monitor(caller)
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^ref, _, _, :killed}
+      assert_receive {:scratch_removed, folder}
+      assert String.starts_with?(scratch, folder)
+      refute File.exists?(scratch)
+      refute File.exists?(folder)
+    end
+
+    test "a Codex that cannot list its MCP servers and has no auth.json file says so", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      # An account on the OS credential store has a config but no auth.json.
+      home = Path.join(dir, "keyring-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "config.toml"), ~s(cli_auth_credentials_store = "keyring"\n))
+      put_codex_home(home)
+
+      assert {:error, message} = TextGeneration.thread_title(repo, "Fix it")
+      assert message =~ "auth.json"
+      assert message =~ "OS credential store"
+      assert calls(log) == []
     end
 
     test "a Codex that cannot list its MCP servers drops the servers its launch arguments define",
@@ -260,13 +340,8 @@ defmodule HalC2.TextGenerationTest do
         }
       })
 
-      System.put_env("CODEX_HOME", dir)
-      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
-
-      on_exit(fn ->
-        System.delete_env("CODEX_HOME")
-        System.delete_env("FAKE_CODEX_MCP_FAIL")
-      end)
+      File.write!(Path.join(dir, "auth.json"), ~s({"token":"t"}))
+      put_codex_home(dir)
 
       assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
 
@@ -338,6 +413,55 @@ defmodule HalC2.TextGenerationTest do
 
       assert {:ok, %{"branch" => branch}} = TextGeneration.branch_name(repo, "Add login")
       assert branch =~ ~r{^acp-branch-fake/two-in-hal-c2-text-\d+-\d+$}
+    end
+
+    test "an ACP run whose caller is killed leaves its folder behind no longer", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([])
+      Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
+
+      settings!(%{
+        "providers" => %{"opencode" => %{"enabled" => true}},
+        "textGenerationModelSelection" => %{
+          "instanceId" => "opencode",
+          "model" => "fake/two"
+        }
+      })
+
+      started = Path.join(dir, "started")
+      {_, 0} = System.cmd("mkfifo", [started])
+
+      reader =
+        Port.open({:spawn_executable, System.find_executable("cat")}, [:binary, args: [started]])
+
+      System.put_env("FAKE_TEXT_STARTED", started)
+      System.put_env("FAKE_TEXT_HANG", "1")
+
+      on_exit(fn ->
+        System.delete_env("FAKE_TEXT_STARTED")
+        System.delete_env("FAKE_TEXT_HANG")
+      end)
+
+      test = self()
+
+      caller =
+        spawn(fn ->
+          Process.put(:scratch_notify, test)
+          TextGeneration.thread_title(repo, "Fix it")
+        end)
+
+      assert_receive {^reader, {:data, "started"}}, 10_000
+      assert [%{"cwd" => folder}] = calls(log)
+      assert File.dir?(folder)
+
+      ref = Process.monitor(caller)
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^ref, _, _, :killed}
+      assert_receive {:scratch_removed, ^folder}
+      refute File.exists?(folder)
     end
 
     test "an ACP agent dying mid-generation fails it, not as a cancellation", %{repo: repo} do

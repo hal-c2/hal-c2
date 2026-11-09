@@ -42,6 +42,12 @@ if log:
                             "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
                             "claudecode": os.environ.get("CLAUDECODE")}) + "\n")
 
+# $FAKE_TEXT_STARTED names a fifo the call writes to once logged: a receipt for a test
+# that stops the caller while this call runs.
+if os.environ.get("FAKE_TEXT_STARTED"):
+    with open(os.environ["FAKE_TEXT_STARTED"], "w") as f:
+        f.write("started")
+
 if codex:
     schema = json.load(open(args[args.index("--output-schema") + 1]))
 else:

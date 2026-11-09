@@ -38,6 +38,42 @@ defmodule HalC2.Scratch do
   end
 
   @doc """
+  Runs `fun` with a new scratch folder (`dir/1`) and removes it afterwards, also when the
+  calling process is killed: `try/after` does not run then, and `clear_leftovers/0` only
+  sees an OS process that ended, so a small process outside the caller removes the folder
+  once the caller is gone. The pid in the caller's `:scratch_notify` (a seam for tests, set
+  in the process that asks) gets `{:scratch_removed, dir}` when it has.
+  """
+  # sobelow_skip ["Traversal.FileModule"]
+  def with_dir(prefix, fun) do
+    dir = dir(prefix)
+    owner = self()
+    notify = Process.get(:scratch_notify)
+    reaper = spawn(fn -> reap(owner, dir, notify) end)
+
+    try do
+      fun.(dir)
+    after
+      # Gone when this returns; the reaper then has nothing left to wait for.
+      File.rm_rf(dir)
+      send(reaper, :done)
+    end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp reap(owner, dir, notify) do
+    ref = Process.monitor(owner)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+      :done -> :ok
+    end
+
+    File.rm_rf(dir)
+    if notify, do: send(notify, {:scratch_removed, dir})
+  end
+
+  @doc """
   Removes what a process that has ended left, read from the OS pid in each name. A
   running one may be another program on this home (`mix hal_c2.thread.import`), and
   a pid used again only keeps a leftover a while longer.

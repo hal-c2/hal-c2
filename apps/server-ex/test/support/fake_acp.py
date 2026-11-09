@@ -411,6 +411,10 @@ for line in sys.stdin:
             # A title writer that never answers: its pid and folder go to the log.
             with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
                 f.write(json.dumps({"acp": INSTANCE, "pid": os.getpid(), "cwd": cwds.get(sid, os.getcwd()), "hung": True}) + "\n")
+            # $FAKE_TEXT_STARTED names a fifo that gets a byte once the log is written.
+            if os.environ.get("FAKE_TEXT_STARTED"):
+                with open(os.environ["FAKE_TEXT_STARTED"], "w") as f:
+                    f.write("started")
             continue
         if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG"):
             # A title writer that tries a command and a file read first.
