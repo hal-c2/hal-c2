@@ -1082,6 +1082,26 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert TokenEconomizer.status(state)["watching"] == 1
     end
 
+    test "a turn longer than its buffer is read back whole, and the guard hears all of it" do
+      {:ok, state} = TokenEconomizer.init(%{"loopGuard" => "watch"})
+      state = settings(state, %{"loopGuard" => "watch", "microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+      at = %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"}
+
+      item =
+        Map.merge(at, %{
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "ls",
+          "output" => "a.py"
+        })
+
+      state = Enum.reduce(1..300, state, fn _, state -> observe(state, item) end)
+      assert state.turns["a"].calls == :history
+      assert state.turns["a"].guard.cum_turns == 300
+      refute state.turns["a"].partial
+    end
+
     test "switching learning under a turn leaves it partial, and only then" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"microSkills" => "envfacts"})

@@ -175,7 +175,8 @@ defmodule HalC2Plugins.TokenEconomizer do
        # The plugin's tasks, linked to it: `tasks` is pid => {thread id, :judge | :delivery}.
        sup: sup,
        tasks: %{},
-       # thread id => %{run, project, instance, guard, partial}, the turn under way
+       # thread id => %{run, project, instance, guard, calls, kept, partial},
+       # the turn under way
        turns: %{},
        # Events still to hear that the feed may have queued before ones it missed.
        missing: 0,
@@ -416,8 +417,11 @@ defmodule HalC2Plugins.TokenEconomizer do
       project: project,
       instance: event["instanceId"] || event["provider"],
       guard: Turn.new("#{thread_id}:#{run_id}"),
-      # The turn's calls, newest first, for the micro-skills to fold at its end.
+      # The turn's calls, newest first, for the micro-skills to fold at its
+      # end; `:history` once there were more than are kept, and the turn is
+      # read back from the thread instead.
       calls: [],
+      kept: 0,
       partial: false
     }
 
@@ -428,10 +432,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   defp hear(state, %{"type" => "turn.item", "threadId" => thread_id, "runId" => run_id} = item) do
     case {state.turns[thread_id], call_of(item)} do
       {%{run: ^run_id} = turn, {name, args, result, code} = call} ->
-        state =
-          if micro_on?(state),
-            do: update_in(state.turns[thread_id].calls, &[call | &1]),
-            else: state
+        state = if micro_on?(state), do: keep_call(state, thread_id, call), else: state
 
         if on?(state), do: fold(state, thread_id, turn, name, args, result, code), else: state
 
@@ -451,6 +452,19 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   defp hear(state, _event), do: state
+
+  # The most calls a turn under way keeps in memory, each cut to what the feed
+  # gives a plugin. A turn that runs longer is read back from the thread at
+  # its end, as a partial one is; what the guard folds is not affected.
+  @calls_kept 256
+
+  defp keep_call(state, thread_id, call) do
+    update_in(state.turns[thread_id], fn
+      %{calls: :history} = turn -> turn
+      %{kept: @calls_kept} = turn -> %{turn | calls: :history}
+      turn -> %{turn | calls: [call | turn.calls], kept: turn.kept + 1}
+    end)
+  end
 
   # Ends the thread's turn under way, if any. One that ended green, with calls, and was
   # heard whole feeds its project's envelope.
@@ -519,7 +533,8 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  defp fold_calls(_thread_id, %{partial: false} = turn), do: Enum.reverse(turn.calls)
+  defp fold_calls(_thread_id, %{partial: false, calls: calls}) when is_list(calls),
+    do: Enum.reverse(calls)
 
   defp fold_calls(thread_id, turn) do
     case Host.history(@id, thread_id, limit: 10) do
