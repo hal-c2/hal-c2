@@ -426,6 +426,35 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "after a redirect the agent refused is offered a stop, whatever redirects are left" do
+      opts = [envelope: 10.0, thr: Rules.defaults(), nudge_budget: 2]
+
+      {g, decisions} =
+        Enum.reduce(1..120, {Turn.new("t"), []}, fn i, {g, decisions} ->
+          {g, decision, _job} =
+            if rem(i, 2) == 0,
+              do: edit(g, opts),
+              else: Turn.fold(g, "Bash", %{"command" => "pytest -q"}, "FAILED t", 1, opts)
+
+          # The provider could not take the redirect while it worked.
+          g =
+            if match?({:nudge, _}, decision),
+              do: g |> Turn.redirect() |> Turn.redirected(false),
+              else: g
+
+          {g, if(decision, do: decisions ++ [decision], else: decisions)}
+        end)
+
+      assert [{:nudge, _}, {:abort, _}] = decisions
+      assert g.nudges_done == 1
+
+      # Nor is the judge asked to write one.
+      judged = [envelope: 30.0, thr: Map.put(Rules.defaults(), "gate_over_envelope", false)]
+      judged = judged ++ [judge: true, nudge_budget: 2, now: 0]
+      refused = Turn.new("t") |> Turn.redirect() |> Turn.redirected(false)
+      assert {_, %{"redirect" => false}} = until_job(refused, judged)
+    end
+
     test "with no redirects left is offered a stop straight away" do
       {_g, decisions} =
         stuck_turn(Turn.new("t"), 120, envelope: 10.0, thr: Rules.defaults(), nudge_budget: 0)

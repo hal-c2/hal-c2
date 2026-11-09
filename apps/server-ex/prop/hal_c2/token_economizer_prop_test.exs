@@ -271,9 +271,9 @@ defmodule HalC2.TokenEconomizerPropTest do
           run.guard.redirects == g.redirects + 1 and run.guard.st.turns == 0 and
           run.guard.judge_pending == nil and run.guard.nudges_done == g.nudges_done
 
-      # Refused: the segment goes on as it was.
+      # Refused: the segment goes on as it was, and no redirect is sent again.
       true ->
-        run.guard == %{g | redirecting: false}
+        run.guard == %{g | redirecting: false, refused: true}
     end
   end
 
@@ -283,7 +283,8 @@ defmodule HalC2.TokenEconomizerPropTest do
     acted = r.decision != nil
 
     # Never acted on, or judged, before the project has an envelope.
-    # The budget, then one stop offer, then nothing.
+    # The budget, then one stop offer, then nothing; a refused redirect is followed by the
+    # stop offer whatever is left of the budget.
     # A redirect has words in it.
     # One judge job out at a time, unless the one out went stale.
     # A job asks for a redirect to be written only while one can still be sent.
@@ -292,11 +293,15 @@ defmodule HalC2.TokenEconomizerPropTest do
       (not before.guard.redirecting or (not acted and r.job == nil)) and
       run.nudges <= state.budget and
       run.stops <= 1 and
-      (not match?({:abort, _}, r.decision) or before.nudges == state.budget) and
+      (not match?({:abort, _}, r.decision) or before.nudges == state.budget or
+         before.guard.refused) and
+      (not match?({:nudge, _}, r.decision) or not before.guard.refused) and
       (before.stops == 0 or not acted) and
       (r.text == nil or String.trim(r.text) != "") and
       (r.job == nil or before.out == nil or before.now - elem(before.out, 1) >= @stale) and
-      (r.job == nil or r.job["redirect"] == before.guard.nudges_done < state.budget) and
+      (r.job == nil or
+         r.job["redirect"] ==
+           (before.guard.nudges_done < state.budget and not before.guard.refused)) and
       run.guard.cum_turns == calls
   end
 

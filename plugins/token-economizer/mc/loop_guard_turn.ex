@@ -167,6 +167,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       nudge_ready: nil,
       # A redirect sent, until it is known whether it reached the agent (`redirected/2`).
       redirecting: false,
+      # Whether one did not: the agent cannot take one now, so none is sent again.
+      refused: false,
       # The redirects that reached the agent.
       redirects: 0
     }
@@ -483,7 +485,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
               "id" => id,
               "digest" => live_digest(g, digest),
               "segment" => g.segment,
-              "redirect" => g.nudges_done < budget
+              "redirect" => redirect_left?(g, budget)
             }
 
             {%{
@@ -580,6 +582,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       else: decide(g, envelope, thr, budget, opts)
   end
 
+  # Whether a stuck call is answered with a redirect rather than a stop offer: one is
+  # left in the budget, and none was refused.
+  defp redirect_left?(g, budget), do: g.nudges_done < budget and not g.refused
+
   defp verified?(g), do: g.verifications > 0 and not g.last_verify_failed and not g.unchecked
 
   defp decide(g, envelope, thr, budget, opts) do
@@ -597,7 +603,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # nudge goes first; after it, a fresh segment must be stuck again before the
       # backstop stops it.
       reason = "cum-backstop:#{g.cum_turns}>=#{Rules.fixed(backstop, 0)}t"
-      action = if g.nudges_done < budget, do: :nudge, else: :abort
+      action = if redirect_left?(g, budget), do: :nudge, else: :abort
       {g, decision} = stop(g, action, reason, envelope)
       {g, decision, nil}
     else
@@ -606,11 +612,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       cond do
         abort ->
           {g, decision} =
-            stop(g, if(g.nudges_done < budget, do: :nudge, else: :abort), reason, envelope)
+            stop(g, if(redirect_left?(g, budget), do: :nudge, else: :abort), reason, envelope)
 
           {g, decision, job}
 
-        thr["nudge_on_ambiguous"] && reason == "judge-ambiguous-spared" && g.nudges_done < budget ->
+        thr["nudge_on_ambiguous"] && reason == "judge-ambiguous-spared" &&
+            redirect_left?(g, budget) ->
           {g, decision} = stop(g, :nudge, "ambiguous-past-envelope", envelope)
           {g, decision, job}
 
@@ -681,7 +688,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   with a fresh state: the agent's fair window to recover, which the calls made before it
   are not part of. A verdict on the old segment is about the old one. One that did not
   (the provider cannot take a message while it works) leaves the segment as it was, and
-  the next stuck call is offered a stop.
+  the next stuck call is offered a stop, whatever redirects the budget has left.
   """
   def redirected(g, true) do
     %{
@@ -698,7 +705,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     }
   end
 
-  def redirected(g, false), do: %{g | redirecting: false}
+  def redirected(g, false), do: %{g | redirecting: false, refused: true}
 
   @doc "A redirect sent and taken at once, as watching decides."
   def after_nudge(g), do: g |> redirect() |> redirected(true)
