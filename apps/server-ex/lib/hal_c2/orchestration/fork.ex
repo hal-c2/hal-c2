@@ -13,7 +13,7 @@ defmodule HalC2.Orchestration.Fork do
   alias HalC2.Orchestration.Entities
 
   # What a thread's history is made of; each belongs to a run.
-  @history ~w(run-attempt node message turn-item plan checkpoint)
+  @history ~w(run-attempt node message turn-item plan checkpoint mcp-app-context)
 
   @spec fork(map) :: :ok | {:error, String.t()}
   def fork(%{"sourceThreadId" => source_id, "targetThreadId" => target_id} = command) do
@@ -56,17 +56,38 @@ defmodule HalC2.Orchestration.Fork do
       transfer =
         transfer(command, "fork", source_id, target_id, point(source, run), nil, run, at)
 
+      {copied, copies} =
+        HalC2.Streams.read(source_id, &history(&1, run["ordinal"], target_id, at))
+
       changes =
         [create("thread", target_id, target)] ++
-          HalC2.Streams.read(source_id, &history(&1, run["ordinal"], target_id, at)) ++
-          [create("context-transfer", transfer["id"], transfer)]
+          copied ++ [create("context-transfer", transfer["id"], transfer)]
 
-      HalC2.Streams.transact(target_id, :thread, fn state ->
-        if StreamState.get(state, "thread")[target_id],
-          do: {[], {:error, "Thread #{target_id} already exists."}},
-          else: {changes, :ok}
-      end)
+      # The copies are made before the target's stream decides, so a fork it rejects
+      # (the target exists, or another fork to it won) or that raises takes its own
+      # copies back. Their ids are unique to this attempt, so the winner's are safe.
+      try do
+        result =
+          HalC2.Streams.transact(target_id, :thread, fn state ->
+            if StreamState.get(state, "thread")[target_id],
+              do: {[], {:error, "Thread #{target_id} already exists."}},
+              else: {changes, :ok}
+          end)
+
+        if result != :ok, do: discard(copies)
+        result
+      catch
+        kind, reason ->
+          discard(copies)
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
     end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp discard(ids) do
+    for id <- ids, path = HalC2.Attachments.path(%{"id" => id}), do: File.rm(path)
+    :ok
   end
 
   # A fork usually starts from a transcript where the provider cannot fork its
@@ -277,29 +298,83 @@ defmodule HalC2.Orchestration.Fork do
           into: MapSet.new(),
           do: checkpoint["scopeId"]
 
-    for {kind, id, entity} <- StreamState.rows(state),
-        (kind == "run" and Map.has_key?(runs, id)) or
-          (kind in @history and Map.has_key?(runs, entity["runId"])) or
-          (kind == "checkpoint-scope" and MapSet.member?(scopes, id)) do
-      entity =
-        cond do
-          kind == "run" and entity["status"] == "queued" ->
-            Map.merge(entity, %{"status" => "cancelled", "queuePosition" => nil})
+    rows =
+      for {kind, id, entity} <- StreamState.rows(state),
+          (kind == "run" and Map.has_key?(runs, id)) or
+            (kind in @history and Map.has_key?(runs, entity["runId"])) or
+            (kind == "checkpoint-scope" and MapSet.member?(scopes, id)),
+          do: {kind, id, entity}
 
-          kind in ~w(run run-attempt node) and entity["status"] == "waiting" and
-              (entity["runId"] || id) in waiting ->
-            Map.merge(entity, %{
-              "status" => "completed",
-              "completedAt" => entity["completedAt"] || at
-            })
+    {changes, copies} =
+      Enum.map_reduce(rows, [], fn {kind, id, entity}, copies ->
+        entity =
+          cond do
+            kind == "run" and entity["status"] == "queued" ->
+              Map.merge(entity, %{"status" => "cancelled", "queuePosition" => nil})
 
-          true ->
-            entity
-        end
+            kind in ~w(run run-attempt node) and entity["status"] == "waiting" and
+                (entity["runId"] || id) in waiting ->
+              Map.merge(entity, %{
+                "status" => "completed",
+                "completedAt" => entity["completedAt"] || at
+              })
 
-      create(kind, id, Map.put(entity, "threadId", target_id))
+            true ->
+              entity
+          end
+
+        {entity, made} = entity |> Map.put("threadId", target_id) |> own_app(target_id)
+        {create(kind, id, entity), made ++ copies}
+      end)
+
+    {changes, copies}
+  end
+
+  # An MCP app's document and the images of a tool's output are attachments of the
+  # source thread, which deleting the source removes: the fork gets copies of its own.
+  # An app whose document is gone keeps its result and loses the reference, and an
+  # image whose file is gone loses its block.
+  # Returns the item and the ids of the copies made for it.
+  defp own_app(item, target_id) do
+    {item, document} = own_document(item, target_id)
+    {item, output} = own_images(item, "output", target_id)
+    {item, images} = own_images(item, "images", target_id)
+    {item, document ++ output ++ images}
+  end
+
+  defp own_document(%{"mcpApp" => %{"attachmentId" => id} = app} = item, target_id) do
+    case HalC2.Attachments.copy(target_id, id) do
+      {:ok, copy} -> {%{item | "mcpApp" => %{app | "attachmentId" => copy}}, [copy]}
+      :error -> {Map.delete(item, "mcpApp"), []}
     end
   end
+
+  defp own_document(item, _target_id), do: {item, []}
+
+  defp own_images(item, field, target_id) do
+    case item do
+      %{^field => blocks} when is_list(blocks) ->
+        {blocks, copies} =
+          Enum.flat_map_reduce(blocks, [], fn block, copies ->
+            {block, made} = own_image(block, target_id)
+            {block, made ++ copies}
+          end)
+
+        {Map.put(item, field, blocks), copies}
+
+      _ ->
+        {item, []}
+    end
+  end
+
+  defp own_image(%{"type" => "image", "id" => id} = block, target_id) when is_binary(id) do
+    case HalC2.Attachments.copy(target_id, id) do
+      {:ok, copy} -> {[%{block | "id" => copy}], [copy]}
+      :error -> {[], []}
+    end
+  end
+
+  defp own_image(block, _target_id), do: {[block], []}
 
   defp create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}
 end

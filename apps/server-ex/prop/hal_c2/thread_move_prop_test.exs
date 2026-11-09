@@ -441,7 +441,9 @@ defmodule HalC2.ThreadMovePropTest do
     id = id(t)
     attachment = :crypto.hash(:sha256, :binary.copy(:crypto.hash(:sha256, id), 37_500))
     messages = for n <- 1..3, do: "message #{n} of #{thread.made}"
-    {:live, thread.title, messages, attachment, if(thread.plugin, do: @mark)}
+
+    {:live, thread.title, messages, {attachment, "<p>app of #{id}</p>"},
+     if(thread.plugin, do: @mark)}
   end
 
   # --- system under test -------------------------------------------------------------

@@ -52,8 +52,7 @@ defmodule HalC2.Codex.Provider do
         "availability" => "available",
         "auth" => %{"status" => "authenticated"},
         "checkedAt" => HalC2.Orchestration.Entities.now(),
-        "models" =>
-          for(model <- :persistent_term.get(@key, @default_models), do: model_entry(model)),
+        "models" => for(model <- entry_models(id), do: model_entry(model)),
         "slashCommands" => slash_commands(),
         "skills" => [],
         "workspaceSnapshots" =>
@@ -206,27 +205,39 @@ defmodule HalC2.Codex.Provider do
     HalC2.Settings.notify_providers()
   end
 
+  # The whole check, from starting the app-server to its last answer, has twice the
+  # budget other providers' checks get: it starts a server and reads the account,
+  # models and config (pingdotgg/t3code#15945). `:codex_probe_timeout_ms` replaces
+  # the budget and `:codex_probe_time_scale` scales it (tests run it shorter).
+  @check_budget_ms 20_000
+  @config_read_ms 3_000
+  @catalog_wait_ms 3_000
+  @catalog_poll_ms 100
+
   defp probe(id) do
     # The probe's connection is linked to it: a Codex that dies as it starts must
     # fail this check, not take the probe with it before it records anything.
     Process.flag(:trap_exit, true)
-    timeout = Application.get_env(:hal_c2, :codex_probe_timeout_ms, 10_000)
+    spawned_at = System.os_time(:millisecond)
+    deadline = System.monotonic_time(:millisecond) + check_budget()
 
-    env = Enum.to_list(HalC2.Settings.instance_env(id))
+    env = HalC2.Codex.Home.instance_env(id)
 
     result =
       with [_ | _] = cmd <- command(id),
            {:ok, args} <- launch_args(id),
            {:ok, home} <- HalC2.Codex.Home.env(id),
-           {:ok, conn} <- start_probe(cmd ++ args, home ++ env),
-           {:ok, _} <- initialize(conn, timeout),
+           {:ok, conn} <- start_probe(cmd ++ args, app_server_env(home ++ env)),
+           {:ok, %{} = init} <- initialize(conn, remaining(deadline)),
            :ok <- Connection.notify(conn, "initialized", nil) do
         # The account and binary checked out; only the model list can still be
         # slow. That must not throw the successful check away: the entry warns
         # and keeps the last list (`with_health/3`).
         result =
-          case model_list(conn, timeout) do
-            {:ok, %{"data" => [_ | _] = models}} ->
+          case list_models(conn, init, spawned_at, deadline) do
+            {:ok, models} ->
+              tier = configured_tier(conn, deadline)
+
               record_models(
                 id,
                 for(
@@ -235,14 +246,14 @@ defmodule HalC2.Codex.Provider do
                     "slug" => m["model"] || m["id"],
                     "name" => m["displayName"] || m["model"] || m["id"],
                     "isDefault" => m["isDefault"] == true,
-                    "capabilities" => capabilities(m)
+                    "capabilities" => m |> capabilities() |> with_configured_tier(tier)
                   }
                 )
               )
 
               :ok
 
-            _ ->
+            :error ->
               {:warning,
                "Codex did not answer its model list in time; showing the last one it gave."}
           end
@@ -263,9 +274,13 @@ defmodule HalC2.Codex.Provider do
          %{"message" => "Codex App Server process exited" <> _, "stderr" => "[spawner]" <> _}} ->
           {:spawn, nil}
 
+        # What the process said, unless it is the spawner's own report of a command
+        # it could not exec, which only sometimes arrives before the exit is read.
         {:error, %{"message" => "Codex App Server process exited" <> _ = exit, "stderr" => said}}
         when said != "" ->
-          {:exited, "#{exit}. It said:\n#{said}"}
+          if exit =~ "code 125" and said =~ "execvp(): failed",
+            do: {:spawn, nil},
+            else: {:exited, "#{exit}. It said:\n#{said}"}
 
         {:error, %{"message" => "Codex App Server process exited" <> _}} ->
           {:spawn, nil}
@@ -345,11 +360,116 @@ defmodule HalC2.Codex.Provider do
     :exit, reason -> Connection.gone(conn, reason)
   end
 
+  defp check_budget do
+    budget = Application.get_env(:hal_c2, :codex_probe_timeout_ms, @check_budget_ms)
+    round(budget * Application.get_env(:hal_c2, :codex_probe_time_scale, 1))
+  end
+
+  defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
+
+  # The model list, as fetched for HAL-C2 (pingdotgg/t3code#18200). `model/list`
+  # answers from `<codexHome>/models_cache.json` while it is fresh, and every Codex
+  # client on the machine shares that file, though the backend tailors the catalog
+  # to each client: the plain CLI's has no Ultrafast. A ChatGPT account's app-server
+  # refreshes the catalog as it starts, so the first answer can be another client's;
+  # once a write newer than this app-server's start lands, the list is read again.
+  # No refresh within a few seconds keeps the first answer; the next check corrects it.
+  defp list_models(conn, init, spawned_at, deadline) do
+    chatgpt_home =
+      with home when is_binary(home) and home != "" <- init["codexHome"],
+           {:ok, %{"account" => %{"type" => "chatgpt"}}} <-
+             safe_call(conn, "account/read", %{}, remaining(deadline)) do
+        home
+      else
+        _ -> nil
+      end
+
+    case model_list(conn, remaining(deadline)) do
+      {:ok, %{"data" => [_ | _] = models}} ->
+        wait_until = min(deadline, System.monotonic_time(:millisecond) + @catalog_wait_ms)
+
+        with home when is_binary(home) <- chatgpt_home,
+             true <- catalog_refreshed?(home, spawned_at, wait_until),
+             {:ok, %{"data" => [_ | _] = fresh}} <- model_list(conn, remaining(deadline)) do
+          {:ok, fresh}
+        else
+          _ -> {:ok, models}
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp catalog_refreshed?(home, spawned_at, wait_until) do
+    cond do
+      catalog_fetched_at(home) >= spawned_at ->
+        true
+
+      System.monotonic_time(:millisecond) >= wait_until ->
+        false
+
+      true ->
+        # Codex writes the file from its own process and says nothing when it does.
+        Process.sleep(@catalog_poll_ms)
+        catalog_refreshed?(home, spawned_at, wait_until)
+    end
+  end
+
+  # When Codex last wrote its model catalog, in epoch milliseconds; -1 when unreadable.
+  # `home` is the `codexHome` the app-server this MC started reports for itself, and
+  # only its catalog file is read.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp catalog_fetched_at(home) do
+    with {:ok, text} <- File.read(Path.join(home, "models_cache.json")),
+         {:ok, %{"fetched_at" => stamp}} when is_binary(stamp) <- JSON.decode(text),
+         {:ok, at, _offset} <- DateTime.from_iso8601(stamp) do
+      DateTime.to_unix(at, :millisecond)
+    else
+      _ -> -1
+    end
+  end
+
+  # The service tier Codex's own config sets (`service_tier`), which its turns run
+  # at when the thread picks none; nil when it sets none or will not say.
+  defp configured_tier(conn, deadline) do
+    case safe_call(
+           conn,
+           "config/read",
+           %{"includeLayers" => false},
+           min(remaining(deadline), @config_read_ms)
+         ) do
+      {:ok, %{"config" => %{"service_tier" => tier}}} when is_binary(tier) and tier != "" -> tier
+      _ -> nil
+    end
+  end
+
+  defp safe_call(conn, method, params, timeout) do
+    Connection.call(conn, method, params, timeout)
+  catch
+    :exit, _ -> {:error, :timeout}
+  end
+
   defp model_list(conn, timeout) do
     Connection.call(conn, "model/list", %{}, timeout)
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
     :exit, _ -> {:error, :closed}
+  end
+
+  @doc """
+  The environment every `codex app-server` the MC starts runs with. Codex sends
+  its client name as the `originator` the backend tailors the model catalog to,
+  and it fetches that catalog before `initialize` names the client, so the name is
+  set at spawn (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`). A value the user set, in the
+  instance's environment or the MC's own, wins.
+  """
+  @spec app_server_env([{String.t(), String.t()}]) :: [{String.t(), String.t()}]
+  def app_server_env(env) do
+    if List.keymember?(env, "CODEX_INTERNAL_ORIGINATOR_OVERRIDE", 0) or
+         System.get_env("CODEX_INTERNAL_ORIGINATOR_OVERRIDE") not in [nil, ""],
+       do: env,
+       else: [{"CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "hal_c2_desktop"} | env]
   end
 
   # Starting the app-server, told apart from it answering badly: a process that
@@ -415,13 +535,18 @@ defmodule HalC2.Codex.Provider do
   end
 
   defp read_skills(id, cwd, timeout) do
-    env = Enum.to_list(HalC2.Settings.instance_env(id))
+    env = HalC2.Codex.Home.instance_env(id)
 
     with [_ | _] = cmd <- command(id),
          {:ok, args} <- launch_args(id),
          {:ok, home} <- HalC2.Codex.Home.env(id),
          {:ok, conn} <-
-           Connection.start_link(cmd: cmd ++ args, handler: self(), cd: cwd, env: home ++ env),
+           Connection.start_link(
+             cmd: cmd ++ args,
+             handler: self(),
+             cd: cwd,
+             env: app_server_env(home ++ env)
+           ),
          {:ok, _} <-
            Connection.call(
              conn,
@@ -611,6 +736,11 @@ defmodule HalC2.Codex.Provider do
     :ok
   end
 
+  # The instance's own list (its account's models and configured tier); an instance
+  # not checked yet shows the built-in instance's, else the defaults.
+  defp entry_models(id),
+    do: listed_models(id) || :persistent_term.get(@key, @default_models)
+
   defp models_key("codex"), do: @key
   defp models_key(id), do: {@key, id}
 
@@ -679,6 +809,9 @@ defmodule HalC2.Codex.Provider do
 
   defp reasoning(_model), do: nil
 
+  # What HAL-C2 says of a tier in place of the catalog's own words.
+  @tier_descriptions %{"ultrafast" => "Even faster, more expensive"}
+
   # Standard ("default") plus the model's faster tiers; older CLIs only name speed tiers.
   defp service_tier(model) do
     tiers =
@@ -699,11 +832,11 @@ defmodule HalC2.Codex.Provider do
 
       options =
         for tier <- [%{"id" => "default", "name" => "Standard"} | tiers] do
+          description = @tier_descriptions[tier["id"]] || tier["description"]
+
           %{"id" => tier["id"], "label" => tier["name"] || tier["id"]}
           |> then(
-            &if tier["description"] in [nil, ""],
-              do: &1,
-              else: Map.put(&1, "description", tier["description"])
+            &if description in [nil, ""], do: &1, else: Map.put(&1, "description", description)
           )
           |> then(&if tier["id"] == default, do: Map.put(&1, "isDefault", true), else: &1)
         end
@@ -718,12 +851,43 @@ defmodule HalC2.Codex.Provider do
     end
   end
 
-  defp command(id),
-    do:
-      HalC2.Settings.instance_command(
-        id,
-        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
-      )
+  # The tier Codex's own config sets shows as the model's selected one, where the
+  # model offers it ("fast" is the "priority" tier by its old name); a model that
+  # does not keeps its own default (pingdotgg/t3code#15623).
+  defp with_configured_tier(%{"optionDescriptors" => descriptors} = capabilities, tier)
+       when is_binary(tier) do
+    descriptors =
+      for descriptor <- descriptors do
+        with %{"id" => "serviceTier", "options" => options} <- descriptor,
+             %{"id" => value} <-
+               Enum.find(
+                 options,
+                 &(&1["id"] == tier or (tier == "fast" and &1["id"] == "priority"))
+               ) do
+          %{
+            descriptor
+            | "options" =>
+                for(
+                  option <- options,
+                  do:
+                    if(option["id"] == value,
+                      do: Map.put(option, "isDefault", true),
+                      else: Map.delete(option, "isDefault")
+                    )
+                )
+          }
+          |> Map.put("currentValue", value)
+        else
+          _ -> descriptor
+        end
+      end
+
+    %{capabilities | "optionDescriptors" => descriptors}
+  end
+
+  defp with_configured_tier(capabilities, _tier), do: capabilities
+
+  defp command(id), do: HalC2.Codex.Installation.command(id)
 
   # Read once per executable, so each instance's binary path has its own. A read that
   # missed its deadline is "unknown" until `:codex_version_retry_ms` (a minute) has

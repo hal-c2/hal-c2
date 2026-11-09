@@ -37,6 +37,7 @@ public:
   bool onScreen() const override;
   QSize viewport() const override;
   void setViewport(const QSize& size) override;
+  bool resizing() const override;
   bool click(const QPointF& point) override;
   bool key(int key, Qt::KeyboardModifiers modifiers, const QString& text) override;
   void setColorScheme(const QString& scheme) override;
