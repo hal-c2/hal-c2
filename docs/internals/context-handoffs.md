@@ -65,9 +65,13 @@ reached a provider is in no later handoff.
 
 A wake, and `/compact` or `/logout`, hands nothing over and leaves the provider thread's place
 and mark alone. Text in front of a command would hide it from the provider, and a wake sends no
-words. What the provider missed goes with the next run that sends it words; a command that is
-its provider's first run in the thread opens a conversation holding none of it, so that run
-hands over the whole thread. Which other slash commands are commands depends on where the
+words. What the provider missed goes with the next run that sends it words. A command that is
+its provider's first run in the thread hands nothing over either: its new provider thread has
+seen no run (`lastRunOrdinal` 0), so the next run that sends words hands over the whole
+thread. A bare `/compact` there has no conversation to compact and is refused before it reaches
+the provider, unless a fork carries one over (`compact_refusal/5` in `orchestration.ex`). A
+command on a provider thread whose conversation is gone, or that another instance held, is not
+quiet: like any message, it is handed the thread. Which other slash commands are commands depends on where the
 provider reads one (#1342). An ACP agent reads one only at the start of its prompt, and Pi a
 prompt template, so there every slash command is quiet the same way. A command that starts
 work needs the history, though: Claude runs one from the last block of a message, so its history
