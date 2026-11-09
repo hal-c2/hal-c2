@@ -1102,6 +1102,25 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
   end
 
   describe "the judge" do
+    # What a call asked for: its prompt and the schema its reply is checked against.
+    defp asked(call) do
+      case_ = self()
+      call.(fn prompt, schema -> send(case_, {:asked, prompt, schema}) && {:error, "none"} end)
+      assert_received {:asked, prompt, schema}
+      {prompt, schema}
+    end
+
+    # Pi and ACP agents are given the prompt alone, and their reply is checked against
+    # the schema all the same: the prompt names the object and each key's type.
+    defp asks_for_its_schema({prompt, schema}) do
+      assert prompt =~ "JSON object"
+      for {key, type} <- schema, do: assert(prompt =~ ~s("#{key}" (a #{type}), key)
+    end
+
+    test "asks for the verdict as the JSON object it is checked against" do
+      asks_for_its_schema(asked(&Judge.stuck_judge("digest", &1)))
+    end
+
     test "writes the redirect only for a stuck verdict it is sure of" do
       sure = fn
         _prompt, %{"stuck" => _} ->
