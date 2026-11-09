@@ -968,6 +968,31 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert digest("pytest --maxfail=1 -k a=b") =~ "pytest --maxfail=1 -k a=…"
     end
 
+    test "shows only the programs of a command with any redirect but a read or a duplication" do
+      for cmd <- [
+            "printf %s PRIVATE_SOURCE 1<>a.py",
+            "printf PRIVATE_SOURCE <>notes.txt",
+            "printf PRIVATE_SOURCE >&out.txt",
+            "printf PRIVATE_SOURCE <&out.txt",
+            "printf PRIVATE_SOURCE >&$fd",
+            "printf PRIVATE_SOURCE > >(cat)"
+          ] do
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # Reading a file, discarding output and duplicating a descriptor write nothing.
+      for cmd <- [
+            "pytest -q < args.txt",
+            "pytest -q >/dev/null 2>&1",
+            "pytest -q 2>&1",
+            "pytest -q >&2",
+            "pytest -q 0<&3"
+          ] do
+        assert digest(cmd) =~ "$ #{cmd}"
+      end
+    end
+
     test "shows only the programs of an interpreter handed code anywhere in its words" do
       for cmd <- [
             ~s{node --input-type commonjs -e "require('fs').writeFileSync('a','PRIVATE_SOURCE')"},

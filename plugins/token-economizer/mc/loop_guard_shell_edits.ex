@@ -43,8 +43,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`); not a here-string (`<<<`).
   @heredoc_start ~r/(?<!<)<<(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
-  # Redirects that write their operand.
-  @out [">", ">>", ">|", "&>", "&>>"]
+  # Redirects that write their operand: any that may, `<>` opening it read-write too.
+  @out [">", ">>", ">|", "&>", "&>>", "<>"]
   # The shell's words that open or close a group, a branch or a loop, before a command.
   @reserved ~w({ } ! if then else elif fi do done while until)
   # Programs that run another, given after their own words, and the programs this reads
@@ -55,7 +55,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # The operands `find -exec` and `xargs -I` put file names in place of.
   @fed ["{}", "+", ";", "\\"]
   # Input, heredoc tags, fd duplication.
-  @skip_operand ["<", "<<", "<<<", "<&", ">&", "<>"]
+  @skip_operand ["<", "<<", "<<<", "<&", ">&"]
   # Redirect and `tee` targets count only when they look like source, so `> out.log` or
   # `| tee /tmp/run.txt`, capturing output, is not mistaken for an edit.
   @source_file ~r/\.(?:py|pyi|pyx|pxd|js|jsx|mjs|cjs|ts|tsx|rs|go|java|kt|kts|scala|c|cc|cpp|cxx|h|hh|hpp|rb|php|cs|swift|m|mm|sh|bash|zsh|lua|jl|ex|exs|erl|hs|ml|clj|sql|toml|ya?ml|json|cfg|ini|conf|md|rst|html?|css|scss|vue|svelte|qml|xml|gradle|properties|in)$/i
@@ -464,13 +464,18 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
         [] -> cur
       end
 
+    # Anything but a read (`<`), a heredoc's tag or a here-string, or a duplication or
+    # close of a descriptor (`2>&1`, `>&-`) may write: `>& file` writes it, as `&>` does,
+    # and a target the shell computes (`>&$fd`) or a process (`> >(cmd)`) may be a file.
     writes =
       case rest do
         [next | _] when next not in @ops ->
-          # `>& file` writes it, as `&>` does; `>&2` and `>&-` only duplicate or close.
-          if t in @out or (t == ">&" and not Regex.match?(~r/^(?:\d+|-)$/, next)),
+          if t in @out or (t in [">&", "<&"] and not Regex.match?(~r/^(?:\d+|-)$/, next)),
             do: writes ++ [unquote_word(next)],
             else: writes
+
+        _ when t in @out ->
+          writes ++ ["(redirect)"]
 
         _ ->
           writes

@@ -426,7 +426,8 @@ defmodule HalC2.TokenEconomizerPropTest do
   # does: quoted, escaped, or inside a quoting context nested in double quotes.
   @hiding ~w(single double ansi escaped subst param backtick)a
 
-  # A command that writes a word holding a random secret, or sets a variable to it: the
+  # A command that writes a word holding a random secret (by any redirect that may
+  # write), sets a variable to it, or runs it as code (behind any interpreter flag): the
   # secret inside a quoted or escaped part, among other parts, the word run alone, after
   # a command, in a group or in a nested shell.
   defp secret_command do
@@ -440,7 +441,19 @@ defmodule HalC2.TokenEconomizerPropTest do
              "printf %s @W | tee a.py",
              "cat > a.py <<< @W",
              "sudo tee a.py <<< @W",
-             "X=@W pytest -q"
+             "X=@W pytest -q",
+             "printf %s @W 1<>a.py",
+             "printf %s @W <>notes.txt",
+             "printf %s @W >&out.txt",
+             "printf %s @W >&$fd",
+             "node --input-type commonjs -e @W",
+             "node --import=@W app.js",
+             "python3 -X dev -W error -c @W",
+             "timeout 10 ruby -w -e @W",
+             "php -d x=1 -r @W",
+             "deno eval @W",
+             "awk @W a.txt",
+             "find . -name a -exec perl -0777 -pe @W {} +"
            ]), elements(~w(alone and_before braces nested)a)} do
       word = Enum.join(before) <> hide(kind, inner <> secret <> inner) <> Enum.join(after_)
       {secret_carry(carrier, String.replace(use, "@W", word)), secret}
