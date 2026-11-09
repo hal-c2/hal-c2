@@ -864,13 +864,15 @@ step(
   },
 );
 
-// The fixtures are timed on the real clock, so a message's stamp reads `<time>`.
-const STAMP = /\d{1,2}:\d{2}(?: [AP]M)?$/;
+// The fixtures are timed on the real clock, so a message's stamp reads `<time>`, day
+// included: a run just past midnight stamps a message `yesterday at 11:46 PM`.
+const TIME = String.raw`(?:yesterday at |\d{1,2}/\d{1,2}(?:/\d{2,4})? )?\d{1,2}:\d{2}(?: [AP]M)?`;
+const STAMP = new RegExp(`${TIME}$`);
 const unstamped = (rows: ReadonlyArray<string>) =>
   rows.map((row) => {
     const text = row.trimEnd();
     // A user message's stamp keeps its right edge, under the bubble.
-    if (/^ *\d{1,2}:\d{2}(?: [AP]M)?$/.test(text)) return "<time>".padStart(text.length);
+    if (new RegExp(`^ *${TIME}$`).test(text)) return "<time>".padStart(text.length);
     return /⧉ Copy · /.test(text) ? text.replace(STAMP, "<time>") : row;
   });
 

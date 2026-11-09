@@ -35,12 +35,13 @@ export interface ThreadWorld extends World {
 /**
  * Ten minutes ago, but never before today began: fixtures are relative to the
  * host's real clock, and a message sent yesterday has a wider stamp
- * ("yesterday at 11:48 PM") than the scenarios draw.
+ * ("yesterday at 11:48 PM") than the scenarios draw. Read as each fixture is made,
+ * so a run that started before midnight does not date its later fixtures yesterday.
  */
-const BASE_MS = Math.max(Date.now() - 10 * 60_000, new Date().setHours(0, 0, 0, 0));
+const base = () => Math.max(Date.now() - 10 * 60_000, new Date().setHours(0, 0, 0, 0));
 
 /** An ISO time `seconds` after the fixture base. */
-export const at = (seconds: number): string => new Date(BASE_MS + seconds * 1000).toISOString();
+export const at = (seconds: number): string => new Date(base() + seconds * 1000).toISOString();
 
 export function message(
   id: string,
