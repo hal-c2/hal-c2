@@ -12,7 +12,10 @@ defmodule HalC2.TokenEconomizerPropTest do
     and never judged; no more redirects than the budget; the stop offer comes only once
     the redirects are spent, at most once, and nothing is decided after it; nothing is
     decided or judged while a redirect is on its way; only a redirect that landed starts
-    a fresh segment, and one refused leaves the segment as it was; a judge job starts
+    a fresh segment, and one refused leaves the segment as it was; a call under way when
+    a redirect landed and heard after it (each call has its place in the thread, given
+    as it started) decides nothing, puts out no job and is not the new segment's; a judge
+    job starts
     only when none is out, or the one out has gone stale, and asks for a redirect only
     while one can still be sent; a verdict for a job that is
     not out changes nothing but the spend; every call is counted;
@@ -103,12 +106,15 @@ defmodule HalC2.TokenEconomizerPropTest do
       jobs: 0,
       # The judge job out, `{id, started at}`, until its verdict is delivered or a
       # redirect that landed starts a new segment.
-      out: nil
+      out: nil,
+      # The thread's last place, and the calls started but not heard yet, `{kind, place}`.
+      place: 0,
+      under_way: []
     }
   end
 
   def initial_state(samples \\ [], budget \\ 1),
-    do: %{learned: length(samples) >= 5, budget: budget, calls: 0}
+    do: %{learned: length(samples) >= 5, budget: budget, calls: 0, under_way: 0}
 
   def command(_state) do
     frequency([
@@ -117,7 +123,10 @@ defmodule HalC2.TokenEconomizerPropTest do
       {1,
        {:call, __MODULE__, :verdict, [elements([:out, :other]), boolean(), elements([0.4, 0.95])]}},
       {1, {:call, __MODULE__, :tick, [elements([0, 60, @stale])]}},
-      {1, {:call, __MODULE__, :landed, [boolean()]}}
+      {1, {:call, __MODULE__, :landed, [boolean()]}},
+      # Calls the agent starts that are heard later, after whatever comes between.
+      {2, {:call, __MODULE__, :start, [resize(6, non_empty(list(kind())))]}},
+      {2, {:call, __MODULE__, :hear, [integer(1, 6)]}}
     ])
   end
 
@@ -130,13 +139,50 @@ defmodule HalC2.TokenEconomizerPropTest do
   def next_state(state, _result, {:call, _, :tools, [kinds]}),
     do: %{state | calls: state.calls + length(kinds)}
 
+  def next_state(state, _result, {:call, _, :start, [kinds]}),
+    do: %{state | under_way: state.under_way + length(kinds)}
+
+  def next_state(state, _result, {:call, _, :hear, [n]}) do
+    heard = min(n, state.under_way)
+    %{state | calls: state.calls + heard, under_way: state.under_way - heard}
+  end
+
   def next_state(state, _result, _call), do: state
 
-  # Tool calls folded one by one as the plugin folds them; what each did.
-  def tools(kinds), do: Enum.map(kinds, &tool/1)
+  # Tool calls that start and end now, folded one by one as the plugin folds them; what
+  # each did.
+  def tools(kinds) do
+    Enum.map(kinds, fn kind ->
+      run = Process.get(:guard)
+      Process.put(:guard, %{run | place: run.place + 1})
+      tool(kind, run.place + 1)
+    end)
+  end
+
+  # Calls that start now, each taking its place, and end later (`hear/1`).
+  def start(kinds) do
+    run = Process.get(:guard)
+    started = Enum.with_index(kinds, run.place + 1)
+
+    Process.put(:guard, %{
+      run
+      | place: run.place + length(kinds),
+        under_way: run.under_way ++ started
+    })
+
+    :ok
+  end
+
+  # The first `n` calls under way end, and are heard.
+  def hear(n) do
+    run = Process.get(:guard)
+    {heard, left} = Enum.split(run.under_way, n)
+    Process.put(:guard, %{run | under_way: left})
+    Enum.map(heard, fn {kind, place} -> tool(kind, place) end)
+  end
 
   # A nudge's redirect is sent (whether it lands is `landed/1`), a job is put out.
-  defp tool(kind) do
+  defp tool(kind, place) do
     run = Process.get(:guard)
     {name, args, result, code} = call(kind)
 
@@ -146,7 +192,8 @@ defmodule HalC2.TokenEconomizerPropTest do
         thr: run.thr,
         judge: run.envelope != nil,
         nudge_budget: run.budget,
-        now: run.now
+        now: run.now,
+        started: place
       )
 
     {text, guard} =
@@ -169,7 +216,7 @@ defmodule HalC2.TokenEconomizerPropTest do
     }
 
     Process.put(:guard, after_run)
-    %{before: run, after: after_run, decision: decision, job: job, text: text}
+    %{before: run, after: after_run, decision: decision, job: job, text: text, place: place}
   end
 
   def verdict(which, stuck, confidence) do
@@ -197,7 +244,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       if run.guard.redirecting,
         do: %{
           run
-          | guard: Turn.redirected(run.guard, landed),
+          | guard: Turn.redirected(run.guard, landed, run.place),
             out: if(landed, do: nil, else: run.out)
         },
         else: run
@@ -316,11 +363,13 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp kind({kind, _}), do: kind
   defp kind(kind), do: kind
 
-  def postcondition(state, {:call, _, :tools, _}, steps) do
+  def postcondition(state, {:call, _, call, _}, steps) when call in [:tools, :hear] do
     steps
     |> Enum.with_index(1)
     |> Enum.all?(fn {step, i} -> lawful?(state, step, state.calls + i) end)
   end
+
+  def postcondition(_state, {:call, _, :start, _}, :ok), do: true
 
   def postcondition(_state, {:call, _, :verdict, _}, %{before: before, after: run, id: id}) do
     out? = before.out != nil and elem(before.out, 0) == id
@@ -340,7 +389,8 @@ defmodule HalC2.TokenEconomizerPropTest do
 
       # Landed: the next segment starts afresh, and the old one's job is forgotten.
       r.landed ->
-        not run.guard.redirecting and run.guard.segment == g.segment + 1 and
+        run.guard.since == before.place and
+          not run.guard.redirecting and run.guard.segment == g.segment + 1 and
           run.guard.redirects == g.redirects + 1 and run.guard.st.turns == 0 and
           run.guard.judge_pending == nil and run.guard.nudges_done == g.nudges_done
 
@@ -361,9 +411,13 @@ defmodule HalC2.TokenEconomizerPropTest do
     # A redirect has words in it.
     # One judge job out at a time, unless the one out went stale.
     # A job asks for a redirect to be written only while one can still be sent.
-    # Nothing decided or judged while a redirect is on its way.
+    # Nothing decided or judged while a redirect is on its way, nor on a call under way
+    # when one landed, which is not the new segment's either.
+    early = before.guard.since != nil and r.place <= before.guard.since
+
     (state.learned or (not acted and r.job == nil)) and
       (not before.guard.redirecting or (not acted and r.job == nil)) and
+      (not early or (not acted and r.job == nil and run.guard.st == before.guard.st)) and
       run.nudges <= state.budget and
       run.stops <= 1 and
       (not match?({:abort, _}, r.decision) or before.nudges == state.budget or

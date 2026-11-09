@@ -611,6 +611,48 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       landed = Turn.redirected(g, true)
       assert landed.segment == 1 and landed.st.turns == 0 and landed.redirects == 1
     end
+
+    test "a call heard after its redirect landed that started before it spends nothing" do
+      # Thresholds pinned so low that one failing call is stuck, with a redirect left.
+      thr =
+        Map.merge(Rules.defaults(), %{
+          "min_turns" => 1,
+          "edit_churn" => 1,
+          "error_outputs" => 1,
+          "stagnation" => 0.0,
+          "backstop_turns" => 1
+        })
+
+      opts = [envelope: 1.0, thr: thr, nudge_budget: 2]
+      failing = &Turn.fold(&1, "Bash", %{"command" => "pytest -q"}, "FAILED t", 1, &2)
+
+      g = Turn.new("t")
+      {g, nil, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: 1)
+      {g, {:nudge, _}, _} = failing.(g, opts ++ [started: 2])
+
+      # The provider took the redirect when the thread's last place was 9.
+      g = g |> Turn.redirect() |> Turn.redirected(true, 9)
+
+      # The agent's edits and failing re-runs under way then, heard now: their places are
+      # 9 or less, or not known. They count for the turn, not for the new segment.
+      {g, decisions} =
+        Enum.reduce([3, 9, nil, 5, 4, 8], {g, []}, fn started, {g, decisions} ->
+          {g, decision, job} =
+            if started in [3, nil, 4],
+              do: Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: started),
+              else: failing.(g, opts ++ [started: started])
+
+          {g, decisions ++ [decision, job]}
+        end)
+
+      assert Enum.all?(decisions, &is_nil/1)
+      assert g.nudges_done == 1 and not g.aborted and g.st.turns == 0
+      assert g.cum_turns == 8 and g.whole.turns == 8
+
+      # A call that started after it is the new segment's, and may decide.
+      {g, nil, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: 10)
+      assert {_, {:nudge, _}, _} = failing.(g, opts ++ [started: 11])
+    end
   end
 
   describe "the ended-green proxy" do

@@ -129,6 +129,8 @@ defmodule HalC2.PluginsTurnHooksTest do
                    5_000
 
     assert %{"runId" => ^run_id, "text" => "Hello from claude"} = said
+    # Each in its place in the thread, given as it started.
+    assert is_integer(item["ordinal"]) and said["ordinal"] > item["ordinal"]
 
     assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id} = finished}, 5_000
     assert finished["status"] == "completed"
@@ -565,7 +567,17 @@ defmodule HalC2.PluginsTurnHooksTest do
     {:ok, _} = send_message(thread_id, "m1", "wait m1")
     [running] = await_statuses(thread_id, ["running"])
 
-    assert {:ok, _} = Host.steer("steerer", thread_id, running["id"], "use the cache")
+    assert {:ok, %{"ordinal" => last}} =
+             Host.steer("steerer", thread_id, running["id"], "use the cache")
+
+    # The receipt's ordinal is the thread's last place once the provider took it: the
+    # steered message's, or an item's after it.
+    steered =
+      HalC2.Streams.read(thread_id, &HalC2.StreamState.get(&1, "turn-item"))
+      |> Map.values()
+      |> Enum.find(&(&1["runId"] == running["id"] and &1["text"] == "use the cache"))
+
+    assert steered["ordinal"] <= last
     # The fake answers a steer in the turn it cut short, which then ends.
     [ended] = await_statuses(thread_id, ["completed"])
     assert Enum.any?(prompts(dir), &(&1 =~ "use the cache"))

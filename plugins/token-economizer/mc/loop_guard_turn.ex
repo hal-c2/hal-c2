@@ -172,7 +172,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # Whether one did not: the agent cannot take one now, so none is sent again.
       refused: false,
       # The redirects that reached the agent.
-      redirects: 0
+      redirects: 0,
+      # The thread's last place when the last redirect reached the agent
+      # (`redirected/3`): a call that started there or before is the old segment's. Nil
+      # when no redirect named one.
+      since: nil
     }
   end
 
@@ -529,7 +533,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   through `verdict/3`.
 
   `opts`: `envelope` (nil before the project has one), `thr`, `judge` (whether a judge
-  is wired), `nudge_budget` (1) and `now` (seconds, for a judge job gone stale).
+  is wired), `nudge_budget` (1), `now` (seconds, for a judge job gone stale) and
+  `started`, the call's place in the thread, given as it started. A call heard after a
+  redirect reached the agent that did not start after it (`since`), or whose place is
+  not known then, may have been under way before the agent was sent it: it counts for
+  the turn, but not for the segment after the redirect, and decides nothing.
   """
   def fold(g, name, args, result, exit_code, opts \\ []) do
     envelope = opts[:envelope]
@@ -565,20 +573,23 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       end
 
     failed = if exit_code == nil, do: nil, else: exit_code != 0
-    st = State.update(g.st, name, args, result, failed)
+    early = g.since != nil and not (is_integer(opts[:started]) and opts[:started] > g.since)
+    st = if early, do: g.st, else: State.update(g.st, name, args, result, failed)
     whole = State.update(g.whole, name, args, result, failed)
 
     # `State` counts the Python runners its thresholds were tuned on; the turn's other
     # test runs (`npx vitest`, `go test`) are verifications too, in what the redirect and
     # the judge are told. No rule the guard decides by reads this count.
     {st, whole} =
-      if status != nil and not Regex.match?(State.test_run_re(), cmd),
-        do: {%{st | test_runs: st.test_runs + 1}, %{whole | test_runs: whole.test_runs + 1}},
-        else: {st, whole}
+      cond do
+        status == nil or Regex.match?(State.test_run_re(), cmd) -> {st, whole}
+        early -> {st, %{whole | test_runs: whole.test_runs + 1}}
+        true -> {%{st | test_runs: st.test_runs + 1}, %{whole | test_runs: whole.test_runs + 1}}
+      end
 
     g = %{
       g
-      | st: State.fold_shell_edits(st, shell_edits),
+      | st: if(early, do: st, else: State.fold_shell_edits(st, shell_edits)),
         whole: State.fold_shell_edits(whole, shell_edits),
         cum_turns: g.cum_turns + 1
     }
@@ -586,10 +597,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     g = track(g, name, args, result, exit_code, shell_edits)
 
     # While a redirect is on its way the calls are the ones the agent made before it, so
-    # nothing is decided on them. While the turn's checks pass after its last edit, it is
-    # not stuck however it got there: the errors and repeated edits it counts are the work
-    # those checks just verified (a passing run after six failing ones at the backstop).
-    if g.aborted or g.redirecting or verified?(g),
+    # nothing is decided on them, nor on one heard after it that may have started before
+    # it. While the turn's checks pass after its last edit, it is not stuck however it got
+    # there: the errors and repeated edits it counts are the work those checks just
+    # verified (a passing run after six failing ones at the backstop).
+    if g.aborted or g.redirecting or early or verified?(g),
       do: {g, nil, nil},
       else: decide(g, envelope, thr, budget, opts)
   end
@@ -703,14 +715,20 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   @doc """
   Whether the redirect sent reached the agent. One that did starts the segment after it
   with a fresh state: the agent's fair window to recover, which the calls made before it
-  are not part of. A verdict on the old segment is about the old one. One that did not
-  (the provider cannot take a message while it works) leaves the segment as it was, and
-  the next stuck call is offered a stop, whatever redirects the budget has left.
+  are not part of. `since` is the thread's last place when it did (`Host.steer/4`'s
+  receipt): a call heard later that started there or before, still under way when the
+  agent was sent it, stays out of the new segment (`fold/6`). A verdict on the old
+  segment is about the old one. One that did not (the provider cannot take a message
+  while it works) leaves the segment as it was, and the next stuck call is offered a
+  stop, whatever redirects the budget has left.
   """
-  def redirected(g, true) do
+  def redirected(g, landed, since \\ nil)
+
+  def redirected(g, true, since) do
     %{
       g
       | redirecting: false,
+        since: since,
         redirects: g.redirects + 1,
         segment: g.segment + 1,
         st: State.new(),
@@ -722,7 +740,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     }
   end
 
-  def redirected(g, false), do: %{g | redirecting: false, refused: true}
+  def redirected(g, false, _since), do: %{g | redirecting: false, refused: true}
 
   @doc "A redirect sent and taken at once, as watching decides."
   def after_nudge(g), do: g |> redirect() |> redirected(true)

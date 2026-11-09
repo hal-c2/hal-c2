@@ -356,7 +356,8 @@ defmodule HalC2.Plugins.Extension do
       "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
       "status"` (`"completed"`, `"failed"`, `"interrupted"` or `"cancelled"`), `"input",
       "output"` and an assistant message's `"text"`, each cut to its last 4,000
-      characters, `"exitCode"` and, for a file change, the file's `"path"`) and
+      characters, `"exitCode"`, `"ordinal"`, its place in the thread, given as it
+      started, and, for a file change, the file's `"path"`) and
       `turn.finished` (`"threadId", "runId", "status", "tokenUsage"`: the provider's
       last report of the conversation's context, `%{"usedTokens", "inputTokens",
       "cachedInputTokens", "outputTokens", "maxTokens"}` as far as it reports them, or
