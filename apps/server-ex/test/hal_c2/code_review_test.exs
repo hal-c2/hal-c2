@@ -815,6 +815,80 @@ defmodule HalC2.CodeReviewTest do
     assert until == newer |> DateTime.add(86_400, :second) |> DateTime.to_iso8601()
   end
 
+  # A machine told of a start may have counted one of its own since this machine read
+  # its starts: a partition took this machine's lock off it in between.
+  test "a start runs only if the starts the machines told of it answer still leave room",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+
+    # The watch's own review of a push, which the limits hold back; the user's ask
+    # before it counts.
+    save_settings(%{
+      "activation" => "automatic",
+      "reviewNewPushes" => true,
+      "reviewsPerAuthorPerDay" => 3
+    })
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+    assert %{"status" => "running"} = review = review()
+    assert review["threadId"] != first["threadId"]
+    peer = "hal_c2@laptop.hal-c2"
+
+    row = fn id ->
+      %{
+        "id" => id,
+        "at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "repository" => String.downcase(review["repository"]),
+        "author" => String.downcase(review["author"])
+      }
+    end
+
+    mine = Enum.find(apply(@server, :starts, []), &(&1["id"] == review["threadId"]))
+    told = fn rows -> [%{"node" => peer, "machine" => "laptop", "result" => rows}] end
+    ask = &GenServer.call(@server, {:told, @key, review["threadId"], [peer], &1})
+
+    assert ask.(told.([mine, row.("laptop-1")])) == :ok
+    assert %{"status" => "running"} = review()
+
+    assert ask.(told.([mine, row.("laptop-1"), row.("laptop-2")])) == :limited
+
+    assert %{"status" => "ready", "threadId" => nil, "limited" => %{"reason" => reason}} =
+             review()
+
+    assert reason =~ "had 3 reviews in the last day, the most the settings allow"
+    assert Enum.any?(apply(@server, :starts, []), &(&1["id"] == review["threadId"]))
+  end
+
+  # What the clients show of a held review follows whether the machines it waits on are
+  # in reach, so a machine coming back publishes it.
+  test "a review held while a machine could not hear of its start is published again once that machine is back",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    peer = "hal_c2@laptop.hal-c2"
+
+    assert GenServer.call(@server, {:told, @key, thread_id, [peer], []}) == :limited
+    assert %{"status" => "ready", "limited" => %{"apart" => [^peer]}} = review()
+
+    {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
+    send(Process.whereis(@server), {:nodeup, String.to_atom(peer)})
+
+    assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => [_ | _]}},
+                   1_000
+  end
+
   test "a review run again with the same findings is not published on what the run before showed",
        context do
     review = start_review()

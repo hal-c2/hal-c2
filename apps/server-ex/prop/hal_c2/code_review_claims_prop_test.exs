@@ -40,8 +40,12 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     ask that ends the pause still leaves a commit the laptop claimed to the laptop;
   - a review the look found starts only while the repository's daily limit has room,
     counting the reviews this machine started and those the connected laptop tells it
-    started in the last day (kept once heard, cut off or not); one over it waits as
-    ready, limited, and one the user asked for starts anyway and counts.
+    started in the last day (kept once heard, cut off or not); while the laptop cannot
+    say, cut off or restarting its plugin, only this machine's half of the limit. One
+    over it waits as ready, limited (while the laptop is cut off, for a half), and one
+    the user asked for starts anyway and counts;
+  - the laptop hears of every start this machine makes while it can say what it
+    started, before that start runs, so the two count the same starts once apart.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -180,7 +184,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # `held` (of the model): runs held at the fetch. `paused`: stopped at the agent's
   # usage limit, until the user asks for a review. `starts`: the starts this machine
   # counted toward the review limits; `peer`: the laptop's, `{id, whether within the
-  # last day}`; `merged`: the ids of those this machine took in, which it keeps.
+  # last day}`; `merged`: the ids of those this machine took in, which it keeps;
+  # `told`: how many of this machine's starts the laptop heard of.
   #
   # The plugin reviews every new head of both pull requests on its own, one at a time,
   # and keeps reviews for the user to publish. Its first look finds both at head 1.
@@ -201,7 +206,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       crashes: 0,
       starts: 0,
       peer: [],
-      merged: MapSet.new()
+      merged: MapSet.new(),
+      told: 0
     })
   end
 
@@ -327,6 +333,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       orphans: [],
       posts: m.posts,
       starts: m.starts + MapSet.size(m.merged),
+      told: m.told,
       problems: if(m.paused, do: [@paused], else: [])
     }
 
@@ -468,6 +475,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # and its plugin runs.
   defp tells?(m), do: m.laptop and not m.restarting
 
+  # A limit holds a review back for the day, or for the half of it this machine had
+  # while the laptop could not say, until the laptop is connected again.
+  defp held_back?(m, r), do: r.limited == :day or (r.limited == :apart and not m.laptop)
+
   # This machine read the laptop's claims again, told by the laptop or after a run
   # stepped back: each review this machine has not taken up at the head it saw shows
   # where the laptop has it now, and one the laptop let go of is looked at again at
@@ -526,7 +537,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       seq: nil,
       held: nil,
       # Whether the user asked for its run, which the review limits count but never
-      # hold back, and whether a limit held its start back.
+      # hold back, and whether a limit held its start back: false, `:day` for the
+      # whole limit, `:apart` for this machine's half while the laptop could not say.
       asked: false,
       limited: false
     }
@@ -582,8 +594,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         reviewed == head ->
           put_review(m, key, seen)
 
-        # A review a limit held back today waits for the user's ask.
-        seen.limited ->
+        # A review a limit held back today waits for the user's ask, or one held for the
+        # laptop until the laptop is back.
+        held_back?(m, seen) ->
           put_review(m, key, seen)
 
         true ->
@@ -618,12 +631,23 @@ defmodule HalC2.CodeReviewClaimsPropTest do
             },
             else: m
 
-        if not r.asked and m.starts + MapSet.size(m.merged) >= @per_repository,
+        limit = if tells?(m), do: @per_repository, else: div(@per_repository, 2)
+
+        if not r.asked and m.starts + MapSet.size(m.merged) >= limit,
           do:
             %{m | runs: Map.update(m.runs, key, [false], &(&1 ++ [false]))}
-            |> put_review(key, %{r | status: :ready, limited: true})
+            |> put_review(key, %{
+              r
+              | status: :ready,
+                limited: if(tells?(m), do: :day, else: :apart)
+            })
             |> pump(),
-          else: launch(%{m | starts: m.starts + 1}, key, r)
+          else:
+            launch(
+              %{m | starts: m.starts + 1, told: m.told + if(tells?(m), do: 1, else: 0)},
+              key,
+              r
+            )
 
       _ ->
         m
@@ -711,7 +735,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end)
     |> Enum.map(fn {key, r} ->
       run = if r.status in [:queued, :ready], do: nil, else: r.run
-      {key, r.status, run, r.seen, r.reviewed, r.elsewhere, r.publish_error, r.limited}
+      {key, r.status, run, r.seen, r.reviewed, r.elsewhere, r.publish_error, held_back?(m, r)}
     end)
   end
 
@@ -834,11 +858,15 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # Back: once the plugin heard, by what it publishes when it had left a review to the
-  # laptop, no longer shown out of reach, and by the laptop's own nodeup here otherwise.
+  # laptop, no longer shown out of reach, or held one while the laptop was apart, no
+  # longer shown held, and by the laptop's own nodeup here otherwise.
   def reconnect do
     node = laptop().node
     back = to_string(node)
-    on? = &match?(%{"node" => ^back}, &1["elsewhere"])
+
+    on? =
+      &(match?(%{"node" => ^back}, &1["elsewhere"]) or back in List.wrap(&1["limited"]["apart"]))
+
     {:ok, state} = get_state(Process.whereis(@server))
     left? = Enum.any?(state.reviews, fn {_, r} -> on?.(r) end)
     true = Node.connect(node)
@@ -852,7 +880,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     if left?,
       do:
         await_topic(
-          &Enum.all?(&1["reviews"], fn r -> not on?.(r) or r["elsewhere"]["away"] == false end)
+          &Enum.all?(&1["reviews"], fn r ->
+            not on?.(r) or
+              (r["elsewhere"]["away"] in [nil, false] and r["limited"]["apart"] == nil)
+          end)
         )
 
     :global.sync()
@@ -993,6 +1024,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       orphans: orphans(),
       posts: posts(),
       starts: length(apply(@server, :starts, [])),
+      told: length(:peer.call(laptop().pid, :persistent_term, :get, [:cr_peer_told, []])),
       problems: Process.put(:cr_problems, []) |> Enum.reverse()
     }
   end
@@ -1282,7 +1314,15 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     peer(<<"code-review">>, starts, []) ->
         Result = case persistent_term:get(cr_peer_restarting, false) of
             true -> restarting;
-            false -> persistent_term:get(cr_peer_starts, [])
+            false -> persistent_term:get(cr_peer_starts, []) ++ persistent_term:get(cr_peer_told, [])
+        end,
+        {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
+    peer(<<"code-review">>, count_start, [Row]) ->
+        Result = case persistent_term:get(cr_peer_restarting, false) of
+            true -> restarting;
+            false ->
+                persistent_term:put(cr_peer_told, persistent_term:get(cr_peer_told, []) ++ [Row]),
+                persistent_term:get(cr_peer_starts, []) ++ persistent_term:get(cr_peer_told, [])
         end,
         {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
     peer(_, _, _) ->
@@ -1345,6 +1385,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_rows, %{}])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_restarting, false])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_starts, []])
+    :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_told, []])
     :net_kernel.monitor_nodes(true)
     if node not in Node.list(), do: true = Node.connect(node)
     :global.sync()

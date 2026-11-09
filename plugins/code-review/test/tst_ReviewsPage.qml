@@ -38,8 +38,9 @@ Item {
         function openThread(id, environment) {
         }
 
-        // The MC's `reviews` topic says #13 by stranger is ready at `head`.
-        function publish(head) {
+        // The MC's `reviews` topic says #13 by stranger is ready at `head`, held back
+        // as `limited` says if it is.
+        function publish(head, limited) {
             listener({
                 watching: ["acme/api"],
                 unwatched: [],
@@ -52,7 +53,8 @@ Item {
                         author: "stranger",
                         status: "ready",
                         headSha: head,
-                        approved: null,
+                        approved: limited ? head : null,
+                        limited: limited ?? null,
                         untrusted: "Opened by stranger, who is not a member or collaborator of the repository."
                     }]
             });
@@ -117,6 +119,16 @@ Item {
             clickApprove();
             compare(approvals().length, 1);
             compare(approvals()[0].input.headSha, second);
+        }
+
+        // A review held for a machine out of reach waits for the machine, not a time.
+        function test_a_review_held_for_a_machine_out_of_reach_names_no_time() {
+            plugin.publish(first, {
+                reason: "laptop did not hear of this review starting.",
+                until: null,
+                apart: ["hal_c2@laptop.hal-c2"]
+            });
+            tryCompare(find("codeReviewProblem"), "text", "Held back: laptop did not hear of this review starting.");
         }
     }
 }

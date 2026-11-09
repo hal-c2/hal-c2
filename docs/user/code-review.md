@@ -64,7 +64,10 @@ yours to ask for.
 **Reviews per author a day** and **Reviews per repository a day** hold back
 reviews over the limit, across all your machines, until a day has passed since
 the first of them; the page says until when. Reviews you start yourself are
-never held back.
+never held back. While one of your machines running code review is out of
+reach, each machine counts only its share of the limits, so machines apart
+cannot each spend the whole day's allowance; the full limits are back once it
+is. If a machine is gone for good, switch it off in the cluster settings.
 
 A new review of a pull request stops the agent of the one before it if that agent
 is still working, and removes its checkout. Whatever that agent had not reported

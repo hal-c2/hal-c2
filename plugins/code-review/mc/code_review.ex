@@ -430,6 +430,10 @@ defmodule HalC2Plugins.CodeReview do
       # The reviews started in the last day, this machine's and those its peers said
       # they started, which the review limits count (`budget/1`).
       starts: loaded.starts,
+      # The other machines whose reviews count toward the limits, by node, with their
+      # labels: those heard from running the plugin, until one says it does not or
+      # leaves the cluster. A start the limits apply to waits for every one.
+      machines: loaded.machines,
       # The next look's timer, armed while none runs.
       timer: nil,
       # The process listing the review threads as the display says, while one does.
@@ -605,14 +609,25 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # Counts a start against the review limits, under the lock across the machines
-  # connected now (`budget/1`), with what the peers said they started. A review over
-  # a limit goes back to not started, and says until when.
-  def handle_call({:budget, key, thread_id, others}, _from, state) do
+  # connected now (`budget/1`), with what the peers answered they started, and
+  # answers `{:ok, row, told}`: the start to tell the machines `told` of before it
+  # runs. A review over a limit goes back to not started, and says until when.
+  #
+  # While a machine the limits count with is out of reach, or did not say what it
+  # started, each machine has its share of every limit: two machines apart know
+  # what both started before (`{:count_start, row}`), and each of them alone cannot
+  # spend more than its part of what is left.
+  def handle_call({:budget, key, thread_id, answers}, _from, state) do
+    others = for %{"result" => rows} <- answers, is_list(rows), row <- rows, do: row
     starts = merge_starts(state.starts, others)
+    machines = learn(state.machines, answers)
+    told = for %{"result" => rows, "node" => node} <- answers, is_list(rows), do: node
+    apart = Map.drop(machines, told)
+    state = %{state | starts: starts, machines: machines}
 
     case state.reviews[key] do
       %{"threadId" => ^thread_id, "status" => "running"} = review ->
-        case over_budget(state.settings, starts, review) do
+        case over_budget(state.settings, starts, review, {apart, map_size(machines) + 1}) do
           nil ->
             row = %{
               "id" => thread_id,
@@ -621,23 +636,56 @@ defmodule HalC2Plugins.CodeReview do
               "author" => String.downcase(review["author"] || "")
             }
 
-            {:reply, :ok, %{state | starts: [row | starts]} |> changed()}
+            {:reply, {:ok, row, told}, %{state | starts: [row | starts]} |> changed()}
 
           {why, until} ->
-            review =
-              Map.merge(review, %{
-                "status" => "ready",
-                "threadId" => nil,
-                "startedAt" => nil,
-                "limited" => %{"reason" => why, "until" => until}
-              })
-
-            {:reply, :limited, %{state | starts: starts} |> put(review) |> pump() |> changed()}
+            {:reply, :limited, held(state, review, why, until, apart)}
         end
 
       _ ->
-        {:reply, :limited, state}
+        {:reply, :limited, changed(state)}
     end
+  end
+
+  # The machines `told` of a start answered (`budget/1`) with the starts they know of
+  # now: it runs if all of them heard and those starts, its own aside, still leave it
+  # room. One may have counted a start of its own after a partition took this lock off
+  # it. Otherwise the start stays counted here and its review waits: for a machine
+  # that did not hear, until it is back, as it could not count the start apart.
+  def handle_call({:told, key, thread_id, told, answers}, _from, state) do
+    others = for %{"result" => rows} <- answers, is_list(rows), row <- rows, do: row
+    heard = for %{"result" => rows, "node" => node} <- answers, is_list(rows), do: node
+    state = %{state | starts: merge_starts(state.starts, others)}
+    missing = told -- heard
+
+    case state.reviews[key] do
+      %{"threadId" => ^thread_id, "status" => "running"} = review when missing != [] ->
+        apart = Map.new(missing, &{&1, state.machines[&1] || &1})
+
+        why =
+          "#{names(apart)} did not hear of this review starting, which the review limits count across your machines. Ask for the review yourself, or switch #{names(apart)} off in the cluster."
+
+        {:reply, :limited, held(state, review, why, nil, apart)}
+
+      %{"threadId" => ^thread_id, "status" => "running"} = review ->
+        apart = Map.drop(state.machines, told)
+        before = Enum.reject(state.starts, &(&1["id"] == thread_id))
+
+        case over_budget(state.settings, before, review, {apart, map_size(state.machines) + 1}) do
+          nil -> {:reply, :ok, changed(state)}
+          {why, until} -> {:reply, :limited, held(state, review, why, until, apart)}
+        end
+
+      _ ->
+        {:reply, :limited, changed(state)}
+    end
+  end
+
+  # Another machine started a review the limits count; it runs once every machine in
+  # reach knows (`budget/1`), which answers with the starts it knows of.
+  def handle_call({:count_start, row}, _from, state) do
+    state = %{state | starts: merge_starts(state.starts, [row])} |> changed()
+    {:reply, state.starts, state}
   end
 
   def handle_call({:dismiss, key, id, dismissed}, _from, state) do
@@ -1022,12 +1070,14 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  # A machine back in reach has its reviews again: they no longer show it away.
+  # A machine back in reach has its reviews again: they no longer show it away, and a
+  # review held while it was apart no longer shows the limit (`held_back?/1`).
   def handle_info({:nodeup, node}, state) do
     back = to_string(node)
 
     if Enum.any?(state.reviews, fn {_key, review} ->
-         match?(%{"node" => ^back}, review["elsewhere"])
+         match?(%{"node" => ^back}, review["elsewhere"]) or
+           back in List.wrap(get_in(review, ["limited", "apart"]))
        end),
        do: {:noreply, announce(state)},
        else: {:noreply, state}
@@ -1130,7 +1180,8 @@ defmodule HalC2Plugins.CodeReview do
       unknown_sizes: [],
       asked: %{},
       closed: [],
-      elsewhere: %{}
+      elsewhere: %{},
+      peers: []
     }
 
     case Host.projects(@id) do
@@ -1246,12 +1297,12 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # The pull requests another machine has queued or claimed at the head seen now,
-  # with which machine it is; a claim wins over a queued one.
-  defp elsewhere(%{entries: []} = found), do: found
-
+  # with which machine it is; a claim wins over a queued one. Asked even with none
+  # listed, so the machines the review limits count with are known (`learn/2`).
   defp elsewhere(found) do
     heads = Map.new(found.entries, &{&1["key"], &1["headSha"]})
-    %{found | elsewhere: seen(heads, heads |> Map.keys() |> peer_claims())}
+    answers = Host.peers(@id, :claims, [Map.keys(heads)])
+    %{found | elsewhere: seen(heads, rows(answers)), peers: answers}
   end
 
   # Where the other machines have each pull request at `heads`, a claim over a queue.
@@ -1460,6 +1511,7 @@ defmodule HalC2Plugins.CodeReview do
     do: state
 
   defp apply_look(state, found) do
+    state = %{state | machines: learn(state.machines, Map.get(found, :peers, []))}
     settings = state.settings
     label = String.trim(settings["label"] || "")
     open = MapSet.new(found.entries, & &1["key"])
@@ -1590,7 +1642,18 @@ defmodule HalC2Plugins.CodeReview do
       else: queue(state, review, trigger)
   end
 
-  defp held_back?(%{"limited" => %{"until" => until}}), do: later?(until, now())
+  # A review held while a machine was out of reach is counted again once that machine is
+  # back or out of the cluster, whatever its time says: the whole limit is there again.
+  defp held_back?(%{"limited" => %{"apart" => [_ | _] = apart} = limited}) do
+    connected = Enum.map(Node.list(), &to_string/1)
+
+    Enum.any?(apart, &(&1 not in connected and not Host.left_cluster?(@id, &1))) and
+      (limited["until"] == nil or later?(limited["until"], now()))
+  end
+
+  defp held_back?(%{"limited" => %{"until" => until}}) when is_binary(until),
+    do: later?(until, now())
+
   defp held_back?(_review), do: false
 
   # Whether `found` began before this machine's run claimed the commit of `key`.
@@ -1854,20 +1917,18 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # Counts the start under one lock across the machines connected now, with the starts
-  # each says it knows of, so of two machines starting at once both count the other's.
-  # A machine out of reach is neither asked nor locked: what it started is counted once
-  # it is back, from what it shares then.
+  # each says it knows of, so of two machines starting at once both count the other's,
+  # and runs it once each of them has it too and the starts they answered leave room.
+  # A machine out of reach is neither asked nor locked: until it is back, each machine
+  # has its share of the limits.
   defp budget(%{"key" => key, "threadId" => thread_id}) do
     :global.trans(
       {{__MODULE__, :budget}, self()},
       fn ->
-        others =
-          for %{"result" => rows} <- Host.peers(@id, :starts, []),
-              is_list(rows),
-              row <- rows,
-              do: row
-
-        server({:budget, key, thread_id, others})
+        with {:ok, row, told} <- server({:budget, key, thread_id, Host.peers(@id, :starts, [])}) do
+          answers = Host.peers(@id, :count_start, [row])
+          server({:told, key, thread_id, told, answers})
+        end
       end,
       [node() | Node.list()]
     )
@@ -2932,6 +2993,16 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   @doc false
+  # Another machine started a review the limits count (`budget/1`): the starts this
+  # machine knows of once it is counted here, or `:restarting` while the plugin runs
+  # without its server.
+  def count_start(row) do
+    GenServer.call(__MODULE__, {:count_start, row})
+  catch
+    :exit, _ -> :restarting
+  end
+
+  @doc false
   # Another machine's claims changed (`Host.peers/4` calls it on this machine).
   def claims_changed do
     if pid = Process.whereis(__MODULE__), do: send(pid, :peer_claims)
@@ -2992,10 +3063,8 @@ defmodule HalC2Plugins.CodeReview do
   # Reviews saved before claims were kept claim what they reviewed.
   defp claimed?(review), do: Map.get(review, "claimed", review["reviewedSha"] != nil)
 
-  # The other machines' rows for `keys`, each with its key and machine; a commit held
-  # behind a review queued again is a claimed row of its own.
-  defp peer_claims(keys), do: rows(Host.peers(@id, :claims, [keys]))
-
+  # The other machines' rows in their answers to `claims/1`, each with its key and
+  # machine; a commit held behind a review queued again is a claimed row of its own.
   defp rows(answers) do
     for %{"result" => rows, "machine" => machine, "node" => node} <- answers,
         is_map(rows),
@@ -3096,14 +3165,21 @@ defmodule HalC2Plugins.CodeReview do
       until = reset_at(saved["pausedUntil"])
       starts = merge_starts([], if(is_list(saved["starts"]), do: saved["starts"], else: []))
 
+      machines =
+        for {node, label} <- if(is_map(saved["machines"]), do: saved["machines"], else: %{}),
+            is_binary(label),
+            into: %{},
+            do: {node, label}
+
       %{
         reviews: reviews,
         paused_until: until,
         paused_reason: until && saved["pausedReason"],
-        starts: starts
+        starts: starts,
+        machines: machines
       }
     else
-      _ -> %{reviews: %{}, paused_until: nil, paused_reason: nil, starts: []}
+      _ -> %{reviews: %{}, paused_until: nil, paused_reason: nil, starts: [], machines: %{}}
     end
   end
 
@@ -3116,7 +3192,8 @@ defmodule HalC2Plugins.CodeReview do
         "reviews" => state.reviews,
         "pausedUntil" => state.paused_until && DateTime.to_iso8601(state.paused_until),
         "pausedReason" => state.paused_reason,
-        "starts" => state.starts
+        "starts" => state.starts,
+        "machines" => state.machines
       })
     )
 
@@ -3201,9 +3278,12 @@ defmodule HalC2Plugins.CodeReview do
     |> Enum.uniq_by(& &1["id"])
   end
 
-  # Which review limit `review` would go over, with when it has room again, or nil. The
-  # user's own asks are counted and never held back.
-  defp over_budget(settings, starts, review) do
+  # Which review limit `review` would go over, with when it has room again (nil: when
+  # the machines in `apart` are back), or nil. The user's own asks are counted and
+  # never held back. With machines apart, of the `machines` the limits count with,
+  # this one has its share of each limit (`handle_call({:budget, ...})`).
+  defp over_budget(settings, starts, review, {apart, machines}) do
+    parts = if apart == %{}, do: 1, else: machines
     author = String.downcase(review["author"] || "")
     repository = String.downcase(review["repository"] || "")
     per_author = settings["reviewsPerAuthorPerDay"] || 0
@@ -3211,27 +3291,69 @@ defmodule HalC2Plugins.CodeReview do
     by_author = Enum.filter(starts, &(&1["author"] == author))
     in_repository = Enum.filter(starts, &(&1["repository"] == repository))
 
-    over =
-      if(per_author > 0 and author != "" and length(by_author) >= per_author,
-        do: [
-          {"#{review["author"]}'s pull requests had #{length(by_author)} reviews in the last day, the most the settings allow.",
-           room_at(by_author, per_author)}
-        ],
-        else: []
-      ) ++
-        if(per_repository > 0 and length(in_repository) >= per_repository,
-          do: [
-            {"#{review["repository"]} had #{length(in_repository)} reviews in the last day, the most the settings allow.",
-             room_at(in_repository, per_repository)}
-          ],
-          else: []
-        )
+    most =
+      if parts == 1,
+        do: "the most the settings allow.",
+        else:
+          "this machine's share of what the settings allow while #{names(apart)} is out of reach."
 
-    # With both over, the one with room last says when.
+    over =
+      for {limit, counted, whose} <- [
+            {per_author, by_author, author != "" && "#{review["author"]}'s pull requests"},
+            {per_repository, in_repository, review["repository"]}
+          ],
+          limit > 0 and whose,
+          share = div(limit, parts),
+          length(counted) >= share,
+          do:
+            {"#{whose} had #{length(counted)} reviews in the last day, #{most}",
+             share > 0 && room_at(counted, share)}
+
+    # With both over, the one with room last says when; one with no room until the
+    # machines apart are back says so.
     if review["trigger"] not in ~w(user retry) and over != [] do
-      {why, at} = Enum.max_by(over, &elem(&1, 1), DateTime)
-      {why, DateTime.to_iso8601(at)}
+      case Enum.find(over, &(elem(&1, 1) == false)) do
+        {why, false} ->
+          {why, nil}
+
+        nil ->
+          {why, at} = Enum.max_by(over, &elem(&1, 1), DateTime)
+          {why, DateTime.to_iso8601(at)}
+      end
     end
+  end
+
+  # A review that goes back to not started for a review limit, saying why and until
+  # when, and which machines out of reach it waits for.
+  defp held(state, review, why, until, apart) do
+    review =
+      Map.merge(review, %{
+        "status" => "ready",
+        "threadId" => nil,
+        "startedAt" => nil,
+        "limited" => %{
+          "reason" => why,
+          "until" => until,
+          "apart" => apart |> Map.keys() |> Enum.sort()
+        }
+      })
+
+    state |> put(review) |> pump() |> changed()
+  end
+
+  defp names(machines), do: machines |> Map.values() |> Enum.sort() |> Enum.join(", ")
+
+  # The machines the limits count with, after `answers` from `Host.peers/4`: one that
+  # answered runs the plugin, one that answers it does not is forgotten, and so is one
+  # no longer in the cluster.
+  defp learn(machines, answers) do
+    answers
+    |> Enum.reduce(machines, fn
+      %{"result" => :none, "node" => node}, acc -> Map.delete(acc, node)
+      %{"node" => node, "machine" => machine}, acc -> Map.put(acc, node, to_string(machine))
+      _answer, acc -> acc
+    end)
+    |> Map.reject(fn {node, _label} -> Host.left_cluster?(@id, node) end)
   end
 
   # When fewer than `limit` of `starts` count again: a day after the start that leaves

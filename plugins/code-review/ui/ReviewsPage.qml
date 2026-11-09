@@ -146,8 +146,11 @@ Item {
             return review.publishNote;
         if (page.gated(review))
             return qsTr("%1 Approve it to review this commit.").arg(review.untrusted);
-        if (review.limited)
+        // A review held for a machine out of reach has no time: it waits for the machine.
+        if (review.limited && review.limited.until)
             return qsTr("Held back until %1: %2").arg(page.time(review.limited.until)).arg(review.limited.reason);
+        if (review.limited)
+            return qsTr("Held back: %1").arg(review.limited.reason);
         if (review.changed)
             return qsTr("Changed since its review");
         if (review.skipped)

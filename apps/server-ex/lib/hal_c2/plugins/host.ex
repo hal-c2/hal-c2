@@ -211,11 +211,12 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   Calls `function` of the plugin's MC part with `args` on every other machine of
-  the cluster connected now that runs the plugin, all at once:
-  `[%{"machine" => label, "node" => node, "result" => result}]`. A machine that
-  does not answer within `timeout`, does not run the plugin, or runs a version
-  without `function` (or without this call) is left out, as one out of reach is,
-  so a plugin that defers to its peers keeps working alone.
+  the cluster connected now, all at once:
+  `[%{"machine" => label, "node" => node, "result" => result}]`. One that does not
+  run the plugin, or runs a version without `function`, answers `:none`. A machine
+  that does not answer within `timeout`, or runs a version without this call, is
+  left out, as one out of reach is, so a plugin that defers to its peers keeps
+  working alone.
   """
   def peers(id, function, args, timeout \\ 5_000) do
     nodes = Node.list()
@@ -231,8 +232,32 @@ defmodule HalC2.Plugins.Host do
          true <- function_exported?(module, function, length(args)) do
       {:ok, %{"machine" => HalC2.Environment.label(), "result" => apply(module, function, args)}}
     else
-      _ -> :none
+      _ -> {:ok, %{"machine" => HalC2.Environment.label(), "result" => :none}}
     end
+  end
+
+  @doc """
+  Whether the machine `node` (as `peers/4` names it) is no longer one this machine
+  is clustered with: removed, switched off, or this MC's cluster is off. False when
+  the cluster does not run here, or the node is not an MC's.
+  """
+  def left_cluster?(_id, node) do
+    with ["hal_c2", host] <- node |> to_string() |> String.split("@", parts: 2),
+         pid when pid != nil <- Process.whereis(HalC2.Cluster) do
+      member = String.replace_suffix(host, ".hal-c2", "")
+
+      case HalC2.Cluster.status() do
+        %{"clustered" => true, "members" => members} ->
+          not Enum.any?(members, &(&1["id"] == member and not &1["off"]))
+
+        _ ->
+          true
+      end
+    else
+      _ -> false
+    end
+  catch
+    :exit, _ -> false
   end
 
   @doc "Whether plugin `id` was granted `permission`."
