@@ -145,6 +145,17 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert form("bun src/index.ts") == {"run_interpreter", "bun"}
   end
 
+  test "manage.py runs tests through its test command, which the form keeps" do
+    assert form("python manage.py test app") == {"run_tests", "python manage.py test"}
+    assert form("./manage.py test app.tests") == {"run_tests", "./manage.py test"}
+    assert form("python src/manage.py test app") == {"run_tests", "python src/manage.py test"}
+    assert form("python src/manage.py migrate") == {"run_interpreter", "python"}
+    assert form("./manage.py migrate") == nil
+
+    [o] = Observe.classify_command("python manage.py test app.tests.test_x")
+    assert Observe.test_labels(o) == ["app.tests.test_x"]
+  end
+
   test "a tool run by its path keeps the path in its form" do
     assert form("./gradlew test") == {"run_tests", "./gradlew test"}
     assert form("./gradlew build") == {"run_build", "./gradlew build"}

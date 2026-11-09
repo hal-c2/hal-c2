@@ -457,8 +457,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
       # A script run through its shebang keeps the spelling that ran it: its
       # interpreter is the shebang's, which may not be Python at all.
-      direct_runner_script(head, rest) ->
-        observation(call, "run_tests", form.(head), head, seg)
+      direct = direct_runner_script(head, rest) ->
+        observation(call, "run_tests", form.(direct), head, seg)
 
       base in @task_heads and hd(rest ++ [nil]) == "test" ->
         observation(call, "run_tests", form.("#{head} test"), head, seg)
@@ -498,18 +498,34 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   defp interpreter_or_script(call, head, rest, form, seg) do
     script = runner_script(rest)
 
-    if script && (script != "manage.py" or "test" in rest) do
-      observation(call, "run_tests", form.("#{head} #{script}"), head, seg)
-    else
-      observation(call, "run_interpreter", form.(head), head, seg)
+    cond do
+      script == nil ->
+        observation(call, "run_interpreter", form.(head), head, seg)
+
+      # `manage.py` runs tests only through its `test` command, which the
+      # form keeps: `python manage.py` alone runs nothing.
+      manage_py?(script) ->
+        if "test" in rest,
+          do: observation(call, "run_tests", form.("#{head} #{script} test"), head, seg),
+          else: observation(call, "run_interpreter", form.(head), head, seg)
+
+      true ->
+        observation(call, "run_tests", form.("#{head} #{script}"), head, seg)
     end
   end
 
-  # The head itself is a runner script, unless it is `manage.py` not running tests.
+  defp manage_py?(path), do: Path.basename(path) == "manage.py"
+
+  # The form of a head that is itself a runner script, or nil: `./manage.py`
+  # only through its `test` command, which the form keeps.
   defp direct_runner_script(head, rest) do
     Enum.find_value(@runner_scripts, fn script ->
-      if head == script or String.ends_with?(head, "/" <> script) or head == "./" <> script do
-        if script == "manage.py" and "test" not in rest, do: nil, else: head
+      if head == script or String.ends_with?(head, "/" <> script) do
+        cond do
+          script != "manage.py" -> head
+          "test" in rest -> "#{head} test"
+          true -> nil
+        end
       end
     end)
   end
