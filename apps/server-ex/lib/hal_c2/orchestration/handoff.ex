@@ -10,6 +10,11 @@ defmodule HalC2.Orchestration.Handoff do
   thread comes back to gets only the runs it missed. Work merged back from a fork
   arrives the same way, as a transcript prepared when it was merged.
 
+  A thread migrated from the version 1 orchestrator (`HalC2.Import.V1Thread`) keeps
+  its messages outside any run, so no transcript covers them. Until one of its runs
+  completes, a run that starts a provider thread gets that conversation as imported
+  history instead, the newest of it that fits in 32,000 characters.
+
   A thread that moved to another machine (`HalC2.ThreadMove`) continues the agent's
   carried session, keeping a transcript as its `fallback` should the copy not
   open; its first run there also tells the agent where the project now lives.
@@ -22,6 +27,8 @@ defmodule HalC2.Orchestration.Handoff do
   @finished ~w(completed interrupted failed)
   # Keeps a transcript well inside any provider's context; the newest part wins.
   @max_chars 60_000
+  @legacy_max_chars 32_000
+  @legacy_header "Imported conversation history from the previous HAL-C2 orchestrator. Use it as context; do not repeat it unless the user asks."
 
   @doc """
   How run `ordinal` starts in `provider_thread` (nil when the run creates it):
@@ -72,11 +79,19 @@ defmodule HalC2.Orchestration.Handoff do
 
     {merged, merge_changes} = merge_backs(state, transfers, driver, run_id, at)
 
+    {legacy, legacy_changes} =
+      if fork == nil and fresh,
+        do: legacy_import(state, provider_thread, driver, run_id, at),
+        else: {nil, []}
+
     %{
       fork: fork,
-      context: wrap(history, merged, moved),
+      context: wrap(history, merged, moved, legacy),
       changes:
-        Enum.reject(fork_changes ++ delta_changes ++ merge_changes ++ moved_changes, &is_nil/1)
+        Enum.reject(
+          fork_changes ++ delta_changes ++ merge_changes ++ moved_changes ++ legacy_changes,
+          &is_nil/1
+        )
     }
   end
 
@@ -344,19 +359,130 @@ defmodule HalC2.Orchestration.Handoff do
       else: text
   end
 
-  defp wrap(nil, "", nil), do: nil
-
-  defp wrap(history, merged, moved) do
+  defp wrap(history, merged, moved, legacy \\ nil) do
     [
       moved && "<moved>\n#{moved}\n</moved>",
+      legacy && "<imported_history>\n#{legacy}\n</imported_history>",
       history &&
         "<conversation_history>\nThis conversation started in another agent session. Continue from it.\n\n#{history}\n</conversation_history>",
       merged != "" &&
         "<merged_work>\nWork done in a fork of this thread, merged back here:\n\n#{merged}\n</merged_work>"
     ]
     |> Enum.filter(&is_binary/1)
-    |> Enum.join("\n\n")
+    |> case do
+      [] -> nil
+      parts -> Enum.join(parts, "\n\n")
+    end
   end
+
+  # The Node server's `shouldPrepareLegacyImportHandoff`: a version 1 thread with
+  # migrated messages and no completed run. A provider thread that already exists has
+  # been told, and an imported agent session resumes the agent's own history.
+  defp legacy_import(state, provider_thread, driver, run_id, at) do
+    thread = state |> StreamState.get("thread") |> Map.values() |> List.first() || %{}
+
+    items =
+      state
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["runId"] == nil and &1["type"] in ~w(user_message assistant_message)))
+      |> Enum.sort_by(& &1["ordinal"])
+
+    completed? = state |> StreamState.list("run") |> Enum.any?(&(&1["status"] == "completed"))
+
+    if thread["historyOrigin"] == "v1_import" and items != [] and not completed? do
+      text = legacy_summary(items)
+      id = "context-handoff:legacy:#{run_id}"
+
+      handoff =
+        Orchestration.create("context-handoff", id, %{
+          "id" => id,
+          "transferId" => nil,
+          "threadId" => thread["id"],
+          "targetRunId" => run_id,
+          "fromProviderThreadIds" => [],
+          "toProviderThreadId" =>
+            (provider_thread && provider_thread["id"]) ||
+              "provider-thread:#{driver}:#{thread["id"]}",
+          "coveredRunOrdinals" => %{"from" => 1, "to" => 1},
+          "strategy" => "manual_context",
+          "status" => "ready",
+          "summaryMessageId" => nil,
+          "summaryText" => text,
+          "createdByProviderInstanceId" => nil,
+          "createdAt" => at,
+          "updatedAt" => at
+        })
+
+      {text, [handoff]}
+    else
+      {nil, []}
+    end
+  end
+
+  @doc """
+  The imported history of a version 1 thread's messages (`makeLegacyImportSummary`):
+  a header, then the newest messages that fit in 32,000 characters. The newest one
+  that does not fit whole keeps its end, cut at a word and marked `... `.
+  """
+  def legacy_summary(items) do
+    sections =
+      for %{"type" => type} = item <- items,
+          label = %{"user_message" => "User", "assistant_message" => "Assistant"}[type],
+          do: {label, item["text"] || ""}
+
+    budget = @legacy_max_chars - String.length(@legacy_header) - 2
+
+    {selected, _} =
+      sections
+      |> Enum.reverse()
+      |> Enum.reduce_while({[], budget}, fn
+        _section, {selected, remaining} when remaining <= 0 ->
+          {:halt, {selected, remaining}}
+
+        {label, body}, {selected, remaining} ->
+          whole = "#{label}:\n#{body}"
+
+          if String.length(whole) <= remaining do
+            {:cont, {[whole | selected], remaining - String.length(whole) - 2}}
+          else
+            prefix = "#{label}:\n... "
+
+            case String.trim_leading(cut_start(body, remaining - String.length(prefix))) do
+              "" ->
+                {:cont, {selected, remaining}}
+
+              kept ->
+                cut = prefix <> kept
+                {:cont, {[cut | selected], remaining - String.length(cut) - 2}}
+            end
+          end
+      end)
+
+    Enum.join([@legacy_header | selected], "\n\n")
+  end
+
+  # The last `budget` characters of `text`, moved forward to the next whitespace when
+  # that would split a word.
+  defp cut_start(_text, budget) when budget <= 0, do: ""
+
+  defp cut_start(text, budget) do
+    start = max(String.length(text) - budget, 0)
+    rest = String.slice(text, start..-1//1)
+
+    split_word? =
+      start > 0 and not whitespace?(String.at(text, start - 1)) and
+        not whitespace?(String.at(rest, 0))
+
+    with true <- split_word?,
+         [{at, _}] <- Regex.run(~r/\s/u, rest, return: :index) do
+      binary_part(rest, at, byte_size(rest) - at)
+    else
+      _ -> rest
+    end
+  end
+
+  defp whitespace?(nil), do: false
+  defp whitespace?(char), do: String.trim(char) == ""
 
   @doc "The message a provider receives: the handed-off context, then the user's text."
   def prompt(nil, text), do: text
