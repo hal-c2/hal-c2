@@ -25,7 +25,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       long.
     * There is no grader, so the project's envelope learns from turns that ended green:
       the agent stopped on its own, the guard did not stop it, no verification after
-      its last edit failed, and it read every command after that edit whole
+      its last edit failed, and no command after that edit may have hidden a check
       (`resolved_proxy/2`).
   """
 
@@ -55,8 +55,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   @not_a_run ~r/\s(?:-h|--help|--version|--collect-only|--co|--list\S*)(?!\S)/
   # What may precede the command itself: `FOO=1 timeout 60 npm test`, and a launcher that
   # runs it in the project's environment, `uv run pytest`, `npx jest`, `bundle exec rspec`,
-  # `dotenv -e .env.local -- npx vitest run`, `mise exec -- mix test`.
-  @prefix ~r/^\s*(?:(?:\w+=\S*|time|nice|nohup|command|env|timeout(?:\s+(?:-\S+|[A-Z]+|\d\S*))+|(?:(?:uv|poetry|pipenv|pdm|hatch|rye)\s+run|npx|bunx|(?:npm|pnpm|yarn)\s+(?:exec|dlx)|bundle\s+exec|xvfb-run)(?:\s+-\S+)*|(?:dotenv|mise\s+(?:exec|x))(?:\s+(?!--(?:\s|$))\S+)*\s+--)\s+)*/
+  # `dotenv -e .env.local -- npx vitest run`, `mise exec -- mix test`. A negation or a
+  # keyword (`! pytest`, `if pytest; then`) leaves a run a run, whose status
+  # `ShellEdits.plain?/1` then calls unknown.
+  @prefix ~r/^\s*(?:(?:\w+=\S*|!|if|elif|while|until|then|else|do|time|nice|nohup|command|env|timeout(?:\s+(?:-\S+|[A-Z]+|\d\S*))+|(?:(?:uv|poetry|pipenv|pdm|hatch|rye)\s+run|npx|bunx|(?:npm|pnpm|yarn)\s+(?:exec|dlx)|bundle\s+exec|xvfb-run)(?:\s+-\S+)*|(?:dotenv|mise\s+(?:exec|x))(?:\s+(?!--(?:\s|$))\S+)*\s+--)\s+)*/
   # What only reports on the run before it: `echo "exit=$?"`, `true`, `exit 0`.
   @pipefail_on ~r/^set\s(?:.*\s)?-[a-zA-Z]*o\s+pipefail\b/
   @pipefail_off ~r/^set\s(?:.*\s)?\+[a-zA-Z]*o\s+pipefail\b/
@@ -154,8 +156,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # Whether an edit was tried after the last check ran: one that failed to apply too,
       # and one later in the check's own command (`pytest && sed -i ...`).
       unchecked: false,
-      # The last call that ran a command this did not read whole (`ShellEdits.read?/1`),
-      # whose checks it may not have heard: 0 for none.
+      # The last call that ran a command that may hide a check (`ShellEdits.hides_check?/2`):
+      # 0 for none.
       unread: 0,
       edits: 0,
       verifications: 0,
@@ -170,7 +172,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # Whether one did not: the agent cannot take one now, so none is sent again.
       refused: false,
       # The redirects that reached the agent.
-      redirects: 0
+      redirects: 0,
+      # The thread's last place when the last redirect reached the agent
+      # (`redirected/3`): a call that started there or before is the old segment's. Nil
+      # when no redirect named one.
+      since: nil
     }
   end
 
@@ -242,11 +248,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   an `&&` chain or a pipe under `pipefail`, and when every command whose status a later
   one replaces only reads, moves about, sets up or reports (`grep -rn Error src | head`,
   `cd web; npx vitest run`). Not when one that does work could have failed unseen:
-  `python repro.py 2>&1 | tail -20` exits with `tail`'s status. A heredoc's lines are the
-  input of the command that reads them, not commands of their own.
+  `python repro.py 2>&1 | tail -20` exits with `tail`'s status. Nor when the command is
+  not plain (`ShellEdits.plain?/1`): `! pytest` succeeds when the tests fail. A heredoc's
+  lines are the input of the command that reads them, not commands of their own.
   """
   def exit_status_covers(cmd) when is_binary(cmd) do
-    if String.trim(cmd) == "" do
+    if String.trim(cmd) == "" or not ShellEdits.plain?(cmd) do
       false
     else
       {pieces, pipefail} = pieces(cmd)
@@ -265,21 +272,26 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   What `cmd`'s exit status says of the test runs in it: nil when it runs none; "own"
   when it is theirs (a run is last, or followed only by `&&`, or piped under
   `pipefail`); "hidden" when a pipe, `||` or a mere report of the status replaced it;
-  "mixed" when other commands ran after, their output in the result too.
+  "mixed" when other commands ran after, their output in the result too; "unknown" when
+  the command is not plain (`ShellEdits.plain?/1`: `! pytest`, `(pytest)`, `(set -o
+  pipefail); pytest | tail`), whose status this does not scope.
   """
   def status_of_tests(cmd) when is_binary(cmd) do
     {pieces, pipefail} = pieces(cmd)
     stages = pieces |> Enum.with_index() |> Enum.filter(fn {_, i} -> rem(i, 2) == 0 end)
 
-    Enum.reduce(stages, nil, fn {stage, i}, found ->
-      if run?(stage) do
-        rest = pieces |> after_each(pipefail) |> Enum.drop(div(i, 2))
-        status = after_run(rest)
-        if found == nil or @rank[status] > @rank[found], do: status, else: found
-      else
-        found
-      end
-    end)
+    status =
+      Enum.reduce(stages, nil, fn {stage, i}, found ->
+        if run?(stage) do
+          rest = pieces |> after_each(pipefail) |> Enum.drop(div(i, 2))
+          status = after_run(rest)
+          if found == nil or @rank[status] > @rank[found], do: status, else: found
+        else
+          found
+        end
+      end)
+
+    if status != nil and not ShellEdits.plain?(cmd), do: "unknown", else: status
   end
 
   def status_of_tests(_), do: nil
@@ -354,12 +366,16 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
       true ->
         cmd = if canon == "bash", do: args["command"]
-        verifies = status_of_tests(cmd) != nil
+        status = status_of_tests(cmd)
+        # A check whose status this does not scope verifies nothing, and may have failed.
+        verifies = status not in [nil, "unknown"]
 
         g =
-          if canon == "bash" and not ShellEdits.read?(cmd),
-            do: %{g | unread: g.cum_turns},
-            else: g
+          if canon == "bash" and
+               (status == "unknown" or
+                  ShellEdits.hides_check?(cmd, Map.keys(g.whole.edit_counts))),
+             do: %{g | unread: g.cum_turns},
+             else: g
 
         g =
           cond do
@@ -405,9 +421,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   @doc """
   Whether this turn ended green, the stand-in for the grader the envelope cannot have:
-  green unless a verification after the last edit failed, or a command after it was not
-  read whole (a nested shell's script, inline code, a capped or garbled command, a
-  heredoc not placed), which may have run a check that failed unheard.
+  green unless a verification after the last edit failed, or a command after it may have
+  hidden a check (`ShellEdits.hides_check?/2`: a nested shell's script, inline code, a
+  capped or garbled command, a heredoc not placed), one that may have failed unheard.
   """
   def resolved_proxy(g, stopped_normally \\ true) do
     stopped_normally and not g.aborted and g.cum_turns != 0 and
@@ -517,7 +533,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   through `verdict/3`.
 
   `opts`: `envelope` (nil before the project has one), `thr`, `judge` (whether a judge
-  is wired), `nudge_budget` (1) and `now` (seconds, for a judge job gone stale).
+  is wired), `nudge_budget` (1), `now` (seconds, for a judge job gone stale) and
+  `started`, the call's place in the thread, given as it started. A call heard after a
+  redirect reached the agent that did not start after it (`since`), or whose place is
+  not known then, may have been under way before the agent was sent it: it counts for
+  the turn, but not for the segment after the redirect, and decides nothing.
   """
   def fold(g, name, args, result, exit_code, opts \\ []) do
     envelope = opts[:envelope]
@@ -543,9 +563,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     status = status_of_tests(cmd)
 
     exit_code =
-      if status in ["hidden", "mixed"] do
+      if status in ["hidden", "mixed", "unknown"] do
         case runner_verdict(result) do
-          nil -> if status == "hidden", do: nil, else: exit_code
+          nil -> if status in ["hidden", "unknown"], do: nil, else: exit_code
           verdict -> if verdict, do: 1, else: 0
         end
       else
@@ -553,20 +573,23 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       end
 
     failed = if exit_code == nil, do: nil, else: exit_code != 0
-    st = State.update(g.st, name, args, result, failed)
+    early = g.since != nil and not (is_integer(opts[:started]) and opts[:started] > g.since)
+    st = if early, do: g.st, else: State.update(g.st, name, args, result, failed)
     whole = State.update(g.whole, name, args, result, failed)
 
     # `State` counts the Python runners its thresholds were tuned on; the turn's other
     # test runs (`npx vitest`, `go test`) are verifications too, in what the redirect and
     # the judge are told. No rule the guard decides by reads this count.
     {st, whole} =
-      if status != nil and not Regex.match?(State.test_run_re(), cmd),
-        do: {%{st | test_runs: st.test_runs + 1}, %{whole | test_runs: whole.test_runs + 1}},
-        else: {st, whole}
+      cond do
+        status == nil or Regex.match?(State.test_run_re(), cmd) -> {st, whole}
+        early -> {st, %{whole | test_runs: whole.test_runs + 1}}
+        true -> {%{st | test_runs: st.test_runs + 1}, %{whole | test_runs: whole.test_runs + 1}}
+      end
 
     g = %{
       g
-      | st: State.fold_shell_edits(st, shell_edits),
+      | st: if(early, do: st, else: State.fold_shell_edits(st, shell_edits)),
         whole: State.fold_shell_edits(whole, shell_edits),
         cum_turns: g.cum_turns + 1
     }
@@ -574,10 +597,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     g = track(g, name, args, result, exit_code, shell_edits)
 
     # While a redirect is on its way the calls are the ones the agent made before it, so
-    # nothing is decided on them. While the turn's checks pass after its last edit, it is
-    # not stuck however it got there: the errors and repeated edits it counts are the work
-    # those checks just verified (a passing run after six failing ones at the backstop).
-    if g.aborted or g.redirecting or verified?(g),
+    # nothing is decided on them, nor on one heard after it that may have started before
+    # it. While the turn's checks pass after its last edit, it is not stuck however it got
+    # there: the errors and repeated edits it counts are the work those checks just
+    # verified (a passing run after six failing ones at the backstop).
+    if g.aborted or g.redirecting or early or verified?(g),
       do: {g, nil, nil},
       else: decide(g, envelope, thr, budget, opts)
   end
@@ -586,7 +610,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # left in the budget, and none was refused.
   defp redirect_left?(g, budget), do: g.nudges_done < budget and not g.refused
 
-  defp verified?(g), do: g.verifications > 0 and not g.last_verify_failed and not g.unchecked
+  # Whether the turn's last check passed and nothing since may have undone it: an edit, or
+  # a command that may have hidden a check (a capped one, a nested shell's) that failed.
+  defp verified?(g) do
+    g.verifications > 0 and not g.last_verify_failed and not g.unchecked and
+      not (g.unread > 0 and g.unread >= g.last_verify)
+  end
 
   defp decide(g, envelope, thr, budget, opts) do
     backstop =
@@ -686,14 +715,20 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   @doc """
   Whether the redirect sent reached the agent. One that did starts the segment after it
   with a fresh state: the agent's fair window to recover, which the calls made before it
-  are not part of. A verdict on the old segment is about the old one. One that did not
-  (the provider cannot take a message while it works) leaves the segment as it was, and
-  the next stuck call is offered a stop, whatever redirects the budget has left.
+  are not part of. `since` is the thread's last place when it did (`Host.steer/4`'s
+  receipt): a call heard later that started there or before, still under way when the
+  agent was sent it, stays out of the new segment (`fold/6`). A verdict on the old
+  segment is about the old one. One that did not (the provider cannot take a message
+  while it works) leaves the segment as it was, and the next stuck call is offered a
+  stop, whatever redirects the budget has left.
   """
-  def redirected(g, true) do
+  def redirected(g, landed, since \\ nil)
+
+  def redirected(g, true, since) do
     %{
       g
       | redirecting: false,
+        since: since,
         redirects: g.redirects + 1,
         segment: g.segment + 1,
         st: State.new(),
@@ -705,7 +740,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     }
   end
 
-  def redirected(g, false), do: %{g | redirecting: false, refused: true}
+  def redirected(g, false, _since), do: %{g | redirecting: false, refused: true}
 
   @doc "A redirect sent and taken at once, as watching decides."
   def after_nudge(g), do: g |> redirect() |> redirected(true)

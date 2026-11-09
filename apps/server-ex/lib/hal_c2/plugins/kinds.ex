@@ -358,8 +358,8 @@ defmodule HalC2.Plugins.Extension do
       `"itemId", "itemType", "tool"`, the provider's own name for the tool where it has
       one, `"title", "status"` (`"completed"`, `"failed"`, `"interrupted"` or
       `"cancelled"`), `"input", "output"` and an assistant message's `"text"`, each cut
-      to its last 4,000 characters, `"exitCode"` and, for a file change, the file's
-      `"path"`; a call a
+      to its last 4,000 characters, `"exitCode"`, `"ordinal"`, its place in the thread,
+      given as it started, and, for a file change, the file's `"path"`; a call a
       subagent of the turn's made has `"subagent" => true`, and a use of a provider's
       own tool that no thread shows as a call, such as Codex viewing an image or
       setting its goal, comes as an item of its own) and

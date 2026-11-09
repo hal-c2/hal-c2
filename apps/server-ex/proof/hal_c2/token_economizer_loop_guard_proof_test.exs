@@ -61,6 +61,11 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   #   - Leaving a judge job asked when its turn ends, when a redirect starts the next
   #     segment, or when it went stale and a new job replaces it: the judge is paid for
   #     a verdict nobody reads. Its jobs are stopped.
+  #   - Weighing every call heard after the redirect landed in the new segment: a call
+  #     already under way when the agent was sent the redirect, whose end the plugin
+  #     hears after the task's word, is judged or found stuck in the segment the agent
+  #     has not acted in yet. A call that did not start after the place the redirect
+  #     landed counts for the turn only, and decides nothing.
   @model "the turn the plugin hears; the MC's side of it is the model's environment"
   @judge "what the judge is told and how its verdict is read, below the model's stuck or productive"
   @text "the words of a redirect or a notice; the model delivers them, whatever they say"
@@ -79,7 +84,7 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
     ],
     covers: %{
       "HalC2Plugins.TokenEconomizer handle_call {:observe, _}" =>
-        ~w(hear-start hear-finish hear-other calm backstop judge mark close),
+        ~w(hear-start hear-finish hear-other calm early backstop judge mark close),
       "HalC2Plugins.TokenEconomizer handle_info {:verdict, _, _, _, _}" => ~w(verdict arrive),
       "HalC2Plugins.TokenEconomizer handle_info {:delivered, _, _, _, _}" => "steered",
       "HalC2Plugins.TokenEconomizer state :turns" => ~w(watching turn),
@@ -89,10 +94,11 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer state :tasks" => ~w(task asking drop),
       "HalC2Plugins.TokenEconomizer.learns?/2" => ~w(close taught),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.new/1" => "fresh",
-      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.fold/6" => ~w(calm backstop judge see act ask),
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.fold/6" =>
+        ~w(calm early backstop judge see act ask),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.verdict/3" => ~w(verdict arrive),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.redirect/1" => "act",
-      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.redirected/2" => ~w(steered seg),
+      "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.redirected/3" => ~w(steered seg heard),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.resolved_proxy/2" => ~w(close see),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.judge_stale_s/0" => "stale"
     },
@@ -166,8 +172,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       ]
     }
 
-  # Keyed, Reset, Once, Stale, Aimed, Told, Whole, Green, Window, Landed, Cancel.
-  @design "true, true, true, true, true, true, true, true, true, true, true"
+  # Keyed, Reset, Once, Stale, Aimed, Told, Whole, Green, Window, Landed, Cancel, Early.
+  @design "true, true, true, true, true, true, true, true, true, true, true, true"
   # After the switches: the budget, the calls each turn makes, the turns, the events the
   # feed may miss, the judge jobs that may never answer, whether one that answers may go
   # stale first, whether the judge may find a turn productive, and whether every call
@@ -177,7 +183,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
 
   # A verdict is read only in its own segment, a redirect lands only in its turn and its
   # notice only after it, a stop is offered at most once and never before the redirect
-  # landed, no judge job outlives its segment, and only a green turn heard whole teaches.
+  # landed, no call under way when it landed is weighed after it, no judge job outlives
+  # its segment, and only a green turn heard whole teaches.
   test "over two turns, with an event missed, a judge job lost and a redirect refused, the guard is safe",
        %{proof: proof} do
     refute_reachable(proof, "start(#{@design}, 1, #{@two_turns})", "unsafe", [])

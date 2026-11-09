@@ -434,8 +434,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   `HalC2.Plugins.Host.history/2`): `"itemId", "itemType", "tool"` (the provider's own
   name for the tool, where it has one), `"title", "status"` (`"completed"`, `"failed"`,
   `"interrupted"` or `"cancelled"` once it ended), `"input", "output", "text"` (an
-  assistant message's), `"exitCode", "path"`, the input, output and text cut to their
-  last #{@observed_chars} characters, a value that is not text as its JSON. A file
+  assistant message's), `"exitCode", "path"`, `"ordinal"` (its place in the thread,
+  given as it started), the input, output and text cut to their last
+  #{@observed_chars} characters, a value that is not text as its JSON. A file
   edit's output is its diff (`diffStr`), and a web call's input what it searched for or
   fetched (`patterns`); its result is heard as the call ends (`finish_item/5`), and not
   kept for history.
@@ -451,7 +452,8 @@ defmodule HalC2.Orchestration.TurnWriter do
       "output" => observed(item["output"] || nonempty(item["diffStr"])),
       "text" => if(item["type"] == "assistant_message", do: observed(item["text"])),
       "exitCode" => item["exitCode"],
-      "path" => item["fileName"]
+      "path" => item["fileName"],
+      "ordinal" => item["ordinal"]
     }
   end
 

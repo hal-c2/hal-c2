@@ -39,6 +39,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @no_stdin_flag ~r/^(?:-[vVh]|--(?:version|help|test(?:-[\w-]+)?(?:=\S*)?))$/
   # Python's own flags that hand it no code, and those that take the next word.
   @python_flag ~r/^-[bBdEhiIOqsSuvVx]+$/
+  # Flags that hand an interpreter its code (`perl -le`, `node -p`, `ruby -e`); flags whose
+  # value is attached (`ruby -Itest`, `perl -Mstrict`), which are none of them; and flags
+  # whose value is the next word (`node -r ./setup.js`, `php -d x=1`), not the program.
+  @eval_flag ~r/^-(?:-(?:eval|print|exec|command)(?:=.*)?|[A-Za-z]*[ceEp][A-Za-z]*)$/
+  @attached_value ~r/^-[IrMmWXdx]/
+  @separate_value ~w(-r --require --import --loader --experimental-loader --input-type -I -M -d -c)
   # A heredoc's delimiter, after its `<<`: `-` for `<<-`, then any word, quoted in whole
   # or part or not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`).
   @heredoc_word ~r/\A(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/u
@@ -49,9 +55,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @out [">", ">>", ">|", "&>", "&>>", "<>"]
   # The shell's words that open or close a group, a branch or a loop, before a command.
   @reserved ~w({ } ! if then else elif fi do done while until)
-  # Programs that run another, given after their own words, and the programs this reads
-  # writes off, which a wrapper is unwrapped to.
-  @wrappers ~w(sudo doas command env time nohup timeout nice ionice stdbuf chronic flock xargs find)
+  # Programs that run another, given after their own words (launchers too: `mise exec --`,
+  # `npx`, `uv run`, `poetry run`), and the programs this reads writes off, which a wrapper
+  # is unwrapped to.
+  @wrappers ~w(sudo doas command env time nohup timeout nice ionice stdbuf chronic flock xargs find
+               mise npx bunx pnpx uv uvx poetry pipenv pdm)
   @writers ~w(sed perl awk gawk tee dd sponge truncate cp mv install patch git apply_patch eval) ++
              @shells
   # The operands `find -exec` and `xargs -I` put file names in place of.
@@ -146,7 +154,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   given any flag but those it is only read with, wherever in its words (`node
   --input-type commonjs -e '...'`, `python3 -X dev -c '...'`), behind a wrapper too
   (`timeout 10 ruby -e '...'`, `find -exec perl -pe '...'`). Python's are read up to the
-  script or module it runs; the words after are that program's.
+  script or module it runs; the words after are that program's. Whatever runs it, an
+  interpreter anywhere in a command's words with an eval flag of its own after it (`pnpm
+  exec node -e '...'`), or a shell with `-c`, hands it code too.
   """
   def opaque?(cmd) when is_binary(cmd) do
     {shell, _} = cmd |> script() |> split_heredocs()
@@ -157,25 +167,260 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
       {:ok, _} ->
         {cmds, _} = commands(shell)
-        Enum.any?(bare(cmds), &runs_code?/1)
+        Enum.any?(bare(cmds), &runs_code?/1) or Enum.any?(cmds, &evals?/1)
     end
   end
 
   def opaque?(_), do: false
 
   @doc """
-  Whether this reads the whole of a shell command, so the commands it finds in it are
-  all it runs: it has the text (a command too long for a plugin to hear has none), it
-  follows every quote and escape in it as `legible?/1` does (a comment aside, which runs
-  nothing), none of its words is code this does not read (`opaque?/1`), and each heredoc
-  is placed: opened outside quotes and ended at its delimiter.
+  Whether a shell command may run a check this does not hear, or hide one's exit status,
+  so a turn must not be learned from it. Narrower than `opaque?/1`, which hides from the
+  digest anything this does not read whole: a runner with any flags (`bun test
+  --coverage`, `node --experimental-vm-modules node_modules/.bin/jest`) and a parameter
+  expansion (`${VAR}`) hide nothing. It does when its text was cut (a plugin hears none
+  of a command too long), a quote does not close, or a heredoc is not placed, so its
+  lines may be any commands; or when it runs a script this does not read: a nested
+  shell's (`bash -lc '...' || true`, `eval`), one a shell or interpreter reads from stdin
+  (`python3 <<EOF`, `... | sh`), inline code (`node -e`, `perl -le`, `deno eval`), a file
+  `written` this turn (basenames) it sources or runs with a shell (`source run.sh`), or
+  a command substitution whose own command does (`$(...)`, backticks, `<(...)`, in a
+  heredoc the shell expands too). A command run whole as `bash -lc '<script>'` is its
+  script.
   """
-  def read?(cmd) when is_binary(cmd) do
-    {shell, _, placed} = heredocs(script(cmd))
-    placed and String.trim(cmd) != "" and followed(shell) != :error and not opaque?(cmd)
+  def hides_check?(cmd, written \\ [])
+
+  def hides_check?(cmd, written) when is_binary(cmd), do: hides(script(cmd), written)
+  def hides_check?(_, _), do: true
+
+  # `hides_check?/2` of shell text as it is: a substitution's `bash -c '...'` is nested,
+  # its status not the command's.
+  defp hides(cmd, written) do
+    {shell, bodies, placed} = heredocs(cmd)
+    expanded = for {body, true} <- bodies, do: body
+
+    with true <- placed and String.trim(cmd) != "",
+         {:ok, shell} <- subst(String.to_charlist(shell), :none, [], written),
+         true <-
+           Enum.all?(expanded, &(subst(String.to_charlist(&1), :doc, [], written) != :error)),
+         {:ok, _} <- tokens(shell) do
+      {cmds, _} = commands(shell)
+      Enum.any?(cmds, &runs_script?(&1, written))
+    else
+      _ -> true
+    end
   end
 
-  def read?(_), do: false
+  @doc """
+  Whether every command in `cmd` runs at its top level, so its exit status is read as the
+  shell gives it: none negated (`! pytest`), in a subshell or a group (`( ... )`, `{ ...;
+  }`), a branch or a loop (`if pytest; then`), or in the background (`pytest &`). A
+  substitution or an expansion is a plain word. False when this cannot read the text. A
+  command run whole as `bash -lc '<script>'` is its script.
+  """
+  def plain?(cmd) when is_binary(cmd) do
+    {shell, _, placed} = cmd |> script() |> heredocs()
+
+    with true <- placed,
+         {:ok, shell} <- subst(String.to_charlist(shell), :none, [], []),
+         {:ok, toks} <- tokens(shell) do
+      {cmds, _} = commands(shell)
+
+      not Enum.any?(toks, &(&1 in ["(", ")", "&"])) and
+        not Enum.any?(cmds, &match?([word | _] when word in @reserved, &1))
+    else
+      _ -> false
+    end
+  end
+
+  def plain?(_), do: false
+
+  # A simple command's words: whether they run a script this does not read.
+  defp runs_script?(words, written) do
+    case Enum.drop_while(words, &(&1 in @reserved or Regex.match?(~r/^\w+=/, &1))) do
+      [] -> false
+      [first | args] -> runs_script?(head([first]), args, written)
+    end
+  end
+
+  defp runs_script?("eval", _, _), do: true
+
+  defp runs_script?(dot, [file | _], written) when dot in ["source", "."],
+    do: head([file]) in written
+
+  defp runs_script?("command", [flag | _], _) when flag in ["-v", "-V"], do: false
+
+  defp runs_script?(name, args, written) do
+    cond do
+      name in @shells ->
+        shell_script?(args, written)
+
+      String.starts_with?(name, "python") and Regex.match?(@interpreter, name) ->
+        not python_reads?(args)
+
+      Regex.match?(@interpreter, name) ->
+        inline?(name, args)
+
+      # `timeout 60 bash -c ...`, `find . -exec sh -c ... +`, `xargs -n1 node -e ...`.
+      name in @wrappers ->
+        case Enum.drop_while(args, &(not runner?(head([&1])))) do
+          [] -> false
+          [run | rest] -> runs_script?(head([run]), rest, written)
+        end
+
+      true ->
+        false
+    end
+  end
+
+  # A shell's words: a `-c` script, or none (it reads stdin), or a script written this turn.
+  defp shell_script?([opt, _ | rest], written) when opt in ["-o", "+o", "-O", "+O"],
+    do: shell_script?(rest, written)
+
+  defp shell_script?(["-" <> flags | rest], written),
+    do: String.contains?(flags, "c") or shell_script?(rest, written)
+
+  defp shell_script?(["+" <> _ | rest], written), do: shell_script?(rest, written)
+  defp shell_script?([file | _], written), do: head([file]) in written
+  defp shell_script?([], _), do: true
+
+  # Whether an interpreter's words hand it code: an eval flag of its own anywhere before a
+  # `--` (`-e`, `-pe`, `-c`, `--eval`, `--print`, php's `-r`, `deno eval`), whatever
+  # order its flags and their values come in, or no program and no flag that reads none,
+  # so it reads stdin. A script's own argument spelt as one hides it too, at the cost of a
+  # turn not learned.
+  defp inline?(name, args) do
+    words = Enum.take_while(args, &(&1 != "--"))
+
+    evals_inline?(name, words) or
+      (operands_of(words) == [] and not Enum.any?(words, &Regex.match?(@no_stdin_flag, &1)))
+  end
+
+  # Whether an interpreter's words up to a `--` hand it code inline.
+  defp evals_inline?(name, words) do
+    (name in ~w(deno bun) and List.first(operands_of(words)) == "eval") or
+      Enum.any?(words, &eval_flag?(name, &1))
+  end
+
+  # Whether any word of a command is an interpreter its later words hand code (Python's up
+  # to its script or module), or a shell given `-c`: whatever program runs it, unwrapped
+  # or not (`pnpm exec node -e '...'`).
+  defp evals?([word | rest]) do
+    name = head([word])
+
+    hands =
+      cond do
+        String.starts_with?(name, "python") and Regex.match?(@interpreter, name) ->
+          rest != [] and not python_reads?(rest)
+
+        Regex.match?(@interpreter, name) ->
+          evals_inline?(name, Enum.take_while(rest, &(&1 != "--")))
+
+        name in @shells ->
+          Enum.any?(rest, &Regex.match?(~r/^-[a-zA-Z]*c[a-zA-Z]*$/, &1))
+
+        true ->
+          false
+      end
+
+    hands or evals?(rest)
+  end
+
+  defp evals?([]), do: false
+
+  defp eval_flag?("php", flag), do: Regex.match?(~r/^-[A-Za-z]*[rBRE]/, flag)
+
+  defp eval_flag?(_, flag),
+    do: not Regex.match?(@attached_value, flag) and Regex.match?(@eval_flag, flag)
+
+  # The words that are not flags nor a flag's separate value (`-r ./setup.js`,
+  # `--input-type commonjs`): what may be the program.
+  defp operands_of([flag, _ | rest]) when flag in @separate_value, do: operands_of(rest)
+  defp operands_of(["-" <> _ | rest]), do: operands_of(rest)
+  defp operands_of([word | rest]), do: [word | operands_of(rest)]
+  defp operands_of([]), do: []
+
+  # The shell text with each command substitution (`$(...)`, backticks, `<(...)`,
+  # `>(...)`) and parameter expansion (`${...}`) put as one plain word; :error when a
+  # substitution's command hides a check (`hides_check?/2`), or one is left open. `quote`
+  # is the quoting context: :none, ?', ?", :ansi, or :doc for an expanded heredoc body,
+  # whose quotes are its text.
+  defp subst([], quote, acc, _) when quote in [:none, :doc],
+    do: {:ok, acc |> Enum.reverse() |> List.to_string()}
+
+  defp subst([], _, _, _), do: :error
+
+  # A line continued is one line, as `tokens/1` reads it: `a \<newline># b` is a comment.
+  defp subst([?\\, ?\n | rest], :none, acc, w), do: subst(rest, :none, acc, w)
+
+  defp subst([?\\, c | rest], quote, acc, w) when quote != ?',
+    do: subst(rest, quote, [c, ?\\ | acc], w)
+
+  defp subst([?$, ?( | rest], quote, acc, w) when quote in [:none, ?", :doc],
+    do: substitution(closing(rest, 0, :none, []), quote, acc, w)
+
+  defp subst([c, ?( | rest], :none, acc, w) when c in [?<, ?>],
+    do: substitution(closing(rest, 0, :none, []), :none, [c | acc], w)
+
+  defp subst([?` | rest], quote, acc, w) when quote in [:none, ?", :doc],
+    do: substitution(backtick(rest, []), quote, acc, w)
+
+  defp subst([?$, ?{ | rest], quote, acc, w) when quote in [:none, ?", :doc] do
+    with {inner, rest} <- brace(rest, 0, []),
+         {:ok, _} <- subst(String.to_charlist(inner), :doc, [], w) do
+      subst(rest, quote, [?_ | acc], w)
+    end
+  end
+
+  defp subst([?$, q | rest], :none, acc, w) when q in [?', ?"],
+    do: subst(rest, if(q == ?', do: :ansi, else: ?"), [q, ?$ | acc], w)
+
+  # A comment runs nothing to the end of its line, as `tokens/1` reads it: `# don't`, but
+  # not `a\ #`, whose escaped space is in the word.
+  defp subst([?# | rest], :none, acc, w) do
+    if word_start?(acc),
+      do: subst(Enum.drop_while(rest, &(&1 != ?\n)), :none, acc, w),
+      else: subst(rest, :none, [?# | acc], w)
+  end
+
+  defp subst([q | rest], :none, acc, w) when q in [?', ?"], do: subst(rest, q, [q | acc], w)
+  defp subst([?' | rest], :ansi, acc, w), do: subst(rest, :none, [?' | acc], w)
+  defp subst([q | rest], q, acc, w) when q in [?', ?"], do: subst(rest, :none, [q | acc], w)
+  defp subst([c | rest], quote, acc, w), do: subst(rest, quote, [c | acc], w)
+
+  # Whether the text read so far (reversed) ends a word: it is empty, or ends in a newline
+  # or a character that ends a word, not escaped (an even run of backslashes before it).
+  defp word_start?([]), do: true
+
+  defp word_start?([c | before]),
+    do: c in [?\n | @boundary] and rem(length(Enum.take_while(before, &(&1 == ?\\))), 2) == 0
+
+  defp substitution(:error, _, _, _), do: :error
+
+  defp substitution({inner, rest}, quote, acc, w),
+    do: if(hides(inner, w), do: :error, else: subst(rest, quote, [?_ | acc], w))
+
+  # The text before the `)` that closes a substitution, and the text after it.
+  defp closing([], _, _, _), do: :error
+  defp closing([?\\, c | rest], d, q, acc) when q != ?', do: closing(rest, d, q, [c, ?\\ | acc])
+  defp closing([?) | rest], 0, :none, acc), do: {acc |> Enum.reverse() |> List.to_string(), rest}
+  defp closing([?) | rest], d, :none, acc), do: closing(rest, d - 1, :none, [?) | acc])
+  defp closing([?( | rest], d, :none, acc), do: closing(rest, d + 1, :none, [?( | acc])
+  defp closing([q | rest], d, :none, acc) when q in [?', ?"], do: closing(rest, d, q, [q | acc])
+  defp closing([q | rest], d, q, acc), do: closing(rest, d, :none, [q | acc])
+  defp closing([c | rest], d, q, acc), do: closing(rest, d, q, [c | acc])
+
+  defp backtick([], _), do: :error
+  defp backtick([?\\, c | rest], acc) when c in ~c"`\\$", do: backtick(rest, [c | acc])
+  defp backtick([?` | rest], acc), do: {acc |> Enum.reverse() |> List.to_string(), rest}
+  defp backtick([c | rest], acc), do: backtick(rest, [c | acc])
+
+  defp brace([], _, _), do: :error
+  defp brace([?\\, c | rest], d, acc), do: brace(rest, d, [c, ?\\ | acc])
+  defp brace([?} | rest], 0, acc), do: {acc |> Enum.reverse() |> List.to_string(), rest}
+  defp brace([?} | rest], d, acc), do: brace(rest, d - 1, [?} | acc])
+  defp brace([?{ | rest], d, acc), do: brace(rest, d + 1, [?{ | acc])
+  defp brace([c | rest], d, acc), do: brace(rest, d, [c | acc])
 
   defp runs_code?(["eval" | _]), do: true
 
@@ -419,7 +664,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   """
   def split_heredocs(cmd) do
     {shell, bodies, _} = heredocs(cmd)
-    {shell, bodies}
+    {shell, Enum.map(bodies, &elem(&1, 0))}
   end
 
   # `split_heredocs/1`, and whether every heredoc is placed: each `<<` had a delimiter,
@@ -435,7 +680,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
     do: {shell, bodies, placed and quote == :none and pending == []}
 
   defp shell_lines(lines, quote, pending, shell, bodies, placed) do
-    {line, rest} = logical_line(lines)
+    {line, rest} = logical_line(lines, "", quote)
     {docs, quote, found} = heredoc_starts(String.to_charlist(line), quote, true, [], true)
     pending = pending ++ docs
 
@@ -471,7 +716,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
     case Regex.run(@heredoc_word, text) do
       [all, dash, word] ->
-        doc = {dash == "-", Regex.replace(~r/\\(.)|['"]/, word, "\\1")}
+        tag = Regex.replace(~r/\\(.)|['"]/, word, "\\1")
+        doc = {dash == "-", tag, tag == word}
         rest = text |> binary_part(byte_size(all), byte_size(text) - byte_size(all))
         heredoc_starts(String.to_charlist(rest), :none, false, [doc | docs], found)
 
@@ -495,21 +741,37 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp heredoc_starts([_ | rest], quote, _, docs, found),
     do: heredoc_starts(rest, quote, false, docs, found)
 
-  defp logical_line([line | rest]) do
-    if rest != [] and Regex.match?(~r/(?<!\\)(?:\\\\)*\\$/, line) do
-      {next, rest} = logical_line(rest)
-      {binary_part(line, 0, byte_size(line) - 1) <> next, rest}
-    else
-      {line, rest}
-    end
+  # The next line with the lines a backslash continues it into, read from inside `quote`:
+  # not in a comment (`# a \`) nor a single quote, where the backslash is text.
+  defp logical_line([line | rest], read, quote) do
+    text = read <> line
+
+    if rest != [] and continued?(String.to_charlist(text), quote, true),
+      do: logical_line(rest, binary_part(text, 0, byte_size(text) - 1), quote),
+      else: {text, rest}
   end
+
+  # Whether a line ends in a backslash that continues it; `start` as `heredoc_starts/5`'s.
+  defp continued?([?\\], quote, _) when quote in [:none, ?"], do: true
+
+  defp continued?([?\\, _ | rest], quote, _) when quote in [:none, ?", :ansi],
+    do: continued?(rest, quote, false)
+
+  defp continued?([?$, ?' | rest], :none, _), do: continued?(rest, :ansi, false)
+  defp continued?([q | rest], :none, _) when q in [?', ?"], do: continued?(rest, q, false)
+  defp continued?([?# | _], :none, true), do: false
+  defp continued?([c | rest], :none, _), do: continued?(rest, :none, c in @boundary)
+  defp continued?([?' | rest], :ansi, _), do: continued?(rest, :none, false)
+  defp continued?([q | rest], q, _), do: continued?(rest, :none, false)
+  defp continued?([_ | rest], quote, _), do: continued?(rest, quote, false)
+  defp continued?([], _, _), do: false
 
   defp read_bodies([], lines, bodies, ended), do: {bodies, lines, ended}
 
-  defp read_bodies([{dash, tag} | docs], lines, bodies, ended) do
+  defp read_bodies([{dash, tag, expands} | docs], lines, bodies, ended) do
     ends? = fn line -> if(dash, do: String.trim_leading(line, "\t"), else: line) == tag end
     {body, rest} = Enum.split_while(lines, &(not ends?.(&1)))
-    bodies = [Enum.join(body, "\n") | bodies]
+    bodies = [{Enum.join(body, "\n"), expands} | bodies]
     read_bodies(docs, Enum.drop(rest, 1), bodies, ended and rest != [])
   end
 

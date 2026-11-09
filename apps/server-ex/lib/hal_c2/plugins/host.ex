@@ -316,7 +316,10 @@ defmodule HalC2.Plugins.Host do
   a run that has ended, is being stopped, or whose provider cannot take a message while
   it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
   `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
-  also when `run_id` names no run of the thread.
+  also when `run_id` names no run of the thread. The receipt's `"ordinal"` is the
+  thread's last place then: an item heard with a higher one (`observe/2`'s
+  `"ordinal"`) started after the provider took the message, and any other may have
+  been under way before the agent was sent it.
   """
   def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
     with :ok <- permit(id, "threads:steer"),
@@ -333,6 +336,14 @@ defmodule HalC2.Plugins.Host do
         "dispatchMode" => %{"type" => "steer_active", "targetRunId" => run_id},
         "steerOnly" => true
       })
+      |> case do
+        {:ok, receipt} ->
+          last = HalC2.Streams.read(thread_id, &(HalC2.Orchestration.next_ordinal(&1) - 1))
+          {:ok, Map.put(receipt, "ordinal", last)}
+
+        refused ->
+          refused
+      end
     end
   end
 
