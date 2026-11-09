@@ -238,6 +238,8 @@ private:
   // A size picked that the MC's tab does not show yet, whether the MC is yet
   // to answer it, and which pick it was.
   QJsonObject m_pendingViewport;
+  // A newer listing showed another size while the pick waited for its answer.
+  bool m_superseded = false;
   // The tabs the MC is yet to answer a size for, and which pick: kept when the
   // page moves to another tab, so back on that one a second request waits.
   QHash<QString, int> m_outstanding;

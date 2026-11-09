@@ -554,6 +554,16 @@ struct Sut {
     RC_ASSERT(std::count_if(held.cbegin(), held.cend(), [&](const Held& call) {
                 return call.rpc.method == QLatin1String("preview.resize") && call.rpc.payload.value(QLatin1String("tabId")).toString() == page->tabId();
               }) <= 1);
+    // One report at a time for a view of a tab: a reply to a report from before the page left
+    // the tab and came back (another view) is not the answer to the one in flight, and sends
+    // nothing beside it.
+    for (const Held& call : std::as_const(held)) {
+      if (call.rpc.method != QLatin1String("preview.reportStatus")) continue;
+      RC_ASSERT(std::count_if(held.cbegin(), held.cend(), [&](const Held& other) {
+                  return other.rpc.method == QLatin1String("preview.reportStatus") && other.view == call.view &&
+                         other.rpc.payload.value(QLatin1String("tabId")) == call.rpc.payload.value(QLatin1String("tabId"));
+                }) <= 1);
+    }
     // A page waits on a size only while the MC holds it.
     if (page->resizing()) {
       RC_ASSERT(std::any_of(held.cbegin(), held.cend(), [&](const Held& call) {

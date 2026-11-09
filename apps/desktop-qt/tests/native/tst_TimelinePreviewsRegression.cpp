@@ -668,6 +668,53 @@ private slots:
     QCOMPARE(said.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString(), kPageC);
   }
 
+  // A report's answer after the page went to another tab and back was taken
+  // for the answer to the report now in flight (same tab), and sent the queued
+  // one beside it: the MC could finish at the older.
+  void aReportAnsweredAfterTheTabWasLeftAndComeBackIsNotTheOneInFlight() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA)), tab(QStringLiteral("tab-2"))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    page.report(QStringLiteral("loading"), kPageB, QString(), 0, QString(), true, false);
+    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.reportStatus")).size() == 1; }));
+    page.setTabId(QStringLiteral("tab-2"));
+    page.setTabId(QStringLiteral("tab-1"));
+    page.report(QStringLiteral("loading"), kPageB, QString(), 0, QString(), true, false);
+    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.reportStatus")).size() == 2; }));
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    f.mc.reply(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QJsonValue::Null);
+    QVERIFY(f.barrier());
+    // Only the report that was in flight; the newest still waits for its answer.
+    QCOMPARE(f.held.value(QStringLiteral("preview.reportStatus")).size(), 1);
+    f.mc.reply(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QJsonValue::Null);
+    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.reportStatus")).size() == 1; }));
+  }
+
+  // Another window's size listed before the answer to the user's own: the
+  // answer left the pick shown for good (it differs from the listed size).
+  void aNewerListingBeforeTheSizeAnswerWins() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    page.setViewport(phone().toVariantMap());
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
+    QJsonObject other = tab(QStringLiteral("tab-1"));
+    other.insert(QStringLiteral("viewport"), tablet());
+    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), other}});
+    QVERIFY(f.barrier());
+    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), phone());
+    f.mc.reply(f.held[QStringLiteral("preview.resize")].takeFirst(), QJsonValue::Null);
+    QVERIFY(f.barrier());
+    QVERIFY(!page.resizing());
+    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), tablet());
+  }
+
   // Showing another tab and coming back reset the wait on a size the MC had
   // yet to answer for this one, so a second request went out beside the first.
   void aTabShownAgainStillWaitsOnItsOutstandingSize() {

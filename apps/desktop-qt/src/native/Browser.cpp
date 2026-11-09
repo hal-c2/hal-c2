@@ -167,13 +167,16 @@ void BrowserPage::setTabId(const QString& tabId) {
   // A size picked for the old tab is not the new tab's, but its request is
   // still the MC's to answer: back on that tab, the wait is on.
   m_pendingViewport = {};
+  m_superseded = false;
   if (resizing != this->resizing()) emit resizingChanged();
   follow();
   emit tabIdChanged();
 }
 
 void BrowserPage::follow() {
-  // The reports on their way were another tab's.
+  // The reports on their way were another tab's: a new generation, so a reply
+  // that comes after the page is back on that tab is not the one in flight.
+  ++m_reports;
   m_reporting = false;
   m_reportQueued = false;
   if (!m_enrolled.isEmpty()) Browser::instance()->leave(this, m_enrolled);
@@ -223,6 +226,10 @@ void BrowserPage::refresh() {
   if (!m_pendingViewport.isEmpty() && (shown == m_pendingViewport || (resized && !resizing()))) {
     m_pendingViewport = {};
     emit viewportChanged();
+  } else if (resized && !m_pendingViewport.isEmpty()) {
+    // The newest listing shows another size: when the answer comes, that one
+    // stands, not the pick it overtook.
+    m_superseded = true;
   } else if (resized && m_pendingViewport.isEmpty()) {
     emit viewportChanged();
   }
@@ -384,8 +391,8 @@ void BrowserPage::send() {
   m_reportQueued = false;
   went(url, owner);
   const bool called = m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, owner, tabId = m_tabId, guard = QPointer<BrowserPage>(this)](ThreadPreviews::Unheard why) {
-    if (!guard || tabId != m_tabId) return;
-    if (owner == m_reports) m_reporting = false;
+    if (!guard || tabId != m_tabId || owner != m_reports) return;
+    m_reporting = false;
     if (why == ThreadPreviews::Unheard::Heard) {
       if (m_reportQueued) send();
       return;
@@ -427,6 +434,7 @@ void BrowserPage::setViewport(const QVariantMap& viewport) {
   const QString tabId = m_tabId;
   m_outstanding.insert(tabId, pick);
   m_pendingViewport = next;
+  m_superseded = false;
   emit resizingChanged();
   emit viewportChanged();
   m_previews->resizeTab(tabId, next, [this, pick, tabId, guard = QPointer<BrowserPage>(this)](const std::optional<QString>& error) {
@@ -434,10 +442,10 @@ void BrowserPage::setViewport(const QVariantMap& viewport) {
     // taken, the size picked stays shown until the MC's tab has it (its event
     // may come after the answer, or not at all).
     if (!guard || m_outstanding.value(tabId) != pick) return;
-    if (tabId == m_tabId && error) m_pendingViewport = {};
+    if (tabId == m_tabId && (error || m_superseded)) m_pendingViewport = {};
     else if (tabId == m_tabId && m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport) m_pendingViewport = {};
     settle(tabId, pick);
-    if (tabId == m_tabId && error) emit viewportChanged();
+    if (tabId == m_tabId && (error || m_superseded)) emit viewportChanged();
   });
   QTimer::singleShot(kResizeTimeoutMs, this, [this, pick, tabId] {
     if (m_outstanding.value(tabId) != pick) return;
