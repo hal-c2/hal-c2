@@ -179,7 +179,7 @@ defmodule HalC2.Mcp do
   # can trail a new thread's first turn, which would then read the environment's
   # settings over the project's, and its next turn would relaunch the session.
   defp project(thread_id) do
-    case HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] do
+    case HalC2.Streams.get(thread_id, "thread", thread_id) do
       %{"projectId" => project} -> project
       _ -> nil
     end
