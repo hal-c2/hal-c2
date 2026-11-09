@@ -836,7 +836,11 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert Enum.any?(one["items"], &(&1["tool"] == "Bash"))
 
     assert {:ok, [^two]} = Host.history("reader", thread_id, limit: 1)
-    assert {:error, _} = Host.history("reader", "thread-none")
+    assert {:error, {:gone, _}} = Host.history("reader", "thread-none")
+
+    # A deleted thread runs no more turns: it is gone, not unreadable.
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
+    assert {:error, {:gone, _}} = Host.history("reader", thread_id)
   end
 
   test "a plugin reads an older turn's calls after they went cold" do

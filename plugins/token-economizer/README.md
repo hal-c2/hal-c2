@@ -38,7 +38,10 @@ The `toolPrune` topic, and the calls `toolPrune`, `toolPruneApply` and
 `toolPruneRestore` (each taking a `projectId`, a `provider`, and tools by name to
 apply or restore just those), carry what is off, proposed and kept per project,
 with the evidence for each tool — what the plugin's page and settings show and
-drive.
+drive. Their `unresolved` lists the threads whose turns the plugin heard only in
+part and could not read back yet: while there are any, the project's new
+conversations are turned off nothing. A thread deleted or moved to another
+machine leaves that list.
 
 ## Tests
 

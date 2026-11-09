@@ -101,3 +101,10 @@ Feature: TokenEconomizer's tool pruning
     When the person opens TokenEconomizer's page
     Then the page shows "CronCreate" as off, with the evidence for it
     And the page offers to give it back
+
+  @backlog
+  Scenario: The plugin's page shows that pruning is held off while a thread's turns cannot be read back
+    Given tool pruning heard only part of a turn of a Claude thread in a project
+    And it could not read that turn back from the thread
+    When the person opens TokenEconomizer's page
+    Then the page shows that nothing is turned off for the project's new conversations until that thread is read back

@@ -762,6 +762,36 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert state.unresolved == %{}
   end
 
+  test "a segment heard in part whose thread is deleted before its turn ends no longer holds the project's pruning off",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose", "toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    state = observe(state, started(thread, "r2", p, %{}))
+
+    # The feed drops some of r2, and the project goes quiet while r2 runs on.
+    state = observe(state, started("other", "o1", p, %{"dropped" => 1, "waiting" => 0}))
+    ended("other", "o1", 1, [])
+    state = observe(state, finished("other", "o1", 1))
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    assert {nil, state} = shape(state, "other", "o2", p)
+    assert [%{"unresolved" => [^thread]}] = TokenEconomizer.prune_status(state)["projects"]
+
+    # Deleted, the thread never ends r2 here: what r2 used reaches no conversation.
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"thread", thread, %{"s" => %{"deletedAt" => "2026-11-09T00:00:00Z"}}}
+      ])
+
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, "other", "o2", p)
+    assert state.unresolved == %{}
+    assert [%{"unresolved" => []}] = TokenEconomizer.prune_status(state)["projects"]
+  end
+
   defp subagent(thread) do
     case HalC2.Streams.state(thread) |> HalC2.StreamState.list("subagent") do
       [entity] -> {:ok, entity}
