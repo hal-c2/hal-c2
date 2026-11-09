@@ -926,6 +926,38 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
+  # --- the settings' status (server.getOpenShellStatus) ------------------------------
+
+  step "the user opens the sandbox settings", context do
+    {result, _client} =
+      context.mc
+      |> Mc.connect()
+      |> Mc.call!(context.mc.environment, "server.getOpenShellStatus")
+
+    Map.put(context, :settings, result)
+  end
+
+  step "they read that OpenShell does not run on an Intel Mac", context do
+    assert %{"supported" => false, "ready" => false, "problems" => [problem]} = context.settings
+    assert problem == %{"code" => "intel-mac", "message" => Platform.problem_message("intel-mac")}
+    assert problem["message"] =~ "Apple Silicon"
+    context
+  end
+
+  step "they read that OpenShell is not installed, and how to install it", context do
+    assert %{"supported" => true, "ready" => false, "mode" => nil} = context.settings
+    assert %{"code" => "not-installed", "message" => message} = hd(context.settings["problems"])
+    assert message =~ "hal-c2-service openshell install"
+    context
+  end
+
+  step "they read that review sandboxes can run here", context do
+    assert %{"supported" => true, "ready" => true, "mode" => "external", "problems" => []} =
+             context.settings
+
+    context
+  end
+
   step "a developer starts the gateway with the dev run", context do
     assert {:ok, %{"mode" => "foreground"}} = install(context, Manifest.version(), service: false)
     assert {:ok, line} = Install.foreground_command()

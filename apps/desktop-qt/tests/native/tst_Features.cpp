@@ -395,6 +395,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("connections/connection-health.feature:Pairing fails when the system's secure storage*"),
     QStringLiteral("mc/platform/websocket-protocol.feature:A client refuses a server speaking*"),
     QStringLiteral("mc/platform/websocket-protocol.feature:A client skips an event type*"),
+    QStringLiteral("mc/platform/openshell.feature:Settings*"),
     QStringLiteral("threads/drafts.feature"),
     QStringLiteral("source-control/pull-request-list.feature"),
     QStringLiteral("source-control/agent-code-review.feature"),
