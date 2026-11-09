@@ -33,8 +33,10 @@ defmodule HalC2Plugins.TokenEconomizer do
   first message of a new provider conversation (`shape_run/2`), never into
   one under way. The `microSkills` call lists a project's facts with the
   evidence behind them; `microSkills.drop` drops one for good (it is not
-  learned again) and `microSkills.restore` lets it be learned again. The
-  `microSkills` topic carries the same listing, published as facts change.
+  learned again) and `microSkills.restore` lets it be learned again. Each
+  project's entry in that listing is published on its own topic,
+  `microSkills:<project id>`, when what it shows changes; the mode is the
+  `microSkills` setting's, which the call reports and no topic repeats.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
