@@ -86,26 +86,45 @@ defmodule HalC2.Paths do
   # sobelow_skip ["Traversal.FileModule"]
   @spec write_replace(Path.t(), iodata, non_neg_integer) :: :ok | {:error, File.posix()}
   def write_replace(path, content, mode) do
-    tmp = "#{path}.#{System.unique_integer([:positive])}.tmp"
+    write_replace(path, content, mode, for(_ <- 1..4, do: tmp_name(path)))
+  end
 
+  # A name beside `path` no other writer picks, in this OS process or another.
+  defp tmp_name(path),
+    do: "#{path}.#{Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)}.tmp"
+
+  # Writes through the first of `tmps` (names beside `path`) it can create, trying
+  # the next while one is taken. Only a file this call created is removed, and
+  # never once it was renamed into place.
+  @doc false
+  # Callers name a file in this MC's own directories.
+  # sobelow_skip ["Traversal.FileModule"]
+  def write_replace(path, content, mode, [tmp | rest]) do
     # :exclusive refuses a file, or a link, already at `tmp`.
-    result =
-      with {:ok, file} <- File.open(tmp, [:write, :exclusive, :binary]) do
-        try do
-          with :ok <- File.chmod(tmp, mode),
-               :ok <- IO.binwrite(file, content),
-               :ok <- :file.sync(file),
-               do: :ok
-        after
-          File.close(file)
-        end
-      end
+    case File.open(tmp, [:write, :exclusive, :binary]) do
+      {:ok, file} ->
+        written =
+          try do
+            with :ok <- File.chmod(tmp, mode),
+                 :ok <- IO.binwrite(file, content),
+                 :ok <- :file.sync(file),
+                 do: :ok
+          after
+            File.close(file)
+          end
 
-    with :ok <- result, :ok <- File.rename(tmp, path) do
-      :ok
-    else
+        with :ok <- written, :ok <- File.rename(tmp, path) do
+          :ok
+        else
+          error ->
+            File.rm(tmp)
+            error
+        end
+
+      {:error, :eexist} when rest != [] ->
+        write_replace(path, content, mode, rest)
+
       error ->
-        File.rm(tmp)
         error
     end
   end
