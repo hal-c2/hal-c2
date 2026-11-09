@@ -79,6 +79,50 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     replay_missed(context, title, "run-never-ran")
   end
 
+  # The feed carried the turn's start and a first look around, then lost its test runs
+  # with its end: only a sweep can close it.
+  step "the plugin heard the thread {string}'s last turn start and look around, then nothing more",
+       %{args: [title]} = context do
+    plugin = Module.concat(HalC2Plugins, TokenEconomizer)
+    thread_id = World.thread_id(context, title)
+    run_id = context |> World.runs(title) |> List.last() |> Map.fetch!("id")
+    at = %{"threadId" => thread_id, "runId" => run_id}
+
+    :ok =
+      plugin.observe(
+        Map.merge(at, %{
+          "type" => "turn.started",
+          "projectId" => project_id(context),
+          "instanceId" => @instance
+        }),
+        %{}
+      )
+
+    :ok =
+      plugin.observe(
+        Map.merge(at, %{
+          "type" => "turn.item",
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "ls",
+          "output" => "tests"
+        }),
+        %{}
+      )
+
+    context
+  end
+
+  # The sweep the plugin's timer runs, twice so a run found ended on both is dropped;
+  # `:sys.get_state/1` returns once both are handled.
+  step "the plugin sweeps twice for turns whose run has ended", context do
+    pid = Process.whereis(Module.concat(HalC2Plugins, TokenEconomizer))
+    send(pid, :sweep)
+    send(pid, :sweep)
+    assert :sys.get_state(pid).turns == %{}
+    context
+  end
+
   defp replay_missed(context, title, run_id) do
     plugin = Module.concat(HalC2Plugins, TokenEconomizer)
     thread_id = World.thread_id(context, title)

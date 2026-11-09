@@ -74,6 +74,16 @@ Feature: TokenEconomizer's micro-skills
     Then TokenEconomizer still counts the fact about "pytest" as forming
 
   @mc
+  Scenario: A turn whose end the feed lost is learned from the thread's history
+    Given micro-skills are off
+    And Claude has repaired the test command in 1 turns in the thread "Learning"
+    Then TokenEconomizer has learned nothing on the project
+    When micro-skills are on
+    And the plugin heard the thread "Learning"'s last turn start and look around, then nothing more
+    And the plugin sweeps twice for turns whose run has ended
+    Then TokenEconomizer still counts the fact about "pytest" as forming
+
+  @mc
   Scenario: A missed turn that cannot be read back teaches nothing
     Given Claude starts the thread "Quiet" with "hello"
     When the plugin is told it partly missed a turn the thread "Quiet" never ran

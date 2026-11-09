@@ -2171,7 +2171,9 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert fired(state) == 1
     end
 
-    test "a turn the sweep drops is read back whole, or learned nothing from" do
+    # The thread is read back whole (the feature's "A turn whose end the feed lost is learned
+    # from the thread's history"); here there is no thread to read, so nothing is learned.
+    test "a turn the sweep drops learns nothing from what was heard of it" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
       state = stage(state, "t", "claude-work", [@pytest])
@@ -2205,7 +2207,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       Process.cancel_timer(state.sweep)
 
       refute Map.has_key?(state.turns, "t")
-      assert state.skills["seam"] == before or fired(state) == 1
+      assert state.skills["seam"] == before
     end
 
     test "with the guard off a settings save keeps the turns learning hears" do
