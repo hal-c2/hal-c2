@@ -57,16 +57,21 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @prefix_heads ~w(sudo env time exec nice nohup timeout)
   @passthrough ~w(cd echo head tail cat sort uniq tee true printf less more)
 
-  @activate_re ~r/^(?:source|\.)\s+\S*activate\s+([\w.-]+)\s*$/
+  # Activations, kept as typed: `source .venv/bin/activate`, `. venv/bin/activate.fish`,
+  # `source /opt/conda/bin/activate proj`, `mamba activate proj`, `nvm use 20`.
+  @activate_re ~r/^(?:source|\.)\s+(?:\S*\/)?activate(?:\.\w+)?(?:\s+[\w.-]+)?\s*$/
+  @nvm_use_re ~r/^nvm\s+use(?:\s+[\w.\/-]+)?\s*$/
   @cd_re ~r/^cd\s+(['"]?)([^\s;&|'"]+)\1\s*$/
   @cd_failed_re ~r/\bcd: [^\n]*: (?:No such file or directory|Not a directory)/
-  @conda_activate_re ~r/^(?:conda|mamba)\s+activate\s+([\w.-]+)\s*$/
-  @conda_run_re ~r/^(?:conda|mamba)\s+run\s+(?:--no-capture-output\s+|--live-stream\s+)*(?:-n|--name)\s+([\w.-]+)\s+/
+  @conda_activate_re ~r/^(?:conda|mamba|micromamba)\s+activate\s+([\w.-]+)\s*$/
+  @conda_run_re ~r/^(conda|mamba|micromamba)\s+run\s+(?:--no-capture-output\s+|--live-stream\s+)*(?:-n|--name)\s+([\w.-]+)\s+/
   # `yarn run`/`pnpm run` are package scripts, not launchers: only their
   # `exec` unwraps, so the script handler still sees the run. The subcommand
   # as typed is kept: `bundle exec rspec` is not `bundle run rspec`.
   @tool_run_re ~r/^(poetry|pipenv|uv|npx|bundle)\s+(run|exec)\s+/
   @tool_exec_re ~r/^(yarn|pnpm)\s+(exec)\s+/
+  # `mise exec node@20 -- npm test`: the tools it pins are part of the form.
+  @mise_exec_re ~r/^mise\s+(?:exec|x)\s+(?:[^\s;&|]+\s+)*?--\s+/
   @npx_re ~r/^npx\s+(?:(?:--yes|-y|--no-install|--no)\s+)*/
   @tool_launch_re ~r/^(uvx|uv\s+tool\s+run|pipx\s+run)\s+/
   @interp_versioned_re ~r/^(?:python|node)\d(?:\.\d+)?$/
@@ -132,7 +137,9 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # The value must end at a boundary: `APP_SETTINGS=conf.dev,conf.extra` is
   # not the assignment `APP_SETTINGS=conf.dev`, and its prefix never ran.
   @env_prefix_re ~r/(?:^|[\s;&(])(?:export\s+)?([A-Z][A-Z0-9_]{2,})=(['"]?)([\w.\-\/:]+)\2(?=$|[\s;&|])/
-  @launcher_re ~r/^(?:conda|poetry|pipenv|uv|npx|uvx|bundle|yarn|pnpm|pipx)\s+(?:run|exec)\b/
+  @launcher_re ~r/^(?:(?:conda|mamba|micromamba|poetry|pipenv|uv|npx|uvx|bundle|yarn|pnpm|pipx)\s+(?:run|exec)|mise\s+(?:exec|x))\b/
+  # A form run inside an activation the agent typed before it.
+  @activated_re ~r/(?:^|&&\s)(?:(?:source|\.)\s|(?:conda|mamba|micromamba)\s+activate\s|nvm\s+use\b)/
   @env_incode_re ~r/os\.environ(?:\.setdefault\(\s*|\[\s*)['"]([A-Z][A-Z0-9_]{2,})['"]\s*(?:,|\]\s*=)\s*['"]([\w.\-\/:]+)['"]/
   @failed_re ~r/(?m)Traceback \(most recent call last\)|^\w*Error\b|\b[Ee]xit [Cc]ode[:=\s]+[1-9]/
   # Output that shows something failed, whatever its kind.
@@ -353,15 +360,11 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
               there -> {obs, carried, there, if(there == "", do: "", else: "cd #{there} &&")}
             end
 
-          match = Regex.run(@activate_re, seg) || Regex.run(@conda_activate_re, seg) ->
-            name = Enum.at(match, 1)
-
-            carried =
-              if String.starts_with?(seg, ["conda", "mamba"]),
-                do: "conda activate #{name} &&",
-                else: "source activate #{name} &&"
-
-            {obs, carried, here, cd}
+          activation?(seg) ->
+            # As typed: `source .venv/bin/activate` is not `source activate venv`,
+            # and `mamba` is not `conda`.
+            activation = Enum.join(String.split(seg), " ") <> " &&"
+            {obs, Enum.join(Enum.reject([carried, activation], &(&1 == "")), " "), here, cd}
 
           true ->
             prefix = Enum.join(Enum.reject([cd, carried], &(&1 == "")), " ")
@@ -395,7 +398,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
     cond do
       match = Regex.run(@conda_run_re, body) ->
-        {join.("conda run -n #{Enum.at(match, 1)}"), strip_match(body, hd(match))}
+        {join.("#{Enum.at(match, 1)} run -n #{Enum.at(match, 2)}"), strip_match(body, hd(match))}
+
+      # What it runs may itself be launched: `mise exec node@20 -- npx jest`.
+      match = Regex.run(@mise_exec_re, body) ->
+        prefixed(
+          join.(hd(match) |> String.split() |> Enum.join(" ")),
+          strip_match(body, hd(match))
+        )
 
       match = Regex.run(@tool_run_re, body) || Regex.run(@tool_exec_re, body) ->
         {join.("#{Enum.at(match, 1)} #{Enum.at(match, 2)}"), strip_match(body, hd(match))}
@@ -948,8 +958,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     head = seg |> String.split() |> List.first("") |> basename()
 
     seg == "" or head in @passthrough or head in @inert_heads or Regex.match?(@cd_re, seg) or
-      Regex.match?(@activate_re, seg) or Regex.match?(@conda_activate_re, seg)
+      activation?(seg)
   end
+
+  defp activation?(seg),
+    do:
+      Regex.match?(@activate_re, seg) or Regex.match?(@conda_activate_re, seg) or
+        Regex.match?(@nvm_use_re, seg)
 
   defp leading_assigns(text) do
     case Regex.run(@env_assign_re, text) do
@@ -980,7 +995,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
     not String.contains?(head, "/") and not String.contains?(form, " activate ") and
       not String.contains?(form, " run ") and not String.contains?(form, " exec ") and
-      not Regex.match?(@launcher_re, form) and
+      not Regex.match?(@launcher_re, form) and not Regex.match?(@activated_re, form) and
       not String.starts_with?(form, ["npx ", "uvx "])
   end
 

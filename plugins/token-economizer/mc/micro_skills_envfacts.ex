@@ -481,7 +481,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
 
   defp typed_ok?(o), do: Observe.form_worked(o) and not o.env
 
-  @run_words ~w(run exec npx uv uvx pipx poetry pipenv conda bundle yarn pnpm -m python python3)
+  @run_words ~w(run exec npx uv uvx pipx poetry pipenv conda mamba micromamba bundle yarn pnpm -m python python3)
   @script_runners ~w(npm bun)
 
   # Can `form` stand in for the failing `a_form`? Another form -- and, outside
@@ -504,10 +504,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
   # The tool a build form runs: its first word past the `cd x &&` and
   # activation prefixes and the launchers, by its basename. `./gradlew build`
   # and `gradlew build` run `gradlew`, `uv run ruff` and `.venv/bin/ruff` run
-  # `ruff`, and `npm run build` and `yarn build` both run the `build` script.
+  # `ruff`, `npm run build` and `yarn build` both run the `build` script, and
+  # `mise exec node@20 -- make build` runs `make`.
   defp build_tool(form) do
     form
     |> String.split(" && ")
+    |> List.last()
+    |> String.split(" -- ")
     |> List.last()
     |> String.split()
     |> Enum.map(&Path.basename/1)

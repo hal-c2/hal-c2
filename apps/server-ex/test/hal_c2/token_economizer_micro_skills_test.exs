@@ -123,7 +123,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
 
     # A test run its output shows ran, whatever came before it.
     assert outcomes.("source .venv/bin/activate && pytest -q", "1 failed, 3 passed", 1) ==
-             [{"pytest", "ran"}]
+             [{"source .venv/bin/activate && pytest", "ran"}]
   end
 
   test "no credential reaches a fact" do
@@ -314,11 +314,33 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert Map.keys(EnvFacts.load(saved).facts) == Enum.sort(Map.keys(saved["facts"]))
   end
 
+  test "an activation is kept as typed, so the form it ran in is not bare" do
+    for {cmd, want} <- [
+          {"source .venv/bin/activate && pytest -q", "source .venv/bin/activate && pytest"},
+          {". venv/bin/activate && python -m pytest -q",
+           ". venv/bin/activate && python -m pytest"},
+          {"source  venv/bin/activate.fish && pytest", "source venv/bin/activate.fish && pytest"},
+          {"mamba activate proj && python -m pytest", "mamba activate proj && python -m pytest"},
+          {"micromamba activate proj && pytest", "micromamba activate proj && pytest"},
+          {"mamba run -n proj pytest -q", "mamba run -n proj pytest"},
+          {"nvm use 20 && npx jest", "nvm use 20 && npx jest"},
+          {"mise exec node@20 -- npx jest", "mise exec node@20 -- npx jest"},
+          {"cd app && source .venv/bin/activate && pytest",
+           "cd app && source .venv/bin/activate && pytest"}
+        ] do
+      assert match?({_intent, ^want}, form(cmd)), "#{cmd}: #{inspect(form(cmd))}"
+      refute Observe.bare?(want), want
+    end
+
+    # Sourcing anything else is not an activation.
+    assert {_intent, "pytest"} = form("source ~/.bashrc; pytest")
+  end
+
   test "classify forms and intents" do
     assert form(
              ~s(/bin/bash -lc "source /opt/env/bin/activate proj && python -m pytest tests -q")
            ) ==
-             {"run_tests", "source activate proj && python -m pytest"}
+             {"run_tests", "source /opt/env/bin/activate proj && python -m pytest"}
 
     assert form("conda run -n proj python - <<'PY'\nimport x\nPY") ==
              {"run_interpreter", "conda run -n proj python"}
@@ -872,6 +894,24 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
                0
 
       assert render(state) |> String.trim() |> String.ends_with?("`python -m pytest …` works.")
+    end
+
+    test "a bare form that fails teaches the activation it worked in" do
+      venv = fn i ->
+        [
+          edit("pkg/f#{i}.py"),
+          bash("pytest -q", "bash: pytest: command not found", 127),
+          bash("source .venv/bin/activate && pytest -q", "4 passed in 0.01s", 0)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..3, venv))
+
+      assert state.facts["form_repair:run_tests:pytest"].params["b_counts"][
+               "source .venv/bin/activate && pytest"
+             ] > 0
+
+      assert render(state) =~ "`source .venv/bin/activate && pytest …` works."
     end
 
     test "a named form that stops working is named no more" do
