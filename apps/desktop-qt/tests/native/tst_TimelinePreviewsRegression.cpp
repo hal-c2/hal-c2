@@ -407,9 +407,11 @@ private slots:
     QSignalSpy loads(&page, &BrowserPage::loadRequested);
     page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
     page.report(QStringLiteral("loaded"), kPageC, QString(), 0, QString(), true, false);
-    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.reportStatus")).size() == 2; }));
+    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.reportStatus")).size() == 1; }));
     f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), tab(QStringLiteral("tab-1"), loadedAt(kPageB))}});
     f.mc.reply(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QJsonValue::Null);
+    // The later report goes once the first is answered.
+    QVERIFY(QTest::qWaitFor([&f] { return f.held.value(QStringLiteral("preview.reportStatus")).size() == 1; }));
     f.mc.refuse(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QStringLiteral("no"));
     QVERIFY(f.barrier());
     QCOMPARE(loads.count(), 1);
@@ -564,6 +566,131 @@ private slots:
     page.setViewport(tablet().toVariantMap());
     QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
     QVERIFY(page.resizing());
+  }
+
+  // Another window's resize while the user's own is outstanding changed the
+  // size the tab shows, which ended the wait on the MC's answer: a second pick
+  // went through, and the first's event then ended it early. The request stays
+  // outstanding until the MC answers it.
+  void anExternalResizeLeavesTheOutstandingRequestOutstanding() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    page.setViewport(phone().toVariantMap());
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
+    QJsonObject other = tab(QStringLiteral("tab-1"));
+    other.insert(QStringLiteral("viewport"), tablet());
+    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), other}});
+    QVERIFY(f.barrier());
+    QVERIFY(page.resizing());
+    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), phone());
+    // Still one at a time.
+    page.setViewport(QJsonObject{{QStringLiteral("_tag"), QStringLiteral("fill")}}.toVariantMap());
+    QVERIFY(f.barrier());
+    QCOMPARE(f.held.value(QStringLiteral("preview.resize")).size(), 1);
+    // The first request's own event does not end the wait either.
+    QJsonObject first = tab(QStringLiteral("tab-1"));
+    first.insert(QStringLiteral("viewport"), phone());
+    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 3, {{QStringLiteral("snapshot"), first}});
+    QVERIFY(f.barrier());
+    QVERIFY(page.resizing());
+    f.mc.reply(f.held[QStringLiteral("preview.resize")].takeFirst(), first);
+    QVERIFY(f.barrier());
+    QVERIFY(!page.resizing());
+    QCOMPARE(QJsonObject::fromVariantMap(page.viewport()), phone());
+  }
+
+  // A resize to the size the tab has is restamped by the MC all the same, and
+  // an event of that kind taken for the echo of a report still on its way left
+  // the report's own event, coming after the agent moved the tab on, to pull
+  // the page back to the old address.
+  void aResizeEventThatChangesNothingDoesNotTakeAnEcho() {
+    Fixture f;
+    QVERIFY(f.show());
+    QJsonObject sized = tab(QStringLiteral("tab-1"), loadedAt(kPageA));
+    sized.insert(QStringLiteral("viewport"), phone());
+    sized.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-11-09T10:00:00.000Z"));
+    QVERIFY(f.answerList(list({sized}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    QSignalSpy loads(&page, &BrowserPage::loadRequested);
+    QJsonObject atB = sized;
+    atB.insert(QStringLiteral("navStatus"), loadedAt(kPageB));
+    atB.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-11-09T10:00:01.000Z"));
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 2, {{QStringLiteral("snapshot"), atB}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 1);
+    // The page reports where it went; the MC has not taken it yet.
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    QJsonObject again = atB;
+    again.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-11-09T10:00:02.000Z"));
+    f.emitEvent(QStringLiteral("resized"), QStringLiteral("tab-1"), 3, {{QStringLiteral("snapshot"), again}});
+    QJsonObject back = sized;
+    back.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-11-09T10:00:03.000Z"));
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 4, {{QStringLiteral("snapshot"), back}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 2);
+    // The MC takes the report now: the page's own address said back.
+    QJsonObject taken = atB;
+    taken.insert(QStringLiteral("updatedAt"), QStringLiteral("2026-11-09T10:00:04.000Z"));
+    f.emitEvent(QStringLiteral("navigated"), QStringLiteral("tab-1"), 5, {{QStringLiteral("snapshot"), taken}});
+    QVERIFY(f.barrier());
+    QCOMPARE(loads.count(), 2);
+  }
+
+  // The MC takes each call in a task of its own (web/socket.ex), so two
+  // reports in flight can be applied in either order, leaving its tab at the
+  // older one (loading, after the page loaded). One goes at a time, and the
+  // newest after the answer.
+  void aReportWaitsForTheAnswerToTheLast() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1"), loadedAt(kPageA))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    page.report(QStringLiteral("loading"), kPageB, QString(), 0, QString(), true, false);
+    page.report(QStringLiteral("loaded"), kPageB, QString(), 0, QString(), true, false);
+    page.report(QStringLiteral("loaded"), kPageC, QString(), 0, QString(), true, false);
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.reportStatus")).isEmpty(); }));
+    QVERIFY(f.barrier());
+    QCOMPARE(f.held.value(QStringLiteral("preview.reportStatus")).size(), 1);
+    f.mc.reply(f.held[QStringLiteral("preview.reportStatus")].takeFirst(), QJsonValue::Null);
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.reportStatus")).isEmpty(); }));
+    QVERIFY(f.barrier());
+    // The newest only: the one in between was overtaken.
+    QCOMPARE(f.held.value(QStringLiteral("preview.reportStatus")).size(), 1);
+    const QJsonObject said = f.held.value(QStringLiteral("preview.reportStatus")).constFirst().payload;
+    QCOMPARE(said.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString(), kPageC);
+  }
+
+  // Showing another tab and coming back reset the wait on a size the MC had
+  // yet to answer for this one, so a second request went out beside the first.
+  void aTabShownAgainStillWaitsOnItsOutstandingSize() {
+    Fixture f;
+    QVERIFY(f.show());
+    QVERIFY(f.answerList(list({tab(QStringLiteral("tab-1")), tab(QStringLiteral("tab-2"))}, 1)));
+    BrowserPage page;
+    page.setPreviews(f.previews.get());
+    page.setTabId(QStringLiteral("tab-1"));
+    page.setViewport(phone().toVariantMap());
+    QVERIFY(QTest::qWaitFor([&f] { return !f.held.value(QStringLiteral("preview.resize")).isEmpty(); }));
+    page.setTabId(QStringLiteral("tab-2"));
+    QVERIFY(!page.resizing());
+    page.setTabId(QStringLiteral("tab-1"));
+    QVERIFY(page.resizing());
+    page.setViewport(tablet().toVariantMap());
+    QVERIFY(f.barrier());
+    QCOMPARE(f.held.value(QStringLiteral("preview.resize")).size(), 1);
+    QJsonObject first = tab(QStringLiteral("tab-1"));
+    first.insert(QStringLiteral("viewport"), phone());
+    f.mc.reply(f.held[QStringLiteral("preview.resize")].takeFirst(), first);
+    QVERIFY(f.barrier());
+    QVERIFY(!page.resizing());
   }
 
   // The user's close of the last tab, the list reloaded meanwhile: the MC's

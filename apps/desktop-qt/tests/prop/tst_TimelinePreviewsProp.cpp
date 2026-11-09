@@ -28,7 +28,9 @@
 // (`preview.resize`, held too): the page shows the size picked at once and
 // waits on the MC, and once every answer is in it waits on nothing and shows
 // the size the MC has; one size at a time, a pick made meanwhile is turned
-// away. A report may time out after the MC took it. The connection can go down for a while, the MC taking
+// away. A report may time out after the MC took it; the MC runs each call in a task
+// of its own, so calls are answered in any order (the page sends one report at
+// a time for that), and another window can resize the tab, maybe to the size it has. The connection can go down for a while, the MC taking
 // some of the reports on their way first: the page stays where it is (nothing
 // asks its view to load, unless its tab went and came back), and once back
 // the MC hears where it went. Nothing ever takes the page back to where its
@@ -37,6 +39,7 @@
 #include "Prop.h"
 
 #include <QAbstractItemModelTester>
+#include <QDateTime>
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -168,6 +171,7 @@ struct Sut {
   QHash<QString, QString> threadOf;
   QString epoch = QStringLiteral("epoch-1");
   qint64 revision = 0;
+  int stamps = 0;
   int opened = 0;
   QList<Held> held;
   // Whether the connected MC is on this machine.
@@ -355,6 +359,9 @@ struct Sut {
     changed.clear();
   }
 
+  // The MC restamps a tab at every change, one that changes nothing included.
+  QString stamp() { return QDateTime(QDate(2026, 11, 9), QTime(10, 0)).addMSecs(++stamps * 100).toUTC().toString(Qt::ISODateWithMs); }
+
   // A PreviewEvent to every watcher, as preview.ex emit/4.
   void emitEvent(const QJsonObject& tab, const QString& type, QJsonObject fields = {}) {
     fields.insert(QStringLiteral("type"), type);
@@ -444,6 +451,7 @@ struct Sut {
         return;
       }
       tabs[index].insert(QStringLiteral("viewport"), payload.value(QLatin1String("viewport")));
+      tabs[index].insert(QStringLiteral("updatedAt"), stamp());
       emitEvent(tabs.at(index), QStringLiteral("resized"), {{QStringLiteral("snapshot"), tabs.at(index)}});
       mc.reply(call.rpc, tabs.at(index));
       return;
@@ -542,6 +550,10 @@ struct Sut {
     }
     // The page reads its tab's row, and once every answer is in its view is
     // where the MC says (only embedded do pages show, and follow the MC).
+    // One size at a time: the MC never holds two of the page's resizes.
+    RC_ASSERT(std::count_if(held.cbegin(), held.cend(), [&](const Held& call) {
+                return call.rpc.method == QLatin1String("preview.resize") && call.rpc.payload.value(QLatin1String("tabId")).toString() == page->tabId();
+              }) <= 1);
     // A page waits on a size only while the MC holds it.
     if (page->resizing()) {
       RC_ASSERT(std::any_of(held.cbegin(), held.cend(), [&](const Held& call) {
@@ -551,7 +563,14 @@ struct Sut {
     // Away from the MC, nothing takes the page anywhere, and what it shows is
     // what the MC said last, not what it has now.
     // A size picked and unanswered is the one shown, whatever else was picked since.
-    if (page->resizing()) RC_ASSERT(QJsonObject::fromVariantMap(page->viewport()) == lastPick);
+    // (or, another window having resized the tab since the pick landed, the size the MC has).
+    if (page->resizing()) {
+      const int at = indexOf(page->tabId());
+      QJsonObject size = at < 0 ? QJsonObject() : tabs.at(at).value(QLatin1String("viewport")).toObject();
+      if (size.isEmpty()) size = {{QStringLiteral("_tag"), QStringLiteral("fill")}};
+      const QJsonObject shown = QJsonObject::fromVariantMap(page->viewport());
+      RC_ASSERT(shown == lastPick || shown == size);
+    }
     RC_ASSERT(pulledWhileDown.isEmpty());
     RC_ASSERT(pulledBack.isEmpty());
     if (down) return;
@@ -738,13 +757,9 @@ struct Answer : Step {
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override {
     if (sut.held.isEmpty()) return;
-    int index = at % int(sut.held.size());
-    // The page's reports reach the MC in the order they were sent (one socket,
-    // one reader): an answer to a later one never comes before an earlier's.
-    if (sut.held.at(index).rpc.method == QLatin1String("preview.reportStatus")) {
-      index = int(std::find_if(sut.held.cbegin(), sut.held.cend(), [](const Sut::Held& call) { return call.rpc.method == QLatin1String("preview.reportStatus"); }) -
-                  sut.held.cbegin());
-    }
+    // Any held call, a report included: the MC runs each call in a task of
+    // its own (web/socket.ex), so reports are applied and answered in any order.
+    const int index = at % int(sut.held.size());
     sut.answer(index, ok);
   }
   void show(std::ostream& os) const override { os << "Answer(" << at << (ok ? "" : ", refused") << ")"; }
@@ -788,6 +803,26 @@ struct McNavigate : Step {
     sut.emitEvent(sut.tabs.at(at), QStringLiteral("navigated"), {{QStringLiteral("snapshot"), sut.tabs.at(at)}});
   }
   void show(std::ostream& os) const override { os << "McNavigate(" << tab.toStdString() << ", " << url.toStdString() << ", " << title.toStdString() << ")"; }
+};
+
+// Another window (or an agent) resizes a tab, maybe to the size it has: the
+// MC restamps it and says so all the same. This is no news about the tab's
+// page, and not the end of a size the user's page is waiting on.
+struct McResize : Step {
+  QString tab = pick(kTabs);
+  int size = *rc::gen::inRange(0, 3);
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const override {
+    const int at = sut.indexOf(tab);
+    if (at < 0) return;
+    const QJsonObject viewport = size == 0   ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("fill")}}
+                                 : size == 1 ? QJsonObject{{QStringLiteral("_tag"), QStringLiteral("freeform")}, {QStringLiteral("width"), 800}, {QStringLiteral("height"), 600}}
+                                             : QJsonObject{{QStringLiteral("_tag"), QStringLiteral("freeform")}, {QStringLiteral("width"), 500}, {QStringLiteral("height"), 800}};
+    sut.tabs[at].insert(QStringLiteral("viewport"), viewport);
+    sut.tabs[at].insert(QStringLiteral("updatedAt"), sut.stamp());
+    sut.emitEvent(sut.tabs.at(at), QStringLiteral("resized"), {{QStringLiteral("snapshot"), sut.tabs.at(at)}});
+  }
+  void show(std::ostream& os) const override { os << "McResize(" << tab.toStdString() << ", " << size << ")"; }
 };
 
 // A tab's page does not load.
@@ -899,7 +934,7 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<SetThread, SetActive, SetPage, PageGo, PageResize, PageResize, Reload, UserClose, UserNewTab,
                                                          OpenLink, OpenLink, SetHere, Answer, Answer, AnswerAll, McOpen, McOpen,
-                                                         McNavigate, McNavigate, McFail, McClose, McRestart, McDown, McDown, McUp, McUp>());
+                                                         McNavigate, McNavigate, McResize, McResize, McFail, McClose, McRestart, McDown, McDown, McUp, McUp>());
     }));
   }
 };

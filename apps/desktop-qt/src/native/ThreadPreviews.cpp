@@ -492,6 +492,7 @@ void ThreadPreviews::reload() {
                    }
                    m_epoch = list.value(QLatin1String("serverEpoch")).toString();
                    m_revision = list.value(QLatin1String("revision")).toInteger(-1);
+                   m_lastEvent.clear();
                    // What changed while the list was on its way, if the list is older: a tab already gone does not come back.
                    bool restarted = false;
                    for (const QJsonObject& event : std::exchange(m_early, {})) {
@@ -579,9 +580,11 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
     // A visit when the tab loads a page, not when the tab showing it is
     // resized or its back and forward change (the MC restamps those too).
     const bool loaded = !before || loadedUrl(*before) != loadedUrl(*next);
+    m_lastEvent.insert(tabId, event.value(QLatin1String("type")).toString());
     upsert(*next);
     remember({*next}, loaded);
   } else {
+    m_lastEvent.remove(tabId);
     remove(tabId);
   }
   // A tab someone opened just now (an agent, another window), not one listed.
@@ -608,8 +611,8 @@ QJsonObject ThreadPreviews::tab(const QString& tabId) const {
   return row < 0 ? QJsonObject() : m_rows.at(row);
 }
 
-void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void(Unheard)> unheard) {
-  if (rowOf(tabId) < 0 || m_thread.isEmpty() || m_closing.contains(tabId)) return;
+bool ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void(Unheard)> unheard) {
+  if (rowOf(tabId) < 0 || m_thread.isEmpty() || m_closing.contains(tabId)) return false;
   // The MC's event says it back.
   m_client->call(this, m_environment, QStringLiteral("preview.reportStatus"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread},
@@ -618,7 +621,8 @@ void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, 
                              {QStringLiteral("canGoBack"), canGoBack},
                              {QStringLiteral("canGoForward"), canGoForward}},
                  [this, unheard](const QJsonValue&, const std::optional<QString>& error) {
-                   if (!error || !unheard) return;
+                   if (!unheard) return;
+                   if (!error) return unheard(Unheard::Heard);
                    // Only "not connected" (McClient had no socket) proves the MC
                    // never had it. A connection that went with it written, a
                    // cluster member that could not be reached, a failed erpc and a
@@ -634,6 +638,7 @@ void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, 
                    }
                    unheard(Unheard::Refused);
                  });
+  return true;
 }
 
 void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done) {

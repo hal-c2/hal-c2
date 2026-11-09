@@ -156,7 +156,16 @@ private slots:
   // A person's size pick still outstanding made the page ignore the agent's
   // resize, and the host waited on a size that never came until the agent's
   // own wait ran out. It now refuses at once, and takes the resize after.
+  void aResizeDuringAPendingPickIsRefusedAtOnce_data() {
+    QTest::addColumn<QJsonObject>("input");
+    QTest::newRow("freeform") << QJsonObject{{QStringLiteral("mode"), QStringLiteral("freeform")}, {QStringLiteral("width"), 390}, {QStringLiteral("height"), 844}};
+    QTest::newRow("preset") << QJsonObject{{QStringLiteral("mode"), QStringLiteral("preset")}, {QStringLiteral("preset"), QStringLiteral("iphone-se")}};
+    // Fill is a resize too: it was reported as done while the page stayed device-sized.
+    QTest::newRow("fill") << QJsonObject{{QStringLiteral("mode"), QStringLiteral("fill")}};
+  }
+
   void aResizeDuringAPendingPickIsRefusedAtOnce() {
+    QFETCH(QJsonObject, input);
     FakeMc mc;
     QString connection;
     mc.onShape(QStringLiteral("previewAutomation"), [&](int id, const QJsonObject&) {
@@ -196,9 +205,7 @@ private slots:
                                        {QStringLiteral("tabId"), kTab},
                                        {QStringLiteral("tabIdExplicit"), true},
                                        {QStringLiteral("operation"), QStringLiteral("resize")},
-                                       {QStringLiteral("input"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("freeform")},
-                                                                             {QStringLiteral("width"), 390},
-                                                                             {QStringLiteral("height"), 844}}},
+                                       {QStringLiteral("input"), input},
                                        {QStringLiteral("timeoutMs"), 60000}}}}}});
     QTRY_VERIFY_WITH_TIMEOUT(response.contains(QLatin1String("ok")), 3000);
     QCOMPARE(response.value(QLatin1String("ok")).toBool(), false);

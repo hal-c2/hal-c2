@@ -145,7 +145,7 @@ public:
   QString status() const;
   bool exists() const { return !m_tab.isEmpty(); }
   QVariantMap viewport() const;
-  bool resizing() const { return m_resizing; }
+  bool resizing() const { return m_outstanding.contains(m_tabId); }
   qreal zoom() const { return m_zoom; }
   void setZoom(qreal zoom);
   QString appearance() const { return m_appearance; }
@@ -210,7 +210,8 @@ private:
   // The report `owner` will not be said back: its echoes go, the rest stay.
   void forget(const QString& url, quint64 owner);
   void send();
-  void setPending(const QJsonObject& viewport, bool waiting);
+  // The wait on tab `tabId`'s pick `pick` is over, if it is still the one waited on.
+  void settle(const QString& tabId, int pick);
 
   QPointer<ThreadPreviews> m_previews;
   QString m_tabId;
@@ -231,10 +232,15 @@ private:
   // The last report never reached the MC (the connection was down): it goes
   // again once the MC lists the tabs, unless its tab has moved on since.
   bool m_unsent = false;
+  // A report is on its way to the MC, and a newer one waits for its answer.
+  bool m_reporting = false;
+  bool m_reportQueued = false;
   // A size picked that the MC's tab does not show yet, whether the MC is yet
   // to answer it, and which pick it was.
   QJsonObject m_pendingViewport;
-  bool m_resizing = false;
+  // The tabs the MC is yet to answer a size for, and which pick: kept when the
+  // page moves to another tab, so back on that one a second request waits.
+  QHash<QString, int> m_outstanding;
   int m_viewportPick = 0;
   qreal m_zoom = 1.0;
   QString m_appearance = QStringLiteral("system");
