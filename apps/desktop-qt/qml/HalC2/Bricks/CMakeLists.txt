@@ -187,6 +187,8 @@ set(hal_c2_bricks_qml_files
     js/markdown.js
     BrowserPanel.qml
     BrowserDevicesView.qml
+    BrowserDeviceToolbar.qml
+    BrowserResizeHandles.qml
     DevicesPicker.qml
     AgentCue.qml
     js/browser.js

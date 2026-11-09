@@ -29,6 +29,13 @@ void trace(QNetworkRequest& request, const QString& traceId) {
 
 }  // namespace
 
+// How an unreachable cluster member is told to the user: "<name> is not connected."
+static const QString kUnreachableSuffix = QStringLiteral(" is not connected.");
+
+bool McClient::unreachable(const QString& error) {
+  return error.endsWith(kUnreachableSuffix);
+}
+
 McClient::McClient(QObject* parent) : QObject(parent) {
   m_retryTimer.setSingleShot(true);
   connect(&m_retryTimer, &QTimer::timeout, this, &McClient::connectSocket);
@@ -605,7 +612,7 @@ void McClient::onMessage(const QString& text) {
         const QString environment = call.environment.isEmpty() ? m_environment : call.environment;
         QString name = m_names ? m_names(environment) : QString();
         if (name.isEmpty()) name = environment;
-        error = QStringLiteral("%1 is not connected.").arg(name);
+        error = QStringLiteral("%1%2").arg(name, kUnreachableSuffix);
       }
       reply(frame.value(QLatin1String("detail")), error);
     }

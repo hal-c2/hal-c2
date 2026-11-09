@@ -20,10 +20,15 @@ defmodule HalC2.Test.DevServer do
   @socket [:binary, active: false, reuseaddr: true, packet: :raw]
 
   @doc "An echo server on `ip` at `port` (0 for a free one)."
-  def echo(ip, port, owner), do: hold(owner, fn -> echo_listen(ip, port, owner) end)
+  def echo(ip, port, owner),
+    do: unreserved(port, fn -> hold(owner, fn -> echo_listen(ip, port, owner) end) end)
 
   @doc "An HTTP server with a websocket echo on `ip` at `port` (0 for a free one)."
   def websocket(ip, port, owner) do
+    unreserved(port, fn -> websocket_hold(ip, port, owner) end)
+  end
+
+  defp websocket_hold(ip, port, owner) do
     hold(owner, fn ->
       {:ok, server} =
         Bandit.start_link(
@@ -111,6 +116,24 @@ defmodule HalC2.Test.DevServer do
   def down(watcher) do
     send(watcher, {:reason, self()})
     receive(do: ({:reason, reason} -> reason))
+  end
+
+  # A port the OS picks at one address can be one this MC holds, or held, at another:
+  # the cluster tests' distribution listens at 127.0.0.1, and a forward refuses the MC's
+  # own ports by number (`HalC2.PreviewForward.Grant.reserved/0`). Each server passed
+  # over stays up until one is kept, so the OS cannot hand its port back.
+  defp unreserved(0, start), do: pick(start, [])
+  defp unreserved(_port, start), do: start.()
+
+  defp pick(start, passed) do
+    {port, server} = start.()
+
+    if port in HalC2.PreviewForward.Grant.reserved() do
+      pick(start, [server | passed])
+    else
+      Enum.each(passed, &stop/1)
+      {port, server}
+    end
   end
 
   # Runs `start` in a process of its own that outlives the caller (an `:erpc`
