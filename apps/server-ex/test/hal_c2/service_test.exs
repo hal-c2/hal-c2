@@ -4,6 +4,7 @@ defmodule HalC2.ServiceTest do
 
   alias HalC2.Service
   alias HalC2.Test.Storage
+  alias HalC2.Test.SystemdUnit
 
   @moduletag :tmp_dir
 
@@ -124,6 +125,18 @@ defmodule HalC2.ServiceTest do
     {sub.durable.dir, HalC2.Subprocess.os_pid(sub)}
   end
 
+  # systemd reads a single quote as a quote in Environment= and ExecStart=, as it
+  # does a double one, so a value with only an apostrophe in it is quoted too.
+  describe "unit_value/2" do
+    test "a value with an apostrophe reads back as written" do
+      for value <- ["/home/o'brien/hal-c2", "it's", "'", "a'b'c"] do
+        assert SystemdUnit.exec(Service.unit_value(value, :exec)) == [value]
+        assert SystemdUnit.env("X=" <> Service.unit_value(value, :env)) == {"X", value}
+        assert SystemdUnit.path(Service.unit_value(value, :path)) == value
+      end
+    end
+  end
+
   describe "uninstall" do
     setup %{tmp_dir: dir} do
       Application.put_env(:hal_c2, :durable_programs, true)
@@ -157,6 +170,28 @@ defmodule HalC2.ServiceTest do
 
       {:ok, %{"unitPath" => path}} = Service.install()
       assert String.ends_with?(path, ".plist")
+      {service_dir, service_pid} = kept_program("t1")
+      Application.put_env(:hal_c2, :home, other)
+
+      assert {:ok, "Background service removed."} = Service.command(["uninstall"])
+      refute File.exists?(service_dir)
+      assert HalC2.Subprocess.Orphans.gone?(service_pid)
+    end
+
+    # systemd expands `%` in a unit's log path; uninstall reads the home back from it.
+    test "finds a home with systemd's special characters in its path",
+         %{tmp_dir: dir, other: other} do
+      Application.put_env(:hal_c2, :home, Path.join(dir, "mc %i dir"))
+      {:ok, %{"unitPath" => path}} = Service.install()
+      unit = File.read!(path)
+
+      for key <- ["StandardOutput", "StandardError"] do
+        assert ["append:" <> log] = SystemdUnit.values(unit, key)
+
+        assert SystemdUnit.path(log) ==
+                 Path.join([HalC2.Paths.state_dir(), "logs", "boot-service.log"])
+      end
+
       {service_dir, service_pid} = kept_program("t1")
       Application.put_env(:hal_c2, :home, other)
 

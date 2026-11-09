@@ -256,7 +256,7 @@ defmodule HalC2.Service do
   def uninstall do
     with manager when manager != nil <- manager() || {:error, unsupported()},
          units = installed(manager),
-         homes = Enum.map(units, fn {_name, path} -> unit_state(path) end),
+         homes = Enum.map(units, fn {_name, path} -> unit_state(manager, path) end),
          :ok <- remove(manager, units) do
       # Only a removed service's programs: an MC in the foreground keeps its own.
       for state when is_binary(state) <- homes,
@@ -271,11 +271,14 @@ defmodule HalC2.Service do
   # server wrote, neither of which kept programs through a restart, so it has none to
   # stop. The path is one `installed/1` built under the user's home, never a caller's.
   # sobelow_skip ["Traversal.FileModule"]
-  defp unit_state(path) do
+  defp unit_state(manager, path) do
     case Regex.run(
            ~r{(?:StandardOutput=append:|<key>StandardOutPath</key>\s*<string>)([^\n<]+)/logs/boot-service\.log},
            File.read!(path)
          ) do
+      [_, dir] when manager == :systemd ->
+        String.replace(dir, "%%", "%")
+
       [_, dir] ->
         dir
         |> String.replace("&lt;", "<")
@@ -345,10 +348,12 @@ defmodule HalC2.Service do
   end
 
   # A systemd that cannot run user services, or cannot say whether this user may
-  # linger, is refused; lingering that is only switched off is switched on.
-  defp prerequisites(:launchd), do: :ok
+  # linger, is refused; lingering that is only switched off is switched on. The
+  # OpenShell gateway's unit (`HalC2.OpenShell.Service`) needs the same.
+  @doc false
+  def prerequisites(:launchd), do: :ok
 
-  defp prerequisites(:systemd) do
+  def prerequisites(:systemd) do
     problems = systemd_problems(false)
 
     cond do
@@ -371,7 +376,8 @@ defmodule HalC2.Service do
 
   # `{:ok, trimmed output}` when a read-only question to the service manager
   # succeeded, `:error` otherwise.
-  defp probe(exe, args) do
+  @doc false
+  def probe(exe, args) do
     with path when is_binary(path) <- executable(exe),
          {out, 0} <- System.cmd(path, args) do
       {:ok, String.trim(out)}
@@ -382,7 +388,8 @@ defmodule HalC2.Service do
 
   # --- platform ----------------------------------------------------------------------
 
-  defp manager do
+  @doc false
+  def manager do
     case Application.get_env(:hal_c2, :service_platform) || :os.type() do
       {:unix, :linux} -> :systemd
       {:unix, :darwin} -> :launchd
@@ -392,7 +399,8 @@ defmodule HalC2.Service do
 
   defp unsupported, do: "Background services are supported on Linux (systemd) and macOS only."
 
-  defp user_home, do: Application.get_env(:hal_c2, :service_user_home) || System.user_home!()
+  @doc false
+  def user_home, do: Application.get_env(:hal_c2, :service_user_home) || System.user_home!()
 
   defp name(:systemd), do: @unit
   defp name(:launchd), do: @label
@@ -443,7 +451,8 @@ defmodule HalC2.Service do
   defp deactivate(:launchd, label),
     do: [{"launchctl", ["bootout", "gui/#{uid()}/#{label}"], :ignore}]
 
-  defp uid do
+  @doc false
+  def uid do
     {out, 0} = System.cmd("id", ["-u"])
     String.trim(out)
   end
@@ -458,7 +467,7 @@ defmodule HalC2.Service do
 
   defp render(:systemd) do
     {argv, cwd} = program()
-    log = log_path()
+    log = unit_value(log_path(), :path)
 
     Enum.join(
       List.flatten([
@@ -469,11 +478,11 @@ defmodule HalC2.Service do
         "",
         "[Service]",
         "Type=simple",
-        "WorkingDirectory=#{quote_value(cwd)}",
-        for({name, dir} <- chosen_home(), do: "Environment=#{name}=#{quote_value(dir)}"),
-        "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
+        "WorkingDirectory=#{unit_value(cwd, :path)}",
+        for({name, dir} <- chosen_home(), do: "Environment=#{name}=#{unit_value(dir, :env)}"),
+        "Environment=PATH=#{unit_value(System.get_env("PATH", ""), :env)}",
         "Environment=HAL_C2_WAIT_FOR_HOME=1",
-        "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
+        "ExecStart=#{Enum.map_join(argv, " ", &unit_value(&1, :exec))}",
         # The provider programs outlive a restart (`HalC2.Subprocess.Durable`).
         "KillMode=process",
         "OOMPolicy=continue",
@@ -541,14 +550,32 @@ defmodule HalC2.Service do
     """
   end
 
-  defp quote_value(value) do
-    if String.match?(value, ~r/[\s"\\]/),
+  @doc """
+  `value` as a systemd unit setting reads it. systemd expands `%` specifiers in
+  every setting a unit writes here, and `$` variables in `ExecStart=`, so each is
+  doubled where systemd would expand it:
+
+  - `:path`: a path setting (`WorkingDirectory=`, `StandardOutput=append:`), which
+    systemd takes as written, quotes included.
+  - `:env`: an `Environment=` value, quoted when it has a space, a quote of either
+    kind or a backslash.
+  - `:exec`: one word of `ExecStart=`, quoted likewise.
+  """
+  def unit_value(value, :path), do: String.replace(value, "%", "%%")
+  def unit_value(value, :env), do: value |> unit_value(:path) |> quoted()
+
+  def unit_value(value, :exec),
+    do: value |> unit_value(:path) |> String.replace("$", "$$") |> quoted()
+
+  defp quoted(value) do
+    if String.match?(value, ~r/[\s"'\\]/),
       do: ~s("#{value |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")}"),
       else: value
   end
 
   # Runs each step in order, stopping at the first failure (`:ignore` steps may fail).
-  defp run_all(steps) do
+  @doc false
+  def run_all(steps) do
     Enum.reduce_while(steps, :ok, fn step, :ok ->
       {exe, args, mode} =
         case step do
@@ -568,15 +595,27 @@ defmodule HalC2.Service do
     do: System.find_executable(Application.get_env(:hal_c2, :"#{exe}_command", exe))
 
   defp run(exe, args) do
+    case command(exe, args) do
+      {:exit, 0, _} -> :ok
+      {:exit, _, out} -> {:error, failure(exe, args, out)}
+      error -> error
+    end
+  end
+
+  # `{:exit, status, output}` of one call to a service manager tool, for a caller
+  # that tells its failures apart; `{:error, message}` when the tool is not installed.
+  @doc false
+  def command(exe, args) do
     case executable(exe) do
       nil ->
         {:error, "#{exe} is not available on this machine."}
 
       path ->
-        case System.cmd(path, args, stderr_to_stdout: true) do
-          {_, 0} -> :ok
-          {out, _} -> {:error, "`#{exe} #{Enum.join(args, " ")}` failed: #{String.trim(out)}"}
-        end
+        {out, status} = System.cmd(path, args, stderr_to_stdout: true)
+        {:exit, status, out}
     end
   end
+
+  @doc false
+  def failure(exe, args, out), do: "`#{exe} #{Enum.join(args, " ")}` failed: #{String.trim(out)}"
 end
