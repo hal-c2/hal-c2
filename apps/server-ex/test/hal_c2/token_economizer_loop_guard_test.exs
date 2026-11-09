@@ -975,7 +975,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute state.turns["b"].partial
     end
 
-    test "after a restart, take every event the feed still holds as possibly before missed ones" do
+    test "after a restart, take every event the feed still holds or is delivering as possibly before missed ones" do
       # This process stands in for the plugin's feed, still running, with three events
       # queued: the report of missed events went to the process that went down. No
       # synchronous test runs alongside this one, so the hooks' registry is this test's.
@@ -989,8 +989,10 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       for i <- 1..3, do: send(self(), {:queued, i})
       {:ok, state} = TokenEconomizer.init(%{})
+      # The feed may be blocked delivering one more, sent to this process while it
+      # started: that one is heard first, and the three queued after it.
       state = state |> observe(started("a")) |> observe(%{"type" => "noop"})
-      state = observe(state, started("b"))
+      state = state |> observe(%{"type" => "noop"}) |> observe(started("b"))
       assert state.turns["a"].partial and state.turns["b"].partial
 
       state = observe(state, started("c"))

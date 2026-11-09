@@ -28,7 +28,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     under way when the feed said it missed events, or one of its events came in the
     window that report opens: the reported event and those the feed had waiting, heard
     while on or off. A restart opens such a window over every event the feed still
-    holds.
+    holds and the one it may be blocked delivering.
 
   `prop/hal_c2/token_economizer_prop_test.exs` runs one turn's guard;
   `proof/hal_c2/token_economizer_loop_guard_proof_test.exs` explores the turns, the
@@ -229,10 +229,11 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   def next_state(state, _result, {:call, _, :mode, [mode, _]}),
     do: %{state | mode: mode, open: if(mode == "off", do: %{}, else: state.open)}
 
-  # The process restarted, its feed holding `held` events: it watches no turn, and every
-  # event the feed holds may have been sent before ones it missed.
+  # The process restarted, its feed holding `held` events and maybe blocked delivering
+  # one more: it watches no turn, and each of those may have been sent before ones it
+  # missed.
   def next_state(state, _result, {:call, _, :restart, [_, _, held]}),
-    do: %{state | open: %{}, missing: held}
+    do: %{state | open: %{}, missing: held + 1}
 
   def next_state(state, _result, _call), do: state
 
