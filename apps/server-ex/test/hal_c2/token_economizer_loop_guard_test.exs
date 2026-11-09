@@ -709,7 +709,13 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "npm --workspaces --if-present test",
             "yarn workspace web test",
             "yarn --cwd web test",
-            "bun --cwd web test"
+            "bun --cwd web test",
+            # Whether an option takes a value is the manager's: pnpm's `-w` is
+            # `--workspace-root` and yarn's `-W` takes none, npm's `-w` names a workspace.
+            "pnpm -w test",
+            "pnpm -w run test",
+            "yarn -W test",
+            "npm -w web test"
           ] do
         assert Turn.status_of_tests(cmd) == "own", cmd
 
@@ -730,7 +736,17 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       # An option this does not know may change what runs, or whether anything does: the
       # check is there, but not read.
-      for cmd <- ["pnpm --frobnicate web test", "npm --dry-run test", "yarn -X run test"] do
+      # An option another manager knows is one this manager does not: bun's `-r` preloads
+      # a module, and `pnpm -w web` runs the root's `web` script.
+      for cmd <- [
+            "pnpm --frobnicate web test",
+            "npm --dry-run test",
+            "yarn -X run test",
+            "pnpm -w web test",
+            "npm -W test",
+            "bun -r test",
+            "yarn -r test"
+          ] do
         assert Turn.status_of_tests(cmd) == "unknown", cmd
 
         passing =

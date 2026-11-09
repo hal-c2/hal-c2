@@ -42,8 +42,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # for the ended-green proxy, never to change what `State` counts. A runner is often
   # named by path (`python tests/runtests.py`, `.venv/bin/pytest`).
   # A package manager's own options before its check say which package's it runs (`pnpm
-  # --filter web test`, `npm --prefix web test`, `yarn workspace web test`).
-  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun|vp)(?:\s+(?:(?:--(?:filter|prefix|dir|workspace|cwd)|-[FCw])(?:=\S+|\s+(?!-)\S+)|-r|--recursive|--workspaces|-ws|--if-present|-s|--silent|workspace\s+\S+))*\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
+  # --filter web test`, `npm --prefix web test`, `yarn workspace web test`). They are each
+  # manager's, in their case, as is whether one takes a value: pnpm's `-w` is
+  # `--workspace-root` and yarn's `-W` takes none, npm's `-w` names a workspace, and
+  # bun's `-r` preloads a module.
+  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?-i:npm(?:\s+(?:(?:--prefix|--workspace|-w)(?:=\S+|\s+(?!-)\S+)|--workspaces|-ws|--if-present|-s|--silent))*|pnpm(?:\s+(?:(?:--filter|--dir|-F|-C)(?:=\S+|\s+(?!-)\S+)|-r|--recursive|-w|--workspace-root|--if-present|-s|--silent))*|yarn(?:\s+(?:--cwd(?:=\S+|\s+(?!-)\S+)|workspace\s+\S+|-W|-s|--silent))*|bun(?:\s+(?:--filter|--cwd|-F)(?:=\S+|\s+(?!-)\S+))*|vp(?:\s+(?:(?:--filter|--dir|-F|-C)(?:=\S+|\s+(?!-)\S+)|-r|--recursive))*)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
 
   # A command line's exit status is its last command's, so it may not be the test run's:
   # `npm test 2>&1 | tail -n 8` exits with `tail`'s status, `npm test || true` with 0.

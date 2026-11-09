@@ -354,24 +354,23 @@ defmodule HalC2.TokenEconomizerPropTest do
   end
 
   # A package manager's check run in one package: a check like any other ("pass",
-  # "fail") behind the options this knows, a check not read ("opaque") behind one it
-  # does not.
+  # "fail") behind an option its manager knows, a check not read ("opaque") behind one it
+  # does not, such as another manager's (`bun -r` preloads a module, `npm -w` takes a
+  # value that pnpm's does not).
+  @pm_options %{
+    "npm" => ["--prefix web", "-w web", "-w run", "--workspace=web", "--workspaces"],
+    "pnpm" => ["--filter web", "-F web", "--filter=web", "-r", "-C web", "-w", "-w run"],
+    "yarn" => ["workspace web", "--cwd web", "-W"],
+    "bun" => ["--filter web", "-F web", "--filter=web", "--cwd web"]
+  }
+
   defp filtered do
+    options = @pm_options |> Map.values() |> List.flatten() |> Enum.uniq()
+
     let {verdict, pm, option} <-
-          {elements(["pass", "fail", "opaque"]), elements(["npm", "pnpm", "yarn", "bun"]),
-           elements([
-             "--filter web",
-             "-F web",
-             "--filter=web",
-             "-r",
-             "-C web",
-             "--prefix web",
-             "-w web",
-             "--workspace=web",
-             "workspace web",
-             "--cwd web"
-           ])} do
-      option = if verdict == "opaque", do: "--frobnicate web", else: option
+          {elements(["pass", "fail"]), elements(Map.keys(@pm_options)),
+           elements(["--frobnicate web" | options])} do
+      verdict = if option in @pm_options[pm], do: verdict, else: "opaque"
       {verdict, Enum.join([pm, option, "test"], " ")}
     end
   end
