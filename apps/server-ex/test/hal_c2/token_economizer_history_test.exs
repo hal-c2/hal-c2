@@ -1051,6 +1051,29 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert state.strays == %{}
   end
 
+  test "after a restart, a call naming only the project sees and restores the tools off from its file",
+       %{thread: thread, project: p} do
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    _state = apply_tools(state, p, ["CronCreate"])
+
+    # Restarted, the plugin holds nothing until a conversation of the project starts.
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    assert TokenEconomizer.prune_status(state)["projects"] == []
+
+    {:reply, {:ok, %{"projects" => [%{"provider" => "claudeAgent", "off" => ["CronCreate"]}]}},
+     state} = TokenEconomizer.handle_call({:toolprune, :state, %{"projectId" => p}}, nil, state)
+
+    {:reply, {:ok, %{"projects" => [%{"restored" => ["CronCreate"]}]}}, _state} =
+      TokenEconomizer.handle_call({:toolprune, :restore, %{"projectId" => p}}, nil, state)
+
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    assert {nil, _state} = shape(state, "other", "o1", p)
+  end
+
   defp stray_item(thread, tool),
     do: %{
       "type" => "turn.item",

@@ -379,8 +379,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       open != [] and {5, finish_call(s, open)},
       {2, {:call, __MODULE__, :tick, []}},
       {1, {:call, __MODULE__, :mode, [elements(~w(off propose auto))]}},
-      {2, {:call, __MODULE__, :apply_tools, [tools]}},
-      {1, {:call, __MODULE__, :restore, [tools]}},
+      {2, {:call, __MODULE__, :apply_tools, [tools, boolean()]}},
+      {1, {:call, __MODULE__, :restore, [tools, boolean()]}},
       {1, {:call, __MODULE__, :apply_elsewhere, [elements([nil, @provider])]}},
       s.up and {1, {:call, __MODULE__, :down, []}},
       not s.up and {3, {:call, __MODULE__, :up, []}},
@@ -649,10 +649,11 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def next_state(s, _res, {:call, _, :mode, [mode]}),
     do: %{s | mode: mode, unreadable: s.unreadable and not (s.up and mode != s.mode)}
 
-  def next_state(s, _res, {:call, _, :apply_tools, [tools]}),
+  # Naming the project alone acts on the same evidence, held or on file.
+  def next_state(s, _res, {:call, _, :apply_tools, [tools | _]}),
     do: %{s | named: tools || [], unreadable: s.unreadable and not s.up}
 
-  def next_state(s, _res, {:call, _, :restore, [tools]}),
+  def next_state(s, _res, {:call, _, :restore, [tools | _]}),
     do: %{s | named: s.named -- (tools || s.named), unreadable: s.unreadable and not s.up}
 
   def next_state(s, _res, {:call, _, :corrupt_strays, []}), do: %{s | unreadable: true}
@@ -1003,8 +1004,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     snapshot()
   end
 
-  def apply_tools(tools), do: person(:apply, tools)
-  def restore(tools), do: person(:restore, tools)
+  # `provider?`: whether the call names the provider too, or only the project, which is
+  # then each pruning provider's evidence, held or on file (after `up/0` only on file).
+  def apply_tools(tools, provider? \\ true), do: person(:apply, tools, provider?)
+  def restore(tools, provider? \\ true), do: person(:restore, tools, provider?)
 
   # A person applies tools to a project the plugin has no evidence of, for `provider` or
   # every provider: the call fails, and changes nothing.
@@ -1018,9 +1021,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     snapshot()
   end
 
-  defp person(action, tools) do
+  defp person(action, tools, provider?) do
     if Process.get(:plugin) do
-      input = %{"projectId" => @project_id, "provider" => @provider, "tools" => tools}
+      input = %{"projectId" => @project_id, "tools" => tools}
+      input = if provider?, do: Map.put(input, "provider", @provider), else: input
       call({:toolprune, action, input})
     end
 

@@ -533,8 +533,11 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # The projects a `toolPrune` call names, loading a named one's file if need be: one
   # with no evidence held or kept is none, so a call naming a project that never ran
-  # (or a mistyped one) neither holds an empty entry nor saves a file for it. Without a
-  # project the state call lists all held; apply and restore need one (`prune_call/3`).
+  # (or a mistyped one) neither holds an empty entry nor saves a file for it. A project
+  # named without a provider is each pruning provider's, held or on file, so after a
+  # restart its tools that are off can be seen and restored before its next
+  # conversation loads them. Without a project the state call lists all held; apply and
+  # restore need one (`prune_call/3`).
   defp prune_targets(state, %{"projectId" => project_id, "provider" => provider})
        when is_binary(project_id) and is_binary(provider) do
     project = {project_id, provider}
@@ -549,8 +552,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  defp prune_targets(state, %{"projectId" => project_id}) when is_binary(project_id) do
-    {:ok, for({id, _} = project <- Map.keys(state.prunes), id == project_id, do: project), state}
+  defp prune_targets(state, %{"projectId" => project_id} = input) when is_binary(project_id) do
+    Enum.reduce(@prune_providers, {:ok, [], state}, fn provider, {:ok, targets, state} ->
+      {:ok, found, state} = prune_targets(state, Map.put(input, "provider", provider))
+      {:ok, targets ++ found, state}
+    end)
   end
 
   defp prune_targets(state, _input), do: {:ok, Map.keys(state.prunes), state}
