@@ -1305,6 +1305,21 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     run(context, thread, context.big)
   end
 
+  step "the handoff names where the whole of the long message is", context do
+    [file] =
+      for %{"role" => "user"} = message <-
+            HalC2.StreamState.list(World.state(context, context.thread), "message"),
+          file <- message["attachments"] || [],
+          do: file
+
+    path = HalC2.Attachments.path(file)
+    transcript = transcript(context.prompt)
+    assert transcript =~ "the whole message is in the attached message.txt"
+    assert transcript =~ "[message.txt is at #{path}]"
+    assert File.read!(path) == context.big
+    context
+  end
+
   step "the run fails saying the message does not fit", context do
     assert %{"status" => "failed"} = World.latest_run(context, context.thread)
     failure = failure(context)

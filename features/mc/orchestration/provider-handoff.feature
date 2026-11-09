@@ -234,6 +234,16 @@ Feature: Changing model and provider mid-thread
     When the user switches "t1" to "codex" and sends it
     Then the run reaches "codex" with the message
 
+  # The history keeps the user's words, so a message saved as a file names where the
+  # file is: the next agent can read the whole of it.
+  @mc
+  Scenario: A message saved as a file goes over with where the file is
+    Given the user's message alone is larger than the context window assumed for "codex"
+    And the user switches "t1" to "codex" and sends it
+    And the run reaches "codex" with the message
+    When the user switches "t1" to "claudeAgent" and sends a message
+    Then the handoff names where the whole of the long message is
+
   @mc
   Scenario: Switching back to the first provider resumes its own conversation
     Given "t1" moved from "codex" to "claudeAgent" and ran once there

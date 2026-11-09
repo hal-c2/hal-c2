@@ -1756,6 +1756,37 @@ defmodule HalC2.OrchestrationTest do
     assert {401, _} = HalC2.Mcp.handle("Bearer nope", "{}")
   end
 
+  test "reading a thread says where a message too long to send whole was saved" do
+    start_supervised!(HalC2.Mcp)
+    long = String.duplicate("word ", 30_000)
+    thread_id = launch(long)
+    await_statuses(thread_id, ["completed"])
+    :ok = HalC2.Shell.subscribe(self())
+
+    unless HalC2.Shell.row(node(), thread_id) do
+      assert_receive {:hal_c2_shell, _}, 2_000
+    end
+
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+
+    {200, %{"result" => %{"structuredContent" => read}}} =
+      HalC2.Mcp.handle(
+        auth,
+        JSON.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "method" => "tools/call",
+          "params" => %{"name" => "hal_c2_thread_read", "arguments" => %{"threadId" => thread_id}}
+        })
+      )
+
+    [message, answer] = read["items"]
+    assert message["text"] =~ "the whole message is in the attached message.txt"
+    assert [%{"name" => "message.txt", "path" => path}] = message["files"]
+    assert File.read!(path) == long
+    refute Map.has_key?(answer, "files")
+  end
+
   test "a running thread delegates a task, and hears the result when the child finishes" do
     start_supervised!(HalC2.Mcp)
     parent_id = launch("wait here")

@@ -14,7 +14,8 @@ defmodule HalC2.Orchestration.Handoff do
   MC's notices), each command the agent ran with how it ended (one cut short by an
   interrupt says so), the user's answers to its questions and the files the run
   changed: what tells the next agent what was asked, tried and verified. Reasoning,
-  other tool calls and attachments stay behind. One too long to hand over whole is
+  other tool calls and attachments stay behind, but for the file a message too long to
+  send whole was saved as, named with where it is. One too long to hand over whole is
   condensed as `history/2` says, the user's words last to give way; what it leaves
   out stays readable through `hal_c2_thread_read`.
 
@@ -965,10 +966,23 @@ defmodule HalC2.Orchestration.Handoff do
   # thread's agent sent (`HalC2.Mcp`) is that agent's request, said as such.
   defp message_entry(message) do
     case String.trim(message["text"] || "") do
-      "" -> []
-      text -> [{message["runId"], message["createdAt"] || "", said(message, text)}]
+      "" ->
+        []
+
+      text ->
+        [{message["runId"], message["createdAt"] || "", said(message, folds(message, text))}]
     end
     |> Enum.map(fn {run, at, {kind, value}} -> {run, at, kind, value} end)
+  end
+
+  # The other attachments stay behind, but a message folded into a file
+  # (`HalC2.Attachments.fold_long_text/3`) is the user's words: its text names the file,
+  # and the next agent is told where it is to read the whole of it.
+  defp folds(message, text) do
+    for file <- HalC2.Attachments.folded_into(text, List.wrap(message["attachments"])),
+        path = HalC2.Attachments.path(file),
+        reduce: text,
+        do: (text -> text <> "\n[#{file["name"]} is at #{path}]")
   end
 
   defp said(%{"role" => "user", "notification" => %{} = notification}, text) do
