@@ -1339,7 +1339,8 @@ defmodule HalC2.Orchestration do
     driver = driver_for(run["providerInstanceId"] || "codex")
 
     case HalC2.Plugins.declared(driver) do
-      nil -> driver in ["codex", "claudeAgent"]
+      # OpenCode takes a message mid-turn over its own server (`HalC2.Acp.OpenCode`).
+      nil -> driver in ["codex", "claudeAgent"] or HalC2.Acp.driver(driver) == "opencode"
       provider -> :active_steering in (provider[:capabilities] || [])
     end
   end

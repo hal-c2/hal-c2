@@ -2,7 +2,7 @@
 #   docs/user/providers-opencode.md
 #   docs/internals/providers.md (OpenCode server per thread, full-access replies once)
 #   apps/server-ex/lib/hal_c2/acp.ex (opencode acp, models split into subProvider)
-#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex, apps/server-ex/lib/hal_c2/acp/opencode.ex (steer, rewind, fork)
 #   apps/server/src/provider/Layers/OpenCodeProvider.ts, apps/server/src/provider/Drivers/OpenCodeDriver.ts
 #   apps/server/src/provider/opencodeRuntime.ts, apps/server/src/provider/OpenCodeServerOwner.ts
 #   apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts
@@ -61,6 +61,8 @@ Feature: OpenCode
 
   @backlog
   Scenario: OpenCode can use an external server
+    # `opencode acp` always runs its own server (no attach), so threads on an external
+    # one need a runtime over OpenCode's HTTP and event stream (`OpenCodeAdapterV2`).
     Given the user runs an OpenCode server elsewhere
     When the user sets its URL and password on the OpenCode instance
     Then OpenCode threads run on that server
@@ -120,19 +122,16 @@ Feature: OpenCode
     When the user switches an OpenCode thread to plan mode
     Then the turn runs with OpenCode's plan agent
 
-  @backlog
   Scenario: An OpenCode turn can be steered while it runs
     Given an OpenCode turn is running
     When the user sends a follow-up message
     Then OpenCode receives the message during the running turn
 
-  @backlog
   Scenario: Reverting an OpenCode turn rewinds OpenCode's session
     Given an OpenCode thread with three turns
     When the user reverts to the end of the first turn
     Then OpenCode's session is rewound to that point
 
-  @backlog
   Scenario: Forking an OpenCode thread forks OpenCode's session
     Given an OpenCode thread with three turns
     When the user forks from the second turn

@@ -668,4 +668,144 @@ defmodule HalC2.Steps.Providers.Opencode do
 
     context
   end
+
+  # --- steering, rewind and fork over OpenCode's server ------------------------------
+
+  defp opencode_thread(context) do
+    context
+    |> FakeAcp.install("opencode", models(@connected), enabled: true)
+    |> FakeAcp.thread("Work", "full-access", %{
+      "modelSelection" => %{"instanceId" => "opencode", "model" => "openai/gpt-5"}
+    })
+  end
+
+  # A turn sent and finished in the thread `title`.
+  defp turn(context, text, title \\ nil) do
+    title = title || context.thread
+    before = for run <- HalC2.StreamState.list(World.stream(context, title), "run"), do: run["id"]
+    context = FakeAcp.send_message(context, text, title)
+
+    run =
+      World.await_stream(World.thread_id(context, title), fn state ->
+        Enum.find(
+          HalC2.StreamState.list(state, "run"),
+          &(&1["id"] not in before and &1["status"] in ~w(completed failed interrupted))
+        )
+      end)
+
+    assert run["status"] == "completed"
+    context
+  end
+
+  # The requests OpenCode's server got: `%{"method", "path", "body"}`.
+  defp http(context, method, suffix) do
+    for %{"http" => %{"method" => ^method, "path" => path} = request} <- FakeAcp.log(context),
+        String.ends_with?(path, suffix),
+        do: request
+  end
+
+  # The thread's OpenCode session and each run's OpenCode message, by run ordinal.
+  defp native(context, title) do
+    state = World.stream(context, title)
+    thread = HalC2.StreamState.get(state, "thread")[World.thread_id(context, title)]
+
+    session =
+      HalC2.StreamState.get(state, "provider-thread")[thread["activeProviderThreadId"]]
+      |> get_in(["nativeThreadRef", "nativeId"])
+
+    turns =
+      for turn <- HalC2.StreamState.list(state, "provider-turn"),
+          into: %{},
+          do: {turn["ordinal"], get_in(turn, ["nativeTurnRef", "nativeId"])}
+
+    {session, turns}
+  end
+
+  # The user messages of an OpenCode session, as the fake keeps it.
+  defp user_texts(context, session) do
+    path = Path.join([FakeAcp.fake(context).dir, "sessions", "#{session}.json"])
+
+    for %{"info" => %{"role" => "user"}, "parts" => [%{"text" => text}]} <-
+          JSON.decode!(File.read!(path)),
+        do: text
+  end
+
+  step "an OpenCode turn is running", context do
+    context = opencode_thread(context) |> FakeAcp.send_message("a long task")
+    FakeAcp.await_run(context, "running")
+    Map.put(context, :running, %{thread: World.thread_id(context, context.thread)})
+  end
+
+  step "OpenCode receives the message during the running turn", context do
+    # The message joined the running turn; OpenCode took it first, with the turn's model.
+    state =
+      World.await_stream(context.running.thread, fn state ->
+        if HalC2.StreamState.get(state, "message")[context.follow_up], do: state
+      end)
+
+    assert [%{"status" => "running", "id" => run}] = HalC2.StreamState.list(state, "run")
+    assert HalC2.StreamState.get(state, "message")[context.follow_up]["runId"] == run
+    {session, _} = native(context, context.thread)
+
+    assert [%{"path" => path, "body" => body}] = http(context, "POST", "/prompt_async")
+    assert path == "/session/#{session}/prompt_async"
+
+    assert body == %{
+             "parts" => [%{"type" => "text", "text" => "look here instead"}],
+             "model" => %{"providerID" => "openai", "modelID" => "gpt-5"}
+           }
+
+    assert "look here instead" in user_texts(context, session)
+    context
+  end
+
+  step "an OpenCode thread with three turns", context do
+    context = Enum.reduce(~w(first second third), opencode_thread(context), &turn(&2, &1))
+    {session, turns} = native(context, context.thread)
+    assert user_texts(context, session) == ~w(first second third)
+    assert map_size(turns) == 3 and Enum.all?(Map.values(turns), &is_binary/1)
+    Map.merge(context, %{current_thread: context.thread, opencode: {session, turns}})
+  end
+
+  # OpenCode forked the session before the second turn's message; the thread goes on
+  # in the fork, which kept the first turn.
+  step "OpenCode's session is rewound to that point", context do
+    assert {:ok, _} = context.reply
+    {source, turns} = context.opencode
+
+    assert [%{"path" => path, "body" => %{"messageID" => before}}] =
+             http(context, "POST", "/fork")
+
+    assert path == "/session/#{source}/fork" and before == turns[2]
+    {fork, _} = native(context, context.thread)
+    assert is_binary(fork) and fork != source
+    assert user_texts(context, fork) == ["first"]
+
+    context = turn(context, "where are we")
+
+    assert [%{"params" => %{"sessionId" => ^fork}} | _] =
+             FakeAcp.received(context, "session/resume")
+
+    assert List.last(FakeAcp.received(context, "session/prompt"))["params"]["sessionId"] == fork
+    assert user_texts(context, fork) == ["first", "where are we"]
+    context
+  end
+
+  # The fork's first turn opened a fork of the source's session, cut before the third
+  # turn's message.
+  step "the new thread continues from a fork of OpenCode's session", context do
+    assert {:ok, _} = context.reply
+    {source, turns} = context.opencode
+    context = turn(context, "where are we", "fork")
+
+    assert [%{"path" => path, "body" => %{"messageID" => before}}] =
+             http(context, "POST", "/fork")
+
+    assert path == "/session/#{source}/fork" and before == turns[3]
+    {fork, _} = native(context, "fork")
+    assert is_binary(fork) and fork != source
+    assert user_texts(context, fork) == ["first", "second", "where are we"]
+    assert user_texts(context, source) == ~w(first second third)
+    context
+  end
 end

@@ -110,10 +110,10 @@ defmodule HalC2.Orchestration.Entities do
   def driver(ids), do: Map.get(ids, :driver, "codex")
   def instance(ids), do: Map.get(ids, :instance, driver(ids))
 
-  # Codex (turn/steer) and Claude (a "now" message) take a message mid-turn, and
-  # fork their own threads; other agents fork through a transcript.
+  # Codex (turn/steer), Claude (a "now" message) and OpenCode (`prompt_async`) take a
+  # message mid-turn, and fork their own threads; other agents fork through a transcript.
   defp capabilities(driver) do
-    native = driver in ["codex", "claudeAgent"]
+    native = driver in ["codex", "claudeAgent"] or HalC2.Acp.driver(driver) == "opencode"
 
     base =
       @codex_capabilities
