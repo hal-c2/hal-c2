@@ -473,16 +473,33 @@ defmodule HalC2.ThreadArchive do
 
   # A thread its plugin keeps on its machine (`stays/1`) is not taken in either, for an
   # MC from before plugins kept their threads sends it on: by its mark, or by the
-  # plugin's manifest here for a mark from before the mark said so.
-  defp not_kept(%{"thread" => %{"id" => id} = meta} = archive) do
+  # plugin's manifest here for a mark from before the mark said so. What is read is
+  # every thread entity the import would write: a version 2 archive's entities here, what
+  # a version 1 archive's events fold into in `write_v1/2`, so the format's version
+  # decides nothing. A mark in a form no MC writes names no plugin that could be asked,
+  # so the file is taken as damaged rather than as an ordinary thread.
+  defp not_kept(%{"version" => 1}), do: :ok
+
+  defp not_kept(%{"thread" => meta} = archive),
+    do:
+      not_kept(
+        for([kind, eid, entity] <- archive["entities"], do: {kind, eid, entity}),
+        meta
+      )
+
+  defp not_kept(rows, meta) do
     title = meta["title"]
 
-    Enum.find_value(List.wrap(archive["entities"]), :ok, fn
-      ["thread", ^id, %{"plugin" => %{"id" => owner} = mark}] when is_binary(owner) ->
+    Enum.find_value(rows, :ok, fn
+      {"thread", _, %{"plugin" => %{"id" => owner} = mark}} when is_binary(owner) ->
         if mark["stays"] == true or HalC2.Plugins.threads_stay?(owner),
           do:
             {:error,
              "#{title} was started by #{owner}, which keeps it on the machine it started on. #{title} was not imported."}
+
+      {"thread", _, %{"plugin" => mark}} when mark != nil ->
+        {:error,
+         "The file is damaged: #{title} names the plugin that started it in a form HAL-C2 does not write. Nothing was imported."}
 
       _ ->
         nil
@@ -529,7 +546,8 @@ defmodule HalC2.ThreadArchive do
          "This file needs a newer HAL-C2: it was written in version #{version} of the thread file format and this machine reads up to version #{@version}. Nothing was imported."}
 
   def decode(%{"format" => @format, "version" => version} = archive) when version in [1, 2] do
-    with :ok <- safe_names(archive),
+    with :ok <- holds_thread(archive),
+         :ok <- safe_names(archive),
          {:ok, attachments} <- verify(archive["attachments"], "the attachment"),
          {:ok, logs} <- verify(archive["terminalLogs"] || [], "the terminal log"),
          {:ok, checkpoints} <- verify_bundle(archive["checkpoints"], "the checkpoints"),
@@ -549,6 +567,12 @@ defmodule HalC2.ThreadArchive do
 
   def decode(_),
     do: {:error, "The file is damaged: it is not a HAL-C2 thread file. Nothing was imported."}
+
+  # A version 2 archive's thread is its entities (a version 1 archive's, its events): one
+  # without a list of them names no thread to write or to check (`not_kept/1`).
+  defp holds_thread(%{"version" => 2, "entities" => entities}) when is_list(entities), do: :ok
+  defp holds_thread(%{"version" => 1}), do: :ok
+  defp holds_thread(_archive), do: decode(nil)
 
   # The attachments and terminal logs an archive carries land under the names it gives
   # them: a name that is a path, or one that is another thread's, would write over
@@ -940,12 +964,32 @@ defmodule HalC2.ThreadArchive do
           terminal = v1_terminal(name, id),
           do: {terminal, file}
 
-    placing_files(archive, id, terminals, fn ->
-      commit(id, changes(id, v1_entities(archive, project, meta), System.os_time(:millisecond)))
+    with {:ok, rows} <- fold_v1(archive, project, meta),
+         :ok <- not_kept(rows, meta) do
+      # A plugin's mark stays behind, as a version 2 archive's does (`carried/5`).
+      rows =
+        Enum.map(rows, fn
+          {"thread", eid, entity} -> {"thread", eid, Map.delete(entity, "plugin")}
+          row -> row
+        end)
 
-      {:ok,
-       %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
-    end)
+      placing_files(archive, id, terminals, fn ->
+        commit(id, changes(id, rows, System.os_time(:millisecond)))
+
+        {:ok,
+         %{thread: id, title: meta["title"], project: project["id"], session: false, notes: []}}
+      end)
+    end
+  end
+
+  # The fold reads nothing of this machine's but the archive, so it runs before any file is
+  # placed and a thread it shows is not to be taken in leaves nothing behind.
+  defp fold_v1(archive, project, meta) do
+    {:ok, v1_entities(archive, project, meta)}
+  rescue
+    error ->
+      {:error,
+       "The import of #{meta["title"]} failed: #{Exception.message(error)}. Nothing was imported."}
   end
 
   # The thread's entities, as `Import.V2` stores an earlier install's events. Provider

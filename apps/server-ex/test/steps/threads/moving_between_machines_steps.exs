@@ -589,14 +589,34 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     legacy_file(context)
   end
 
-  defp legacy_file(context) do
+  # The mark is from before plugins kept their threads: the destination's copy of the
+  # plugin is what keeps it.
+  step "a thread file exported by the previous server of a thread the plugin {string} started",
+       %{args: [plugin]} = context do
+    context = legacy_file(context, %{"plugin" => %{"id" => plugin, "kind" => "review"}})
+    Map.put(context, :image, context.legacy.image)
+  end
+
+  step "the user is told {string} keeps {string} on the machine it started on",
+       %{args: [plugin, title]} = context do
+    assert context.imported ==
+             {:error,
+              "#{title} was started by #{plugin}, which keeps it on the machine it started on. #{title} was not imported."}
+
+    context
+  end
+
+  defp legacy_file(context, fields \\ %{}) do
     root = World.project(context, "shop").root
     id = "th-legacy-#{System.unique_integer([:positive])}"
     at = "2026-09-01T00:00:00.000Z"
     image = "#{id}-img"
 
     thread =
-      Map.merge(thread_fields(id, "Legacy", "shop"), %{"createdAt" => at, "updatedAt" => at})
+      id
+      |> thread_fields("Legacy", "shop")
+      |> Map.merge(%{"createdAt" => at, "updatedAt" => at})
+      |> Map.merge(fields)
 
     events = [
       v1_event(id, "thread.created", thread, at),

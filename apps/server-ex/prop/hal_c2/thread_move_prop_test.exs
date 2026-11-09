@@ -28,7 +28,9 @@ defmodule HalC2.ThreadMovePropTest do
   from before the mark still stay, and so do the ones it starts then. A case may also
   remove the package from a machine, which then lets the threads from before the mark go,
   as an MC from before plugins kept their threads does: a machine that has the package
-  refuses such a thread when it arrives, and it stays where it was.
+  refuses such a thread when it arrives, and it stays where it was. A thread file in the
+  earlier install's format (version 1), which carries the thread as events and the mark
+  in one of them, is refused alike and leaves no copy anywhere.
 
   The promises checked after every step: once a move settles, a thread lives on exactly
   one machine (the model's) with all its history and its attachment intact, the machines
@@ -143,6 +145,14 @@ defmodule HalC2.ThreadMovePropTest do
         ) ++
         if(fresh != [],
           do: [{2, {:call, __MODULE__, :create_legacy, [oneof(fresh), oneof(@mcs)]}}],
+          else: []
+        ) ++
+        if(fresh != [],
+          do: [
+            {1,
+             {:call, __MODULE__, :import_v1,
+              [oneof(fresh), oneof(@mcs), oneof([:stays, :legacy])]}}
+          ],
           else: []
         ) ++
         for(
@@ -262,6 +272,11 @@ defmodule HalC2.ThreadMovePropTest do
   def precondition(state, {:call, _, :create_legacy, [t, _]}),
     do: not is_map_key(state.threads, t)
 
+  # Only a file the machine keeps the thread out of: one it takes in is an ordinary
+  # import, with history of its own.
+  def precondition(state, {:call, _, :import_v1, [t, mc, mark]}),
+    do: not is_map_key(state.threads, t) and (mark == :stays or state.keeper[mc] != :removed)
+
   def precondition(state, {:call, _, :create_kept, [t, mc]}),
     do: not is_map_key(state.threads, t) and state.keeper[mc] != :removed
 
@@ -314,6 +329,8 @@ defmodule HalC2.ThreadMovePropTest do
 
   def next_state(state, _result, {:call, _, :create_kept, [t, mc]}),
     do: put_in(state.threads[t], %{at: mc, title: t, made: t, plugin: :kept})
+
+  def next_state(state, _result, {:call, _, :import_v1, _}), do: state
 
   def next_state(state, _result, {:call, _, :keeper, [mc, :installed]}),
     do: %{state | keeper: Map.delete(state.keeper, mc)}
@@ -442,6 +459,13 @@ defmodule HalC2.ThreadMovePropTest do
   def postcondition(state, {:call, _, fun, _} = call, {result, world})
       when fun in [:create, :create_plugin, :create_staying, :create_legacy, :create_kept],
       do: result == :ok and settled?(next_state(state, nil, call), world, held(state))
+
+  def postcondition(state, {:call, _, :import_v1, [t, _, _]}, {result, world}),
+    do:
+      match?({:error, message} when is_binary(message), result) and
+        elem(result, 1) =~ "keeps it on the machine it started on." and
+        Enum.all?(world.copies[t], fn {_, copy} -> copy == :none end) and
+        settled?(state, world, held(state))
 
   def postcondition(state, {:call, _, :keeper, _} = call, {result, world}),
     do: result == :ok and settled?(next_state(state, nil, call), world, held(state))
@@ -619,6 +643,14 @@ defmodule HalC2.ThreadMovePropTest do
   # The keeper on `mc` starts `t` there, whatever state its package is in.
   def create_kept(t, mc) do
     result = Cluster.on(mcs()[mc], :create_kept_thread, [id(t), "proj-#{mc}", t])
+    {result, world()}
+  end
+
+  # Imports onto `mc` a version 1 file of `t` marked by the plugin that keeps it
+  # (`:stays`) or by the keeper from before its mark said so (`:legacy`).
+  def import_v1(t, mc, mark) do
+    mark = if mark == :stays, do: @stays_mark, else: @legacy_mark
+    result = Cluster.on(mcs()[mc], :import_v1, [id(t), "proj-#{mc}", t, mark])
     {result, world()}
   end
 

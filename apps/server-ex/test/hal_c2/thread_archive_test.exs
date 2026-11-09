@@ -183,6 +183,62 @@ defmodule HalC2.ThreadArchiveTest do
     assert ThreadArchive.local_thread("th-cart")["plugin"] == nil
   end
 
+  # A version 1 archive carries the thread as events, not entities, and an event's
+  # payload can name the plugin: what they fold into is read, so the format's version
+  # gets no kept thread past, and a mark no MC writes is taken as damage.
+  test "a version 1 archive of a thread its plugin keeps is not imported either",
+       %{root: root} do
+    with_mark = fn mark -> legacy(root, %{"plugin" => mark}) end
+
+    refused =
+      {:error,
+       "Legacy was started by code-review, which keeps it on the machine it started on. Legacy was not imported."}
+
+    stays = %{"id" => "code-review", "kind" => "review", "stays" => true}
+    assert ThreadArchive.import_archive(with_mark.(stays), project: "shop") == refused
+    assert ThreadArchive.local_thread("th-legacy") == nil
+
+    package = Path.join(HalC2.Paths.data_dir(), "plugins/code-review")
+    File.mkdir_p!(package)
+
+    File.write!(
+      Path.join(package, "plugin.json"),
+      JSON.encode!(%{"id" => "code-review", "threadsStay" => true})
+    )
+
+    old_mark = %{"id" => "code-review", "kind" => "review"}
+    assert ThreadArchive.import_archive(with_mark.(old_mark), project: "shop") == refused
+    assert ThreadArchive.local_thread("th-legacy") == nil
+
+    damaged =
+      {:error,
+       "The file is damaged: Legacy names the plugin that started it in a form HAL-C2 does not write. Nothing was imported."}
+
+    assert ThreadArchive.import_archive(with_mark.("code-review"), project: "shop") == damaged
+    assert ThreadArchive.local_thread("th-legacy") == nil
+
+    # The same for a version 2 archive's entities.
+    cart = %{"id" => "th-cart", "title" => "Cart", "plugin" => "code-review"}
+    cart_archive = archive(root, %{"entities" => [["thread", "th-cart", cart]]})
+
+    assert ThreadArchive.import_archive(cart_archive, project: "shop") ==
+             {:error,
+              "The file is damaged: Cart names the plugin that started it in a form HAL-C2 does not write. Nothing was imported."}
+
+    # A version 2 archive without its entities has no thread to read: it is not one.
+    assert ThreadArchive.import_archive(archive(root, %{"entities" => nil}), project: "shop") ==
+             {:error,
+              "The file is damaged: it is not a HAL-C2 thread file. Nothing was imported."}
+
+    # Another plugin's thread arrives as an ordinary one, as a version 2 archive's does.
+    other = %{"id" => "notes", "kind" => "note"}
+
+    assert {:ok, %{thread: "th-legacy"}} =
+             ThreadArchive.import_archive(with_mark.(other), project: "shop")
+
+    assert ThreadArchive.local_thread("th-legacy")["plugin"] == nil
+  end
+
   # The plugin host never loaded a version of this package (it started, or the package
   # was dropped in, with the manifest broken), so only the disk can speak for it: a
   # package that is there with a manifest that says nothing keeps its threads (#1432).
@@ -473,19 +529,27 @@ defmodule HalC2.ThreadArchiveTest do
     )
   end
 
-  # Four events, one entity each, as an earlier install exported them.
-  defp legacy(root) do
+  # Four events, one entity each, as an earlier install exported them; `thread` is
+  # merged into the thread's.
+  defp legacy(root, thread \\ %{}) do
     at = "2026-09-01T00:00:00.000Z"
     id = "th-legacy"
 
     events = [
-      event(id, "thread.created", %{
-        "id" => id,
-        "title" => "Legacy",
-        "projectId" => "shop-old",
-        "createdAt" => at,
-        "updatedAt" => at
-      }),
+      event(
+        id,
+        "thread.created",
+        Map.merge(
+          %{
+            "id" => id,
+            "title" => "Legacy",
+            "projectId" => "shop-old",
+            "createdAt" => at,
+            "updatedAt" => at
+          },
+          thread
+        )
+      ),
       event(id, "message.updated", %{
         "id" => "m1",
         "threadId" => id,

@@ -369,6 +369,49 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     history(id, title)
   end
 
+  @doc """
+  Imports into `project` a version 1 thread file of `id`, as an earlier install wrote
+  one: the thread as events, the first carrying the plugin mark `mark`.
+  """
+  def import_v1(id, project, title, mark) do
+    at = "2026-09-01T00:00:00.000Z"
+
+    events =
+      [{"thread.created", %{"id" => id, "title" => title, "plugin" => mark}}] ++
+        for n <- 1..3 do
+          {"message.updated",
+           %{"id" => "#{id}-m#{n}", "threadId" => id, "role" => "user", "text" => "message #{n}"}}
+        end
+
+    HalC2.ThreadArchive.import_archive(
+      %{
+        "format" => "hal-c2-thread-export",
+        "version" => 1,
+        "exportedAt" => at,
+        "thread" => %{
+          "id" => id,
+          "title" => title,
+          "sourceProjectId" => "proj-elsewhere",
+          "sourceWorkspaceRoot" => "/elsewhere/proj"
+        },
+        "events" =>
+          for {type, payload} <- events do
+            %{
+              "aggregateKind" => "thread",
+              "streamId" => id,
+              "eventType" => type,
+              "payloadJson" => JSON.encode!(Map.put_new(payload, "createdAt", at)),
+              "occurredAt" => at,
+              "applicationEventVersion" => 2
+            }
+          end,
+        "attachments" => [],
+        "terminalLogs" => []
+      },
+      project: project
+    )
+  end
+
   @doc "Turns the plugin on or off, as a client does; returns whether it now runs."
   def plugin(running) do
     {:ok, _} =

@@ -849,6 +849,17 @@ Feature: Moving a thread and its agent to another machine
       Then the thread is listed with its history, attachments and terminal scrollback
       And its next message hands the conversation over to the agent
 
+    # The previous server's format carries the thread as events, and one of them can name the
+    # plugin that started it: the destination reads what the events make of the thread, so the
+    # file's format lets no thread its plugin keeps in.
+    @mc
+    Scenario: A file exported by the previous server is refused for a thread its plugin keeps
+      Given a thread file exported by the previous server of a thread the plugin "code-review" started
+      And the plugin "code-review" is installed on "desktop" and keeps its threads there, but is turned off
+      When the user imports it on "desktop"
+      Then the user is told "code-review" keeps "Legacy" on the machine it started on
+      And nothing is imported
+
     @mc
     Scenario: A damaged file is refused
       Given one of the attachments in "alpha.hal-c2-thread" does not match its checksum
