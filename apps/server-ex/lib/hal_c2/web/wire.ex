@@ -16,7 +16,7 @@ defmodule HalC2.Web.Wire do
   rules starts over.
   """
 
-  @version 3
+  @version 4
   @max_detail 32_768
   @truncated "\n… output truncated for transport"
   @cut_keys ~w(prompt progress result)
@@ -151,25 +151,35 @@ defmodule HalC2.Web.Wire do
 
   # --- turn items ----------------------------------------------------------------
 
-  defp turn_item(%{"type" => "command_execution"} = item) do
+  defp turn_item(item), do: item |> turn_item_type() |> app_result()
+
+  # An MCP app's tool result is the tool's whole output, so it is bounded as an
+  # output is. The stored item keeps it whole.
+  defp app_result(%{"mcpApp" => %{"toolResult" => result} = app} = item),
+    do: %{item | "mcpApp" => %{app | "toolResult" => summarize(result)}}
+
+  defp app_result(item), do: item
+
+  defp turn_item_type(%{"type" => "command_execution"} = item) do
     item |> Map.delete("output") |> failed(item["exitCode"], item["outputIndicatesFailure"])
   end
 
-  defp turn_item(%{"type" => "file_change"} = item), do: Map.drop(item, @dropped["file_change"])
+  defp turn_item_type(%{"type" => "file_change"} = item),
+    do: Map.drop(item, @dropped["file_change"])
 
-  defp turn_item(%{"type" => "subagent"} = item) do
+  defp turn_item_type(%{"type" => "subagent"} = item) do
     Enum.reduce(@cut_keys, item, fn key, item ->
       if is_binary(item[key]), do: Map.put(item, key, cut(item[key])), else: item
     end)
   end
 
-  defp turn_item(%{"type" => "dynamic_tool"} = item) do
+  defp turn_item_type(%{"type" => "dynamic_tool"} = item) do
     Enum.reduce(~w(input output), item, fn key, item ->
       if Map.has_key?(item, key), do: Map.put(item, key, summarize(item[key])), else: item
     end)
   end
 
-  defp turn_item(item), do: item
+  defp turn_item_type(item), do: item
 
   defp turn_item_patch(type, patch, _was) when is_map_key(@dropped, type) do
     patch = drop(patch, @dropped[type])
@@ -188,10 +198,19 @@ defmodule HalC2.Web.Wire do
     |> map_set(@cut_keys, &if(is_binary(&1), do: cut(&1), else: &1))
   end
 
-  defp turn_item_patch("dynamic_tool", patch, _was),
-    do: map_set(patch, ~w(input output), &summarize/1)
+  # A Codex MCP app item is a `dynamic_tool` that also carries the app's `mcpApp`.
+  defp turn_item_patch("dynamic_tool", patch, _was) do
+    patch
+    |> map_set(~w(input output), &summarize/1)
+    |> map_set(["mcpApp"], &app_result_field/1)
+  end
 
-  defp turn_item_patch(_type, patch, _was), do: patch
+  defp turn_item_patch(_type, patch, _was), do: map_set(patch, ["mcpApp"], &app_result_field/1)
+
+  defp app_result_field(%{"toolResult" => _} = app),
+    do: app_result(%{"mcpApp" => app}) |> Map.fetch!("mcpApp")
+
+  defp app_result_field(app), do: app
 
   # The client holds a subagent's text cut, as a snapshot has it. An append that keeps
   # the text under the limit goes through; one that takes it past is the cut text,

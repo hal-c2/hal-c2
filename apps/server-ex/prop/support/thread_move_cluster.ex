@@ -223,12 +223,22 @@ defmodule HalC2.Prop.ThreadMoveCluster do
         }
       end
 
+    # A tool call's MCP app document, named by a turn item as the Codex adapter does.
+    app = HalC2.Attachments.thread_segment(id) <> "-mcp-app-prop"
+    File.write!(Path.join(HalC2.Attachments.dir(), app <> ".html"), "<p>app of #{id}</p>")
+
+    item = %{
+      "id" => "#{id}-app",
+      "threadId" => id,
+      "mcpApp" => %{"attachmentId" => app, "server" => "weather", "tool" => "forecast"}
+    }
+
     :ok =
       HalC2.Streams.transact(id, :thread, fn state ->
         {for(
            m <- messages,
            do: HalC2.Orchestration.upsert(state, "message", m["id"], fn _ -> m end)
-         ), :ok}
+         ) ++ [HalC2.Orchestration.upsert(state, "turn-item", item["id"], fn _ -> item end)], :ok}
       end)
 
     HalC2.Streams.flush_shell(id)
@@ -289,7 +299,8 @@ defmodule HalC2.Prop.ThreadMoveCluster do
   @doc """
   What this machine has of the thread `id`: `:none`, `:forward` (a forwarding record),
   `{:moving, title}` or `{:live, title, messages, attachment, plugin}`, where
-  `attachment` is the sha256 of the first message's attachment as stored here and
+  `attachment` is `{sha256 of the first message's attachment, the thread's MCP app
+  document}` as stored here and
   `plugin` the mark of the plugin that started it, or nil.
   """
   def copy(id) do
@@ -307,11 +318,17 @@ defmodule HalC2.Prop.ThreadMoveCluster do
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
         messages = HalC2.StreamState.list(state, "message")
 
+        app = HalC2.Attachments.thread_segment(id) <> "-mcp-app-prop"
+
         attachment =
-          case HalC2.Attachments.path(%{"id" => "att-#{id}"}) do
-            nil -> nil
-            path -> :crypto.hash(:sha256, File.read!(path))
-          end
+          {case HalC2.Attachments.path(%{"id" => "att-#{id}"}) do
+             nil -> nil
+             path -> :crypto.hash(:sha256, File.read!(path))
+           end,
+           case HalC2.Attachments.path(%{"id" => app}) do
+             nil -> nil
+             path -> File.read!(path)
+           end}
 
         {:live, thread["title"], messages |> Enum.map(& &1["text"]) |> Enum.sort(), attachment,
          thread["plugin"]}

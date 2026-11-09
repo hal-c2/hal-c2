@@ -125,6 +125,18 @@ defmodule HalC2.ServiceTest do
     {sub.durable.dir, HalC2.Subprocess.os_pid(sub)}
   end
 
+  # systemd reads a single quote as a quote in Environment= and ExecStart=, as it
+  # does a double one, so a value with only an apostrophe in it is quoted too.
+  describe "unit_value/2" do
+    test "a value with an apostrophe reads back as written" do
+      for value <- ["/home/o'brien/hal-c2", "it's", "'", "a'b'c"] do
+        assert SystemdUnit.exec(Service.unit_value(value, :exec)) == [value]
+        assert SystemdUnit.env("X=" <> Service.unit_value(value, :env)) == {"X", value}
+        assert SystemdUnit.path(Service.unit_value(value, :path)) == value
+      end
+    end
+  end
+
   describe "uninstall" do
     setup %{tmp_dir: dir} do
       Application.put_env(:hal_c2, :durable_programs, true)

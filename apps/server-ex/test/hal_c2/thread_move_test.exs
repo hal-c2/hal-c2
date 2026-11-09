@@ -272,12 +272,12 @@ defmodule HalC2.ThreadMoveTest do
     context = Machines.cluster(context, "laptop", others)
     Mc.ensure(HalC2.ThreadMove)
     root = Path.join(context.mc.home, "shop")
-    File.mkdir_p!(root)
+    Machines.shop_checkout(root)
     context = World.create_project(context, "shop", %{"workspaceRoot" => root})
 
     for label <- others do
       peer_root = Path.join(Machines.home(context, label), "shop")
-      Machines.on(context, label, File, :mkdir_p!, [peer_root])
+      Machines.on(context, label, Machines, :shop_checkout, [peer_root])
       Machines.on(context, label, Machines, :create_project, ["shop", "shop", peer_root])
     end
 

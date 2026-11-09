@@ -291,6 +291,17 @@ defmodule HalC2.Test.Machines do
     HalC2.Checkpoint.turn_diff(state, id, from, to, false)
   end
 
+  @doc """
+  A checkout of one repository at `root`: a thread move picks the destination project by
+  the origin, and git must not find an origin above the scratch folders (the suite sets a
+  git ceiling).
+  """
+  def shop_checkout(root) do
+    File.mkdir_p!(root)
+    HalC2.Test.Mc.World.git!(root, ~w(init -q -b main))
+    HalC2.Test.Mc.World.git!(root, ~w(remote add origin https://github.com/acme/shop.git))
+  end
+
   @doc "Creates a project on this MC and waits until its row is stored."
   def create_project(id, title, root) do
     {:ok, _} =

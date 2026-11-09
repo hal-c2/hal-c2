@@ -129,7 +129,6 @@ Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/acp/ca
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/acp/catalog.ex | tmp
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/attachments.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/attachments.ex | dir
-Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/attachments.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/cluster.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/cluster/distribution.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/devices.ex | Elixir.Path
@@ -203,7 +202,6 @@ Traversal.FileModule: Directory Traversal in `File.open!` | lib/hal_c2/thread_ar
 Traversal.FileModule: Directory Traversal in `File.open!` | lib/hal_c2/thread_move.ex | path
 Traversal.FileModule: Directory Traversal in `File.open!` | lib/hal_c2/thread_move.ex | staged
 Traversal.FileModule: Directory Traversal in `File.open` | lib/hal_c2/acp/antigravity.ex | path
-Traversal.FileModule: Directory Traversal in `File.open` | lib/hal_c2/acp/antigravity/installation.ex | dest
 Traversal.FileModule: Directory Traversal in `File.open` | lib/hal_c2/acp/kimi.ex | path
 Traversal.FileModule: Directory Traversal in `File.open` | lib/hal_c2/agent_sessions.ex | path
 Traversal.FileModule: Directory Traversal in `File.open` | lib/hal_c2/environment/machine.ex | path
@@ -354,7 +352,6 @@ Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subproces
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subprocess/durable.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subprocess/durable.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/text_generation.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/text_generation.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_archive.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_archive.ex | scratch_dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_move.ex | incoming
@@ -416,7 +413,6 @@ Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/upgrade/sour
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/upgrade/source.ex | stamp
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/upgrade/source.ex | temp
 Traversal.FileModule: Directory Traversal in `File.rm` | lib/hal_c2/usage_limit_sources.ex | key_path
-Traversal.FileModule: Directory Traversal in `File.stream!` | lib/hal_c2/acp/antigravity/installation.ex | archive
 Traversal.FileModule: Directory Traversal in `File.stream!` | lib/hal_c2/acp/catalog.ex | archive
 Traversal.FileModule: Directory Traversal in `File.stream!` | lib/hal_c2/portable_sessions.ex | path
 Traversal.FileModule: Directory Traversal in `File.stream!` | lib/hal_c2/portable_sessions.ex | source
@@ -428,7 +424,6 @@ Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/acp/anti
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/acp/antigravity/installation.ex | Elixir.Antigravity
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/acp/antigravity/installation.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/acp/catalog.ex | path
-Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/attachments.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/attachments.ex | part
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/attachments.ex | path
 Traversal.FileModule: Directory Traversal in `File.write!` | lib/hal_c2/cluster.ex | path

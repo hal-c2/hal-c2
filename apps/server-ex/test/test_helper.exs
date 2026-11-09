@@ -10,6 +10,10 @@ ExUnit.start(exclude: [:codex, :claude, :opencode, :parity, :backlog])
 # Keep the MC's git include, if we run inside one, out of the tests.
 HalC2.Test.GitEnv.scrub()
 
+# `tmp` holds the tests' scratch folders and sits inside the checkout: git must not find
+# the checkout from them, or a git action under test would commit and push the developer's work.
+System.put_env("GIT_CEILING_DIRECTORIES", Path.expand("../tmp", __DIR__))
+
 # The Gherkin specification runs only when asked for (`mix features`, or
 # `HAL_C2_FEATURES=threads/*.feature mix test --only cucumber`), so a plain
 # `mix test <file>` stays quick. `@backlog` and `@backlog-mc` scenarios are left out unless

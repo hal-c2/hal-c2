@@ -79,8 +79,10 @@ defmodule HalC2.Paths do
   @doc """
   Replaces the file at `path` with `content` and `mode`, through a new file beside
   it renamed over it: a reader, or a crash, sees the old file or the new one whole,
-  the new one never has a wider mode than `mode`, and a link at `path` is replaced
-  rather than written through.
+  and a link at `path` is replaced rather than written through. The new file is
+  created under the umask and set to `mode` before any of `content` is written, so
+  `path` never names it under a wider mode; one opened in that moment could still
+  read it, so keep a secret in a directory only the MC can enter (`mkdir_private!/1`).
   """
   # Callers name a file in this MC's own directories.
   # sobelow_skip ["Traversal.FileModule"]

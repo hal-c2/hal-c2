@@ -155,9 +155,9 @@ defmodule HalC2.Web.Socket do
         {:push, Protocol.encode(%{"t" => "pong"}), state}
 
       {:ok, {:sub, id, shape, offset}} ->
-        scope = shape_scope(shape)
+        scope = Enum.find(List.wrap(shape_scope(shape)), &(not allowed?(state, &1)))
 
-        if allowed?(state, scope),
+        if scope == nil,
           do: subscribe(state, id, shape, offset),
           else: {:push, Protocol.encode(error_frame(id, "#{scope} is required")), state}
 
@@ -1306,6 +1306,12 @@ defmodule HalC2.Web.Socket do
 
   defp shape_scope(:auth_access), do: "access:read"
 
+  # Pull request text is written from the thread's history, so a pull request action for a
+  # thread needs to read threads as well as write.
+  defp shape_scope({:git_action, _, %{"action" => action, "threadId" => thread}})
+       when action in ["create_pr", "commit_push_pr"] and is_binary(thread),
+       do: ["orchestration:operate", "orchestration:read"]
+
   defp shape_scope({kind, _, _}) when kind in [:server_update, :git_action, :preview_automation],
     do: "orchestration:operate"
 
@@ -1849,10 +1855,12 @@ defmodule HalC2.Web.Socket do
       {{:provider_auth, instance}, mc, HalC2.ProviderAuth, :subscribe, :unsubscribe,
        [instance, self()]}
 
+  # The installer is picked on `mc` (`HalC2.ProviderInstall.watch/3`): this MC's
+  # settings may not know an instance that exists only there.
   defp watch_spec({:provider_install, mc, instance}),
     do:
-      {{:provider_install, instance}, mc, HalC2.Acp.Antigravity.Installation, :subscribe,
-       :unsubscribe, [instance, self()]}
+      {{:provider_install, instance}, mc, HalC2.ProviderInstall, :watch, :unwatch,
+       [instance, self()]}
 
   # The addresses go by `subscribe_urls`, which an MC from before it lacks; that one is
   # watched by `subscribe` and simply never probes them. Unsubscribing is the same.
