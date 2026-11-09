@@ -1711,7 +1711,13 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     end
 
     test "the working form is named as the repair" do
-      for working <- ["python -m mypy .", "uvx mypy .", "pipx run mypy ."] do
+      for working <- [
+            "python -m mypy .",
+            "uvx mypy .",
+            "pipx run mypy .",
+            "conda run -n proj mypy .",
+            "mise exec python@3.12 -- mypy ."
+          ] do
         task = fn i ->
           [
             edit("/r/pkg/m#{i}.py"),
@@ -1783,7 +1789,11 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       for {failing, other} <- [
             {"python -m mypy .", "python -m ruff check ."},
             {"uvx mypy .", "uvx ruff check ."},
-            {"pipx run mypy .", "pipx run ruff check ."}
+            {"pipx run mypy .", "pipx run ruff check ."},
+            # A launcher's own arguments are not the tool it runs.
+            {"conda run -n proj mypy .", "conda run -n proj ruff check ."},
+            {"mamba run -n proj mypy .", "mamba run -n proj ruff check ."},
+            {"mise exec python@3.12 -- mypy .", "mise exec python@3.12 -- ruff check ."}
           ] do
         task = fn i ->
           [

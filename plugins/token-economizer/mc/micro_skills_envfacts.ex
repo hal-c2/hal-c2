@@ -481,9 +481,6 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
 
   defp typed_ok?(o), do: Observe.form_worked(o) and not o.env
 
-  @run_words ~w(run exec npx uv uvx pipx poetry pipenv conda mamba micromamba bundle yarn pnpm -m python python3)
-  @script_runners ~w(npm bun)
-
   # Can `form` stand in for the failing `a_form`? Another form -- and, outside
   # test runs and builds, not a bare one. A build or check is repaired only by
   # the same tool spelled another way: `make build` does not repair `ruff`, nor
@@ -501,21 +498,80 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
     end
   end
 
-  # The tool a build form runs: its first word past the `cd x &&` and
-  # activation prefixes and the launchers, by its basename. `./gradlew build`
-  # and `gradlew build` run `gradlew`, `uv run ruff` and `.venv/bin/ruff` run
-  # `ruff`, `npm run build` and `yarn build` both run the `build` script, and
-  # `mise exec node@20 -- make build` runs `make`.
-  defp build_tool(form) do
-    form
-    |> String.split(" && ")
-    |> List.last()
-    |> String.split(" -- ")
-    |> List.last()
-    |> String.split()
-    |> Enum.map(&Path.basename/1)
-    |> Enum.find(&(&1 not in @run_words and &1 not in @script_runners))
+  # The tool a build form runs, by its basename, past the `cd x &&` and
+  # activation prefixes and each launcher with its own arguments. `./gradlew
+  # build` and `gradlew build` run `gradlew`, `uv run ruff` and `.venv/bin/ruff`
+  # run `ruff`, `conda run -n proj mypy` and `mise exec node@20 -- make build`
+  # run `mypy` and `make`, and `npm run build` and `yarn build` both run the
+  # `build` script. nil when a launcher takes an option it does not know: a
+  # form whose tool is unsure is no evidence of a repair.
+  defp build_tool(form),
+    do: form |> String.split(" && ") |> List.last() |> String.split() |> tool_word()
+
+  @conda ~w(conda mamba micromamba)
+  @conda_args ~w(-n --name -p --prefix)
+  @conda_flags ~w(--no-capture-output --live-stream)
+  @pythons ~w(python python3)
+  @script_runners ~w(npm bun yarn pnpm)
+
+  defp tool_word([launcher, "run" | rest]) when launcher in @conda,
+    do: rest |> skip_options(@conda_args, @conda_flags) |> tool_word()
+
+  defp tool_word(["mise", exec | rest]) when exec in ~w(exec x) do
+    case Enum.split_while(rest, &(&1 != "--")) do
+      {_specs, ["--" | command]} -> tool_word(command)
+      _ -> nil
+    end
   end
+
+  defp tool_word([launcher, "run" | rest]) when launcher in ~w(uv poetry pipenv pipx),
+    do: rest |> skip_options([], []) |> tool_word()
+
+  defp tool_word([launcher | rest]) when launcher in ~w(npx bunx uvx),
+    do: rest |> skip_options(~w(-p --package), ~w(-y --yes)) |> tool_word()
+
+  defp tool_word(["bundle", "exec" | rest]), do: tool_word(rest)
+
+  defp tool_word([runner | rest]) when runner in @script_runners do
+    case rest do
+      [sub | script] when sub in ~w(run exec) -> tool_word(script)
+      script -> tool_word(script)
+    end
+  end
+
+  defp tool_word([word | rest]) do
+    name = Path.basename(word)
+
+    cond do
+      String.starts_with?(name, "-") -> nil
+      # `node_modules/.bin/pnpm run lint` launches as `pnpm` does.
+      name != word -> tool_word([name | rest])
+      name in @pythons -> python_tool(rest)
+      true -> name
+    end
+  end
+
+  defp tool_word([]), do: nil
+
+  # `python -m mypy` runs `mypy`; `python setup.py build` runs `setup.py`.
+  defp python_tool(["-m", module | _]), do: module
+
+  defp python_tool([script | _]),
+    do: if(String.starts_with?(script, "-"), do: nil, else: Path.basename(script))
+
+  defp python_tool([]), do: nil
+
+  # Drops a launcher's own options: those in `with_arg` and their argument,
+  # and the `flags`. Any other option leaves the tool unsure, so nothing.
+  defp skip_options(["-" <> _ = option | rest], with_arg, flags) do
+    cond do
+      option in flags -> skip_options(rest, with_arg, flags)
+      option in with_arg and rest != [] -> skip_options(tl(rest), with_arg, flags)
+      true -> []
+    end
+  end
+
+  defp skip_options(words, _with_arg, _flags), do: words
 
   # The executable a form runs, by its last word.
   defp tool_of(form) do
