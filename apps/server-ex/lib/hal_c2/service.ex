@@ -256,7 +256,7 @@ defmodule HalC2.Service do
   def uninstall do
     with manager when manager != nil <- manager() || {:error, unsupported()},
          units = installed(manager),
-         homes = Enum.map(units, fn {_name, path} -> unit_state(path) end),
+         homes = Enum.map(units, fn {_name, path} -> unit_state(manager, path) end),
          :ok <- remove(manager, units) do
       # Only a removed service's programs: an MC in the foreground keeps its own.
       for state when is_binary(state) <- homes,
@@ -271,11 +271,14 @@ defmodule HalC2.Service do
   # server wrote, neither of which kept programs through a restart, so it has none to
   # stop. The path is one `installed/1` built under the user's home, never a caller's.
   # sobelow_skip ["Traversal.FileModule"]
-  defp unit_state(path) do
+  defp unit_state(manager, path) do
     case Regex.run(
            ~r{(?:StandardOutput=append:|<key>StandardOutPath</key>\s*<string>)([^\n<]+)/logs/boot-service\.log},
            File.read!(path)
          ) do
+      [_, dir] when manager == :systemd ->
+        String.replace(dir, "%%", "%")
+
       [_, dir] ->
         dir
         |> String.replace("&lt;", "<")
@@ -465,7 +468,7 @@ defmodule HalC2.Service do
 
   defp render(:systemd) do
     {argv, cwd} = program()
-    log = log_path()
+    log = unit_value(log_path(), :path)
 
     Enum.join(
       List.flatten([
@@ -476,11 +479,11 @@ defmodule HalC2.Service do
         "",
         "[Service]",
         "Type=simple",
-        "WorkingDirectory=#{quote_value(cwd)}",
-        for({name, dir} <- chosen_home(), do: "Environment=#{name}=#{quote_value(dir)}"),
-        "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
+        "WorkingDirectory=#{unit_value(cwd, :path)}",
+        for({name, dir} <- chosen_home(), do: "Environment=#{name}=#{unit_value(dir, :env)}"),
+        "Environment=PATH=#{unit_value(System.get_env("PATH", ""), :env)}",
         "Environment=HAL_C2_WAIT_FOR_HOME=1",
-        "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
+        "ExecStart=#{Enum.map_join(argv, " ", &unit_value(&1, :exec))}",
         # The provider programs outlive a restart (`HalC2.Subprocess.Durable`).
         "KillMode=process",
         "OOMPolicy=continue",
@@ -548,8 +551,23 @@ defmodule HalC2.Service do
     """
   end
 
-  @doc false
-  def quote_value(value) do
+  @doc """
+  `value` as a systemd unit setting reads it. systemd expands `%` specifiers in
+  every setting a unit writes here, and `$` variables in `ExecStart=`, so each is
+  doubled where systemd would expand it:
+
+  - `:path`: a path setting (`WorkingDirectory=`, `StandardOutput=append:`), which
+    systemd takes as written, quotes included.
+  - `:env`: an `Environment=` value, quoted when it has a space, quote or backslash.
+  - `:exec`: one word of `ExecStart=`, quoted likewise.
+  """
+  def unit_value(value, :path), do: String.replace(value, "%", "%%")
+  def unit_value(value, :env), do: value |> unit_value(:path) |> quoted()
+
+  def unit_value(value, :exec),
+    do: value |> unit_value(:path) |> String.replace("$", "$$") |> quoted()
+
+  defp quoted(value) do
     if String.match?(value, ~r/[\s"\\]/),
       do: ~s("#{value |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")}"),
       else: value

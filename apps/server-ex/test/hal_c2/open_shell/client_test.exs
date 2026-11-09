@@ -188,12 +188,9 @@ defmodule HalC2.OpenShell.ClientTest do
       assert request.request_id =~
                ~r/\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
 
+      # Limits only: OpenShell's Docker driver refuses requests (FAILED_PRECONDITION).
       limits = Google.Protobuf.to_map(request.spec.template.resources)
-
-      assert limits == %{
-               "limits" => %{"cpu" => "2", "memory" => "4Gi"},
-               "requests" => %{"cpu" => "2", "memory" => "4Gi"}
-             }
+      assert limits == %{"limits" => %{"cpu" => "2", "memory" => "4Gi"}}
     end
 
     test "the owner label cannot be taken over, and bad labels fail with their name", %{

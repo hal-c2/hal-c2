@@ -14,22 +14,25 @@ runs it as a service of your own user, and talks to it only over mutual TLS.
 
 ## What your machine needs
 
-| Machine                       | Container runtime                                       |
-| ----------------------------- | ------------------------------------------------------- |
-| Linux on x86_64 or aarch64    | Podman 5 or later, rootless, as your own user (default) |
-| glibc 2.28+, Linux 6.2+, with | or a rootless Docker daemon, named in                   |
-| Landlock enabled              | `HAL_C2_OPENSHELL_DOCKER_SOCKET`                        |
-| macOS on Apple Silicon        | Docker Desktop 28 or later                              |
+| Machine                                                                    | Container runtime                             |
+| -------------------------------------------------------------------------- | --------------------------------------------- |
+| Linux on x86_64 or aarch64, glibc 2.28+, Linux 6.2+, with Landlock enabled | Podman 5 or later, rootless, as your own user |
+| macOS on Apple Silicon                                                     | Docker Desktop 28 or later                    |
 
 Intel Macs are not supported, and neither is an MC running under Rosetta. On Linux,
-start Podman's socket with `systemctl --user enable --now podman.socket`.
+start Podman's socket with `systemctl --user enable --now podman.socket`. To use a
+Podman socket somewhere else, name it in `HAL_C2_OPENSHELL_DOCKER_SOCKET`;
+`DOCKER_HOST` is not read.
 
-A Docker daemon that runs as root is always refused, even when you name its socket:
-whatever holds that socket controls the machine. Use rootless Podman, or set up
-rootless Docker (`dockerd-rootless-setuptool.sh`) and name its socket.
-`DOCKER_HOST` is not read; name the socket in `HAL_C2_OPENSHELL_DOCKER_SOCKET`. A
-socket that Podman answers on is used as Podman. Docker Desktop for Linux is refused,
-since its daemon runs as root in its VM.
+The runtime must be able to hold each sandbox to its CPU, memory and process limits:
+cgroup v2, with the `cpu`, `memory` and `pids` controllers delegated to your user. Most
+current distributions do this already. Where they don't, `install` says what's missing
+instead of running sandboxes with no limits.
+
+Docker on Linux is refused. A Docker daemon that runs as root controls the machine
+through its socket. The sandboxes of a rootless Docker daemon can't reach the gateway,
+which listens on your machine's loopback only. Docker Desktop for Linux runs its daemon
+as root in its VM.
 
 ## Set it up
 
@@ -132,17 +135,18 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 
 `status` prints a code with each problem and what to do about it:
 
-| Code                                                                                                                       | What to do                                                                                              |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `not-installed`                                                                                                            | Run `install`.                                                                                          |
-| `update-available`, `version-mismatch`                                                                                     | Run `install` to move to the version this MC pins.                                                      |
-| `service-missing`, `service-outdated`                                                                                      | Run `install` to rewrite the gateway's service.                                                         |
-| `service-not-ours`                                                                                                         | The service under this home's name runs another HAL-C2 home's gateway. Uninstall OpenShell there first. |
-| `home-moved`                                                                                                               | Installed when this home was at another path, whose service is still there. Remove it, run `install`.   |
-| `service-stopped`, `gateway-unreachable`                                                                                   | Read the gateway's log (`status` prints where), then run `install`.                                     |
-| `gateway-shared`                                                                                                           | Another HAL-C2 environment uses this gateway. Give each one its own.                                    |
-| `intel-mac`, `unsupported-os`, `unsupported-arch`                                                                          | This machine cannot run OpenShell.                                                                      |
-| `glibc-too-old`, `kernel-too-old`, `landlock-missing`                                                                      | Update the system, or enable Landlock in the kernel's `lsm=` boot parameter.                            |
-| `podman-missing`, `podman-too-old`, `runtime-not-rootless`, `root-docker`, `docker-desktop-linux`, `docker-socket-missing` | Set up rootless Podman 5, or a rootless Docker daemon.                                                  |
-| `docker-desktop-missing`, `docker-too-old`, `podman-on-mac`                                                                | Install and start Docker Desktop 28 or later.                                                           |
-| `runtime-unreachable`                                                                                                      | Start the container runtime.                                                                            |
+| Code                                                                                                                                          | What to do                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `not-installed`                                                                                                                               | Run `install`.                                                                                             |
+| `update-available`, `version-mismatch`                                                                                                        | Run `install` to move to the version this MC pins.                                                         |
+| `service-missing`, `service-outdated`                                                                                                         | Run `install` to rewrite the gateway's service.                                                            |
+| `service-not-ours`                                                                                                                            | The service under this home's name runs another HAL-C2 home's gateway. Uninstall OpenShell there first.    |
+| `home-moved`                                                                                                                                  | Installed when this home was at another path, whose service is still there. Remove it, run `install`.      |
+| `service-stopped`, `gateway-unreachable`                                                                                                      | Read the gateway's log (`status` prints where), then run `install`.                                        |
+| `gateway-shared`                                                                                                                              | Another HAL-C2 environment uses this gateway. Give each one its own.                                       |
+| `intel-mac`, `unsupported-os`, `unsupported-arch`                                                                                             | This machine cannot run OpenShell.                                                                         |
+| `glibc-too-old`, `kernel-too-old`, `landlock-missing`                                                                                         | Update the system, or enable Landlock in the kernel's `lsm=` boot parameter.                               |
+| `podman-missing`, `podman-too-old`, `runtime-not-rootless`, `root-docker`, `rootless-docker`, `docker-desktop-linux`, `docker-socket-missing` | Set up rootless Podman 5.                                                                                  |
+| `cgroup-v1`, `cgroup-controllers-missing`, `cgroup-unknown`                                                                                   | Run on cgroup v2 and delegate the `cpu`, `memory` and `pids` controllers to your user; `install` says how. |
+| `docker-desktop-missing`, `docker-too-old`, `podman-on-mac`                                                                                   | Install and start Docker Desktop 28 or later.                                                              |
+| `runtime-unreachable`                                                                                                                         | Start the container runtime.                                                                               |

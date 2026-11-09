@@ -35,8 +35,7 @@ GitHub release cannot change what an MC runs. Moving the pin is a reviewed code 
 5. Run the gateway once against the scratch archive with a scratch MC home
    (`mise run openshell --home <dir> --archive <file>`) and run
    `HAL_C2_MC_HOME=<dir> mise exec -- mix hal_c2.openshell check` against it. Do not point it at a root Docker
-   daemon; the check needs rootless Podman (or a rootless Docker daemon) to create its probe
-   sandbox.
+   daemon; the check needs rootless Podman to create its probe sandbox.
 
 An MC that runs an older pin reports `update-available`, and `hal-c2-service openshell install`
 updates it: the previous gateway, its certificates, its configuration and its database are

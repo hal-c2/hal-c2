@@ -25,7 +25,8 @@ defmodule HalC2.OpenShell.InstallTest do
       uid: 1000,
       reachable: true,
       version: "5.2.1",
-      rootless: true
+      rootless: true,
+      cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]}
     }
   }
 
@@ -353,6 +354,7 @@ defmodule HalC2.OpenShell.InstallTest do
         reachable: true,
         version: "28.1.0",
         rootless: false,
+        cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]},
         desktop: true
       }
 

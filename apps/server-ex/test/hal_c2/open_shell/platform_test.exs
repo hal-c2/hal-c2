@@ -31,7 +31,8 @@ defmodule HalC2.OpenShell.PlatformTest do
         uid: @uid,
         reachable: true,
         version: "5.2.1",
-        rootless: true
+        rootless: true,
+        cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]}
       },
       overrides
     )
@@ -47,11 +48,14 @@ defmodule HalC2.OpenShell.PlatformTest do
         reachable: true,
         version: "28.1.0",
         rootless: true,
+        cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]},
         desktop: false
       },
       overrides
     )
   end
+
+  defp mac, do: %{os: :darwin, arch: "aarch64", runtime: nil}
 
   describe "check/1" do
     test "Linux with rootless Podman picks the target for its architecture" do
@@ -104,13 +108,46 @@ defmodule HalC2.OpenShell.PlatformTest do
       assert {:error, ["root-docker"]} =
                Platform.check(linux(%{runtime: docker(%{owner_uid: 0})}))
 
-      assert {:error, ["docker-too-old"]} =
-               Platform.check(linux(%{runtime: docker(%{version: "27.5.1"})}))
-
-      assert {:ok, %{driver: "docker", socket: "/run/user/1000/docker.sock", network: "host"}} =
-               Platform.check(linux(%{runtime: docker(%{})}))
-
       assert {:ok, %{network: nil}} = Platform.check(linux())
+    end
+
+    # Its supervisors would dial 127.0.0.1 in RootlessKit's network namespace, where
+    # the gateway is not, and OpenShell refuses a bridge to a loopback-only gateway.
+    test "a rootless Docker daemon on Linux is refused, whatever its version" do
+      for version <- ["28.1.0", "27.5.1"] do
+        assert {:error, ["rootless-docker"]} =
+                 Platform.check(linux(%{runtime: docker(%{version: version})}))
+      end
+    end
+
+    # A rootless runtime on cgroup v1, or without the controllers, starts containers
+    # with no CPU, memory or pids limits, and says so only in a warning.
+    test "a runtime that cannot enforce the sandbox's limits is refused" do
+      desktop = docker(%{desktop: true, rootless: false})
+
+      for runtime <- [podman(), desktop],
+          facts = if(runtime.kind == :podman, do: linux(), else: mac()) do
+        assert {:ok, _} = Platform.check(%{facts | runtime: runtime})
+
+        assert {:error, ["cgroup-v1"]} =
+                 Platform.check(%{
+                   facts
+                   | runtime: %{runtime | cgroup: %{version: 1, controllers: []}}
+                 })
+
+        for missing <- ["cpu", "memory", "pids"] do
+          controllers = List.delete(runtime.cgroup.controllers, missing)
+
+          assert {:error, ["cgroup-controllers-missing"]} =
+                   Platform.check(%{
+                     facts
+                     | runtime: %{runtime | cgroup: %{version: 2, controllers: controllers}}
+                   })
+        end
+
+        assert {:error, ["cgroup-unknown"]} =
+                 Platform.check(%{facts | runtime: %{runtime | cgroup: nil}})
+      end
     end
 
     test "macOS needs Apple Silicon and Docker Desktop" do
@@ -177,7 +214,8 @@ defmodule HalC2.OpenShell.PlatformTest do
         ~w(unsupported-os unsupported-arch intel-mac glibc-too-old kernel-too-old landlock-missing
            podman-missing podman-too-old runtime-not-rootless root-docker docker-too-old
            docker-desktop-missing runtime-unreachable unsupported-runtime docker-socket-missing
-           docker-desktop-linux podman-on-mac)
+           docker-desktop-linux podman-on-mac rootless-docker cgroup-v1 cgroup-controllers-missing
+           cgroup-unknown)
 
       for code <- codes, do: refute(Platform.problem_message(code) == code, code)
     end
@@ -190,13 +228,30 @@ defmodule HalC2.OpenShell.PlatformTest do
           "/version" => %{"Version" => "5.2.1"},
           # Podman 5 serves its own API under a version only (`/info` is the
           # Docker-compatible one); the unversioned path is a 404.
-          "/v5.0.0/libpod/info" => %{"host" => %{"security" => %{"rootless" => true}}}
+          "/v5.0.0/libpod/info" => %{
+            "host" => %{
+              "security" => %{"rootless" => true},
+              "cgroupVersion" => "v2",
+              "cgroupControllers" => ["memory", "pids"]
+            }
+          }
         })
 
       assert %{kind: :podman, version: "5.2.1", rootless: true, reachable: true} =
                probe = Platform.probe_runtime(:podman, socket)
 
       assert probe.owner_uid == probe.uid
+      # The controllers delegated to the user, which here are not enough.
+      assert probe.cgroup == %{version: 2, controllers: ["memory", "pids"]}
+      assert {:error, ["cgroup-controllers-missing"]} = Platform.check(linux(%{runtime: probe}))
+
+      socket =
+        serve(dir, %{
+          "/version" => %{"Version" => "5.2.1"},
+          "/v5.0.0/libpod/info" => %{"host" => %{"security" => %{"rootless" => true}}}
+        })
+
+      assert %{cgroup: nil} = Platform.probe_runtime(:podman, socket)
     end
 
     test "reads Docker's rootless and Desktop flags", %{tmp_dir: dir} do
@@ -211,6 +266,37 @@ defmodule HalC2.OpenShell.PlatformTest do
 
       assert %{version: "28.1.0", rootless: true, desktop: false} =
                Platform.probe_runtime(:docker, socket)
+    end
+
+    test "reads what Docker can limit, and that it limits nothing without cgroups", %{
+      tmp_dir: dir
+    } do
+      info = %{
+        "OperatingSystem" => "Docker Desktop",
+        "CgroupDriver" => "cgroupfs",
+        "CgroupVersion" => "2",
+        "CpuCfsQuota" => true,
+        "MemoryLimit" => true,
+        "PidsLimit" => true
+      }
+
+      probe = fn info ->
+        socket = serve(dir, %{"/version" => %{"Version" => "28.1.0"}, "/info" => info})
+        Platform.probe_runtime(:docker, socket).cgroup
+      end
+
+      assert probe.(info) == %{version: 2, controllers: ["cpu", "memory", "pids"]}
+
+      assert probe.(%{info | "PidsLimit" => false}) == %{
+               version: 2,
+               controllers: ["cpu", "memory"]
+             }
+
+      # Rootless Docker on cgroup v1 runs with no cgroup driver, and says it limits all.
+      assert probe.(%{info | "CgroupDriver" => "none", "CgroupVersion" => "1"}) ==
+               %{version: 1, controllers: []}
+
+      assert probe.(Map.delete(info, "CgroupVersion")) == nil
     end
 
     test "a Docker socket that Podman answers on is probed as Podman", %{tmp_dir: dir} do

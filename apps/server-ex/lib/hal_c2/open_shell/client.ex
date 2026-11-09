@@ -300,9 +300,11 @@ defmodule HalC2.OpenShell.Client do
 
   defp resources(nil), do: nil
 
+  # Limits only: OpenShell's Docker driver refuses requests (FAILED_PRECONDITION), and
+  # its Podman driver ignores them.
   defp resources(limits) do
     limits = for {k, v} when k in [:cpu, :memory] <- limits, into: %{}, do: {to_string(k), v}
-    Google.Protobuf.from_map(%{"limits" => limits, "requests" => limits})
+    Google.Protobuf.from_map(%{"limits" => limits})
   end
 
   @doc "`{:ok, sandbox}` (`sandbox/1`), `{:error, :not_owned}` or the gateway's error."

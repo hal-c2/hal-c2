@@ -457,18 +457,25 @@ defmodule HalC2.Test.FakeOpenShell do
       reply(conn, %Pb.CreateWorkspaceResponse{})
     end
 
+    # As OpenShell 0.1.7's Docker driver does, a sandbox that asks for resource
+    # requests rather than limits only is refused.
     defp unary(conn, "CreateSandbox", body, config) do
       request = Pb.CreateSandboxRequest.decode(body)
       notify(config, "CreateSandbox", request)
       sandbox = FakeOpenShell.sandbox(request.name, request.labels)
       policy = request.spec && request.spec.policy
-
+      resources = request.spec && request.spec.template && request.spec.template.resources
       # As 0.1.7's, a policy its validator refuses makes no sandbox.
-      case policy && FakeOpenShell.Validator.violations(policy) do
-        [_ | _] = violations ->
+      violations = (policy && FakeOpenShell.Validator.violations(policy)) || []
+
+      cond do
+        match?(%Google.Protobuf.Struct{fields: %{"requests" => _}}, resources) ->
+          error(conn, 9, "docker compute driver does not support resources.requests.cpu")
+
+        violations != [] ->
           error(conn, 3, "policy contains unsafe content: " <> Enum.join(violations, "; "))
 
-        _ ->
+        true ->
           Agent.update(config.store, fn store ->
             store
             |> put_in([:sandboxes, request.name], sandbox)

@@ -39,8 +39,8 @@ defmodule HalC2.OpenShell.ConfigTest do
       Config.render(%{
         port: 1,
         driver: "docker",
-        socket: "/run/user/1000/docker.sock",
-        network: "host"
+        socket: "/Users/me/.docker/run/docker.sock",
+        network: "bridge"
       })
 
     for key <- ~w(default_image sandbox_runtime_image supervisor_image) do
@@ -55,7 +55,7 @@ defmodule HalC2.OpenShell.ConfigTest do
         port: 1,
         driver: driver,
         socket: "/run/user/1000/#{driver}.sock",
-        network: if(driver == "docker", do: "host")
+        network: if(driver == "docker", do: "bridge")
       })
     end
 
@@ -77,7 +77,6 @@ defmodule HalC2.OpenShell.ConfigTest do
     end
 
     assert docker.("bridge") =~ ~s(\nsupervisor_network_mode = "bridge"\n)
-    assert docker.("host") =~ ~s(\nsupervisor_network_mode = "host"\n)
     # The gateway still listens on loopback only; Desktop forwards the name to it.
     assert docker.("bridge") =~ ~s(bind_address = "127.0.0.1:1"\n)
     refute docker.("bridge") =~ "grpc_endpoint"
@@ -85,8 +84,19 @@ defmodule HalC2.OpenShell.ConfigTest do
     refute Config.render(%{port: 1, driver: "podman", socket: "/p.sock"}) =~
              "supervisor_network_mode"
 
-    # No silent default: OpenShell's would leave a Mac's sandboxes unable to start.
+    # No silent default: OpenShell's would leave a Mac's sandboxes unable to start, and
+    # the host network leaves rootless Docker's unable to reach the gateway.
     assert_raise FunctionClauseError, fn -> docker.(nil) end
+    assert_raise FunctionClauseError, fn -> docker.("host") end
+  end
+
+  # As sqlx-sqlite 0.9 parses it: the filename ends at the first `?`, then is
+  # percent-decoded.
+  test "the database URL names the home's database, whatever its path", %{tmp_dir: dir} do
+    FakeOpenShell.put_env(home: Path.join(dir, "mc%20home?x=1#y"))
+    ["--db-url", "sqlite:" <> url] = Enum.take(Config.args(), -2)
+    [file, "mode=rwc"] = String.split(url, "?", parts: 2)
+    assert URI.decode(file) == OpenShell.db_path()
   end
 
   test "a path with quotes or control characters stays one TOML string" do
