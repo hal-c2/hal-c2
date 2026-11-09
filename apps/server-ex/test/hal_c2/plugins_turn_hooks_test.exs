@@ -393,6 +393,7 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     assert %{"path" => "a.txt", "status" => "completed"} = edit
     assert edit["output"] =~ "+new"
+    assert is_integer(edit["ordinal"])
 
     assert_receive {:observed, %{"type" => "turn.finished"} = finished}, 5_000
     assert %{"usedTokens" => 1000} = finished["tokenUsage"]
@@ -409,6 +410,25 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert is_binary(two["tokenUsage"]["updatedAt"])
     assert is_binary(finished["tokenUsage"]["updatedAt"])
     assert Enum.any?(one["items"], &(&1["itemType"] == "file_change"))
+  end
+
+  test "a Codex file edit takes its place in the thread as it starts, not as it ends",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "edit-around a.txt")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "command_execution"} = run},
+                   5_000
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "file_change"} = edit},
+                   5_000
+
+    assert %{"path" => "a.txt", "status" => "completed"} = edit
+    assert is_integer(edit["ordinal"]) and edit["ordinal"] < run["ordinal"]
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
   end
 
   test "a Codex turn that reports no usage ends with none, not the turn before's",
