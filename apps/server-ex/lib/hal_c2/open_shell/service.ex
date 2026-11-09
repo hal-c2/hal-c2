@@ -482,6 +482,9 @@ defmodule HalC2.OpenShell.Service do
         reap_comment(),
         "[Unit]",
         "Description=Deletes HAL-C2 review sandboxes past their time",
+        # It asks the gateway, so at boot it runs after the gateway's unit, itself
+        # after its runtime; ordering only, as a reap must not start either.
+        "After=#{name(:systemd)}",
         "",
         "[Service]",
         "Type=oneshot",

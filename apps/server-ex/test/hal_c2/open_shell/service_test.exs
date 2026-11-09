@@ -155,6 +155,9 @@ defmodule HalC2.OpenShell.ServiceTest do
 
       lines = String.split(unit, "\n")
       assert "Type=oneshot" in lines
+      # After the gateway, which is after its runtime, and pulling in neither.
+      assert "After=#{Service.name(:systemd)}" in lines
+      refute Enum.any?(lines, &String.starts_with?(&1, ["Wants=", "Requires="]))
       [exec] = for "ExecStart=" <> argv <- lines, do: argv
       root = HalC2.Service.quote_value(OpenShell.root())
       assert String.ends_with?(exec, " hal_c2.openshell reap --root #{root}")
