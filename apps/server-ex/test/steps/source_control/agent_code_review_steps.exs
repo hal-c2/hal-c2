@@ -561,6 +561,18 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     sandbox(context, report: nil, tokens: tokens)
   end
 
+  # A subagent's messages carry only their starting counts; its task's progress, the rest.
+  step "the sandboxed agent's subagent writes {int} tokens without reporting",
+       %{args: [tokens]} = context do
+    sandbox(context, report: nil, tokens: 10, subagent_tokens: 10, subagent_progress: tokens)
+  end
+
+  # Spend no message reports, such as the CLI's side requests, shows only in its result.
+  step "the sandboxed agent's CLI alone counts {int} tokens without reporting",
+       %{args: [tokens]} = context do
+    sandbox(context, report: nil, tokens: 10, cli_tokens: tokens)
+  end
+
   step "the sandboxed agent works until it is stopped", context do
     sandbox(context, hang: true)
   end

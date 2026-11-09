@@ -1334,6 +1334,34 @@ defmodule HalC2.CodeReviewTest do
       assert review()["error"] =~ "used up its token budget"
     end
 
+    @tag sandbox: [report: nil, tokens: 10, subagent_tokens: 10, subagent_progress: 1_000]
+    test "what a subagent writes counts against the budget of a Claude review", _context do
+      save_settings(%{
+        "sandboxTokens" => 500,
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      })
+
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
+    @tag sandbox: [report: nil, tokens: 10, cli_tokens: 1_000]
+    test "what only the CLI counts goes against the budget of a Claude review", _context do
+      save_settings(%{
+        "sandboxTokens" => 500,
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5"
+      })
+
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
     @tag sandbox: [report: nil, tokens: 10, subagent_tokens: 1_000]
     test "what subagents use counts against the budget of a Codex review", _context do
       save_settings(%{"sandboxTokens" => 500})

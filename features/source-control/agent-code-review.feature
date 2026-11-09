@@ -2,6 +2,7 @@
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
 #   apps/server-ex/lib/hal_c2/open_shell/review.ex, broker.ex (review sandboxes, their lease and the report broker)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex, codex/thread_runtime.ex (a sandboxed turn skips this machine's checks, skills, tasks and quota)
+#   apps/server-ex/lib/hal_c2/claude/budget.ex (what a sandboxed Claude CLI spent, its subagents and side requests included)
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
@@ -403,6 +404,21 @@ Feature: Agent code review
       When #12 is reviewed
       Then the review of #12 is failed saying it used up its token budget
       And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario Outline: A sandboxed Claude review's budget counts what only its subagents and the CLI report
+      Given pull requests are not trusted and OpenShell is installed
+      And sandboxed reviews may use 500 tokens
+      And "code-review" reviews with Claude on "claude-haiku-4-5"
+      And <spender> 1000 tokens without reporting
+      When #12 is reviewed
+      Then the review of #12 is failed saying it used up its token budget
+      And its sandbox and the sandbox's provider are deleted
+
+      Examples:
+        | spender                                       |
+        | the sandboxed agent's subagent writes         |
+        | the sandboxed agent's CLI alone counts        |
 
     @mc
     Scenario: Stopping a sandboxed review deletes its sandbox

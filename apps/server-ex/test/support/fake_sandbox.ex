@@ -11,8 +11,9 @@ defmodule HalC2.Test.FakeSandbox do
     the review broker, with `opts[:report]` (an approval unless it is `nil`), report
     `opts[:tokens]` tokens used (0), and finish the turn. Claude also reports
     `opts[:cached]` cache reads (0), with `rate_limit: info` a rate limit event, with
-    `task_update: input` a TaskUpdate call that succeeds, and with `subagent_tokens: n` a subagent's message that used `n`; Codex,
-    with it, spawns a subagent whose thread reports `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
+    `task_update: input` a TaskUpdate call that succeeds, and with `subagent_tokens: n` a subagent's message that used `n`,
+    which its task's progress then says used `subagent_progress` (none), and its result
+    says the turn used `cli_tokens` over every model (none). Codex, with `subagent_tokens`, spawns a subagent whose thread reports `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
     to `test`, until it is interrupted.
 
   `stat -f` of the review's writable paths answers the tmpfs mounts it asked for,
@@ -296,6 +297,18 @@ defmodule HalC2.Test.FakeSandbox do
           "usage" => %{"input_tokens" => sub, "output_tokens" => 0}
         }
       })
+
+      if total = s.opts[:subagent_progress] do
+        out(io, %{
+          "type" => "system",
+          "subtype" => "task_progress",
+          "session_id" => session,
+          "task_id" => "task-subagent",
+          "tool_use_id" => "toolu-subagent",
+          "description" => "Looking",
+          "usage" => %{"total_tokens" => total, "tool_uses" => 1, "duration_ms" => 10}
+        })
+      end
     end
 
     if info = s.opts[:rate_limit] do
@@ -339,7 +352,12 @@ defmodule HalC2.Test.FakeSandbox do
       "subtype" => "success",
       "is_error" => false,
       "result" => "done",
-      "session_id" => session
+      "session_id" => session,
+      "modelUsage" =>
+        if(cli = s.opts[:cli_tokens],
+          do: %{"claude-haiku" => %{"inputTokens" => cli, "outputTokens" => 0}},
+          else: %{}
+        )
     })
 
     s

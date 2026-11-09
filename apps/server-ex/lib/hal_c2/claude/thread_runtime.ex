@@ -30,6 +30,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   import HalC2.Orchestration.TurnWriter
 
+  alias HalC2.Claude.Budget
   alias HalC2.Claude.Provider
   alias HalC2.Subprocess.Durable
   alias HalC2.Claude.Session
@@ -318,7 +319,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        # list id nil once Claude's own copy turned out unreadable; nil before any change
        # of this runtime's. And the task tool calls still to report back, by tool use id.
        task_list: nil,
-       task_calls: %{}
+       task_calls: %{},
+       # What a sandboxed review's CLI spent (#1412), a `Budget`; nil outside a sandbox.
+       sandbox_spent: nil
      }}
   end
 
@@ -755,8 +758,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_info(:durable_save, state),
     do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
-  def handle_info({:claude, _session, {:message, message}}, state),
-    do: {:noreply, receive_message(result_meta(message), state)}
+  def handle_info({:claude, _session, {:message, message}}, state) do
+    message = result_meta(message)
+    {:noreply, receive_message(message, budget(state, message))}
+  end
 
   # The thread would not run the wake (`wake/2`): its messages go on as between turns.
   def handle_info(:wake_refused, %{turn: nil, wake: %{buffer: [_ | _] = buffer} = wake} = state) do
@@ -1029,6 +1034,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:goal_checked, false)
        |> Map.put_new(:task_list, nil)
        |> Map.put_new(:task_calls, %{})
+       |> Map.put_new(:sandbox_spent, nil)
        |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
@@ -1720,8 +1726,16 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     with {:ok, opts} <- in_sandbox(opts, turn, state),
          {:ok, session} <- Session.start_link(opts) do
+      spent = if Map.get(turn, :sandbox) == true, do: Budget.new(opts[:resume] != nil)
+
       {:ok,
-       %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
+       %{
+         state
+         | session: session,
+           permission_mode: permission_mode(turn),
+           launch: turn.launch,
+           sandbox_spent: spent
+       }}
     end
   end
 
@@ -2175,7 +2189,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       with nil <- message["parent_tool_use_id"],
            %{} = usage <- get_in(message, ["message", "usage"]) do
-        spent(state, id, usage)
+        state = spent(state, id, usage)
         turn = Map.merge(state.turn, %{last_usage: usage, usage_message: id, compacted: false})
         %{state | turn: turn}
       else
@@ -3213,20 +3227,24 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # What a sandboxed review's message cost counts against its budget (#1412), once per
-  # message however often its counts are reported. A cached prompt is still read, so
-  # cache reads count like any other input.
-  defp spent(%{turn: %{sandbox: true}} = state, message_id, usage) when is_binary(message_id) do
-    tokens =
-      for key <-
-            ~w(input_tokens output_tokens cache_creation_input_tokens cache_read_input_tokens),
-          is_integer(usage[key]),
-          reduce: 0,
-          do: (sum -> sum + usage[key])
+  # message however often its counts are reported.
+  defp spent(%{sandbox_spent: %Budget{} = budget} = state, message_id, usage)
+       when is_binary(message_id),
+       do: report(state, Budget.message(budget, message_id, usage))
 
-    HalC2.OpenShell.Review.spent(state.thread_id, message_id, tokens)
+  defp spent(state, _message_id, _usage), do: state
+
+  # What else a sandboxed review's CLI spends (its subagents, its own count in each
+  # result), whatever the thread then does with the message.
+  defp budget(%{sandbox_spent: %Budget{} = budget} = state, message),
+    do: report(state, Budget.observe(budget, message))
+
+  defp budget(state, _message), do: state
+
+  defp report(state, {budget, counts}) do
+    for {key, tokens} <- counts, do: HalC2.OpenShell.Review.spent(state.thread_id, key, tokens)
+    %{state | sandbox_spent: budget}
   end
-
-  defp spent(_state, _message_id, _usage), do: :ok
 
   # Partial messages: text and thinking stream into their items as they arrive.
   defp stream_event(%{"type" => "message_start", "message" => %{"id" => id}}, state),
@@ -3265,8 +3283,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         for {key, value} <- usage, is_number(value) and value > 0, into: %{}, do: {key, value}
 
       turn = Map.update!(turn, :last_usage, &Map.merge(&1, counts))
-      spent(state, state.message_id, turn.last_usage)
-      %{state | turn: turn}
+      %{spent(state, state.message_id, turn.last_usage) | turn: turn}
     else
       state
     end
@@ -3411,6 +3428,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # running in the background (a command, a monitor, a subagent of its own) runs in
   # this thread's Claude process, which must stay up for it, so that is this thread's
   # background work. Its partial messages are dropped: the complete message follows.
+  # What it spends counts in `budget/2`.
   defp sidechain(%{"type" => "stream_event"}, _parent, state), do: state
 
   defp sidechain(
@@ -3419,11 +3437,6 @@ defmodule HalC2.Claude.ThreadRuntime do
          state
        )
        when is_list(content) do
-    # A sandboxed review's subagents spend from its budget too; the context meter is
-    # the main conversation's, so their usage goes nowhere else.
-    with %{} = usage <- message["message"]["usage"],
-         do: spent(state, message["message"]["id"], usage)
-
     state
     |> parent_work(Enum.filter(content, &parent_work?/1))
     |> to_subagent(parent, fn sub ->
