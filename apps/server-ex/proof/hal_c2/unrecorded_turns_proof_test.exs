@@ -44,7 +44,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Orchestration.TurnWatch.driven?/1" => ~w(interrupt-driven interrupt-undriven),
       "HalC2.Orchestration.TurnWatch.unrecorded/3" => ~w(unrecorded hand-over deadline),
       "HalC2.Orchestration.TurnWatch handle_call {:claim, _, _, _}" => "take",
-      "HalC2.Orchestration.TurnWatch handle_cast {:release, _}" => "finish",
+      # A try that records the run releases it before its answer is heard; a held end
+      # keeps its runtime watched until then.
+      "HalC2.Orchestration.TurnWatch handle_cast {:release, _}" => ~w(finish commit),
       "HalC2.Orchestration.TurnWatch handle_cast {:unrecorded, _, _, _}" =>
         ~w(unrecorded hand-over deadline try),
       "HalC2.Orchestration.TurnWatch handle_call {:driven?, _}" =>
@@ -53,7 +55,7 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Orchestration.TurnWatch handle_info {:retry, _}" => "try",
       # A try that recorded the run, its runtime gone meanwhile, starts the next.
       "HalC2.Orchestration.TurnWatch handle_info {:attempted, _, _}" =>
-        ~w(commit attempt-failed try),
+        ~w(commit answered attempt-failed try),
       # A turn left over is stopped first, and the new one waits for its end.
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take hold refuse-start),
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupt-driven unrecorded),
@@ -215,7 +217,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         {"reend goals", "overwritten", "the run's end leaving a provider turn that ended"},
         {"noLeftoverRetry", "stale", "a left-over turn's refused end being tried again"},
         {"noWatchHeld", "stale", "TurnWatch watching a runtime whose end it holds"},
-        {"noRecheck", "stale", "a try that recorded the run looking again at its runtime"}
+        {"noRecheck", "stale", "a try that recorded the run looking again at its runtime"},
+        {"releaseEarly", "stale", "TurnWatch watching a runtime until it hears the try's answer"}
       ] do
     [part | with] = String.split(part)
 

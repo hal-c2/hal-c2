@@ -73,7 +73,7 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
     notify(pid, runtime, "item/started", %{
       "threadId" => "native-child-1",
       "turnId" => "native-child-turn-1",
-      "item" => %{"type" => "commandExecution", "id" => "child-cmd", "command" => "ls lib"}
+      "item" => %{"type" => "commandExecution", "id" => "child-cmd-1", "command" => "ls lib"}
     })
 
     :ok = GenServer.call(pid, :settle)
@@ -281,6 +281,46 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
     assert %{"status" => "failed"} = item(@tid, "subagent")
   end
 
+  # Review of #1398: the try that records the run releases its claim before its answer
+  # reaches TurnWatch. A runtime that goes in between still takes its subagent with it,
+  # TurnWatch watching it until the end records.
+  test "a runtime that goes after the run's end released it takes its subagent with it",
+       %{work: work} do
+    {pid, runtime, run} = running_turn(work)
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    child_command(pid, runtime, native)
+    [%{"childThreadId" => child}] = list(@tid, "subagent")
+
+    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_every, []})
+    completed = Map.put(native, "turn", %{"id" => native["turnId"], "status" => "completed"})
+    notify(pid, runtime, "turn/completed", completed)
+    assert {:unrecorded, _} = TurnWatch.attempted(run)
+
+    # The next try holds at its first write; TurnWatch hears its release and answer
+    # only after the runtime went.
+    gate = make_ref()
+    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :hold_once, [self(), gate]})
+    assert_receive {:held, ^gate, store}, 5_000
+    watch = Process.whereis(TurnWatch)
+    :erlang.trace(watch, true, [:receive])
+    :sys.suspend(watch)
+    send(store, {:go, gate})
+    assert_receive {:trace, ^watch, :receive, {:attempted, ^run, :ok}}, 5_000
+    :erlang.trace(watch, false, [:receive])
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+    :sys.resume(watch)
+
+    await(fn ->
+      match?([%{"status" => "failed"}], list(@tid, "run")) and
+        match?([%{"status" => "failed"}], list(@tid, "subagent"))
+    end)
+
+    assert %{"status" => "failed"} = command(child)
+    assert %{"status" => "failed"} = item(@tid, "subagent")
+  end
+
   # The subagent an earlier run left running is ended by the run's end however long
   # ago that run settled: its item and node, in cold storage by then, end with it.
   test "a run the store failed ends an earlier run's subagent whose item went cold",
@@ -356,17 +396,22 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
     assert [{^pid, _}] = Registry.lookup(HalC2.Codex.Registry, @tid)
   end
 
-  defp child_command(pid, runtime, native) do
-    notify(pid, runtime, "item/started", Map.put(native, "item", collab()))
-    await(fn -> list(@tid, "subagent") != [] end)
-    child = %{"threadId" => "native-child-1", "turnId" => "native-child-turn-1"}
-    notify(pid, runtime, "item/started", Map.put(child, "item", child_cmd()))
+  defp child_command(pid, runtime, native, n \\ "1") do
+    count = length(list(@tid, "subagent"))
+    notify(pid, runtime, "item/started", Map.put(native, "item", collab(n)))
+    await(fn -> length(list(@tid, "subagent")) > count end)
+    child = %{"threadId" => "native-child-#{n}", "turnId" => "native-child-turn-#{n}"}
+    notify(pid, runtime, "item/started", Map.put(child, "item", child_cmd(n)))
     :ok = GenServer.call(pid, :settle)
-    [%{"childThreadId" => child}] = list(@tid, "subagent")
-    assert %{"status" => "running"} = command(child)
+
+    %{"childThreadId" => child} =
+      Enum.find(list(@tid, "subagent"), &(&1["runId"] == runtime.turn.ids.run))
+
+    assert %{"status" => "running"} = command(child, n)
   end
 
-  defp child_cmd, do: %{"type" => "commandExecution", "id" => "child-cmd", "command" => "ls lib"}
+  defp child_cmd(n),
+    do: %{"type" => "commandExecution", "id" => "child-cmd-#{n}", "command" => "ls lib"}
 
   defp item(thread_id, type), do: Enum.find(list(thread_id, "turn-item"), &(&1["type"] == type))
 
@@ -394,7 +439,7 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
   end
 
   # The thread's next message, and the runtime once Codex runs its turn.
-  defp dispatch(message_id, previous) do
+  defp dispatch(message_id, previous, gone \\ nil) do
     {:ok, _} =
       Orchestration.dispatch(%{
         "type" => "message.dispatch",
@@ -406,7 +451,11 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
         "dispatchMode" => %{"type" => "start_immediately"}
       })
 
-    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, @tid) end)
+    # A runtime that went may linger in the registry a moment.
+    [{pid, _}] =
+      await(fn ->
+        Enum.reject(Registry.lookup(HalC2.Codex.Registry, @tid), &(elem(&1, 0) == gone))
+      end)
 
     await_state(
       pid,
@@ -414,19 +463,20 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
     )
   end
 
-  defp collab do
+  defp collab(n \\ "1") do
     %{
       "type" => "collabAgentToolCall",
-      "id" => "collab-1",
+      "id" => "collab-#{n}",
       "tool" => "spawnAgent",
       "prompt" => "List the modules in lib",
-      "receiverThreadIds" => ["native-child-1"],
+      "receiverThreadIds" => ["native-child-#{n}"],
       "status" => "inProgress",
-      "agentsStates" => %{"native-child-1" => %{"status" => "running"}}
+      "agentsStates" => %{"native-child-#{n}" => %{"status" => "running"}}
     }
   end
 
-  defp command(child), do: Enum.find(list(child, "turn-item"), &(&1["id"] =~ "child-cmd"))
+  defp command(child, n \\ "1"),
+    do: Enum.find(list(child, "turn-item"), &(&1["id"] =~ "child-cmd-#{n}"))
 
   # As the app-server would send it.
   defp notify(pid, runtime, method, params),

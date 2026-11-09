@@ -64,10 +64,11 @@ mod UNRECORDED-TURNS is
   --- goal hold handing its completed turn over as completed, and the run's end leaving
   --- a provider turn recorded as ended as it is (TurnWriter.ended/7), a left-over
   --- turn's end the store refused being tried again, TurnWatch watching the runtime
-  --- of every end it holds, and a try that recorded the run looking again at a runtime
-  --- that went while it ran.
+  --- of every end it holds, a try that recorded the run looking again at a runtime
+  --- that went while it ran, and TurnWatch watching that runtime until it hears the
+  --- try's answer, not only until the try releases the run.
   ops noRetry nowTime overwrite noLeftoverStop noLeftoverWait noInterrupt notDriven noActiveCheck
-    keepMark goalStop reend noLeftoverRetry noWatchHeld noRecheck : -> Sw [ctor] .
+    keepMark goalStop reend noLeftoverRetry noWatchHeld noRecheck releaseEarly : -> Sw [ctor] .
   op off : Sw -> Item [ctor] .
 
   --- Codex pursues a goal.
@@ -115,9 +116,12 @@ mod UNRECORDED-TURNS is
 
   --- TurnWatch: a run's end held until the store takes it (time, provider turn, and
   --- whether a try has failed), a try at it on its way (the task of try_record/2) with
-  --- the provider turn it took, and a runtime's `:DOWN` it has yet to act on.
+  --- the provider turn it took, a try that recorded with its answer on its way (its
+  --- `{:attempted, _, :ok}`, sent after the run's release), and a runtime's `:DOWN` it
+  --- has yet to act on.
   op pend : Rid Nat Pv Bool -> Item [ctor] .
   op try : Rid Pv -> Item [ctor] .
+  op done : Rid Pv -> Item [ctor] .
   op downed : Rid -> Item [ctor] .
 
   --- Boot recovery still to run; the next message, sent and dispatched; a user's stop.
@@ -176,6 +180,7 @@ mod UNRECORDED-TURNS is
   eq wiped(pend(R, T, P, B) C) = forgot(R) wiped(C) .
   eq wiped(downed(R) C) = wiped(C) .
   eq wiped(try(R, P) C) = wiped(C) .
+  eq wiped(done(R, P) C) = wiped(C) .
   eq wiped(lend(R, S, B) C) = wiped(C) .
   eq wiped(settling C) = wiped(C) .
   eq wiped(rt(Y) C) = rt(down) wiped(C) .
@@ -240,6 +245,7 @@ mod UNRECORDED-TURNS is
   eq downs?(C, R) = false [owise] .
   op trying : Conf Rid -> Bool .
   eq trying(try(R, P) C, R) = true .
+  eq trying(done(R, P) C, R) = true .
   eq trying(C, R) = false [owise] .
   op up : Conf -> Bool .
   eq up(store(true) C) = true .
@@ -253,15 +259,19 @@ mod UNRECORDED-TURNS is
   eq holds(C) = false [owise] .
 
   --- A runtime's `:DOWN` for the ends TurnWatch holds besides run R's: it watches the
-  --- runtime until each records (TurnWriter.finish/3). One already gone is harmless to
-  --- hear again, [gone] being idempotent.
+  --- runtime until each records (TurnWriter.finish/3), its try's release of the run
+  --- aside. One already gone is harmless to hear again, [gone] being idempotent.
   op downs : Conf Rid -> Conf .
   eq downs(pend(R', T, P, B) C, R) =
-    (if R' == R or has(C, noWatchHeld) then empty else downed(R') fi) downs(C, R) .
+    (if R' == R or unwatched(C, R') then empty else downed(R') fi) downs(C, R) .
   eq downs(C, R) = empty [owise] .
   op downs : Conf -> Conf .
-  eq downs(pend(R, T, P, B) C) = (if has(C, noWatchHeld) then empty else downed(R) fi) downs(C) .
+  eq downs(pend(R, T, P, B) C) = (if unwatched(C, R) then empty else downed(R) fi) downs(C) .
   eq downs(C) = empty [owise] .
+  --- With releaseEarly, the release of a run whose try recorded it ends the watch.
+  op unwatched : Conf Rid -> Bool .
+  eq unwatched(done(R, P) C, R) = has(C, noWatchHeld) or has(C, releaseEarly) .
+  eq unwatched(C, R) = has(C, noWatchHeld) [owise] .
 
   op booting : Conf -> Bool .
   eq booting(settling C) = true .
@@ -399,13 +409,13 @@ mod UNRECORDED-TURNS is
   crl [try] : { pend(R, T, P, B) C } => { pend(R, T, P, B) try(R, seen(C, R, P)) C }
     if P =/= pending /\ not trying(C, R) /\ (not B or up(C)) .
 
-  --- The try's TurnWriter.abandon/5 and {:attempted, _, :ok}: the run fails at the time it
-  --- failed, its provider turn as the try took it.
+  --- The try's TurnWriter.abandon/5: the run fails at the time it failed, its provider
+  --- turn as the try took it, and is released; its answer is on its way.
   rl [commit] : { store(true) clock(N) pend(R, T, P, B) try(R, P') run(R, active) ends(R, K)
       rpt(R, X) C }
     => { store(true) clock(N) run(R, over(failed, (if has(C, nowTime) then N else T fi)))
          ends(R, s K) rpt(R, written(has(C, overwrite), has(C, reend), P', X)) watched(R)
-         again(C, R, T, P, P', B) } .
+         answer(C, R, T, P, P', B) } .
   --- A run already ended is left as it is (abandon/5's check that it is still active), but
   --- for a provider turn still read as running, which a try after its runtime went ends
   --- as that runtime's end says.
@@ -414,8 +424,22 @@ mod UNRECORDED-TURNS is
     if has(C, noActiveCheck) .
   crl [commit] : { store(true) pend(R, T, P, B) try(R, P') run(R, over(S, M)) rpt(R, X) C }
     => { store(true) run(R, over(S, M)) rpt(R, (if X == running then settles(P', X) else X fi))
-         again(C, R, T, P, P', B) }
+         answer(C, R, T, P, P', B) }
     if not has(C, noActiveCheck) .
+
+  --- The try's answer, on its way while the runtime can still go before it is heard
+  --- and its going would change the end (a provider turn it could not stop, `went/1`);
+  --- otherwise nothing between the two touches the held end, and it is heard at once.
+  op answer : Conf Rid Nat Pv Pv Bool -> Conf .
+  ceq answer(C, R, T, P, P', B) = pend(R, T, P, B) done(R, P') C
+    if went(P) =/= P /\ exposed(C) .
+  eq answer(C, R, T, P, P', B) = again(C, R, T, P, P', B) [owise] .
+  op exposed : Conf -> Bool .
+  eq exposed(faults(s F) rt(Y) C) = Y =/= down .
+  eq exposed(C) = false [owise] .
+
+  --- {:attempted, _, :ok}: TurnWatch hears the try that recorded.
+  rl [answered] : { pend(R, T, P, B) done(R, P') C } => { again(C, R, T, P, P', B) } .
 
   --- After a try recorded: a runtime that went while it ran leaves the end held, as
   --- TurnWatch reads it now, for a try at the recorded run; otherwise TurnWatch forgets
@@ -559,6 +583,7 @@ mod UNRECORDED-TURNS is
   eq quiet({ pend(R, T, P, B) C }) = false .
   eq quiet({ downed(R) C }) = false .
   eq quiet({ try(R, P) C }) = false .
+  eq quiet({ done(R, P) C }) = false .
   eq quiet({ settling C }) = false .
   eq quiet({ endmsg(R, S) C }) = false .
   eq quiet({ asked(R) C }) = false .

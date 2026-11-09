@@ -80,7 +80,14 @@ defmodule HalC2.Orchestration.TurnWatch do
   def init(nil), do: {:ok, %{claims: %{}, pending: %{}, waiters: %{}}}
 
   @impl true
-  def handle_cast({:release, run_id}, state), do: {:noreply, forget(state, run_id)}
+  # A run whose end is held keeps its runtime watched until the end records
+  # (`recorded/3`): the try that ends it releases it before its answer is heard, and a
+  # runtime that goes in between takes its work with it.
+  def handle_cast({:release, run_id}, state) do
+    if Map.has_key?(state.pending, run_id),
+      do: {:noreply, state},
+      else: {:noreply, forget(state, run_id)}
+  end
 
   def handle_cast({:unrecorded, thread_id, run_id, ending}, state) do
     ending =
