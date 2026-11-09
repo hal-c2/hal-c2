@@ -370,6 +370,37 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "an edit tried after a passing check, or after it in the same command, is unchecked" do
+      tracker = Envelope.new("default", %{}, %{"resolved_turns" => [4, 4, 4, 4, 4]})
+      thr = Envelope.turn_thresholds(tracker)
+      thr = Map.merge(thr, %{"gate_over_envelope" => false, "gate_min_turns" => thr["min_turns"]})
+
+      opts = [
+        envelope: Envelope.envelope(tracker),
+        thr: thr,
+        judge: true,
+        nudge_budget: 1,
+        now: 0
+      ]
+
+      {g, []} = stuck_turn(Turn.new("t"), 12, opts)
+      passing = "3 passed in 0.10s"
+
+      # Checked, then an edit that failed to apply: what follows is no longer checked, as
+      # upstream counts every edit it is told of.
+      {g, nil, nil} = Turn.fold(g, "Bash", %{"command" => "pytest -q"}, passing, 0, opts)
+      failed_edit = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "not found", 1, opts)
+      assert elem(failed_edit, 1) != nil
+
+      # The run checked the code before the edit after it, not the edit.
+      cmd = "pytest -q && sed -i 's/a/b/' a.py"
+      assert elem(Turn.fold(g, "Bash", %{"command" => cmd}, passing, 0, opts), 1) != nil
+
+      # The edit before the run is what it checked.
+      cmd = "sed -i 's/a/b/' a.py && pytest -q"
+      assert {_, nil, nil} = Turn.fold(g, "Bash", %{"command" => cmd}, passing, 0, opts)
+    end
+
     test "with no redirects left is offered a stop straight away" do
       {_g, decisions} =
         stuck_turn(Turn.new("t"), 120, envelope: 10.0, thr: Rules.defaults(), nudge_budget: 0)
