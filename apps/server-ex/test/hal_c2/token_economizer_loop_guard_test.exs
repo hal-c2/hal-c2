@@ -1334,6 +1334,39 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute state.turns["c"].partial
     end
 
+    test "drop a turn whose run ended unheard once two sweeps found it so, learning nothing from it" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      # The MC says run-a ended: its `turn.finished` was lost, or is still on its way.
+      state = %{state | active?: fn _thread, run -> run != "run-a" end}
+      state = state |> observe(started("a")) |> observe(started("b"))
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["a", "b"]
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["b"]
+      assert state.stats["turns"] == 1
+      assert state.trackers == %{}
+
+      # A turn that started on the thread since is the MC's to answer for afresh.
+      state = observe(state, started("a", %{"runId" => "run-a2"}))
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["a", "b"]
+      Process.cancel_timer(state.sweep)
+    end
+
+    test "count a turn whose run the MC could not answer for as ended, so a failing MC keeps none for good" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = %{state | active?: fn _thread, _run -> raise "no stream" end}
+      state = observe(state, started("a"))
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert state.turns == %{}
+      Process.cancel_timer(state.sweep)
+    end
+
     test "count what was waiting, which a full queue does not bound" do
       {:ok, state} = TokenEconomizer.init(%{})
       # Senders that found room together put more than the limit in the queue.

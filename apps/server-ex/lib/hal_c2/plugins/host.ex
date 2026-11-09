@@ -467,6 +467,22 @@ defmodule HalC2.Plugins.Host do
     end
   end
 
+  # A run's statuses while it is under way, as the orchestration counts them.
+  @under_way ~w(preparing starting running waiting)
+
+  @doc """
+  Whether run `run_id` of `thread_id` is under way on this MC. Not once it ended, nor a
+  run or thread this MC does not have: a plugin that never heard a turn end learns here
+  that it will not. Needs `turns:observe`; without it, false.
+  """
+  def run_active?(id, thread_id, run_id) do
+    granted?(id, "turns:observe") and
+      match?(
+        %{"status" => status} when status in @under_way,
+        HalC2.Streams.get(thread_id, "run", run_id)
+      )
+  end
+
   @doc """
   How many turn events plugin `id`'s feed may still deliver: 0 when it has no feed. A
   plugin process restarted while its feed ran has lost what it knew of the events

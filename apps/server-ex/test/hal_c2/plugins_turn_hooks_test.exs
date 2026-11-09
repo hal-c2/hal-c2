@@ -686,6 +686,22 @@ defmodule HalC2.PluginsTurnHooksTest do
     await_statuses(thread_id, ["interrupted"])
   end
 
+  test "a plugin asks whether a run it heard start is under way: not once it ended, nor a run the thread lacks",
+       %{thread_id: thread_id} do
+    grant(%{"reader" => ["turns:observe"]})
+    {:ok, _} = send_message(thread_id, "m1", "wait m1")
+    [running] = await_statuses(thread_id, ["running"])
+
+    assert Host.run_active?("reader", thread_id, running["id"])
+    refute Host.run_active?("reader", thread_id, "run:missing")
+    # Without turns:observe a plugin is told nothing of the thread's runs.
+    refute Host.run_active?("stranger", thread_id, running["id"])
+
+    :ok = HalC2.Claude.ThreadRuntime.interrupt(thread_id, running["id"])
+    await_statuses(thread_id, ["interrupted"])
+    refute Host.run_active?("reader", thread_id, running["id"])
+  end
+
   test "a plugin reads the turns a thread ran, oldest first, each with its calls",
        %{thread_id: thread_id} do
     grant(%{"reader" => ["turns:observe"]})
