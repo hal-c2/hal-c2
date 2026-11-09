@@ -783,7 +783,9 @@ defmodule HalC2.TurnWatchPropTest do
 
     :ok =
       HalC2.Streams.transact(child_id(id), :thread, fn stream ->
-        {[Orchestration.upsert(stream, "turn-item", child_item(id), item)], :ok}
+        # An item an earlier resume left running needs no change (`upsert/4` is nil).
+        {[Orchestration.upsert(stream, "turn-item", child_item(id), item)]
+         |> Enum.filter(&is_tuple/1), :ok}
       end)
   end
 
