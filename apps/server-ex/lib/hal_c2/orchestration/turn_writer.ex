@@ -42,9 +42,12 @@ defmodule HalC2.Orchestration.TurnWriter do
   `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:search`, `:web`, `:tool`,
   `:compaction`, `:notice` (a message the provider itself announced), or `:error`
   (a provider failure, such as a retry);
-  `fields` are the item type's own fields.
+  `fields` are the item type's own fields. An item confirms the run reached its provider
+  (`confirmed/2`) unless the runtime still holds its prompt (`prompt_held`, as Pi's does
+  while it compacts) or the item is one the runtime kept from before the turn
+  (`confirms: false`): neither is the provider answering the prompt.
   """
-  def ensure_item(state, native, kind, fields \\ %{}) do
+  def ensure_item(state, native, kind, fields \\ %{}, opts \\ []) do
     if Map.has_key?(state.items, native) do
       state
     else
@@ -56,6 +59,11 @@ defmodule HalC2.Orchestration.TurnWriter do
       message_id = if kind == :assistant, do: "message:#{driver}:#{native}"
       plan_id = if kind == :plan, do: "plan:#{driver}:#{native}"
       item_ids = Map.put(ids, :node, node_id)
+
+      confirms? =
+        driver not in @acknowledging and Keyword.get(opts, :confirms, true) and
+          Map.get(state, :prompt_held, false) == false
+
       {node_kind, type, item_fields} = shape(kind, message_id, fields)
       item_fields = if plan_id, do: Map.put(item_fields, "planId", plan_id), else: item_fields
 
@@ -98,7 +106,7 @@ defmodule HalC2.Orchestration.TurnWriter do
             ),
           # A provider that says when it starts the turn confirms the run then; an item
           # can be something left over from before it, such as background work's.
-          driver not in @acknowledging && confirmed(stream, ids)
+          confirms? && confirmed(stream, ids)
         ]
       end)
 

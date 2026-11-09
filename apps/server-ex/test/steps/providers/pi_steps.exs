@@ -2971,6 +2971,91 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi compacts for longer than the scenario runs, once the first turn settled.
+  step "Pi is compacting a thread's conversation after an extension failed between turns",
+       context do
+    event = %{
+      "type" => "extension_error",
+      "extensionPath" => "/home/user/.pi/agent/extensions/nightly/index.ts",
+      "event" => "session_start",
+      "error" => "woke up wrong"
+    }
+
+    turns = [
+      %{"match" => "compact after", "compactAfter" => 600, "steps" => [%{"text" => "Done."}]}
+    ]
+
+    context
+    |> install(%{
+      "turns" => turns ++ FakeAcp.pi_turns(),
+      "rejectWhileCompacting" => true,
+      "settledEvents" => [event]
+    })
+    |> FakeAcp.thread()
+    |> turn("compact after this")
+  end
+
+  step "the thread comes back to Pi from Codex while Pi still compacts", context do
+    thread_id = World.thread_id(context, context.thread)
+    context = World.providers(context)
+    codex = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+    pi = %{"instanceId" => context.provider, "model" => "fake/one"}
+
+    switch = fn context, selection ->
+      context =
+        World.command(context, %{
+          "type" => "provider.switch",
+          "threadId" => thread_id,
+          "modelSelection" => selection
+        })
+
+      assert {:ok, _} = context.reply
+      context
+    end
+
+    context = context |> switch.(codex) |> turn("work on Codex")
+    context = context |> switch.(pi) |> FakeAcp.send_message("back on Pi")
+    FakeAcp.await_run(context, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+    assert :sys.get_state(pid).prompt_held == :unsent
+    Map.put(context, :pi_runtime, pid)
+  end
+
+  step "the run shows the extension's failure while its prompt waits", context do
+    run = World.latest_run(context, context.thread)
+
+    assert [%{"runId" => run_id}] =
+             Enum.filter(items(context, "error"), &(&1["title"] == "nightly"))
+
+    assert run_id == run["id"]
+
+    refute Enum.any?(FakeAcp.log(context), &match?(%{"accepted" => "back on Pi"}, &1))
+    context
+  end
+
+  step "the history it hands over is still unconfirmed", context do
+    run = World.latest_run(context, context.thread)
+    instance = context.provider
+
+    assert [%{"unconfirmedRunId" => run_id}] =
+             for(
+               t <- StreamState.list(state(context), "provider-thread"),
+               t["providerInstanceId"] == instance,
+               do: t
+             )
+
+    assert run_id == run["id"]
+    # A turn still waiting on the compaction stops at once.
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    FakeAcp.await_run(context, "interrupted")
+    context
+  end
+
   step "a Pi extension shows the warning {string}", %{args: [warning]} = context do
     event_thread(
       context,

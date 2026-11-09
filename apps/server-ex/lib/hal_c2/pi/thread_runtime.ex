@@ -1827,12 +1827,17 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # Extension failures queued between turns, shown at the head of this turn.
   defp show_extension_errors(state) do
-    Enum.reduce(state.extension_errors, %{state | extension_errors: []}, &extension_error(&2, &1))
+    Enum.reduce(
+      state.extension_errors,
+      %{state | extension_errors: []},
+      &extension_error(&2, &1, confirms: false)
+    )
   end
 
   # A failing extension is named in the work log: a failed entry titled after
-  # the extension, saying during which step it failed and why.
-  defp extension_error(state, event) do
+  # the extension, saying during which step it failed and why. One kept from between
+  # turns is the MC's to show, not Pi taking the prompt.
+  defp extension_error(state, event, opts \\ []) do
     n = state.ext_errors + 1
     native = "extension-error:#{state.turn.ids.run}:#{n}"
     name = extension_name(event["extensionPath"])
@@ -1852,7 +1857,7 @@ defmodule HalC2.Pi.ThreadRuntime do
     state
     |> flush()
     |> Map.put(:ext_errors, n)
-    |> ensure_item(native, :error, fields)
+    |> ensure_item(native, :error, fields, opts)
     |> finish_item(native, "failed", &Map.merge(&1, fields))
   end
 

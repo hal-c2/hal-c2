@@ -682,6 +682,15 @@ Feature: Pi
     When the user sends the next message
     Then that turn's work log shows the extension's failure
 
+  # The run's prompt waits for Pi's compaction to end, and with it the history it hands
+  # over. Showing an extension's failure from between turns is not Pi taking either, so a
+  # handoff still counts that history as unconfirmed (#1363 review).
+  Scenario: A prompt waiting on Pi's compaction does not confirm its handoff
+    Given Pi is compacting a thread's conversation after an extension failed between turns
+    When the thread comes back to Pi from Codex while Pi still compacts
+    Then the run shows the extension's failure while its prompt waits
+    And the history it hands over is still unconfirmed
+
   Scenario Outline: A Pi compaction shows how it ended
     When Pi's compaction of the conversation <ends>
     Then the work log entry reads "<title>"
