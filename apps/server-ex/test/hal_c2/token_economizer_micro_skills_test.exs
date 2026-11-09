@@ -83,8 +83,13 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert form("conda run -n proj python - <<'PY'\nimport x\nPY") ==
              {"run_interpreter", "conda run -n proj python"}
 
+    # A script run through its shebang keeps the spelling that ran it: its
+    # interpreter is the shebang's, not one to guess.
     assert form("PYTHONPATH=/testbed ./tests/runtests.py auth_tests -v 1") ==
-             {"run_tests", "python tests/runtests.py"}
+             {"run_tests", "./tests/runtests.py"}
+
+    assert form("./bin/test -q") == {"run_tests", "./bin/test"}
+    assert form("/testbed/bin/doctest") == {"run_tests", "/testbed/bin/doctest"}
 
     assert form("#{@proj} bin/test sympy/core/tests/test_a.py") ==
              {"run_tests", "#{@proj} bin/test"}

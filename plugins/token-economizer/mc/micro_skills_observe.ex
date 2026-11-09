@@ -36,7 +36,6 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # person works in may mix them.
   @interpreters ~w(python python2 python3 pypy pypy3 node nodejs deno bun tsx ts-node
                    ruby perl php Rscript julia lua elixir)
-  @canonical_interpreter "python"
   @runner_heads ~w(pytest py.test tox nox nosetests trial jest vitest mocha playwright
                    cypress ava karma rspec phpunit ctest bats)
   @runner_scripts ["runtests.py", "bin/test", "bin/doctest", "manage.py"]
@@ -452,20 +451,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
       base in @runner_heads ->
         observation(call, "run_tests", form.(head), head, seg)
 
-      script = direct_runner_script(head, rest) ->
-        # A script run through its shebang is the interpreter running it; spell
-        # the form that way so `./tests/runtests.py` and
-        # `python tests/runtests.py` pool.
-        observation(
-          call,
-          "run_tests",
-          form.("#{@canonical_interpreter} " <> Regex.replace(~r/^[.\/]+/, script, "")),
-          head,
-          seg
-        )
+      # A script run through its shebang keeps the spelling that ran it: its
+      # interpreter is the shebang's, which may not be Python at all.
+      direct_runner_script(head, rest) ->
+        observation(call, "run_tests", form.(head), head, seg)
 
       base in @task_heads and hd(rest ++ [nil]) == "test" ->
-        observation(call, "run_tests", form.("#{base} test"), head, seg)
+        observation(call, "run_tests", form.("#{head} test"), head, seg)
 
       base in @run_script_heads and length(rest) > 1 and hd(rest) == "run" ->
         script = Enum.at(rest, 1)
