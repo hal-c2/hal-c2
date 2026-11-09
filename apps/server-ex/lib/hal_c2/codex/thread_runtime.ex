@@ -2098,13 +2098,14 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp notification(
          "item/" <> event,
-         %{"item" => %{"type" => "collabAgentToolCall"} = item},
+         %{"item" => %{"type" => "collabAgentToolCall"} = item} = params,
          state
        )
        when event in ["started", "completed"] do
     # Plugins that hear turns hear each call end: the agent working its subagents,
-    # whose start alone the subagent's item tells (`NativeSubagent.start/3`).
-    if state.turn != nil and event == "completed",
+    # whose start alone the subagent's item tells (`NativeSubagent.start/3`). A call
+    # of an earlier turn that ends late is not this turn's use.
+    if event == "completed" and this_turn?(params, state),
       do:
         observe_item(state, "completed", %{
           "id" => item_id(state.turn.ids, item["id"]),
@@ -2494,6 +2495,21 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp notification(_method, _params, state), do: state
+
+  # Whether a notification is of the turn under way, as the notification clauses that drop
+  # the others have it: none is between turns or a goal's turns, nor another turn's item.
+  defp this_turn?(_params, %{turn: nil}), do: false
+
+  defp this_turn?(_params, %{turn: %{native_turn_id: nil}, goal_hold: hold}) when hold != nil,
+    do: false
+
+  defp this_turn?(
+         %{"threadId" => thread, "turnId" => turn_id},
+         %{native_thread_id: thread, turn: %{native_turn_id: current}}
+       ),
+       do: turn_id == current
+
+  defp this_turn?(_params, _state), do: true
 
   # The instance quota is published under, resolved once: a turn's own
   # instance when settings here know it, or the driver when they do not (a

@@ -458,6 +458,19 @@ defmodule HalC2.PluginsTurnHooksTest do
     await_statuses(thread_id, ["completed"])
   end
 
+  test "a plugin hears no earlier Codex turn's agent call that ends late as this turn's",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    # A wait call of an earlier turn ends as this one runs.
+    {:ok, _} = send_message(thread_id, "m1", "late collab")
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    refute_received {:observed, %{"type" => "turn.item", "itemType" => "collab_tool_call"}}
+    await_statuses(thread_id, ["completed"])
+  end
+
   test "a plugin hears and reads the usage a Codex goal's run ended with between Codex's turns",
        %{work: work} do
     grant(%{"listener" => ["turns:observe"]})

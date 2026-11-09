@@ -528,6 +528,12 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-sub", "text": "The subagent found three modules."}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
+        # "late collab": a wait call of an earlier turn ends while this one runs.
+        if "late collab" in text:
+            call = {"type": "collabAgentToolCall", "id": "collab-late", "tool": "wait", "senderThreadId": thread_id, "receiverThreadIds": [], "agentsStates": {}}
+            send({"method": "item/completed", "params": {**ctx, "turnId": "turn-earlier", "item": {**call, "status": "completed"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         # "make a failing image": the image Codex was making fails.
         if "make a failing image" in text:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "imageGeneration", "id": "gen-f", "status": "failed", "inputImages": []}}})
