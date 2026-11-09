@@ -144,6 +144,9 @@ mod CODE-REVIEW-CLAIMS is
   --- so a restart keeps them), the machines it counts with (state :machines) and its
   --- next start.
   op bm : Id Bool Starts Ids Nat -> Item [ctor] .
+  --- The members of the cluster, those that never met included, as
+  --- Host.cluster_machines/1 lists them; none when the machines are in no cluster.
+  op members : Ids -> Item [ctor] .
   --- The limit, and how many more reviews each machine asks to start.
   op cap : Nat -> Item [ctor] .
   op asks : Id Nat -> Item [ctor] .
@@ -474,6 +477,10 @@ mod CODE-REVIEW-CLAIMS is
   op heard : Id Id Conf -> Bool .
   eq heard(X, Y, bm(Y, true, Sts, I, F) C) = linked(X, Y, C) .
   eq heard(X, Y, C) = false [owise] .
+  --- learn/2 starts from the cluster's other members, whether in reach or never met.
+  op membersOf : Id Conf -> Ids .
+  eq membersOf(X, members(I) C) = I less X .
+  eq membersOf(X, C) = noids [owise] .
   --- What the machines I know of.
   op ledgers : Ids Conf -> Starts .
   eq ledgers(Y & I, bm(Y, P, Sts, J, F) C) = join(Sts, ledgers(I, bm(Y, P, Sts, J, F) C)) .
@@ -723,13 +730,13 @@ mod CODE-REVIEW-CLAIMS is
     { bh(X, H) bm(X, true, Sts, I, F') cap(F) C }
     => { bp(X, sr(X, F'), J, noids, H, part(F, without(I', J), I'))
          bm(X, true, Sts' ++ sr(X, F'), I', s F') cap(F) C }
-    if J := toldOf(X, C) /\ I' := plus(I, J & restartingOf(X, C))
+    if J := toldOf(X, C) /\ I' := plus(plus(I, membersOf(X, C)), J & restartingOf(X, C))
        /\ Sts' := join(Sts, ledgers(J, C)) /\ count(Sts') < part(F, without(I', J), I') .
   --- ... or holds the review back.
   crl [over] :
     { bh(X, H) bm(X, true, Sts, I, F') cap(F) C }
     => { bm(X, true, Sts', I', F') cap(F) C }
-    if J := toldOf(X, C) /\ I' := plus(I, J & restartingOf(X, C))
+    if J := toldOf(X, C) /\ I' := plus(plus(I, membersOf(X, C)), J & restartingOf(X, C))
        /\ Sts' := join(Sts, ledgers(J, C)) /\ count(Sts') >= part(F, without(I', J), I') .
 
   --- Host.peers :count_start: each machine that answered is told, and answers the
@@ -867,13 +874,25 @@ mod CODE-REVIEW-CLAIMS is
   --- start; Sp partitions, Bo plugin restarts and Cr machines down between them.
   op limited : Nat Nat Nat Nat -> Sys .
   eq limited(F, Sp, Bo, Cr) =
-       { bm(a, true, nostart, b, 0) bm(b, true, nostart, a, 0) link(a, b) cap(F)
+       { bm(a, true, nostart, b, 0) bm(b, true, nostart, a, 0) link(a, b) members(a & b) cap(F)
          asks(a, s F) asks(b, s F) splits(Sp) bounces(Bo) crashes(Cr) } .
+  --- Two members of a cluster that have never answered each other, which may connect
+  --- at any step.
+  op strangers : Nat Nat Nat -> Sys .
+  eq strangers(F, Sp, Bo) =
+       { bm(a, true, nostart, noids, 0) bm(b, true, nostart, noids, 0) members(a & b) cap(F)
+         asks(a, s F) asks(b, s F) splits(Sp) bounces(Bo) crashes(0) } .
+  --- Two that know each other and a third member neither has met.
+  op stranger3 : Nat -> Sys .
+  eq stranger3(Sp) =
+       { bm(a, true, nostart, b, 0) bm(b, true, nostart, a, 0) bm(c, true, nostart, noids, 0)
+         link(a, b) members(a & b & c) cap(3) asks(a, 2) asks(b, 2) asks(c, 2)
+         splits(Sp) bounces(0) crashes(0) } .
   --- Three, with a limit of three.
   op limited3 : Nat Nat -> Sys .
   eq limited3(Sp, Bo) =
        { bm(a, true, nostart, b & c, 0) bm(b, true, nostart, a & c, 0) bm(c, true, nostart, a & b, 0)
-         link(a, b) link(a, c) link(b, c) cap(3) asks(a, 2) asks(b, 2) asks(c, 2)
+         link(a, b) link(a, c) link(b, c) members(a & b & c) cap(3) asks(a, 2) asks(b, 2) asks(c, 2)
          splits(Sp) bounces(Bo) crashes(0) } .
 
   --- symmetry --------------------------------------------------------------------------

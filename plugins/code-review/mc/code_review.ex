@@ -431,8 +431,9 @@ defmodule HalC2Plugins.CodeReview do
       # they started, which the review limits count (`budget/1`).
       starts: loaded.starts,
       # The other machines whose reviews count toward the limits, by node, with their
-      # labels: those heard from running the plugin, until one says it does not or
-      # leaves the cluster. A start the limits apply to waits for every one.
+      # labels: the cluster's members and those heard from running the plugin, until
+      # one says it does not or leaves the cluster (`learn/2`). A start the limits
+      # apply to waits for every one.
       machines: loaded.machines,
       # The next look's timer, armed while none runs.
       timer: nil,
@@ -1050,14 +1051,23 @@ defmodule HalC2Plugins.CodeReview do
 
   # What a machine that left had queued is no longer anyone's: those reviews are
   # looked at again, without waiting for the next look. A commit it started
-  # reviewing goes with it (`away/2`), and shows it is out of reach.
+  # reviewing goes with it (`away/2`), and shows it is out of reach. A review held
+  # while it was apart before shows the limit again (`held_back?/1`).
   def handle_info({:nodedown, node}, state) do
     gone = to_string(node)
 
     on =
       for {key, %{"elsewhere" => %{"node" => ^gone} = other}} <- state.reviews, do: {key, other}
 
+    held? =
+      Enum.any?(state.reviews, fn {_key, review} ->
+        gone in List.wrap(get_in(review, ["limited", "apart"]))
+      end)
+
     case for({key, other} <- on, other["claimed"] != true, do: key) do
+      [] when on == [] and held? ->
+        {:noreply, announce(state)}
+
       [] when on == [] ->
         {:noreply, state}
 
@@ -3343,12 +3353,13 @@ defmodule HalC2Plugins.CodeReview do
 
   defp names(machines), do: machines |> Map.values() |> Enum.sort() |> Enum.join(", ")
 
-  # The machines the limits count with, after `answers` from `Host.peers/4`: one that
-  # answered runs the plugin, one that answers it does not is forgotten, and so is one
-  # no longer in the cluster.
+  # The machines the limits count with, after `answers` from `Host.peers/4`: every
+  # member of the cluster, so one that has never answered counts as out of reach, and
+  # each one that answered runs the plugin. One that answers it does not is left out
+  # until it is out of reach again, and so is one no longer in the cluster.
   defp learn(machines, answers) do
     answers
-    |> Enum.reduce(machines, fn
+    |> Enum.reduce(Map.merge(Host.cluster_machines(@id), machines), fn
       %{"result" => :none, "node" => node}, acc -> Map.delete(acc, node)
       %{"node" => node, "machine" => machine}, acc -> Map.put(acc, node, to_string(machine))
       _answer, acc -> acc

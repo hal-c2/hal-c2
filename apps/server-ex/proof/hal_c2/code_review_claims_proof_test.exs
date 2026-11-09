@@ -60,19 +60,20 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview state :paused_until" => ~w(paused shareOf pump resume),
       "HalC2Plugins.CodeReview state :claimed_at" => ~w(started older polled),
       "HalC2Plugins.CodeReview handle_call {:budget, _, _, _}" =>
-        ~w(count count-lock bblocked admit over toldOf restartingOf ledgers join plus without part),
+        ~w(count count-lock bblocked admit over toldOf restartingOf membersOf ledgers join plus without part),
       "HalC2Plugins.CodeReview handle_call {:told, _, _, _, _}" => ~w(counted untold),
       "HalC2Plugins.CodeReview handle_call {:count_start, _}" => ~w(tell join),
       "HalC2Plugins.CodeReview.starts/0" => ~w(admit over ledgers),
       "HalC2Plugins.CodeReview.count_start/1" => ~w(tell heard counted),
       "HalC2Plugins.CodeReview state :starts" => ~w(bm join count),
-      "HalC2Plugins.CodeReview state :machines" => ~w(bm plus without part),
+      "HalC2Plugins.CodeReview state :machines" => ~w(bm plus membersOf without part),
       "HalC2Plugins.CodeReview.Checkout.prepare/5" => ~w(checkout claim lock),
       "HalC2Plugins.CodeReview.Checkout.remove/2" => "defer",
       "HalC2.Plugins.Host.peers/4" =>
         ~w(peers started defer post peer-claims note heldBy restart admit tell toldOf restartingOf),
       "HalC2.Plugins.Host.peer/3" => ~w(hardBy softBy publishedBy),
-      "HalC2.Plugins.Host.pull_requests/3" => ~w(peers post)
+      "HalC2.Plugins.Host.pull_requests/3" => ~w(peers post),
+      "HalC2.Plugins.Host.cluster_machines/1" => ~w(members membersOf admit over)
     },
     abstracts: %{
       "HalC2Plugins.CodeReview.prompt/3" => @agent,
@@ -196,6 +197,16 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   test "machines out of each other's reach run no more reviews than the limits allow",
        %{proof: proof} do
     for init <- @limited, do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  # Members of the cluster that have never answered each other, which may meet at any
+  # step: with the machines the limits count with learned only from those that answered,
+  # each spends the whole limit (strangers(2,0,0) runs three reviews against two).
+  @strangers ~w[strangers(2,0,0) strangers(2,1,0) strangers(2,0,1) strangers(3,1,0) stranger3(0)]
+
+  test "members of a cluster that never met run no more reviews than the limits allow",
+       %{proof: proof} do
+    for init <- @strangers, do: refute_reachable(proof, init, "unsafe", [])
   end
 
   test "a push does not start or post a commit twice", %{proof: proof} do

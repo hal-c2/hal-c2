@@ -10,7 +10,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   bare `:peer` node with only a stand-in `HalC2.Plugins.Host`, whose `peer/3` answers
   the rows (queued, running, claimed, published, each maybe holding a claim of the
   other commit) the test gives it, or that its plugin is restarting, so the plugin sees
-  a peer whose claims the test controls. The commands set and clear those rows,
+  a peer whose claims the test controls. The laptop is a member of this machine's
+  cluster, connected at the start or never yet in reach, when this machine has only
+  its share of the limits until the two meet. The commands set and clear those rows,
   restart the laptop's plugin, cut the laptop off and connect it again, push, look,
   ask for reviews, hold checkouts at the fetch, report, stop a run at the agent's usage
   limit, publish, crash the plugin, and put a review on GitHub as the laptop or this
@@ -103,7 +105,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
          GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0)
 
     previous_vars = Map.new(vars, &{&1, System.get_env(&1)})
-    apps = ~w(gh_command codex_command settings_check_ms home)a
+    apps = ~w(gh_command codex_command settings_check_ms home cluster_transport cluster_listen)a
     previous_apps = Map.new(apps, &{&1, Application.fetch_env(:hal_c2, &1)})
 
     System.put_env("PATH", bin <> ":" <> System.get_env("PATH"))
@@ -127,6 +129,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     ])
 
     Application.put_env(:hal_c2, :settings_check_ms, nil)
+    # The cluster keeps its member table and leaves the connections to the test.
+    Application.put_env(:hal_c2, :cluster_transport, HalC2.Test.ClusterTable)
+    Application.put_env(:hal_c2, :cluster_listen, "127.0.0.1")
     started_distribution = distribute()
     laptop = start_laptop()
     :persistent_term.put({__MODULE__, :fx}, %{dir: fx, shas: shas, laptop: laptop})
@@ -154,15 +159,17 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   property "of two connected machines one reviews each commit, and it posts its review once",
     numtests: HalC2.Prop.numtests(60),
     max_size: 40 do
-    forall cmds <- commands(__MODULE__) do
-      trap_exit do
-        begin_case()
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        end_case()
+    forall met <- frequency([{3, true}, {1, false}]) do
+      forall cmds <- commands(__MODULE__, initial_state(met)) do
+        trap_exit do
+          begin_case(met)
+          {history, state, result} = run_commands(__MODULE__, cmds)
+          end_case()
 
-        (result == :ok)
-        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
-        |> aggregate(command_names(cmds))
+          (result == :ok)
+          |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+          |> aggregate(command_names(cmds))
+        end
       end
     end
   end
@@ -188,15 +195,19 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # `told`: how many of this machine's starts the laptop heard of.
   #
   # The plugin reviews every new head of both pull requests on its own, one at a time,
-  # and keeps reviews for the user to publish. Its first look finds both at head 1.
-  def initial_state do
+  # and keeps reviews for the user to publish. Its first look finds both at head 1. The
+  # laptop is a member of the cluster, connected at the start (`met`) or never yet in
+  # reach, when this machine counts it out of reach all the same.
+  def initial_state, do: initial_state(true)
+
+  def initial_state(met) do
     look(%{
       prs: Map.new(@keys, &{&1, 1}),
       reviews: %{},
       runs: %{},
       posts: [],
       github: [],
-      laptop: true,
+      laptop: met,
       restarting: false,
       rows: %{},
       hold: false,
@@ -833,14 +844,17 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # Cut off: once the plugin heard, by what it publishes when it had left a review to
-  # the laptop (one the laptop had not started gone, the rest shown out of reach), and
-  # by the laptop's own nodedown here otherwise.
+  # the laptop (one the laptop had not started gone, the rest shown out of reach) or
+  # held one while the laptop was apart before (shown held again), and by the laptop's
+  # own nodedown here otherwise.
   def disconnect do
     node = laptop().node
     gone = to_string(node)
     on? = &match?(%{"node" => ^gone}, &1["elsewhere"])
+    apart? = &(gone in List.wrap(&1["limited"]["apart"]))
     {:ok, state} = get_state(Process.whereis(@server))
-    left? = Enum.any?(state.reviews, fn {_, r} -> on?.(r) end)
+    left? = Enum.any?(state.reviews, fn {_, r} -> on?.(r) or apart?.(r) end)
+    held = for {key, r} <- state.reviews, apart?.(r), do: key
     true = Node.disconnect(node)
 
     receive do
@@ -850,7 +864,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
 
     shown? =
-      &(not on?.(&1) or (&1["elsewhere"]["claimed"] == true and &1["elsewhere"]["away"] == true))
+      &((not on?.(&1) or
+           (&1["elsewhere"]["claimed"] == true and &1["elsewhere"]["away"] == true)) and
+          (&1["key"] not in held or apart?.(&1)))
 
     if left?, do: await_topic(&Enum.all?(&1["reviews"], shown?))
 
@@ -1263,21 +1279,35 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # A bare node: no MC, only a `HalC2.Plugins.Host` whose `peer/3` answers the rows
-  # in its `:cr_peer_rows`. Its control runs over standard io, so cutting the
+  # in its `:cr_peer_rows`. It is named as the cluster's member `id` is
+  # (`HalC2.Cluster.mc_name/1`), and reached as members are, without a port mapper
+  # (`HalC2.Prop.Epmd`). Its control runs over standard io, so cutting the
   # distribution connection leaves it running. It stops with a process of its own,
   # as ExUnit's `setup_all` process ends before the tests run.
   defp start_laptop do
     driver = self()
+    id = "laptop#{System.unique_integer([:positive])}"
+    epmd = :code.which(HalC2.Cluster.Epmd) |> Path.dirname() |> to_charlist()
+    elixir = :code.which(Kernel) |> Path.dirname() |> to_charlist()
 
     owner =
       spawn(fn ->
         {:ok, pid, node} =
           :peer.start(%{
-            name: :"hal_c2_cr_laptop#{System.unique_integer([:positive])}",
-            host: ~c"127.0.0.1",
+            name: :hal_c2,
+            host: to_charlist(HalC2.Cluster.host(id)),
             longnames: true,
             connection: :standard_io,
-            args: [~c"-setcookie", Atom.to_charlist(Node.get_cookie())]
+            args: [
+              ~c"-setcookie",
+              Atom.to_charlist(Node.get_cookie()),
+              ~c"-epmd_module",
+              ~c"Elixir.HalC2.Cluster.Epmd",
+              ~c"-pa",
+              epmd,
+              ~c"-pa",
+              elixir
+            ]
           })
 
         send(driver, {:laptop, self(), pid, node})
@@ -1289,7 +1319,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         {:module, _} =
           :peer.call(pid, :code, :load_binary, [HalC2.Plugins.Host, ~c"laptop", host_stub()])
 
-        %{owner: owner, pid: pid, node: node}
+        port = :peer.call(pid, HalC2.Cluster.Epmd, :listen_port, [])
+        HalC2.Prop.Epmd.put(HalC2.Cluster.host(id), {127, 0, 0, 1}, port)
+        %{owner: owner, pid: pid, node: node, id: id}
     after
       60_000 -> raise "the laptop never started"
     end
@@ -1354,7 +1386,20 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   # --- one case ----------------------------------------------------------------------------
 
-  defp begin_case do
+  @doc false
+  def admit_laptop do
+    {:ok, _} =
+      HalC2.Cluster.admit(%{
+        "id" => laptop().id,
+        "fingerprint" => String.duplicate("a", 64),
+        "label" => "laptop",
+        "version" => HalC2.Upgrade.version()
+      })
+
+    :ignore
+  end
+
+  defp begin_case(met) do
     home = HalC2.Prop.scratch_home("code-review-claims")
     fx = fx_dir()
     File.write!(fx_path("calls.jsonl"), "")
@@ -1380,15 +1425,32 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     git!(home, ["clone", "-q", bare(), root])
     git!(root, ["remote", "set-url", "origin", "git@github.com:acme/api.git"])
 
-    # The laptop starts connected, with nothing of the pull requests in hand.
+    # The laptop starts connected, or (`met` false) never yet in reach, with nothing of
+    # the pull requests in hand.
     %{pid: peer, node: node} = laptop()
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_rows, %{}])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_restarting, false])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_starts, []])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_told, []])
     :net_kernel.monitor_nodes(true)
-    if node not in Node.list(), do: true = Node.connect(node)
-    :global.sync()
+
+    cond do
+      met and node not in Node.list() ->
+        true = Node.connect(node)
+        :global.sync()
+
+      not met and node in Node.list() ->
+        true = Node.disconnect(node)
+
+        receive do
+          {:nodedown, ^node} -> :ok
+        after
+          10_000 -> raise "#{node} never went down"
+        end
+
+      true ->
+        :ok
+    end
 
     Process.put(:cr_tids, %{})
     Process.put(:cr_problems, [])
@@ -1396,6 +1458,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     put_world(Map.new(@keys, &{&1, 1}))
 
     HalC2.Prop.start_services([
+      # The cluster, which has the laptop as a member whether it was ever in reach, before
+      # the plugin's first look counts the machines.
+      HalC2.Cluster,
+      %{id: :admit_laptop, start: {__MODULE__, :admit_laptop, []}, restart: :temporary},
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
       HalC2.Settings,
       HalC2.Streams,

@@ -7,3 +7,7 @@ ExUnit.start(exclude: [:slow])
 
 # Keep the MC's git include, if we run inside one, out of the tests.
 HalC2.Test.GitEnv.scrub()
+
+# Before anything starts distribution: reaches the MCs a test names as members do
+# (`HalC2.Prop.Epmd`), and every other node as `:erl_epmd` does.
+Application.put_env(:kernel, :epmd_module, HalC2.Prop.Epmd)

@@ -260,6 +260,26 @@ defmodule HalC2.Plugins.Host do
     :exit, _ -> false
   end
 
+  @doc """
+  The other machines of this machine's cluster, by node as `peers/4` names it, with
+  their labels: every member not switched off, whether it is in reach now or has
+  never been. Empty when the cluster does not run here or is off.
+  """
+  def cluster_machines(_id) do
+    case Process.whereis(HalC2.Cluster) && HalC2.Cluster.status() do
+      %{"clustered" => true, "members" => members} ->
+        for %{"id" => member} = entry <- members,
+            not entry["off"],
+            into: %{},
+            do: {to_string(HalC2.Cluster.mc_name(member)), entry["label"] || member}
+
+      _ ->
+        %{}
+    end
+  catch
+    :exit, _ -> %{}
+  end
+
   @doc "Whether plugin `id` was granted `permission`."
   def granted?(id, permission), do: permission in Plugins.granted(id)
 

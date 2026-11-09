@@ -339,6 +339,14 @@ Feature: Agent code review
       When the user asks for a review of #12
       Then a review of #12 starts
 
+    @mc
+    Scenario: A machine of the cluster never yet in reach counts as out of reach for the limits
+      Given "code-review" watches "acme/api" automatically with at most 2 reviews of each author a day
+      And the user's machine "laptop" is in the cluster but has never been in reach
+      And #11 is reviewed
+      When the pull request #12 is opened on "acme/api"
+      Then #12 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day, this machine's share of what the settings allow while laptop is out of reach"
+
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page says why a pull request is not reviewed and lets the user approve it
       Given #13 by "stranger", who is not a member or collaborator, is listed

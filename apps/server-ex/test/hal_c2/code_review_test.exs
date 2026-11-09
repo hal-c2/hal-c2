@@ -864,6 +864,56 @@ defmodule HalC2.CodeReviewTest do
     assert Enum.any?(apply(@server, :starts, []), &(&1["id"] == review["threadId"]))
   end
 
+  # A member of the cluster that has never answered this machine may be starting
+  # reviews of its own: until they meet, each has only its share of the limits.
+  test "a member of the cluster that has never answered counts as out of reach for the review limits",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+
+    Application.put_env(:hal_c2, :cluster_transport, __MODULE__.Unreached)
+    Application.put_env(:hal_c2, :cluster_listen, "127.0.0.1")
+
+    on_exit(fn ->
+      for key <- [:cluster_transport, :cluster_listen], do: Application.delete_env(:hal_c2, key)
+    end)
+
+    start_supervised!(HalC2.Cluster)
+    entry = %{"id" => "laptop", "fingerprint" => String.duplicate("a", 64), "label" => "laptop"}
+    {:ok, _} = HalC2.Cluster.admit(Map.put(entry, "version", HalC2.Upgrade.version()))
+
+    # The user's ask counted one; this machine's share of two is one.
+    save_settings(%{
+      "activation" => "automatic",
+      "reviewNewPushes" => true,
+      "reviewsPerAuthorPerDay" => 2
+    })
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "ready", "limited" => %{"reason" => reason, "apart" => apart}} =
+             review()
+
+    assert apart == ["hal_c2@laptop.hal-c2"]
+
+    assert reason =~
+             "this machine's share of what the settings allow while laptop is out of reach"
+  end
+
+  defmodule Unreached do
+    @moduledoc false
+    # The cluster's distribution, with no member ever connected.
+    def start(_dir, _id), do: :ok
+    def connected, do: []
+    def disconnect(_mc), do: :ok
+    def send(_mc, _message), do: :ok
+    def version_changed(_dir), do: :ok
+  end
+
   # What the clients show of a held review follows whether the machines it waits on are
   # in reach, so a machine coming back publishes it.
   test "a review held while a machine could not hear of its start is published again once that machine is back",
@@ -884,6 +934,29 @@ defmodule HalC2.CodeReviewTest do
 
     {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
     send(Process.whereis(@server), {:nodeup, String.to_atom(peer)})
+
+    assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => [_ | _]}},
+                   1_000
+  end
+
+  test "a review held while a machine could not hear of its start is published again once that machine is gone again",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    peer = "hal_c2@laptop.hal-c2"
+
+    assert GenServer.call(@server, {:told, @key, thread_id, [peer], []}) == :limited
+    assert %{"status" => "ready", "limited" => %{"apart" => [^peer]}} = review()
+
+    {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
+    send(Process.whereis(@server), {:nodedown, String.to_atom(peer)})
 
     assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => [_ | _]}},
                    1_000

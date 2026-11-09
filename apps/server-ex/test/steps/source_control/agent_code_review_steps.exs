@@ -1765,6 +1765,17 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   # It shares this VM's fake GitHub and fake Codex gate. Its `reviews` topic is
   # watched from this process (`await_peer/3`).
 
+  # A member this MC admitted that has not connected since: no peer runs for it.
+  step "the user's machine {string} is in the cluster but has never been in reach",
+       %{args: [label]} = context do
+    World.put_app_env(:cluster_transport, HalC2.Test.ClusterTable)
+    Mc.ensure(HalC2.Cluster)
+    fingerprint = :crypto.hash(:sha256, label) |> Base.encode16(case: :lower)
+    entry = %{"id" => label, "fingerprint" => fingerprint, "label" => label, "addresses" => []}
+    {:ok, _} = HalC2.Cluster.admit(entry)
+    context
+  end
+
   step "the user's machine {string} in the cluster watches {string} automatically too",
        %{args: [label, repo]} = context do
     join(context, label, %{"repositories" => [repo], "activation" => "automatic"})
