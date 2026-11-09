@@ -740,7 +740,6 @@ defmodule HalC2.TextGeneration do
   # config. Codex keeps a login in the OS credential store under a key of the home's path,
   # so a different home cannot reach it: an account without an `auth.json` cannot run here,
   # and the error says how to get one (docs/user/providers-codex.md).
-  # sobelow_skip ["Traversal.FileModule"]
   defp bare_codex_home(instance, dir) do
     case account_home(instance) do
       {:ok, account} ->
@@ -751,6 +750,7 @@ defmodule HalC2.TextGeneration do
     end
   end
 
+  # sobelow_skip ["Traversal.FileModule"]
   defp copy_codex_login(source, dir) do
     home = Path.join(dir, "codex-home")
     target = Path.join(home, "auth.json")

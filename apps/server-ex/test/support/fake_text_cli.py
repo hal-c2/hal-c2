@@ -47,7 +47,8 @@ def codex_files():
             with open(path, "rb") as f:
                 files["auth.json"] = hashlib.sha256(f.read()).hexdigest()
             modes["auth.json"] = oct(os.stat(path).st_mode & 0o777)
-        modes["."] = oct(os.stat(home).st_mode & 0o777)
+        if os.path.isdir(home):
+            modes["."] = oct(os.stat(home).st_mode & 0o777)
     return files, modes
 
 log = os.environ.get("FAKE_TEXT_LOG")
