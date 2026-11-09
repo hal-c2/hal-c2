@@ -676,9 +676,11 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
+  # Only while the review waits to be published: once a post is under way, or done, the
+  # comments stay as they were posted.
   defp step(m, {:call, _, :dismiss, [key, i, flag]}) do
     case m.reviews[key] do
-      %{comments: comments} = r when length(comments) >= i ->
+      %{status: :waiting, comments: comments} = r when length(comments) >= i ->
         {put_review(m, key, %{r | comments: List.replace_at(comments, i - 1, flag)}), :ok}
 
       _ ->
