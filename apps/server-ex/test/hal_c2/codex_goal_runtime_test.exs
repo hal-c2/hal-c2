@@ -11,16 +11,11 @@ defmodule HalC2.CodexGoalRuntimeTest do
     work = Path.join(dir, "work")
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
-    Application.put_env(:hal_c2, :home, dir)
-    Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
+    HalC2.Test.Env.put_app(:home, dir)
+    HalC2.Test.Env.put_app(:codex_command, ["python3", "-u", @fake_codex])
     # The test fires the grace itself.
-    Application.put_env(:hal_c2, :codex_goal_grace_ms, 3_600_000)
-    System.put_env("FAKE_CODEX_GOAL_STALL", "1")
-
-    on_exit(fn ->
-      for key <- ~w(codex_command codex_goal_grace_ms)a, do: Application.delete_env(:hal_c2, key)
-      System.delete_env("FAKE_CODEX_GOAL_STALL")
-    end)
+    HalC2.Test.Env.put_app(:codex_goal_grace_ms, 3_600_000)
+    HalC2.Test.Env.put_system("FAKE_CODEX_GOAL_STALL", "1")
 
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)
@@ -64,8 +59,7 @@ defmodule HalC2.CodexGoalRuntimeTest do
   # run until the grace paused it.
   test "a goal Codex finished before the MC heard the activation answer is complete, not active",
        %{work: work} do
-    System.put_env("FAKE_CODEX_GOAL_FINISH_FIRST", "1")
-    on_exit(fn -> System.delete_env("FAKE_CODEX_GOAL_FINISH_FIRST") end)
+    HalC2.Test.Env.put_system("FAKE_CODEX_GOAL_FINISH_FIRST", "1")
     thread_id = "thread-goal-done"
     start_goal_run(thread_id, work)
 
@@ -81,13 +75,12 @@ defmodule HalC2.CodexGoalRuntimeTest do
   for {command, expected} <- [{"/goal clear", nil}, {"/goal pause", "paused"}] do
     test "#{command} answered after Codex reported the goal complete keeps the answer",
          %{work: work} do
-      System.put_env("FAKE_CODEX_GOAL", ~s({"objective": "ship the fix", "status": "active"}))
-      System.put_env("FAKE_CODEX_GOAL_DONE_BEFORE_STOP", "1")
+      HalC2.Test.Env.put_system(
+        "FAKE_CODEX_GOAL",
+        ~s({"objective": "ship the fix", "status": "active"})
+      )
 
-      on_exit(fn ->
-        System.delete_env("FAKE_CODEX_GOAL")
-        System.delete_env("FAKE_CODEX_GOAL_DONE_BEFORE_STOP")
-      end)
+      HalC2.Test.Env.put_system("FAKE_CODEX_GOAL_DONE_BEFORE_STOP", "1")
 
       thread_id = "thread-goal-#{String.replace(unquote(command), " ", "-")}"
       start_goal_run(thread_id, work, unquote(command))

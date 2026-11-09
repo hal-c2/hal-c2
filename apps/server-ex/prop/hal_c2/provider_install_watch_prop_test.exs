@@ -22,7 +22,7 @@ defmodule HalC2.ProviderInstallWatchPropTest do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
         home = HalC2.Prop.scratch_home("provider-install-watch")
-        Application.put_env(:hal_c2, :codex_command, ["codex", "app-server"])
+        HalC2.Prop.put_env(:codex_command, ["codex", "app-server"])
 
         HalC2.Prop.start_services([
           Settings,
@@ -34,7 +34,7 @@ defmodule HalC2.ProviderInstallWatchPropTest do
         _ = home
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
-        Application.delete_env(:hal_c2, :codex_command)
+        HalC2.Prop.restore_env()
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))

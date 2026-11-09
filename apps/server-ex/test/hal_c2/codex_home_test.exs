@@ -9,8 +9,7 @@ defmodule HalC2.Codex.HomeTest do
   @moduletag :tmp_dir
 
   setup %{tmp_dir: dir} do
-    Application.put_env(:hal_c2, :home, Path.join(dir, "mc"))
-    on_exit(fn -> Application.delete_env(:hal_c2, :home) end)
+    HalC2.Test.Env.put_app(:home, Path.join(dir, "mc"))
     start_supervised!(Settings)
     :ok
   end

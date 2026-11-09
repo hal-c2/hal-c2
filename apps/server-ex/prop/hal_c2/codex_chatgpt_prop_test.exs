@@ -33,7 +33,7 @@ defmodule HalC2.CodexChatGptPropTest do
         setup()
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
-        System.delete_env("FAKE_CODEX_CHATGPT")
+        HalC2.Prop.restore_env()
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -46,8 +46,8 @@ defmodule HalC2.CodexChatGptPropTest do
     home = HalC2.Prop.scratch_home("codex-chatgpt")
     shared = Path.join(home, "codex")
     File.mkdir_p!(shared)
-    System.put_env("FAKE_CODEX_CHATGPT", "1")
-    Application.put_env(:hal_c2, :codex_command, ["python3", @fake_codex])
+    HalC2.Prop.put_system_env("FAKE_CODEX_CHATGPT", "1")
+    HalC2.Prop.put_env(:codex_command, ["python3", @fake_codex])
     HalC2.Prop.start_services([Settings, Limits])
 
     {:ok, _} =

@@ -56,7 +56,7 @@ defmodule HalC2.CodexPlanLimitsPropTest do
         start()
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
-        Application.delete_env(:hal_c2, :codex_command)
+        HalC2.Prop.restore_env()
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -70,7 +70,7 @@ defmodule HalC2.CodexPlanLimitsPropTest do
     work = Path.join(home, "work")
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
-    Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
+    HalC2.Prop.put_env(:codex_command, ["python3", "-u", @fake_codex])
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},

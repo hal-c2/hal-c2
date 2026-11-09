@@ -7,9 +7,7 @@ defmodule HalC2.CodexInstallationTest do
   @target "x86_64-unknown-linux-musl"
 
   setup %{tmp_dir: dir} do
-    previous = Application.get_env(:hal_c2, :home)
-    Application.put_env(:hal_c2, :home, dir)
-    on_exit(fn -> Application.put_env(:hal_c2, :home, previous) end)
+    HalC2.Test.Env.put_app(:home, dir)
     File.mkdir_p!(Installation.managed_dir())
     :ok
   end

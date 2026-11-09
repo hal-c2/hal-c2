@@ -121,8 +121,7 @@ defmodule HalC2.Codex.ChatGptTest do
     test "fails at once when Codex stops before the sign-in completes", %{tmp_dir: dir} do
       script = Path.join(dir, "codex.py")
       File.write!(script, @dies_after_start)
-      Application.put_env(:hal_c2, :codex_command, ["python3", script, @link])
-      on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
+      HalC2.Test.Env.put_app(:codex_command, ["python3", script, @link])
 
       server = self()
       {pid, ref} = spawn_monitor(fn -> ChatGpt.login("codex", "chatgpt", server, "f1") end)

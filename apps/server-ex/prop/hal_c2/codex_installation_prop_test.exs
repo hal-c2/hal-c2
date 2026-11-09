@@ -51,9 +51,8 @@ defmodule HalC2.CodexInstallationPropTest do
     File.mkdir_p!(bare)
     File.write!(Path.join(bare, "codex"), <<0x7F, "ELF", 0::64>>)
     File.chmod!(Path.join(bare, "codex"), 0o755)
-    Process.put(:path, System.get_env("PATH"))
-    System.put_env("PATH", "#{bare}:#{System.get_env("PATH")}")
-    Application.put_env(:hal_c2, :codex_command, ["codex", "app-server"])
+    HalC2.Prop.put_system_env("PATH", "#{bare}:#{System.get_env("PATH")}")
+    HalC2.Prop.put_env(:codex_command, ["codex", "app-server"])
 
     bytes = archive(home)
     {:ok, log} = Agent.start(fn -> [] end)
@@ -76,7 +75,7 @@ defmodule HalC2.CodexInstallationPropTest do
 
     {:ok, {_, port}} = ThousandIsland.listener_info(bandit)
 
-    Application.put_env(:hal_c2, :codex_release, %{
+    HalC2.Prop.put_env(:codex_release, %{
       version: @pinned,
       target: @target,
       url: "http://127.0.0.1:#{port}#{@path}",
@@ -93,8 +92,7 @@ defmodule HalC2.CodexInstallationPropTest do
     # A download still held is let go, so its handler ends with the server.
     if state[:handler], do: send(state.handler, {:go, :not_found})
     HalC2.Prop.stop_services()
-    System.put_env("PATH", Process.get(:path))
-    for key <- [:codex_release, :codex_command], do: Application.delete_env(:hal_c2, key)
+    HalC2.Prop.restore_env()
   end
 
   # The pinned package: wrappers around the fake Codex, laid out as OpenAI's are.

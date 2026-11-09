@@ -24,22 +24,17 @@ defmodule HalC2.CodexCatalogPropTest do
 
   @fake_codex Path.expand("../../test/support/fake_codex.py", __DIR__)
   @sol "gpt-6.1-sol"
-  @env ~w(CODEX_HOME FAKE_CODEX_ACCOUNT FAKE_CODEX_CATALOG FAKE_ULTRAFAST_ENTITLED CODEX_INTERNAL_ORIGINATOR_OVERRIDE)
 
   property "a Codex check lists Ultrafast exactly when the account has it",
     numtests: HalC2.Prop.numtests(15),
     max_size: 10 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
-        saved = for name <- @env, do: {name, System.get_env(name)}
         start()
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
-        Application.delete_env(:hal_c2, :codex_command)
+        HalC2.Prop.restore_env()
         :persistent_term.erase({HalC2.Codex.Provider, :models})
-
-        for {name, value} <- saved,
-            do: if(value, do: System.put_env(name, value), else: System.delete_env(name))
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -52,12 +47,12 @@ defmodule HalC2.CodexCatalogPropTest do
     home = HalC2.Prop.scratch_home("codex-catalog")
     codex_home = Path.join(home, "codex-home")
     File.mkdir_p!(codex_home)
-    Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
-    System.put_env("CODEX_HOME", codex_home)
-    System.put_env("FAKE_CODEX_ACCOUNT", "chatgpt")
-    System.put_env("FAKE_CODEX_CATALOG", "1")
-    System.put_env("FAKE_ULTRAFAST_ENTITLED", "0")
-    System.delete_env("CODEX_INTERNAL_ORIGINATOR_OVERRIDE")
+    HalC2.Prop.put_env(:codex_command, ["python3", "-u", @fake_codex])
+    HalC2.Prop.put_system_env("CODEX_HOME", codex_home)
+    HalC2.Prop.put_system_env("FAKE_CODEX_ACCOUNT", "chatgpt")
+    HalC2.Prop.put_system_env("FAKE_CODEX_CATALOG", "1")
+    HalC2.Prop.put_system_env("FAKE_ULTRAFAST_ENTITLED", "0")
+    HalC2.Prop.put_system_env("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", nil)
     :persistent_term.erase({HalC2.Codex.Provider, :models})
 
     HalC2.Prop.start_services([
@@ -101,7 +96,7 @@ defmodule HalC2.CodexCatalogPropTest do
   # --- commands ------------------------------------------------------------------
 
   def entitle(entitled) do
-    System.put_env("FAKE_ULTRAFAST_ENTITLED", if(entitled, do: "1", else: "0"))
+    HalC2.Prop.put_system_env("FAKE_ULTRAFAST_ENTITLED", if(entitled, do: "1", else: "0"))
     :ok
   end
 
