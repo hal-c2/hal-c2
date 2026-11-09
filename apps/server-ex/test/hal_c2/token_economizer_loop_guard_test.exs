@@ -1725,8 +1725,21 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             # A body with no brackets: `[[ 1 ]]` makes `pytest` succeed.
             {"function pytest [[ 1 ]] && bash run.sh && pytest -q", false},
             {"function pytest [[ 1 ]] && pytest -q", false},
-            # A file the turn did not write sources nothing it changed.
-            {". venv/bin/activate && bash run.sh && pytest -q", true}
+            # A group's `;` already cuts the `&&` chain; pinned so the group stays unread.
+            {"{ function pytest [[ 1 ]]; } && bash run.sh && pytest -q", false},
+            {"{ pytest() [[ 1 ]]; } && bash run.sh && pytest -q", false},
+            # Only a simple command runs apart from the check: a builtin that may change what
+            # `pytest` runs is not one, nor is a bare assignment.
+            {"hash -p /bin/true pytest && bash run.sh && pytest -q", false},
+            {"export PATH=./bin:$PATH && bash run.sh && pytest -q", false},
+            {"PATH=./bin && bash run.sh && pytest -q", false},
+            {"set -f && bash run.sh && pytest -q", false},
+            {~s{"$RUN" && bash run.sh && pytest -q}, false},
+            # A file the turn did not write sources nothing it changed, and a program, a
+            # `cd` or an assignment to a program's environment runs apart.
+            {". venv/bin/activate && bash run.sh && pytest -q", true},
+            {"cd web && FOO=1 bash run.sh && pytest -q", true},
+            {"./run.sh && echo ok && pytest -q", true}
           ] do
         state =
           heard_turn([edited("/r/run.sh"), command(cmd, "1 passed in 0.02s", "completed")])

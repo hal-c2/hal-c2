@@ -345,14 +345,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # -q && bash scripts/check.sh`) may have changed the tree, or run a check of its own that
   # failed unread, so its pass is not taken, deliberately: a redirect there is the cost of
   # not reading the script. A comment or an escape could hide where the chain ends, so
-  # neither is read as one. The commands before the check must also have run apart from
-  # it: an `eval`, or a `source`/`.` of anything but a file the turn did not write (a
-  # plain `venv/bin/activate`), runs in the check's own shell and may redefine the check.
+  # neither is read as one. Every command before the check must also have run apart from
+  # it (`apart?/3`), or it may have changed the check in the chain's own shell.
   defp checked_last?(cmd, "own", 0, written) do
     {script, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
     script = String.trim_trailing(script)
-    masked = Regex.replace(@quoted, script, &String.duplicate("Q", byte_size(&1)))
-    masked = Regex.replace(~r/[(){}]/, masked, " ")
+    unquoted = Regex.replace(@quoted, script, &String.duplicate("Q", byte_size(&1)))
+    masked = Regex.replace(~r/[(){}]/, unquoted, " ")
     cuts = for [{at, len} | _] <- Regex.scan(@sep, masked, return: :index), do: {at, at + len}
     starts = [0 | Enum.map(cuts, &elem(&1, 1))]
     ends = Enum.map(cuts, &elem(&1, 0)) ++ [byte_size(masked)]
@@ -370,9 +369,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       {from, _} when chain? ->
         before = Enum.take_while(Enum.zip(starts, ends), fn {at, _} -> at < from end)
 
-        not Enum.any?(before, fn {at, to} ->
-          same_shell?(binary_part(script, at, to - at), written)
-        end) and
+        ShellEdits.plain?(cmd) and
+          Enum.all?(before, fn {at, to} ->
+            apart?(binary_part(unquoted, at, to - at), binary_part(script, at, to - at), written)
+          end) and
           not ShellEdits.hides_check?(
             binary_part(script, from, byte_size(script) - from),
             written
@@ -385,29 +385,44 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   defp checked_last?(_, _, _, _), do: false
 
-  # Whether one command of a chain runs code in the chain's own shell that this did not
-  # read: `eval`, a function definition (`function pytest [[ 1 ]]`, `pytest () ( ... )`),
-  # or a `source`/`.` of a file the turn wrote or of a word that is not a plain path. A
-  # group or subshell bracket is read as a space, so `(. x)` counts too.
-  defp same_shell?(segment, written) do
-    defines? = Regex.match?(~r/^\s*(?:function\s|[^\s()]+\s*\(\s*\))/, segment)
+  # Whether one command of a chain ran apart from the check after it, so all it could do
+  # to the check is exit nonzero, which the chain's `&&` would have shown: a simple command
+  # (no group or subshell bracket, no `[[`) whose name is a program, or one of the
+  # builtins below that cannot change what a later command runs, or a `source`/`.` of a
+  # plain path the turn did not write (`. venv/bin/activate`). Anything else (a keyword,
+  # `eval`, a function definition, `alias`, `export PATH=...`, a bare assignment) may
+  # change the check in the chain's own shell, so the chain is not read. `masked` is the
+  # segment with its quotes masked, so a bracket in a quoted word is no bracket.
+  @apart_builtins ~w(cd pushd popd echo printf true false : test [ pwd)
+  # Bash's builtins and keywords: a name among them is not a program run apart.
+  @shell_builtins ~w(
+    . : [ alias bg bind break builtin caller cd command compgen complete compopt continue
+    declare dirs disown echo enable eval exec exit export false fc fg getopts hash help
+    history jobs kill let local logout mapfile popd printf pushd pwd read readarray readonly
+    return set shift shopt source suspend test times trap type typeset ulimit umask unalias
+    unset wait ! [[ ]] case coproc do done elif else esac fi for function if in select then
+    time until while { }
+  )
 
+  defp apart?(masked, segment, written) do
     words =
-      Regex.replace(~r/[(){}]/, segment, " ")
+      segment
       |> String.split()
-      |> Enum.drop_while(&(&1 in ~w(builtin command) or Regex.match?(~r/^\w+=/, &1)))
+      |> Enum.drop_while(&Regex.match?(~r/^\w+=\S*$/, &1))
 
-    case words do
-      _ when defines? -> true
-      ["eval" | _] -> true
-      [dot, file | _] when dot in ["source", "."] -> sourced_unread?(file, written)
-      [dot] when dot in ["source", "."] -> true
-      _ -> false
-    end
+    not String.contains?(masked, ["(", ")", "{", "}", "[["]) and
+      case words do
+        [dot, file] when dot in ["source", "."] ->
+          Regex.match?(~r{^[\w./-]+$}, file) and Path.basename(file) not in written
+
+        [name | _] ->
+          name in @apart_builtins or
+            (name not in @shell_builtins and Regex.match?(~r{^[\w./@+-]+$}, name))
+
+        [] ->
+          false
+      end
   end
-
-  defp sourced_unread?(file, written),
-    do: not Regex.match?(~r{^[\w./-]+$}, file) or Path.basename(file) in written
 
   defp after_run(rest) do
     Enum.reduce_while(rest, "own", fn

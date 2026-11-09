@@ -337,6 +337,9 @@ defmodule HalC2.TokenEconomizerPropTest do
              {"script", "python3 -c 'x()'"},
              {"eval", ~s{eval "$CHECK"}},
              {"defined", "function pytest [[ 1 ]]"},
+             {"defined", "{ function pytest [[ 1 ]]; }"},
+             {"defined", "{ pytest() [[ 1 ]]; }"},
+             {"defined", "hash -p /bin/true pytest && bash -c 'x'"},
              {"sourced", "source ./a.py"},
              {"sourced", ". ./a.py"}
            ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"]),
