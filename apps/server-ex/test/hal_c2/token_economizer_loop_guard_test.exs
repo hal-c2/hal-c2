@@ -404,6 +404,32 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "a command that may hide a check after a passing one leaves the turn unverified" do
+      tracker = Envelope.new("default", %{}, %{"resolved_turns" => [4, 4, 4, 4, 4]})
+      thr = Envelope.turn_thresholds(tracker)
+      thr = Map.merge(thr, %{"gate_over_envelope" => false, "gate_min_turns" => thr["min_turns"]})
+
+      opts = [
+        envelope: Envelope.envelope(tracker),
+        thr: thr,
+        judge: true,
+        nudge_budget: 1,
+        now: 0
+      ]
+
+      {g, []} = stuck_turn(Turn.new("t"), 12, opts)
+      passing = %{"command" => "pytest -q"}
+      {g, nil, nil} = Turn.fold(g, "Bash", passing, "3 passed in 0.10s", 0, opts)
+
+      # Heard only in part (the plugin blanks a capped command) or a nested shell: either
+      # may have run the checks again and failed, so the pass no longer covers the turn.
+      for cmd <- ["", "bash -c 'pytest -q'"] do
+        failing = %{"command" => cmd}
+        {_g, decision, _} = Turn.fold(g, "Bash", failing, "FAILED t - AssertionError", 1, opts)
+        assert decision != nil, inspect(cmd)
+      end
+    end
+
     test "an edit tried after a passing check, or after it in the same command, is unchecked" do
       tracker = Envelope.new("default", %{}, %{"resolved_turns" => [4, 4, 4, 4, 4]})
       thr = Envelope.turn_thresholds(tracker)
@@ -434,7 +460,6 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             {"pytest -q || sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py || pytest -q"},
             {"pytest -q | tee log && sed -i 's/a/b/' a.py",
              "sed -i 's/a/b/' a.py && pytest -q | tee log"},
-            {"(pytest -q) && (sed -i 's/a/b/' a.py)", "(sed -i 's/a/b/' a.py) && (pytest -q)"},
             {"pytest -q\nsed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py\npytest -q"}
           ] do
         unchecked = Turn.fold(g, "Bash", %{"command" => run_first}, passing, 0, opts)
@@ -604,6 +629,48 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       landed = Turn.redirected(g, true)
       assert landed.segment == 1 and landed.st.turns == 0 and landed.redirects == 1
     end
+
+    test "a call heard after its redirect landed that started before it spends nothing" do
+      # Thresholds pinned so low that one failing call is stuck, with a redirect left.
+      thr =
+        Map.merge(Rules.defaults(), %{
+          "min_turns" => 1,
+          "edit_churn" => 1,
+          "error_outputs" => 1,
+          "stagnation" => 0.0,
+          "backstop_turns" => 1
+        })
+
+      opts = [envelope: 1.0, thr: thr, nudge_budget: 2]
+      failing = &Turn.fold(&1, "Bash", %{"command" => "pytest -q"}, "FAILED t", 1, &2)
+
+      g = Turn.new("t")
+      {g, nil, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: 1)
+      {g, {:nudge, _}, _} = failing.(g, opts ++ [started: 2])
+
+      # The provider took the redirect when the thread's last place was 9.
+      g = g |> Turn.redirect() |> Turn.redirected(true, 9)
+
+      # The agent's edits and failing re-runs under way then, heard now: their places are
+      # 9 or less, or not known. They count for the turn, not for the new segment.
+      {g, decisions} =
+        Enum.reduce([3, 9, nil, 5, 4, 8], {g, []}, fn started, {g, decisions} ->
+          {g, decision, job} =
+            if started in [3, nil, 4],
+              do: Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: started),
+              else: failing.(g, opts ++ [started: started])
+
+          {g, decisions ++ [decision, job]}
+        end)
+
+      assert Enum.all?(decisions, &is_nil/1)
+      assert g.nudges_done == 1 and not g.aborted and g.st.turns == 0
+      assert g.cum_turns == 8 and g.whole.turns == 8
+
+      # A call that started after it is the new segment's, and may decide.
+      {g, nil, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: 10)
+      assert {_, {:nudge, _}, _} = failing.(g, opts ++ [started: 11])
+    end
   end
 
   describe "the ended-green proxy" do
@@ -647,6 +714,41 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
         |> fold("Bash", %{"command" => cmd}, "==== 1 failed, 2 passed in 0.12s ====", 0)
 
       refute Turn.resolved_proxy(g)
+    end
+
+    test "a check negated, grouped, backgrounded or under a pipefail set elsewhere has no status" do
+      for cmd <- [
+            "! pytest -q",
+            "(set -o pipefail); pytest -q 2>&1 | tail -n 2",
+            "(pytest -q)",
+            "cd x && (pytest -q)",
+            "{ pytest -q; }",
+            "if pytest -q; then echo ok; fi",
+            "pytest -q &"
+          ] do
+        assert Turn.status_of_tests(cmd) == "unknown", cmd
+
+        # Whatever the call reported, the run may have failed: it verifies nothing and
+        # the turn is not learned.
+        for {result, code} <- [{"1 failed in 0.02s", 0}, {"1 passed in 0.02s", 0}] do
+          g =
+            Turn.new()
+            |> fold("Edit", %{"file_path" => "/r/a.py"}, "ok")
+            |> fold("Bash", %{"command" => cmd}, result, code)
+
+          assert g.verifications == 0, cmd
+          refute Turn.resolved_proxy(g), cmd
+        end
+      end
+
+      # A runner alone, or last in a pipe under a pipefail set at the top: its own.
+      for cmd <- [
+            "pytest -q",
+            "set -o pipefail; pytest -q 2>&1 | tail -n 2",
+            "cd x && pytest -q $(git ls-files 'test_*.py') ${ARGS:-}",
+            "pytest -q 2>&1"
+          ],
+          do: assert(Turn.status_of_tests(cmd) == "own", cmd)
     end
 
     test "a test runner named in a heredoc's text is not a test run" do
@@ -1048,7 +1150,15 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             ~s{timeout 10 ruby -w -e 'File.write("a", "PRIVATE_SOURCE")'},
             "find . -name a -exec perl -0777 -pe 's/x/PRIVATE_SOURCE/' {} +",
             ~s{deno eval "Deno.writeTextFileSync('a', 'PRIVATE_SOURCE')"},
-            ~s|awk 'BEGIN { print "PRIVATE_SOURCE" > "a.py" }'|
+            ~s|awk 'BEGIN { print "PRIVATE_SOURCE" > "a.py" }'|,
+            # Behind a launcher, or any program that runs another after its own words.
+            ~s|mise exec -- node -e 'require("fs").writeFileSync("a.py","PRIVATE_SOURCE")'|,
+            ~s|mise x node@20 -- node -e 'require("fs").writeFileSync("a","PRIVATE_SOURCE")'|,
+            ~s|npx node -e 'require("fs").writeFileSync("a","PRIVATE_SOURCE")'|,
+            ~s|uv run python -c "open('a','w').write('PRIVATE_SOURCE')"|,
+            ~s|poetry run python3 -c "open('a','w').write('PRIVATE_SOURCE')"|,
+            ~s|pnpm exec node --eval 'require("fs").writeFileSync("a","PRIVATE_SOURCE")'|,
+            ~s|mise exec -- bash -c 'echo PRIVATE_SOURCE'|
           ] do
         text = digest(cmd)
         refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
@@ -1060,7 +1170,9 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "python -W error tests/runtests.py --verbose",
             "node --test",
             "ruby -Ilib test/a_test.rb",
-            "awk -f count.awk a.txt"
+            "awk -f count.awk a.txt",
+            "uv run pytest -q",
+            "mise exec -- npm test"
           ] do
         assert digest(cmd) =~ "$ #{cmd}"
       end
@@ -1443,6 +1555,67 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       state =
         heard_turn([edited("/r/a.py"), command("bash -lc 'pytest -q'", "1 passed in 0.02s")])
 
+      assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a runner with any flags, an expansion or a substitution it reads is learned from" do
+      for cmd <- [
+            "bun test --coverage",
+            "deno test --allow-read",
+            "node --experimental-vm-modules node_modules/.bin/jest",
+            "ruby -Itest test/a_test.rb",
+            "pytest -q ${PYTEST_ARGS:-} \"$@\"",
+            "pytest -q $(git ls-files 'test_*.py')",
+            "cd \"$(git rev-parse --show-toplevel)\" && npm test",
+            "source .venv/bin/activate && pytest -q",
+            "pytest -q  # don't stop at the first failure",
+            "pytest -q # $(",
+            "pytest -q a#b.py",
+            "cat <<'EOF' > /dev/null\nhi\nEOF\npytest -q"
+          ] do
+        state = heard_turn([edited("/r/a.py"), command(cmd, "1 passed in 0.02s")])
+        assert TokenEconomizer.learns?(state.turns["a"], true), cmd
+      end
+    end
+
+    test "a script a command runs that this does not read hides its check from learning" do
+      for cmd <- [
+            "echo $(bash -c 'pytest -q')",
+            "x=`sh -c 'pytest -q'`; echo ok",
+            "diff <(python3 -c 'import os; os.system(\"pytest\")') /dev/null",
+            "python3 <<'EOF'\nimport os; os.system('pytest -q')\nEOF",
+            "cat run.sh | bash",
+            "eval \"$CHECK\"",
+            "perl -le 'system q(pytest)'",
+            "deno eval 'Deno.exit(0)'",
+            "timeout 60 node --input-type commonjs -e 'x()'",
+            ~s{node -r ./setup.js -e 'require("child_process").execSync("npm test")'},
+            "node --require ts-node/register -e 'x()'",
+            ~s{php -r 'system("vendor/bin/phpunit");'},
+            "node a.js -e 'x()'",
+            "source run.sh",
+            ". ./run.sh && echo ok",
+            "bash run.sh || true",
+            "echo $(bash -c 'pytest -q') # don't",
+            "mise exec -- node -e 'x()'",
+            "mise x python@3.12 -- python -c 'x()'",
+            "uv run python -c 'x()'",
+            "poetry run bash -c 'pytest -q'",
+            "npx node -e 'x()'",
+            "env CI=1 nice -n 5 node -e 'x()'",
+            # An escaped space keeps the `#` in its word, as the shell reads it.
+            ~S{pytest a\ #$(bash -c 'pytest -q')},
+            # A backslash in a comment continues no line: the next is a command.
+            "pytest -q # note \\\nbash -c 'pytest -q'"
+          ] do
+        state =
+          heard_turn([edited("/r/run.sh"), command(cmd, "1 failed in 0.02s", "completed")])
+
+        refute TokenEconomizer.learns?(state.turns["a"], true), cmd
+      end
+
+      # A script written before this turn is the project's, run as any program is.
+      state = heard_turn([edited("/r/a.py"), command("bash run.sh", "1 passed in 0.02s")])
       assert TokenEconomizer.learns?(state.turns["a"], true)
     end
 

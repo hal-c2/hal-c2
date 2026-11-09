@@ -12,7 +12,10 @@ defmodule HalC2.TokenEconomizerPropTest do
     and never judged; no more redirects than the budget; the stop offer comes only once
     the redirects are spent, at most once, and nothing is decided after it; nothing is
     decided or judged while a redirect is on its way; only a redirect that landed starts
-    a fresh segment, and one refused leaves the segment as it was; a judge job starts
+    a fresh segment, and one refused leaves the segment as it was; a call under way when
+    a redirect landed and heard after it (each call has its place in the thread, given
+    as it started) decides nothing, puts out no job and is not the new segment's; a judge
+    job starts
     only when none is out, or the one out has gone stale, and asks for a redirect only
     while one can still be sent; a verdict for a job that is
     not out changes nothing but the spend; every call is counted;
@@ -103,12 +106,15 @@ defmodule HalC2.TokenEconomizerPropTest do
       jobs: 0,
       # The judge job out, `{id, started at}`, until its verdict is delivered or a
       # redirect that landed starts a new segment.
-      out: nil
+      out: nil,
+      # The thread's last place, and the calls started but not heard yet, `{kind, place}`.
+      place: 0,
+      under_way: []
     }
   end
 
   def initial_state(samples \\ [], budget \\ 1),
-    do: %{learned: length(samples) >= 5, budget: budget, calls: 0}
+    do: %{learned: length(samples) >= 5, budget: budget, calls: 0, under_way: 0}
 
   def command(_state) do
     frequency([
@@ -117,7 +123,10 @@ defmodule HalC2.TokenEconomizerPropTest do
       {1,
        {:call, __MODULE__, :verdict, [elements([:out, :other]), boolean(), elements([0.4, 0.95])]}},
       {1, {:call, __MODULE__, :tick, [elements([0, 60, @stale])]}},
-      {1, {:call, __MODULE__, :landed, [boolean()]}}
+      {1, {:call, __MODULE__, :landed, [boolean()]}},
+      # Calls the agent starts that are heard later, after whatever comes between.
+      {2, {:call, __MODULE__, :start, [resize(6, non_empty(list(kind())))]}},
+      {2, {:call, __MODULE__, :hear, [integer(1, 6)]}}
     ])
   end
 
@@ -130,13 +139,50 @@ defmodule HalC2.TokenEconomizerPropTest do
   def next_state(state, _result, {:call, _, :tools, [kinds]}),
     do: %{state | calls: state.calls + length(kinds)}
 
+  def next_state(state, _result, {:call, _, :start, [kinds]}),
+    do: %{state | under_way: state.under_way + length(kinds)}
+
+  def next_state(state, _result, {:call, _, :hear, [n]}) do
+    heard = min(n, state.under_way)
+    %{state | calls: state.calls + heard, under_way: state.under_way - heard}
+  end
+
   def next_state(state, _result, _call), do: state
 
-  # Tool calls folded one by one as the plugin folds them; what each did.
-  def tools(kinds), do: Enum.map(kinds, &tool/1)
+  # Tool calls that start and end now, folded one by one as the plugin folds them; what
+  # each did.
+  def tools(kinds) do
+    Enum.map(kinds, fn kind ->
+      run = Process.get(:guard)
+      Process.put(:guard, %{run | place: run.place + 1})
+      tool(kind, run.place + 1)
+    end)
+  end
+
+  # Calls that start now, each taking its place, and end later (`hear/1`).
+  def start(kinds) do
+    run = Process.get(:guard)
+    started = Enum.with_index(kinds, run.place + 1)
+
+    Process.put(:guard, %{
+      run
+      | place: run.place + length(kinds),
+        under_way: run.under_way ++ started
+    })
+
+    :ok
+  end
+
+  # The first `n` calls under way end, and are heard.
+  def hear(n) do
+    run = Process.get(:guard)
+    {heard, left} = Enum.split(run.under_way, n)
+    Process.put(:guard, %{run | under_way: left})
+    Enum.map(heard, fn {kind, place} -> tool(kind, place) end)
+  end
 
   # A nudge's redirect is sent (whether it lands is `landed/1`), a job is put out.
-  defp tool(kind) do
+  defp tool(kind, place) do
     run = Process.get(:guard)
     {name, args, result, code} = call(kind)
 
@@ -146,7 +192,8 @@ defmodule HalC2.TokenEconomizerPropTest do
         thr: run.thr,
         judge: run.envelope != nil,
         nudge_budget: run.budget,
-        now: run.now
+        now: run.now,
+        started: place
       )
 
     {text, guard} =
@@ -169,7 +216,7 @@ defmodule HalC2.TokenEconomizerPropTest do
     }
 
     Process.put(:guard, after_run)
-    %{before: run, after: after_run, decision: decision, job: job, text: text}
+    %{before: run, after: after_run, decision: decision, job: job, text: text, place: place}
   end
 
   def verdict(which, stuck, confidence) do
@@ -197,7 +244,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       if run.guard.redirecting,
         do: %{
           run
-          | guard: Turn.redirected(run.guard, landed),
+          | guard: Turn.redirected(run.guard, landed, run.place),
             out: if(landed, do: nil, else: run.out)
         },
         else: run
@@ -223,9 +270,10 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp call("read"), do: {"Bash", %{"command" => "cat a.py"}, "x = 1", 0}
   defp call("bad_edit"), do: {"Edit", %{"path" => "a.py"}, "String to replace not found", 1}
 
-  # Commands the guard does not read whole, each hiding a failing check: capped (the
-  # plugin hears no text), in a nested shell, as inline code, in a substitution, or in a
-  # heredoc that never ends.
+  # Commands that may hide a check, each hiding a failing one: capped (the plugin hears no
+  # text), in a nested shell, as inline code, in a substitution's nested shell, in a
+  # heredoc that never ends, or in a script the turn wrote and sources ("sourced", which
+  # hides one only once a.py was edited).
   defp call("capped"), do: {"Bash", %{"command" => ""}, "1 failed in 0.02s", 1}
 
   defp call("nested"),
@@ -238,16 +286,90 @@ defmodule HalC2.TokenEconomizerPropTest do
     do: {"Bash", %{"command" => "node --input-type commonjs -e \"x()\""}, "1 failed in 0.02s", 0}
 
   defp call("substituted"),
-    do: {"Bash", %{"command" => "echo $(pytest -q)"}, "1 failed in 0.02s", 0}
+    do: {"Bash", %{"command" => "echo $(bash -c 'pytest -q')"}, "1 failed in 0.02s", 0}
+
+  defp call({"inline", cmd}), do: {"Bash", %{"command" => cmd}, "1 failed in 0.02s", 0}
+
+  # A check whose exit status this cannot scope reads passing and exits 0 whatever ran.
+  defp call({"unscoped", cmd}), do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
+
+  defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
+
+  # Checks that hide nothing however they are spelt: a runner with flags, expansions, a
+  # substitution read whole.
+  defp call("flagged"), do: {"Bash", %{"command" => "bun test --coverage"}, "1 pass\n0 fail", 0}
+
+  defp call("expanded"),
+    do:
+      {"Bash", %{"command" => "pytest -q ${ARGS:-} $(git ls-files 'test_*.py')"},
+       "1 passed in 0.02s", 0}
 
   defp call("open_heredoc"),
     do: {"Bash", %{"command" => "cat <<EOF\npytest -q"}, "1 failed in 0.02s", 1}
 
-  def postcondition(state, {:call, _, :tools, _}, steps) do
+  defp call("pipefail"),
+    do:
+      {"Bash", %{"command" => "set -o pipefail; pytest -q 2>&1 | tail -3"}, "1 passed in 0.02s",
+       0}
+
+  # A check negated, in a subshell or a group, under a branch, in the background, or piped
+  # under a pipefail a subshell set: its status is not its own.
+  defp unscoped do
+    let {form, runner} <-
+          {elements([
+             "! %",
+             "(%)",
+             "cd x && (%)",
+             "{ %; }",
+             "if %; then echo ok; fi",
+             "% &",
+             "(set -o pipefail); % 2>&1 | tail -3",
+             "(set -o pipefail; true) && % | tail -3"
+           ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"])} do
+      {"unscoped", String.replace(form, "%", runner)}
+    end
+  end
+
+  # Inline code handed to an interpreter behind any of its flags and their values, in any
+  # order (`node -r ./setup.js -e ...`), and with a program or `--` after it.
+  defp inline do
+    let {{interpreter, eval}, before, tail} <-
+          {elements([
+             {"node", "-e"},
+             {"node", "--eval"},
+             {"node", "-p"},
+             {"bun", "-e"},
+             {"ruby", "-e"},
+             {"perl", "-le"},
+             {"php", "-r"}
+           ]),
+           list(
+             elements([
+               "-r ./setup.js",
+               "--require ts-node/register",
+               "--import tsx",
+               "--input-type commonjs",
+               "-I lib",
+               "-Itest",
+               "-Mstrict",
+               "-d memory_limit=1G",
+               "--no-warnings"
+             ])
+           ), elements(["", " a.js", " -- x"])} do
+      {"inline", Enum.join([interpreter | before] ++ [eval, "'x()'"], " ") <> tail}
+    end
+  end
+
+  defp kind({kind, _}), do: kind
+  defp kind(kind), do: kind
+
+  def postcondition(state, {:call, _, call, _}, steps) when call in [:tools, :hear] do
     steps
     |> Enum.with_index(1)
     |> Enum.all?(fn {step, i} -> lawful?(state, step, state.calls + i) end)
   end
+
+  def postcondition(_state, {:call, _, :start, _}, :ok), do: true
 
   def postcondition(_state, {:call, _, :verdict, _}, %{before: before, after: run, id: id}) do
     out? = before.out != nil and elem(before.out, 0) == id
@@ -267,7 +389,8 @@ defmodule HalC2.TokenEconomizerPropTest do
 
       # Landed: the next segment starts afresh, and the old one's job is forgotten.
       r.landed ->
-        not run.guard.redirecting and run.guard.segment == g.segment + 1 and
+        run.guard.since == before.place and
+          not run.guard.redirecting and run.guard.segment == g.segment + 1 and
           run.guard.redirects == g.redirects + 1 and run.guard.st.turns == 0 and
           run.guard.judge_pending == nil and run.guard.nudges_done == g.nudges_done
 
@@ -288,9 +411,13 @@ defmodule HalC2.TokenEconomizerPropTest do
     # A redirect has words in it.
     # One judge job out at a time, unless the one out went stale.
     # A job asks for a redirect to be written only while one can still be sent.
-    # Nothing decided or judged while a redirect is on its way.
+    # Nothing decided or judged while a redirect is on its way, nor on a call under way
+    # when one landed, which is not the new segment's either.
+    early = before.guard.since != nil and r.place <= before.guard.since
+
     (state.learned or (not acted and r.job == nil)) and
       (not before.guard.redirecting or (not acted and r.job == nil)) and
+      (not early or (not acted and r.job == nil and run.guard.st == before.guard.st)) and
       run.nudges <= state.budget and
       run.stops <= 1 and
       (not match?({:abort, _}, r.decision) or before.nudges == state.budget or
@@ -337,9 +464,16 @@ defmodule HalC2.TokenEconomizerPropTest do
     end
   end
 
-  property "a turn with a command it did not read after its last edit is never learned",
+  property "a turn with a command that may hide a check after its last edit is never learned",
     numtests: HalC2.Prop.numtests(300) do
-    forall kinds <- list(elements(~w(read edit pass fail) ++ @unread)) do
+    forall kinds <-
+             list(
+               oneof([
+                 elements(~w(read edit pass fail flagged expanded sourced pipefail) ++ @unread),
+                 inline(),
+                 unscoped()
+               ])
+             ) do
       g =
         Enum.reduce(kinds, Turn.new("t:r"), fn kind, g ->
           {name, args, result, code} = call(kind)
@@ -351,10 +485,12 @@ defmodule HalC2.TokenEconomizerPropTest do
       at = Enum.with_index(kinds, 1)
       last_edit = Enum.max([0 | for({"edit", i} <- at, do: i)])
       after_edit = for {kind, i} <- at, i > last_edit, do: kind
-      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail)))
+      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail flagged expanded pipefail)))
+      hidden = ["unscoped" | @unread]
+      hidden = if last_edit > 0, do: ["sourced" | hidden], else: hidden
 
       green =
-        kinds != [] and not Enum.any?(after_edit, &(&1 in @unread)) and
+        kinds != [] and not Enum.any?(after_edit, &(kind(&1) in hidden)) and
           List.last(checks) != "fail"
 
       (Turn.resolved_proxy(g) == green)
@@ -406,6 +542,39 @@ defmodule HalC2.TokenEconomizerPropTest do
     end
   end
 
+  property "a `#` hides a command substitution after it exactly when the lexer reads a comment",
+    numtests: HalC2.Prop.numtests(500) do
+    forall prefix <- comment_prefix() do
+      # The lexer reads a comment when what follows the `#` makes no difference to it.
+      comment? =
+        match?({:ok, _}, ShellEdits.tokens(prefix <> "#y")) and
+          ShellEdits.tokens(prefix <> "#y") == ShellEdits.tokens(prefix <> "#z")
+
+      cmd = prefix <> "#$(bash -c 'pytest -q')"
+      expected = if comment?, do: ShellEdits.hides_check?(prefix <> "#y"), else: true
+
+      (ShellEdits.hides_check?(cmd) == expected)
+      |> when_fail(IO.puts("Command: #{inspect(cmd)}\nComment: #{comment?}"))
+    end
+  end
+
+  # Shell text up to a `#`: escapes, line continuations, quotes and what ends a word. No
+  # process substitution (`>(`), which the lexer does not read as one.
+  defp comment_prefix do
+    such_that prefix <-
+                let(
+                  parts <-
+                    list(
+                      elements(
+                        ["a", " ", "\t", "\n", "\\", "\\ ", "\\\n", "#", ";", "|", "&", ">"] ++
+                          ["(", ")", "{", "}", "'", "\""]
+                      )
+                    ),
+                  do: Enum.join(parts)
+                ),
+              when: not String.contains?(prefix, ">(")
+  end
+
   # A command that writes SECRET into a.py: a writer, behind a wrapper, on a path spelt
   # one of the ways a path is, inside a carrier (a list, a group, a nested shell, a line
   # continued).
@@ -420,7 +589,9 @@ defmodule HalC2.TokenEconomizerPropTest do
              "command ",
              "timeout 10 ",
              "nice -n 5 ",
-             "X=1 "
+             "X=1 ",
+             "mise exec -- ",
+             "uv run "
            ]), elements(["a.py", "./src/a.py", "\"src/a.py\"", "'a.py'", "src/a'.py'"]),
            elements(
              ~w(alone and_before semi_after subshell braces pipe_from continued nested eval)a
@@ -509,7 +680,11 @@ defmodule HalC2.TokenEconomizerPropTest do
              "php -d x=1 -r @W",
              "deno eval @W",
              "awk @W a.txt",
-             "find . -name a -exec perl -0777 -pe @W {} +"
+             "find . -name a -exec perl -0777 -pe @W {} +",
+             "mise exec -- node -e @W",
+             "uv run python -c @W",
+             "pnpm exec node --eval @W",
+             "npx --yes bash -c @W"
            ]), elements(~w(alone and_before braces nested)a)} do
       word = Enum.join(before) <> hide(kind, inner <> secret <> inner) <> Enum.join(after_)
       {secret_carry(carrier, String.replace(use, "@W", word)), secret}

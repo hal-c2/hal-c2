@@ -435,7 +435,9 @@ defmodule HalC2Plugins.TokenEconomizer do
       case {entry["action"], state.turns[thread_id]} do
         {"nudge", %{run: ^run_id, guard: %{redirecting: true} = guard}} ->
           state = if landed, do: cancel_judge(state, thread_id), else: state
-          put_in(state.turns[thread_id].guard, Turn.redirected(guard, landed))
+          # The calls the agent had under way then may still be heard (`Turn.fold/6`).
+          since = with {:ok, %{"ordinal" => last}} <- result, do: last, else: (_ -> nil)
+          put_in(state.turns[thread_id].guard, Turn.redirected(guard, landed, since))
 
         _ ->
           state
@@ -501,10 +503,10 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp hear(state, %{"type" => "turn.item", "threadId" => thread_id, "runId" => run_id} = item) do
     case {state.turns[thread_id], call_of(item)} do
-      {%{run: ^run_id} = turn, {name, args, result, code} = call} ->
+      {%{run: ^run_id} = turn, {_name, _args, _result, _code} = call} ->
         state = if micro_on?(state), do: keep_call(state, thread_id, call), else: state
 
-        if on?(state), do: fold(state, thread_id, turn, name, args, result, code), else: state
+        if on?(state), do: fold(state, thread_id, turn, call, item["ordinal"]), else: state
 
       _ ->
         state
@@ -628,7 +630,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   def learns?(turn, stopped_normally),
     do: not turn.partial and Turn.resolved_proxy(turn.guard, stopped_normally)
 
-  defp fold(state, thread_id, turn, name, args, result, code) do
+  defp fold(state, thread_id, turn, {name, args, result, code}, started) do
     {tracker, state} = tracker(state, turn.project)
     envelope = Envelope.envelope(tracker)
     thr = Envelope.turn_thresholds(tracker, thresholds(state))
@@ -649,7 +651,8 @@ defmodule HalC2Plugins.TokenEconomizer do
         # project whose usual turns it has not learned.
         judge: envelope != nil,
         nudge_budget: nudges(state),
-        now: System.monotonic_time(:second)
+        now: System.monotonic_time(:second),
+        started: started
       )
 
     state =

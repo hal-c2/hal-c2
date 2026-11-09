@@ -178,14 +178,17 @@ defmodule HalC2.Steps.Plugins.TokenEconomizer do
   end
 
   step "TokenEconomizer counts one redirect", context do
-    {status, context} = await_topic(context, &(&1["nudges"] == 1 and &1))
+    # The count can be published before the delivery is: wait for its entry, the receipt.
+    {status, context} = await_topic(context, &(&1["nudges"] == 1 and logged?(&1, true) and &1))
+
     assert [%{"action" => "nudge", "delivered" => true} = entry] = status["recent"]
     assert entry["threadId"] == World.thread_id(context, @thread)
     context
   end
 
   step "TokenEconomizer counts one redirect it did not deliver", context do
-    {status, context} = await_topic(context, &(&1["turns"] == 1 and &1))
+    {status, context} = await_topic(context, &(&1["turns"] == 1 and logged?(&1, false) and &1))
+
     assert status["mode"] == "watch"
     assert %{"nudges" => 1, "aborts" => 0} = status
     assert [%{"action" => "nudge", "delivered" => false}] = status["recent"]
@@ -283,6 +286,10 @@ defmodule HalC2.Steps.Plugins.TokenEconomizer do
     |> World.put_client("token-economizer", client)
     |> Map.put(:watched, {sub, nil})
   end
+
+  # Whether the topic's recent actions hold a redirect whose delivery came back `delivered`.
+  defp logged?(status, delivered),
+    do: Enum.any?(List.wrap(status["recent"]), &(&1["delivered"] == delivered))
 
   # Waits for the topic's value to satisfy `fun`; a topic not published yet has none.
   defp await_topic(context, fun) do
