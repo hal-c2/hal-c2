@@ -354,15 +354,27 @@ defmodule HalC2.Orchestration.Recovery do
   # What the run left running in the background, as the continuation names it: a
   # command by its command line, other work as `%{"kind", "label"}`. Monitors that run
   # for the life of the session (`persistent`) are not waited on, so not named, and a
-  # task the thread delegated runs on in its own thread.
-  defp ended_work(state, run) do
+  # task the thread delegated runs on in its own thread. A provider subagent's is of the
+  # run that drives it now (`NativeSubagent.run/1`), which may have resumed it from a
+  # cold run.
+  defp ended_work(state, %{"id" => run_id}) do
     delegated =
       for {id, %{"origin" => "app_owned"}} <- StreamState.get(state, "subagent"),
           into: MapSet.new(),
           do: id
 
-    for %{"type" => type} = item <- StreamState.list(state, "turn-item"),
-        type in @background and item["status"] in @active and item["runId"] == run["id"],
+    driven = HalC2.Orchestration.NativeSubagent.driven(state)
+    hot = StreamState.get(state, "turn-item")
+
+    resumed =
+      for {{"turn-item", id}, item} <-
+            StreamState.lookup(state, for({{"turn-item", _} = key, ^run_id} <- driven, do: key)),
+          not Map.has_key?(hot, id),
+          do: item
+
+    for %{"type" => type} = item <- StreamState.list(state, "turn-item") ++ resumed,
+        type in @background and item["status"] in @active and
+          Map.get(driven, {"turn-item", item["id"]}, item["runId"]) == run_id,
         item["nodeId"] not in delegated,
         not match?(%{"persistent" => true}, item["input"]),
         do: work(item)

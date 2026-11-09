@@ -1,0 +1,82 @@
+{
+  "data": {
+    "viewer": {
+      "login": "olafura"
+    },
+    "repository": {
+      "pullRequest": {
+        "author": {
+          "__typename": "User",
+          "login": "olafura"
+        },
+        "authorAssociation": "MEMBER",
+        "isCrossRepository": false,
+        "headRefOid": "ea695370b969f690750b29fff859ece7d904dfd0",
+        "headRepositoryOwner": {
+          "login": "hal-c2"
+        },
+        "comments": {
+          "nodes": []
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-08T19:58:34Z",
+              "actor": {
+                "__typename": "User",
+                "login": "olafura"
+              },
+              "requestedReviewer": {}
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-08T21:01:44Z",
+              "actor": {
+                "__typename": "User",
+                "login": "olafura"
+              },
+              "requestedReviewer": {}
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-08T22:10:33Z",
+              "actor": {
+                "__typename": "User",
+                "login": "olafura"
+              },
+              "requestedReviewer": {}
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-08T23:06:19Z",
+              "actor": {
+                "__typename": "User",
+                "login": "olafura"
+              },
+              "requestedReviewer": {}
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-09T00:28:53Z",
+              "actor": {
+                "__typename": "User",
+                "login": "olafura"
+              },
+              "requestedReviewer": {}
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-09T00:57:34Z",
+              "actor": {
+                "__typename": "User",
+                "login": "olafura"
+              },
+              "requestedReviewer": {}
+            }
+          ]
+        }
+      }
+    }
+  }
+}

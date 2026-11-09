@@ -12,7 +12,8 @@ defmodule HalC2.CodeReviewPropTest do
   turns (one of them stopped by the provider's usage limit, which parks its review
   in the queue and starts nothing else until the limit resets, restarts included,
   unless the user asks for a review), answer a
-  superseded post late, change settings, turn the plugin off and on,
+  superseded post late, comment the review command and label pull requests, change
+  settings (also while a look reads GitHub), turn the plugin off and on,
   and crash it. After every step:
 
   - one review runs per pull request: each run has a thread of its own once it starts
@@ -31,6 +32,21 @@ defmodule HalC2.CodeReviewPropTest do
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
   - a settings save keeps them going, and starts queued reviews when it makes room;
+  - a review the look found starts only while its author and repository are under
+    their daily limits, restarts included, and waits as ready, limited, otherwise, until
+    enough of the starts it counted are a day old, which need not be the oldest when the
+    user's own asks went past a limit; one the user asked for starts anyway and counts
+    toward them. Steps whose outcome would hang on which of two reviews reached the
+    limit first are not generated;
+  - a trusted login's review command, or the trigger label added by someone trusted,
+    starts a review, judged under the settings as the look ends: a login taken off the
+    trusted ones while GitHub is read asks for nothing, and who added the label the look
+    began with says nothing of another trigger label saved meanwhile;
+  - an automatic review of a pull request nobody trusted waits for the user, as a draft
+    does;
+  - a draft saved before reports were made safe (`age/1`) is shown with its mentions,
+    images and markup neutralised once the plugin loads it, and is neither previewed
+    nor posted until it is reviewed again;
   - each review's thread is listed with the threads as the display last saved says,
     and a discarded review's stays out of the list, even when the display was saved
     just before and its listing is still under way;
@@ -163,6 +179,70 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
+  # From hal-c2/hal-c2#1423: hubot, trusted when a look began and not once it ends,
+  # asks for nothing with its command.
+  test "a command from a login taken off the trusted ones while GitHub is read asks nothing" do
+    replay([
+      {:save, [{"trustedLogins", ["hubot"]}]},
+      {:comment, ["acme/api#1"]},
+      {:save_mid_read, [{"trustedLogins", []}]}
+    ])
+  end
+
+  # Also from hal-c2/hal-c2#1423: who added agent-review says nothing of ship-it, saved as
+  # the trigger label while the look read GitHub.
+  test "who added the old trigger label, read as the label changed, starts no review" do
+    replay([{:label, ["acme/api#1"]}, {:save_mid_read, [{"label", "ship-it"}]}])
+  end
+
+  # Also from hal-c2/hal-c2#1423: ship-it, added by monalisa and the untrusted hubot in
+  # the same second, starts no review on monalisa's say-so.
+  test "a trigger label added by someone trusted and someone untrusted at once starts no review" do
+    replay([{:save, [{"label", "ship-it"}]}, {:label, ["acme/api#1"]}, {:refresh, []}])
+  end
+
+  # Also from hal-c2/hal-c2#1423: the user's asks took the author past the limit, so the
+  # review the watch holds back, once a run is done and makes room, has room once the
+  # newer start is a day old.
+  test "a review held back past the limit has room once enough starts are a day old" do
+    replay([
+      {:save, [{"reviewsPerAuthorPerDay", 1}]},
+      {:start, ["acme/api#1"]},
+      {:start, ["acme/api#2"]},
+      {:report, [{"acme/api#1", 1}, :findings]},
+      {:save, [{"activation", "automatic"}]},
+      {:refresh, []}
+    ])
+  end
+
+  defp replay(steps) do
+    Process.flag(:trap_exit, true)
+
+    cmds =
+      for {{name, args}, i} <- Enum.with_index(steps, 1),
+          do: {:set, {:var, i}, {:call, __MODULE__, name, args}}
+
+    begin_case()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
+  # From hal-c2/hal-c2#1423: a usage limit stops the run of a pull request nobody
+  # trusted after its commit was checked out; the user takes the approval back and
+  # gives it again, and nothing has reviewed the commit yet.
+  test "an approval given again after a usage limit stopped its run queues the review" do
+    replay([
+      {:distrust, ["acme/api#1"]},
+      {:refresh, []},
+      {:approve, ["acme/api#1", true]},
+      {:limited, [{"acme/api#1", 1}]},
+      {:unapprove, ["acme/api#1"]},
+      {:approve, ["acme/api#1", true]}
+    ])
+  end
+
   # From hal-c2/hal-c2#990: two reviews start with the gate closed.
   test "two reviews started with the gate closed both get a checkout and a thread" do
     Process.flag(:trap_exit, true)
@@ -170,8 +250,8 @@ defmodule HalC2.CodeReviewPropTest do
     cmds = [
       {:set, {:var, 1}, {:call, __MODULE__, :save, [{"activation", "automatic"}]}},
       {:set, {:var, 2}, {:call, __MODULE__, :push, ["acme/api#1"]}},
-      {:set, {:var, 3}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
-      {:set, {:var, 4}, {:call, __MODULE__, :publish, ["acme/api#1"]}},
+      {:set, {:var, 3}, {:call, __MODULE__, :publish, ["acme/web#1", true]}},
+      {:set, {:var, 4}, {:call, __MODULE__, :publish, ["acme/api#1", true]}},
       {:set, {:var, 5}, {:call, __MODULE__, :gate, [:closed]}},
       {:set, {:var, 6}, {:call, __MODULE__, :refresh, []}},
       {:set, {:var, 7}, {:call, __MODULE__, :report, [{"acme/api#2", 1}, :findings]}}
@@ -235,10 +315,10 @@ defmodule HalC2.CodeReviewPropTest do
       {:set, {:var, 1}, {:call, __MODULE__, :gate, [:closed]}},
       {:set, {:var, 2}, {:call, __MODULE__, :start, ["acme/web#1"]}},
       {:set, {:var, 3}, {:call, __MODULE__, :report, [{"acme/web#1", 1}, :findings]}},
-      {:set, {:var, 4}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 4}, {:call, __MODULE__, :publish, ["acme/web#1", true]}},
       {:set, {:var, 5}, {:call, __MODULE__, :start, ["acme/web#1"]}},
       {:set, {:var, 6}, {:call, __MODULE__, :report, [{"acme/web#1", 2}, :findings]}},
-      {:set, {:var, 7}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 7}, {:call, __MODULE__, :publish, ["acme/web#1", true]}},
       {:set, {:var, 8}, {:call, __MODULE__, :gate, [:open]}}
     ]
 
@@ -259,10 +339,10 @@ defmodule HalC2.CodeReviewPropTest do
       {:set, {:var, 2}, {:call, __MODULE__, :refuse, [true]}},
       {:set, {:var, 3}, {:call, __MODULE__, :start, ["acme/web#1"]}},
       {:set, {:var, 4}, {:call, __MODULE__, :report, [{"acme/web#1", 1}, :findings]}},
-      {:set, {:var, 5}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 5}, {:call, __MODULE__, :publish, ["acme/web#1", true]}},
       {:set, {:var, 6}, {:call, __MODULE__, :start, ["acme/web#1"]}},
       {:set, {:var, 7}, {:call, __MODULE__, :report, [{"acme/web#1", 2}, :findings]}},
-      {:set, {:var, 8}, {:call, __MODULE__, :publish, ["acme/web#1"]}},
+      {:set, {:var, 8}, {:call, __MODULE__, :publish, ["acme/web#1", true]}},
       {:set, {:var, 9}, {:call, __MODULE__, :start, ["acme/web#1"]}},
       {:set, {:var, 10}, {:call, __MODULE__, :gate, [:open]}}
     ]
@@ -293,11 +373,37 @@ defmodule HalC2.CodeReviewPropTest do
         concurrency: 2,
         activation: "selective",
         new_pushes: false,
-        display: "threads"
+        display: "threads",
+        per_author: 3,
+        per_repository: 2,
+        # Whether hubot is a trusted login, and the trigger label.
+        trusted_logins: false,
+        label: "agent-review"
       },
-      prs: Map.new(@keys, &{&1, %{open: true, head: 1, broken: false}}),
+      # `labeled`: whether it carries both labels, agent-review added by monalisa and
+      # ship-it by hubot (and monalisa at the same time); `comment`: when hubot last commented the review command, as
+      # `tick` counts the comments; `edits`: how often it changed, as `updatedAt` shows.
+      prs:
+        Map.new(
+          @keys,
+          &{&1,
+           %{
+             open: true,
+             head: 1,
+             broken: false,
+             trusted: true,
+             labeled: false,
+             comment: nil,
+             edits: 0
+           }}
+        ),
+      tick: 0,
       reviews: %{},
       runs: %{},
+      # The starts the review limits count, by repository, and the reviews the step
+      # being looked at tried to start (`contested?/2`), with whether each was asked for.
+      starts: %{},
+      tried: [],
       posts: [],
       github: MapSet.new(),
       gate: :open,
@@ -355,13 +461,18 @@ defmodule HalC2.CodeReviewPropTest do
         {1, {:call, __MODULE__, :poll, []}},
         {5, {:call, __MODULE__, :start, [key]}},
         {2, {:call, __MODULE__, :retry, [key]}},
+        {2, {:call, __MODULE__, :approve, [key, frequency([{4, true}, {1, false}])]}},
+        {1, {:call, __MODULE__, :unapprove, [key]}},
         {2, {:call, __MODULE__, :dismiss, [commented, oneof([1, 2]), boolean()]}},
         {2, {:call, __MODULE__, :discard, [key]}},
         {relists, {:call, __MODULE__, :relist_discard, [finished, relisted]}},
-        {if(waiting == [], do: 2, else: 10), {:call, __MODULE__, :publish, [published]}},
-        {1, {:call, __MODULE__, :disable, [oneof([:plain, :polling])]}}
+        {if(waiting == [], do: 2, else: 10),
+         {:call, __MODULE__, :publish, [published, frequency([{6, true}, {1, false}])]}},
+        {1, {:call, __MODULE__, :disable, [oneof([:plain, :polling])]}},
+        {2, {:call, __MODULE__, :save_mid_read, [trust_setting()]}}
       ] ++
         if(m.crashes < 2, do: [{1, {:call, __MODULE__, :crash, []}}], else: []) ++
+        if(waiting != [], do: [{1, {:call, __MODULE__, :age, [elements(waiting)]}}], else: []) ++
         if(launched != [],
           do: [
             {6,
@@ -382,6 +493,10 @@ defmodule HalC2.CodeReviewPropTest do
 
     always = [
       {3, {:call, __MODULE__, :push, [key]}},
+      {2, {:call, __MODULE__, :distrust, [key]}},
+      {2, {:call, __MODULE__, :comment, [key]}},
+      {1, {:call, __MODULE__, :label, [key]}},
+      {2, {:call, __MODULE__, :save, [trust_setting()]}},
       {2, {:call, __MODULE__, :toggle_open, [key]}},
       {1, {:call, __MODULE__, :break, [key]}},
       {2, {:call, __MODULE__, :gate, [oneof([:open, :closed])]}},
@@ -397,29 +512,49 @@ defmodule HalC2.CodeReviewPropTest do
             {"reviewNewPushes", boolean()},
             {"display", oneof(~w(page threads both))}
           ])
+        ]}},
+      # The watch's own starts, which the review limits hold back, and the limits.
+      {2, {:call, __MODULE__, :save, [{"activation", "automatic"}]}},
+      {2,
+       {:call, __MODULE__, :save,
+        [
+          oneof([
+            {"reviewsPerAuthorPerDay", oneof([0, 1, 3, 6])},
+            {"reviewsPerRepositoryPerDay", oneof([0, 1, 2])}
+          ])
         ]}}
     ]
 
     frequency(if(m.enabled, do: on, else: off) ++ always)
   end
 
-  @plugin_commands ~w(refresh poll start retry dismiss discard relist_discard publish disable report turn_finished limited late_published)a
+  # Who may ask for a review, and with which label.
+  defp trust_setting,
+    do:
+      oneof([
+        {"trustedLogins", oneof([[], ["hubot"]])},
+        {"label", oneof(~w(agent-review ship-it))}
+      ])
 
-  def precondition(m, {:call, _, :enable, _}), do: not m.enabled
-  def precondition(m, {:call, _, :crash, _}), do: m.enabled and m.crashes < 2
+  @plugin_commands ~w(refresh poll start retry approve unapprove dismiss discard relist_discard publish age disable report turn_finished limited late_published save_mid_read)a
 
-  def precondition(m, {:call, _, cmd, [{key, k} | _]})
-      when cmd in [:report, :turn_finished, :limited],
-      do: m.enabled and Enum.at(m.runs[key] || [], k - 1) == true
+  def precondition(m, call), do: allowed?(m, call) and not contested?(m, call)
 
-  def precondition(m, {:call, _, :late_published, [{key, k}]}),
+  defp allowed?(m, {:call, _, :enable, _}), do: not m.enabled
+  defp allowed?(m, {:call, _, :crash, _}), do: m.enabled and m.crashes < 2
+
+  defp allowed?(m, {:call, _, cmd, [{key, k} | _]})
+       when cmd in [:report, :turn_finished, :limited],
+       do: m.enabled and Enum.at(m.runs[key] || [], k - 1) == true
+
+  defp allowed?(m, {:call, _, :late_published, [{key, k}]}),
     do: m.enabled and k < length(m.runs[key] || [])
 
-  def precondition(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
-  def precondition(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
-  def precondition(_m, _call), do: true
+  defp allowed?(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
+  defp allowed?(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
+  defp allowed?(_m, _call), do: true
 
-  def next_state(m, _result, call), do: m |> step(call) |> elem(0)
+  def next_state(m, _result, call), do: %{elem(step(m, call), 0) | tried: []}
 
   def postcondition(m, call, observed) do
     {m, reply} = step(m, call)
@@ -434,6 +569,7 @@ defmodule HalC2.CodeReviewPropTest do
       orphans: [],
       unstopped: [],
       posts: Enum.sort(m.posts),
+      starts: if(m.enabled, do: m.starts, else: :off),
       # A plugin turned off has no process to report from; its pause is saved with the
       # reviews and shows again once it is on.
       problems: if(m.enabled and m.paused, do: ["code-review reports: #{m.pause_text}"], else: [])
@@ -465,26 +601,78 @@ defmodule HalC2.CodeReviewPropTest do
       not m.prs[key].open ->
         {m, :error}
 
+      # Asked for a pull request nobody trusted and the user has not approved, it
+      # waits for the approval, with who stands behind it read afresh.
+      m.reviews[key] == nil and gated?(fresh(m, key), m.prs[key].head) ->
+        {put_review(m, key, fresh(m, key)), :error}
+
       m.reviews[key] == nil ->
         {m
          |> unpause()
          |> put_review(key, %{fresh(m, key) | followed: true})
-         |> queue(key)
+         |> queue(key, true)
          |> pump(), :ok}
 
       m.reviews[key].status in [:queued, :running] ->
         {m |> unpause() |> pump(), :ok}
 
+      gated?(asking(m, key), m.reviews[key].seen) ->
+        {put_review(m, key, asking(m, key)), :error}
+
       true ->
-        {m |> unpause() |> follow(key) |> queue(key) |> pump(), :ok}
+        m = put_review(m, key, asking(m, key))
+        {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
+    end
+  end
+
+  # The user approves the head the Reviews page shows, or (`fresh` false) the other
+  # one. A review under way, being posted or done at that head only takes it; one
+  # whose run there ended without findings, as at a usage limit, is queued.
+  defp step(m, {:call, _, :approve, [key, fresh]}) do
+    case m.reviews[key] do
+      %{seen: seen} = r when fresh ->
+        r = %{r | approved: seen}
+        m = put_review(m, key, r)
+
+        if r.status in [:queued, :running, :publishing] or
+             (r.reviewed == seen and r.verdict != nil),
+           do: {m, :ok},
+           else: {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
+
+      _ ->
+        {m, :error}
+    end
+  end
+
+  defp step(m, {:call, _, :unapprove, [key]}) do
+    case m.reviews[key] do
+      nil ->
+        {m, :error}
+
+      r ->
+        r = %{r | approved: nil}
+
+        r =
+          if r.status == :queued and gated?(r, r.seen),
+            do: %{r | status: :ready},
+            else: r
+
+        {put_review(m, key, r), :ok}
     end
   end
 
   defp step(m, {:call, _, :retry, [key]}) do
     case m.reviews[key] do
-      nil -> {m, :error}
-      %{status: s} when s in [:queued, :running] -> {m |> unpause() |> pump(), :ok}
-      _ -> {m |> unpause() |> follow(key) |> queue(key) |> pump(), :ok}
+      nil ->
+        {m, :error}
+
+      %{status: s} when s in [:queued, :running] ->
+        {m |> unpause() |> pump(), :ok}
+
+      r ->
+        if gated?(r, r.seen),
+          do: {m, :error},
+          else: {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
     end
   end
 
@@ -511,9 +699,13 @@ defmodule HalC2.CodeReviewPropTest do
     step(m, {:call, c, :discard, [key]})
   end
 
-  defp step(m, {:call, _, :publish, [key]}) do
+  defp step(m, {:call, _, :publish, [key, fresh]}) do
     case m.reviews[key] do
-      %{status: :waiting} = r ->
+      # A draft saved before reports were made safe is reviewed again first.
+      %{status: :waiting, old: true} = r when fresh ->
+        {put_review(m, key, %{r | publish_error: true}), :error}
+
+      %{status: :waiting} = r when fresh ->
         m |> put_review(key, %{r | status: :publishing, publish_error: false}) |> post(key)
 
       _ ->
@@ -523,6 +715,10 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp step(m, {:call, _, :report, [{key, k}, kind]}) do
     case m.reviews[key] do
+      # A run's first report is final.
+      %{run: ^k, verdict: v} when v != nil ->
+        {m, :error}
+
       %{run: ^k, status: s} = r when s not in [:queued, :ready, :published, :publishing] ->
         if kind == :nothing do
           {m, :error}
@@ -530,10 +726,14 @@ defmodule HalC2.CodeReviewPropTest do
           {verdict, comments} =
             if kind == :findings, do: {"request-changes", [false, false]}, else: {"approve", []}
 
-          status =
-            %{"local" => :kept, "draft" => :waiting, "automatic" => :publishing}[
-              m.settings.publishing
-            ]
+          # A pull request nobody trusted is never posted on its own: an automatic
+          # review of one waits for the user, as a draft does.
+          mode =
+            if m.settings.publishing == "automatic" and not r.trusted,
+              do: "draft",
+              else: m.settings.publishing
+
+          status = %{"local" => :kept, "draft" => :waiting, "automatic" => :publishing}[mode]
 
           r = %{r | status: status, verdict: verdict, comments: comments, publish_error: false}
           m = %{put_review(m, key, r) | failures: 0}
@@ -572,7 +772,7 @@ defmodule HalC2.CodeReviewPropTest do
     case m.reviews[key] do
       %{run: ^k, status: :running} ->
         {%{
-           queue(m, key)
+           queue(m, key, m.reviews[key].asked)
            | paused: true,
              failures: 0,
              pause_text:
@@ -592,6 +792,23 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :enable, []}), do: {restart(%{m | enabled: true, crashes: 0}), :ok}
   defp step(m, {:call, _, :crash, []}), do: {restart(%{m | crashes: m.crashes + 1}), nil}
 
+  # A waiting draft is saved as before reports were made safe, and the plugin loads it.
+  defp step(m, {:call, _, :age, [key]}) do
+    m =
+      case m.reviews[key] do
+        %{status: :waiting} = r -> put_review(m, key, %{r | old: true})
+        _ -> m
+      end
+
+    m = restart(m)
+
+    case m.reviews[key] do
+      %{status: :waiting, old: true} -> {m, :refused}
+      %{status: :waiting} -> {m, :shown}
+      _ -> {m, :none}
+    end
+  end
+
   defp step(m, {:call, _, :save, [{field, value}]}) do
     name =
       %{
@@ -599,16 +816,40 @@ defmodule HalC2.CodeReviewPropTest do
         "concurrency" => :concurrency,
         "activation" => :activation,
         "reviewNewPushes" => :new_pushes,
-        "display" => :display
+        "display" => :display,
+        "reviewsPerAuthorPerDay" => :per_author,
+        "reviewsPerRepositoryPerDay" => :per_repository,
+        "trustedLogins" => :trusted_logins,
+        "label" => :label
       }[field]
+
+    value = if field == "trustedLogins", do: value != [], else: value
 
     # The running plugin takes it as it is: the next look reads the rest.
     m = %{m | settings: Map.put(m.settings, name, value)}
     if m.enabled, do: {pump(m), :ok}, else: {m, :ok}
   end
 
+  # Saved while a look reads GitHub: the look reads who added the label it began with,
+  # and is applied under the settings saved.
+  defp step(m, {:call, c, :save_mid_read, [setting]}) do
+    {after_save, reply} = step(m, {:call, c, :save, [setting]})
+    {look(after_save, m.settings.label), reply}
+  end
+
+  defp step(m, {:call, _, :comment, [key]}),
+    do:
+      {update_pr(%{m | tick: m.tick + 1}, key, &%{&1 | comment: m.tick + 1, edits: &1.edits + 1}),
+       :ok}
+
+  defp step(m, {:call, _, :label, [key]}),
+    do: {update_pr(m, key, &%{&1 | labeled: not &1.labeled, edits: &1.edits + 1}), :ok}
+
   defp step(m, {:call, _, :push, [key]}),
     do: {update_pr(m, key, &%{&1 | head: 3 - &1.head}), :ok}
+
+  defp step(m, {:call, _, :distrust, [key]}),
+    do: {update_pr(m, key, &%{&1 | trusted: not &1.trusted, edits: &1.edits + 1}), :ok}
 
   defp step(m, {:call, _, :toggle_open, [key]}),
     do: {update_pr(m, key, &%{&1 | open: not &1.open}), :ok}
@@ -639,6 +880,11 @@ defmodule HalC2.CodeReviewPropTest do
     m = %{m | hold: false, held_runs: []}
     {Enum.reduce(held, m, fn {key, k}, m -> resolve(m, key, k) end), :ok}
   end
+
+  # What asking for `key` reads of who stands behind it, for the trigger label as it is
+  # now; when the pull request changed since stays as the last look read it.
+  defp asking(m, key),
+    do: %{m.reviews[key] | trusted: m.prs[key].trusted, trust_label: m.settings.label}
 
   defp follow(m, key), do: put_review(m, key, %{m.reviews[key] | followed: true})
 
@@ -673,36 +919,107 @@ defmodule HalC2.CodeReviewPropTest do
       publish_error: false,
       seq: nil,
       followed: false,
-      past: []
+      past: [],
+      # Whether its author is trusted, as the plugin last read it, the head the user
+      # approved, and both as its run started with them.
+      trusted: m.prs[key].trusted,
+      approved: nil,
+      launched: nil,
+      # The pull request's `edits` and the trigger label the plugin last read who stands
+      # behind it at; asking for a review reads the label, not when it changed. And
+      # when its run started, as `tick` counted: comments after it ask again.
+      seen_at: nil,
+      trust_label: m.settings.label,
+      started: nil,
+      # Whether the user asked for its run, and the limits that held its start back
+      # (`over_budget/2`), or nil; the watch leaves one held back alone for the rest of
+      # the day.
+      asked: false,
+      limited: nil,
+      # Whether its findings were saved before reports were made safe.
+      old: false
     }
   end
 
-  defp queue(m, key) do
+  defp moved_on(%{approved: approved} = r, head) when approved != nil and approved != head do
+    r = %{r | approved: nil}
+    if r.status == :queued and gated?(r, head), do: %{r | status: :ready}, else: r
+  end
+
+  defp moved_on(r, _head), do: r
+
+  # Whether the review waits for the user's approval of `head`.
+  defp gated?(r, head), do: not r.trusted and r.approved != head
+
+  # Whether `r` is reviewed for its label: added by someone trusted, as last read.
+  defp labeled?(m, key, r) do
+    m.settings.activation == "selective" and m.prs[key].labeled and
+      r.trust_label == m.settings.label and
+      (m.settings.label == "agent-review" or m.settings.trusted_logins)
+  end
+
+  # What a look learns of who stands behind `key`, read for the label `read_label` and
+  # applied under the settings as they are: whether it read GitHub again and what it
+  # keeps. A read for another label than the trigger is now is not known.
+  defp read(m, key, known, read_label) do
+    pr = m.prs[key]
+    read? = not (known != nil and known.seen_at == pr.edits and known.trust_label == read_label)
+
+    facts =
+      cond do
+        read_label != m.settings.label -> %{trusted: false, seen_at: nil, trust_label: nil}
+        read? -> %{trusted: pr.trusted, seen_at: pr.edits, trust_label: read_label}
+        true -> Map.take(known, [:trusted, :seen_at, :trust_label])
+      end
+
+    # hubot's command asks once it is trusted, if it came after the review last started.
+    asked =
+      read? and m.settings.activation == "selective" and m.settings.trusted_logins and
+        pr.comment != nil and (known == nil or known.started == nil or pr.comment > known.started)
+
+    {facts, asked}
+  end
+
+  # `asked`: whether the user asked for it (a start, a retry or an approval), so the
+  # review limits count it but never hold it back; the watch's own are held back.
+  defp queue(m, key, asked) do
     r = m.reviews[key]
 
     review = %{
       r
       | status: :queued,
+        asked: asked,
+        limited: nil,
+        started: nil,
         past: if(r.run, do: [r.run | r.past], else: r.past),
         seq: m.seq + 1,
         verdict: nil,
         comments: [],
         publish_error: false,
-        changed: false
+        changed: false,
+        old: false
     }
 
     %{put_review(m, key, review) | seq: m.seq + 1}
   end
 
-  # What a look at the open pull requests does, in the listing's order.
-  defp look(m) do
+  # What a look at the open pull requests does, in the listing's order. `read_label`:
+  # the trigger label as the look began.
+  defp look(m, read_label \\ nil) do
+    read_label = read_label || m.settings.label
     automatic = m.settings.activation == "automatic"
     reviews = Map.reject(m.reviews, fn {key, r} -> r.status == :ready and not m.prs[key].open end)
 
     m =
       Enum.reduce(@keys, %{m | reviews: reviews}, fn key, m ->
         pr = m.prs[key]
-        known = m.reviews[key]
+        # Who stands behind an open pull request is read with it.
+        {facts, asked} =
+          if pr.open, do: read(m, key, m.reviews[key], read_label), else: {%{}, false}
+
+        known = m.reviews[key] && Map.merge(m.reviews[key], facts)
+        # A push takes an approval back, and a review queued on it goes back to ready.
+        known = if pr.open and known, do: moved_on(known, pr.head), else: known
 
         cond do
           # A followed pull request found closed is followed no longer, so reopening
@@ -713,20 +1030,41 @@ defmodule HalC2.CodeReviewPropTest do
           known && known.status in [:queued, :running] ->
             put_review(m, key, %{known | seen: pr.head})
 
+          asked ->
+            r = %{(known || Map.merge(fresh(m, key), facts)) | seen: pr.head}
+            m = put_review(m, key, r)
+
+            if not gated?(r, pr.head) and r.limited == nil,
+              do: m |> queue(key, false) |> follow(key),
+              else: m
+
           # A run that could not start waits at that head for a retry or a push.
           known != nil and known.status == :failed and known.reviewed == nil and
               known.seen == pr.head ->
             put_review(m, key, %{known | seen: pr.head})
 
           known == nil or known.reviewed == nil ->
-            m = put_review(m, key, %{(known || fresh(m, key)) | seen: pr.head})
-            if automatic or (known != nil and known.followed), do: queue(m, key), else: m
+            r = %{(known || Map.merge(fresh(m, key), facts)) | seen: pr.head}
+            m = put_review(m, key, r)
+            labeled = not automatic and labeled?(m, key, r)
+
+            if (automatic or r.followed or labeled) and not gated?(r, pr.head) and
+                 r.limited == nil,
+               do: m |> queue(key, false) |> then(&if(labeled, do: follow(&1, key), else: &1)),
+               else: m
 
           known.reviewed == pr.head ->
             put_review(m, key, %{known | seen: pr.head, changed: false})
 
-          m.settings.new_pushes and (automatic or known.followed) ->
-            m |> put_review(key, %{known | seen: pr.head}) |> queue(key)
+          m.settings.new_pushes and
+            (automatic or known.followed or labeled?(m, key, known)) and
+            not gated?(known, pr.head) and known.limited == nil ->
+            labeled = not automatic and labeled?(m, key, known)
+
+            m
+            |> put_review(key, %{known | seen: pr.head})
+            |> queue(key, false)
+            |> then(&if(labeled, do: follow(&1, key), else: &1))
 
           true ->
             put_review(m, key, %{known | seen: pr.head, changed: true})
@@ -751,18 +1089,102 @@ defmodule HalC2.CodeReviewPropTest do
       |> Enum.take(max(m.settings.concurrency - running, 0))
       |> Enum.map(&elem(&1, 0))
 
-    m =
-      Enum.reduce(taken, m, fn key, m ->
-        runs = (m.runs[key] || []) ++ [false]
-        m = %{m | runs: Map.put(m.runs, key, runs)}
-        put_review(m, key, %{m.reviews[key] | status: :running, run: length(runs)})
+    m = %{m | tried: m.tried ++ Enum.map(taken, &{&1, m.reviews[&1].asked})}
+
+    # A start the review limits hold back goes back to ready, with no thread, and the
+    # next queued review starts in its place.
+    {m, held} =
+      Enum.reduce(taken, {m, false}, fn key, {m, held} ->
+        r = m.reviews[key]
+
+        over = over_budget(m, key)
+
+        if not r.asked and over != [] do
+          {put_review(m, key, %{r | status: :ready, limited: over, started: nil}), true}
+        else
+          runs = (m.runs[key] || []) ++ [false]
+          {repo, _} = @prs[key]
+
+          m = %{
+            m
+            | runs: Map.put(m.runs, key, runs),
+              starts: Map.update(m.starts, repo, 1, &(&1 + 1))
+          }
+
+          {put_review(m, key, %{
+             r
+             | status: :running,
+               run: length(runs),
+               launched: {r.trusted, r.approved},
+               started: m.tick
+           }), held}
+        end
       end)
 
-    started = Enum.map(taken, &{&1, m.reviews[&1].run})
+    started =
+      for key <- taken, m.reviews[key].status == :running, do: {key, m.reviews[key].run}
+
+    m = if held, do: pump(m), else: m
 
     if m.hold,
       do: %{m | held_runs: m.held_runs ++ started},
       else: Enum.reduce(started, m, fn {key, k}, m -> resolve(m, key, k) end)
+  end
+
+  # The review limits a start of `key` goes over, each `{repository, starts, limit}`
+  # with the starts it counts now (the author's limit, repository nil): every pull
+  # request here is octocat's, so the author's limit counts every start.
+  defp over_budget(m, key) do
+    {repo, _} = @prs[key]
+    total = m.starts |> Map.values() |> Enum.sum()
+    here = Map.get(m.starts, repo, 0)
+    %{per_author: author, per_repository: repository} = m.settings
+
+    if(author > 0 and total >= author, do: [{nil, total, author}], else: []) ++
+      if repository > 0 and here >= repository, do: [{repo, here, repository}], else: []
+  end
+
+  # Whether which of the reviews `call` starts a review limit holds back depends on the
+  # order their starts are counted in, which the plugin leaves to its processes: some
+  # limit with room for more starts than none, yet fewer than it starts, one of them the
+  # watch's own.
+  defp contested?(m, call) do
+    {after_call, _} = step(%{m | tried: []}, call)
+    tried = after_call.tried
+    total = m.starts |> Map.values() |> Enum.sum()
+
+    buckets =
+      [{m.settings.per_author, tried, total}] ++
+        for repo <- ~w(api web) do
+          {m.settings.per_repository,
+           Enum.filter(tried, fn {key, _} -> elem(@prs[key], 0) == repo end),
+           Map.get(m.starts, repo, 0)}
+        end
+
+    # Nor is when one held back has room again, if a start it counts may come before
+    # or after it.
+    started =
+      for {key, _} <- tried,
+          length(after_call.runs[key] || []) > length(m.runs[key] || []),
+          do: key
+
+    late =
+      for {key, false} <- tried,
+          %{status: :ready, limited: [_ | _] = over} <- [after_call.reviews[key]],
+          {repo, _, _} <- over,
+          other <- started,
+          other != key,
+          repo == nil or elem(@prs[other], 0) == repo,
+          do: key
+
+    length(tried) > 1 and
+      (late != [] or
+         Enum.any?(buckets, fn {limit, members, count} ->
+           room = limit - count
+
+           limit > 0 and room > 0 and room < length(members) and
+             Enum.any?(members, fn {_, asked} -> not asked end)
+         end))
   end
 
   # Run `k` of `key` gets past the fetch: a broken head fails it, any other is checked
@@ -770,7 +1192,10 @@ defmodule HalC2.CodeReviewPropTest do
   defp resolve(m, key, k) do
     case m.reviews[key] do
       %{status: :running, run: ^k} = r ->
-        if m.prs[key].broken do
+        {trusted, approved} = r.launched
+
+        # Nobody trusted, it is checked out only at the head the user approved.
+        if m.prs[key].broken or (not trusted and approved != m.prs[key].head) do
           m |> put_review(key, %{r | status: :failed}) |> fail() |> pump()
         else
           m = put_review(m, key, %{r | reviewed: m.prs[key].head})
@@ -896,7 +1321,37 @@ defmodule HalC2.CodeReviewPropTest do
     end)
     |> Enum.map(fn {key, r} ->
       run = if r.status in [:queued, :ready], do: nil, else: r.run
-      {key, r.status, run, r.seen, r.reviewed, r.changed, r.verdict, r.comments, r.publish_error}
+
+      {key, r.status, run, r.seen, r.reviewed, r.changed, r.verdict, r.comments, r.publish_error,
+       room_at(r.limited)}
+    end)
+  end
+
+  # When a review held back has room again: for each limit it went over, once enough of
+  # the starts it counted (the oldest of the starts the plugin keeps) are a day old to
+  # leave fewer than the limit; the later of them.
+  defp room_at(nil), do: nil
+
+  defp room_at(over) do
+    rows = Process.get(:cr_start_rows, [])
+
+    over
+    |> Enum.map(fn {repo, count, limit} ->
+      counted =
+        rows
+        |> Enum.filter(&(repo == nil or &1["repository"] == "acme/" <> repo))
+        |> Enum.map(&elem(DateTime.from_iso8601(&1["at"]), 1))
+        |> Enum.sort(DateTime)
+        |> Enum.take(count)
+
+      if length(counted) == count,
+        do: counted |> Enum.at(count - limit) |> DateTime.add(86_400, :second),
+        else: {:missing, repo, count}
+    end)
+    |> then(fn times ->
+      if Enum.all?(times, &match?(%DateTime{}, &1)),
+        do: times |> Enum.max(DateTime) |> DateTime.to_iso8601(),
+        else: times
     end)
   end
 
@@ -921,6 +1376,56 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   def retry(key), do: observe(call("retry", %{"key" => key}))
+
+  # The head the Reviews page shows, or the other one.
+  def approve(key, fresh) do
+    shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
+    sha = shown && shown["headSha"]
+
+    sha =
+      if fresh or sha == nil, do: sha, else: Enum.find([sha(key, 1), sha(key, 2)], &(&1 != sha))
+
+    observe(call("approve", %{"key" => key, "headSha" => sha || ""}))
+  end
+
+  def unapprove(key), do: observe(call("unapprove", %{"key" => key}))
+
+  # Its author joins or leaves the repository's collaborators, which GitHub shows as a
+  # change to the pull request.
+  def distrust(key) do
+    world = Process.get(:cr_world)
+    put_world(update_in(world.prs[key], &%{&1 | trusted: not &1.trusted, edits: &1.edits + 1}))
+    observe(:ok)
+  end
+
+  # hubot comments the review command, which asks for a review while hubot is trusted.
+  def comment(key) do
+    world = Process.get(:cr_world)
+    at = DateTime.utc_now() |> DateTime.to_iso8601()
+    put_world(update_in(world.prs[key], &%{&1 | comment: at, edits: &1.edits + 1}))
+    observe(:ok)
+  end
+
+  # Both labels are added to the pull request, or taken off it.
+  def label(key) do
+    world = Process.get(:cr_world)
+    put_world(update_in(world.prs[key], &%{&1 | labeled: not &1.labeled, edits: &1.edits + 1}))
+    observe(:ok)
+  end
+
+  # Saves `setting` while a look waits on GitHub for the pull requests, before it reads
+  # who stands behind them.
+  def save_mid_read({field, value}) do
+    hold = fx_path("list.hold")
+    pids = fx_path("list.pids")
+    File.write!(hold, "")
+    File.write!(pids, "")
+    send(@server, :poll)
+    wait_for_file(pids)
+    reply = plugins("saveSettings", %{"id" => @id, "settings" => %{field => value}})
+    File.rm(hold)
+    observe(reply)
+  end
 
   def dismiss(key, i, flag),
     do: observe(call("dismiss", %{"key" => key, "commentId" => "c#{i}", "dismissed" => flag}))
@@ -982,16 +1487,31 @@ defmodule HalC2.CodeReviewPropTest do
     reply
   end
 
-  # Asked of the plugin directly, as `call("publish")` waits for GitHub's answer.
-  def publish(key) do
+  # Asked of the plugin directly, as `call("publish")` waits for GitHub's answer; with
+  # the version the user saw, or (`fresh` false) one the review had before, and the
+  # verdict its preview said it posts with.
+  def publish(key, fresh) do
     ref = make_ref()
-    send(@server, {:"$gen_call", {self(), ref}, {:publish, key}})
+    shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
+    version = if fresh, do: shown && shown["version"], else: "stale"
+    send(@server, {:"$gen_call", {self(), ref}, {:publish, key, version, verdict(key)}})
     drain()
 
     receive do
       {^ref, reply} -> observe(reply(reply))
     after
       0 -> observe(:held)
+    end
+  end
+
+  defp verdict(key) do
+    case HalC2.Plugins.handle("call", %{
+           "id" => @id,
+           "method" => "preview",
+           "input" => %{"key" => key}
+         }) do
+      {:ok, %{"verdict" => verdict}} -> verdict
+      _ -> nil
     end
   end
 
@@ -1142,6 +1662,59 @@ defmodule HalC2.CodeReviewPropTest do
     observe(plugins("enable", %{"id" => @id, "acceptPermissions" => permissions()}), :restarted)
   end
 
+  # Saves the review of `key`, if it waits, as a draft was saved before reports were
+  # made safe: no report version, and its text as an agent might have written it. The
+  # plugin restarts on it, and says whether its preview was refused.
+  def age(key) do
+    file = Path.join(data_dir(), "reviews.json")
+    saved = file |> File.read!() |> JSON.decode!()
+
+    saved =
+      case saved["reviews"][key] do
+        %{"status" => "waiting"} = r ->
+          raw = "@octocat ![x](https://example.com/x.png) <img src=x>\n```"
+
+          r =
+            r
+            |> Map.delete("report")
+            |> Map.update("summary", raw, &(raw <> &1))
+            |> Map.update("comments", [], fn cs ->
+              Enum.map(cs, &%{&1 | "body" => raw <> &1["body"]})
+            end)
+
+          put_in(saved, ["reviews", key], r)
+
+        _ ->
+          saved
+      end
+
+    File.write!(file, JSON.encode!(saved))
+    reply = killing(fn -> plugins("restart", %{"id" => @id}) end)
+    await_restart(Process.get(:cr_pid))
+    observed = observe(reply, :restarted)
+
+    preview =
+      case HalC2.Plugins.handle("call", %{
+             "id" => @id,
+             "method" => "preview",
+             "input" => %{"key" => key}
+           }) do
+        {:ok, _} ->
+          :shown
+
+        # The plugin host names the plugin before its message.
+        {:error, %{"message" => message}} when is_binary(message) ->
+          if message =~ "The review of " and message =~ "review it again",
+            do: :refused,
+            else: :none
+
+        _ ->
+          :none
+      end
+
+    %{observed | reply: preview}
+  end
+
   def crash do
     pid = Process.whereis(@server)
 
@@ -1261,6 +1834,13 @@ defmodule HalC2.CodeReviewPropTest do
       if pid do
         snapshot = GenServer.call(@server, :snapshot)
         if snapshot["problem"], do: problem("code-review reports: #{snapshot["problem"]}")
+
+        # No findings are shown as an agent wrote them, however old the draft they are in.
+        for r <- snapshot["reviews"],
+            text <- [r["summary"] | Enum.map(r["comments"] || [], & &1["body"])],
+            is_binary(text) and (text =~ ~r/(?<![\w@])@(?=[\w-])/u or text =~ ~r/!\[|<[A-Za-z]/),
+            do: problem("#{r["key"]} shows findings not made safe: #{inspect(text)}")
+
         published = snapshot |> JSON.encode!() |> JSON.decode!()
 
         if Process.get(:cr_topic) != published,
@@ -1281,6 +1861,7 @@ defmodule HalC2.CodeReviewPropTest do
       orphans: orphans(),
       unstopped: unstopped(view),
       posts: posts(),
+      starts: if(pid, do: starts(), else: :off),
       problems: Process.put(:cr_problems, []) |> Enum.reverse()
     }
   end
@@ -1308,7 +1889,16 @@ defmodule HalC2.CodeReviewPropTest do
 
     {key, @statuses[r["status"]], run(key, r["threadId"]), head(r["headSha"]),
      head(r["reviewedSha"]), r["changed"] == true, r["verdict"],
-     Enum.map(r["comments"] || [], &(&1["dismissed"] == true)), r["publishError"] != nil}
+     Enum.map(r["comments"] || [], &(&1["dismissed"] == true)), r["publishError"] != nil,
+     get_in(r, ["limited", "until"])}
+  end
+
+  # The starts the plugin counts toward the review limits, by repository, each once.
+  defp starts do
+    rows = apply(@server, :starts, []) |> Enum.uniq_by(& &1["id"])
+    # When each started, for the time a review held back has room again (`room_at/1`).
+    Process.put(:cr_start_rows, rows)
+    Enum.frequencies_by(rows, fn %{"repository" => "acme/" <> repo} -> repo end)
   end
 
   # The run a thread id is: its place among the thread ids seen for the review.
@@ -1636,7 +2226,20 @@ defmodule HalC2.CodeReviewPropTest do
     Process.put(:cr_problems, [])
 
     put_world(%{
-      prs: Map.new(@keys, &{&1, %{open: true, head: 1, broken: false}}),
+      prs:
+        Map.new(
+          @keys,
+          &{&1,
+           %{
+             open: true,
+             head: 1,
+             broken: false,
+             trusted: true,
+             edits: 0,
+             labeled: false,
+             comment: nil
+           }}
+        ),
       refusing: false
     })
 
@@ -1692,14 +2295,19 @@ defmodule HalC2.CodeReviewPropTest do
           "model" => "fake/one",
           "prompt" => @prompt,
           "pollMinutes" => 60,
-          "command" => "",
+          "command" => "/review",
+          "label" => "agent-review",
+          "trustedLogins" => [],
           "repositories" => ["acme/api", "acme/web"],
           "activation" => "selective",
           "publishing" => "draft",
           "concurrency" => 2,
           "reviewNewPushes" => false,
           "readReviewMd" => false,
-          "display" => "threads"
+          "display" => "threads",
+          # As `initial_state/0` has them.
+          "reviewsPerAuthorPerDay" => 3,
+          "reviewsPerRepositoryPerDay" => 2
         }
       })
 
@@ -1781,6 +2389,7 @@ defmodule HalC2.CodeReviewPropTest do
       [%{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}}] ++
         lists ++
         details(world) ++
+        trust(world) ++
         activity ++
         [permissions_rule()] ++
         if(world.refusing, do: [refusal], else: []) ++
@@ -1818,10 +2427,14 @@ defmodule HalC2.CodeReviewPropTest do
       "state" => "OPEN",
       "isDraft" => false,
       "createdAt" => "2026-09-01T00:00:00Z",
-      "updatedAt" => @updated[key],
+      "updatedAt" => updated(world, key),
       "reviewRequests" => [],
       "latestReviews" => [],
-      "labels" => [],
+      "labels" =>
+        if(world.prs[key].labeled,
+          do: [%{"name" => "agent-review"}, %{"name" => "ship-it"}],
+          else: []
+        ),
       "statusCheckRollup" => [],
       "headRefOid" => sha(key, world.prs[key].head),
       "additions" => 5,
@@ -1830,6 +2443,71 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # One pull request as asking for its review reads it, closed ones too.
+  # When the pull request last changed: a change of who its author is to the repository
+  # counts, so the plugin reads who stands behind it again.
+  defp updated(world, key) do
+    seconds = world.prs[key].edits |> rem(60) |> Integer.to_string() |> String.pad_leading(2, "0")
+    String.replace(@updated[key], ":00Z", ":#{seconds}Z")
+  end
+
+  # Who stands behind each pull request: octocat, a member while trusted.
+  defp trust(world) do
+    for key <- @keys do
+      {repo, number} = @prs[key]
+
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestTrust", ~s("name":"#{repo}"), ~s("number":#{number},)],
+        "stdout" => %{
+          "data" => %{
+            "viewer" => %{"login" => "monalisa"},
+            "repository" => %{
+              "pullRequest" => %{
+                "author" => %{"__typename" => "User", "login" => "octocat"},
+                "authorAssociation" => if(world.prs[key].trusted, do: "MEMBER", else: "NONE"),
+                "isCrossRepository" => false,
+                "headRefOid" => sha(key, world.prs[key].head),
+                "headRepositoryOwner" => %{"login" => "acme"},
+                "comments" => %{"nodes" => comments(world.prs[key].comment)},
+                "timelineItems" => %{
+                  "nodes" => [
+                    labeled("agent-review", "User", "monalisa"),
+                    # ship-it added by monalisa and hubot in the same second: which
+                    # came last cannot be told, so it stands on hubot too.
+                    labeled("ship-it", "User", "monalisa"),
+                    labeled("ship-it", "Bot", "hubot")
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    end
+  end
+
+  defp comments(nil), do: []
+
+  defp comments(at) do
+    [
+      %{
+        "author" => %{"__typename" => "Bot", "login" => "hubot"},
+        "authorAssociation" => "NONE",
+        "body" => "/review",
+        "createdAt" => at
+      }
+    ]
+  end
+
+  defp labeled(name, type, login) do
+    %{
+      "__typename" => "LabeledEvent",
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "actor" => %{"__typename" => type, "login" => login},
+      "label" => %{"name" => name}
+    }
+  end
+
   defp details(world) do
     for key <- @keys do
       {repo, number} = @prs[key]

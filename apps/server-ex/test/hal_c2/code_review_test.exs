@@ -168,6 +168,196 @@ defmodule HalC2.CodeReviewTest do
     assert_receive {:DOWN, ^ref, :process, _, _}, 1_000
   end
 
+  # A look whose read of who stands behind #1 waits until `release/0` is called.
+  defp hold_trust_read(context, opts) do
+    hold = Path.join(context.dir, "trust.hold")
+    File.write!(hold, "")
+    on_exit(fn -> File.rm(hold) end)
+    held = "touch '#{context.dir}/trust.held'; while [ -e '#{hold}' ]; do sleep 0.05; done"
+    rules!(context, Keyword.put(opts, :trust, held))
+    send(@server, :poll)
+    await_file(Path.join(context.dir, "trust.held"))
+    fn -> File.rm!(hold) end
+  end
+
+  test "a commenter taken off the trusted logins while GitHub is read asks for no review",
+       context do
+    save_settings(%{"trustedLogins" => ["hubot"]})
+
+    comment = %{
+      "author" => %{"__typename" => "Bot", "login" => "hubot"},
+      "authorAssociation" => "NONE",
+      "body" => "/review",
+      "createdAt" => "2026-09-01T00:00:00Z"
+    }
+
+    release =
+      hold_trust_read(context, head: 1, comments: [comment], updated: "2026-09-05T00:00:00Z")
+
+    put_settings(%{"trustedLogins" => []})
+    release.()
+    await_look()
+    settle()
+    assert %{"status" => "ready"} = review()
+
+    # Trusted when the look is applied, the same comment asks.
+    save_settings(%{"trustedLogins" => ["hubot"]})
+    rules!(context, head: 1, comments: [comment], updated: "2026-09-06T00:00:00Z")
+    refresh()
+    assert %{"trigger" => "command"} = review()
+  end
+
+  test "who added the old trigger label, read while the label changed, does not start a review",
+       context do
+    labeled = fn name, login ->
+      %{
+        "__typename" => "LabeledEvent",
+        "createdAt" => "2026-09-01T00:00:00Z",
+        "actor" => %{"__typename" => "User", "login" => login},
+        "label" => %{"name" => name}
+      }
+    end
+
+    release =
+      hold_trust_read(context,
+        head: 1,
+        labels: ["agent-review", "ship-it"],
+        updated: "2026-09-05T00:00:00Z",
+        timeline: [labeled.("agent-review", "monalisa"), labeled.("ship-it", "stranger")]
+      )
+
+    put_settings(%{"label" => "ship-it"})
+    release.()
+    await_look()
+    settle()
+    assert %{"status" => "ready", "untrusted" => untrusted} = review()
+    assert untrusted =~ "has not been read yet"
+
+    # Read again for the label that is the trigger now, its adder is not trusted.
+    refresh()
+    assert %{"status" => "ready", "untrusted" => nil} = review()
+  end
+
+  test "a collaborator with a custom role is trusted by the permission it extends",
+       context do
+    save_settings(%{"label" => "ship-it"})
+
+    labeled = %{
+      "__typename" => "LabeledEvent",
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "actor" => %{"__typename" => "User", "login" => "custodian"},
+      "label" => %{"name" => "ship-it"}
+    }
+
+    label = fn answer, updated ->
+      rules!(context,
+        head: 1,
+        labels: ["ship-it"],
+        updated: updated,
+        timeline: [labeled],
+        permissions: [{"custodian", answer}]
+      )
+
+      refresh()
+      review()
+    end
+
+    # A custom role over read, and one GitHub names no permission for, are not trusted.
+    for {answer, at} <- [
+          {%{"role_name" => "Docs", "permission" => "read"}, "2026-09-02T00:00:00Z"},
+          {%{"role_name" => "Docs"}, "2026-09-03T00:00:00Z"}
+        ] do
+      assert %{"status" => "ready"} = review = label.(answer, at)
+      refute review["trigger"]
+      assert review["trust"]["labeled"]["login"] == "custodian"
+    end
+
+    # One over write is.
+    assert %{"trigger" => "label"} =
+             label.(
+               %{"role_name" => "Security reviewer", "permission" => "write"},
+               "2026-09-04T00:00:00Z"
+             )
+  end
+
+  test "a label added by someone trusted and someone untrusted at the same time does not start a review",
+       context do
+    save_settings(%{"label" => "ship-it"})
+
+    labeled = fn login ->
+      %{
+        "__typename" => "LabeledEvent",
+        "createdAt" => "2026-09-01T00:00:00Z",
+        "actor" => %{"__typename" => "User", "login" => login},
+        "label" => %{"name" => "ship-it"}
+      }
+    end
+
+    label = fn timeline, updated ->
+      rules!(context, head: 1, labels: ["ship-it"], updated: updated, timeline: timeline)
+      refresh()
+      review()
+    end
+
+    # Within one second GitHub's order says nothing of which came last, in either order.
+    for {timeline, at} <- [
+          {[labeled.("monalisa"), labeled.("stranger")], "2026-09-02T00:00:00Z"},
+          {[labeled.("stranger"), labeled.("monalisa")], "2026-09-03T00:00:00Z"}
+        ] do
+      assert %{"status" => "ready"} = review = label.(timeline, at)
+      refute review["trigger"]
+      %{"login" => last, "tied" => [%{"login" => tied}]} = review["trust"]["labeled"]
+      assert Enum.sort([last, tied]) == ["monalisa", "stranger"]
+    end
+
+    # The same trusted login twice is still trusted.
+    assert %{"trigger" => "label"} =
+             label.([labeled.("monalisa"), labeled.("monalisa")], "2026-09-04T00:00:00Z")
+  end
+
+  test "an account that shares a trusted login but is not that user does not start a review",
+       context do
+    save_settings(%{"label" => "ship-it"})
+
+    labeled = fn type, login ->
+      %{
+        "__typename" => "LabeledEvent",
+        "createdAt" => "2026-09-01T00:00:00Z",
+        "actor" => %{"__typename" => type, "login" => login},
+        "label" => %{"name" => "ship-it"}
+      }
+    end
+
+    label = fn timeline, updated ->
+      rules!(context,
+        head: 1,
+        labels: ["ship-it"],
+        updated: updated,
+        timeline: timeline,
+        permissions: [{"custodian", %{"role_name" => "write", "permission" => "write"}}]
+      )
+
+      refresh()
+      review()
+    end
+
+    # A mannequin of an import with the user's login, or a collaborator's, is neither:
+    # its permission is not read by the login, which names the user.
+    for {timeline, at} <- [
+          {[labeled.("Mannequin", "monalisa")], "2026-09-02T00:00:00Z"},
+          {[labeled.("Mannequin", "custodian")], "2026-09-03T00:00:00Z"},
+          # A bot with the user's login, at the same time as the user, is someone else.
+          {[labeled.("User", "monalisa"), labeled.("Bot", "monalisa")], "2026-09-04T00:00:00Z"},
+          {[labeled.("Bot", "monalisa"), labeled.("User", "monalisa")], "2026-09-05T00:00:00Z"}
+        ] do
+      assert %{"status" => "ready"} = review = label.(timeline, at)
+      refute review["trigger"], inspect(timeline)
+    end
+
+    assert %{"trigger" => "label"} =
+             label.([labeled.("User", "custodian")], "2026-09-06T00:00:00Z")
+  end
+
   test "a head pushed back to the commit reviewed is no longer changed since the review",
        context do
     review = start_review()
@@ -295,11 +485,562 @@ defmodule HalC2.CodeReviewTest do
            |> Enum.all?(&(&1["name"] != "code_review_report"))
   end
 
+  test "the first report of a run is final", _context do
+    review = start_review()
+    first = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", first, review["threadId"])
+    settle()
+    again = %{first | "verdict" => "request-changes", "summary" => "Wait, no."}
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool("code_review_report", again, review["threadId"])
+
+    assert message =~ "the first report is final"
+    assert %{"verdict" => "approve", "summary" => "Looks right."} = review()
+  end
+
+  test "a review that changed since the user looked at it is not published", context do
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "comment",
+      "summary" => "Two things.",
+      "comments" => [
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "One."},
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "Two."}
+      ]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    looked = seen()
+    {:ok, _} = call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert {:error, %{"message" => message}} = call("publish", looked)
+    assert message =~ "changed since you looked at it"
+    assert {:error, _} = call("publish", %{"key" => @key})
+
+    # Without how the post goes, as the user was shown it, nothing is posted either.
+    assert {:error, %{"message" => message}} =
+             call("publish", Map.delete(seen(), "verdict"))
+
+    assert message =~ "Publishing needs what you were shown it would post"
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+  end
+
+  test "a pull request nobody trusted is reviewed only at the commit the user approved, and never posted on its own",
+       context do
+    rules!(context, head: 1, association: "NONE")
+    {:ok, _} = put_settings(%{"publishing" => "automatic"})
+    settle()
+
+    assert {:error, %{"message" => message}} =
+             call("start", %{"repository" => "acme/api", "number" => 1})
+
+    assert message =~ "Approve it on the Reviews page"
+    assert %{"status" => "ready", "untrusted" => why} = review = review()
+    refute review["threadId"]
+    assert why =~ "not a member or collaborator"
+
+    assert {:error, _} = call("approve", %{"key" => @key, "headSha" => context.shas[2]})
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+    settle()
+
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+  end
+
+  test "a push takes back the approval of a pull request nobody trusted, even pushed back",
+       context do
+    rules!(context, head: 1, association: "NONE")
+    settle()
+    {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+    settle()
+    first = context.shas[1]
+    assert %{"status" => "waiting", "approved" => ^first} = review()
+
+    rules!(context, head: 2, association: "NONE")
+    refresh()
+    assert %{"approved" => nil} = review()
+
+    # Back at the commit the user approved, it waits for the user again.
+    rules!(context, head: 1, association: "NONE")
+    refresh()
+    assert %{"approved" => nil, "headSha" => ^first} = review()
+    assert {:error, %{"message" => message}} = call("retry", %{"key" => @key})
+    assert message =~ "Approve it on the Reviews page"
+  end
+
+  test "what an agent writes mentions nobody, loads nothing and hides nothing", _context do
+    _ = start_review()
+    neutral = &apply(@server, :neutral, [&1])
+
+    assert neutral.("ask @acme/security and @octocat, not me@example.com") ==
+             "ask @\u200Bacme/security and @\u200Boctocat, not me@\u200Bexample.com"
+
+    # Markup around a mention does not keep it whole.
+    assert neutral.("ask _@octocat_, __@acme/security__ and *@octocat*") ==
+             "ask _@\u200Boctocat_, __@\u200Bacme/security__ and *@\u200Boctocat*"
+
+    assert neutral.(neutral.("_@octocat_")) == neutral.("_@octocat_")
+
+    assert neutral.("![x](https://example.com/p.png) <img src=x> <!-- hi --> a < b") ==
+             "!\u200B[x](https://example.com/p.png) <\u200Bimg src=x> <\u200B!-- hi --> a < b"
+
+    refute neutral.("<!-- hal-c2-code-review:acme/api#1@abc -->") =~ "hal-c2-code-review:"
+  end
+
+  test "a fence the prose of a comment leaves open does not let its suggestion out of its code block",
+       _context do
+    body = &apply(@server, :comment_body, [&1, &2])
+    bait = "![x](https://example.com/p.png) @octocat"
+    open = %{"body" => "Use this:\n```", "suggestion" => bait}
+
+    assert body.(open, "old") == "Use this:\n```\n```\n\nSuggested change:\n\n```\n#{bait}\n```"
+    assert body.(open, "new") == "Use this:\n```\n```\n\n```suggestion\n#{bait}\n```"
+
+    # A lone carriage return ends a line on GitHub too.
+    assert body.(%{open | "body" => "Use this:\r```"}, "old") ==
+             "Use this:\n```\n```\n\nSuggested change:\n\n```\n#{bait}\n```"
+
+    # One the prose opens in a list or a quote, or indents, which the reader could end
+    # elsewhere, is no fence at all.
+    for nested <- ["- ```", "> ~~~", "   ```", "1. > ```"] do
+      [lead, mark] = Regex.run(~r/^(.*?)([`~])/, nested, capture: :all_but_first)
+      broken = lead <> mark <> "​" <> String.slice(nested, String.length(lead) + 1, 99)
+
+      assert body.(%{"body" => "Ok.\n#{nested}\n  x", "suggestion" => bait}, "new") ==
+               "Ok.\n#{broken}\n  x\n\n```suggestion\n#{bait}\n```"
+    end
+
+    # A closed fence, and a fence of tildes inside one of backticks, stay as written.
+    closed = "See:\n```\n~~~\n```\nDone."
+
+    assert body.(%{"body" => closed, "suggestion" => "x"}, "new") ==
+             "#{closed}\n\n```suggestion\nx\n```"
+  end
+
+  test "the preview of a review is what publishing it posts", context do
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "request-changes",
+      "summary" => "Two things.",
+      "comments" => [
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "One.", "severity" => "major"},
+        %{"path" => "src/limits.ts", "line" => 1, "body" => "Two."}
+      ]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    {:ok, _} = call("dismiss", %{"key" => @key, "commentId" => "c2"})
+
+    assert {:ok, preview} = call("preview", %{"key" => @key})
+    assert preview["version"] == review()["version"]
+    assert [%{"path" => "src/limits.ts", "line" => 1, "body" => one}] = preview["comments"]
+    assert one =~ "One."
+
+    assert {:ok, _} =
+             call("publish", Map.merge(seen(), Map.take(preview, ~w(version verdict))))
+
+    assert [post] = posts(context)
+    sent = post |> Jason.decode!() |> Map.fetch!("stdin") |> Jason.decode!()
+    assert sent["body"] == preview["body"]
+    assert sent["event"] == "REQUEST_CHANGES" and preview["verdict"] == review()["verdict"]
+    assert Enum.map(sent["comments"], & &1["body"]) == [one]
+  end
+
+  test "a draft saved before reports were made safe is shown safe and is not published",
+       context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    # As reviews.json held a waiting draft before: its text as the agent wrote it, and
+    # no report version.
+    raw = "Ping @octocat and @acme/core. ![x](https://example.com/x.png) <img src=x>\n```"
+
+    comment = %{
+      "id" => "c1",
+      "path" => "src/limits.ts\nREADME.md",
+      "line" => 1,
+      "side" => "new",
+      "body" => raw <> String.duplicate("y", 9_000),
+      "severity" => "major",
+      "position" => 1,
+      "dismissed" => false
+    }
+
+    file = Path.join([context.dir, "home", "plugin-data", "code-review", "reviews.json"])
+    saved = file |> File.read!() |> JSON.decode!()
+
+    old =
+      saved["reviews"][@key]
+      |> Map.delete("report")
+      |> Map.merge(%{
+        "summary" => raw <> String.duplicate("x", 70_000),
+        "comments" =>
+          List.duplicate(comment, 40)
+          |> Enum.with_index(1)
+          |> Enum.map(fn {c, i} -> %{c | "id" => "c#{i}"} end),
+        "validation" => %{"ran" => [%{"command" => "@octocat\nmix test", "result" => "ok"}]}
+      })
+
+    File.write!(file, JSON.encode!(put_in(saved, ["reviews", @key], old)))
+    {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
+    settle()
+
+    shown = review()
+    texts = [shown["summary"] | Enum.map(shown["comments"], & &1["body"])]
+
+    for text <- texts do
+      refute text =~ ~r/@(?=[\w-])/u
+      refute text =~ "!["
+      refute text =~ ~r/<[A-Za-z]/
+      # No code block left open.
+      assert text |> String.split("\n") |> Enum.count(&String.starts_with?(&1, "```")) |> rem(2) ==
+               0
+    end
+
+    assert byte_size(shown["summary"]) <= 60_100
+    assert length(shown["comments"]) <= 30
+    assert Enum.all?(shown["comments"], &(byte_size(&1["body"]) <= 4_200))
+    assert Enum.all?(shown["comments"], &(not String.contains?(&1["path"], "\n")))
+    assert [%{"command" => "@\u200Boctocat mix test"}] = shown["validation"]["ran"]
+
+    # What the plugin holds is as safe as what it shows.
+    held = :sys.get_state(@server).reviews[@key]
+    assert held["summary"] == shown["summary"]
+
+    # It is not posted, from its preview or from Publish: it is reviewed again first.
+    assert {:error, %{"message" => message}} = call("preview", %{"key" => @key})
+    assert message =~ "review it again"
+    assert {:error, %{"message" => message}} = call("publish", seen())
+    assert message =~ "review it again"
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+  end
+
+  test "a review whose post would change from its preview is not published", context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    {:ok, preview} = call("preview", %{"key" => @key})
+    save_settings(%{"verdictAsComment" => true})
+
+    assert {:error, %{"message" => message}} =
+             call("publish", Map.merge(seen(), Map.take(preview, ~w(version verdict))))
+
+    assert message =~ "changed since you looked at it"
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+  end
+
+  test "a comment off the change that opens with a fence keeps its suggestion in its own block",
+       _context do
+    review = start_review()
+    bait = "![x](https://example.com/p.png) @octocat"
+
+    comment = %{
+      "path" => "src/elsewhere.ts",
+      "line" => 3,
+      "side" => "old",
+      "body" => "```ts\nconst limit = 2;",
+      "suggestion" => bait
+    }
+
+    arguments = %{"verdict" => "comment", "summary" => "One note.", "comments" => [comment]}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    assert %{"summary" => summary, "comments" => []} = review()
+
+    assert summary ==
+             "One note.\n\n`src/elsewhere.ts:3`:\n\n```ts\nconst limit = 2;\n```\n\n" <>
+               "Suggested change:\n\n```\n#{bait}\n```"
+  end
+
+  test "counts in the settings are whole numbers", _context do
+    for key <-
+          ~w(reviewsPerAuthorPerDay reviewsPerRepositoryPerDay maxChangedLines concurrency pollMinutes) do
+      assert {:error, %{"message" => message}} = save_settings_answer(%{key => 1.5})
+      assert message =~ key
+    end
+
+    assert {:ok, _} = put_settings(%{"reviewsPerAuthorPerDay" => 2, "concurrency" => 1})
+    settle()
+  end
+
+  test "a severity badge on an old-side comment that opens with a fence keeps its suggestion in its own block",
+       context do
+    # The pull request changes README.md, so its first line on the old side is in the diff.
+    seed = Path.join(context.dir, "seed")
+    git!(seed, ["checkout", "-q", context.shas[1]])
+    File.write!(Path.join(seed, "README.md"), "# API\n")
+    git!(seed, ["commit", "-q", "-am", "Rename"])
+    head = git!(seed, ["rev-parse", "HEAD"])
+    bare = Path.join(context.dir, "remotes/acme/api.git")
+    git!(seed, ["push", "-q", bare, "#{head}:refs/pull/1/head"])
+    context = put_in(context.shas[3], head)
+    rules!(context, head: 3)
+
+    review = start_review()
+    bait = "![x](https://example.com/p.png) @octocat"
+
+    comment = %{
+      "path" => "README.md",
+      "line" => 1,
+      "side" => "old",
+      "severity" => "high",
+      "body" => "```ts\nconst limit = 2;",
+      "suggestion" => bait
+    }
+
+    arguments = %{"verdict" => "comment", "summary" => "One note.", "comments" => [comment]}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    expected =
+      "🔴 **High:**\n\n```ts\nconst limit = 2;\n```\n\nSuggested change:\n\n```\n#{bait}\n```"
+
+    assert {:ok, preview} = call("preview", %{"key" => @key})
+    assert [%{"path" => "README.md", "body" => ^expected}] = preview["comments"]
+
+    assert {:ok, _} =
+             call("publish", Map.merge(seen(), Map.take(preview, ~w(version verdict))))
+
+    assert [post] = posts(context)
+    sent = post |> Jason.decode!() |> Map.fetch!("stdin") |> Jason.decode!()
+    assert Enum.map(sent["comments"], & &1["body"]) == [expected]
+  end
+
+  test "a limit that asks of the user went past holds until enough reviews stop counting",
+       context do
+    report = fn review ->
+      arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+      {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+      settle()
+    end
+
+    report.(start_review())
+    {:ok, _} = call("retry", %{"key" => @key})
+    settle()
+    report.(review())
+
+    # Two starts of octocat's, both asked for, against a limit of one: the next of the
+    # watch's own has room once the newer of them stops counting, not the older.
+    save_settings(%{"reviewNewPushes" => true, "reviewsPerAuthorPerDay" => 1})
+    rules!(context, head: 2)
+    refresh()
+
+    newer = apply(@server, :starts, []) |> Enum.map(& &1["at"]) |> Enum.max()
+    {:ok, newer, _} = DateTime.from_iso8601(newer)
+    assert %{"limited" => %{"until" => until}} = review()
+    assert until == newer |> DateTime.add(86_400, :second) |> DateTime.to_iso8601()
+  end
+
+  # A machine told of a start may have counted one of its own since this machine read
+  # its starts: a partition took this machine's lock off it in between.
+  test "a start runs only if the starts the machines told of it answer still leave room",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+
+    # The watch's own review of a push, which the limits hold back; the user's ask
+    # before it counts.
+    save_settings(%{
+      "activation" => "automatic",
+      "reviewNewPushes" => true,
+      "reviewsPerAuthorPerDay" => 3
+    })
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+    assert %{"status" => "running"} = review = review()
+    assert review["threadId"] != first["threadId"]
+    peer = "hal_c2@laptop.hal-c2"
+
+    row = fn id ->
+      %{
+        "id" => id,
+        "at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "repository" => String.downcase(review["repository"]),
+        "author" => String.downcase(review["author"])
+      }
+    end
+
+    mine = Enum.find(apply(@server, :starts, []), &(&1["id"] == review["threadId"]))
+    told = fn rows -> [%{"node" => peer, "machine" => "laptop", "result" => rows}] end
+    ask = &GenServer.call(@server, {:told, @key, review["threadId"], [peer], &1})
+
+    assert ask.(told.([mine, row.("laptop-1")])) == :ok
+    assert %{"status" => "running"} = review()
+
+    assert ask.(told.([mine, row.("laptop-1"), row.("laptop-2")])) == :limited
+
+    assert %{"status" => "ready", "threadId" => nil, "limited" => %{"reason" => reason}} =
+             review()
+
+    assert reason =~ "had 3 reviews in the last day, the most the settings allow"
+    assert Enum.any?(apply(@server, :starts, []), &(&1["id"] == review["threadId"]))
+  end
+
+  # A member of the cluster that has never answered this machine may be starting
+  # reviews of its own: until they meet, each has only its share of the limits.
+  test "a member of the cluster that has never answered counts as out of reach for the review limits",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+
+    Application.put_env(:hal_c2, :cluster_transport, __MODULE__.Unreached)
+    Application.put_env(:hal_c2, :cluster_listen, "127.0.0.1")
+
+    on_exit(fn ->
+      for key <- [:cluster_transport, :cluster_listen], do: Application.delete_env(:hal_c2, key)
+    end)
+
+    start_supervised!(HalC2.Cluster)
+    entry = %{"id" => "laptop", "fingerprint" => String.duplicate("a", 64), "label" => "laptop"}
+    {:ok, _} = HalC2.Cluster.admit(Map.put(entry, "version", HalC2.Upgrade.version()))
+
+    # The user's ask counted one; this machine's share of two is one.
+    save_settings(%{
+      "activation" => "automatic",
+      "reviewNewPushes" => true,
+      "reviewsPerAuthorPerDay" => 2
+    })
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "ready", "limited" => %{"reason" => reason, "apart" => apart}} =
+             review()
+
+    assert apart == ["hal_c2@laptop.hal-c2"]
+
+    assert reason =~
+             "this machine's share of what the settings allow while laptop is out of reach"
+  end
+
+  defmodule Unreached do
+    @moduledoc false
+    # The cluster's distribution, with no member ever connected.
+    def start(_dir, _id), do: :ok
+    def connected, do: []
+    def disconnect(_mc), do: :ok
+    def send(_mc, _message), do: :ok
+    def version_changed(_dir), do: :ok
+  end
+
+  # What the clients show of a held review follows whether the machines it waits on are
+  # in reach, so a machine coming back publishes it.
+  test "a review held while a machine could not hear of its start is published again once that machine is back",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    peer = "hal_c2@laptop.hal-c2"
+
+    assert GenServer.call(@server, {:told, @key, thread_id, [peer], []}) == :limited
+    assert %{"status" => "ready", "limited" => %{"apart" => [^peer]}} = review()
+
+    {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
+    send(Process.whereis(@server), {:nodeup, String.to_atom(peer)})
+
+    assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => [_ | _]}},
+                   1_000
+  end
+
+  test "a review held while a machine could not hear of its start is published again once that machine is gone again",
+       context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    peer = "hal_c2@laptop.hal-c2"
+
+    assert GenServer.call(@server, {:told, @key, thread_id, [peer], []}) == :limited
+    assert %{"status" => "ready", "limited" => %{"apart" => [^peer]}} = review()
+
+    {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "code-review", "reviews")
+    send(Process.whereis(@server), {:nodedown, String.to_atom(peer)})
+
+    assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => [_ | _]}},
+                   1_000
+  end
+
+  test "a review run again with the same findings is not published on what the run before showed",
+       context do
+    review = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    looked = seen()
+
+    {:ok, _} = call("retry", %{"key" => @key})
+    settle()
+    assert %{"status" => "running", "threadId" => again} = review()
+    assert again != review["threadId"]
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, again)
+    settle()
+
+    assert %{"status" => "waiting", "version" => version} = review()
+    assert version != looked["version"]
+    assert {:error, %{"message" => message}} = call("publish", looked)
+    assert message =~ "changed since you looked at it"
+    assert posts(context) == []
+  end
+
+  # A path the agent named, in the review of another commit, can carry any marker.
+  test "a review that names the marker of this commit inside its text does not stop the post",
+       context do
+    posted = reviewed_by("monalisa")
+    marker = posted["body"] |> String.split("\n\n") |> List.last()
+    other = "<!-- hal-c2-code-review:#{@key}@#{String.duplicate("0", 40)} -->"
+    body = "One.\n\n- `src/#{marker}.ts:1` — One.\n\n#{other}"
+    rules!(context, head: 1, reviews: [%{posted | "body" => body}])
+
+    assert {:ok, _} = call("publish", seen())
+    assert %{"status" => "published", "publishNote" => nil} = review()
+    assert [_] = posts(context)
+  end
+
   test "a thread whose review is published is told so when it reports again", _context do
     review = start_review()
     arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
     {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
-    {:ok, _} = call("publish", %{"key" => @key})
+    {:ok, _} = call("publish", seen())
     settle()
 
     assert {:error, "plugin_failed", message} =
@@ -555,6 +1296,42 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "queued"} = review()
     assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
     _ = context
+  end
+
+  test "an approval given again after a run stopped at a usage limit queues the review again",
+       context do
+    rules!(context, head: 1, association: "NONE")
+    settle()
+    {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    :ok =
+      apply(@server, :handle_event, [
+        %{
+          "type" => "turn.finished",
+          "threadId" => thread_id,
+          "status" => "failed",
+          "errorClass" => "usage_limit",
+          "error" => "Subscription quota exhausted.",
+          "resetAt" => reset
+        },
+        %{}
+      ])
+
+    settle()
+    assert %{"status" => "queued", "reviewedSha" => sha} = review()
+    assert sha == context.shas[1]
+
+    {:ok, _} = call("unapprove", %{"key" => @key})
+    assert %{"status" => "ready"} = review()
+
+    # Its commit was checked out, but nothing reviewed it: approved again, it is queued.
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert review()["status"] in ~w(queued running)
   end
 
   test "a finished review settles its thread in the sidebar", context do
@@ -937,7 +1714,7 @@ defmodule HalC2.CodeReviewTest do
   test "a review GitHub already has under the login gh uses is published without posting it again",
        context do
     rules!(context, head: 1, reviews: [reviewed_by("monalisa")])
-    assert {:ok, _} = call("publish", %{"key" => @key})
+    assert {:ok, _} = call("publish", seen())
 
     assert %{"status" => "published", "publishError" => nil, "publishNote" => note} = review()
     assert note =~ "already on the pull request"
@@ -947,7 +1724,7 @@ defmodule HalC2.CodeReviewTest do
   test "a review of the same commit under another login does not stop the post",
        context do
     rules!(context, head: 1, reviews: [reviewed_by("octocat")])
-    assert {:ok, _} = call("publish", %{"key" => @key})
+    assert {:ok, _} = call("publish", seen())
     assert %{"status" => "published", "publishNote" => nil} = review()
     assert [_] = posts(context)
   end
@@ -990,6 +1767,82 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running"} = review()
   end
 
+  # A comment dismissed while its review was being posted changed what the page showed
+  # as posted, though GitHub had the comment.
+  test "a comment of a review being posted stays as it was posted", context do
+    hold = Path.join(context.dir, "post.hold")
+    held = Path.join(context.dir, "post.held")
+    File.write!(hold, "")
+
+    rules!(context,
+      head: 1,
+      post: "touch '#{held}'; while [ -e '#{hold}' ]; do sleep 0.05; done"
+    )
+
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "comment",
+      "summary" => "One thing.",
+      "comments" => [%{"path" => "src/limits.ts", "line" => 1, "body" => "One."}]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    posting = publishing()
+    await_file(held)
+
+    assert {:error, %{"message" => message}} =
+             call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert message =~ "is being published"
+
+    File.rm!(hold)
+    assert_receive {^posting, {:ok, _}}, 15_000
+    settle()
+    assert %{"status" => "published", "comments" => [%{"dismissed" => false}]} = review()
+
+    assert {:error, %{"message" => message}} =
+             call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert message =~ "already published"
+    assert [_] = posts(context)
+  end
+
+  # While the plugin started again, its claims table was up before the claims saved on
+  # disk were in it, so a peer reading it then was told this machine claimed nothing.
+  test "a plugin starting again holds its saved claims from the moment a peer can read them",
+       _context do
+    start_review()
+    pid = Process.whereis(@server)
+    {:parent, sup} = Process.info(pid, :parent)
+    :sys.suspend(sup)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+    # The plugin's first call on the file server, finding where its reviews are,
+    # waits there until the claims are checked.
+    fs = Process.whereis(:file_server_2)
+    :erlang.trace(fs, true, [:receive])
+    :sys.suspend(fs)
+
+    try do
+      :sys.resume(sup)
+      await_file_call(fs)
+      assert apply(@server, :claims, [[@key]]) == :restarting
+      assert apply(@server, :starts, []) == :restarting
+    after
+      :sys.resume(fs)
+      :erlang.trace(fs, false, [:receive])
+    end
+
+    :sys.get_state(sup)
+    :sys.get_state(@server)
+    assert %{@key => %{"claimed" => true}} = apply(@server, :claims, [[@key]])
+    assert [_] = apply(@server, :starts, [])
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   # Reports findings from the review's thread, starting a run first if there is none.
@@ -1010,7 +1863,13 @@ defmodule HalC2.CodeReviewTest do
   # Asks to publish #1 without waiting for GitHub. Returns the ref its reply comes with.
   defp publishing do
     ref = make_ref()
-    send(@server, {:"$gen_call", {self(), ref}, {:publish, @key}})
+    shown = seen()
+
+    send(
+      @server,
+      {:"$gen_call", {self(), ref}, {:publish, @key, shown["version"], shown["verdict"]}}
+    )
+
     :sys.get_state(@server)
     ref
   end
@@ -1145,7 +2004,10 @@ defmodule HalC2.CodeReviewTest do
   end
 
   # Saves the settings without waiting for what the plugin does with them.
-  defp put_settings(overrides) do
+  defp put_settings(overrides), do: {:ok, _} = save_settings_answer(overrides)
+
+  # What the plugin answers a save of the settings with `overrides`.
+  defp save_settings_answer(overrides) do
     settings =
       Map.merge(
         %{
@@ -1162,7 +2024,7 @@ defmodule HalC2.CodeReviewTest do
         overrides
       )
 
-    {:ok, _} = HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
+    HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
   end
 
   # While the stop waits on the agent, which `hold_interrupts/1` keeps from answering, its
@@ -1282,6 +2144,18 @@ defmodule HalC2.CodeReviewTest do
     GenServer.call(@server, :snapshot)["reviews"] |> Enum.find(&(&1["key"] == @key))
   end
 
+  # The review as the user sees it, to publish: its key and the version of its findings.
+  # The review as the user saw it before publishing: its findings' version and, read
+  # when it waits to be published, the verdict its post goes with.
+  defp seen do
+    shown = %{"key" => @key, "version" => review()["version"]}
+
+    case call("preview", %{"key" => @key}) do
+      {:ok, %{"verdict" => verdict}} -> Map.put(shown, "verdict", verdict)
+      _ -> shown
+    end
+  end
+
   # Returns once the plugin has nothing in flight but the processes `held`, and has
   # heard from what ended.
   defp settle(held \\ []) do
@@ -1324,13 +2198,22 @@ defmodule HalC2.CodeReviewTest do
     Enum.find_value(monitors, fn {:process, p} -> p in links and p end)
   end
 
+  # Waits for the plugin's server to call the file server `fs`, traced for receives.
+  defp await_file_call(fs) do
+    assert_receive {:trace, ^fs, :receive, {:"$gen_call", {from, _}, _}}, 5_000
+    if from != Process.whereis(@server), do: await_file_call(fs)
+  end
+
   defp await_file(path) do
     {_, 0} =
       System.cmd("timeout", ["5", "sh", "-c", "until [ -e '#{path}' ]; do sleep 0.05; done"])
   end
 
   # The fake GitHub: pull request #1 of acme/api open at head commit `head`, listed
-  # unless `listed: false`; `list` runs while it is listed.
+  # unless `listed: false`; `list` runs while it is listed. Its author is a member of
+  # the repository unless `association` says otherwise. It carries the `labels` (names),
+  # its `comments` and `timeline` are the trust read's nodes, which `trust` runs ahead
+  # of, and it was last updated at `updated`.
   defp rules!(context, opts) do
     pr = %{
       "number" => 1,
@@ -1342,10 +2225,10 @@ defmodule HalC2.CodeReviewTest do
       "state" => "OPEN",
       "isDraft" => false,
       "createdAt" => "2026-09-01T00:00:00Z",
-      "updatedAt" => "2026-09-01T00:00:00Z",
+      "updatedAt" => opts[:updated] || "2026-09-01T00:00:00Z",
       "reviewRequests" => [],
       "latestReviews" => [],
-      "labels" => [],
+      "labels" => Enum.map(opts[:labels] || [], &%{"name" => &1}),
       "statusCheckRollup" => [],
       "headRefOid" => context.shas[opts[:head]],
       "additions" => 2,
@@ -1364,8 +2247,35 @@ defmodule HalC2.CodeReviewTest do
               r
             )
 
+    # What GitHub answers for the role of each login in `permissions` on the repository.
+    permissions =
+      for {login, answer} <- opts[:permissions] || [],
+          do: %{"args" => ["collaborators/#{login}/permission"], "stdout" => answer}
+
     rules = [
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
+      # Who stands behind pull request #1: octocat, a member unless `association` says.
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestTrust"],
+        "run" => opts[:trust] || "true",
+        "stdout" => %{
+          "data" => %{
+            "viewer" => %{"login" => "monalisa"},
+            "repository" => %{
+              "pullRequest" => %{
+                "author" => %{"__typename" => "User", "login" => "octocat"},
+                "authorAssociation" => opts[:association] || "MEMBER",
+                "isCrossRepository" => false,
+                "headRefOid" => context.shas[opts[:head]],
+                "headRepositoryOwner" => %{"login" => "acme"},
+                "comments" => %{"nodes" => opts[:comments] || []},
+                "timelineItems" => %{"nodes" => opts[:timeline] || []}
+              }
+            }
+          }
+        }
+      },
       list,
       # The pull request's reviews, read before a post, and the post.
       %{
@@ -1420,7 +2330,7 @@ defmodule HalC2.CodeReviewTest do
       }
     ]
 
-    File.write!(Path.join(context.dir, "rules.json"), JSON.encode!(rules))
+    File.write!(Path.join(context.dir, "rules.json"), JSON.encode!(permissions ++ rules))
   end
 
   # `remotes/acme/api.git`: `main`, and two head commits of pull request #1 off it,

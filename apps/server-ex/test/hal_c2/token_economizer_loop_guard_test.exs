@@ -902,6 +902,46 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "reads a backslash and a word's # as the shell does" do
+      # Escaped, an operator or a quote is part of the word; in double quotes, `\"` and
+      # `\\` do not end it; `#` starts a comment only at a word's start.
+      for cmd <- [
+            ~S{printf %s prefix\;PRIVATE_SOURCE > a.py},
+            ~S{sed -i -e"s/x/\";PRIVATE_SOURCE;\"/" a.py},
+            ~S{echo it\'s\;PRIVATE_SOURCE > a.py},
+            "printf %s x#;printf PRIVATE_SOURCE > a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], inspect(cmd)
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      assert ShellEdits.tokens(~S{a\;b "c\"d\\" e\ f x#y #z}) ==
+               {:ok, [~S{a\;b}, ~S{"c\"d\\"}, ~S{e\ f}, "x#y"]}
+
+      assert ShellEdits.tokens("a\\") == :error
+      assert ShellEdits.targets(~S{sed -i 's/x/y/' a\ b.py}) == ["a b.py"]
+      assert ShellEdits.targets(~S{echo x > "a\"b.py"}) == [~S{a"b.py}]
+    end
+
+    test "shows a command it cannot read every character of as a shell command, never its words" do
+      for cmd <- [
+            ~S|printf "$(echo "x;PRIVATE_SOURCE")" > a.py|,
+            ~S|printf "${X:-"a;PRIVATE_SOURCE"}" > a.py|,
+            ~S{printf "`echo "a;PRIVATE_SOURCE"`" > a.py},
+            ~S{printf $'a\';PRIVATE_SOURCE' > a.py},
+            ~S{printf $"a;PRIVATE_SOURCE" > a.py}
+          ] do
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+        assert text =~ "$ <shell command>", inspect(cmd)
+      end
+
+      # A comment is dropped, so the command's characters no longer add up to its words.
+      assert digest("cat a.py # PRIVATE_SOURCE") =~ "$ <shell command>"
+      assert digest(~S{rg -n "foo\(" src}) =~ ~S{$ rg -n "foo\(" src}
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",
@@ -928,6 +968,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "env API_TOKEN=s3cr3t-xyz npm test",
             "cd src && API_TOKEN='s3cr3t xyz' ./run.sh",
             ~s(API_TOKEN="s3cr3t \\"xyz\\"" ./run.sh),
+            ~S(API_TOKEN=s3cr3t\ xyz pytest -q),
             "grep x <<< s3cr3t-xyz",
             ~s(grep x <<<"s3cr3t xyz"),
             ~s{python3 -c "print('s3cr3t-xyz')"},
@@ -1079,6 +1120,29 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
   end
 
   describe "the judge" do
+    # What a call asked for: its prompt and the schema its reply is checked against.
+    defp asked(call) do
+      case_ = self()
+      call.(fn prompt, schema -> send(case_, {:asked, prompt, schema}) && {:error, "none"} end)
+      assert_received {:asked, prompt, schema}
+      {prompt, schema}
+    end
+
+    # Pi and ACP agents are given the prompt alone, and their reply is checked against
+    # the schema all the same: the prompt names the object and each key's type.
+    defp asks_for_its_schema({prompt, schema}) do
+      assert prompt =~ "JSON object"
+      for {key, type} <- schema, do: assert(prompt =~ ~s("#{key}" (a #{type}), key)
+    end
+
+    test "asks for the verdict as the JSON object it is checked against" do
+      asks_for_its_schema(asked(&Judge.stuck_judge("digest", &1)))
+    end
+
+    test "asks for the redirect as the JSON object it is checked against" do
+      asks_for_its_schema(asked(&Judge.nudge_writer("digest", &1)))
+    end
+
     test "writes the redirect only for a stuck verdict it is sure of" do
       sure = fn
         _prompt, %{"stuck" => _} ->
@@ -1261,7 +1325,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute Turn.resolved_proxy(guard)
     end
 
-    test "a turn's end stops its judge job, watching stops deliveries, and off stops every task" do
+    test "a turn's end stops its judge job, and off stops every judge job; a delivery under way finishes" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = state |> observe(started("a")) |> observe(started("b"))
       {judge, state} = sleeper(state, "a", :judge)
@@ -1281,16 +1345,32 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       {:reply, :ok, state} =
         TokenEconomizer.handle_call({:settings, %{"loopGuard" => "watch"}}, nil, state)
 
-      assert_receive {:DOWN, _, :process, ^delivery, _}
-      assert state.tasks == %{}
-
       {judge, state} = sleeper(state, "b", :judge)
 
       {:reply, :ok, state} =
         TokenEconomizer.handle_call({:settings, %{"loopGuard" => "off"}}, nil, state)
 
       assert_receive {:DOWN, _, :process, ^judge, _}
-      assert state.tasks == %{} and state.turns == %{}
+      assert Process.alive?(delivery)
+      assert Map.values(state.tasks) == [{"b", :delivery}] and state.turns == %{}
+    end
+
+    # The steer may already have been taken when the mode changes: what the delivery
+    # answers is what happened.
+    test "a redirect on its way when watching starts lands as its delivery says" do
+      {delivery, state} = sleeper(redirecting("a"), "a", :delivery)
+
+      {:reply, :ok, state} =
+        TokenEconomizer.handle_call({:settings, %{"loopGuard" => "watch"}}, nil, state)
+
+      assert Process.alive?(delivery)
+      assert state.turns["a"].guard.redirecting
+
+      state = delivered(state, "a", {:ok, %{}})
+      guard = state.turns["a"].guard
+      refute guard.redirecting
+      assert guard.segment == 1 and guard.redirects == 1
+      assert [%{"action" => "nudge", "delivered" => true}] = state.recent
     end
   end
 

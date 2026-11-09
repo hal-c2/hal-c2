@@ -109,6 +109,27 @@
       "description": "Pull requests by these logins are never reviewed automatically."
     },
     {
+      "key": "trustedLogins",
+      "label": "Trusted logins",
+      "type": "list",
+      "default": [],
+      "description": "Besides the repository's members and collaborators, these logins may have their pull requests reviewed and ask for reviews."
+    },
+    {
+      "key": "reviewsPerAuthorPerDay",
+      "label": "Reviews per author per day",
+      "type": "number",
+      "default": 10,
+      "description": "Across all your machines. Reviews you start yourself count but are never held back. 0 for no limit."
+    },
+    {
+      "key": "reviewsPerRepositoryPerDay",
+      "label": "Reviews per repository per day",
+      "type": "number",
+      "default": 50,
+      "description": "Across all your machines. 0 for no limit."
+    },
+    {
       "key": "maxChangedLines",
       "label": "Largest change reviewed automatically",
       "type": "number",

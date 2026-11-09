@@ -23,8 +23,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   enough of them the guard watches and does nothing. The paid judge, the user's text
   generation model, runs only when the free gate opens, in a process of its own; its
   verdict is read at the turn's next call. The judge's jobs and the deliveries are the
-  plugin's tasks, which end with it: a job is stopped once its segment or turn is over, a
-  delivery once the mode no longer delivers.
+  plugin's tasks, which end with it: a job is stopped once its segment or turn is over or
+  the guard is turned off; a delivery under way always finishes, whatever the mode.
 
   The micro-skills learn short environment facts per project from the same
   turns (`MicroSkills.EnvFacts`), kept in the data directory: which way of
@@ -257,24 +257,23 @@ defmodule HalC2Plugins.TokenEconomizer do
         state
       end
 
+    # Off, the guard hears no turn and no judge job is read. A delivery under way runs on:
+    # its steer may already have been taken, and its answer says what happened. Watching
+    # only starts none (`act/5`).
     state =
       cond do
-        not on?(state) and not micro_on?(state) ->
-          # Nothing listens: the turns under way are dropped, and the next
-          # turn is heard from its start again.
-          %{cancel(state, fn _ -> true end) | turns: %{}}
+        on?(state) ->
+          state
 
         # The guard off leaves the turns to the micro-skills, which still
-        # learn from them; it judges and delivers nothing.
-        not on?(state) ->
-          state |> cancel(fn _ -> true end) |> stop_redirects()
+        # learn from them; it judges nothing.
+        micro_on?(state) ->
+          cancel(state, &match?({_, :judge}, &1))
 
-        # Watching delivers nothing: a redirect on its way is stopped, and did not land.
-        shadow?(state) ->
-          state |> cancel(&match?({_, :delivery}, &1)) |> stop_redirects()
-
+        # Nothing listens: the turns under way are dropped, and the next turn
+        # is heard from its start again.
         true ->
-          state
+          %{cancel(state, &match?({_, :judge}, &1)) | turns: %{}}
       end
 
     {:reply, :ok, state |> publish() |> publish_loaded_skills()}
@@ -803,20 +802,6 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # A thread's judge jobs, once their segment or turn is over: a paid answer no one reads.
   defp cancel_judge(state, thread_id), do: cancel(state, &(&1 == {thread_id, :judge}))
-
-  # A redirect on its way when delivering stopped did not land.
-  defp stop_redirects(state) do
-    turns =
-      Map.new(state.turns, fn {id, turn} ->
-        {id,
-         update_in(
-           turn.guard,
-           &if(&1.redirecting, do: Turn.redirected(&1, false), else: &1)
-         )}
-      end)
-
-    %{state | turns: turns}
-  end
 
   # --- settings and the envelope's files ----------------------------------------------
 

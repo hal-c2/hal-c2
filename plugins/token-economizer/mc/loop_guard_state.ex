@@ -47,7 +47,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
   }
   @recent 40
   # A shell word's value: quoted (`'...'`, `$'...'`, `"..."`) or bare, in parts.
-  @value ~S{(?:\$'(?:\\.|[^'\\])*'|'[^']*'|"(?:\\.|[^"\\])*"|[^\s;&|()'"])}
+  @value ~S{(?:\$'(?:\\.|[^'\\])*'|'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s;&|()'"\\])}
   # A quoted string, which a newline in it shows to be text (a commit message's body, a
   # file's lines), not a word.
   @quoted ~S{\$'(?:\\.|[^'\\])*'|'[^']*'|"(?:\\.|[^"\\])*"}
@@ -268,30 +268,41 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
     %{state | edit_counts: counts, recent: recent}
   end
 
-  # What the action log keeps of a command: never a heredoc's body, a here-string's text,
-  # a quoted string over several lines or the value a variable is set to (`API_TOKEN=...
-  # pytest`), and of a command that writes a file, source or not, runs code given inline
-  # (`node -e '...'`) or code this cannot read (`sh -c '...'`, `... | python3`, quotes
-  # that do not balance), only the programs it runs, for any of its words may be what it
-  # writes (`printf '...' > a.py`, `echo SECRET=1 > Main.qml`, `sed -i 's/x/y/' a.py`).
-  # `fold_shell_edits/2` names the source files it wrote.
+  # What the action log keeps of a command: nothing of one whose every character this
+  # does not read as the shell does (`ShellEdits.legible?/1`), for any of its words may
+  # be what it writes; never a heredoc's body, a here-string's text, a quoted string over
+  # several lines or the value a variable is set to (`API_TOKEN=... pytest`); and of a
+  # command that writes a file, source or not, runs code given inline (`node -e '...'`)
+  # or code this cannot read (`sh -c '...'`, `... | python3`), only the programs it
+  # runs, for any of its words may be what it writes (`printf '...' > a.py`, `echo
+  # SECRET=1 > Main.qml`, `sed -i 's/x/y/' a.py`). `fold_shell_edits/2` names the source
+  # files it wrote.
   defp shown(cmd) do
     script = ShellEdits.script(cmd)
 
-    if ShellEdits.writes?(script) or Regex.match?(@inline_code, script) or
-         ShellEdits.opaque?(script) do
-      Enum.join(ShellEdits.programs(script), "; ") <> " …"
-    else
-      {shell, _} = ShellEdits.split_heredocs(script)
+    cond do
+      not ShellEdits.legible?(cmd) ->
+        "<shell command>"
 
-      shell =
-        Regex.replace(~r/#{@quoted}/, shell, fn q ->
-          if String.contains?(q, "\n"), do: String.last(q) <> "…" <> String.last(q), else: q
-        end)
+      ShellEdits.writes?(script) or Regex.match?(@inline_code, script) or
+          ShellEdits.opaque?(script) ->
+        Enum.join(ShellEdits.programs(script), "; ") <> " …"
 
-      shell = Regex.replace(@here_string, shell, "<<< …")
-      Regex.replace(@assignment, shell, "\\1\\2=…")
+      true ->
+        verbatim(script)
     end
+  end
+
+  defp verbatim(script) do
+    {shell, _} = ShellEdits.split_heredocs(script)
+
+    shell =
+      Regex.replace(~r/#{@quoted}/, shell, fn q ->
+        if String.contains?(q, "\n"), do: String.last(q) <> "…" <> String.last(q), else: q
+      end)
+
+    shell = Regex.replace(@here_string, shell, "<<< …")
+    Regex.replace(@assignment, shell, "\\1\\2=…")
   end
 
   defp text(nil), do: ""
