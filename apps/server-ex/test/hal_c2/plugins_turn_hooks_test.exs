@@ -442,6 +442,42 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert Enum.all?(~w(image_view image_generation collab_tool_call), &(&1 not in shown))
   end
 
+  test "a Codex subagent started before an update in place sets its goal without crashing its thread",
+       %{work: work, tmp_dir: dir} do
+    gates = Path.join(dir, "gates")
+    File.mkdir_p!(gates)
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_CODEX_GATE=#{gates}",
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+    {:ok, _} = send_message(thread_id, "m1", "spawn a subagent that sets a goal")
+
+    # The subagent runs; its handle is the one an MC from before this release made,
+    # which had no run in it.
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "subagent"}}, 5_000
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+
+    :sys.replace_state(runtime, fn state ->
+      update_in(state.subagents["native-child-1"].sub, &Map.delete(&1, :run))
+    end)
+
+    File.write!(Path.join(gates, "goal"), "")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "goal"} = goal}, 5_000
+    assert %{"threadId" => ^thread_id, "subagent" => true} = goal
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+    assert [{^runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+  end
+
   test "a plugin hears a Codex image that failed as failed",
        %{work: work} do
     grant(%{"listener" => ["turns:observe"]})

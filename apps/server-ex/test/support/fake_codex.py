@@ -520,6 +520,10 @@ for line in sys.stdin:
             send({"method": "item/agentMessage/delta", "params": {**child, "itemId": "child-msg", "delta": "lib has three modules"}})
             if "that views an image" in text:
                 send({"method": "item/completed", "params": {**child, "item": {"type": "imageView", "id": "child-image", "path": "/r/shot.png"}}})
+            # "... that sets a goal": once the gate file "goal" exists, the subagent sets its goal.
+            if "that sets a goal" in text:
+                gate("goal")
+                send({"method": "thread/goal/updated", "params": {**child, "goal": {"threadId": child["threadId"], "objective": "List them", "status": "active"}}})
             send({"method": "item/completed", "params": {**child, "item": {"type": "agentMessage", "id": "child-msg", "text": "lib has three modules"}}})
             send({"method": "turn/completed", "params": {**child, "turn": {"id": child["turnId"], "status": "completed"}}})
             send({"method": "item/completed", "params": {**ctx, "item": {**call, "status": "completed",

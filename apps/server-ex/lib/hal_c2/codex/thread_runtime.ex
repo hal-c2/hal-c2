@@ -2085,8 +2085,13 @@ defmodule HalC2.Codex.ThreadRuntime do
           HalC2.Orchestration.NativeSubagent.observe(entry.sub, unshown_item(entry.sub, item))
           entry
 
+        # A subagent started before an update in place has a handle with no run.
         {"thread/goal/updated", _} ->
-          HalC2.Orchestration.NativeSubagent.observe(entry.sub, goal_item(entry.sub.run))
+          HalC2.Orchestration.NativeSubagent.observe(
+            entry.sub,
+            goal_item(Map.get(entry.sub, :run))
+          )
+
           entry
 
         _ ->
