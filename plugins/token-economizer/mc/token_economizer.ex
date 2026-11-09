@@ -305,7 +305,10 @@ defmodule HalC2Plugins.TokenEconomizer do
         # the same one) gets its own staging, and each fold credits the
         # conversation it belongs to. Saved once the answer is on its way.
         # A run naming no conversation still gets the facts, but stages
-        # nothing: no turn could be credited to it.
+        # nothing: no turn could be credited to it. A conversation that
+        # carries on another's shape without asking (a native fork, a Claude
+        # home two instances share) has no staging of its own, so its turns
+        # fold as an unstaged conversation's (hal-c2/hal-c2#1473).
         key = {run["threadId"], run["instanceId"] || run["provider"]}
         reply = if(text == "", do: nil, else: %{"context" => text})
 
