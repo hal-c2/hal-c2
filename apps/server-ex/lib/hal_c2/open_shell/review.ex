@@ -190,6 +190,7 @@ defmodule HalC2.OpenShell.Review do
            Process.whereis(__MODULE__) != nil ||
              {:error, "Review sandboxes are not running on this MC."},
          {:ok, model} <- model(driver, spec.instance),
+         :ok <- installed(),
          :ok <- Service.reaped(),
          {:ok, disk} <- disk(),
          :ok <- GenServer.call(__MODULE__, {:opening, thread_id}),
@@ -814,6 +815,15 @@ defmodule HalC2.OpenShell.Review do
     do: "OpenShell refused the review sandbox: #{message}"
 
   def why(reason), do: "OpenShell refused the review sandbox: #{inspect(reason)}"
+
+  # Asked before the reaper: an MC without OpenShell needs `install`, which brings the
+  # reaper too. Any other trouble with the endpoint is the connection's to report.
+  defp installed do
+    case OpenShell.endpoint() do
+      {:error, :not_installed} -> {:error, not_installed()}
+      _ -> :ok
+    end
+  end
 
   defp not_installed,
     do:

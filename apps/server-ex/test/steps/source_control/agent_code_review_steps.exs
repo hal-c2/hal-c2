@@ -1962,8 +1962,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
       )
 
     # This home's reaper, its units under a user home of the scenario's own.
-    Mc.put_app_env(:service_user_home, Mc.tmp_dir(context.mc, "user"))
-    Mc.put_app_env(:service_platform, {:unix, :linux})
+    World.put_app_env(:service_user_home, Mc.tmp_dir(context.mc, "user"))
+    World.put_app_env(:service_platform, {:unix, :linux})
     FakeOpenShell.install!(gateway)
 
     Map.merge(context, %{gateway: gateway, sandbox_root: root, sandbox_options: options})
