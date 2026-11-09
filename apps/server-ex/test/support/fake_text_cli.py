@@ -23,6 +23,12 @@ if args[-3:] == ["mcp", "list", "--json"]:
     if os.environ.get("FAKE_CODEX_MCP_FAIL"):
         sys.stderr.write("cannot list\n")
         sys.exit(1)
+    # A home with an mcp.json lists what it holds (a home of its own configuration).
+    mcp = os.path.join(os.environ.get("CODEX_HOME") or "", "mcp.json")
+    if os.environ.get("CODEX_HOME") and os.path.exists(mcp):
+        with open(mcp, encoding="utf-8") as f:
+            print(f.read())
+        sys.exit(0)
     print(os.environ.get("FAKE_CODEX_MCP") or "[]")
     sys.exit(0)
 

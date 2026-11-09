@@ -466,6 +466,73 @@ defmodule HalC2.TextGenerationTest do
       assert files == %{"auth.json" => sha256(~s({"token":"own"})), "config.toml" => ""}
     end
 
+    test "the MCP servers switched off are those of the home the instance runs in",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      ambient = Path.join(dir, "ambient-codex")
+      own = Path.join(dir, "own-codex")
+
+      for {home, server} <- [{ambient, "ambient"}, {own, "instance"}] do
+        File.mkdir_p!(home)
+        File.write!(Path.join(home, "mcp.json"), ~s([{"name":"#{server}","enabled":true}]))
+      end
+
+      previous = System.get_env("CODEX_HOME")
+      System.put_env("CODEX_HOME", ambient)
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("CODEX_HOME", previous),
+          else: System.delete_env("CODEX_HOME")
+      end)
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "environment" => [%{"name" => "CODEX_HOME", "value" => own}]
+          }
+        }
+      })
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"argv" => argv}] = calls(log)
+      assert "mcp_servers.instance.enabled=false" in argv
+      refute "mcp_servers.ambient.enabled=false" in argv
+    end
+
+    test "a connected ChatGPT account whose MCP servers cannot be listed keeps its own login",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      shared = Path.join(dir, "shared-codex")
+      File.mkdir_p!(shared)
+      File.write!(Path.join(shared, "auth.json"), ~s({"token":"cli"}))
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"setupMode" => "managed"},
+            "environment" => [%{"name" => "CODEX_HOME", "value" => shared}]
+          }
+        }
+      })
+
+      managed = HalC2.Codex.ChatGpt.home("codex-work")
+      File.mkdir_p!(managed)
+      File.write!(Path.join(managed, "auth.json"), ~s({"token":"managed"}))
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+      on_exit(fn -> System.delete_env("FAKE_CODEX_MCP_FAIL") end)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexFiles" => files}] = calls(log)
+      assert files["auth.json"] == sha256(~s({"token":"managed"}))
+    end
+
     test "a writer whose check only warned keeps generating", %{repo: repo} do
       install([:claude, :codex])
 

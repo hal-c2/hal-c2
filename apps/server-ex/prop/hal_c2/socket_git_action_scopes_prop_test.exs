@@ -48,6 +48,36 @@ defmodule HalC2.SocketGitActionScopesPropTest do
 
   defp required(_action, _thread), do: ["orchestration:operate"]
 
+  # The action runs in a process of its own (`GitActions.start/2`) that the socket's caller
+  # is not given. Waits for its last event, then for the process to be gone, so the case
+  # never returns while it still reads the scratch home and environment. The worker is the
+  # process holding `GitActions.run/2`'s `:git_action_thread` entry; it puts it before its
+  # first event, so it is in view by the time the last one arrives.
+  defp await_git_action(action_id) do
+    receive do
+      {:hal_c2_git_action, ^action_id, %{"kind" => kind}}
+      when kind in ["action_finished", "action_failed"] ->
+        for pid <- Process.list(),
+            {:dictionary, dict} <- [Process.info(pid, :dictionary)],
+            List.keymember?(dict, :git_action_thread, 0) do
+          ref = Process.monitor(pid)
+
+          receive do
+            {:DOWN, ^ref, :process, ^pid, _} -> :ok
+          after
+            10_000 -> flunk("the git action worker did not exit")
+          end
+        end
+
+        true
+
+      {:hal_c2_git_action, ^action_id, _event} ->
+        await_git_action(action_id)
+    after
+      10_000 -> false
+    end
+  end
+
   property "a git action subscription is dispatched exactly when its scopes are all granted",
     numtests: HalC2.Prop.numtests(200) do
     forall {granted, action, thread} <- {
@@ -84,12 +114,7 @@ defmodule HalC2.SocketGitActionScopesPropTest do
           case {missing, result} do
             {nil, {:ok, next}} ->
               # Started: the action answers with its events, and the socket follows it.
-              started? =
-                receive do
-                  {:hal_c2_git_action, ^action_id, _event} -> true
-                after
-                  10_000 -> false
-                end
+              started? = await_git_action(action_id)
 
               started? and next.by_terminal[{:git_action, action_id}] == id and
                 Map.has_key?(next.subs, id)

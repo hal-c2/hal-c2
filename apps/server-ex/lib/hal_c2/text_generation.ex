@@ -674,7 +674,15 @@ defmodule HalC2.TextGeneration do
   defp codex_isolation(instance, launch, cwd, dir) do
     list = [codex_command(instance) | launch] ++ ["mcp", "list", "--json"]
 
-    with {:ok, out} <- run_cli(list, cwd, "", label: "Codex", timeout: 10_000),
+    # The listing runs in the environment `codex exec` will, so it names the servers of the
+    # home the run loads, not the MC's own.
+    with {:ok, home} <- HalC2.Codex.Home.env(instance),
+         cli = [
+           label: "Codex",
+           timeout: 10_000,
+           env: run_env(home ++ HalC2.Codex.Home.instance_env(instance), [])
+         ],
+         {:ok, out} <- run_cli(list, cwd, "", cli),
          {:ok, entries} when is_list(entries) <- JSON.decode(out) do
       servers =
         for %{"name" => name} when is_binary(name) <- entries,
@@ -710,15 +718,16 @@ defmodule HalC2.TextGeneration do
   defp mcp_override?(value), do: String.trim_leading(value) =~ ~r/\Amcp_servers\b/
 
   # The home whose login a run of `instance` uses, by the precedence a normal run has: a
-  # `CODEX_HOME` in the instance's environment (`Home.shared/1` returns exactly that
-  # variable, `~` expanded, when it is set), else its shadow home (or home setting), else
-  # the MC's own `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made is an
+  # `CODEX_HOME` in the instance's environment of an unmanaged instance (`Home.shared/1`
+  # returns exactly that variable, `~` expanded, when it is set), else its shadow home (a
+  # connected ChatGPT account's own, over that variable) or home setting, else the MC's own
+  # `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made is an
   # error, as for a normal run (`Codex.ThreadRuntime`): the shared home's `auth.json` is
   # another account's login, and text generation must not sign in as that account.
   defp account_home(instance) do
     default = System.get_env("CODEX_HOME") || Path.join(HalC2.Paths.user_home(), ".codex")
 
-    if env_home?(instance) do
+    if env_home?(instance) and not HalC2.Codex.ChatGpt.managed?(instance) do
       {:ok, HalC2.Codex.Home.shared(instance)}
     else
       case HalC2.Codex.Home.env(instance) do
