@@ -11,6 +11,7 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
   @id "token-economizer"
@@ -55,6 +56,16 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
     context
   end
 
+  step "tool pruning folds a project's conversations as soon as it is quiet", context do
+    {_, context} =
+      World.call!(context, "plugins.saveSettings", %{
+        "id" => @id,
+        "settings" => %{"toolPruneQuietMinutes" => 0}
+      })
+
+    watch(context)
+  end
+
   step "a project where {string} is turned off for Claude", %{args: [tool]} = context do
     seed(context, %{"off" => [tool]})
     context
@@ -73,6 +84,67 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
 
   step "another Claude thread in the project runs a turn", context do
     run_thread(context, "Second")
+  end
+
+  # A turn the thread ran that the plugin's feed dropped every event of, as a feed
+  # with a full queue drops them: the run is in the thread, and the feed counts it to
+  # say so on the next event it delivers.
+  step "the plugin missed a turn of that thread in which Claude used {string}",
+       %{args: [tool]} = context do
+    title = context.prune_thread
+    thread_id = World.thread_id(context, title)
+    [last | _] = context |> World.runs(title) |> Enum.reverse()
+    run = "run-missed-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", run,
+         %{
+           "s" =>
+             Map.merge(Map.take(last, ~w(providerThreadId providerInstanceId)), %{
+               "id" => run,
+               "ordinal" => last["ordinal"] + 1,
+               "status" => "completed"
+             })
+         }},
+        {"turn-item", run <> "-i1",
+         %{
+           "s" => %{
+             "id" => run <> "-i1",
+             "runId" => run,
+             "ordinal" => 1,
+             "type" => "dynamic_tool_call",
+             "providerToolName" => tool,
+             "status" => "completed"
+           }
+         }}
+      ])
+
+    [{_feed, %{dropped: dropped}}] =
+      for {_, %{id: @id}} = feed <- HalC2.Plugins.Feed.lookup(:observe), do: feed
+
+    :counters.add(dropped, 1, 2)
+    context
+  end
+
+  step "that thread runs another turn", context do
+    title = context.prune_thread
+    context = World.post_message(context, title, "again")
+    World.await_runs(context, title, ["completed", "completed", "completed"])
+    context
+  end
+
+  step "tool pruning lists {string} as used for the project", %{args: [tool]} = context do
+    project = World.project(context).id
+
+    await_prune(context, fn status ->
+      Enum.any?(
+        status["projects"],
+        &(&1["projectId"] == project and get_in(&1, ["tools", tool, "state"]) == "used")
+      )
+    end)
+
+    context
   end
 
   step "Claude ran the turn with {string} available", %{args: [tool]} = context do
@@ -173,6 +245,30 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
       World.call(context, "plugins.call", %{"id" => @id, "method" => method, "input" => input})
 
     Map.put(context, :prune_reply, result)
+  end
+
+  # Watches the plugin's `toolPrune` topic; `await_prune/2` waits on it.
+  defp watch(context) do
+    sub = System.unique_integer([:positive])
+
+    shape = %{
+      "type" => "plugin",
+      "environment" => context.mc.environment,
+      "id" => @id,
+      "topic" => "toolPrune"
+    }
+
+    client = context |> World.client("tool-prune") |> Mc.sub(sub, shape)
+    context |> World.put_client("tool-prune", client) |> Map.put(:prune_watched, sub)
+  end
+
+  defp await_prune(context, fun) do
+    Mc.await(
+      World.client(context, "tool-prune"),
+      &(&1["t"] == "plugin" and &1["id"] == context.prune_watched and is_map(&1["value"]) and
+          fun.(&1["value"])),
+      15_000
+    )
   end
 
   defp project_state(context) do

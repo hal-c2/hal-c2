@@ -581,14 +581,16 @@ defmodule HalC2Plugins.TokenEconomizer do
   defp fold_conv(state, conv, imported \\ false) do
     unit = Prune.unit_for_provider(elem(conv.project, 1))
     {prune, state} = prune(state, conv.project, unit)
-    # A segment heard only in part (`missed/2`) folds as no evidence: its
-    # uses are still noted, its silences grow no streak.
-    prompts = if Map.get(conv, :partial, false), do: 0, else: conv.prompts
-
     # Saved with the evidence, the thread's watermark moves to the segment's last run
     # (`seed_history/5`), so a restart before a segment folds reads its runs back; not
     # while its earlier runs are unread, which would leave them unread for good.
     read? = state.seeded[{conv.thread, conv.project}] == :read
+    conv = if read? and Map.get(conv, :partial, false), do: heard(conv, prune, unit), else: conv
+    # A segment heard only in part (`missed/2`) whose runs could not be read back folds
+    # as no evidence: its uses are still noted, its silences grow no streak, and the
+    # watermark stays, so a restart reads its runs back.
+    partial? = Map.get(conv, :partial, false)
+    prompts = if partial?, do: 0, else: conv.prompts
 
     prune =
       prune
@@ -596,13 +598,43 @@ defmodule HalC2Plugins.TokenEconomizer do
         imported: imported,
         thread: conv.thread
       )
-      |> Prune.note_thread(conv.thread, if(read?, do: Map.get(conv, :last_run)))
+      |> Prune.note_thread(conv.thread, if(read? and not partial?, do: Map.get(conv, :last_run)))
 
     state
     |> put_prune(conv.project, prune, true)
     |> publish_prune()
     |> schedule_tick(conv.project)
   end
+
+  # A segment heard only in part, as its thread's history has it: its provider's runs
+  # that ended since the watermark, with what their items used, the uses the feed
+  # dropped among them. Still partial when the history cannot be read.
+  defp heard(conv, prune, unit) do
+    {_, provider} = conv.project
+
+    case history(conv.thread, nil) do
+      {:ok, history} ->
+        {watermark, runs} =
+          Prune.unseen_runs(history, Prune.seeded_run(prune, conv.thread), nil, fn run ->
+            run["provider"] == provider
+          end)
+
+        used = Enum.flat_map(runs, &uses(&1, unit))
+
+        %{
+          conv
+          | used: Enum.uniq(conv.used ++ used),
+            prompts: length(runs),
+            partial: false,
+            last_run: watermark
+        }
+
+      :error ->
+        conv
+    end
+  end
+
+  defp uses(run, unit), do: Enum.flat_map(run["items"] || [], &Prune.used_in_item(&1, unit))
 
   # Once the project has been quiet long enough, its open conversations fold as
   # finished sessions (a later resume starts a new segment with the same loaded
@@ -715,11 +747,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     if runs == [] do
       state
     else
-      used =
-        runs
-        |> Enum.flat_map(& &1["items"])
-        |> Enum.flat_map(&Prune.used_in_item(&1, unit))
-        |> Enum.uniq()
+      used = runs |> Enum.flat_map(&uses(&1, unit)) |> Enum.uniq()
 
       fold_conv(
         state,
@@ -735,7 +763,8 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  # The 50 runs that ended before `run_id` started, however late the feed tells of it.
+  # The 50 runs that ended before `run_id` started, however late the feed tells of it
+  # (the last 50 to end with no `run_id`).
   # Each names the driver it ran on, which is what a project's evidence is kept by, even
   # once its instance is deleted. `:error` when they could not be read.
   defp history(thread_id, run_id) do

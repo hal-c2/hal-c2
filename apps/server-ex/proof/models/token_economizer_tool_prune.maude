@@ -33,9 +33,11 @@ sload model-checker
 ---   Partial - a segment the feed missed events of is partial: its uses count, but
 ---             it grows no unused streak (missed/2 and suspect/2, fold_conv/3). Which
 ---             segments those are is the loop guard model's Window; here the miss
----             marks the segment under way. A use missed cannot protect its tool:
----             what the design keeps is that its conversation is no evidence the tool
----             went unused.
+---             marks the segment under way. As it folds, a partial segment is read
+---             back from the thread's history, missed uses and all, when it can be:
+---             heard/3 in fold_conv/3, the reread rule. When it cannot, the use
+---             missed cannot protect its tool: what the design keeps is that its
+---             conversation is no evidence the tool went unused.
 
 mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   protecting NAT .
@@ -211,6 +213,16 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     => { conv(none) hearing(noseg) mode(M) prot(PR)
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA) C
          folded(CD, SG, not B, M, PR, SF, KP, CP, EV, P) } .
+
+  --- Or, heard only in part, it folds as the thread's history has it: what the
+  --- agent really used in it, heard or missed (heard/3). A read that fails is the
+  --- finish above.
+  rl [reread] :
+    { conv(live(M1, B)) hearing(seg(U, B', true, RS)) tool(CD) mode(M) prot(PR) demot(N)
+      pkgs(P) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA) C }
+    => { conv(none) hearing(noseg) mode(M) prot(PR)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA) C
+         folded(CD, seg(U or RS, B', false, RS), not B, M, PR, SF, KP, CP, EV, P) } .
 
   --- No conversation under way, and time passes: the project has been quiet.
   rl [wait] : conv(none) quiet(false) => conv(none) quiet(true) .

@@ -55,6 +55,14 @@ Feature: TokenEconomizer's tool pruning
     Then Claude ran the turn without "CronCreate"
     And tool pruning lists "CronCreate" as off for the project
 
+  @mc
+  Scenario: A tool used in turns the plugin missed counts as used, read back from the thread
+    Given tool pruning folds a project's conversations as soon as it is quiet
+    And a Claude thread in the project runs a turn
+    And the plugin missed a turn of that thread in which Claude used "CronCreate"
+    When that thread runs another turn
+    Then tool pruning lists "CronCreate" as used for the project
+
   @backlog
   Scenario: The plugin's page shows what is off, proposed and kept, and lets the person apply and restore
     Given a project where "CronCreate" is turned off for Claude
