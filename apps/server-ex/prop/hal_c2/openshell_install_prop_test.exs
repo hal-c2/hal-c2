@@ -83,6 +83,7 @@ defmodule HalC2.OpenShellInstallPropTest do
     :service_platform,
     :service_user_home,
     :systemctl_command,
+    :loginctl_command,
     :launchctl_command
   ]
 
@@ -132,6 +133,7 @@ defmodule HalC2.OpenShellInstallPropTest do
     Application.put_env(:hal_c2, :service_platform, {:unix, platform})
     Application.put_env(:hal_c2, :service_user_home, Path.join(home, "user"))
     Application.put_env(:hal_c2, :systemctl_command, Path.join(bin, "systemctl"))
+    Application.put_env(:hal_c2, :loginctl_command, Path.join(bin, "loginctl"))
     Application.put_env(:hal_c2, :launchctl_command, Path.join(bin, "launchctl"))
 
     control = Path.join(home, "control")
@@ -577,12 +579,13 @@ defmodule HalC2.OpenShellInstallPropTest do
     )
   end
 
-  @other_env [:home, :systemctl_command, :launchctl_command]
+  @other_env [:home, :systemctl_command, :loginctl_command, :launchctl_command]
 
   defp in_other_home(ctx, fun) do
     previous = for key <- @other_env, do: {key, Application.get_env(:hal_c2, key)}
     Application.put_env(:hal_c2, :home, ctx.other.home)
     Application.put_env(:hal_c2, :systemctl_command, Path.join(ctx.other.bin, "systemctl"))
+    Application.put_env(:hal_c2, :loginctl_command, Path.join(ctx.other.bin, "loginctl"))
     Application.put_env(:hal_c2, :launchctl_command, Path.join(ctx.other.bin, "launchctl"))
 
     try do

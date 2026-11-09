@@ -5,6 +5,7 @@
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5819948882: homes, probe cleanup, Docker)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820095093: a home by two spellings, the unit after a failed stop)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820437968: one lifecycle command at a time)
+#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820535766: Docker Desktop's bridge, lingering)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
 #   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix, rootless runtimes only)
@@ -69,6 +70,19 @@ Feature: The OpenShell gateway review sandboxes run in
     Given a machine whose named Docker socket is answered by the user's rootless Podman
     When the user installs OpenShell
     Then the gateway drives Podman over that socket
+
+  @mc
+  Scenario: On a Mac, sandboxes reach the gateway through Docker Desktop
+    Given a Mac with Docker Desktop
+    When the user installs OpenShell
+    Then Docker's supervisors reach the gateway over Docker Desktop's bridge
+    And the gateway still listens on loopback only
+
+  @mc
+  Scenario: Installing lets the gateway keep running after the user logs out
+    Given the user's services stop when they log out
+    When the user installs OpenShell
+    Then their services are set to keep running after logout, before the gateway's starts
 
   @mc
   Scenario: A gateway archive that is not the pinned one is refused

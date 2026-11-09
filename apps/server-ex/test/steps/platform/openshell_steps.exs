@@ -73,6 +73,8 @@ defmodule HalC2.Steps.Platform.OpenShell do
     bin = Path.join(dir, "bin")
     File.mkdir_p!(bin)
     log = Storage.fake_service_manager(bin)
+    # This user already lingers; the tests that it is switched on set it off.
+    File.touch!(Path.join(bin, "linger"))
 
     FakeOpenShell.put_env(
       openshell_facts: @linux,
@@ -122,6 +124,52 @@ defmodule HalC2.Steps.Platform.OpenShell do
     config = File.read!(OpenShell.config_path())
     assert config =~ "[openshell.drivers.podman]\n"
     assert config =~ ~s(socket_path = "#{socket}")
+    context
+  end
+
+  step "a Mac with Docker Desktop", context do
+    desktop = %{
+      kind: :docker,
+      socket: "/Users/me/.docker/run/docker.sock",
+      owner_uid: 1000,
+      uid: 1000,
+      reachable: true,
+      version: "28.1.0",
+      rootless: false,
+      desktop: true
+    }
+
+    FakeOpenShell.put_env(service_platform: {:unix, :darwin})
+    put_facts(%{os: :darwin, arch: "aarch64", runtime: desktop})
+    context
+  end
+
+  step "Docker's supervisors reach the gateway over Docker Desktop's bridge", context do
+    assert {:ok, %{"driver" => "docker", "network" => "bridge"}} = context.result
+    config = File.read!(OpenShell.config_path())
+    assert config =~ ~s(\nsupervisor_network_mode = "bridge"\n)
+    # The driver picks Desktop's name for the host, which the gateway's certificate holds.
+    refute config =~ "grpc_endpoint"
+    context
+  end
+
+  step "the gateway still listens on loopback only", context do
+    {:ok, %{"port" => port}} = context.result
+    assert File.read!(OpenShell.config_path()) =~ ~s(bind_address = "127.0.0.1:#{port}"\n)
+    context
+  end
+
+  step "the user's services stop when they log out", context do
+    Storage.service_state(context.openshell.log, "linger", false)
+    context
+  end
+
+  step "their services are set to keep running after logout, before the gateway's starts",
+       context do
+    assert {:ok, _} = context.result
+    assert [linger | rest] = Storage.service_calls(context.openshell.log)
+    assert linger =~ ~r/\Aloginctl enable-linger --no-ask-password \d+\z/
+    assert "systemctl --user restart #{Service.name(:systemd)}" in rest
     context
   end
 

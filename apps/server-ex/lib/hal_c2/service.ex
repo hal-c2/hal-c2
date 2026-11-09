@@ -345,10 +345,12 @@ defmodule HalC2.Service do
   end
 
   # A systemd that cannot run user services, or cannot say whether this user may
-  # linger, is refused; lingering that is only switched off is switched on.
-  defp prerequisites(:launchd), do: :ok
+  # linger, is refused; lingering that is only switched off is switched on. The
+  # OpenShell gateway's unit (`HalC2.OpenShell.Service`) needs the same.
+  @doc false
+  def prerequisites(:launchd), do: :ok
 
-  defp prerequisites(:systemd) do
+  def prerequisites(:systemd) do
     problems = systemd_problems(false)
 
     cond do

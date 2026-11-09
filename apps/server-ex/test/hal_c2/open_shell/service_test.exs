@@ -30,6 +30,8 @@ defmodule HalC2.OpenShell.ServiceTest do
     bin = Path.join(dir, "bin")
     File.mkdir_p!(bin)
     log = Storage.fake_service_manager(bin)
+    # This user already lingers; the tests that it is switched on set it off.
+    File.touch!(Path.join(bin, "linger"))
 
     FakeOpenShell.put_env(
       home: Path.join(dir, "mc dir"),
@@ -64,6 +66,32 @@ defmodule HalC2.OpenShell.ServiceTest do
 
       refute unit =~ "docker.sock"
       refute Service.render(:systemd, %{@state | "driver" => "docker"}) =~ "podman.socket"
+    end
+
+    test "the gateway waits for the runtime its driver dials" do
+      docker = String.split(Service.render(:systemd, %{@state | "driver" => "docker"}), "\n")
+      assert "Wants=docker.service" in docker
+      assert "After=docker.service" in docker
+
+      podman = String.split(Service.render(:systemd, @state), "\n")
+      assert "After=podman.socket" in podman
+      refute Enum.any?(podman, &(&1 =~ "docker.service"))
+    end
+
+    # Without lingering the user manager, and the gateway with it, stops at logout
+    # and does not start at boot.
+    test "install switches lingering on for a user who does not linger", %{log: log} do
+      Storage.service_state(log, "linger", false)
+      assert :ok = Service.install(@state)
+      assert [first | _] = Storage.service_calls(log)
+      assert first =~ ~r/\Aloginctl enable-linger --no-ask-password \d+\z/
+    end
+
+    test "a systemd that cannot say whether this user lingers is refused", %{log: log} do
+      Storage.service_state(log, "no-logind", true)
+      assert {:error, "[linger-unavailable] " <> _} = Service.install(@state)
+      refute File.exists?(Service.unit_path(:systemd))
+      assert Storage.service_calls(log) == []
     end
 
     test "install writes the unit, enables and restarts it; uninstall takes it away", %{log: log} do
