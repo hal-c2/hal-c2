@@ -1245,6 +1245,28 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert Map.keys(state.staged) |> Enum.sort() == Enum.sort(state.staged_order)
     end
 
+    test "a saved fact that holds a credential leaves the project's file" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      path = TokenEconomizer.micro_skills_path("seam")
+      File.mkdir_p!(Path.dirname(path))
+
+      leaky = %{
+        "id" => "env_value:DB_PASS",
+        "family" => "env_value",
+        "params" => %{"var" => "DB_PASS", "good" => %{"hunter2" => 2}},
+        "life" => %{}
+      }
+
+      File.write!(path, JSON.encode!(%{"facts" => %{"env_value:DB_PASS" => leaky}}))
+
+      run = %{"threadId" => "t", "projectId" => "seam", "instanceId" => "codex"}
+      future = System.monotonic_time(:millisecond) + 60_000
+      TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+      refute File.read!(path) =~ "hunter2"
+    end
+
     test "a run naming no conversation stages nothing" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"microSkills" => "envfacts"})

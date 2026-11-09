@@ -76,9 +76,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @heredoc_re ~r|<<-?\s*['"]?(\w+)['"]?[^\n]*\n.*?\n\s*\1\b|s
   # The host and port a URL names. Its userinfo (`alice:secret@`) is left out:
   # a learned host is shown and staged, and a credential must not be.
-  @url_host_re ~r|https?://(?:[^/\s'"`@]*@)?([^/\s'"`@]+)|
+  @url_host_re ~r|https?://(?:[^/\s'"`@?#]*@)?([^/\s'"`@?#]+)|
   # Variables whose values are credentials: never learned, so never staged.
-  @secret_var_re ~r/TOKEN|SECRET|PASSW|PASSPHRASE|CREDENTIAL|AUTH|API_?KEY|PRIVATE|COOKIE|SESSION/
+  @secret_var_re ~r/TOKEN|SECRET|PASS|PWD|CRED|AUTH|KEY|PRIVATE|COOKIE|SESSION|SALT|SIGN|CERT|DSN|(?:^|_)PAT(?:_|$)/
+  # A value shaped as a credential, whatever it is called: a known token's
+  # prefix, or one long word of letters and digits with no path or module in it.
+  @secret_value_re ~r/^(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-|sk_live_|rk_live_|AKIA|ASIA|AIza|ya29\.|eyJ)|^(?=[^.\/:]*\d)(?=[^.\/:]*[A-Za-z])[\w\-+=]{20,}$/
+  @userinfo_re ~r|://[^/\s'"`]*@|
   @rtk_prefix_re ~r/^rtk\s+(?:proxy\s+)?(?=\S)/
 
   # Error classes an environment produces, in upstream's order: first match wins.
@@ -691,7 +695,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
             after_option = String.starts_with?(prev, "-") and not String.contains?(prev, "=")
 
             if not String.starts_with?(token, "-") and Regex.match?(@label_token_re, token) and
-                 (structured or not after_option) do
+                 (structured or not after_option) and not secret_value?(token) do
               {out ++ [token], false, token}
             else
               {out, false, token}
@@ -753,7 +757,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         |> Enum.reject(&secret_var?/1)
         |> Enum.uniq()
         |> Enum.sort(),
-      sets: Map.reject(sets, fn {var, _} -> secret_var?(var) end),
+      sets: Map.reject(sets, fn {var, value} -> secret_var?(var) or secret_value?(value) end),
       # nil when the call only made assignments: `export K=V` succeeds
       # whatever the value, and proves nothing about it.
       ok:
@@ -789,7 +793,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     end)
   end
 
-  defp secret_var?(var), do: Regex.match?(@secret_var_re, var)
+  @doc "Whether a variable's name says it holds a credential."
+  def secret_var?(var), do: Regex.match?(@secret_var_re, var)
+
+  @doc "Whether text holds a credential-shaped word or a URL's userinfo."
+  def secret_value?(text) do
+    Regex.match?(@userinfo_re, text) or
+      text |> String.split() |> Enum.any?(&Regex.match?(@secret_value_re, &1))
+  end
 
   # A segment that cannot stop the work after it: an assignment, a directory
   # change, an activation, or a command that only sets, reads or reports.

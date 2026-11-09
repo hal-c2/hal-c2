@@ -1113,6 +1113,10 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
          }}
       end)
 
+    # A fact learned before the micro-skills knew to leave a credential out
+    # is never read back, so never stated.
+    facts = Map.reject(facts, fn {_id, fact} -> leaks?(fact) end)
+
     %{
       base
       | now: saved["now"] || 0,
@@ -1123,4 +1127,20 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
   end
 
   def load(_saved, opts), do: new(opts)
+
+  defp leaks?(%Fact{family: "env_value", params: %{"var" => var}} = fact) when is_binary(var),
+    do: Observe.secret_var?(var) or leaks_in?(fact.params)
+
+  defp leaks?(%Fact{family: "boundary", params: %{"hosts" => hosts}} = fact) when is_map(hosts),
+    do:
+      Enum.any?(Map.keys(hosts), &String.contains?(&1, ["@", "?", "#"])) or
+        leaks_in?(fact.params)
+
+  defp leaks?(%Fact{params: params}), do: leaks_in?(params)
+
+  defp leaks_in?(text) when is_binary(text), do: Observe.secret_value?(text)
+  defp leaks_in?(map) when is_map(map), do: Enum.any?(map, &leaks_in?/1)
+  defp leaks_in?({key, value}), do: leaks_in?(key) or leaks_in?(value)
+  defp leaks_in?(list) when is_list(list), do: Enum.any?(list, &leaks_in?/1)
+  defp leaks_in?(_), do: false
 end

@@ -839,7 +839,15 @@ defmodule HalC2Plugins.TokenEconomizer do
   defp skills_for(state, project_id) do
     case state.skills[project_id] do
       nil ->
-        skills = EnvFacts.load(read_skills(project_id), skills_caps(state))
+        saved = read_skills(project_id)
+        skills = EnvFacts.load(saved, skills_caps(state))
+
+        # A fact the load left out for holding a credential leaves the file too.
+        with %{"facts" => %{} = facts} <- saved,
+             true <- map_size(skills.facts) < map_size(facts) do
+          save_skills(project_id, skills)
+        end
+
         {skills, put_in(state.skills[project_id], skills)}
 
       skills ->

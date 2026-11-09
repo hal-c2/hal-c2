@@ -118,6 +118,69 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
              [{"pytest", "ran"}]
   end
 
+  test "no credential reaches a fact" do
+    env = fn command ->
+      [entry] = Observe.observe_turn([bash(command, "4 passed", 0)]).env
+      entry.sets
+    end
+
+    # By name, however it is spelled.
+    for var <- ~w(DB_PASS DB_PWD AWS_ACCESS_KEY_ID GH_PAT STRIPE_KEY SIGNING_SALT SENTRY_DSN) do
+      assert env.("#{var}=v1 PYTHONPATH=src python -m pytest -q") == %{"PYTHONPATH" => "src"}
+    end
+
+    # By shape, whatever it is called.
+    for value <-
+          ~w(ghp_abc123def456 AKIAABCDEFGH12345678 eyJhbGciOiJIUzI1NiJ9 a1b2c3d4e5f6a7b8c9d0e1f2) do
+      assert env.("MY_VAR=#{value} PYTHONPATH=src python -m pytest -q") == %{
+               "PYTHONPATH" => "src"
+             }
+    end
+
+    # A module, a path or a flag is not a credential.
+    assert env.("DJANGO_SETTINGS_MODULE=proj.settings_test_2024 python -m pytest -q") ==
+             %{"DJANGO_SETTINGS_MODULE" => "proj.settings_test_2024"}
+
+    # A URL's host leaves out its userinfo, query and fragment.
+    hosts = fn command -> command |> Observe.classify_command() |> Enum.flat_map(& &1.hosts) end
+    assert hosts.("curl https://h.example.com?token=abc") == ["h.example.com"]
+    assert hosts.("curl 'https://h.example.com#k=abc'") == ["h.example.com"]
+    assert hosts.("curl https://u:p@h.example.com/x?a=b@c") == ["h.example.com"]
+
+    # A test label shaped as a credential is not one.
+    [o] = Observe.classify_command("python -m pytest tests/a.py ghp_abc123def456")
+    assert Observe.test_labels(o) == ["tests/a.py"]
+  end
+
+  test "a saved fact that holds a credential is never read back" do
+    fact = fn id, family, params ->
+      {id, %{"id" => id, "family" => family, "params" => params, "life" => %{}}}
+    end
+
+    saved = %{
+      "facts" =>
+        Map.new([
+          fact.("env_value:DB_PASS", "env_value", %{
+            "var" => "DB_PASS",
+            "good" => %{"hunter2" => 2}
+          }),
+          fact.("env_value:PYTHONPATH:old", "env_value", %{
+            "var" => "PYTHONPATH",
+            "good" => %{"ghp_abc123def456" => 2}
+          }),
+          fact.("boundary:fetch_remote", "boundary", %{
+            "hosts" => %{"h.example.com?token=abc" => 2}
+          }),
+          fact.("env_value:PYTHONPATH", "env_value", %{
+            "var" => "PYTHONPATH",
+            "good" => %{"src" => 2}
+          })
+        ])
+    }
+
+    assert Map.keys(EnvFacts.load(saved).facts) == ["env_value:PYTHONPATH"]
+  end
+
   test "classify forms and intents" do
     assert form(
              ~s(/bin/bash -lc "source /opt/env/bin/activate proj && python -m pytest tests -q")
