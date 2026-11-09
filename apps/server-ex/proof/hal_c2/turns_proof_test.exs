@@ -151,8 +151,6 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWatch.unrecorded/3" => @unrecorded,
       "HalC2.Orchestration.TurnWatch.ending/2" => @partway,
       "HalC2.Orchestration.TurnWatch.ended/1" => @partway,
-      "HalC2.Orchestration.TurnWatch handle_call {:ending, _, _}" => @partway,
-      "HalC2.Orchestration.TurnWatch handle_cast {:ended, _}" => @partway,
       "HalC2.Orchestration.TurnWatch.attempted/2" =>
         "for tests: waits on TurnWatch's next try at an unrecorded end; changes nothing",
       "HalC2.Orchestration.TurnWatch handle_cast {:unrecorded, _, _, _}" => @unrecorded,

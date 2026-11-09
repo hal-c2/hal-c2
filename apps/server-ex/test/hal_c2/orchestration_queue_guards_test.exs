@@ -185,6 +185,8 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
   # A stop's interrupted end captures the run's checkpoint before its transaction: when
   # another end wins the run in between, the capture it no longer records is dropped.
+  # Another `abandon/5` of the run waits for this one, so the end that wins is one
+  # written outside it, as a runtime's own does.
   test "an interrupted end that loses its run to a failed one leaves no checkpoint behind",
        %{thread_id: thread_id, tmp_dir: dir} do
     {:ok, _} = send_message(thread_id, "m1")
@@ -196,6 +198,11 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
     # Held, the stream answers the stop's read of the run (still running), then the
     # failed end already waiting behind it, before the stop's capture is done.
+    failed_end = fn stream ->
+      done = %{"status" => "failed", "completedAt" => HalC2.Orchestration.Entities.now()}
+      {[Orchestration.upsert(stream, "run", running["id"], &Map.merge(&1, done))], :ok}
+    end
+
     stream = HalC2.Streams.ensure(thread_id)
     :ok = :sys.suspend(stream)
     :erlang.trace(stream, true, [:receive])
@@ -206,7 +213,7 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_call(stream, stopper)
 
     {failer, failed} =
-      spawn_monitor(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
+      spawn_monitor(fn -> :ok = HalC2.Streams.transact(thread_id, :thread, failed_end) end)
 
     await_call(stream, failer)
 

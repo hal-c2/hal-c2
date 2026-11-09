@@ -31,6 +31,8 @@ defmodule HalC2.Orchestration.TurnWatch do
   alias HalC2.Orchestration.Entities
   alias HalC2.Orchestration.TurnWriter
 
+  @endings __MODULE__.Endings
+
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   @doc """
@@ -72,17 +74,31 @@ defmodule HalC2.Orchestration.TurnWatch do
   The end run `run_id` takes, `{status, failure, at}`: the first one asked for since
   its end last recorded (`ended/1`). An end the store refused partway (the work in a
   subagent's thread ended, the run not) stands, so another end of the run that comes
-  before the try after it ends the run as that one did. An MC upgraded in place, where
-  this process has not started yet, takes `ending`.
+  before the try after it ends the run as that one did. Kept in a table this process
+  owns, so an end never waits behind the watch's own messages; the ends of a run take
+  turns (`TurnWriter.abandon/5`). An MC upgraded in place, where this process has not
+  started yet, takes `ending`.
   """
   def ending(run_id, {_status, _failure, _at} = ending) do
-    GenServer.call(__MODULE__, {:ending, run_id, ending})
-  catch
-    :exit, _ -> ending
+    if :ets.insert_new(@endings, {run_id, ending}) do
+      ending
+    else
+      case :ets.lookup(@endings, run_id) do
+        [{_, kept}] -> kept
+        [] -> ending
+      end
+    end
+  rescue
+    ArgumentError -> ending
   end
 
   @doc "Run `run_id`'s end recorded: the next end asked for is its own (`ending/2`)."
-  def ended(run_id), do: GenServer.cast(__MODULE__, {:ended, run_id})
+  def ended(run_id) do
+    :ets.delete(@endings, run_id)
+    :ok
+  rescue
+    ArgumentError -> :ok
+  end
 
   @doc """
   Waits for the next try at recording run `run_id`'s unrecorded end to fail, or for
@@ -93,7 +109,10 @@ defmodule HalC2.Orchestration.TurnWatch do
     do: GenServer.call(__MODULE__, {:attempted, run_id}, timeout)
 
   @impl true
-  def init(nil), do: {:ok, %{claims: %{}, pending: %{}, waiters: %{}, endings: %{}}}
+  def init(nil) do
+    endings()
+    {:ok, %{claims: %{}, pending: %{}, waiters: %{}}}
+  end
 
   @impl true
   # A run whose end is held keeps its runtime watched until the end records
@@ -104,9 +123,6 @@ defmodule HalC2.Orchestration.TurnWatch do
       do: {:noreply, state},
       else: {:noreply, forget(state, run_id)}
   end
-
-  def handle_cast({:ended, run_id}, state),
-    do: {:noreply, %{state | endings: Map.delete(state.endings, run_id)}}
 
   def handle_cast({:unrecorded, thread_id, run_id, ending}, state) do
     ending =
@@ -124,11 +140,6 @@ defmodule HalC2.Orchestration.TurnWatch do
   def handle_call({:claim, pid, thread_id, run_id}, _from, state) do
     state = forget(state, run_id)
     {:reply, :ok, put_in(state.claims[run_id], {Process.monitor(pid), pid, thread_id})}
-  end
-
-  def handle_call({:ending, run_id, ending}, _from, state) do
-    ending = Map.get(state.endings, run_id, ending)
-    {:reply, ending, put_in(state.endings[run_id], ending)}
   end
 
   # A process that has exited no longer drives its run, though its `:DOWN` may still
@@ -218,11 +229,20 @@ defmodule HalC2.Orchestration.TurnWatch do
 
   # An MC upgraded in place carries the claims alone.
   @impl true
-  def code_change(_old, %{claims: _} = state, _extra),
-    do: {:ok, Map.put_new(state, :endings, %{})}
+  def code_change(_old, %{claims: _} = state, _extra) do
+    endings()
+    {:ok, Map.delete(state, :endings)}
+  end
 
-  def code_change(_old, claims, _extra),
-    do: {:ok, %{claims: claims, pending: %{}, waiters: %{}, endings: %{}}}
+  def code_change(_old, claims, _extra) do
+    endings()
+    {:ok, %{claims: claims, pending: %{}, waiters: %{}}}
+  end
+
+  defp endings do
+    if :ets.whereis(@endings) == :undefined,
+      do: :ets.new(@endings, [:named_table, :public, :set])
+  end
 
   defp recorded(state, run_id, ending) do
     {waiters, state} = pop_in(state.waiters[run_id])
@@ -277,7 +297,8 @@ defmodule HalC2.Orchestration.TurnWatch do
   defp forget(state, run_id) do
     {claim, claims} = Map.pop(state.claims, run_id)
     if claim, do: Process.demonitor(elem(claim, 0), [:flush])
-    %{state | claims: claims, endings: Map.delete(state.endings, run_id)}
+    :ets.delete(@endings, run_id)
+    %{state | claims: claims}
   end
 
   defp lost?(pid),
