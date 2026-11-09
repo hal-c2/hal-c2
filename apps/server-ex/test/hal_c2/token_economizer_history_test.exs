@@ -968,6 +968,71 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     end
   end
 
+  test "a hold on saved uses that could not be read shows, and a person's word releases it for good",
+       %{thread: thread, project: p} do
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    _state = apply_tools(state, p, ["CronCreate"])
+
+    path =
+      Path.join([HalC2.Plugins.Host.data_dir("token-economizer"), "toolprune", "strays.json"])
+
+    corrupt = fn ->
+      File.write!(path, "[{")
+      {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+      {nil, state} = shape(state, "other", "o1", p)
+      status = TokenEconomizer.prune_status(state)
+      assert status["unreadable"] == ["claudeAgent", "codex"]
+      assert [%{"provider" => "claudeAgent", "unreadable" => true}] = status["projects"]
+      state
+    end
+
+    restarted = fn ->
+      {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+      state
+    end
+
+    # Applying the provider's tools releases that provider's hold, across a restart.
+    state = apply_tools(corrupt.(), p, ["CronCreate"])
+    assert TokenEconomizer.prune_status(state)["unreadable"] == ["codex"]
+    state = restarted.()
+    assert TokenEconomizer.prune_status(state)["unreadable"] == ["codex"]
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, "other", "o2", p)
+    assert [%{"unreadable" => false}] = TokenEconomizer.prune_status(state)["projects"]
+
+    # So does restoring them.
+    state = corrupt.()
+
+    {:reply, {:ok, %{"projects" => [%{"unreadable" => false}]}}, state} =
+      TokenEconomizer.handle_call(
+        {:toolprune, :restore, %{"projectId" => p, "provider" => "claudeAgent", "tools" => []}},
+        nil,
+        state
+      )
+
+    assert TokenEconomizer.prune_status(state)["unreadable"] == ["codex"]
+    assert TokenEconomizer.prune_status(restarted.())["unreadable"] == ["codex"]
+
+    # Changing the mode releases every provider's; keeping it releases none.
+    state = corrupt.()
+
+    {:reply, :ok, state} =
+      TokenEconomizer.handle_call({:settings, %{"toolPrune" => "propose"}}, nil, state)
+
+    assert TokenEconomizer.prune_status(state)["unreadable"] == ["claudeAgent", "codex"]
+
+    {:reply, :ok, state} =
+      TokenEconomizer.handle_call({:settings, %{"toolPrune" => "auto"}}, nil, state)
+
+    assert TokenEconomizer.prune_status(state)["unreadable"] == []
+    state = restarted.()
+    assert TokenEconomizer.prune_status(state)["unreadable"] == []
+    assert state.strays == %{}
+  end
+
   defp stray_item(thread, tool),
     do: %{
       "type" => "turn.item",

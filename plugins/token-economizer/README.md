@@ -46,7 +46,9 @@ which that is, its provider's new conversations are turned off nothing until a t
 of the thread's or its record names it. A deleted thread leaves that list. One
 moved to another machine is listed under `away` instead, and holds nothing off
 while it is there; once it is moved back, its turns are read back before
-anything is turned off again.
+anything is turned off again. When those saved uses cannot be read back, every
+project of the provider shows `unreadable` and is turned off nothing until a
+person applies or restores its tools by hand or changes the mode.
 
 ## Tests
 

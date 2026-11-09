@@ -186,6 +186,21 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       finish: ["b", "r2", 1],
       thread_placed: ["a"],
       start: ["b", "r3", 2, true, false]
+    ],
+    # Saved uses that cannot be read hold pruning off, shown, till a person's word.
+    unreadable: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      finish: ["a", "r1", 1],
+      down: [],
+      corrupt_strays: [],
+      up: [],
+      start: ["b", "r2", 1, true, true],
+      finish: ["b", "r2", 1],
+      apply_tools: [["CronCreate"]],
+      down: [],
+      up: [],
+      start: ["b", "r3", 2, true, false]
     ]
   ]
 
@@ -300,7 +315,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # deleted threads. `away`: those moved to another MC, which may come back. `strays`:
   # `{thread, tool}`, a subagent's uses heard with no project while its thread's record
   # names none, kept across restarts until a turn of its or its record names one.
-  # `placed`: the threads whose record names their project.
+  # `placed`: the threads whose record names their project. `unreadable`: whether saved
+  # uses that could not be read hold the provider off, till a person's word.
   def initial_state,
     do: %{
       up: true,
@@ -320,7 +336,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       gone: [],
       away: [],
       strays: [],
-      placed: []
+      placed: [],
+      unreadable: false
     }
 
   def command(s) do
@@ -366,7 +383,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       s.away != [] and s.runs < @max_runs and {2, ran_away_call(s)},
       s.up and here != [] and
         {1, {:call, __MODULE__, :stray_use, [elements(here), elements(@tools)]}},
-      unplaced != [] and {1, {:call, __MODULE__, :thread_placed, [elements(unplaced)]}}
+      unplaced != [] and {1, {:call, __MODULE__, :thread_placed, [elements(unplaced)]}},
+      not s.up and {1, {:call, __MODULE__, :corrupt_strays, []}}
     ]
     |> Enum.filter(& &1)
     |> frequency()
@@ -505,6 +523,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def precondition(s, {:call, _, :stray_use, [thread, _tool]}),
     do: s.up and Map.has_key?(s.threads, thread) and thread not in (s.gone ++ s.away)
 
+  def precondition(s, {:call, _, :corrupt_strays, []}), do: not s.up
+
   def precondition(s, {:call, _, :thread_placed, [thread]}),
     do: Map.has_key?(s.threads, thread) and thread not in (s.placed ++ s.gone)
 
@@ -613,11 +633,18 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   def next_state(s, _res, {:call, _, :tick, _}), do: untold(s)
 
-  def next_state(s, _res, {:call, _, :mode, [mode]}), do: %{s | mode: mode}
-  def next_state(s, _res, {:call, _, :apply_tools, [tools]}), do: %{s | named: tools || []}
+  # A person's word releases the hold on uses that could not be read: changing the
+  # mode, or applying or restoring the provider's tools.
+  def next_state(s, _res, {:call, _, :mode, [mode]}),
+    do: %{s | mode: mode, unreadable: s.unreadable and not (s.up and mode != s.mode)}
+
+  def next_state(s, _res, {:call, _, :apply_tools, [tools]}),
+    do: %{s | named: tools || [], unreadable: s.unreadable and not s.up}
 
   def next_state(s, _res, {:call, _, :restore, [tools]}),
-    do: %{s | named: s.named -- (tools || s.named)}
+    do: %{s | named: s.named -- (tools || s.named), unreadable: s.unreadable and not s.up}
+
+  def next_state(s, _res, {:call, _, :corrupt_strays, []}), do: %{s | unreadable: true}
 
   # The uses heard with no project are kept.
   def next_state(s, _res, {:call, _, :down, _}),
@@ -672,11 +699,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     |> Map.update!(:runs, &(&1 + 1))
   end
 
-  # With no project of its own, the use is its thread's record's project's at once.
+  # With no project of its own, the use is its thread's record's project's at once,
+  # when the record can be read.
   def next_state(s, _res, {:call, _, :stray_use, [thread, tool]}) do
     s = %{told(s) | used: Enum.uniq(s.used ++ [tool])}
 
-    if thread in s.placed,
+    if thread in s.placed and s.history,
       do: %{s | owed: Enum.uniq(s.owed ++ [tool])},
       else: %{s | strays: Enum.uniq(s.strays ++ [{thread, tool}])}
   end
@@ -704,7 +732,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     subset?(next.owed, res.used) and subset?(res.used, next.used) and
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
       shaped_whole?(s, res, denied) and disjoint?(denied, lost(s)) and gone_holds_nothing?(s, res) and
-      disjoint?(denied, strayed(s)) and
+      disjoint?(denied, strayed(s)) and (denied == [] or not s.unreadable) and
+      res.unreadable == next.unreadable and
       res.prompts <= ended_runs(next) and
       Enum.all?(@tools -- res.used, &(streak(res, &1) <= unused_runs(next, &1)))
   end
@@ -730,6 +759,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     end
   end
 
+  # Saved uses that could not be read hold it off whatever else does.
   # A deleted thread's segments heard in part neither hold a conversation's shape off
   # nor stay to be read back, once the history can be read. Those of a thread on
   # another MC hold nothing off either, but stay: once it is back, `lost/1` and
@@ -738,6 +768,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     partial = for {t, _} <- res.partial, do: t
 
     cond do
+      s.unreadable ->
+        true
+
       partial == [] ->
         res.denied == res.deniable
 
@@ -848,7 +881,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       partial =
         for({t, %{partial: true, runs: runs}} <- plugin.convs, do: {t, runs}) ++
           for({{t, _}, marks} <- Map.get(plugin, :unresolved, %{}), do: {t, marks}) ++
-          for({{t, _}, _} <- Map.get(plugin, :strays, %{}), do: {t, []})
+          for({{t, _}, _} <- Map.get(plugin, :strays, %{}), is_binary(t), do: {t, []})
 
       partial = for {t, marks} <- partial, do: {t, Enum.map(marks, & &1["run"])}
 
@@ -1053,6 +1086,16 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     snapshot()
   end
 
+  # While the plugin is down its saved uses become unreadable.
+  def corrupt_strays do
+    path =
+      Path.join([HalC2.Plugins.Host.data_dir("token-economizer"), "toolprune", "strays.json"])
+
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "[{")
+    snapshot()
+  end
+
   # The thread's record comes to name its project, as every thread's but those made
   # before it kept one does.
   def thread_placed(thread) do
@@ -1095,6 +1138,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         cfg = Prune.config(plugin.settings)
 
         Map.merge(extra, %{
+          unreadable: @provider in TokenEconomizer.prune_status(plugin)["unreadable"],
           used: prune["used"],
           prompts: prune["prompts"],
           streaks: prune["streaks"],

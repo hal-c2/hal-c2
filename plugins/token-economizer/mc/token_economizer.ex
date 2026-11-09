@@ -257,8 +257,15 @@ defmodule HalC2Plugins.TokenEconomizer do
   @impl GenServer
   def handle_call({:settings, settings}, _from, state) do
     # The level and pinned thresholds shape each tracker: read them afresh. Tool
-    # pruning reads its settings at each decision, so its evidence stays.
+    # pruning reads its settings at each decision, so its evidence stays; a person
+    # changing its mode has seen the saved uses it could not read.
+    mode = prune_cfg(state)["mode"]
     state = %{state | settings: settings, trackers: %{}}
+
+    state =
+      if prune_cfg(state)["mode"] != mode,
+        do: release_unreadable(state, unreadable(state)),
+        else: state
 
     # Off, the guard hears no turn and no judge job is read. A delivery under way runs on:
     # its steer may already have been taken, and its answer says what happened. Watching
@@ -378,6 +385,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     %{
       "mode" => cfg["mode"],
+      "unreadable" => unreadable(state),
       "projects" =>
         state.prunes
         |> Enum.sort()
@@ -452,6 +460,14 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     named? = is_binary(input["projectId"])
 
+    # Applying or restoring a provider's tools by hand is a person's word over the saved
+    # uses it could not read.
+    state =
+      if action != :state and named? and tools?,
+        do:
+          release_unreadable(state, if(p = input["provider"], do: [p], else: unreadable(state))),
+        else: state
+
     case prune_targets(state, input) do
       _ when action != :state and not named? ->
         {{:error, "Name the project to apply or restore tools for."}, state}
@@ -495,7 +511,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   # yet (`recover_uses/5`); while there are any, the project's conversations are denied
   # nothing. `"away"`: those of them on another MC, which hold nothing off until they
   # come back. Threads heard with no project (`strays/2`) are unresolved for every
-  # project of their provider.
+  # project of their provider. `"unreadable"`: saved uses of the provider's that could
+  # not be read hold it off too (`unreadable/1`).
   defp project_summary(state, {project_id, provider} = project, prune, cfg, extra) do
     {away, unresolved} =
       for({{thread_id, ^project} = key, _} <- state.unresolved, do: {key, thread_id})
@@ -509,6 +526,7 @@ defmodule HalC2Plugins.TokenEconomizer do
       "projectId" => project_id,
       "provider" => provider,
       "unresolved" => unresolved |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> Enum.sort(),
+      "unreadable" => provider in unreadable(state),
       "away" => away |> Enum.map(&elem(&1, 1)) |> Enum.sort()
     })
     |> Map.merge(extra)
@@ -797,6 +815,19 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp read_stray(%{"provider" => p}, strays), do: hold_stray(strays, p)
   defp read_stray(_entry, strays), do: hold_stray(strays, nil)
+
+  # The providers whose pruning saved uses that could not be read hold off
+  # (`read_strays/0`): shown on the topic, and released by a person applying or
+  # restoring that provider's tools or changing the mode.
+  defp unreadable(state), do: for({nil, p} <- Map.keys(state.strays), do: p) |> Enum.sort()
+
+  defp release_unreadable(state, providers) do
+    held = for p <- providers, Map.has_key?(state.strays, {nil, p}), do: {nil, p}
+
+    if held == [],
+      do: state,
+      else: state |> update_in([:strays], &Map.drop(&1, held)) |> save_strays()
+  end
 
   defp hold_stray(strays, provider) do
     providers = if provider in @prune_providers, do: [provider], else: @prune_providers
