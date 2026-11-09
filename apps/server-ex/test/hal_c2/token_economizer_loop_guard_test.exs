@@ -442,7 +442,6 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             {"pytest -q || sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py || pytest -q"},
             {"pytest -q | tee log && sed -i 's/a/b/' a.py",
              "sed -i 's/a/b/' a.py && pytest -q | tee log"},
-            {"(pytest -q) && (sed -i 's/a/b/' a.py)", "(sed -i 's/a/b/' a.py) && (pytest -q)"},
             {"pytest -q\nsed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py\npytest -q"}
           ] do
         unchecked = Turn.fold(g, "Bash", %{"command" => run_first}, passing, 0, opts)
@@ -655,6 +654,41 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
         |> fold("Bash", %{"command" => cmd}, "==== 1 failed, 2 passed in 0.12s ====", 0)
 
       refute Turn.resolved_proxy(g)
+    end
+
+    test "a check negated, grouped, backgrounded or under a pipefail set elsewhere has no status" do
+      for cmd <- [
+            "! pytest -q",
+            "(set -o pipefail); pytest -q 2>&1 | tail -n 2",
+            "(pytest -q)",
+            "cd x && (pytest -q)",
+            "{ pytest -q; }",
+            "if pytest -q; then echo ok; fi",
+            "pytest -q &"
+          ] do
+        assert Turn.status_of_tests(cmd) == "unknown", cmd
+
+        # Whatever the call reported, the run may have failed: it verifies nothing and
+        # the turn is not learned.
+        for {result, code} <- [{"1 failed in 0.02s", 0}, {"1 passed in 0.02s", 0}] do
+          g =
+            Turn.new()
+            |> fold("Edit", %{"file_path" => "/r/a.py"}, "ok")
+            |> fold("Bash", %{"command" => cmd}, result, code)
+
+          assert g.verifications == 0, cmd
+          refute Turn.resolved_proxy(g), cmd
+        end
+      end
+
+      # A runner alone, or last in a pipe under a pipefail set at the top: its own.
+      for cmd <- [
+            "pytest -q",
+            "set -o pipefail; pytest -q 2>&1 | tail -n 2",
+            "cd x && pytest -q $(git ls-files 'test_*.py') ${ARGS:-}",
+            "pytest -q 2>&1"
+          ],
+          do: assert(Turn.status_of_tests(cmd) == "own", cmd)
     end
 
     test "a test runner named in a heredoc's text is not a test run" do

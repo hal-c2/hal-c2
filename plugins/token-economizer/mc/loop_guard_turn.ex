@@ -55,8 +55,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   @not_a_run ~r/\s(?:-h|--help|--version|--collect-only|--co|--list\S*)(?!\S)/
   # What may precede the command itself: `FOO=1 timeout 60 npm test`, and a launcher that
   # runs it in the project's environment, `uv run pytest`, `npx jest`, `bundle exec rspec`,
-  # `dotenv -e .env.local -- npx vitest run`, `mise exec -- mix test`.
-  @prefix ~r/^\s*(?:(?:\w+=\S*|time|nice|nohup|command|env|timeout(?:\s+(?:-\S+|[A-Z]+|\d\S*))+|(?:(?:uv|poetry|pipenv|pdm|hatch|rye)\s+run|npx|bunx|(?:npm|pnpm|yarn)\s+(?:exec|dlx)|bundle\s+exec|xvfb-run)(?:\s+-\S+)*|(?:dotenv|mise\s+(?:exec|x))(?:\s+(?!--(?:\s|$))\S+)*\s+--)\s+)*/
+  # `dotenv -e .env.local -- npx vitest run`, `mise exec -- mix test`. A negation or a
+  # keyword (`! pytest`, `if pytest; then`) leaves a run a run, whose status
+  # `ShellEdits.plain?/1` then calls unknown.
+  @prefix ~r/^\s*(?:(?:\w+=\S*|!|if|elif|while|until|then|else|do|time|nice|nohup|command|env|timeout(?:\s+(?:-\S+|[A-Z]+|\d\S*))+|(?:(?:uv|poetry|pipenv|pdm|hatch|rye)\s+run|npx|bunx|(?:npm|pnpm|yarn)\s+(?:exec|dlx)|bundle\s+exec|xvfb-run)(?:\s+-\S+)*|(?:dotenv|mise\s+(?:exec|x))(?:\s+(?!--(?:\s|$))\S+)*\s+--)\s+)*/
   # What only reports on the run before it: `echo "exit=$?"`, `true`, `exit 0`.
   @pipefail_on ~r/^set\s(?:.*\s)?-[a-zA-Z]*o\s+pipefail\b/
   @pipefail_off ~r/^set\s(?:.*\s)?\+[a-zA-Z]*o\s+pipefail\b/
@@ -242,11 +244,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   an `&&` chain or a pipe under `pipefail`, and when every command whose status a later
   one replaces only reads, moves about, sets up or reports (`grep -rn Error src | head`,
   `cd web; npx vitest run`). Not when one that does work could have failed unseen:
-  `python repro.py 2>&1 | tail -20` exits with `tail`'s status. A heredoc's lines are the
-  input of the command that reads them, not commands of their own.
+  `python repro.py 2>&1 | tail -20` exits with `tail`'s status. Nor when the command is
+  not plain (`ShellEdits.plain?/1`): `! pytest` succeeds when the tests fail. A heredoc's
+  lines are the input of the command that reads them, not commands of their own.
   """
   def exit_status_covers(cmd) when is_binary(cmd) do
-    if String.trim(cmd) == "" do
+    if String.trim(cmd) == "" or not ShellEdits.plain?(cmd) do
       false
     else
       {pieces, pipefail} = pieces(cmd)
@@ -265,21 +268,26 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   What `cmd`'s exit status says of the test runs in it: nil when it runs none; "own"
   when it is theirs (a run is last, or followed only by `&&`, or piped under
   `pipefail`); "hidden" when a pipe, `||` or a mere report of the status replaced it;
-  "mixed" when other commands ran after, their output in the result too.
+  "mixed" when other commands ran after, their output in the result too; "unknown" when
+  the command is not plain (`ShellEdits.plain?/1`: `! pytest`, `(pytest)`, `(set -o
+  pipefail); pytest | tail`), whose status this does not scope.
   """
   def status_of_tests(cmd) when is_binary(cmd) do
     {pieces, pipefail} = pieces(cmd)
     stages = pieces |> Enum.with_index() |> Enum.filter(fn {_, i} -> rem(i, 2) == 0 end)
 
-    Enum.reduce(stages, nil, fn {stage, i}, found ->
-      if run?(stage) do
-        rest = pieces |> after_each(pipefail) |> Enum.drop(div(i, 2))
-        status = after_run(rest)
-        if found == nil or @rank[status] > @rank[found], do: status, else: found
-      else
-        found
-      end
-    end)
+    status =
+      Enum.reduce(stages, nil, fn {stage, i}, found ->
+        if run?(stage) do
+          rest = pieces |> after_each(pipefail) |> Enum.drop(div(i, 2))
+          status = after_run(rest)
+          if found == nil or @rank[status] > @rank[found], do: status, else: found
+        else
+          found
+        end
+      end)
+
+    if status != nil and not ShellEdits.plain?(cmd), do: "unknown", else: status
   end
 
   def status_of_tests(_), do: nil
@@ -354,12 +362,16 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
       true ->
         cmd = if canon == "bash", do: args["command"]
-        verifies = status_of_tests(cmd) != nil
+        status = status_of_tests(cmd)
+        # A check whose status this does not scope verifies nothing, and may have failed.
+        verifies = status not in [nil, "unknown"]
 
         g =
-          if canon == "bash" and ShellEdits.hides_check?(cmd, Map.keys(g.whole.edit_counts)),
-            do: %{g | unread: g.cum_turns},
-            else: g
+          if canon == "bash" and
+               (status == "unknown" or
+                  ShellEdits.hides_check?(cmd, Map.keys(g.whole.edit_counts))),
+             do: %{g | unread: g.cum_turns},
+             else: g
 
         g =
           cond do
@@ -543,9 +555,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     status = status_of_tests(cmd)
 
     exit_code =
-      if status in ["hidden", "mixed"] do
+      if status in ["hidden", "mixed", "unknown"] do
         case runner_verdict(result) do
-          nil -> if status == "hidden", do: nil, else: exit_code
+          nil -> if status in ["hidden", "unknown"], do: nil, else: exit_code
           verdict -> if verdict, do: 1, else: 0
         end
       else

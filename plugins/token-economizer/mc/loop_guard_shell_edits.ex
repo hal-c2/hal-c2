@@ -211,6 +211,30 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
     end
   end
 
+  @doc """
+  Whether every command in `cmd` runs at its top level, so its exit status is read as the
+  shell gives it: none negated (`! pytest`), in a subshell or a group (`( ... )`, `{ ...;
+  }`), a branch or a loop (`if pytest; then`), or in the background (`pytest &`). A
+  substitution or an expansion is a plain word. False when this cannot read the text. A
+  command run whole as `bash -lc '<script>'` is its script.
+  """
+  def plain?(cmd) when is_binary(cmd) do
+    {shell, _, placed} = cmd |> script() |> heredocs()
+
+    with true <- placed,
+         {:ok, shell} <- subst(String.to_charlist(shell), :none, [], []),
+         {:ok, toks} <- tokens(shell) do
+      {cmds, _} = commands(shell)
+
+      not Enum.any?(toks, &(&1 in ["(", ")", "&"])) and
+        not Enum.any?(cmds, &match?([word | _] when word in @reserved, &1))
+    else
+      _ -> false
+    end
+  end
+
+  def plain?(_), do: false
+
   # A simple command's words: whether they run a script this does not read.
   defp runs_script?(words, written) do
     case Enum.drop_while(words, &(&1 in @reserved or Regex.match?(~r/^\w+=/, &1))) do
