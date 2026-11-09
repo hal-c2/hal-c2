@@ -11,9 +11,11 @@ defmodule HalC2.Subprocess.Sandboxed do
   the stream's owner: it frames stdout into `{:subprocess_lines, reader, lines}` and
   waits for `ack/1` as the port reader does, sends `{exit_ref, {:ok, status}}` when the
   command exits and `{:subprocess_eof, reader}` once its lines are handed over.
-  Stderr is counted and dropped. More than `output_limit` bytes of output in all
-  cancels the command (exit 137) and calls `on_limit`, since the stream does not hold
-  output back while the owner is busy.
+  Stderr is counted and dropped. More than `output_limit` bytes of output in all, or
+  more lines waiting on the owner than a batch should ever hold, cancels the command
+  (exit 137), drops what was waiting and calls `on_limit`, since the stream does not
+  hold output back while the owner is busy. The reader ends with its owner, and the
+  stream with the reader.
 
   The exit status is kept past that message: an owner that took it (as
   `HalC2.Subprocess.exit_status/2` lets it) still gets it from `exited/2` and `stop/2`,
@@ -36,8 +38,11 @@ defmodule HalC2.Subprocess.Sandboxed do
   # Not an exit status, which the gateway sends as an int32.
   @running 1 <<< 40
 
-  # Exec gives no output backpressure, so a run's output is capped instead.
+  # Exec gives no output backpressure, so a run's output is capped instead, and so are
+  # the lines held for a busy owner: short lines cost far more as list cells than their
+  # bytes.
   @output_limit 268_435_456
+  @held_limit 1_000_000
 
   @doc false
   def start(argv, sandbox, owner) do
@@ -159,6 +164,9 @@ defmodule HalC2.Subprocess.Sandboxed do
 
   @doc false
   def reader_init(owner, {ref, status}, limit, on_limit, {conn, name, argv, opts}) do
+    # A monitor, not the link: an owner that exits normally leaves a linked reader up.
+    monitor = Process.monitor(owner)
+
     case Client.exec(conn, name, argv, Keyword.put(opts, :owner, self())) do
       {:error, reason} ->
         send(owner, {ref, {:failed, reason}})
@@ -168,14 +176,17 @@ defmodule HalC2.Subprocess.Sandboxed do
 
         __MODULE__.reader_loop(%{
           owner: owner,
+          monitor: monitor,
           ref: ref,
           status: status,
           exec: exec,
           limit: limit,
+          held_limit: @held_limit,
           on_limit: on_limit,
           seen: 0,
           partial: "",
           lines: [],
+          held: 0,
           waiting: false,
           ended: false
         })
@@ -194,13 +205,17 @@ defmodule HalC2.Subprocess.Sandboxed do
   # of short lines costs one reverse per batch rather than an append per chunk.
   def reader_loop(%{waiting: false, lines: [_ | _]} = s) do
     send(s.owner, {:subprocess_lines, self(), Enum.reverse(s.lines)})
-    __MODULE__.reader_loop(%{s | lines: [], waiting: true})
+    __MODULE__.reader_loop(%{s | lines: [], held: 0, waiting: true})
   end
 
-  def reader_loop(%{exec: exec} = s) do
+  def reader_loop(%{exec: exec, monitor: monitor} = s) do
     receive do
       :ack ->
         __MODULE__.reader_loop(%{s | waiting: false})
+
+      # Its exec, which it owns, stops with it, cancelling the command.
+      {:DOWN, ^monitor, :process, _, _} ->
+        :ok
 
       {:openshell_exec, ^exec, {:stdout, data}} ->
         s = count(s, data)
@@ -209,7 +224,9 @@ defmodule HalC2.Subprocess.Sandboxed do
           __MODULE__.reader_loop(s)
         else
           {lines, rest} = Subprocess.split_lines(s.partial, data)
-          __MODULE__.reader_loop(%{s | lines: Enum.reverse(lines, s.lines), partial: rest})
+          held = s.held + length(lines)
+          s = %{s | lines: Enum.reverse(lines, s.lines), held: held, partial: rest}
+          __MODULE__.reader_loop(if held > s.held_limit, do: limited(s), else: s)
         end
 
       {:openshell_exec, ^exec, {:stderr, data}} ->
@@ -228,13 +245,13 @@ defmodule HalC2.Subprocess.Sandboxed do
   defp count(s, data) do
     seen = s.seen + byte_size(data)
 
-    if seen > s.limit do
-      Exec.cancel(s.exec)
-      s.on_limit.()
-      exit_with(%{s | seen: seen, partial: ""}, 137)
-    else
-      %{s | seen: seen}
-    end
+    if seen > s.limit, do: limited(%{s | seen: seen}), else: %{s | seen: seen}
+  end
+
+  defp limited(s) do
+    Exec.cancel(s.exec)
+    s.on_limit.()
+    exit_with(%{s | partial: "", lines: [], held: 0}, 137)
   end
 
   defp exit_with(%{ended: true} = s, _code), do: s

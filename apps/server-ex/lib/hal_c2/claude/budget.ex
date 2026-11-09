@@ -10,17 +10,21 @@ defmodule HalC2.Claude.Budget do
   progress then carries its latest message's whole count (`observe/2`). The CLI's own
   count in each result, over every model and request of the process, covers the rest
   (what a subagent wrote after its last progress, the CLI's side requests): what it
-  counted beyond every count reported in this process. A resumed session's CLI counts
-  on from what it restored, so its first result only says where it began.
+  counted beyond every count reported in this process. A count that rises after a
+  result, a subagent's progress coming late, was already in that result's, so the
+  remainder reported then shrinks by as much, never below nothing. A resumed session's
+  CLI counts on from what it restored, so its first result only says where it began.
   """
 
-  defstruct counted: %{}, base: 0, key: nil, last: %{}
+  # `result` is the last result's own count beyond `base` and the keys counted by then.
+  defstruct counted: %{}, base: 0, key: nil, last: %{}, result: nil
 
   @type t :: %__MODULE__{
           counted: %{optional(String.t()) => non_neg_integer()},
           base: non_neg_integer() | nil,
           key: reference(),
-          last: %{optional(String.t()) => String.t()}
+          last: %{optional(String.t()) => String.t()},
+          result: {non_neg_integer(), MapSet.t(String.t())} | nil
         }
   @type counts :: [{String.t() | reference(), non_neg_integer()}]
 
@@ -76,15 +80,30 @@ defmodule HalC2.Claude.Budget do
         {%{budget | base: total, counted: %{}}, []}
 
       base ->
-        unreported = total - base - Enum.sum(Map.values(budget.counted))
-        {budget, [{budget.key, max(unreported, 0)}]}
+        budget = %{budget | result: {total - base, MapSet.new(Map.keys(budget.counted))}}
+        {budget, [unreported(budget)]}
     end
   end
 
   def observe(budget, _message), do: {budget, []}
 
-  defp count(budget, key, tokens),
-    do: {put_in(budget.counted[key], tokens), [{key, tokens}]}
+  # The remainder goes first: the budget adds up each count as it arrives, and must not
+  # see a key's new count while the remainder still holds it.
+  defp count(budget, key, tokens) do
+    budget = put_in(budget.counted[key], tokens)
+
+    with {_, keys} <- budget.result, true <- MapSet.member?(keys, key) do
+      {budget, [unreported(budget), {key, tokens}]}
+    else
+      _ -> {budget, [{key, tokens}]}
+    end
+  end
+
+  # What the last result counted beyond this process's counts of the keys it covered.
+  defp unreported(%{result: {total, keys}} = budget) do
+    covered = Enum.sum(for key <- keys, do: budget.counted[key])
+    {budget.key, max(total - covered, 0)}
+  end
 
   defp sum(usage, keys),
     do: Enum.sum(for key <- keys, is_integer(usage[key]), do: usage[key])

@@ -2,7 +2,9 @@ defmodule HalC2.ClaudeBudgetPropTest do
   @moduledoc """
   `HalC2.Claude.Budget` against a simulated sandboxed Claude CLI (#1412): main
   conversation messages counted as they start and again as they end, subagent messages
-  that carry only their starting counts with or without a progress after them, side
+  that carry only their starting counts with or without a progress after them, at once
+  or later, past results and other messages (a background task reports on after its
+  turn's result), side
   requests no message reports, results carrying the process's own running count, and
   restarts, fresh or resuming a session from a partly restored count, as the CLI was
   seen to restore one.
@@ -19,11 +21,13 @@ defmodule HalC2.ClaudeBudgetPropTest do
   alias HalC2.Claude.Budget
 
   defp tokens, do: range(0, 50)
+  defp parent, do: oneof(["toolu-a", "toolu-b"])
 
   defp event do
     frequency([
       {4, {:main, tokens(), tokens()}},
-      {4, {:sub, oneof(["toolu-a", "toolu-b"]), tokens(), tokens(), boolean()}},
+      {4, {:sub, parent(), tokens(), tokens(), boolean()}},
+      {2, {:progress, parent()}},
       {1, {:side, tokens()}},
       {3, :result},
       {1, {:restart, boolean(), range(0, 100)}}
@@ -43,6 +47,7 @@ defmodule HalC2.ClaudeBudgetPropTest do
         resumed: false,
         lost: 0,
         next: 0,
+        tasks: %{},
         ok: true
       }
 
@@ -76,19 +81,26 @@ defmodule HalC2.ClaudeBudgetPropTest do
     }
 
     sim = sim |> observe(message) |> spend(input + output)
+    sim = put_in(sim.tasks[parent], input + output)
+    if progress, do: step({:progress, parent}, sim), else: holds(sim, false)
+  end
 
-    sim =
-      if progress,
-        do:
-          observe(sim, %{
-            "type" => "system",
-            "subtype" => "task_progress",
-            "tool_use_id" => parent,
-            "usage" => %{"total_tokens" => input + output}
-          }),
-        else: sim
+  # The task's progress carries its latest message's whole count.
+  defp step({:progress, parent}, sim) do
+    case sim.tasks do
+      %{^parent => total} ->
+        sim
+        |> observe(%{
+          "type" => "system",
+          "subtype" => "task_progress",
+          "tool_use_id" => parent,
+          "usage" => %{"total_tokens" => total}
+        })
+        |> holds(false)
 
-    holds(sim, false)
+      _ ->
+        sim
+    end
   end
 
   defp step({:side, n}, sim), do: sim |> spend(n) |> holds(false)
@@ -109,7 +121,14 @@ defmodule HalC2.ClaudeBudgetPropTest do
     cli = if resume, do: div(sim.cli * percent, 100), else: 0
     lost = sim.real - Enum.sum(Map.values(sim.told))
 
-    %{sim | budget: Budget.new(resume), cli: cli, resumed: sim.resumed or resume, lost: lost}
+    %{
+      sim
+      | budget: Budget.new(resume),
+        cli: cli,
+        resumed: sim.resumed or resume,
+        lost: lost,
+        tasks: %{}
+    }
     |> holds(false)
   end
 

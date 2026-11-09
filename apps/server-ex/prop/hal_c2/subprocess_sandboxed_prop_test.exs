@@ -4,7 +4,8 @@ defmodule HalC2.SubprocessSandboxedPropTest do
   against a model of what an owner is promised, over any sequence of programs started,
   written to, half-closed, exiting by themselves, their exit taken from the mailbox
   (as `HalC2.JsonRpc.Connection` does, through `HalC2.Subprocess.exit_status/2`),
-  asked whether they exited, and stopped. The gateway is the TLS fake: `cat` echoes
+  asked whether they exited, stopped, and left behind by an owner that exits without
+  stopping them (with a batch it never acknowledged, or none). The gateway is the TLS fake: `cat` echoes
   its stdin and exits with its code at the end of it; `exit` exits with its code at
   once; `stall` never reads. The promises:
 
@@ -15,7 +16,8 @@ defmodule HalC2.SubprocessSandboxedPropTest do
     * `stop/2` gives the program's own exit status, whether it exited by itself
       (the message taken or not) or on its stdin closing, and a stalled program is
       cancelled; the status is never made up;
-    * however it stops, the program's stream is gone.
+    * however it stops, the program's stream is gone;
+    * an owner that exits takes its program's reader and stream with it.
   """
 
   use ExUnit.Case, async: false
@@ -99,7 +101,10 @@ defmodule HalC2.SubprocessSandboxedPropTest do
     line = oneof(["a", "two words", ~s({"id":1})])
 
     frequency(
-      [{3, {:call, __MODULE__, :start, start}}] ++
+      [
+        {3, {:call, __MODULE__, :start, start}},
+        {1, {:call, __MODULE__, :abandon, [oneof([:cat, :stall])]}}
+      ] ++
         on(open, [
           {3, {:call, __MODULE__, :write, [oneof(open), line]}},
           {2, {:call, __MODULE__, :close, [oneof(open)]}}
@@ -156,6 +161,7 @@ defmodule HalC2.SubprocessSandboxedPropTest do
   def next_state(state, _result, _call), do: state
 
   def postcondition(_state, {:call, _, :start, _}, result), do: result == :ok
+  def postcondition(_state, {:call, _, :abandon, _}, result), do: result == :gone
   def postcondition(_state, {:call, _, :write, [_, line]}, result), do: result == [line]
   def postcondition(_state, {:call, _, :close, _}, result), do: result == :ok
   def postcondition(state, {:call, _, :take, [i]}, result), do: result == state.progs[i].code
@@ -188,6 +194,51 @@ defmodule HalC2.SubprocessSandboxedPropTest do
 
       error ->
         error
+    end
+  end
+
+  # Another owner starts a program and exits without stopping it, a `cat` holding a
+  # batch it never acknowledged.
+  def abandon(kind) do
+    conn = Process.get(:sandboxed_prop).conn
+    test = self()
+    argv = if kind == :stall, do: ["stall"], else: ["cat", "0"]
+
+    {owner, owned} =
+      spawn_monitor(fn ->
+        {:ok, sub} = Subprocess.start(argv, sandbox: %{conn: conn, name: "box"})
+        reader = sub.reader
+
+        if kind == :cat do
+          :ok = Subprocess.write_line(sub, "held")
+          receive do: ({:subprocess_lines, ^reader, _} -> :ok)
+        end
+
+        ref = make_ref()
+        send(test, {:abandoned, ref, reader, sub.proc.exec})
+        receive do: ({:abandoned, ^ref} -> :ok)
+      end)
+
+    receive do
+      {:abandoned, ref, reader, exec} ->
+        watched = [Process.monitor(reader), Process.monitor(exec)]
+        send(owner, {:abandoned, ref})
+        receive do: ({:DOWN, ^owned, :process, ^owner, _} -> :ok)
+
+        if Enum.all?(watched, &down?/1), do: :gone, else: :running
+    after
+      @wait ->
+        Process.demonitor(owned, [:flush])
+        Process.exit(owner, :kill)
+        :no_start
+    end
+  end
+
+  defp down?(monitor) do
+    receive do
+      {:DOWN, ^monitor, :process, _, _} -> true
+    after
+      @wait -> false
     end
   end
 
