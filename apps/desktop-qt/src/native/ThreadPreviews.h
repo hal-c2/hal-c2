@@ -9,6 +9,7 @@
 #include "PreviewHistory.h"
 
 #include <functional>
+#include <optional>
 #include <utility>
 
 class McClient;
@@ -129,12 +130,25 @@ public:
   Q_INVOKABLE void show(const QString& tabId);
   // The tab as the MC last said, or {} when there is none.
   QJsonObject tab(const QString& tabId) const;
+  // The kind of MC event ("navigated", "resized", ...) that last changed the
+  // tab, empty when a list did: what a page reads to tell a report's echo from
+  // news that is not about its address.
+  QString lastEvent(const QString& tabId) const { return m_lastEvent.value(tabId); }
+  // Why the MC did not take a report: it said no (Refused), the connection
+  // was down so it never went (Unsent), or the answer did not come (the
+  // connection dropped, the cluster member was unreachable, the call timed
+  // out), so the MC may have it anyway (Dropped). Heard: it took it.
+  enum class Unheard { Refused, Unsent, Dropped, Heard };
   // What the page showing the tab did: `preview.reportStatus`, navStatus a
-  // PreviewNavStatus.
-  void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward);
+  // PreviewNavStatus. `unheard` runs when the call is answered, with why not
+  // when the MC did not say it took it; false (and it never runs) when no
+  // call was made.
+  bool report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward,
+              std::function<void(Unheard)> unheard = {});
   // The size the tab's page is shown at: `preview.resize`, viewport a
-  // PreviewViewportSetting. `failed` runs when the MC refused it.
-  void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const QString&)> failed = {});
+  // PreviewViewportSetting. `done` runs once the MC answers, with why it
+  // refused; the tab changes with the MC's event.
+  void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done = {});
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -147,6 +161,9 @@ signals:
   void emptyTabChanged();
   // The MC said something new of the tab, or it went.
   void tabChanged(const QString& tabId);
+  // The MC listed the thread's tabs (on showing, a reload, a reconnect); the
+  // rows that changed said so first.
+  void listed();
   // Embedded: the tab is to be shown: the user asked (show, newTab,
   // openAddress), or someone opened it just now (an agent, another window).
   void showRequested(const QString& tabId);
@@ -185,9 +202,12 @@ private:
   int m_subscription = -1;
   // Replies for another thread (or an older load) are dropped.
   int m_generation = 0;
+  // A report found the thread's environment out of reach; its next event relists.
+  bool m_unreached = false;
   QString m_epoch;
   qint64 m_revision = -1;
   QList<QJsonObject> m_rows;
+  QHash<QString, QString> m_lastEvent;
   // Tabs being closed: their events do not bring them back.
   QSet<QString> m_closing;
   // A list is on its way; the thread's events since it was asked for, which it may predate.
