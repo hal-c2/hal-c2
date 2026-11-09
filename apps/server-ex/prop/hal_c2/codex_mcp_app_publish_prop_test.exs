@@ -3,8 +3,8 @@ defmodule HalC2.CodexMcpAppPublishPropTest do
   Where a Codex MCP app's stored document goes (`HalC2.Codex.McpApps.publish/3`), which
   a read that returned late races with the thread's deletion. A document published on
   a live thread's item is kept and named by the item; one that arrives after the
-  thread was deleted, or for an item the thread does not have, is removed, so no file
-  is left that nothing owns or cleans up.
+  thread was deleted, or for an item the thread does not have, is removed, as is one whose append raised (the error still reaches the caller), so no
+  file is left that nothing owns or cleans up.
   """
 
   use ExUnit.Case, async: false
@@ -52,6 +52,7 @@ defmodule HalC2.CodexMcpAppPublishPropTest do
   def command(_state) do
     frequency([
       {5, {:call, __MODULE__, :publish, [elements(@items ++ ["gone"])]}},
+      {2, {:call, __MODULE__, :publish_failing, [elements(@items)]}},
       {1, {:call, __MODULE__, :delete, []}}
     ])
   end
@@ -67,12 +68,20 @@ defmodule HalC2.CodexMcpAppPublishPropTest do
       else: %{state | held: MapSet.put(state.held, item)}
   end
 
+  # An append that raises publishes nothing.
+  def next_state(state, _result, {:call, _, :publish_failing, _}), do: state
+
   def next_state(state, _result, {:call, _, :delete, []}), do: %{state | deleted: true}
 
   def postcondition(state, {:call, _, :publish, [item]}, result) do
     after_call = next_state(state, result, {:call, __MODULE__, :publish, [item]})
     result == MapSet.member?(after_call.held, item) and files_match?(after_call)
   end
+
+  # The error reaches the caller (a deleted thread appends nothing, so nothing raises),
+  # and the document it stored is gone.
+  def postcondition(state, {:call, _, :publish_failing, _}, result),
+    do: result == if(state.deleted, do: :published, else: :raised) and files_match?(state)
 
   def postcondition(state, _call, _result), do: files_match?(state)
 
@@ -95,6 +104,19 @@ defmodule HalC2.CodexMcpAppPublishPropTest do
     contents = [%{"uri" => @uri, "mimeType" => @mime, "text" => @html}]
     app = McpApps.snapshot(@thread, "weather", "get_forecast", @uri, contents)
     CodexApps.publish(@thread, item, %{"mcpApp" => app})
+  end
+
+  # Fields the stream cannot record (a pid is not data): the append raises.
+  def publish_failing(item) do
+    contents = [%{"uri" => @uri, "mimeType" => @mime, "text" => @html}]
+    app = McpApps.snapshot(@thread, "weather", "get_forecast", @uri, contents)
+
+    try do
+      CodexApps.publish(@thread, item, %{"mcpApp" => app, "bad" => self()})
+      :published
+    rescue
+      _ -> :raised
+    end
   end
 
   def delete do

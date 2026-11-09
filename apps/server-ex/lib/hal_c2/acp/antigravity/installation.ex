@@ -416,6 +416,10 @@ defmodule HalC2.Acp.Antigravity.Installation do
           {:error, :stalled} ->
             {:error, "The Antigravity download stalled. Try again."}
 
+          {:error, {:disk, reason}} ->
+            {:error,
+             "The Antigravity download could not be saved (#{:file.format_error(reason)})."}
+
           {:error, _} ->
             {:error, "The Antigravity download failed. Check the connection and try again."}
         end

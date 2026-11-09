@@ -31,7 +31,8 @@ defmodule HalC2.ProviderInstall do
   Streams `url` to `dest`, calling `progress.(bytes)` as bytes arrive, at most every
   250 ms and once all `total` have. `:ok` once the body ended, else `{:error,
   {:status, code}}` for a reply other than 200, `{:error, :interrupted}` for a
-  connection that failed or closed early, `{:error, :stalled}` when nothing arrived
+  connection that failed or closed early, `{:error, {:disk, reason}}` when `dest` cannot
+  be written (a full disk), `{:error, :stalled}` when nothing arrived
   for `:stall_ms` (default two minutes) and `{:error, :timeout}` when the whole
   download took longer than `:deadline_ms` (default none).
   """
@@ -86,10 +87,15 @@ defmodule HalC2.ProviderInstall do
         receive_body(ref, deadline, stall, file, bytes, report)
 
       {:http, {^ref, :stream, chunk}} ->
-        IO.binwrite(file, chunk)
-        bytes = bytes + byte_size(chunk)
-        report.(bytes)
-        receive_body(ref, deadline, stall, file, bytes, report)
+        case :file.write(file, chunk) do
+          :ok ->
+            bytes = bytes + byte_size(chunk)
+            report.(bytes)
+            receive_body(ref, deadline, stall, file, bytes, report)
+
+          {:error, reason} ->
+            {:error, {:disk, reason}}
+        end
 
       {:http, {^ref, :stream_end, _headers}} ->
         :ok
@@ -162,7 +168,13 @@ defmodule HalC2.ProviderInstall do
   def watch(instance, pid, ref), do: installer(instance).subscribe(instance, pid, ref)
 
   @doc "Lets go of `watch/3`'s subscription `ref`."
-  def unwatch(instance, pid, ref), do: installer(instance).unsubscribe(instance, pid, ref)
+  def unwatch(instance, pid, ref) do
+    # Both installers: the instance may have changed driver or gone since `watch/3`
+    # picked one, and each ignores a subscription it does not hold.
+    HalC2.Codex.Installation.unsubscribe(instance, pid, ref)
+    HalC2.Acp.Antigravity.Installation.unsubscribe(instance, pid, ref)
+    :ok
+  end
 
   defp installer(instance) do
     if HalC2.Codex.Installation.instance?(instance),

@@ -71,4 +71,15 @@ defmodule HalC2.Codex.HomeTest do
     assert {:ok, []} = Home.env("codex-work")
     assert [{"CODEX_HOME", ^cli_home}] = Home.instance_env("codex-work")
   end
+
+  # Regression: `ChatGpt.home/1` raised from `env/1` when the secrets directory could
+  # not be made, instead of answering the error a start refuses with.
+  test "a managed instance whose secrets directory cannot be made is an error, not a raise",
+       %{tmp_dir: dir} do
+    put_instance(%{"setupMode" => "managed"}, Path.join(dir, "cli-codex"))
+    File.mkdir_p!(HalC2.Paths.data_dir())
+    File.write!(Path.join(HalC2.Paths.data_dir(), "secrets"), "not a directory")
+
+    assert {:error, "Codex shadow home could not be prepared: " <> _} = Home.env("codex-work")
+  end
 end

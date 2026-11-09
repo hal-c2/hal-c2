@@ -585,6 +585,9 @@ defmodule HalC2.Codex.Installation do
         {:error,
          "The Codex download server returned HTTP #{status}. #{@connection}, then try again later."}
 
+      {:error, {:disk, reason}} ->
+        {:error, "The Codex download could not be saved (#{:file.format_error(reason)})."}
+
       {:error, :timeout} ->
         {:error, "The Codex download timed out. #{@connection}, then retry installation."}
 

@@ -17,7 +17,7 @@ defmodule HalC2.ProviderInstallWatchPropTest do
   @pool ["codex-work", "codex-lab", "other"]
 
   property "an instance reaches the installer its own MC's settings say",
-    numtests: HalC2.Prop.numtests(50),
+    numtests: HalC2.Prop.numtests(200),
     max_size: 20 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
@@ -45,7 +45,7 @@ defmodule HalC2.ProviderInstallWatchPropTest do
 
   # --- model: the instances settings know as Codex ----------------------------------
 
-  def initial_state, do: %{codex: MapSet.new()}
+  def initial_state, do: %{codex: MapSet.new(), watched: MapSet.new()}
 
   def command(_state) do
     id = elements(@pool)
@@ -53,7 +53,8 @@ defmodule HalC2.ProviderInstallWatchPropTest do
     frequency([
       {2, {:call, __MODULE__, :add, [id]}},
       {2, {:call, __MODULE__, :remove, [id]}},
-      {4, {:call, __MODULE__, :watch, [id, elements([:ref1, :ref2])]}}
+      {4, {:call, __MODULE__, :watch, [id, elements([:ref1, :ref2])]}},
+      {3, {:call, __MODULE__, :unwatch, [id, elements([:ref1, :ref2])]}}
     ])
   end
 
@@ -65,6 +66,15 @@ defmodule HalC2.ProviderInstallWatchPropTest do
   def next_state(state, _result, {:call, _, :remove, [id]}),
     do: %{state | codex: MapSet.delete(state.codex, id)}
 
+  def next_state(state, _result, {:call, _, :watch, [id, ref]}) do
+    if MapSet.member?(state.codex, id),
+      do: %{state | watched: MapSet.put(state.watched, {id, ref})},
+      else: state
+  end
+
+  def next_state(state, _result, {:call, _, :unwatch, [id, ref]}),
+    do: %{state | watched: MapSet.delete(state.watched, {id, ref})}
+
   def next_state(state, _result, _call), do: state
 
   # Known as Codex: followed (the Codex installer answers its state). Else refused.
@@ -72,6 +82,13 @@ defmodule HalC2.ProviderInstallWatchPropTest do
     if MapSet.member?(state.codex, id),
       do: match?({:ok, _}, result),
       else: match?({:error, %{"operation" => "observe-install"}}, result)
+  end
+
+  # Whatever became of the instance since, `unwatch/3` lets go of what `watch/3` held:
+  # the Codex installer is left with the refs the model still has.
+  def postcondition(state, {:call, _, :unwatch, [id, _]} = call, held) do
+    after_call = next_state(state, nil, call)
+    held == for({^id, ref} <- after_call.watched, into: MapSet.new(), do: ref)
   end
 
   def postcondition(_state, _call, _result), do: true
@@ -83,6 +100,18 @@ defmodule HalC2.ProviderInstallWatchPropTest do
 
   def watch(id, ref) do
     ProviderInstall.watch(id, self(), ref)
+  end
+
+  # The refs the Codex installer still holds for this process on `id`.
+  def unwatch(id, ref) do
+    ProviderInstall.unwatch(id, self(), ref)
+    # A call behind the cast: the installer has handled it.
+    watchers = :sys.get_state(HalC2.Codex.Installation).watchers
+
+    case Map.get(watchers, {self(), id}) do
+      {_monitor, refs} -> refs
+      nil -> MapSet.new()
+    end
   end
 
   defp put(fun) do

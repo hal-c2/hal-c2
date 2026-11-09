@@ -73,7 +73,16 @@ defmodule HalC2.Codex.McpApps do
   inside the stream's transaction, so it is ordered against the thread's deletion.
   """
   def publish(thread_id, item_id, %{"mcpApp" => %{"attachmentId" => id}} = fields) do
-    published? = put_on_item(thread_id, item_id, fields)
+    published? =
+      try do
+        put_on_item(thread_id, item_id, fields)
+      rescue
+        error ->
+          # A failed append owns no item either: the document goes, the error stays.
+          remove_document(id)
+          reraise error, __STACKTRACE__
+      end
+
     if not published?, do: remove_document(id)
     published?
   end

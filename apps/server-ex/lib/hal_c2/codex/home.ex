@@ -41,8 +41,10 @@ defmodule HalC2.Codex.Home do
       # account's threads too, and the CLI's own login is never touched.
       managed?(instance) ->
         shared = shared(instance) || default_home()
-        shadow = HalC2.Codex.ChatGpt.home(instance)
-        with :ok <- link(shared, shadow), do: {:ok, [{"CODEX_HOME", shadow}]}
+
+        with {:ok, shadow} <- managed_home(instance),
+             :ok <- link(shared, shadow),
+             do: {:ok, [{"CODEX_HOME", shadow}]}
 
       shadow == nil and home == nil ->
         {:ok, []}
@@ -71,6 +73,14 @@ defmodule HalC2.Codex.Home do
   # A connected account's login lives in the MC-owned home (`ChatGpt.home/1`), which
   # `ChatGpt.adopt/3` and `move/1` read and write: a `shadowHomePath` set before the
   # account was connected does not take its place.
+  # `ChatGpt.home/1` makes the folder and raises when the secrets directory is unwritable.
+  defp managed_home(instance) do
+    {:ok, HalC2.Codex.ChatGpt.home(instance)}
+  rescue
+    error in File.Error ->
+      {:error, "Codex shadow home could not be prepared: " <> Exception.message(error)}
+  end
+
   defp managed?(instance), do: HalC2.Codex.ChatGpt.managed?(instance)
 
   @doc """
