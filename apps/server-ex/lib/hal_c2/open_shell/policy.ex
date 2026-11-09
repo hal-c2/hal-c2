@@ -189,16 +189,16 @@ defmodule HalC2.OpenShell.Policy do
     |> Enum.sort_by(&{&1.host, &1.port, &1.ports, &1.path})
   end
 
-  # The fields that decide what an endpoint lets through, compared whole.
-  @endpoint_fields ~w(host port ports protocol tls enforcement access rules allowed_ips path
-                      json_rpc_max_body_bytes mcp credential_binding allow_uninspected_credentials
-                      deny_rules)a
+  # The markers the gateway derives itself, ignoring what a policy says. Every other
+  # field, one a newer OpenShell adds included, is compared: many of them widen what
+  # an endpoint lets through, such as rewriting credentials into request bodies.
+  @derived_fields [:provider_credentialed, :token_grant_owner]
 
   defp same_endpoint?(got, want) do
     got.enforcement == :NETWORK_ENFORCEMENT_MODE_ENFORCE and
       got.tls != :NETWORK_TLS_MODE_SKIP and got.allow_uninspected_credentials != true and
       exact?(got.host) and Enum.all?(got.allowed_ips, &exact?/1) and
-      Map.take(got, @endpoint_fields) == Map.take(want, @endpoint_fields)
+      Map.drop(got, @derived_fields) == Map.drop(want, @derived_fields)
   end
 
   defp exact?(value), do: is_binary(value) and value != "" and not String.contains?(value, "*")

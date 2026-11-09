@@ -77,6 +77,32 @@ defmodule HalC2.OpenShell.PolicyTest do
     end
   end
 
+  # A gateway-wide policy can set any endpoint field, and many widen what gets through:
+  # each is compared, all but the markers the gateway derives itself.
+  test "an endpoint the gateway changes in any field is not the one asked for" do
+    wanted = Policy.review(@review)
+
+    for change <- [
+          request_body_credential_rewrite: true,
+          websocket_credential_rewrite: true,
+          credential_signing: "sigv4",
+          signing_service: "bedrock",
+          allow_encoded_slash: true,
+          persisted_queries: "allow_registered",
+          graphql_max_body_bytes: 1_048_576,
+          advisor_proposed: true
+        ] do
+      wider = put_model(wanted, &struct!(&1, [change]))
+
+      assert Policy.check(wider, wanted) ==
+               {:error, "network rule model is not the one asked for"},
+             "#{inspect(change)} passed"
+    end
+
+    marked = put_model(wanted, &%{&1 | provider_credentialed: true, token_grant_owner: "grant"})
+    assert Policy.check(marked, wanted) == :ok
+  end
+
   test "a model request that is a glob is refused" do
     for request <- [{"GET", "/v1/files/**"}, {"*", "/v1/messages"}, {"POST", "/v1/*"}] do
       review = put_in(@review.model.requests, [request])
