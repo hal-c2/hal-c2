@@ -744,61 +744,121 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   end
 
   # What one call says about environment variables: those its output asks for,
-  # and those its command sets (inline, exported or in the code it runs).
+  # and the values it gave the work it ran (inline, exported before it, or set
+  # in its code). A value counts only where something that could read it ran:
+  # `APP_SETTINGS=conf.bad true` and `export K=V && cd .` exercise nothing. A
+  # variable given different values by different segments is left out, and the
+  # call vouches for its values only when its exit status speaks for every
+  # segment that received them (`covers?/3`). A call that only made
+  # assignments keeps them, with `ok` nil: `export K=V` succeeds whatever the
+  # value, and proves nothing about it.
   defp env_calls(cmd, out, success) do
-    sets =
-      @env_prefix_re
-      |> Regex.scan(assignments(cmd))
-      |> Map.new(fn [_, var, _quote, value] -> {var, value} end)
+    out = out || ""
+    {texts, seps} = cmd |> unwrap() |> split() |> Enum.unzip()
+    segs = Enum.map(texts, &env_segment/1)
+
+    {received, _exported} =
+      segs
+      |> Enum.zip(seps)
+      |> Enum.with_index()
+      |> Enum.reduce({[], %{}}, fn {{seg, sep}, j}, {received, exported} ->
+        received =
+          if seg.runs do
+            exported
+            |> Map.merge(Map.new(seg.assigns ++ seg.incode))
+            |> Enum.map(fn {var, value} -> {var, value, j} end)
+            |> then(&(received ++ &1))
+          else
+            received
+          end
+
+        # A pipeline's segments run in subshells: what one exports is lost.
+        exported =
+          if seg.exports and sep != "|",
+            do: Map.merge(exported, Map.new(seg.assigns)),
+            else: exported
+
+        {received, exported}
+      end)
+
+    runs = Enum.any?(segs, & &1.runs)
+
+    received =
+      received
+      |> Enum.group_by(&elem(&1, 0))
+      |> Enum.filter(fn {_var, got} -> got |> Enum.uniq_by(&elem(&1, 1)) |> length() == 1 end)
+      |> Enum.flat_map(&elem(&1, 1))
+      |> Enum.reject(fn {var, value, _j} -> secret_var?(var) or secret_value?(value) end)
 
     sets =
-      @env_incode_re
-      |> Regex.scan(cmd)
-      |> Enum.reduce(sets, fn [_, var, value], acc -> Map.put(acc, var, value) end)
+      if runs,
+        do: Map.new(received, fn {var, value, _j} -> {var, value} end),
+        else:
+          segs
+          |> Enum.flat_map(& &1.assigns)
+          |> Map.new()
+          |> Map.reject(fn {var, value} -> secret_var?(var) or secret_value?(value) end)
 
     %{
       need:
         @env_need_re
-        |> Regex.scan(out || "")
+        |> Regex.scan(out)
         |> Enum.map(&Enum.at(&1, 1))
         |> Enum.reject(&secret_var?/1)
         |> Enum.uniq()
         |> Enum.sort(),
-      sets: Map.reject(sets, fn {var, value} -> secret_var?(var) or secret_value?(value) end),
-      # nil when the call only made assignments: `export K=V` succeeds
-      # whatever the value, and proves nothing about it.
+      sets: sets,
       ok:
-        if(workload?(cmd),
-          do: success == true and not Regex.match?(@failed_re, out || "")
-        )
+        cond do
+          not runs -> nil
+          success != true or Regex.match?(@failed_re, out) -> false
+          Enum.all?(received, fn {_var, _value, j} -> covers?(seps, j, out) end) -> true
+          true -> nil
+        end
     }
   end
 
   # Builtins that set or show variables and run nothing that reads them.
   @inert_heads ~w(export env set unset echo printf true : readonly declare)
 
-  # Does the command run something past its assignments?
-  defp workload?(cmd) do
-    cmd
-    |> unwrap()
-    |> segments()
-    |> Enum.any?(fn seg ->
-      seg = String.trim(seg) <> " "
-      rest = Regex.replace(~r/^(?:export|env)\s+/, seg, "")
+  # Builtins and setup that read no variable they are given, past `setup?/1`'s.
+  @env_inert ~w(cd pwd source . nvm unset)
 
-      rest =
-        binary_part(
-          rest,
-          byte_size(leading_assigns(rest)),
-          byte_size(rest) - byte_size(leading_assigns(rest))
-        )
+  # One segment's part in what a command sets: the `K=V`s it makes (after an
+  # `export` or `env`, around an `rtk`), whether they outlive it (`export`),
+  # the values its code sets, and whether it runs anything that could read
+  # them. Text that only looks like an assignment, as in `echo K=V`, sets
+  # nothing.
+  defp env_segment(text) do
+    seg = String.trim(text)
+    bare = Regex.replace(~r/^(?:export|env)\s+/, seg, "") <> " "
+    first = leading_assigns(bare)
+    rest = (bare |> drop_prefix(first) |> strip_rtk_prefix()) <> " "
+    second = leading_assigns(rest)
+    rest = rest |> drop_prefix(second) |> String.trim()
+    head = rest |> String.split() |> List.first("") |> basename()
+    exports = Regex.match?(~r/^export\s/, seg)
+    # `export` runs nothing, whatever follows it (`export -p`).
+    runs = not exports and rest != "" and not setup?(rest) and head not in @env_inert
 
-      case rest |> strip_rtk_prefix() |> String.split() do
-        [head | _] -> head not in @inert_heads
-        [] -> false
-      end
-    end)
+    %{
+      assigns:
+        @env_prefix_re
+        |> Regex.scan(first <> second)
+        |> Enum.map(fn [_, var, _quote, value] -> {var, value} end),
+      exports: exports,
+      incode:
+        if(runs,
+          do:
+            @env_incode_re |> Regex.scan(rest) |> Enum.map(fn [_, var, value] -> {var, value} end),
+          else: []
+        ),
+      runs: runs
+    }
   end
+
+  defp drop_prefix(text, prefix),
+    do: binary_part(text, byte_size(prefix), byte_size(text) - byte_size(prefix))
 
   @doc "Whether a variable's name says it holds a credential."
   # Whole parts only, so `KEYBOARD_LAYOUT` and `DESIGN_MODE` are not; `PWD`
@@ -889,21 +949,6 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
     seg == "" or head in @passthrough or head in @inert_heads or Regex.match?(@cd_re, seg) or
       Regex.match?(@activate_re, seg) or Regex.match?(@conda_activate_re, seg)
-  end
-
-  # The assignments a command makes: each segment's leading `K=V`s, after an
-  # `export` or `env` and around an `rtk`. Text that only looks like one, as
-  # in `echo K=V` or a string in the code a command runs, sets nothing.
-  defp assignments(cmd) do
-    cmd
-    |> unwrap()
-    |> segments()
-    |> Enum.map_join(" ", fn seg ->
-      seg = Regex.replace(~r/^(?:export|env)\s+/, String.trim(seg), "") <> " "
-      first = leading_assigns(seg)
-      rest = seg |> binary_part(byte_size(first), byte_size(seg) - byte_size(first))
-      first <> leading_assigns(strip_rtk_prefix(rest) <> " ")
-    end)
   end
 
   defp leading_assigns(text) do

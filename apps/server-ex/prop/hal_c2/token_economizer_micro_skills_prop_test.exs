@@ -26,7 +26,11 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
     * saving and loading changes nothing: the dump of the reloaded state is
       the dump that was saved, and both stage the same block;
     * every fact ever staged was learned from evidence, never invented: its
-      fired count never exceeds the turns folded since it was created.
+      fired count never exceeds the turns folded since it was created;
+    * an environment value is vouched for only by a successful workload that
+      received it, inline or exported before it, and whose exit status speaks
+      for it: a value only an inert builtin, a later segment or a lost
+      pipeline export got is never learned as working.
 
   The settings' mode gate (off learns and stages nothing) is the plugin
   process's two lines around these pure functions and is covered by
@@ -39,7 +43,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
   use PropCheck
   use PropCheck.StateM
 
-  alias HalC2Plugins.TokenEconomizer.MicroSkills.{EnvFacts, Lifecycle}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.{EnvFacts, Lifecycle, Observe}
 
   @repair_id "form_repair:run_tests:python -m pytest"
   @absent_id "absent_tool:ruff"
@@ -357,6 +361,102 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
       end)
 
     dropped_ok and facts_ok and skills.now == state.turns
+  end
+
+  # --- environment values ----------------------------------------------------------------------
+
+  @workload "python -c 'import app'"
+
+  property "an environment value is vouched for only by a successful workload that received it",
+    numtests: HalC2.Prop.numtests(300) do
+    forall {segs, code, out} <-
+             {env_command(), oneof([0, 1, nil]),
+              elements(["ran", "", "Traceback (most recent call last):\n"])} do
+      cmd =
+        Enum.map_join(segs, fn {seg, sep} ->
+          env_text(seg) <> if(sep, do: " #{sep} ", else: "")
+        end)
+
+      entries = Observe.observe_turn([bash(cmd, out, code)]).env
+      received = env_received(segs)
+      workloads? = Enum.any?(segs, &match?({{:run, _}, _}, &1))
+
+      lawful =
+        Enum.all?(entries, fn entry ->
+          # Where anything ran, a value it reports is one a workload got.
+          # Vouched for: the call exited 0 and a workload its status speaks
+          # for got the value.
+          (not workloads? or
+             Enum.all?(entry.sets, fn kv -> Enum.any?(received, fn {_j, got} -> kv in got end) end)) and
+            (entry.ok != true or
+               (code == 0 and
+                  Enum.all?(entry.sets, fn kv ->
+                    Enum.any?(received, fn {j, got} -> kv in got and env_covered?(segs, j) end)
+                  end)))
+        end)
+
+      lawful
+      |> when_fail(IO.puts("cmd: #{cmd}\ncode: #{inspect(code)}\nentries: #{inspect(entries)}"))
+    end
+  end
+
+  defp env_assigns,
+    do: resize(2, list({elements(~w(APP_SETTINGS DEBUG_LEVEL)), elements(~w(conf.a conf.b))}))
+
+  defp env_segment do
+    oneof([
+      {:run, env_assigns()},
+      {:inert, env_assigns(), elements(["true", ":", "echo set", "cd .", "pwd", "set -e"])},
+      {:export, non_empty(env_assigns())},
+      {:plain, non_empty(env_assigns())}
+    ])
+  end
+
+  # Segments, each with the operator after it (nil after the last).
+  defp env_command do
+    let pairs <- resize(4, non_empty(list({env_segment(), elements(["&&", "||", ";", "|"])}))) do
+      List.update_at(pairs, -1, fn {seg, _} -> {seg, nil} end)
+    end
+  end
+
+  defp env_text({:run, assigns}), do: env_words(assigns, @workload)
+  defp env_text({:inert, assigns, head}), do: env_words(assigns, head)
+  defp env_text({:export, assigns}), do: "export " <> env_words(assigns, "")
+  defp env_text({:plain, assigns}), do: env_words(assigns, "")
+
+  defp env_words(assigns, tail),
+    do:
+      (Enum.map(assigns, fn {k, v} -> "#{k}=#{v}" end) ++ [tail])
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join(" ")
+
+  # What each workload got, as the shell gives it: the values exported before
+  # it (a pipeline's export is lost with its subshell), then its own.
+  defp env_received(segs) do
+    {received, _} =
+      segs
+      |> Enum.with_index()
+      |> Enum.reduce({[], %{}}, fn
+        {{{:run, assigns}, _sep}, j}, {received, exported} ->
+          {[{j, exported |> Map.merge(Map.new(assigns)) |> Map.to_list()} | received], exported}
+
+        {{{:export, assigns}, sep}, _j}, {received, exported} when sep != "|" ->
+          {received, Map.merge(exported, Map.new(assigns))}
+
+        _, acc ->
+          acc
+      end)
+
+    received
+  end
+
+  # A call's status speaks for workload `j` when only `&&` follows it and it
+  # did not run only because something before it failed.
+  defp env_covered?(segs, j) do
+    seps = Enum.map(segs, &elem(&1, 1))
+
+    seps |> Enum.slice(j..-2//1) |> Enum.all?(&(&1 == "&&")) and
+      (j == 0 or Enum.at(seps, j - 1) != "||")
   end
 end
 

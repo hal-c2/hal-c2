@@ -1334,6 +1334,51 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
              %{"APP_SETTINGS" => "conf.dev"}
   end
 
+  test "a value is vouched for only by a workload that received it and whose status shows" do
+    env = fn cmd, code ->
+      case Observe.observe_turn([bash(cmd, "ran", code)]).env do
+        [] -> nil
+        [entry] -> {entry.sets, entry.ok}
+      end
+    end
+
+    # The value only `true` got exercised nothing.
+    assert env.("APP_SETTINGS=conf.dev python -c 'import app' && APP_SETTINGS=conf.bad true", 0) ==
+             {%{"APP_SETTINGS" => "conf.dev"}, true}
+
+    # Inert builtins receive a value without reading it.
+    for tail <- ["cd .", "true", ":", "echo set", "pwd", "set -e", "export -p", "env"] do
+      assert env.("export APP_SETTINGS=conf.missing && #{tail}", 0) ==
+               {%{"APP_SETTINGS" => "conf.missing"}, nil}
+    end
+
+    # Set after the work ran, nothing read it.
+    assert env.("python -c 'import app' && export APP_SETTINGS=conf.missing", 0) == nil
+
+    # Exported, it reaches what runs after it.
+    assert env.("export APP_SETTINGS=conf.dev && cd app && python -c 'import app'", 0) ==
+             {%{"APP_SETTINGS" => "conf.dev"}, true}
+
+    # The exit status is the last segment's: it does not speak for the receiver.
+    assert env.("APP_SETTINGS=conf.dev python -c 'import app' || true", 0) ==
+             {%{"APP_SETTINGS" => "conf.dev"}, nil}
+
+    assert env.("APP_SETTINGS=conf.dev python -c 'import app' | tail -n 1", 0) ==
+             {%{"APP_SETTINGS" => "conf.dev"}, nil}
+
+    assert env.("APP_SETTINGS=conf.dev python -c 'import app'; echo done", 0) ==
+             {%{"APP_SETTINGS" => "conf.dev"}, nil}
+
+    # Two workloads given different values: which one worked is not known.
+    assert env.(
+             "APP_SETTINGS=conf.a python -c 'import app' && APP_SETTINGS=conf.b python -c 'import app'",
+             0
+           ) == nil
+
+    # A pipeline's export is lost with its subshell.
+    assert env.("export APP_SETTINGS=conf.dev | python -c 'import app'", 0) == nil
+  end
+
   test "an unknown exit status is no evidence of success" do
     digest =
       Observe.observe_turn([
@@ -1444,6 +1489,25 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       assert fact.params["good"] == %{"conf.dev" => 6}
       # Only exported, it did not fail either.
       assert fact.params["bad"] == %{}
+    end
+
+    test "a value only an inert command or another segment received is never learned" do
+      for cmd <- [
+            "export APP_SETTINGS=conf.missing && cd .",
+            "APP_SETTINGS=conf.missing true && python -c 'print(1)'"
+          ] do
+        tasks =
+          Enum.map(0..5, fn i ->
+            [
+              edit("/r/pkg/mod#{i}.py"),
+              bash("python -c 'import app'", @need, 1),
+              bash(cmd, "1", 0)
+            ]
+          end)
+
+        {state, _} = stream(tasks)
+        refute Map.has_key?(state.facts, "env_value:APP_SETTINGS"), cmd
+      end
     end
 
     test "no value that worked means no fact" do
