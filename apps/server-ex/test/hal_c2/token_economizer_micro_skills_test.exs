@@ -1592,7 +1592,15 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
             "export APP_SETTINGS=conf.missing && unset APP_SETTINGS && python -c 'import app'",
             "true | export APP_SETTINGS=conf.missing && python -c 'import app'",
             "export APP_SETTINGS=conf.missing; python -c 'import app'",
-            "(export APP_SETTINGS=conf.missing) && python -c 'import app'"
+            "(export APP_SETTINGS=conf.missing) && python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && env -u APP_SETTINGS python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && env -uAPP_SETTINGS python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && env --unset=APP_SETTINGS python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && env --unset APP_SETTINGS python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && env -i python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && /usr/bin/env --ignore-environment python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && export -n APP_SETTINGS && python -c 'import app'",
+            "export APP_SETTINGS=conf.missing && declare +x APP_SETTINGS && python -c 'import app'"
           ] do
         tasks =
           Enum.map(0..5, fn i ->

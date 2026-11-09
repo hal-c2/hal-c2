@@ -30,8 +30,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
     * an environment value is vouched for only by a successful workload that
       received it, inline or exported before it down a plain `&&` chain, and
       whose exit status speaks for it: a value only an inert builtin, a later
-      segment, an export beside a pipe or in a subshell got, or one unset or
-      reassigned, is never learned as working.
+      segment, an export beside a pipe or in a subshell got, or one unset,
+      reassigned, un-exported or cleared by `env`, is never learned as working.
 
   The settings' mode gate (off learns and stages nothing) is the plugin
   process's two lines around these pure functions and is covered by
@@ -401,6 +401,11 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
     end
   end
 
+  # Ways to clear or un-export a variable: `env`'s options for the command it
+  # runs, and the builtins' for the shell.
+  @env_scrubs ["env -u APP_SETTINGS", "env -uDEBUG_LEVEL", "env --unset=APP_SETTINGS", "env -i"]
+  @scrubs @env_scrubs ++ ["export -n APP_SETTINGS", "export -n DEBUG_LEVEL"]
+
   defp env_assigns,
     do: resize(2, list({elements(~w(APP_SETTINGS DEBUG_LEVEL)), elements(~w(conf.a conf.b))}))
 
@@ -412,7 +417,9 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
       {:inert, env_assigns(), elements(["true", ":", "echo set", "cd .", "pwd", "set -e"])},
       {:export, non_empty(env_assigns())},
       {:plain, non_empty(env_assigns())},
-      {:unset, elements(~w(APP_SETTINGS DEBUG_LEVEL))}
+      {:unset, elements(~w(APP_SETTINGS DEBUG_LEVEL))},
+      {:scrub, elements(@scrubs)},
+      {:scrubbed_run, elements(@env_scrubs)}
     ])
   end
 
@@ -428,6 +435,9 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
   defp env_text({:export, assigns}), do: "export " <> env_words(assigns, "")
   defp env_text({:plain, assigns}), do: env_words(assigns, "")
   defp env_text({:unset, var}), do: "unset #{var}"
+  defp env_text({:scrub, "env" <> _ = scrub}), do: "#{scrub} true"
+  defp env_text({:scrub, scrub}), do: scrub
+  defp env_text({:scrubbed_run, scrub}), do: "#{scrub} #{@workload}"
   defp env_text({:subshell, seg}), do: "(#{env_text(seg)})"
 
   defp env_words(assigns, tail),
@@ -439,7 +449,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
   # What each workload surely got: its own values, and those exported before
   # it that the shell passes on down a plain `&&` chain -- not an export beside
   # a pipe (its subshell loses it), nor one past a `;`, `||` or `|`, nor one
-  # unset anywhere or reassigned after it, and none where a subshell runs.
+  # unset or cleared anywhere or reassigned after it, and none where a
+  # subshell runs.
   defp env_received(segs) do
     seps = Enum.map(segs, &elem(&1, 1))
     subshell? = Enum.any?(segs, &match?({{:subshell, _}, _}, &1))
@@ -452,6 +463,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
 
   defp env_run({:run, assigns}), do: assigns
   defp env_run({:subshell, {:run, assigns}}), do: assigns
+  defp env_run({:scrubbed_run, _scrub}), do: []
+  defp env_run({:subshell, {:scrubbed_run, _scrub}}), do: []
   defp env_run(_seg), do: nil
 
   defp env_carried(segs, seps, j) do
@@ -469,12 +482,20 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
       seps |> Enum.slice(i..(j - 1)//1) |> Enum.all?(&(&1 == "&&")) and
         (i == 0 or Enum.at(seps, i - 1) != "|") and
         not Enum.any?(Enum.with_index(segs), fn {{seg, _sep}, k} ->
-          match?({:unset, ^var}, seg) or
+          match?({:unset, ^var}, seg) or clears?(seg, var) or
             (match?({:plain, _}, seg) and k > i and List.keymember?(elem(seg, 1), var, 0))
         end)
     end)
     |> Map.new(fn {var, {value, _i}} -> {var, value} end)
   end
+
+  # Whether a segment may clear or un-export `var`.
+  defp clears?({:subshell, seg}, var), do: clears?(seg, var)
+
+  defp clears?({kind, scrub}, var) when kind in [:scrub, :scrubbed_run],
+    do: scrub == "env -i" or String.ends_with?(scrub, var)
+
+  defp clears?(_seg, _var), do: false
 
   # A call's status speaks for workload `j` when only `&&` follows it and it
   # did not run only because something before it failed.

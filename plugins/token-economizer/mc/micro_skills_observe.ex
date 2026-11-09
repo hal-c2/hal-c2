@@ -772,7 +772,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     # exports and assignments into workloads. A variable it carries is
     # unconfirmed for the whole call when it is unset, reassigned bare, exported
     # beside a `|` (a pipeline's segments run in subshells), or carried past a
-    # `;` or `||`, and every carried one is when a subshell runs.
+    # `;` or `||`, and every carried one is when a subshell runs or a segment
+    # may clear or un-export it (`scrubs`).
     {received, _exported, tainted, _before} =
       segs
       |> Enum.zip(seps)
@@ -810,9 +811,9 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         tainted = MapSet.union(tainted, MapSet.new(seg.unsets ++ mutated))
 
         tainted =
-          if sep in ["&&", nil],
-            do: tainted,
-            else: MapSet.union(tainted, MapSet.new(Map.keys(exported)))
+          if seg.scrubs or sep not in ["&&", nil],
+            do: MapSet.union(tainted, MapSet.new(Map.keys(exported))),
+            else: tainted
 
         {received, exported, tainted, sep}
       end)
@@ -865,6 +866,10 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     }
   end
 
+  # `env` with any option (`-u NAME`, `-i`) or `export`, `declare` or `typeset`
+  # with any flag (`export -n NAME`) may clear or un-export what is carried.
+  @scrub_re ~r/(?:^|\s)(?:\S*\/)?env\s+-|^(?:export|declare|typeset)\s+[-+]/
+
   # Builtins that set or show variables and run nothing that reads them.
   @inert_heads ~w(export env set unset echo printf true : readonly declare)
 
@@ -874,7 +879,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # One segment's part in what a command sets: the `K=V`s it makes (after an
   # `export` or `env`, around an `rtk`), whether they outlive it (`export`),
   # the values its code sets, whether it runs anything that could read them,
-  # and the variables it unsets. Text that only looks like an assignment, as in `echo K=V`, sets
+  # the variables it unsets, and whether it may clear any carried one. Text that only looks like an assignment, as in `echo K=V`, sets
   # nothing.
   defp env_segment(text) do
     seg = String.trim(text)
@@ -906,6 +911,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
           else: []
         ),
       runs: runs,
+      scrubs: Regex.match?(@scrub_re, seg),
       unsets: unsets
     }
   end
