@@ -101,7 +101,7 @@ defmodule HalC2.Upgrade.Release do
           (native = Enum.flat_map(apps, & &1.native)) != [] &&
             "#{native |> Enum.map(&inspect/1) |> Enum.join(", ")} load native code",
           (frozen = Enum.flat_map(apps, & &1.frozen)) != [] &&
-            "#{frozen |> Enum.map(&inspect/1) |> Enum.join(", ")} change, which processes wait in (HalC2.Frozen)"
+            "#{frozen |> Enum.map(&inspect/1) |> Enum.join(", ")} change or go, and processes wait in them (HalC2.Frozen)"
         ],
         & &1
       )

@@ -86,16 +86,21 @@ defmodule HalC2.Upgrade.Appup do
   end
 
   @doc """
-  The changed modules processes wait in (`HalC2.Frozen`), which take a restart.
-  Processes wait in the running version, so a module that stops being frozen counts
-  too; one new to the release has nobody waiting in it yet.
+  The changed or removed modules processes wait in (`HalC2.Frozen`), which take a
+  restart. Processes wait in the running version, so a module that stops being
+  frozen, or is dropped, counts too; one new to the release has nobody waiting in
+  it yet.
   """
   @spec frozen(%{module() => map()}, %{module() => beam()}) :: [module()]
   def frozen(old, new) do
-    for mod <- changed(old, new),
-        was = old[mod],
-        was != nil and (was[:frozen?] == true or new[mod].frozen?),
-        do: mod
+    changed =
+      for mod <- changed(old, new),
+          was = old[mod],
+          was != nil and (was[:frozen?] == true or new[mod].frozen?),
+          do: mod
+
+    removed = for {mod, was} <- old, not Map.has_key?(new, mod), was[:frozen?] == true, do: mod
+    changed ++ removed
   end
 
   @doc """

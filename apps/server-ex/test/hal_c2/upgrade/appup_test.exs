@@ -74,12 +74,14 @@ defmodule HalC2.Upgrade.AppupTest do
     refute Appup.info(elem(:code.get_object_code(HalC2.Upgrade.Appup), 1)).frozen?
   end
 
-  test "a change to a module that is or was frozen takes a restart" do
+  test "a change to, or removal of, a module that is or was frozen takes a restart" do
     old = %{
       AppupT.F1 => %{md5: "a", frozen?: false},
       AppupT.F2 => %{md5: "a", frozen?: true},
       AppupT.F3 => %{md5: "a", frozen?: false},
-      AppupT.F4 => %{md5: "a", frozen?: true}
+      AppupT.F4 => %{md5: "a", frozen?: true},
+      AppupT.F6 => %{md5: "a", frozen?: true},
+      AppupT.F7 => %{md5: "a", frozen?: false}
     }
 
     new = %{
@@ -90,7 +92,7 @@ defmodule HalC2.Upgrade.AppupTest do
       AppupT.F5 => %{md5: "b", frozen?: true}
     }
 
-    assert Enum.sort(Appup.frozen(old, new)) == [AppupT.F1, AppupT.F2]
+    assert Enum.sort(Appup.frozen(old, new)) == [AppupT.F1, AppupT.F2, AppupT.F6]
   end
 
   test "a module loading a NIF is told apart" do
