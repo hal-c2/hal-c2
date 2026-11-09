@@ -15,6 +15,8 @@
 #     every other member says, a switched-off one once it is back)
 #   apps/server-ex/lib/hal_c2/thread_archive.ex (what the destination writes of a thread: a plugin's
 #     mark stays behind)
+#   apps/server-ex/lib/hal_c2/plugins/package.ex (threadsStay read from the package on disk; an install
+#     cut off at any point leaves the package installed or aside, never missing)
 #   apps/server-ex/lib/hal_c2/project_environment.ex (a session loads the environment of the project it
 #     runs in, on the machine it runs on)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
@@ -175,9 +177,11 @@ Feature: Moving a thread and its agent to another machine
         | its unread state                                   |
         | a pending merge-back from one of its forks         |
 
+    # A plugin that keeps its threads where they are (the next rule) is never moved; this is
+    # every other plugin's thread, which holds nothing of it once the plugin has stopped.
     @mc
     Scenario: A thread a plugin started arrives as an ordinary thread
-      Given "Alpha" was started by the plugin "code-review", which no longer runs on "laptop"
+      Given "Alpha" was started by the plugin "tracker", which no longer runs on "laptop"
       When "Alpha" moves to "desktop"
       Then "Alpha" on "desktop" is an ordinary thread, in the thread list
 
@@ -450,6 +454,148 @@ Feature: Moving a thread and its agent to another machine
       When the user writes a message in "Alpha"
       Then the message is kept as a draft
       And it can be sent once "Alpha" has arrived on "desktop"
+
+    # A plugin declares that its threads stay when it launches them
+    # (apps/server-ex/lib/hal_c2/plugins/host.ex launch_thread, `stays: true`), and "code-review"
+    # does: its sandbox, credential and checkout of untrusted code do not travel, so a review
+    # thread that arrived elsewhere would run without them. The refusal comes before anything is
+    # read or copied, and it is the MC's own message, which desktop and the TUI show as they
+    # show a thread that is running (the phone has no move yet). A fork of such a thread
+    # carries the mark, so it is kept on the machine too; forking never leaves the machine.
+    @mc
+    Scenario: A thread its plugin keeps on the machine is not moved
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And "Alpha" stays on "laptop" as it was
+      And nothing of "Alpha" is left on "desktop"
+
+    # A thread run in a review sandbox (apps/server-ex/lib/hal_c2/open_shell/review.ex) is kept
+    # whatever its plugin's manifest says: the sandbox is this machine's.
+    @mc
+    Scenario: A thread run in a review sandbox is not moved
+      Given "Alpha" runs in a review sandbox the plugin "notes" opened on the machine
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by notes, which keeps it on this machine."
+      And "Alpha" stays on "laptop" as it was
+      And nothing of "Alpha" is left on "desktop"
+
+    @mc
+    Scenario: A thread its plugin keeps on the machine is refused while it is idle or running
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      And the agent is working in "Alpha"
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And "Alpha" stays on "laptop" and keeps running
+
+    @mc
+    Scenario: A thread its plugin keeps on the machine is offered no destination
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      When the user asks which machines "Alpha" could move to
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+
+    # A running turn is stopped only once the MC has said the thread may go: the desktop palette
+    # lists the cluster's machines without asking it, so choosing one asks before it offers to
+    # stop the turn (apps/desktop-qt/src/native/ThreadMenuController.cpp startMove), and the
+    # TUI's picker asks before it lists anything.
+    @shared @backlog-mobile
+    Scenario: A running thread its plugin keeps is not stopped to be moved
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      And the agent is working in "Alpha"
+      And the user is looking at "Alpha"
+      When the user moves the thread to "desktop" from the command palette
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And the running turn of "Alpha" is not interrupted
+
+    @mc
+    Scenario: A thread its plugin keeps on the machine is not exported either
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+
+    @mc
+    Scenario: A fork of a thread its plugin keeps is kept too
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      And "Beta" on "laptop" is a fork of "Alpha"
+      When the user moves "Beta" to "desktop"
+      Then the user is told "Alpha fork was started by code-review, which keeps it on this machine."
+
+    # A review thread and its fork from before the manifest said so carry a plugin mark without
+    # "stays". The installed plugin's manifest (`"threadsStay"`) keeps them anyway, whether or not
+    # the plugin runs and without an MC having started since the upgrade, so none of them can be
+    # moved or exported to land as an ordinary thread in a checkout of untrusted code.
+    @mc
+    Scenario: A thread started before its plugin kept its threads is kept once the plugin does, even turned off
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And "Beta" on "laptop" is a fork of "Alpha"
+      And the plugin "code-review" is installed on "laptop" and keeps its threads there, but is turned off
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      When the user moves "Beta" to "desktop"
+      Then the user is told "Alpha fork was started by code-review, which keeps it on this machine."
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+
+    # Installing a new version moves the old one aside before putting the new one in its place
+    # (`mix hal_c2.plugins.install`). The manifest set aside still speaks for the plugin in
+    # between, to the MC and to an export run on its own.
+    @mc
+    Scenario: A thread its plugin keeps is kept while a new version of the plugin is put in place
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And the plugin "code-review" is installed on "laptop" and keeps its threads there, but is turned off
+      And a new version of "code-review" is being installed on "laptop", the old one moved aside and the new one not yet in place
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+
+    # An install cut off between its two renames leaves the old version aside and nothing in its
+    # place. The next install puts it back before it copies the new one, so when that one is cut
+    # off too (a crash, a full disk), the plugin is still installed and still keeps its threads.
+    @mc
+    Scenario: A thread its plugin keeps is kept when installs of a new version are cut off
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And the plugin "code-review" is installed on "laptop" and keeps its threads there, but is turned off
+      And an install of a new version of "code-review" on "laptop" was cut off between its renames, and the next one while it copied
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+
+    # The MC starts (or its plugin host does) while the installed plugin's manifest cannot be
+    # parsed, so no version of the plugin loads and nothing says whether it keeps its threads. A
+    # package that is there but unreadable is taken to keep them: a review thread from before the
+    # mark, and its fork, are not let go until the manifest is fixed or the package is removed.
+    @mc
+    Scenario: A thread its plugin keeps is kept while the plugin's manifest cannot be read
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And "Beta" on "laptop" is a fork of "Alpha"
+      And the plugin "code-review" is installed on "laptop" with a manifest that is not valid JSON, so the plugin host loaded no version of it
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      When the user moves "Beta" to "desktop"
+      Then the user is told "Alpha fork was started by code-review, which keeps it on this machine."
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+      When the plugin "code-review" is uninstalled from "laptop"
+      Then "Alpha" moves to "desktop"
+
+    # The machine a thread leaves may not keep it: an MC from before plugins kept their threads,
+    # or one whose version of the plugin does not say so. The machine it reaches then refuses it,
+    # by the thread's mark or by its own copy of the plugin, and the thread stays where it was.
+    @mc
+    Scenario: A thread its plugin keeps is refused by the machine it would arrive on
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And the plugin "code-review" is installed on "desktop" and keeps its threads there, but is turned off
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on the machine it started on. Alpha was not imported."
+      And "Alpha" stays on "laptop" as it was
+      And nothing of "Alpha" is left on "desktop"
 
     @mc
     Scenario Outline: A move the destination cannot take is refused before anything is copied
@@ -725,6 +871,17 @@ Feature: Moving a thread and its agent to another machine
       When the user imports it on "desktop"
       Then the thread is listed with its history, attachments and terminal scrollback
       And its next message hands the conversation over to the agent
+
+    # The previous server's format carries the thread as events, and one of them can name the
+    # plugin that started it: the destination reads what the events make of the thread, so the
+    # file's format lets no thread its plugin keeps in.
+    @mc
+    Scenario: A file exported by the previous server is refused for a thread its plugin keeps
+      Given a thread file exported by the previous server of a thread the plugin "code-review" started
+      And the plugin "code-review" is installed on "desktop" and keeps its threads there, but is turned off
+      When the user imports it on "desktop"
+      Then the user is told "code-review" keeps "Legacy" on the machine it started on
+      And nothing is imported
 
     @mc
     Scenario: A damaged file is refused

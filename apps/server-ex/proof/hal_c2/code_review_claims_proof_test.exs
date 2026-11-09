@@ -111,7 +111,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.close_sandbox/3" => @agent,
       "HalC2.Plugins.Host.sandbox_ended/2" => @agent,
       "HalC2Plugins.CodeReview.sandboxed?/2" => @host,
-      "HalC2Plugins.CodeReview handle_call {:stop, _}" => @user
+      "HalC2Plugins.CodeReview handle_call {:stop, _}" => @user,
+      "HalC2.Plugins.Host.steer/4" => @host,
+      "HalC2.Plugins.Host.notice/5" => @shown,
+      "HalC2.Plugins.Host.generate/3" => @host,
+      "HalC2.Plugins.Host.history/3" => @host
     },
     environment: %{
       "push" => "a commit is pushed to the pull request",

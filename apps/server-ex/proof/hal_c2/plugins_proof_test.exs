@@ -12,6 +12,7 @@ defmodule HalC2.PluginsProofTest do
   @consent "permissions and the settings a plugin declares: not part of its lifecycle"
   @dispatch "decodes a client's request into the calls the model lists"
   @checked "records what a compile check found on a plugin's entry; starts and stops nothing"
+  @hooks "reads the hook registry, never the host: a plugin's feed (HalC2.Plugins.Feed) runs under its supervisor, sv, and its entries go with it"
 
   use HalC2.Proof,
     model: "plugins.maude",
@@ -52,6 +53,7 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.provider/1" => @reads,
       "HalC2.Plugins.providers/0" => @reads,
       "HalC2.Plugins.running?/2" => @reads,
+      "HalC2.Plugins.threads_stay?/1" => @reads,
       "HalC2.Plugins.sessions/1" => @reads,
       "HalC2.Plugins.text_backend?/1" => @reads,
       "HalC2.Plugins.tools/1" => @reads,
@@ -61,6 +63,11 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.call_tool/3" => "runs a plugin's tool in the caller's process",
       "HalC2.Plugins.generate/3" => "runs a plugin's text generation in the caller's process",
       "HalC2.Plugins.pull_requests/2" => "asks a plugin's git host in the caller's process",
+      "HalC2.Plugins.observing?/0" => @hooks,
+      "HalC2.Plugins.observe/1" => @hooks,
+      "HalC2.Plugins.shape_run/1" => @hooks,
+      "HalC2.Plugins.settings_now/2" =>
+        "reads a plugin's saved settings, as its feed starts and as it is asked to shape",
       "HalC2.Plugins.turn_finished/3" => "tells the plugins of a finished turn, in a task",
       "HalC2.Plugins.slack_event/2" =>
         "hands a Slack event to the plugins granted slack:read, each in a task after the last",
