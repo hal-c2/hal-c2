@@ -14,6 +14,7 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Plugins.Host
   alias HalC2.Steps.Plugins.Fixtures
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
@@ -348,7 +349,12 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     for {title, _} <- context[:threads] || %{},
         do: :ok = HalC2.Streams.flush_shell(World.thread_id(context, title))
 
-    context = save(context, %{"historyImport" => true})
+    context |> save(%{"historyImport" => true}) |> watch_history()
+  end
+
+  # Watches the project's topic: the receipt the import's states are reached
+  # by (`await_history/2`).
+  defp watch_history(context) do
     sub = System.unique_integer([:positive])
 
     shape = %{
@@ -363,6 +369,56 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     context
     |> World.put_client("token-economizer-history", client)
     |> Map.put(:history_watched, sub)
+  end
+
+  # The fold as the plugin saves it mid-import, nothing learned yet: planned
+  # and part way through a thread.
+  step "TokenEconomizer's history import on the project was under way when the MC stopped",
+       context do
+    Map.put(context, :saved_fold, %{
+      "state" => "running",
+      "id" => "under-way",
+      "startedAt" => "2026-01-01T00:00:00Z",
+      "plan" => ["thread-read-before"],
+      "next" => 0,
+      "after" => "run-read-before",
+      "step" => 2,
+      "turns" => 0,
+      "skipped" => %{},
+      "pending" => [],
+      "envelopes" => %{}
+    })
+  end
+
+  # The setting is off and the project's micro-skills file holds the fold
+  # under way as the MC starts again, so the plugin never hears it turned off.
+  step "the history import was turned off before the MC started again", context do
+    context = save(context, %{"historyImport" => false})
+
+    key =
+      :crypto.hash(:sha256, project_id(context))
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 24)
+
+    path = Path.join([Host.data_dir(@id), "micro-skills", key <> ".json"])
+    File.mkdir_p!(Path.dirname(path))
+    saved = %{"projectId" => project_id(context), "history" => context.saved_fold}
+    File.write!(path, JSON.encode!(saved))
+
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert %{"status" => "running"} = Fixtures.entry(@id)
+    context |> Map.put(:folded, 0) |> watch() |> watch_history()
+  end
+
+  step "TokenEconomizer's history import stopped, the import having been turned off, the project having learned from {int} turns",
+       %{args: [turns]} = context do
+    {entry, context} = await_history(context, "stopped")
+    assert entry["history"]["reason"] =~ "turned off"
+    assert entry["history"]["pending"] == 0
+    {view, context} = micro_skills(context)
+    assert view["history"]["state"] == "stopped"
+    assert view["turns"] == turns
+    context
   end
 
   step "TokenEconomizer's history import is done, the project having learned from {int} turns",

@@ -70,6 +70,13 @@ Feature: TokenEconomizer learns from a project's earlier threads
     Then Claude is not told anything about "pytest"
 
   @mc
+  Scenario: An import left under way by an MC that stopped, with the import turned off since, stops and still learns from the turns that end
+    Given TokenEconomizer's history import on the project was under way when the MC stopped
+    And the history import was turned off before the MC started again
+    When Claude starts the thread "Next" with "hello"
+    Then TokenEconomizer's history import stopped, the import having been turned off, the project having learned from 1 turns
+
+  @mc
   Scenario: The import's settings take whole numbers
     When the person sets "historyDays" to 0
     Then the settings are refused, naming "historyDays"

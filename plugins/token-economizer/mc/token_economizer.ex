@@ -737,7 +737,9 @@ defmodule HalC2Plugins.TokenEconomizer do
         if turn.run in skills.folded,
           do: loaded,
           else:
-            put_fold(loaded, project_id, History.hold(fold, [thread_id, turn.run, turn.injected]))
+            loaded
+            |> put_fold(project_id, History.hold(fold, [thread_id, turn.run, turn.injected]))
+            |> pump()
       else
         fold_live(state, project_id, thread_id, turn)
       end
@@ -1016,10 +1018,22 @@ defmodule HalC2Plugins.TokenEconomizer do
         skills = EnvFacts.load(saved, skills_caps(state))
         state = put_in(state.skills[project_id], skills)
 
+        # A fold saved running while the import is now off (turned off
+        # while the MC was down) stops as it would have, folding what it held.
         state =
           case History.load(saved["history"]) do
-            nil -> state
-            fold -> put_in(state.folds[project_id], fold)
+            nil ->
+              state
+
+            fold ->
+              stopped =
+                if history_on?(state),
+                  do: fold,
+                  else: History.stop(fold, "the history import was turned off")
+
+              state = put_in(state.folds[project_id], stopped)
+              if stopped != fold, do: save_skills(state, project_id)
+              state
           end
 
         # A fact the load left out for holding a credential leaves the file
@@ -1378,7 +1392,10 @@ defmodule HalC2Plugins.TokenEconomizer do
     work = fn ->
       result =
         try do
-          read_history(project_id, what, days, most, level, thr)
+          case what do
+            {:pending, entries} -> read_pending(entries, fold)
+            what -> read_history(project_id, what, days, most, level, thr)
+          end
         rescue
           e -> {:error, what, Exception.message(e)}
         end
@@ -1425,16 +1442,14 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  defp read_history(_project_id, {:pending, entries}, _days, _most, _level, _thr) do
+  # The held-back live turns, read back from their threads (`History.held_turns/6`).
+  defp read_pending(entries, fold) do
     read =
       entries
-      |> Enum.map(&hd/1)
-      |> Enum.uniq()
-      |> Map.new(fn thread_id ->
-        case Host.history(@id, thread_id, limit: @pending_page) do
-          {:ok, turns} -> {thread_id, Map.new(turns, &{&1["runId"], &1})}
-          _ -> {thread_id, %{}}
-        end
+      |> Enum.group_by(&hd/1, &Enum.at(&1, 1))
+      |> Map.new(fn {thread_id, runs} ->
+        page = &Host.history(@id, thread_id, before: &1, limit: @pending_page)
+        {thread_id, History.held_turns(MapSet.new(runs), fold, @pending_page, page)}
       end)
 
     {:pending,
@@ -1536,26 +1551,18 @@ defmodule HalC2Plugins.TokenEconomizer do
       key = {project_id, provider}
       {tracker, state} = tracker(state, key)
 
-      cond do
-        match?(%{"left" => _}, fold["envelopes"][provider]) ->
+      case History.envelope(fold["envelopes"][provider], on?(state), tracker, fold["id"]) do
+        :seed ->
+          tracker = History.seed(tracker, fold["id"], fold["step"], samples)
+          save_tracker(key, tracker)
+          seeded = %{"seeded" => tracker.seed["n"]}
+          {put_in(fold, ["envelopes", provider], seeded), put_in(state.trackers[key], tracker)}
+
+        :keep ->
           {fold, state}
 
-        not on?(state) ->
-          {put_in(fold, ["envelopes", provider], %{"left" => "the loop guard was off"}), state}
-
-        true ->
-          case History.seedable(tracker, fold["id"]) do
-            :seeding ->
-              tracker = History.seed(tracker, fold["id"], fold["step"], samples)
-              save_tracker(key, tracker)
-              seeded = %{"seeded" => tracker.seed["n"]}
-
-              {put_in(fold, ["envelopes", provider], seeded),
-               put_in(state.trackers[key], tracker)}
-
-            {:left, reason} ->
-              {put_in(fold, ["envelopes", provider], %{"left" => reason}), state}
-          end
+        {:left, reason} ->
+          {put_in(fold, ["envelopes", provider], %{"left" => reason}), state}
       end
     end)
   end

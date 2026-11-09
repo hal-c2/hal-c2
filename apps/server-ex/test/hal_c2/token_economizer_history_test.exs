@@ -128,6 +128,64 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     end
   end
 
+  describe "the live turns it held back" do
+    # A thread of `n` ended turns, r1 to rn, the fold started as r`started` ended,
+    # read as `Host.history/3` reads it with `before:`; the reads are counted.
+    defp thread_of(n, started) do
+      turns =
+        for i <- 1..n,
+            do: %{"runId" => "r#{i}", "completedAt" => "2026-11-09T12:00:#{pad(i)}Z"}
+
+      fold = History.new("f", "2026-11-09T12:00:#{pad(started)}.5Z")
+
+      read = fn before ->
+        send(self(), :read)
+        cut = if before, do: Enum.find_index(turns, &(&1["runId"] == before)), else: n
+        {:ok, turns |> Enum.take(cut) |> Enum.take(-5)}
+      end
+
+      {fold, read}
+    end
+
+    defp pad(i), do: i |> Integer.to_string() |> String.pad_leading(2, "0")
+
+    defp reads(n \\ 0) do
+      receive do
+        :read -> reads(n + 1)
+      after
+        0 -> n
+      end
+    end
+
+    test "pages back past the newest turns until it has them all" do
+      {fold, read} = thread_of(30, 2)
+      found = History.held_turns(MapSet.new(["r28", "r12", "r4"]), fold, 5, read)
+      assert Map.keys(found) |> Enum.sort() == ["r12", "r28", "r4"]
+      assert reads() == 6
+    end
+
+    test "stops at the turns that ended before the fold started, or the thread's first" do
+      {fold, read} = thread_of(30, 18)
+
+      assert History.held_turns(MapSet.new(["r25", "gone"]), fold, 5, read) |> Map.keys() == [
+               "r25"
+             ]
+
+      assert reads() == 3
+
+      {fold, read} = thread_of(7, 0)
+      assert History.held_turns(MapSet.new(["gone"]), fold, 5, read) == %{}
+      assert reads() == 2
+    end
+
+    test "a page that cannot be read ends it with what it found" do
+      assert History.held_turns(MapSet.new(["r1"]), History.new("f", "t"), 5, fn _ ->
+               {:error, :gone}
+             end) ==
+               %{}
+    end
+  end
+
   describe "what it imports" do
     test "only turns that ended before it started; one without a time is not" do
       fold = History.new("f", "2026-11-09T12:00:00Z")
@@ -230,6 +288,17 @@ defmodule HalC2.TokenEconomizerHistoryTest do
 
       unseeded = History.unseed(tracker, "f")
       assert unseeded.resolved_turns == List.duplicate(1, cap - 2)
+    end
+
+    test "a page with the guard off is left out; a later page with it on seeds" do
+      tracker = Envelope.new()
+      assert {:left, "the loop guard was off"} = left = History.envelope(nil, false, tracker, "f")
+      assert History.envelope(%{"left" => elem(left, 1)}, true, tracker, "f") == :seed
+      assert History.envelope(%{"seeded" => 2}, false, tracker, "f") == :keep
+      assert History.envelope(%{"seeded" => 2}, true, tracker, "f") == :seed
+
+      assert {:left, reason} = History.envelope(nil, true, live(tracker), "f")
+      assert reason =~ "already learned"
     end
 
     test "a seed saved with the tracker loads back; a bad one does not" do

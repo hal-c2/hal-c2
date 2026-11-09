@@ -138,6 +138,29 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.History do
 
   def next(_fold), do: nil
 
+  @doc """
+  The turns of one thread among `runs`, the run ids it held back, by run id:
+  `read` takes the run to read before (nil for the newest) and answers a page
+  of `page` turns, oldest first, as `HalC2.Plugins.Host.history/3` does.
+  Pages are read newest first until every run is found, the thread has no
+  more, or the page reaches the turns that ended before `fold` started,
+  which no held turn is among. A page that cannot be read ends it.
+  """
+  def held_turns(runs, fold, page, read, before \\ nil, found \\ %{}) do
+    case read.(before) do
+      {:ok, [oldest | _] = turns} ->
+        found = for turn <- turns, turn["runId"] in runs, into: found, do: {turn["runId"], turn}
+
+        if map_size(found) == MapSet.size(runs) or length(turns) < page or
+             imported?(fold, oldest["completedAt"] || oldest["startedAt"]),
+           do: found,
+           else: held_turns(runs, fold, page, read, oldest["runId"], found)
+
+      _ ->
+        found
+    end
+  end
+
   @doc "Whether a fold still reads the threads of its plan."
   def importing?(fold) do
     running?(fold) and fold["stop"] == nil and is_list(fold["plan"]) and
@@ -352,6 +375,20 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.History do
 
       true ->
         {:left, "the envelope had already learned from #{length(tracker.resolved_turns)} turns"}
+    end
+  end
+
+  @doc """
+  What an imported page does to a provider driver's envelope, whose fold
+  entry is `entry`: `:seed` it, `:keep` what an earlier page did, or leave
+  the page out, `{:left, reason}`. The guard off leaves out only that page:
+  on again, a later page seeds where `seedable/2` lets it.
+  """
+  def envelope(entry, guard_on, tracker, fold_id) do
+    cond do
+      not guard_on and match?(%{"seeded" => _}, entry) -> :keep
+      not guard_on -> {:left, "the loop guard was off"}
+      true -> with :seeding <- seedable(tracker, fold_id), do: :seed
     end
   end
 
