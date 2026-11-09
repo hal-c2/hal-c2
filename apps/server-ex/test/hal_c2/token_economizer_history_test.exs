@@ -512,6 +512,97 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert "CronCreate" in state.prunes[{p, "claudeAgent"}]["used"]
   end
 
+  test "a thread handed from Claude to Codex and back keeps each provider's turned-off tools and evidence its own",
+       %{thread: thread, project: p} do
+    {claude, codex} = {{p, "claudeAgent"}, {p, "codex"}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"provider-thread", "pt-codex", %{"s" => %{"driver" => "codex"}}}
+      ])
+
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    ended(thread, "r1", 1, [])
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+
+    # Handed to Codex, the conversation is shaped by Codex's evidence alone.
+    assert {nil, state} = shape(state, thread, "r2", p, "codex")
+    codex_started = started(thread, "r2", p, %{"provider" => "codex", "newConversation" => true})
+    state = observe(state, codex_started)
+
+    goal = %{
+      "type" => "turn.item",
+      "threadId" => thread,
+      "runId" => "r2",
+      "provider" => "codex",
+      "itemType" => "dynamic_tool",
+      "tool" => "update_goal",
+      "status" => "completed"
+    }
+
+    # A Claude tool's name in a Codex turn is no use of Claude's tool.
+    cron = %{goal | "itemType" => "dynamic_tool_call", "tool" => "CronCreate"}
+    state = state |> observe(goal) |> observe(cron)
+    ended(thread, "r2", 2, [], "pt-codex")
+    state = observe(state, finished(thread, "r2", 2))
+    state = apply_tools(state, p, ["image_media"], "codex")
+
+    assert "goals" in state.prunes[codex]["used"]
+    assert state.prunes[claude]["used"] == []
+    assert state.prunes[claude]["off"] == ["CronCreate"]
+    assert state.prunes[codex]["off"] == ["image_media"]
+
+    # Back in Claude, each provider's conversation is denied its own tools alone, and
+    # each segment counted as its provider's.
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, thread, "r3", p)
+    state = observe(state, started(thread, "r3", p, %{}))
+    assert {%{"deniedTools" => ["image_media"]}, state} = shape(state, "other", "o1", p, "codex")
+    assert state.prunes[claude]["prompts"] == 1
+    assert state.prunes[codex]["prompts"] == 1
+
+    # A Claude use gives back Claude's tool, and nothing of Codex's.
+    use = %{cron | "runId" => "r3", "provider" => "claudeAgent"}
+    state = observe(state, use)
+    assert state.prunes[claude]["off"] == []
+    assert state.prunes[codex]["off"] == ["image_media"]
+  end
+
+  # A new version of the plugin is a new process (`HalC2.Plugins` stops a plugin whose
+  # source changed and starts it again): only the file crosses, written by the version
+  # before, perhaps in a shape this one does not know.
+  test "evidence saved by an earlier version turns off only what was turned off, and nothing on stale evidence",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    path = TokenEconomizer.toolprune_path(project)
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(
+      path,
+      JSON.encode!(%{
+        "version" => 0,
+        "off" => ["CronCreate", "Workflow", "Gone"],
+        "used" => ["Workflow"],
+        # What auto held, on streaks from before live evidence was counted apart.
+        "pending" => %{"items" => ["CronList"], "since" => 0},
+        "streaks" => %{"CronList" => %{"sessions" => 9, "prompts" => 99}},
+        "seededThreads" => "not a map",
+        "foldedRuns" => 7
+      })
+    )
+
+    {:ok, state} =
+      TokenEconomizer.init(%{"toolPrune" => "auto", "toolPruneQuietMinutes" => 0})
+
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, thread, "r1", p)
+    prune = state.prunes[project]
+    assert prune["pending"] == nil
+    refute "CronList" in prune["off"]
+    assert {:ok, %{} = saved} = path |> File.read!() |> JSON.decode()
+    assert saved["pending"] == nil
+  end
+
   test "a thread's history says a subagent resumed later worked in neither the turns between nor after",
        %{thread: thread} do
     at = &"2026-11-09T10:0#{&1}:00.000Z"
@@ -566,8 +657,8 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     end
   end
 
-  defp apply_tools(state, p, tools) do
-    input = %{"projectId" => p, "provider" => "claudeAgent", "tools" => tools}
+  defp apply_tools(state, p, tools, provider \\ "claudeAgent") do
+    input = %{"projectId" => p, "provider" => provider, "tools" => tools}
 
     {:reply, {:ok, _}, state} =
       TokenEconomizer.handle_call({:toolprune, :apply, input}, nil, state)
@@ -575,8 +666,8 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     state
   end
 
-  defp shape(state, thread, run, p) do
-    run = %{"threadId" => thread, "runId" => run, "projectId" => p, "provider" => "claudeAgent"}
+  defp shape(state, thread, run, p, provider \\ "claudeAgent") do
+    run = %{"threadId" => thread, "runId" => run, "projectId" => p, "provider" => provider}
     {:reply, shape, state} = TokenEconomizer.handle_call({:shape, run}, nil, state)
     {shape, state}
   end
@@ -591,7 +682,7 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     {:ok, _} = HalC2.Settings.put(Map.put(settings, "plugins", plugins), version)
   end
 
-  defp ended(thread, run, ordinal, items) do
+  defp ended(thread, run, ordinal, items, provider_thread \\ "pt") do
     rows =
       for {item, i} <- Enum.with_index(items, 1) do
         {"turn-item", "#{run}-i#{i}",
@@ -609,7 +700,7 @@ defmodule HalC2.TokenEconomizerHistoryTest do
                "id" => run,
                "ordinal" => ordinal,
                "status" => "completed",
-               "providerThreadId" => "pt"
+               "providerThreadId" => provider_thread
              }
            }}
         ] ++ rows

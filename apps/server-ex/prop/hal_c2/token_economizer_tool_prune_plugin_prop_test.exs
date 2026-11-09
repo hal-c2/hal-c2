@@ -7,7 +7,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   A state machine model of TokenEconomizer's tool pruning in its process
   (`HalC2Plugins.TokenEconomizer`): the Claude turns of two threads of one project,
   each written to the thread's stream as the MC writes it and heard through the feed,
-  which may drop a tool use and say so with its next event. A use may be a subagent's,
+  which may drop a tool use and say so with its next event, or tell of one after its
+  turn ended. A use may be a subagent's,
   heard as its parent turn's but kept in the child's thread: the parent's history
   shows only that a subagent worked in the turn. The plugin stops and
   starts again (missing whatever ran meanwhile), its history reads fail while it has
@@ -25,7 +26,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     use or not, in a turn the history still has, and nothing at all when that
     history cannot be read;
   - no tool's streak counts more ended turns than those that did not use it, so a
-    use it missed and could not read back is no evidence the tool went unused;
+    use it missed and could not read back is no evidence the tool went unused (a
+    tool it knows is used is never proposed or turned off, so a use told of after its
+    turn folded may leave that tool's streak as it was);
   - it counts no turn twice, whatever a rollback or a fork did to the history;
   - what it holds is what its file keeps, so a restart loses nothing.
 
@@ -179,10 +182,15 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     tools = oneof([nil, elements(Enum.map(@tools, &[&1]))])
 
+    # Turns that ended, of threads whose conversation the plugin holds.
+    closed =
+      for {t, %{runs: runs}} <- s.threads, s.up, t in s.heard, run <- ended(runs), do: {t, run}
+
     [
       idle != [] and s.runs < @max_runs and {6, start_call(s, idle)},
       idle != [] and s.runs < @max_runs and {2, late_call(s, idle)},
       open != [] and {8, use_call(s, open)},
+      closed != [] and {2, late_use_call(closed)},
       open != [] and {5, finish_call(s, open)},
       {2, {:call, __MODULE__, :tick, []}},
       {1, {:call, __MODULE__, :mode, [elements(~w(off propose auto))]}},
@@ -227,6 +235,20 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     end
   end
 
+  # A use the feed tells of after its turn ended: a subagent of the turn's still at
+  # work, or an item the provider reported late. One the feed dropped too is a use
+  # neither it nor a history read (each run folds once) shows, which the Maude model's
+  # `unseenOff` keeps as the design's known limit.
+  defp late_use_call(closed) do
+    let [
+      {thread, run} <- elements(closed),
+      tool <- elements(@tools),
+      via <- frequency([{3, :own}, {1, :subagent}])
+    ] do
+      {:call, __MODULE__, :late_use, [thread, run.id, length(run.tools) + 1, tool, via]}
+    end
+  end
+
   defp finish_call(s, open) do
     let thread <- elements(open) do
       {:call, __MODULE__, :finish, [thread, s.open[thread], current(s, thread).ordinal]}
@@ -260,6 +282,15 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   def precondition(s, {:call, _, :use, [thread, run | _]}), do: s.open[thread] == run
   def precondition(s, {:call, _, :finish, [thread, run, _]}), do: s.open[thread] == run
+
+  def precondition(s, {:call, _, :late_use, [thread, run, n | _]}) do
+    s.up and thread in s.heard and
+      Enum.any?(
+        ended(s.threads[thread][:runs] || []),
+        &(&1.id == run and length(&1.tools) + 1 == n)
+      )
+  end
+
   def precondition(s, {:call, _, :down, _}), do: s.up
   def precondition(s, {:call, _, :up, _}), do: not s.up
 
@@ -334,6 +365,18 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       else: s
   end
 
+  def next_state(s, _res, {:call, _, :late_use, [thread, run, _n, tool, via]}) do
+    s =
+      update_in(s.threads[thread].runs, fn runs ->
+        Enum.map(
+          runs,
+          &if(&1.id == run, do: %{&1 | tools: &1.tools ++ [{tool, nil, via}]}, else: &1)
+        )
+      end)
+
+    %{s | used: Enum.uniq(s.used ++ [tool]), owed: Enum.uniq(s.owed ++ [tool])}
+  end
+
   def next_state(s, _res, {:call, _, :finish, [thread, _run, _]}) do
     runs = s.threads[thread].runs
     last = List.last(runs)
@@ -372,7 +415,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
       shaped_whole?(s, res, denied) and
       res.prompts <= ended_runs(next) and
-      Enum.all?(@tools, &(streak(res, &1) <= unused_runs(next, &1)))
+      Enum.all?(@tools -- res.used, &(streak(res, &1) <= unused_runs(next, &1)))
   end
 
   # A conversation is shaped knowing the uses of the segments heard in part that the
@@ -514,6 +557,25 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
           |> Map.merge(if(via == :subagent, do: %{"subagent" => true}, else: %{}))
         )
     end
+
+    snapshot()
+  end
+
+  def late_use(thread, run, n, tool, via) do
+    commit(thread, [item_row(run, n, {tool, via})])
+
+    deliver(
+      %{
+        "type" => "turn.item",
+        "threadId" => thread,
+        "runId" => run,
+        "provider" => @provider,
+        "itemType" => "dynamic_tool_call",
+        "tool" => tool,
+        "status" => "completed"
+      }
+      |> Map.merge(if(via == :subagent, do: %{"subagent" => true}, else: %{}))
+    )
 
     snapshot()
   end
