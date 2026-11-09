@@ -371,6 +371,10 @@ defmodule HalC2.TokenEconomizerToolPruneTest do
              ["NotebookEdit"]
 
     assert Prune.used_in_item(%{"itemType" => "command_execution"}, "tool") == ["Bash"]
+    # A change with no tool name, as a subagent's or an older turn's may be, by its file.
+    notebook = %{"itemType" => "file_change", "path" => "nb/Analysis.IPYNB"}
+    assert Prune.used_in_item(notebook, "tool") == ["NotebookEdit"]
+    assert Prune.used_in_item(%{notebook | "path" => "a.py"}, "tool") == ["Edit"]
 
     # Codex's own exec calls name the nested helper in the input.
     exec = %{

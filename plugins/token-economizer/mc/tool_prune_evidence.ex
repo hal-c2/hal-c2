@@ -593,7 +593,8 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
 
   @doc """
   The tools of `unit` one observed turn item used: Claude's own tool name where the
-  item has one (else the work-surface name its kind stands for), or the Codex
+  item has one (else the work-surface name its kind stands for, a notebook's change
+  `NotebookEdit`), or the Codex
   capability a tool name exercises, including a nested `tools.<name>(...)` call in
   a tool's input, as upstream reads Codex traces.
   """
@@ -601,6 +602,7 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     cond do
       is_binary(item["tool"]) and item["tool"] != "" -> [item["tool"]]
       item["itemType"] == "command_execution" -> ["Bash"]
+      item["itemType"] == "file_change" and notebook?(item["path"]) -> ["NotebookEdit"]
       item["itemType"] == "file_change" -> ["Edit"]
       item["itemType"] == "file_search" -> ["Grep"]
       item["itemType"] == "web_search" -> ["WebSearch"]
@@ -621,6 +623,8 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   end
 
   def used_in_item(_item, _unit), do: []
+
+  defp notebook?(path), do: is_binary(path) and String.ends_with?(String.downcase(path), ".ipynb")
 
   # The MC names a Codex tool call `<namespace>.<tool>` (an MCP call `<server>.<tool>`),
   # and Codex's own tools sit in `tools`: `tools.view_image` is `view_image`, while
