@@ -352,7 +352,6 @@ Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subproces
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subprocess/durable.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subprocess/durable.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/text_generation.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/text_generation.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_archive.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_archive.ex | scratch_dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_move.ex | incoming

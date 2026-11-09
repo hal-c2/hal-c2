@@ -1157,6 +1157,24 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
+  @doc """
+  Whether `model` takes the option `id` (such as `"effort"`). A model neither the CLI
+  listed nor the manifest knows is taken to, as its options are the user's to choose.
+  """
+  @spec offers_option?(String.t() | nil, String.t(), String.t()) :: boolean
+  def offers_option?(model, id, instance \\ "claudeAgent") do
+    case spec(model, instance) do
+      nil ->
+        true
+
+      %{"capabilities" => capabilities} ->
+        descriptor((capabilities || %{})["optionDescriptors"] || [], id) != nil
+
+      _ ->
+        true
+    end
+  end
+
   # A chosen context suffix goes on `modelId`, the model a listed row resolves to. A
   # fixed one goes on the name the model was picked by, alias included (`opus[1m]`),
   # except the CLI's `default`, which has no suffixed spelling.

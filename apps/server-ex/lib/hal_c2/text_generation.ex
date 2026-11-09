@@ -101,7 +101,8 @@ defmodule HalC2.TextGeneration do
         diff_stat,
         diff_patch,
         opts[:template],
-        opts[:policy] || %{}
+        opts[:policy] || %{},
+        opts[:thread_history]
       )
 
     with {:ok, out} <-
@@ -248,10 +249,32 @@ defmodule HalC2.TextGeneration do
 
   defp fallback(settings) do
     Enum.find_value(@fallback_order, fn driver ->
-      selection = %{"instanceId" => driver, "model" => @default_models[driver]}
+      selection =
+        custom_default(settings, driver) ||
+          %{"instanceId" => driver, "model" => @default_models[driver]}
+
       if usable?(settings, selection), do: selection
     end)
   end
+
+  # A Claude or Codex instance whose default thread model is one the user added
+  # (`customModels`) is written with that model and its options: the built-in default may
+  # be refused where only the custom one is allowed. A built-in default model is not used.
+  defp custom_default(settings, driver) when driver in ["claudeAgent", "codex"] do
+    with %{"instanceId" => ^driver, "model" => model} = default when is_binary(model) <-
+           settings["defaultModelSelection"],
+         custom =
+           get_in(settings, ["providerInstances", driver, "config", "customModels"]) ||
+             get_in(settings, ["providers", driver, "customModels"]),
+         true <-
+           Enum.any?(List.wrap(custom), &(&1 == model or (is_map(&1) and &1["slug"] == model))) do
+      Map.take(default, ["instanceId", "model", "options"])
+    else
+      _ -> nil
+    end
+  end
+
+  defp custom_default(_settings, _driver), do: nil
 
   @doc "The provider driver of a model selection or an instance id."
   def driver(%{"instanceId" => id}), do: driver(id)
@@ -445,10 +468,11 @@ defmodule HalC2.TextGeneration do
   defp valid?(_out, _schema), do: false
 
   defp option(selection, id) do
-    Enum.find_value(selection["options"] || [], fn
-      %{"id" => ^id, "value" => value} -> value
+    # An off switch (`false`) is a choice too, so it cannot come from `find_value`.
+    case Enum.find(List.wrap(selection["options"]), &match?(%{"id" => ^id}, &1)) do
+      %{"value" => value} -> value
       _ -> nil
-    end)
+    end
   end
 
   defp claude(cwd, prompt, schema, selection, opts) do
@@ -464,17 +488,20 @@ defmodule HalC2.TextGeneration do
         &if(option(selection, "fastMode") == true, do: Map.put(&1, "fastMode", true), else: &1)
       )
 
+    # An effort the model has no option for is left out.
+    model = selection["model"] || @default_models["claudeAgent"]
+    instance = selection["instanceId"] || "claudeAgent"
     effort = option(selection, "effort")
+    effort = if HalC2.Claude.Provider.offers_option?(model, "effort", instance), do: effort
 
     args =
       ~w(-p --output-format json --json-schema) ++
-        [JSON.encode!(schema), "--model", selection["model"] || @default_models["claudeAgent"]] ++
+        [JSON.encode!(schema), "--model", model] ++
         if(is_binary(effort), do: ["--effort", effort], else: []) ++
         ["--settings", JSON.encode!(settings), "--tools", ""] ++
         ["--disable-slash-commands", "--strict-mcp-config", "--permission-mode", "dontAsk"]
 
     # The instance's own env and config folder, as its sessions get them.
-    instance = selection["instanceId"] || "claudeAgent"
 
     env =
       (Enum.to_list(HalC2.Settings.instance_env(instance)) ++
@@ -590,39 +617,176 @@ defmodule HalC2.TextGeneration do
           {:error, _} -> []
         end
 
-      args =
-        ["exec"] ++
-          launch ++
-          ~w(--ephemeral --skip-git-repo-check -s read-only) ++
-          ["--model", model] ++
-          if(is_binary(effort),
-            do: ["--config", ~s(model_reasoning_effort="#{effort}")],
-            else: []
-          ) ++
-          if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++
-          ["--output-schema", schema_path, "--output-last-message", output_path] ++
-          Enum.flat_map(images, &["--image", &1]) ++ ["-"]
+      with {:ok, isolation, env, launch} <-
+             codex_isolation(selection["instanceId"], launch, cwd, dir) do
+        args =
+          ["exec"] ++
+            launch ++
+            isolation ++
+            ~w(--ephemeral --skip-git-repo-check -s read-only) ++
+            ["--model", model] ++
+            if(is_binary(effort),
+              do: ["--config", ~s(model_reasoning_effort="#{effort}")],
+              else: []
+            ) ++
+            if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++
+            ["--output-schema", schema_path, "--output-last-message", output_path] ++
+            Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-      # The instance's home and variables reach the Codex that writes text as they
-      # reach its sessions: a connected ChatGPT account writes with its own login.
-      instance = selection["instanceId"] || "codex"
+        # The instance's home and variables reach the Codex that writes text as they
+        # reach its sessions: a connected ChatGPT account writes with its own login. A
+        # scratch Codex home (`env`) replaces the home they name.
+        instance = selection["instanceId"] || "codex"
 
-      with {:ok, home} <- HalC2.Codex.Home.env(instance),
-           cli = [
-             label: "Codex",
-             unexpected: unexpected(opts),
-             env: home ++ HalC2.Codex.Home.instance_env(instance)
-           ],
-           {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
-           {:ok, text} <- File.read(output_path),
-           {:ok, %{} = result} <- JSON.decode(text) do
-        {:ok, result}
-      else
-        {:error, reason} when is_binary(reason) -> {:error, reason}
-        _ -> {:error, "Codex returned invalid structured output."}
+        with {:ok, home} <- HalC2.Codex.Home.env(instance),
+             cli = [
+               label: "Codex",
+               unexpected: unexpected(opts),
+               env: run_env(home ++ HalC2.Codex.Home.instance_env(instance), env)
+             ],
+             {:ok, _} <-
+               run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
+             {:ok, text} <- File.read(output_path),
+             {:ok, %{} = result} <- JSON.decode(text) do
+          {:ok, result}
+        else
+          {:error, reason} when is_binary(reason) -> {:error, reason}
+          _ -> {:error, "Codex returned invalid structured output."}
+        end
       end
     end)
   end
+
+  # The instance's variables, minus its `CODEX_HOME` when the run has a scratch home of its own.
+  defp run_env(instance_env, []), do: instance_env
+
+  defp run_env(instance_env, scratch),
+    do: Enum.reject(instance_env, &match?({"CODEX_HOME", _}, &1)) ++ scratch
+
+  # What keeps the user's tools out of a Codex that only writes text: each MCP server its
+  # configuration enables is switched off, and plugins and apps are disabled. The servers
+  # come from `codex mcp list`. When it cannot answer, the run gets a scratch Codex home
+  # with the account's login and no configuration, and the launch arguments lose their
+  # `mcp_servers` overrides, so no MCP server is enabled at all.
+  # Returns `{:ok, args, env, launch}`, the run using the returned `launch`; the scratch
+  # home is made inside `dir`, so it goes with the run's folder, also when the caller is
+  # killed. `{:error, message}` when the account's login cannot reach that home.
+  defp codex_isolation(instance, launch, cwd, dir) do
+    list = [codex_command(instance) | launch] ++ ["mcp", "list", "--json"]
+
+    # The listing runs in the environment `codex exec` will, so it names the servers of the
+    # home the run loads, not the MC's own.
+    with {:ok, home} <- HalC2.Codex.Home.env(instance),
+         cli = [
+           label: "Codex",
+           timeout: 10_000,
+           env: run_env(home ++ HalC2.Codex.Home.instance_env(instance), [])
+         ],
+         {:ok, out} <- run_cli(list, cwd, "", cli),
+         {:ok, entries} when is_list(entries) <- JSON.decode(out) do
+      servers =
+        for %{"name" => name} when is_binary(name) <- entries,
+            do: ["--config", "mcp_servers.#{toml_key(name)}.enabled=false"]
+
+      {:ok, List.flatten(servers) ++ ~w(--disable plugins --disable apps), [], launch}
+    else
+      _ ->
+        with {:ok, home} <- bare_codex_home(instance, dir) do
+          {:ok, ~w(--disable plugins --disable apps), [{"CODEX_HOME", home}],
+           without_mcp_overrides(launch)}
+        end
+    end
+  end
+
+  # The launch arguments without the `--config mcp_servers...` overrides: a server the
+  # instance defines there would reach `codex exec` even from a home with no configuration.
+  defp without_mcp_overrides([flag, value | rest]) when flag in ~w(--config -c) do
+    if mcp_override?(value),
+      do: without_mcp_overrides(rest),
+      else: [flag, value | without_mcp_overrides(rest)]
+  end
+
+  defp without_mcp_overrides([arg | rest]) do
+    if String.starts_with?(arg, ["--config=", "-c="]) and
+         mcp_override?(arg |> String.split("=", parts: 2) |> List.last()),
+       do: without_mcp_overrides(rest),
+       else: [arg | without_mcp_overrides(rest)]
+  end
+
+  defp without_mcp_overrides([]), do: []
+
+  defp mcp_override?(value), do: String.trim_leading(value) =~ ~r/\Amcp_servers\b/
+
+  # The home whose login a run of `instance` uses, by the precedence a normal run has: a
+  # `CODEX_HOME` in the instance's environment of an unmanaged instance (`Home.shared/1`
+  # returns exactly that variable, `~` expanded, when it is set), else its shadow home (a
+  # connected ChatGPT account's own, over that variable) or home setting, else the MC's own
+  # `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made is an
+  # error, as for a normal run (`Codex.ThreadRuntime`): the shared home's `auth.json` is
+  # another account's login, and text generation must not sign in as that account.
+  defp account_home(instance) do
+    default = System.get_env("CODEX_HOME") || Path.join(HalC2.Paths.user_home(), ".codex")
+
+    if env_home?(instance) and not HalC2.Codex.ChatGpt.managed?(instance) do
+      {:ok, HalC2.Codex.Home.shared(instance)}
+    else
+      case HalC2.Codex.Home.env(instance) do
+        {:ok, [{"CODEX_HOME", home}]} -> {:ok, home}
+        {:ok, []} -> {:ok, default}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp env_home?(instance) do
+    case HalC2.Settings.instance_env(instance)["CODEX_HOME"] do
+      home when is_binary(home) -> home != ""
+      _ -> false
+    end
+  end
+
+  # A Codex home inside `dir` holding only the instance's login (`auth.json`) and an empty
+  # config. Codex keeps a login in the OS credential store under a key of the home's path,
+  # so a different home cannot reach it: an account without an `auth.json` cannot run here,
+  # and the error says how to get one (docs/user/providers-codex.md).
+  defp bare_codex_home(instance, dir) do
+    case account_home(instance) do
+      {:ok, account} ->
+        copy_codex_login(Path.join(account, "auth.json"), dir)
+
+      {:error, reason} ->
+        {:error, "Failed to materialize the Codex shadow home. #{reason}"}
+    end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp copy_codex_login(source, dir) do
+    home = Path.join(dir, "codex-home")
+    target = Path.join(home, "auth.json")
+    File.mkdir_p!(home)
+    # The login is a secret: the home is the owner's alone and the copy is made 0600 before
+    # it is filled, whatever mode the source has (`File.cp` keeps the source's mode).
+    File.chmod!(home, 0o700)
+    File.write!(Path.join(home, "config.toml"), "")
+
+    with :ok <- File.write(target, ""),
+         :ok <- File.chmod(target, 0o600),
+         :ok <- File.cp(source, target),
+         :ok <- File.chmod(target, 0o600) do
+      {:ok, home}
+    else
+      {:error, reason} ->
+        File.rm(target)
+
+        {:error,
+         "Codex text generation could not copy the login from #{source} " <>
+           "(#{:file.format_error(reason)}). Its MCP servers could not be listed, so it needs " <>
+           "a file-based login (auth.json); an account on the OS credential store cannot be used."}
+    end
+  end
+
+  defp toml_key(name),
+    do: if(name =~ ~r/\A[A-Za-z0-9_-]+\z/, do: name, else: JSON.encode!(name))
 
   # The model Codex is run with, resolved against the list its last check read
   # (nil when none was read: the name stands). A listed name stands; a family
@@ -660,15 +824,7 @@ defmodule HalC2.TextGeneration do
   # Runs `fun` in `dir`, or in a new temporary directory it removes afterwards.
   defp in_dir(dir, fun) when is_binary(dir), do: fun.(dir)
 
-  defp in_dir(nil, fun) do
-    dir = HalC2.Scratch.dir("hal-c2-text")
-
-    try do
-      fun.(dir)
-    after
-      File.rm_rf(dir)
-    end
-  end
+  defp in_dir(nil, fun), do: HalC2.Scratch.with_dir("hal-c2-text", fun)
 
   # The images a Codex prompt takes by path.
   defp images(attachments) do
@@ -682,7 +838,12 @@ defmodule HalC2.TextGeneration do
   # One ACP prompt in its own process, which outlives neither the agent nor the timeout.
   # A Cursor run its sandbox stopped is retried once without the sandbox, and
   # only that run: `retried` carries the retry's mode.
-  defp acp(selection, prompt, label, attachments, retried \\ nil) do
+  defp acp(selection, prompt, label, attachments, retried \\ nil),
+    do: in_dir(nil, &run_acp(&1, selection, prompt, label, attachments, retried))
+
+  # The folder is made here, not in the task, so a run that times out and is killed
+  # still has it removed.
+  defp run_acp(dir, selection, prompt, label, attachments, retried) do
     id = selection["instanceId"]
     antigravity = driver(id) == "antigravity"
     cursor = driver(id) == "cursor"
@@ -697,41 +858,39 @@ defmodule HalC2.TextGeneration do
         caller = List.first(Process.get(:"$callers") || [])
 
         try do
-          in_dir(nil, fn dir ->
-            cond do
-              driver(id) == "cursor" and
-                  File.exists?(Path.join(HalC2.Paths.user_home(), ".cursor/sandbox.json")) ->
-                # Cursor's own sandbox settings could widen what the agent may write.
-                {:error,
-                 "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
+          cond do
+            driver(id) == "cursor" and
+                File.exists?(Path.join(HalC2.Paths.user_home(), ".cursor/sandbox.json")) ->
+              # Cursor's own sandbox settings could widen what the agent may write.
+              {:error,
+               "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
 
-              antigravity ->
-                antigravity(id, dir, selection["model"], prompt, caller)
+            antigravity ->
+              antigravity(id, dir, selection["model"], prompt, caller)
 
-              driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
-                  not provider_model?(selection["model"]) ->
-                {:error,
-                 "OpenCode model '#{selection["model"]}' must use the provider/model format."}
+            driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
+                not provider_model?(selection["model"]) ->
+              {:error,
+               "OpenCode model '#{selection["model"]}' must use the provider/model format."}
 
-              true ->
-                # Cursor plans read-only there, without the user's Cursor settings or tools.
-                mode =
-                  cond do
-                    driver(id) != "cursor" -> nil
-                    retried -> retried
-                    true -> "text-generation"
-                  end
+            true ->
+              # Cursor plans read-only there, without the user's Cursor settings or tools.
+              mode =
+                cond do
+                  driver(id) != "cursor" -> nil
+                  retried -> retried
+                  true -> "text-generation"
+                end
 
-                HalC2.Acp.with_agent(
-                  id,
-                  dir,
-                  fn conn, _init ->
-                    acp_prompt(conn, dir, selection["model"], prompt, false, attachments, caller)
-                  end,
-                  mode
-                )
-            end
-          end)
+              HalC2.Acp.with_agent(
+                id,
+                dir,
+                fn conn, _init ->
+                  acp_prompt(conn, dir, selection["model"], prompt, false, attachments, caller)
+                end,
+                mode
+              )
+          end
         catch
           _kind, reason -> {:error, reason}
         end
@@ -1318,8 +1477,8 @@ defmodule HalC2.TextGeneration do
 
   # --- linked pull requests and issues -----------------------------------------------
 
-  # What the first two of the thread's pull requests and the GitHub pull request or
-  # issue links in its message are about: each with its title and body, or marked
+  # What the first two of the thread's pull requests and the GitHub or GitLab pull
+  # request, merge request or issue links in its message are about: each with its title and body, or marked
   # unavailable. A pull request on another host gives the title it was last synced with.
   defp linked_context(cwd, message, pull_requests) do
     linked =
@@ -1373,7 +1532,8 @@ defmodule HalC2.TextGeneration do
   end
 
   # What a link looks up: a GitHub pull request or issue, or a GitLab merge request or
-  # issue (in a group of any depth). Only these two hosts: ambient credentials never go
+  # issue (in a group of any depth, with or without the newer "/-/" before the kind).
+  # Only these two hosts: ambient credentials never go
   # to a host named in message text.
   defp link_endpoint("github.com", path) do
     case Regex.run(~r{^/([\w.-]+)/([\w.-]+)/(?:pull|issues)/([1-9]\d*)(?:/.*)?$}, path) do
@@ -1384,7 +1544,7 @@ defmodule HalC2.TextGeneration do
 
   defp link_endpoint("gitlab.com", path) do
     case Regex.run(
-           ~r{^/([\w.-]+(?:/[\w.-]+)+)/-/(merge_requests|issues)/([1-9]\d*)(?:/.*)?$},
+           ~r{^/([\w.-]+(?:/(?!-/)[\w.-]+)+)(?:/-)?/(merge_requests|issues)/([1-9]\d*)(?:/.*)?$},
            path
          ) do
       [_, project, kind, number] ->
