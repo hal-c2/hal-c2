@@ -3,16 +3,18 @@ defmodule HalC2.ThreadFilesPropTest do
   A state machine over the files a thread's messages carry, through the real
   `thread.fork` and `thread.delete`: a message too long to send whole, saved as a file
   (`HalC2.Attachments.fold_long_text/3`) before its message is written, as a send does,
-  or one with a file attached; forks, forks of forks, forks on a disk that takes no
-  more files, and deletes in any order. Each message's turn item, which the timeline
-  shows it by, names its files too.
+  or one with a file attached; a long message queued, a message naming the file it was
+  saved as (one the thread already has), then the queued one edited short through the
+  real `queued-run.edit`; forks, forks of forks, forks on a disk that takes no more
+  files, and deletes in any order. Each message's turn item, which the timeline shows
+  it by, names its files too.
 
   The model is what each live thread's messages say, in order, with the contents of
   their files. After each command every live thread has those messages, and each of
   their files, as its message and its turn item name it, is on disk, holds what the
   model says, and is the thread's own (its id names the thread), so deleting any other
-  thread leaves it alone. A fork that cannot copy the files it would carry is refused,
-  and leaves no thread and no file.
+  thread leaves it alone, and an edit leaves a file another message names. A fork that
+  cannot copy the files it would carry is refused, and leaves no thread and no file.
   """
 
   use ExUnit.Case, async: false
@@ -75,6 +77,7 @@ defmodule HalC2.ThreadFilesPropTest do
       frequency([
         {1, fresh},
         {4, {:call, __MODULE__, :send, [oneof(ids), oneof([:long, :file, :short]), state.next]}},
+        {1, {:call, __MODULE__, :edit_shared, [oneof(ids), state.next]}},
         {2, {:call, __MODULE__, :fork, [oneof(ids), "t#{state.next}"]}},
         {1, {:call, __MODULE__, :fork_full, [oneof(ids), "t#{state.next}"]}},
         {2, {:call, __MODULE__, :delete, [oneof(ids)]}}
@@ -102,6 +105,13 @@ defmodule HalC2.ThreadFilesPropTest do
       | live: Map.update!(state.live, id, &(&1 ++ [said(kind, n)])),
         next: state.next + 1
     }
+
+  # The edited message keeps no file; the one naming its old file keeps that.
+  def next_state(state, _result, {:call, _, :edit_shared, [id, n]}) do
+    {_folded, [whole]} = said(:long, n)
+    said = [{"edited #{n}", []}, {"message #{n + 1}", [whole]}]
+    %{state | live: Map.update!(state.live, id, &(&1 ++ said)), next: state.next + 2}
+  end
 
   def next_state(state, _result, {:call, _, :fork, [source, target]}),
     do: %{state | live: Map.put(state.live, target, state.live[source]), next: state.next + 1}
@@ -214,22 +224,28 @@ defmodule HalC2.ThreadFilesPropTest do
   # A message and the finished run it opened, its files saved before it is written, as
   # `message.dispatch` saves them before its stream writes the message.
   def send(id, kind, n) do
-    {:ok, text, attachments} =
-      case kind do
-        :long ->
-          Attachments.fold_long_text(id, text(:long, n), [])
+    {:ok, text, attachments} = saved(id, kind, n)
+    write(id, n, "completed", text, attachments)
+  end
 
-        :file ->
-          file = "#{Attachments.thread_segment(id)}-#{HalC2.Environment.uuid4()}"
-          File.mkdir_p!(Attachments.dir())
-          File.write!(Path.join(Attachments.dir(), file <> ".txt"), "notes #{n}")
-          {:ok, text(:file, n), [%{"type" => "file", "id" => file, "name" => "notes.txt"}]}
+  # A long message queued, a message naming the file it was saved as, then the queued
+  # one edited short through `queued-run.edit`, and run.
+  def edit_shared(id, n) do
+    {:ok, text, [file] = attachments} = saved(id, :long, n)
+    write(id, n, "queued", text, attachments, false)
+    write(id, n + 1, "completed", "message #{n + 1}", [file])
 
-        :short ->
-          {:ok, text(:short, n), []}
-      end
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "queued-run.edit",
+        "threadId" => id,
+        "runId" => "run-#{n}",
+        "text" => "edited #{n}"
+      })
 
-    at = DateTime.utc_now() |> DateTime.add(n, :millisecond) |> DateTime.to_iso8601()
+    # It runs as it now reads.
+    message = StreamState.fetch(HalC2.Streams.state(id), "message", "msg-#{n}")
+    at = message["createdAt"]
     run = "run-#{n}"
 
     {:ok, _} =
@@ -237,15 +253,60 @@ defmodule HalC2.ThreadFilesPropTest do
         {"run", run,
          %{
            "s" => %{
-             "id" => run,
-             "threadId" => id,
-             "ordinal" => n,
              "status" => "completed",
-             "userMessageId" => "msg-#{n}",
-             "requestedAt" => at,
+             "queuePosition" => nil,
              "startedAt" => at,
              "completedAt" => at
            }
+         }},
+        item(id, n, run, message["text"], message["attachments"], at)
+      ])
+
+    :ok
+  end
+
+  defp saved(id, kind, n) do
+    case kind do
+      :long ->
+        Attachments.fold_long_text(id, text(:long, n), [])
+
+      :file ->
+        file = "#{Attachments.thread_segment(id)}-#{HalC2.Environment.uuid4()}"
+        File.mkdir_p!(Attachments.dir())
+        File.write!(Path.join(Attachments.dir(), file <> ".txt"), "notes #{n}")
+        {:ok, text(:file, n), [%{"type" => "file", "id" => file, "name" => "notes.txt"}]}
+
+      :short ->
+        {:ok, text(:short, n), []}
+    end
+  end
+
+  # Message `n` and its run in `status`, with its turn item once it ran.
+  defp write(id, n, status, text, attachments, item? \\ true) do
+    at = DateTime.utc_now() |> DateTime.add(n, :millisecond) |> DateTime.to_iso8601()
+    run = "run-#{n}"
+
+    ran =
+      if status == "queued",
+        do: %{"queuePosition" => 0},
+        else: %{"startedAt" => at, "completedAt" => at}
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [
+        {"run", run,
+         %{
+           "s" =>
+             Map.merge(
+               %{
+                 "id" => run,
+                 "threadId" => id,
+                 "ordinal" => n,
+                 "status" => status,
+                 "userMessageId" => "msg-#{n}",
+                 "requestedAt" => at
+               },
+               ran
+             )
          }},
         {"message", "msg-#{n}",
          %{
@@ -259,25 +320,29 @@ defmodule HalC2.ThreadFilesPropTest do
              "createdAt" => at,
              "updatedAt" => at
            }
-         }},
-        {"turn-item", "turn-item:user:msg-#{n}",
-         %{
-           "s" => %{
-             "id" => "turn-item:user:msg-#{n}",
-             "threadId" => id,
-             "runId" => run,
-             "type" => "user_message",
-             "messageId" => "msg-#{n}",
-             "text" => text,
-             "attachments" => attachments,
-             "createdAt" => at,
-             "updatedAt" => at
-           }
          }}
+        | if(item?, do: [item(id, n, run, text, attachments, at)], else: [])
       ])
 
     :ok
   end
+
+  defp item(id, n, run, text, attachments, at),
+    do:
+      {"turn-item", "turn-item:user:msg-#{n}",
+       %{
+         "s" => %{
+           "id" => "turn-item:user:msg-#{n}",
+           "threadId" => id,
+           "runId" => run,
+           "type" => "user_message",
+           "messageId" => "msg-#{n}",
+           "text" => text,
+           "attachments" => attachments,
+           "createdAt" => at,
+           "updatedAt" => at
+         }
+       }}
 
   def fork(source, target) do
     {:ok, _} =

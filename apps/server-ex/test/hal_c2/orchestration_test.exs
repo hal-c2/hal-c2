@@ -2169,6 +2169,27 @@ defmodule HalC2.OrchestrationTest do
       refute HalC2.Attachments.path(file)
     end
 
+    # A message may name a file the thread already has, as one sent again with another's
+    # attachments does: an edit of the message it was folded for leaves it to that one.
+    test "an edit of a folded queued message keeps its old file while another message names it" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      [old] = StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+      {:ok, _} = send_message(thread_id, "m3", "see the file", %{"attachments" => [old]})
+      _ = await_statuses(thread_id, ["running", "queued", "queued"])
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+
+      assert %{"text" => "short", "attachments" => []} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert [%{"id" => id}] = StreamState.get(current(thread_id), "message")["m3"]["attachments"]
+      assert id == old["id"]
+      assert File.read!(HalC2.Attachments.path(old)) == String.duplicate("y", 130_000)
+    end
+
     # The desktop edits a queued message from its stored text, which for a long one is
     # the folded text with its cut mark.
     test "an edit of a folded message's stored text keeps the file its cut mark names" do

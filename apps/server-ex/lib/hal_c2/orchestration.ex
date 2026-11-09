@@ -254,11 +254,7 @@ defmodule HalC2.Orchestration do
             {:ok, claimed_command} ->
               sent = dispatch_message(thread_id, claimed_command)
               # The file a long text was folded into goes unless the message names it.
-              drop_unnamed(
-                thread_id,
-                command["messageId"],
-                claimed_command["attachments"] -- attachments
-              )
+              drop_unnamed(thread_id, claimed_command["attachments"] -- attachments)
 
               case sent do
                 # A resend names its first copies, so the copies this claim made go.
@@ -547,8 +543,7 @@ defmodule HalC2.Orchestration do
         end)
 
       # The file a long text was folded into goes unless the message names it.
-      message_id = StreamState.get(state, "run")[run_id]["userMessageId"]
-      drop_unnamed(thread_id, message_id, folded)
+      drop_unnamed(thread_id, folded)
 
       # An edit that changed nothing (the run is no longer queued, or the thread
       # refused it) gives its copies back.
@@ -3487,16 +3482,20 @@ defmodule HalC2.Orchestration do
   end
 
   # The file a long message was folded into (`claimed/3`), once its send or edit is
-  # over: removed unless the message names it. Then the thread refused it, or had the
-  # message already (a resend folds again), and nothing else names the file.
-  defp drop_unnamed(_thread_id, _message_id, []), do: :ok
+  # over: removed unless a message of the thread names it. Then the thread refused it,
+  # had the message already (a resend folds again), or the edit left it behind. Another
+  # message may name it, as one sent with a file the thread already has does.
+  defp drop_unnamed(_thread_id, []), do: :ok
 
   # The file comes from `HalC2.Attachments.path/1`: a `safe_id?` id inside the
   # attachments folder.
   # sobelow_skip ["Traversal.FileModule"]
-  defp drop_unnamed(thread_id, message_id, files) do
-    message = StreamState.fetch(HalC2.Streams.state(thread_id), "message", message_id) || %{}
-    named = for %{"id" => id} <- List.wrap(message["attachments"]), do: id
+  defp drop_unnamed(thread_id, files) do
+    named =
+      for message <- StreamState.list(HalC2.Streams.state(thread_id), "message"),
+          %{"id" => id} <- List.wrap(message["attachments"]),
+          into: MapSet.new(),
+          do: id
 
     for %{"id" => id} = file <- files,
         id not in named,
