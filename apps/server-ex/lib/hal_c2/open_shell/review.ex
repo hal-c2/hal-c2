@@ -189,8 +189,8 @@ defmodule HalC2.OpenShell.Review do
     with true <-
            Process.whereis(__MODULE__) != nil ||
              {:error, "Review sandboxes are not running on this MC."},
-         {:ok, model} <- model(driver, spec.instance),
          :ok <- installed(),
+         {:ok, model} <- model(driver, spec.instance),
          :ok <- Service.reaped(),
          {:ok, disk} <- disk(),
          :ok <- GenServer.call(__MODULE__, {:opening, thread_id}),

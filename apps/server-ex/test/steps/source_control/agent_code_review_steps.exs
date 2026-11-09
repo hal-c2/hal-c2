@@ -582,6 +582,61 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # Each of these is this machine's own: Claude's launch arguments (its settings, MCP
+  # servers, directories and a prompt file), its home, and the project environment.
+  step "Claude on this machine has launch arguments, a home and a project environment of its own",
+       context do
+    World.put_env("ANTHROPIC_API_KEY", "sk-test-anthropic")
+    dir = Mc.tmp_dir(context.mc, "host-claude")
+    prompt = Path.join(dir, "host-prompt.txt")
+    File.write!(prompt, "host-only instructions")
+
+    launch_args =
+      Enum.join(
+        [
+          ~s(--settings '{"env":{"HOST_TOKEN":"sk-host-token"},"apiKeyHelper":"host-helper"}'),
+          "--mcp-config #{Path.join(dir, "host-mcp.json")}",
+          "--add-dir #{dir}",
+          "--append-system-prompt-file #{prompt}",
+          "--dangerously-skip-permissions"
+        ],
+        " "
+      )
+
+    context
+    |> World.update_settings(%{
+      "providers" => %{
+        "claudeAgent" => %{"launchArgs" => launch_args, "homePath" => Path.join(dir, "home")}
+      },
+      "projectEnvironment" => "dotenv",
+      "projectEnvironmentFile" => Path.join(dir, "host.env")
+    })
+    |> Map.put(:host_claude, dir)
+  end
+
+  step "{string} reviews with Claude", %{args: [@id]} = context do
+    save(context, %{"provider" => World.instance("Claude"), "model" => "claude-haiku-4-5"})
+  end
+
+  step "its agent runs Claude in a sandbox with none of this machine's launch arguments, home or project environment",
+       context do
+    assert_receive {:sandbox_exec, ["claude" | args], %{environment: env}}, 15_000
+    argv = Enum.join(args, " ")
+
+    for host <- [context.host_claude, "sk-host-token", "host-helper", "host-only", "--mcp-config"],
+        do: refute(argv =~ host, "#{host} reached the sandbox's argv")
+
+    refute "--dangerously-skip-permissions" in args
+    refute Map.has_key?(env, "CLAUDE_CONFIG_DIR")
+    refute Map.has_key?(env, "HOST_TOKEN")
+
+    # Loading it would have said on the thread that its file is not there.
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.thread))
+    items = HalC2.StreamState.get(state, "turn-item") || %{}
+    refute Enum.any?(Map.keys(items), &String.starts_with?(&1, "turn-item:project-environment"))
+    context
+  end
+
   step "its agent runs in a sandbox, in a checkout of the head of \#{int}, with no credential in its environment",
        %{args: [number]} = context do
     assert_receive {:sandbox_exec, ["codex", "app-server"],
@@ -648,12 +703,31 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # What the reap said is the scenario's `reaped`; one that names no failure must have
+  # deleted the sandbox past its time.
   step "the reaper's timer runs without the MC", context do
     ExUnit.Callbacks.stop_supervised!(OpenShell.Review)
+    reaped = OpenShell.Command.command(["reap", "--root", OpenShell.root()])
 
-    assert {:ok, "Deleted review sandboxes past their time: review-old"} =
-             OpenShell.Command.command(["reap", "--root", OpenShell.root()])
+    with {:ok, _} <- reaped,
+         do: assert({:ok, "Deleted review sandboxes past their time: review-old"} = reaped)
 
+    Map.put(context, :reaped, reaped)
+  end
+
+  step "the gateway will not list its sandboxes", context do
+    FakeOpenShell.failing(context.gateway, ["ListSandboxes"])
+    context
+  end
+
+  step "the reap says the sandboxes were not listed", context do
+    assert {:error, message} = context.reaped
+    assert message =~ "sandboxes not listed"
+    context
+  end
+
+  step "only the provider within its time remains", context do
+    assert Map.keys(FakeOpenShell.providers(context.gateway)) == ["review-new"]
     context
   end
 
@@ -1938,7 +2012,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   # Whether this MC trusts pull requests; the scenarios' MC does unless one says not.
+  # No model's API key is in its environment, whatever the runner's holds, until
+  # `gateway/1` puts one there.
   defp trust(context, trusted) do
+    World.put_os_env("OPENAI_API_KEY", nil)
+    World.put_os_env("ANTHROPIC_API_KEY", nil)
+
     FakeOpenShell.put_env(
       code_review_trust_all: trusted,
       openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]

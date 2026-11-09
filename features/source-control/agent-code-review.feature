@@ -318,6 +318,15 @@ Feature: Agent code review
       Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
 
     @mc
+    Scenario: A sandboxed Claude review takes none of this machine's Claude settings
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude on this machine has launch arguments, a home and a project environment of its own
+      And "code-review" reviews with Claude
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox with none of this machine's launch arguments, home or project environment
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
     Scenario: An untrusted pull request on an MC without OpenShell is not reviewed, saying how to set it up
       Given pull requests are not trusted
       When the user starts a review of #12
@@ -356,6 +365,15 @@ Feature: Agent code review
       And a review sandbox's provider past its time is left without its sandbox
       When the reaper's timer runs without the MC
       Then only the review sandbox within its time remains, with its provider
+
+    @mc
+    Scenario: A reaper whose gateway will not list its sandboxes still deletes their providers past their time
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox past its time and one within it are left on the gateway
+      And the gateway will not list its sandboxes
+      When the reaper's timer runs without the MC
+      Then the reap says the sandboxes were not listed
+      And only the provider within its time remains
 
     @mc
     Scenario: An MC starting deletes the review sandboxes left from before

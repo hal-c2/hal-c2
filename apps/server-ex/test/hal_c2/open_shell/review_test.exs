@@ -160,6 +160,16 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_gone(g)
   end
 
+  # Installing comes first: no key makes a sandbox without OpenShell.
+  test "an MC without OpenShell says to install it, before it asks for the model's API key",
+       %{repo: repo} do
+    System.delete_env("OPENAI_API_KEY")
+    OpenShell.delete_state()
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "Run `hal-c2-service openshell install`."
+    refute message =~ "OPENAI_API_KEY"
+  end
+
   test "an agent that cannot run in a sandbox is refused, never run here" do
     assert Review.refusal(@thread, "cursor") =~ "cursor cannot run in yet"
     assert Review.refusal(@thread, "codex") =~ "Run the review again."
