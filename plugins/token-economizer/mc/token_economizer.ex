@@ -675,25 +675,28 @@ defmodule HalC2Plugins.TokenEconomizer do
   # A segment heard only in part, as its thread's history has it: its provider's runs
   # that ended since the watermark, with what their items used, the uses the feed
   # dropped among them, and the tools whose uses their items need not show
-  # (`Prune.unrecorded/2`). Still partial when the history cannot be read.
+  # (`Prune.unrecorded/2`). Still partial when the history cannot be read, or does not
+  # have one of the segment's runs yet (one still running as a quiet project folds it):
+  # the uses dropped from it are read back at the thread's next turn.
   defp heard(conv, prune, unit, before) do
-    case history(conv.thread, before) do
-      {:ok, history} ->
-        {watermark, runs} = unfolded(prune, history, conv.thread, conv.project, before)
+    with {:ok, history} <- history(conv.thread, before),
+         read = MapSet.new(history, & &1["runId"]),
+         true <-
+           Enum.all?(conv.runs, &(&1["run"] in read or Prune.folded?(prune, conv.thread, &1))) do
+      {watermark, runs} = unfolded(prune, history, conv.thread, conv.project, before)
 
-        used = Enum.flat_map(runs, &uses(&1, unit))
+      used = Enum.flat_map(runs, &uses(&1, unit))
 
-        %{
-          conv
-          | used: Enum.uniq(conv.used ++ used),
-            runs: Enum.map(runs, &run_mark/1),
-            partial: false,
-            last_run: watermark
-        }
-        |> Map.put(:unrecorded, unrecorded(runs, unit))
-
-      :error ->
+      %{
         conv
+        | used: Enum.uniq(conv.used ++ used),
+          runs: Enum.map(runs, &run_mark/1),
+          partial: false,
+          last_run: watermark
+      }
+      |> Map.put(:unrecorded, unrecorded(runs, unit))
+    else
+      _ -> conv
     end
   end
 

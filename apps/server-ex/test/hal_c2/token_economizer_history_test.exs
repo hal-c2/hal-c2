@@ -196,6 +196,30 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert "CronCreate" in state.prunes[project]["used"]
   end
 
+  test "a segment the feed dropped some of that a quiet project folds while its turn still runs is read back once the turn has ended",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    {:ok, state} = TokenEconomizer.init(%{"toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+
+    # r1 uses CronCreate, which the feed drops, and says so on another thread's turn.
+    state =
+      observe(
+        state,
+        started("other", "o1", p, %{"newConversation" => true, "dropped" => 1, "waiting" => 0})
+      )
+
+    state = observe(state, finished("other", "o1", 1))
+
+    # The project goes quiet while r1 runs on, which its history does not have yet.
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    ended(thread, "r1", 1, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+    state = observe(state, finished(thread, "r1", 1))
+    state = observe(state, started(thread, "r2", p, %{"newConversation" => true}))
+
+    assert "CronCreate" in state.prunes[project]["used"]
+  end
+
   test "a run the feed tells of after it ended, as a segment heard in part folds, counts once",
        %{thread: thread, project: p} do
     project = {p, "claudeAgent"}

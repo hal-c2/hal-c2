@@ -88,7 +88,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer handle_call {:observe, _}" =>
         ~w(use prompt finish reread seg),
       "HalC2Plugins.TokenEconomizer state :missing" => "seg",
-      "HalC2Plugins.TokenEconomizer handle_info {:toolprune_tick, _}" => ~w(auto-apply finish),
+      "HalC2Plugins.TokenEconomizer handle_info {:toolprune_tick, _}" =>
+        ~w(auto-apply finish idle idle-reread),
       "HalC2Plugins.TokenEconomizer state :settings" => ~w(cfg mode),
       "HalC2Plugins.TokenEconomizer state :prunes" => "tool",
       "HalC2Plugins.TokenEconomizer state :convs" => ~w(conv hearing),

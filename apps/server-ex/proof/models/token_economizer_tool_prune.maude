@@ -9,7 +9,8 @@ sload model-checker
 --- applies a proposal or a tool by name and restores what is off or refuses what
 --- is proposed; the settings change mode, from any mode to any other and at any
 --- point, a conversation under way included; the plugin restarts; the feed misses a
---- use. Between conversations the project may go quiet. Under off the plugin still
+--- use. Between conversations the project may go quiet, and between the turns of
+--- one, whose segment so far then folds. Under off the plugin still
 --- hears every use and miss, folds, reads back and keeps what was applied; it only
 --- proposes, holds and denies nothing, so a conversation shaped under off has the
 --- tool loaded even when it is off, and a later switch to propose or auto acts on
@@ -230,9 +231,10 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C } .
 
   --- The conversation ends; the plugin folds what it heard (observe/2, and an idle
-  --- segment folds the same way at the tick before it can resume).
+  --- segment folds the same way at the tick before it can resume; one that goes on
+  --- folds at idle).
   rl [finish] :
-    { conv(live(M1, B)) hearing(SG) tool(CD) mode(M) prot(PR) demot(N) pkgs(P)
+    { conv(live(M1, B)) hearing(SG) tool(CD) pend(PD) mode(M) prot(PR) demot(N) pkgs(P)
       cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
     => { conv(none) hearing(noseg) mode(M) prot(PR)
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
@@ -243,12 +245,36 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   --- uses (heard/3); under Unrecorded, when it does not, the tool counts as not
   --- loaded in it unless it was heard used. A read that fails is the finish above.
   rl [reread] :
-    { conv(live(M1, B)) hearing(seg(U, B', true, RS)) tool(CD) mode(M) prot(PR) demot(N)
+    { conv(live(M1, B)) hearing(seg(U, B', true, RS)) tool(CD) pend(PD) mode(M) prot(PR) demot(N)
       pkgs(P) rec(REC) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
     => { conv(none) hearing(noseg) mode(M) prot(PR) rec(REC)
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
          folded(CD, seg(U or (RS and REC), B', false, RS), not B and (REC or U or not UR),
                 M, PR, SF, KP, CP, EV, P) } .
+
+  --- The project goes quiet between two turns of a conversation that goes on, or a
+  --- miss reported while its turn runs stops counting it active (suspect/2): the
+  --- tick folds the segment so far (prune_tick/2), and the conversation goes on in a
+  --- new one with the same tools. Heard in part, the segment is read back as at
+  --- reread once every run of it has ended. While one still runs, its uses are not
+  --- in the history yet, or the read fails: it folds as no evidence (heard/4), and
+  --- the thread's next turn reads it back, so the segment that goes on carries the
+  --- use still unread.
+  crl [idle] :
+    { conv(live(M1, B)) hearing(seg(U, B', PT, RS)) tool(CD) pend(PD) mode(M) prot(PR)
+      demot(N) pkgs(P) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
+    => { conv(live(M1, B)) hearing(seg(false, false, PT, PT and RS)) mode(M) prot(PR)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
+         folded(CD, seg(U, B', PT, RS), not B, M, PR, SF, KP, CP, EV, P) }
+    if U or B' .
+  crl [idle-reread] :
+    { conv(live(M1, B)) hearing(seg(U, B', true, RS)) tool(CD) pend(PD) mode(M) prot(PR)
+      demot(N) pkgs(P) rec(REC) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
+    => { conv(live(M1, B)) hearing(seg(false, false, false, false)) mode(M) prot(PR)
+         rec(REC) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
+         folded(CD, seg(U or (RS and REC), B', false, RS), not B and (REC or U or not UR),
+                M, PR, SF, KP, CP, EV, P) }
+    if U or B' .
 
   --- No conversation under way, and time passes: the project has been quiet.
   rl [wait] : conv(none) quiet(false) => conv(none) quiet(true) .
