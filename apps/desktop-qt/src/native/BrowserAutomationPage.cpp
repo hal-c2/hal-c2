@@ -154,6 +154,8 @@ void BrowserAutomationPage::setViewport(const QSize& size) {
                        {QStringLiteral("height"), size.height()}});
 }
 
+bool BrowserAutomationPage::resizing() const { return m_page && m_page->resizing(); }
+
 bool BrowserAutomationPage::click(const QPointF& point) {
   if (!onScreen()) return false;
   // The view draws the page's CSS pixels at its zoom, then scaled with the

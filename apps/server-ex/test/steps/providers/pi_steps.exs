@@ -233,7 +233,14 @@ defmodule HalC2.Steps.Providers.Pi do
     })
   end
 
+  # Codex's feature has a step of the same words, for the model its catalog lists.
   step "the user opens the options for that model", context do
+    if Path.basename(context[:feature_file] || "") == "codex.feature",
+      do: HalC2.Steps.Providers.CodexModels.open_model_options(context),
+      else: pi_model_options(context)
+  end
+
+  defp pi_model_options(context) do
     FakeAcp.probe("pi")
     {providers, context} = FakeAcp.open_config(context)
     model = Enum.find(FakeAcp.find(providers, "pi")["models"], &(&1["slug"] == "fake/deep"))
