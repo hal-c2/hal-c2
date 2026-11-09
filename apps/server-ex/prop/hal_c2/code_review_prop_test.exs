@@ -8,7 +8,7 @@ defmodule HalC2.CodeReviewPropTest do
   Three pull requests (`acme/api#1`, `acme/api#2`, `acme/web#1`) each have two head
   commits to push between. The commands open and close them, push, break a head so its
   checkout fails, hold checkouts at the fetch and posts at GitHub, refuse posts, look
-  for pull requests, start, retry, report, dismiss, discard and publish reviews, end
+  for pull requests, start, retry, stop, report, dismiss, discard and publish reviews, end
   turns (one of them stopped by the provider's usage limit, which parks its review
   in the queue and starts nothing else until the limit resets, restarts included,
   unless the user asks for a review), answer a
@@ -26,6 +26,9 @@ defmodule HalC2.CodeReviewPropTest do
     waited posts nothing;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
+  - a review stopped while its checkout is fetched gets no thread and keeps no
+    checkout, and one stopped later keeps its thread but not its checkout, and its
+    agent's report is refused;
   - a new run stops the thread it replaces before its checkout goes, and a report from
     a thread the review moved past, or whose review is published, is refused;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
@@ -345,6 +348,10 @@ defmodule HalC2.CodeReviewPropTest do
           Enum.at(m.runs[key], k - 1),
           do: key
 
+    # Mostly a running review, often one still held at its fetch.
+    running = for {key, %{status: :running}} <- m.reviews, do: key
+    stopped = if running == [], do: key, else: frequency([{4, elements(running)}, {1, key}])
+
     relists = if finished == [], do: 1, else: 4
     finished = if finished == [], do: key, else: frequency([{6, elements(finished)}, {1, key}])
     relisted = if m.settings.display == "page", do: oneof(~w(threads both)), else: "page"
@@ -357,6 +364,7 @@ defmodule HalC2.CodeReviewPropTest do
         {2, {:call, __MODULE__, :retry, [key]}},
         {2, {:call, __MODULE__, :dismiss, [commented, oneof([1, 2]), boolean()]}},
         {2, {:call, __MODULE__, :discard, [key]}},
+        {if(running == [], do: 1, else: 2), {:call, __MODULE__, :stop, [stopped]}},
         {relists, {:call, __MODULE__, :relist_discard, [finished, relisted]}},
         {if(waiting == [], do: 2, else: 10), {:call, __MODULE__, :publish, [published]}},
         {1, {:call, __MODULE__, :disable, [oneof([:plain, :polling])]}}
@@ -403,7 +411,7 @@ defmodule HalC2.CodeReviewPropTest do
     frequency(if(m.enabled, do: on, else: off) ++ always)
   end
 
-  @plugin_commands ~w(refresh poll start retry dismiss discard relist_discard publish disable report turn_finished limited late_published)a
+  @plugin_commands ~w(refresh poll start retry dismiss discard stop relist_discard publish disable report turn_finished limited late_published)a
 
   def precondition(m, {:call, _, :enable, _}), do: not m.enabled
   def precondition(m, {:call, _, :crash, _}), do: m.enabled and m.crashes < 2
@@ -506,6 +514,18 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
+  # Stop fails a running review and takes its checkout; a run stopped while its
+  # checkout was fetched gets no thread when the fetch is done.
+  defp step(m, {:call, _, :stop, [key]}) do
+    case m.reviews[key] do
+      %{status: :running} = r ->
+        {m |> put_review(key, %{r | status: :failed, stopped: true}) |> pump(), :ok}
+
+      _ ->
+        {m, :error}
+    end
+  end
+
   defp step(m, {:call, c, :relist_discard, [key, display]}) do
     {m, :ok} = step(m, {:call, c, :save, [{"display", display}]})
     step(m, {:call, c, :discard, [key]})
@@ -523,6 +543,10 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp step(m, {:call, _, :report, [{key, k}, kind]}) do
     case m.reviews[key] do
+      # A stopped run's checkout is gone; what its agent says is not a review.
+      %{run: ^k, stopped: true} ->
+        {m, :error}
+
       %{run: ^k, status: s} = r when s not in [:queued, :ready, :published, :publishing] ->
         if kind == :nothing do
           {m, :error}
@@ -673,6 +697,7 @@ defmodule HalC2.CodeReviewPropTest do
       publish_error: false,
       seq: nil,
       followed: false,
+      stopped: false,
       past: []
     }
   end
@@ -755,7 +780,8 @@ defmodule HalC2.CodeReviewPropTest do
       Enum.reduce(taken, m, fn key, m ->
         runs = (m.runs[key] || []) ++ [false]
         m = %{m | runs: Map.put(m.runs, key, runs)}
-        put_review(m, key, %{m.reviews[key] | status: :running, run: length(runs)})
+
+        put_review(m, key, %{m.reviews[key] | status: :running, run: length(runs), stopped: false})
       end)
 
     started = Enum.map(taken, &{&1, m.reviews[&1].run})
@@ -900,10 +926,12 @@ defmodule HalC2.CodeReviewPropTest do
     end)
   end
 
-  # A review's checkout stays from its run's start until its next run starts or it is
-  # discarded.
+  # A review's checkout stays from its run's start until its next run starts, or it is
+  # stopped or discarded.
   defp checkouts(m) do
-    Enum.count(m.reviews, fn {key, r} -> r.run != nil and Enum.at(m.runs[key], r.run - 1) end)
+    Enum.count(m.reviews, fn {key, r} ->
+      r.run != nil and not r.stopped and Enum.at(m.runs[key], r.run - 1)
+    end)
   end
 
   # --- commands ---------------------------------------------------------------------------
@@ -926,6 +954,8 @@ defmodule HalC2.CodeReviewPropTest do
     do: observe(call("dismiss", %{"key" => key, "commentId" => "c#{i}", "dismissed" => flag}))
 
   def discard(key), do: observe(discarding(key))
+
+  def stop(key), do: observe(call("stop", %{"key" => key}))
 
   # Saves the display with the listing of the threads it starts held on its way to the
   # first, discards the review while it is, then lets the listing go.

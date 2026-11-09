@@ -306,6 +306,20 @@ defmodule HalC2.CodeReviewTest do
            |> Enum.all?(&(&1["name"] != "code_review_report"))
   end
 
+  # Its checkout went with the stop, so comments on its lines would land in the summary.
+  test "a review stopped on this machine takes no report from its agent", _context do
+    review = start_review()
+    {:ok, _} = call("stop", %{"key" => @key})
+    arguments = %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
+
+    assert {:error, _, message} =
+             HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+
+    assert message =~ "no longer running"
+    settle()
+    assert %{"status" => "failed", "error" => "Stopped.", "verdict" => nil} = review()
+  end
+
   test "a thread whose review is published is told so when it reports again", _context do
     review = start_review()
     arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
@@ -1160,7 +1174,10 @@ defmodule HalC2.CodeReviewTest do
       File.write!(Path.join(dir, "fetch.hold"), "")
       {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
       await_file(Path.join(dir, "fetch.held"))
+      %{"threadId" => thread_id} = review()
       assert {:ok, _} = call("stop", %{"key" => @key})
+      # Closed by the time Stop returns, so the sandbox the run asks for next is refused.
+      assert HalC2.OpenShell.Review.ended(thread_id) == "closed"
       File.rm!(Path.join(dir, "fetch.hold"))
 
       settle()
@@ -1168,6 +1185,9 @@ defmodule HalC2.CodeReviewTest do
       refute_received {:sandbox_exec, _, _}
       assert FakeOpenShell.sandboxes(g) == %{}
       assert %{"status" => "failed", "error" => "Stopped."} = review()
+      # The run's claim is refused, and the checkout it fetched goes with it.
+      checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+      assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
     end
 
     @tag sandbox: [hang: true]

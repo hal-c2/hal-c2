@@ -596,11 +596,16 @@ defmodule HalC2Plugins.CodeReview do
     case state.reviews[key] do
       %{"status" => "running", "threadId" => thread_id} = review ->
         review =
-          Map.merge(review, %{"status" => "failed", "error" => "Stopped.", "finishedAt" => now()})
+          Map.merge(review, %{
+            "status" => "failed",
+            "error" => "Stopped.",
+            "stopped" => true,
+            "finishedAt" => now()
+          })
 
-        # By its thread, as the run may not have said yet whether it is sandboxed: a
-        # sandbox closed before it is made is never made.
-        close_sandbox(%{"threadId" => thread_id, "sandboxed" => true})
+        # By its thread, as the run may not have said yet whether it is sandboxed,
+        # and before Stop returns: a sandbox closed before it is made is never made.
+        if is_binary(thread_id), do: Host.close_sandbox(@id, thread_id)
         settle(thread_id)
         {:reply, {:ok, review}, state |> put(review) |> pump() |> changed()}
 
@@ -612,14 +617,19 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  @not_running "This review is no longer running; your report was not recorded."
+
   # An automatic post is answered once it is over, so the agent hears how it went.
   def handle_call({:report, thread_id, findings}, from, state) do
     case by_thread(state, thread_id) do
       # A sandboxed agent reports once, while its review runs: a stopped or failed
       # one's sandbox is being closed, and what it says now is not a review.
       %{"sandboxed" => true, "status" => status} when status != "running" ->
-        {:reply, {:error, "This review is no longer running; your report was not recorded."},
-         state}
+        {:reply, {:error, @not_running}, state}
+
+      # Nor is what any agent says once the user stopped it, its checkout gone.
+      %{"stopped" => true, "status" => status} when status != "running" ->
+        {:reply, {:error, @not_running}, state}
 
       %{"status" => status} = review when status not in ~w(published publishing) ->
         mode = publishing(state.settings, review["repository"])
@@ -676,7 +686,7 @@ defmodule HalC2Plugins.CodeReview do
   # Answered once the claim is shared, so the lock it was made under covers it.
   def handle_call({:started, key, thread_id, checkout}, _from, state) do
     case state.reviews[key] do
-      %{"threadId" => ^thread_id} = review ->
+      %{"threadId" => ^thread_id, "status" => "running"} = review ->
         # A look while the checkout was fetched saw a newer head than the run began with.
         review =
           review
@@ -689,8 +699,9 @@ defmodule HalC2Plugins.CodeReview do
         state = %{state | claimed_at: Map.put(state.claimed_at, key, System.monotonic_time())}
         {:reply, :ok, state |> put(review) |> changed()}
 
+      # Stopped, or started again, while its checkout was fetched: this run is over.
       _ ->
-        {:reply, :ok, state}
+        {:reply, {:stopped, checkout}, state}
     end
   end
 
@@ -1431,6 +1442,7 @@ defmodule HalC2Plugins.CodeReview do
         "general" => [],
         "validation" => nil,
         "error" => nil,
+        "stopped" => false,
         "publishError" => nil,
         "changed" => false,
         "claimed" => false,
@@ -1658,6 +1670,9 @@ defmodule HalC2Plugins.CodeReview do
       {:elsewhere, other, started} ->
         Checkout.remove(started["root"], started["checkout"])
         GenServer.cast(__MODULE__, {:elsewhere, key, thread_id, other})
+
+      {:stopped, started} ->
+        Checkout.remove(started["root"], started["checkout"])
 
       {:error, error} ->
         GenServer.cast(__MODULE__, {:start_failed, key, thread_id, message(error)})
