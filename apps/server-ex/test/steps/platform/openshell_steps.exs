@@ -12,7 +12,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   alias HalC2.OpenShell
   alias HalC2.OpenShell.{Client, Config, Install, Manifest, Platform, Service}
-  alias HalC2.Test.{FakeOpenShell, Mc, Storage}
+  alias HalC2.Test.{FakeOpenShell, Mc, Storage, SystemdUnit}
 
   @podman %{
     kind: :podman,
@@ -21,7 +21,8 @@ defmodule HalC2.Steps.Platform.OpenShell do
     uid: 1000,
     reachable: true,
     version: "5.2.1",
-    rootless: true
+    rootless: true,
+    cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]}
   }
 
   @linux %{
@@ -50,6 +51,23 @@ defmodule HalC2.Steps.Platform.OpenShell do
             rootless: false
         }
     },
+    "names a rootless Docker daemon's socket" => %{
+      @linux
+      | runtime: %{
+          @podman
+          | kind: :docker,
+            socket: "/run/user/1000/docker.sock",
+            version: "28.1.0"
+        }
+    },
+    "runs Podman on cgroup v1" => %{
+      @linux
+      | runtime: %{@podman | cgroup: %{version: 1, controllers: []}}
+    },
+    "has not delegated the cpu controller" => %{
+      @linux
+      | runtime: %{@podman | cgroup: %{version: 2, controllers: ["memory", "pids"]}}
+    },
     "names Docker Desktop for Linux's socket" => %{
       @linux
       | runtime:
@@ -58,6 +76,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
             socket: "/home/me/.docker/desktop/docker.sock",
             version: "28.1.0",
             rootless: false,
+            cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]},
             desktop: true
           })
     },
@@ -111,7 +130,13 @@ defmodule HalC2.Steps.Platform.OpenShell do
           "Version" => "5.2.1",
           "Components" => [%{"Name" => "Podman Engine", "Version" => "5.2.1"}]
         },
-        "/v5.0.0/libpod/info" => %{"host" => %{"security" => %{"rootless" => true}}}
+        "/v5.0.0/libpod/info" => %{
+          "host" => %{
+            "security" => %{"rootless" => true},
+            "cgroupVersion" => "v2",
+            "cgroupControllers" => ["cpu", "io", "memory", "pids"]
+          }
+        }
       })
 
     put_facts(%{@linux | runtime: Platform.named_runtime("unix://" <> socket)})
@@ -136,6 +161,7 @@ defmodule HalC2.Steps.Platform.OpenShell do
       reachable: true,
       version: "28.1.0",
       rootless: false,
+      cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]},
       desktop: true
     }
 
@@ -156,6 +182,31 @@ defmodule HalC2.Steps.Platform.OpenShell do
   step "the gateway still listens on loopback only", context do
     {:ok, %{"port" => port}} = context.result
     assert File.read!(OpenShell.config_path()) =~ ~s(bind_address = "127.0.0.1:#{port}"\n)
+    context
+  end
+
+  step ~s(the MC's home is at a path with "%", "$" and quotes in it), context do
+    FakeOpenShell.put_env(home: Path.join(context.openshell.dir, ~s(mc %i $HOME "q")))
+    context
+  end
+
+  # As systemd reads the unit (`HalC2.Test.SystemdUnit`): no specifier or variable expands.
+  step "the gateway's service runs the gateway from that path, as written", context do
+    assert {:ok, _} = context.result
+    unit = File.read!(Service.unit_path(:systemd))
+
+    assert [dir] = SystemdUnit.values(unit, "WorkingDirectory")
+    assert SystemdUnit.path(dir) == OpenShell.root()
+    assert [exec] = SystemdUnit.values(unit, "ExecStart")
+    assert SystemdUnit.exec(exec) == Config.command(OpenShell.gateway_bin(Manifest.version()))
+    assert ["append:" <> log] = SystemdUnit.values(unit, "StandardOutput")
+    assert SystemdUnit.path(log) == OpenShell.log_path()
+    context
+  end
+
+  step "the gateway's service is this home's own", context do
+    assert :ok = Service.owned()
+    assert %{"foreign" => false, "current" => true} = Service.status(OpenShell.state())
     context
   end
 
@@ -606,6 +657,27 @@ defmodule HalC2.Steps.Platform.OpenShell do
 
   step "the user points the MC at a plaintext gateway", context do
     installed(context, Install.reuse("http://127.0.0.1:#{Install.free_port()}", []))
+  end
+
+  step "the MC makes a sandbox with CPU and memory limits", context do
+    flush_requests()
+    {:ok, conn} = Client.connect()
+
+    try do
+      assert {:ok, _} = Client.create_sandbox(conn, "limited", limits: %{cpu: "2", memory: "4Gi"})
+    after
+      Client.disconnect(conn)
+    end
+
+    context
+  end
+
+  # OpenShell's Docker driver refuses a sandbox that asks for requests.
+  step "the gateway is asked for those limits and no requests", context do
+    assert_received {:openshell_request, "CreateSandbox", request}
+    resources = Google.Protobuf.to_map(request.spec.template.resources)
+    assert resources == %{"limits" => %{"cpu" => "2", "memory" => "4Gi"}}
+    context
   end
 
   step "the MC refuses because {string}", %{args: [code]} = context do

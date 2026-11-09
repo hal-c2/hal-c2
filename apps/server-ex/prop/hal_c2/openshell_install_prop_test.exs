@@ -74,7 +74,8 @@ defmodule HalC2.OpenShellInstallPropTest do
       uid: 1000,
       reachable: true,
       version: "5.2.1",
-      rootless: true
+      rootless: true,
+      cgroup: %{version: 2, controllers: ["cpu", "io", "memory", "pids"]}
     }
   }
 

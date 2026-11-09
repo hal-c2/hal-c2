@@ -68,8 +68,8 @@ defmodule HalC2.OpenShell.Config do
 
   @doc """
   `gateway.toml` for a gateway on `port` with `driver` ("podman" or "docker") over
-  `socket`. Docker also takes the supervisors' `network` ("host" or "bridge",
-  `HalC2.OpenShell.Platform.check/1`).
+  `socket`. Docker also takes the supervisors' `network`, "bridge", the only one
+  `HalC2.OpenShell.Platform.check/1` chooses.
   """
   def render(%{port: port, driver: driver, socket: socket} = config)
       when driver in ["podman", "docker"] do
@@ -123,11 +123,10 @@ defmodule HalC2.OpenShell.Config do
   # supervisors of every sandbox under its label, so each home has a label of its
   # own. Podman's driver has no such sweep, but puts every sandbox's supervisor on
   # `network_name`, so each home has a network of its own. Docker's supervisors are
-  # on the network `HalC2.OpenShell.Platform` chose; on a bridge, with no
-  # `grpc_endpoint`, the driver dials `host.docker.internal`, which the gateway's
-  # certificate names.
-  defp driver_scope(%{driver: "docker", network: network}) when network in ["host", "bridge"],
-    do: "sandbox_label = #{toml(scope())}\nsupervisor_network_mode = #{toml(network)}\n"
+  # on a bridge, where with no `grpc_endpoint` the driver dials `host.docker.internal`,
+  # which the gateway's certificate names.
+  defp driver_scope(%{driver: "docker", network: "bridge"}),
+    do: "sandbox_label = #{toml(scope())}\nsupervisor_network_mode = \"bridge\"\n"
 
   defp driver_scope(%{driver: "podman"}), do: "network_name = #{toml(scope())}\n"
 

@@ -6,9 +6,11 @@
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820095093: a home by two spellings, the unit after a failed stop)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820437968: one lifecycle command at a time)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820535766: Docker Desktop's bridge, lingering)
+#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot reviews of 2026-11-09: rootless Docker, cgroup limits, unit escaping, limits only)
+#   https://github.com/hal-c2/hal-c2/issues/1449 (rootless Docker's network namespace)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
-#   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix, rootless runtimes only)
+#   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix: rootless runtimes that enforce cgroup v2 limits)
 #   apps/server-ex/lib/hal_c2/open_shell/manifest.ex (the pinned release and its hashes)
 #   apps/server-ex/lib/hal_c2/open_shell/config.ex (mTLS only, telemetry off, the pids limit)
 #   apps/server-ex/lib/hal_c2/open_shell/service.ex (the gateway's systemd user unit and launchd agent)
@@ -54,16 +56,19 @@ Feature: The OpenShell gateway review sandboxes run in
     And no gateway is installed
 
     Examples:
-      | machine                                 | problem               |
-      | is an Intel Mac                         | intel-mac             |
-      | is Linux on riscv64                     | unsupported-arch      |
-      | is Linux without Landlock               | landlock-missing      |
-      | has no Podman                           | podman-missing        |
-      | runs Podman as root                     | runtime-not-rootless  |
-      | names the root Docker daemon's socket   | root-docker           |
-      | names Docker Desktop for Linux's socket | docker-desktop-linux  |
-      | names a Docker socket that is not there | docker-socket-missing |
-      | is a Mac with Podman instead of Docker  | podman-on-mac         |
+      | machine                                 | problem                    |
+      | is an Intel Mac                         | intel-mac                  |
+      | is Linux on riscv64                     | unsupported-arch           |
+      | is Linux without Landlock               | landlock-missing           |
+      | has no Podman                           | podman-missing             |
+      | runs Podman as root                     | runtime-not-rootless       |
+      | names the root Docker daemon's socket   | root-docker                |
+      | names a rootless Docker daemon's socket | rootless-docker            |
+      | runs Podman on cgroup v1                | cgroup-v1                  |
+      | has not delegated the cpu controller    | cgroup-controllers-missing |
+      | names Docker Desktop for Linux's socket | docker-desktop-linux       |
+      | names a Docker socket that is not there | docker-socket-missing      |
+      | is a Mac with Podman instead of Docker  | podman-on-mac              |
 
   @mc
   Scenario: A Docker socket that rootless Podman answers on is used as Podman
@@ -77,6 +82,13 @@ Feature: The OpenShell gateway review sandboxes run in
     When the user installs OpenShell
     Then Docker's supervisors reach the gateway over Docker Desktop's bridge
     And the gateway still listens on loopback only
+
+  @mc
+  Scenario: A home whose path has systemd's special characters runs its own gateway
+    Given the MC's home is at a path with "%", "$" and quotes in it
+    When the user installs OpenShell
+    Then the gateway's service runs the gateway from that path, as written
+    And the gateway's service is this home's own
 
   @mc
   Scenario: Installing lets the gateway keep running after the user logs out
@@ -223,6 +235,13 @@ Feature: The OpenShell gateway review sandboxes run in
     Then the MC uses that gateway without running one of its own
     When the user uninstalls OpenShell
     Then the MC forgets the gateway and leaves its sandboxes alone
+
+  @mc
+  Scenario: A sandbox the MC makes asks the gateway for limits only
+    Given a gateway the user runs, with its CA and a client certificate
+    And the user points the MC at it
+    When the MC makes a sandbox with CPU and memory limits
+    Then the gateway is asked for those limits and no requests
 
   @mc
   Scenario: A gateway that holds another HAL-C2 environment's sandboxes is refused
