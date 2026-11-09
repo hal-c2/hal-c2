@@ -5,7 +5,8 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
   MC's plugins directory as a user would install it.
 
   Threads run on the fake Claude, whose "repair the test command" turn finds
-  the bare `pytest` missing and runs the tests through `python -m pytest`.
+  the bare `pytest` missing and runs the tests through `python -m pytest`,
+  and whose "run the tests the working way" turn runs only the latter.
   What was learned is read through the plugin's own `microSkills` call; the
   steps wait for a turn to be folded on the `loopGuard` topic, published in
   the same close that folds it, before the plugin answers anything else.
@@ -134,6 +135,28 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     Map.put(context, :folded, expected)
   end
 
+  step "Claude runs the tests the working way in the thread {string}",
+       %{args: [title]} = context do
+    expected = context.folded + 1
+    context = World.post_message(context, title, "run the tests the working way")
+    {_, context} = await_turns(context, expected)
+    Map.put(context, :folded, expected)
+  end
+
+  # What the fact had fired before, then the MC starts again with the plugin
+  # enabled: its turn count, which the steps wait on, starts again from none.
+  step "the MC restarts with TokenEconomizer running", context do
+    {view, context} = micro_skills(context)
+    fired = skill_about(view, "pytest")["evidence"]["fired"]
+
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    assert %{"status" => "running"} = Fixtures.entry(@id)
+
+    context
+    |> Map.merge(%{fired_before: fired, folded: 0})
+    |> watch()
+  end
+
   # --- what was learned, dropped and staged ------------------------------------------------------
 
   step "TokenEconomizer has learned the fact about {string}, active and staged",
@@ -153,6 +176,15 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     skill = skill_about(view, tool)
     assert skill["state"] == "CANDIDATE"
     assert skill["staged"] == false
+    context
+  end
+
+  # A turn that ran only the working form fires the fact only when its
+  # conversation was given it.
+  step "the fact about {string} counts that turn as having been given it",
+       %{args: [tool]} = context do
+    {view, context} = micro_skills(context)
+    assert skill_about(view, tool)["evidence"]["fired"] == context.fired_before + 1
     context
   end
 

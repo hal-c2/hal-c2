@@ -3,6 +3,7 @@
 #   plugins/token-economizer/mc/micro_skills_envfacts.ex, micro_skills_observe.ex (what a turn teaches)
 #   plugins/token-economizer/mc/micro_skills_lifecycle.ex (a fact's formation, retirement and firing gate)
 #   plugins/token-economizer/plugin.json (microSkills, microSkillsMaxFacts, microSkillsMaxTokens, runs:shape)
+#   apps/server-ex/test/steps/plugins/token_economizer_micro_skills_steps.exs, apps/server-ex/test/support/fake_claude.py ("repair the test command", "run the tests the working way")
 #   microsoft/TokenEconomizer@cb42207e3e09 tokeneconomizer/microskills/{envfacts,observe,lifecycle,stage}.py (what this ports)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port)
 
@@ -26,6 +27,14 @@ Feature: TokenEconomizer's micro-skills
     When Claude starts the thread "Next" with "hello"
     Then Claude gets the fact about "pytest" ahead of "hello"
     And nothing before that thread was told the fact
+
+  @mc
+  Scenario: A conversation staged before the MC restarts still counts the facts it was given
+    Given Claude has repaired the test command in 4 turns in the thread "Learning"
+    And Claude starts the thread "Next" with "hello"
+    When the MC restarts with TokenEconomizer running
+    And Claude runs the tests the working way in the thread "Next"
+    Then the fact about "pytest" counts that turn as having been given it
 
   @mc
   Scenario: A candidate that has not earned its place is not staged

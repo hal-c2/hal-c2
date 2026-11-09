@@ -168,6 +168,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   @impl GenServer
   def init(settings) do
     {:ok, sup} = Task.Supervisor.start_link()
+    {staged, staged_order} = read_staged()
 
     {:ok,
      %{
@@ -190,10 +191,12 @@ defmodule HalC2Plugins.TokenEconomizer do
        # The shape of the listing last published, turn counts aside: the
        # topic is republished only when what a person would see changes.
        published_skills: nil,
-       # thread id => the fact ids staged for its conversation, oldest
-       # first in staged_order and capped, so it cannot grow for good.
-       staged: %{},
-       staged_order: [],
+       # {thread id, provider instance} => the fact ids staged for that
+       # conversation, oldest first in staged_order and capped, so it cannot
+       # grow for good. Kept on disk too: a conversation staged before the MC
+       # restarted is resumed, not staged again, and still counts its facts.
+       staged: staged,
+       staged_order: staged_order,
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
        # The latest redirects and stop offers, newest first.
        recent: []
@@ -287,10 +290,12 @@ defmodule HalC2Plugins.TokenEconomizer do
         # Staged per conversation, not per thread: a thread carried on by
         # another provider instance (another driver, or another account of
         # the same one) gets its own staging, and each fold credits the
-        # conversation it belongs to.
+        # conversation it belongs to. Saved once the answer is on its way.
         key = {run["threadId"], run["instanceId"] || run["provider"]}
         state = stage(state, key, EnvFacts.injected_ids(skills))
-        {:reply, if(text == "", do: nil, else: %{"context" => text}), state}
+
+        {:reply, if(text == "", do: nil, else: %{"context" => text}), state,
+         {:continue, :save_staged}}
       else
         {:reply, nil, state}
       end
@@ -310,7 +315,59 @@ defmodule HalC2Plugins.TokenEconomizer do
     {:reply, :ok, state}
   end
 
+  @impl GenServer
+  def handle_continue(:save_staged, state) do
+    save_staged(state)
+    {:noreply, state}
+  end
+
   @staged_kept 128
+
+  @doc "The file that keeps what each conversation was staged."
+  def staged_path, do: Path.join(Host.data_dir(@id), "staged.json")
+
+  # `[[thread id, instance, ids], ...]`, oldest first; anything unreadable
+  # is no staging, which costs a conversation's credit, never the plugin.
+  defp read_staged do
+    entries =
+      with {:ok, text} <- File.read(staged_path()),
+           {:ok, %{"staged" => entries}} when is_list(entries) <- JSON.decode(text) do
+        for [thread_id, instance, ids] <- entries,
+            is_binary(thread_id) and is_binary(instance) and is_list(ids) and
+              Enum.all?(ids, &is_binary/1),
+            do: {{thread_id, instance}, ids}
+      else
+        _ -> []
+      end
+
+    entries =
+      entries
+      |> Enum.reverse()
+      |> Enum.uniq_by(&elem(&1, 0))
+      |> Enum.take(@staged_kept)
+      |> Enum.reverse()
+
+    {Map.new(entries), Enum.map(entries, &elem(&1, 0))}
+  end
+
+  # As `save_tracker/2`: a failed write costs persistence, never the plugin.
+  defp save_staged(state) do
+    path = staged_path()
+    tmp = path <> ".tmp"
+
+    entries =
+      for {thread_id, instance} = key <- state.staged_order,
+          do: [thread_id, instance, state.staged[key]]
+
+    with :ok <- File.write(tmp, JSON.encode!(%{"staged" => entries})),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("token-economizer: staging not saved to #{path}: #{inspect(reason)}")
+        :error
+    end
+  end
 
   # Remembers what a thread's conversation was staged, keeping the latest
   # conversations only: an evicted thread's later turns count no prevented

@@ -117,6 +117,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer.status/1" => "what the topic carries, which decides nothing",
       "HalC2Plugins.TokenEconomizer.envelope_path/1" =>
         "where a project's envelope is kept; the model keeps what it taught",
+      "HalC2Plugins.TokenEconomizer.staged_path/0" =>
+        "where what each conversation was staged is kept; the guard never reads it",
       "HalC2Plugins.TokenEconomizer.micro_skills_path/1" =>
         "where a project's learned facts are kept; their lifecycle is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
       "HalC2Plugins.TokenEconomizer.call_of/1" => @calls,

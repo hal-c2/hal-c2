@@ -983,6 +983,14 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
   end
 
   describe "the micro-skills at the plugin's seam" do
+    # What was staged is kept on disk, read as the plugin starts: each test
+    # starts with none.
+    setup do
+      File.rm(TokenEconomizer.staged_path())
+      on_exit(fn -> File.rm(TokenEconomizer.staged_path()) end)
+      on_exit(fn -> File.rm(TokenEconomizer.micro_skills_path("seam")) end)
+    end
+
     defp settings(state, settings) do
       {:reply, :ok, state} = TokenEconomizer.handle_call({:settings, settings}, nil, state)
       state
@@ -1059,6 +1067,24 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert fired(state) == 1
     end
 
+    test "what a conversation was staged outlives a restart, and an unreadable file is none" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      {:noreply, ^state} = TokenEconomizer.handle_continue(:save_staged, state)
+
+      # The MC restarts; the conversation is resumed, so it is not staged again.
+      {:ok, again} = TokenEconomizer.init(%{})
+      assert {again.staged, again.staged_order} == {state.staged, state.staged_order}
+
+      again = again |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      assert again |> ran_tests("t", "claude-work") |> fired() == 1
+
+      File.write!(TokenEconomizer.staged_path(), "{not json")
+      {:ok, again} = TokenEconomizer.init(%{})
+      assert {again.staged, again.staged_order} == {%{}, []}
+    end
+
     test "with the guard off a settings save keeps the turns learning hears" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})
@@ -1128,16 +1154,18 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       assert state.staged == %{}
 
-      {:reply, nil, state} =
+      {:reply, nil, state, {:continue, :save_staged}} =
         TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
 
       other = %{run | "instanceId" => "codex"}
-      {:reply, nil, state} = TokenEconomizer.handle_call({:shape_run, other, future}, nil, state)
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, other, future}, nil, state)
 
       # Another account of the same driver is another conversation.
       account = Map.merge(run, %{"instanceId" => "claude-work", "provider" => "claudeAgent"})
 
-      {:reply, nil, state} =
+      {:reply, nil, state, {:continue, :save_staged}} =
         TokenEconomizer.handle_call({:shape_run, account, future}, nil, state)
 
       assert Map.keys(state.staged) |> Enum.sort() ==

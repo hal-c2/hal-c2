@@ -488,6 +488,16 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}rd", "role": "assistant", "content": [{"type": "text", "text": "The tests pass"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "The tests pass", "session_id": session})
         continue
+    # "run the tests the working way": Claude runs the tests through
+    # `python -m pytest` only, as one told the bare `pytest` is missing would.
+    if "run the tests the working way" in text.split("</conversation_history>")[-1]:
+        tool_id = f"working-{turn}"
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "tool_use", "id": tool_id, "name": "Bash", "input": {"command": "python -m pytest -q"}}]}})
+        send({"type": "user", "session_id": session, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_id,
+              "content": "4 passed in 0.01s", "is_error": False}]}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}wd", "role": "assistant", "content": [{"type": "text", "text": "The tests pass"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "The tests pass", "session_id": session})
+        continue
     # "answer halfway": Claude writes part of its answer (message half-uuid-N) and stays open,
     # as a turn the user stops mid-answer.
     if "answer halfway" in text.split("</conversation_history>")[-1]:
