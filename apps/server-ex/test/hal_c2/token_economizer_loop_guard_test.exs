@@ -1428,6 +1428,49 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert TokenEconomizer.learns?(state.turns["a"], true)
     end
 
+    test "a runner with any flags, an expansion or a substitution it reads is learned from" do
+      for cmd <- [
+            "bun test --coverage",
+            "deno test --allow-read",
+            "node --experimental-vm-modules node_modules/.bin/jest",
+            "ruby -Itest test/a_test.rb",
+            "pytest -q ${PYTEST_ARGS:-} \"$@\"",
+            "pytest -q $(git ls-files 'test_*.py')",
+            "cd \"$(git rev-parse --show-toplevel)\" && npm test",
+            "source .venv/bin/activate && pytest -q",
+            "cat <<'EOF' > /dev/null\nhi\nEOF\npytest -q"
+          ] do
+        state = heard_turn([edited("/r/a.py"), command(cmd, "1 passed in 0.02s")])
+        assert TokenEconomizer.learns?(state.turns["a"], true), cmd
+      end
+    end
+
+    test "a script a command runs that this does not read hides its check from learning" do
+      for cmd <- [
+            "echo $(bash -c 'pytest -q')",
+            "x=`sh -c 'pytest -q'`; echo ok",
+            "diff <(python3 -c 'import os; os.system(\"pytest\")') /dev/null",
+            "python3 <<'EOF'\nimport os; os.system('pytest -q')\nEOF",
+            "cat run.sh | bash",
+            "eval \"$CHECK\"",
+            "perl -le 'system q(pytest)'",
+            "deno eval 'Deno.exit(0)'",
+            "timeout 60 node --input-type commonjs -e 'x()'",
+            "source run.sh",
+            ". ./run.sh && echo ok",
+            "bash run.sh || true"
+          ] do
+        state =
+          heard_turn([edited("/r/run.sh"), command(cmd, "1 failed in 0.02s", "completed")])
+
+        refute TokenEconomizer.learns?(state.turns["a"], true), cmd
+      end
+
+      # A script written before this turn is the project's, run as any program is.
+      state = heard_turn([edited("/r/a.py"), command("bash run.sh", "1 passed in 0.02s")])
+      assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
     test "a command heard only in part after an edit is not read, so the turn is not learned" do
       capped = "cat > a.py <<'EOF'\n" <> String.duplicate("x = 1\n", 700) <> "EOF\npytest -q"
       failing = command(capped, "1 failed in 0.02s", "failed", %{"exitCode" => 1})

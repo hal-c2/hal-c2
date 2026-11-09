@@ -223,9 +223,10 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp call("read"), do: {"Bash", %{"command" => "cat a.py"}, "x = 1", 0}
   defp call("bad_edit"), do: {"Edit", %{"path" => "a.py"}, "String to replace not found", 1}
 
-  # Commands the guard does not read whole, each hiding a failing check: capped (the
-  # plugin hears no text), in a nested shell, as inline code, in a substitution, or in a
-  # heredoc that never ends.
+  # Commands that may hide a check, each hiding a failing one: capped (the plugin hears no
+  # text), in a nested shell, as inline code, in a substitution's nested shell, in a
+  # heredoc that never ends, or in a script the turn wrote and sources ("sourced", which
+  # hides one only once a.py was edited).
   defp call("capped"), do: {"Bash", %{"command" => ""}, "1 failed in 0.02s", 1}
 
   defp call("nested"),
@@ -238,7 +239,18 @@ defmodule HalC2.TokenEconomizerPropTest do
     do: {"Bash", %{"command" => "node --input-type commonjs -e \"x()\""}, "1 failed in 0.02s", 0}
 
   defp call("substituted"),
-    do: {"Bash", %{"command" => "echo $(pytest -q)"}, "1 failed in 0.02s", 0}
+    do: {"Bash", %{"command" => "echo $(bash -c 'pytest -q')"}, "1 failed in 0.02s", 0}
+
+  defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
+
+  # Checks that hide nothing however they are spelt: a runner with flags, expansions, a
+  # substitution read whole.
+  defp call("flagged"), do: {"Bash", %{"command" => "bun test --coverage"}, "1 pass\n0 fail", 0}
+
+  defp call("expanded"),
+    do:
+      {"Bash", %{"command" => "pytest -q ${ARGS:-} $(git ls-files 'test_*.py')"},
+       "1 passed in 0.02s", 0}
 
   defp call("open_heredoc"),
     do: {"Bash", %{"command" => "cat <<EOF\npytest -q"}, "1 failed in 0.02s", 1}
@@ -337,9 +349,9 @@ defmodule HalC2.TokenEconomizerPropTest do
     end
   end
 
-  property "a turn with a command it did not read after its last edit is never learned",
+  property "a turn with a command that may hide a check after its last edit is never learned",
     numtests: HalC2.Prop.numtests(300) do
-    forall kinds <- list(elements(~w(read edit pass fail) ++ @unread)) do
+    forall kinds <- list(elements(~w(read edit pass fail flagged expanded sourced) ++ @unread)) do
       g =
         Enum.reduce(kinds, Turn.new("t:r"), fn kind, g ->
           {name, args, result, code} = call(kind)
@@ -351,10 +363,11 @@ defmodule HalC2.TokenEconomizerPropTest do
       at = Enum.with_index(kinds, 1)
       last_edit = Enum.max([0 | for({"edit", i} <- at, do: i)])
       after_edit = for {kind, i} <- at, i > last_edit, do: kind
-      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail)))
+      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail flagged expanded)))
+      hidden = if last_edit > 0, do: ["sourced" | @unread], else: @unread
 
       green =
-        kinds != [] and not Enum.any?(after_edit, &(&1 in @unread)) and
+        kinds != [] and not Enum.any?(after_edit, &(&1 in hidden)) and
           List.last(checks) != "fail"
 
       (Turn.resolved_proxy(g) == green)

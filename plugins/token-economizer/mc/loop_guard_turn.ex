@@ -25,7 +25,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       long.
     * There is no grader, so the project's envelope learns from turns that ended green:
       the agent stopped on its own, the guard did not stop it, no verification after
-      its last edit failed, and it read every command after that edit whole
+      its last edit failed, and no command after that edit may have hidden a check
       (`resolved_proxy/2`).
   """
 
@@ -154,8 +154,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # Whether an edit was tried after the last check ran: one that failed to apply too,
       # and one later in the check's own command (`pytest && sed -i ...`).
       unchecked: false,
-      # The last call that ran a command this did not read whole (`ShellEdits.read?/1`),
-      # whose checks it may not have heard: 0 for none.
+      # The last call that ran a command that may hide a check (`ShellEdits.hides_check?/2`):
+      # 0 for none.
       unread: 0,
       edits: 0,
       verifications: 0,
@@ -357,7 +357,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         verifies = status_of_tests(cmd) != nil
 
         g =
-          if canon == "bash" and not ShellEdits.read?(cmd),
+          if canon == "bash" and ShellEdits.hides_check?(cmd, Map.keys(g.whole.edit_counts)),
             do: %{g | unread: g.cum_turns},
             else: g
 
@@ -405,9 +405,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   @doc """
   Whether this turn ended green, the stand-in for the grader the envelope cannot have:
-  green unless a verification after the last edit failed, or a command after it was not
-  read whole (a nested shell's script, inline code, a capped or garbled command, a
-  heredoc not placed), which may have run a check that failed unheard.
+  green unless a verification after the last edit failed, or a command after it may have
+  hidden a check (`ShellEdits.hides_check?/2`: a nested shell's script, inline code, a
+  capped or garbled command, a heredoc not placed), one that may have failed unheard.
   """
   def resolved_proxy(g, stopped_normally \\ true) do
     stopped_normally and not g.aborted and g.cum_turns != 0 and
