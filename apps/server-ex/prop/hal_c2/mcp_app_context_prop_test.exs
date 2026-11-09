@@ -174,7 +174,15 @@ defmodule HalC2.McpAppContextPropTest do
 
   # --- the thread ------------------------------------------------------------------
 
+  # Each app's document is a real file with the `-mcp-app-` marker the publisher gives
+  # it: a fork copies the document (`Attachments.copy/2`) and drops an app without one.
   defp seed do
+    File.mkdir_p!(HalC2.Attachments.dir())
+
+    for n <- @ordinals do
+      File.write!(Path.join(HalC2.Attachments.dir(), document(n) <> ".html"), "<p>app #{n}</p>")
+    end
+
     thread = %{"id" => @source, "title" => "Weather", "deletedAt" => nil}
 
     changes =
@@ -195,7 +203,7 @@ defmodule HalC2.McpAppContextPropTest do
               "mcpApp" => %{
                 "server" => "weather",
                 "tool" => "get_forecast",
-                "attachmentId" => "a#{n}"
+                "attachmentId" => document(n)
               }
             })
           ]
@@ -206,6 +214,7 @@ defmodule HalC2.McpAppContextPropTest do
 
   defp create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}
 
+  defp document(n), do: "#{HalC2.Attachments.thread_segment(@source)}-mcp-app-doc#{n}"
   defp run(n), do: "run:#{n}"
   defp item(n), do: "turn-item:codex:app-#{n}"
   defp key(n), do: "turn-item_codex_app-#{n}"
