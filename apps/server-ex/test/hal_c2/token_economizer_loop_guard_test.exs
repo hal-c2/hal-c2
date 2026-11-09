@@ -653,6 +653,34 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       {g, nil, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: 10)
       assert {_, {:nudge, _}, _} = failing.(g, opts ++ [started: 11])
     end
+
+    test "a passing check after a script the turn wrote, in one && chain, says the turn is not stuck" do
+      # Thresholds pinned so low that any call not verified is stuck.
+      thr =
+        Map.merge(Rules.defaults(), %{
+          "min_turns" => 1,
+          "edit_churn" => 1,
+          "error_outputs" => 1,
+          "stagnation" => 0.0,
+          "backstop_turns" => 1
+        })
+
+      opts = [envelope: 1.0, thr: thr, nudge_budget: 2]
+
+      # An edit and a failing run, heard before the project had an envelope.
+      {edited, nil, nil} =
+        Turn.new("t") |> Turn.fold("Edit", %{"file_path" => "/r/scripts/check.sh"}, "ok", nil)
+
+      {edited, nil, nil} =
+        Turn.fold(edited, "Bash", %{"command" => "pytest -q"}, "FAILED t\n1 failed", 1)
+
+      run = &Turn.fold(edited, "Bash", %{"command" => &1}, "1 passed in 0.02s", 0, opts)
+
+      assert {_, nil, nil} = run.("bash scripts/check.sh && pytest -q")
+      # The script ran after the tests: it may have changed the tree, or run a check of its
+      # own that failed unread. Not reading it costs a redirect here.
+      assert {_, {:nudge, _}, _} = run.("pytest -q && bash scripts/check.sh")
+    end
   end
 
   describe "the ended-green proxy" do
@@ -1599,6 +1627,36 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       # A script written before this turn is the project's, run as any program is.
       state = heard_turn([edited("/r/a.py"), command("bash run.sh", "1 passed in 0.02s")])
       assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a check after every script in its passing && chain is its last word; one before a script is not" do
+      for {cmd, learns} <- [
+            {"bash run.sh && pytest -q", true},
+            {"bash run.sh && echo ok && pytest -q && echo done", true},
+            # The script ran after the check, and may have undone it or failed a check of
+            # its own unread.
+            {"pytest -q && bash run.sh", false},
+            {"bash run.sh && pytest -q && bash run.sh", false},
+            # Not one && chain: a script's failure need not stop the check.
+            {"bash run.sh; pytest -q", false},
+            {"bash run.sh || pytest -q", false},
+            # A comment could hide where the chain ends.
+            {"bash run.sh # && pytest -q", false}
+          ] do
+        state =
+          heard_turn([edited("/r/run.sh"), command(cmd, "1 passed in 0.02s", "completed")])
+
+        assert TokenEconomizer.learns?(state.turns["a"], true) == learns, cmd
+      end
+
+      # A chain that did not exit 0 says nothing of what the script did.
+      state =
+        heard_turn([
+          edited("/r/run.sh"),
+          command("bash run.sh && pytest -q", "1 passed in 0.02s", "failed", %{"exitCode" => 1})
+        ])
+
+      refute TokenEconomizer.learns?(state.turns["a"], true)
     end
 
     test "a command heard only in part after an edit is not read, so the turn is not learned" do

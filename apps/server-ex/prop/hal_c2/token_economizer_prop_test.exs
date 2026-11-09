@@ -293,6 +293,10 @@ defmodule HalC2.TokenEconomizerPropTest do
   # A check whose exit status this cannot scope reads passing and exits 0 whatever ran.
   defp call({"unscoped", cmd}), do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
 
+  # A passing check and a command that may hide one, in one `&&` chain that exited 0.
+  defp call({order, cmd}) when order in ["script_then_check", "check_then_script"],
+    do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
+
   defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
 
   # Checks that hide nothing however they are spelt: a runner with flags, expansions, a
@@ -311,6 +315,25 @@ defmodule HalC2.TokenEconomizerPropTest do
     do:
       {"Bash", %{"command" => "set -o pipefail; pytest -q 2>&1 | tail -3"}, "1 passed in 0.02s",
        0}
+
+  # A passing check and a command that may hide one in one `&&` chain, in either order:
+  # a check after it is the last word, one before it is not (the command may have undone
+  # it, or failed a check of its own unread).
+  defp ordered do
+    let {check_last, hider, runner, between} <-
+          {boolean(),
+           elements([
+             "node -e 'x()'",
+             "perl -le 'system q(pytest)'",
+             "python3 -c 'x()'",
+             ~s{eval "$CHECK"}
+           ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"]),
+           elements([" && ", " && echo ok && "])} do
+      if check_last,
+        do: {"script_then_check", hider <> between <> runner},
+        else: {"check_then_script", runner <> between <> hider}
+    end
+  end
 
   # A check negated, in a subshell or a group, under a branch, in the background, or piped
   # under a pipefail a subshell set: its status is not its own.
@@ -471,7 +494,8 @@ defmodule HalC2.TokenEconomizerPropTest do
                oneof([
                  elements(~w(read edit pass fail flagged expanded sourced pipefail) ++ @unread),
                  inline(),
-                 unscoped()
+                 unscoped(),
+                 ordered()
                ])
              ) do
       g =
@@ -485,8 +509,14 @@ defmodule HalC2.TokenEconomizerPropTest do
       at = Enum.with_index(kinds, 1)
       last_edit = Enum.max([0 | for({"edit", i} <- at, do: i)])
       after_edit = for {kind, i} <- at, i > last_edit, do: kind
-      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail flagged expanded pipefail)))
-      hidden = ["unscoped" | @unread]
+
+      checks =
+        Enum.filter(
+          after_edit,
+          &(kind(&1) in ~w(pass fail flagged expanded pipefail script_then_check))
+        )
+
+      hidden = ["unscoped", "check_then_script" | @unread]
       hidden = if last_edit > 0, do: ["sourced" | hidden], else: hidden
 
       green =

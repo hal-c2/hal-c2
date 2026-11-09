@@ -324,6 +324,42 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     end
   end
 
+  # Whether `cmd`, one `&&` chain that exited 0, ran its last check after every command in
+  # it that may hide one (`bash scripts/check.sh && pytest -q`): each of those exited 0,
+  # and the check after them is the last word. A hiding command after the check (`pytest
+  # -q && bash scripts/check.sh`) may have changed the tree, or run a check of its own that
+  # failed unread, so its pass is not taken, deliberately: a redirect there is the cost of
+  # not reading the script. A comment or an escape could hide where the chain ends, so
+  # neither is read as one.
+  defp checked_last?(cmd, "own", 0, written) do
+    {script, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
+    script = String.trim_trailing(script)
+    masked = Regex.replace(@quoted, script, &String.duplicate("Q", byte_size(&1)))
+    masked = Regex.replace(~r/[(){}]/, masked, " ")
+    cuts = for [{at, len} | _] <- Regex.scan(@sep, masked, return: :index), do: {at, at + len}
+    starts = [0 | Enum.map(cuts, &elem(&1, 1))]
+    ends = Enum.map(cuts, &elem(&1, 0)) ++ [byte_size(masked)]
+
+    last_run =
+      Enum.zip(starts, ends)
+      |> Enum.filter(fn {from, to} -> run?(binary_part(masked, from, to - from)) end)
+      |> List.last()
+
+    chain? =
+      not String.contains?(masked, ["#", "\\"]) and
+        Enum.all?(cuts, fn {from, to} -> binary_part(masked, from, to - from) == "&&" end)
+
+    case last_run do
+      {from, _} when chain? ->
+        not ShellEdits.hides_check?(binary_part(script, from, byte_size(script) - from), written)
+
+      _ ->
+        false
+    end
+  end
+
+  defp checked_last?(_, _, _, _), do: false
+
   defp after_run(rest) do
     Enum.reduce_while(rest, "own", fn
       {_, sep, then, pipefail}, status ->
@@ -370,10 +406,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         # A check whose status this does not scope verifies nothing, and may have failed.
         verifies = status not in [nil, "unknown"]
 
+        written = Map.keys(g.whole.edit_counts)
+
         g =
           if canon == "bash" and
-               (status == "unknown" or
-                  ShellEdits.hides_check?(cmd, Map.keys(g.whole.edit_counts))),
+               (status == "unknown" or ShellEdits.hides_check?(cmd, written)) and
+               not checked_last?(cmd, status, exit_code, written),
              do: %{g | unread: g.cum_turns},
              else: g
 
