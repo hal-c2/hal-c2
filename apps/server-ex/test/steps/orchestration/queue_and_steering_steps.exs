@@ -1417,7 +1417,8 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     prompt = List.last(World.claude_prompts(context))
     assert [_, rest] = String.split(prompt, "<conversation_history>", parts: 2)
     assert [history, message] = String.split(rest, "</conversation_history>", parts: 2)
-    assert history =~ "User: Woken"
+    # The wake is the provider's notice, not the user's request (`Handoff`).
+    assert history =~ "Notice: Woken"
     assert String.trim(message) == text
     context
   end

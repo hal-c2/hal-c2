@@ -425,11 +425,16 @@ Feature: Runs and turns
     When "t1" is deleted while its turn starts
     Then the run of "t1" stays cancelled
 
+  # The conversation the first turn opened may hold its prompt under an id the MC never
+  # learnt, so the second does not go into it, and what Codex reports of the first turn is
+  # not the thread's (#1363 review).
   @mc
   Scenario: A turn that starts after its start gave up stays failed
     Given the start of a turn in "t1" gave up while a second message waits
     When the provider starts the first turn anyway
     Then the first run of "t1" stays failed and the second runs alone
+    And the second run starts a new Codex conversation
+    And the first turn's usage leaves the context meter of "t1" alone
 
   # Whether and how often to retry is each provider plugin's own behaviour; the core
   # only waits for the plugin to give up.

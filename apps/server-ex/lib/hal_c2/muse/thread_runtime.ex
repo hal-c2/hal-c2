@@ -818,6 +818,12 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp notification(_method, _params, %{turn: nil} = state), do: state
 
+  # Muse took the prompt: `turn/start` answers a queued one too.
+  defp notification("turn/started", %{"turnId" => id}, state) when id == state.native do
+    commit(state, &[confirmed(&1, state.turn.ids)])
+    state
+  end
+
   # Muse starts a turn of its own when a workflow finishes; the running run shows it.
   defp notification("turn/started", %{"turnId" => id}, state)
        when id != state.native and not state.compact,

@@ -27,6 +27,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
     model: "unrecorded_turns.maude",
     module: "UNRECORDED-TURNS",
     check: "UNRECORDED-TURNS-PROPS",
+    # The deadlock search from init(4, true, empty) takes about 200 s alone on a fast
+    # machine and ran past 300 s on a runner shared with the file's other searches.
+    timeout: 900_000,
     code: [
       {:exports, HalC2.Orchestration.Unrecorded},
       {:exports, HalC2.Orchestration.TurnWatch},

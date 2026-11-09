@@ -186,6 +186,140 @@ defmodule HalC2.Orchestration.TurnWriterTest do
     end
   end
 
+  describe "a turn's first output" do
+    setup %{tmp_dir: dir} do
+      start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+      start_supervised!(HalC2.Streams)
+
+      {:ok, _} =
+        HalC2.Streams.commit("t1", :thread, [
+          {"provider-thread", "pt",
+           %{"s" => %{"id" => "pt", "threadId" => "t1", "unconfirmedRunId" => "run-2"}}}
+        ])
+
+      :ok
+    end
+
+    # Pi never says it started a turn, so its output is what confirms one.
+    defp writer(run, driver \\ "pi") do
+      ids = %{
+        thread: "t1",
+        run: run,
+        root_node: "node-#{run}",
+        provider_thread: "pt",
+        driver: driver
+      }
+
+      %{thread_id: "t1", turn: %{ids: ids}, items: %{}, buffer: %{}, flush_timer: nil}
+    end
+
+    defp mark do
+      state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t1"))
+      StreamState.get(state, "provider-thread")["pt"]["unconfirmedRunId"]
+    end
+
+    # An older run's output arriving after a newer run handed history over says nothing
+    # of whether that handoff reached the provider (#1233).
+    test "confirms only its own run's handoff, however late it arrives" do
+      _ = TurnWriter.ensure_item(writer("run-1"), "late", :assistant)
+      assert mark() == "run-2"
+
+      _ = TurnWriter.ensure_item(writer("run-2"), "answer", :assistant)
+      assert mark() == nil
+    end
+
+    # A provider that says when it starts the turn confirms the run then
+    # (`TurnWriter.confirmed/2`): an item before it can be left over from earlier work.
+    test "confirms nothing for a provider that says when it starts the turn" do
+      for driver <- ~w(codex claudeAgent muse) do
+        _ = TurnWriter.ensure_item(writer("run-2", driver), "output-#{driver}", :assistant)
+        assert mark() == "run-2"
+      end
+    end
+  end
+
+  # Codex, Muse or an ACP agent found the conversation to resume gone and opened a new
+  # one, which gets the whole thread (#1233).
+  describe "a fresh start" do
+    setup %{tmp_dir: dir} do
+      start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+      start_supervised!(HalC2.Streams)
+
+      changes =
+        for {kind, entity} <- [
+              {"run", %{"id" => "run-1", "ordinal" => 1, "status" => "completed"}},
+              {"message",
+               %{
+                 "id" => "user-1",
+                 "runId" => "run-1",
+                 "role" => "user",
+                 "text" => "the first ask",
+                 "createdAt" => "2026-10-01T10:01:00Z"
+               }},
+              {"run",
+               %{"id" => "run-2", "ordinal" => 2, "status" => "running", "sentTokens" => 3}},
+              {"provider-thread",
+               %{
+                 "id" => "pt",
+                 "threadId" => "t1",
+                 "lastRunOrdinal" => 2,
+                 "nativeSinceRunOrdinal" => 1,
+                 "contextUsage" => %{"usedTokens" => 90_000, "maxTokens" => 100_000}
+               }}
+            ],
+            do: {kind, entity["id"], %{"s" => entity}}
+
+      {:ok, _} = HalC2.Streams.commit("t1", :thread, changes)
+      :ok
+    end
+
+    test "hands over the whole thread and marks the run until the provider confirms it" do
+      ids = %{thread: "t1", run: "run-2", provider_thread: "pt", driver: "codex"}
+
+      turn = %{
+        ids: ids,
+        text: "next",
+        fresh: %{thread: "t1", ordinal: 2, merged: nil, moved: nil, restart: nil, text: "next"}
+      }
+
+      {state, turn} = HalC2.Orchestration.Handoff.fresh_start(%{fresh_start: true}, turn)
+      refute Map.has_key?(state, :fresh_start)
+      assert turn.text =~ "the first ask"
+      assert String.ends_with?(turn.text, "next")
+
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("t1"))
+      provider_thread = StreamState.get(stream, "provider-thread")["pt"]
+
+      assert %{"unconfirmedRunId" => "run-2", "unconfirmedSince" => 0} = provider_thread
+      assert provider_thread["nativeSinceRunOrdinal"] == 2
+      refute Map.has_key?(provider_thread, "contextUsage")
+      assert StreamState.get(stream, "run")["run-2"]["sentTokens"] > 3
+    end
+
+    # A start that outlived its caller's timeout opens its conversation after the next
+    # run was planned for the old one. That run waits behind the start and goes on in the
+    # new conversation, which holds none of the thread, so its own mark says too little:
+    # the start's mark stands for the whole thread, and the run after hands it over.
+    test "a fresh start a later run overtook marks the whole thread unconfirmed" do
+      mark = %{"lastRunOrdinal" => 3, "unconfirmedRunId" => "run-3", "unconfirmedSince" => 1}
+      {:ok, _} = HalC2.Streams.commit("t1", :thread, [{"provider-thread", "pt", %{"s" => mark}}])
+      ids = %{thread: "t1", run: "run-2", provider_thread: "pt", driver: "codex"}
+
+      turn = %{
+        ids: ids,
+        text: "next",
+        fresh: %{thread: "t1", ordinal: 2, merged: nil, moved: nil, restart: nil, text: "next"}
+      }
+
+      {_state, _turn} = HalC2.Orchestration.Handoff.fresh_start(%{fresh_start: true}, turn)
+
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("t1"))
+
+      assert %{"lastRunOrdinal" => 3, "unconfirmedRunId" => "run-2", "unconfirmedSince" => 0} =
+               StreamState.get(stream, "provider-thread")["pt"]
+    end
+  end
+
   describe "a finished command" do
     setup %{tmp_dir: dir} do
       start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})

@@ -145,6 +145,20 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     context
   end
 
+  step "a new thread in {string} starts its first run before the sidebar lists it", context do
+    shell = Process.whereis(HalC2.Shell)
+    :sys.suspend(shell)
+
+    try do
+      context = World.launch_on(context, "newcomer", "codex", "wait for it")
+      await_active(context, "newcomer")
+      assert HalC2.Shell.row(node(), World.thread_id(context, "newcomer")) == nil
+      context
+    after
+      :sys.resume(shell)
+    end
+  end
+
   step "the agent is given no {string} server", %{args: [name]} = context do
     session = latest_session(context)
     assert session["method"] in ["thread/start", "thread/resume"]

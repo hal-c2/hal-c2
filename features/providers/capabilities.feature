@@ -66,10 +66,10 @@ Feature: Provider capabilities
     When the user switches the thread to Claude and sends a message
     Then Claude receives a transcript of the history ahead of the message
 
-  Scenario: A long transcript keeps its newest part
+  Scenario: A long transcript keeps every request and condenses the older work
     Given a thread whose history is longer than a provider's handover limit
     When the thread moves to another provider
-    Then the transcript keeps the newest history and drops the oldest
+    Then the transcript keeps every request whole, the newest work first, and condenses the older
 
   Scenario: Merging a fork back hands the fork's new work to the parent
     Given a fork with two turns the parent has not seen

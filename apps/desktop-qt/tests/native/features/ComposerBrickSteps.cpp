@@ -439,21 +439,18 @@ const Steps steps([] {
            QStringLiteral("the draft reads \"%1\" with the caret at %2").arg(editorText(world)).arg(cursor(world)));
   });
 
-  // The message limit.
+  // A long message: the composer sends it whole, and the MC makes a file of it.
   step(QStringLiteral("the user has typed a prompt (\\d+) characters over the 120,000-character limit"), [](World& world, const Captures& c, const Table&) {
     const QString text(120000 + c[0].toInt(), QLatin1Char('x'));
     world.bridge().dispatch(QStringLiteral("composer.text.set"),
                             QVariantMap{{QStringLiteral("target"), target(world)}, {QStringLiteral("text"), text}, {QStringLiteral("cursor"), text.size()}});
   });
-  step(QStringLiteral("the message is not sent"), [](World& world, const Captures&, const Table&) {
-    expect(messages(world).isEmpty(), QStringLiteral("the MC has %1 commands").arg(world.mc.commands.size()));
-    expect(!world.native().controller<ComposerController>()->draft(target(world)).isEmpty(), QStringLiteral("the draft was cleared"));
-  });
-  step(QStringLiteral("the user is told the prompt is (\\d+) characters over the limit and to shorten or split it"), [](World& world, const Captures& c, const Table&) {
-    const QString expected = QStringLiteral("Prompt is %1 characters over the 120,000-character limit. Shorten or split it before sending.").arg(c[0]);
-    const QVariantList toasts = world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
-    expect(std::any_of(toasts.cbegin(), toasts.cend(), [&](const QVariant& toast) { return toast.toMap().value(QStringLiteral("description")) == expected; }),
-           QStringLiteral("the toasts are %1").arg(show(toasts)));
+  step(QStringLiteral("the whole prompt is sent to the MC"), [](World& world, const Captures&, const Table&) {
+    const QList<QJsonObject> sent = messages(world);
+    expect(sent.size() == 1 && sent.first().value(QLatin1String("text")).toString() == QString(120010, QLatin1Char('x')),
+           QStringLiteral("the MC has %1 messages, the first %2 characters long")
+               .arg(sent.size())
+               .arg(sent.isEmpty() ? 0 : sent.first().value(QLatin1String("text")).toString().size()));
   });
 
   // The shell's own scenarios (qt-scenarios.feature).
