@@ -415,7 +415,7 @@ defmodule HalC2.PullRequests.Wakes do
     base = get_in(link, ["snapshot", "baseBranch"]) || "main"
 
     "It left the merge queue: its checks failed there. See the queue's run with " <>
-      "`gh run list --repo #{repository} --event merge_group " <>
+      "`gh run list --repo #{repository} --event merge_group --limit 100 " <>
       "--json databaseId,headBranch,status,conclusion,url " <>
       "--jq '.[] | select(.headBranch | startswith(\"gh-readonly-queue/#{base}/pr-#{number}-\"))'`, " <>
       "then `gh run view <databaseId> --repo #{repository} --log-failed`."

@@ -116,7 +116,7 @@ defmodule HalC2.PullRequests.WakesTest do
     wake = Wakes.wake("t1", [{link, [{:left_merge_queue, "failed_checks"}]}])
 
     assert wake["text"] =~ "It left the merge queue: its checks failed there."
-    assert wake["text"] =~ "gh run list --repo acme/app --event merge_group"
+    assert wake["text"] =~ "gh run list --repo acme/app --event merge_group --limit 100"
     assert wake["text"] =~ ~s|startswith("gh-readonly-queue/main/pr-12-")|
     assert wake["notification"]["outcome"] == "failed"
     assert wake["notification"]["summary"] == "acme/app#12: left merge queue"
