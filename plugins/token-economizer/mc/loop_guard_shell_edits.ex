@@ -3,9 +3,10 @@
 # Ported from tokeneconomizer/loopguard/shell_edits.py (microsoft/TokenEconomizer@cb42207e3e09),
 # into Elixir for HAL-C2's MC. Changed: Python's `shlex` (non-POSIX, with punctuation
 # characters) is reimplemented here, quirks included, so commands split as upstream's do,
-# but for a run of operators (`)>`), split as the shell splits it; `fold_shell_edits` lives
-# in State; a heredoc ends where the shell's does, its delimiter any word (`<<'EOF-CODE'`,
-# `<<123`), and every heredoc a line opens is read; `dd`, `sponge`, `cp`, `mv`, `install`
+# but for a run of operators (`)>`) and a word's quoted parts (`-e'a;b'`), read as the
+# shell reads them; `fold_shell_edits` lives in State; a heredoc ends where the shell's
+# does, its delimiter any word (`<<'EOF-CODE'`, `<<123`), and every heredoc a line opens
+# is read; `dd`, `sponge`, `cp`, `mv`, `install`
 # and `truncate` write files too, as does `gawk -i inplace`; an editor behind a wrapper
 # (`sudo -u me`, `timeout 10`, `xargs`, `find -exec`), in a nested shell or `eval`, with
 # its script attached (`-e's/a/b/'`) or after git's global options is read;
@@ -593,7 +594,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # characters split into the shell's operators (shlex keeps it whole). Quotes stay on
   # quoted words, so a quoted `'>'` or `'|'` is never read as an operator; :error on
   # unbalanced quotes. As in shlex, `#` starts a comment that runs to the end of the
-  # line, newline included, and a quote inside a word is part of the word.
+  # line, newline included; unlike it, a word's quoted parts are quoted wherever they
+  # are, as the shell's are (`-e'a;b'`, `x'|'y` is one word).
 
   @punct ~c"();<>|&\n"
   @space ~c" \t\r"
@@ -627,6 +629,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
       # A comment inside a word drops the rest of the line and the word goes on.
       c == ?# -> lex(drop_line(rest), :word, tok, acc)
       c in @punct -> lex([c | rest], :space, [], emit(tok, acc))
+      c in @quotes -> lex(rest, {:quote, c}, [c | tok], acc)
       true -> lex(rest, :word, [c | tok], acc)
     end
   end
@@ -642,7 +645,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp lex([c | rest], {:quote, q}, tok, acc) do
     if c == q,
-      do: lex(rest, :space, [], emit([c | tok], acc)),
+      do: lex(rest, :word, [c | tok], acc),
       else: lex(rest, {:quote, q}, [c | tok], acc)
   end
 

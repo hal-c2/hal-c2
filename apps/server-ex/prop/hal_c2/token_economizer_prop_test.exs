@@ -388,6 +388,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       {"sed -i s/x/SECRET/ @P", true},
       {"sed -i.bak -e s/x/SECRET/ @P", true},
       {"sed --in-place -Ee's/x/SECRET/' @P", false},
+      {"sed -i -e'1iSECRET;SECRET' @P", false},
       {"perl -pi -e 's/x/SECRET/' @P", false},
       {"printf 'SECRET\n' > @P", false},
       {"printf $'SECRET\\n' > @P", false},

@@ -802,6 +802,22 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert ShellEdits.targets("timeout 60 pytest -q") == []
     end
 
+    test "keeps an operator quoted inside a word in the word" do
+      for cmd <- [
+            "sed -i -e'1iPRIVATE_SOURCE;PRIVATE_TOKEN' a.py",
+            "sed -i -e\"1iPRIVATE_SOURCE|PRIVATE_TOKEN\" a.py",
+            "printf x';'PRIVATE_TOKEN'&&'PRIVATE_SOURCE > a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], cmd
+        assert ShellEdits.programs(cmd) in [["sed"], ["printf"]], cmd
+        refute shell_edit(cmd) =~ "PRIVATE", cmd
+      end
+
+      # A word the shell joins from quoted and bare parts is one word.
+      assert ShellEdits.tokens("echo 'a;b'c\"d|e\"f > x") ==
+               {:ok, ["echo", "'a;b'c\"d|e\"f", ">", "x"]}
+    end
+
     test "counts an edit inside a group, a branch or a loop" do
       for cmd <- [
             "{ tee a.py <<< SECRET; }",
