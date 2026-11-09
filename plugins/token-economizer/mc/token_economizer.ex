@@ -309,7 +309,7 @@ defmodule HalC2Plugins.TokenEconomizer do
           "token-economizer: turn #{inspect(Map.put(summary, "partial", turn.partial))}"
         )
 
-        if not turn.partial and Turn.resolved_proxy(turn.guard, stopped_normally) do
+        if learns?(turn, stopped_normally) do
           {tracker, state} = tracker(state, turn.project)
           tracker = Envelope.record_turn(tracker, turn.guard, stopped_normally)
           save_tracker(turn.project, tracker)
@@ -319,6 +319,13 @@ defmodule HalC2Plugins.TokenEconomizer do
         end
     end
   end
+
+  @doc """
+  Whether a turn the plugin closes feeds its project's envelope: heard whole, and ended
+  green (`Turn.resolved_proxy/2`).
+  """
+  def learns?(turn, stopped_normally),
+    do: not turn.partial and Turn.resolved_proxy(turn.guard, stopped_normally)
 
   defp fold(state, thread_id, turn, name, args, result, code) do
     {tracker, state} = tracker(state, turn.project)

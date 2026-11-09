@@ -40,7 +40,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # `State.test_run_re/0` (the Python vocabulary the thresholds were tuned on); used only
   # for the ended-green proxy, never to change what `State` counts. A runner is often
   # named by path (`python tests/runtests.py`, `.venv/bin/pytest`).
-  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
+  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun|vp)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
 
   # A command line's exit status is its last command's, so it may not be the test run's:
   # `npm test 2>&1 | tail -n 8` exits with `tail`'s status, `npm test || true` with 0.

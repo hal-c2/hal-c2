@@ -1039,6 +1039,16 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       )
     end
 
+    # Thread "a"'s turn, its items heard in order. Never closed: a closed turn that
+    # learns writes its project's envelope to the plugin's data directory.
+    defp heard_turn(items) do
+      {:ok, state} = TokenEconomizer.init(%{})
+      at = %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"}
+      Enum.reduce(items, observe(state, started("a")), &observe(&2, Map.merge(at, &1)))
+    end
+
+    defp edited(path), do: %{"itemType" => "file_change", "status" => "completed", "path" => path}
+
     test "mark partial the turns under way and those heard before the feed's queue drains" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = observe(state, started("a"))
@@ -1356,6 +1366,19 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       guard = state.turns["a"].guard
       assert guard.edits == 1 and guard.cum_turns == 2
       refute Turn.resolved_proxy(guard)
+    end
+
+    test "a failing vp test run after an edit is a failed check, so the turn is not learned" do
+      for cmd <- ["vp test run src/a.test.ts", "vp test", "vp run test"] do
+        state =
+          heard_turn([
+            edited("/r/a.ts"),
+            command(cmd, "FAIL src/a.test.ts", "failed", %{"exitCode" => 1})
+          ])
+
+        refute TokenEconomizer.learns?(state.turns["a"], true), cmd
+        assert state.turns["a"].guard.last_verify_failed, cmd
+      end
     end
 
     test "a turn's end stops its judge job, and off stops every judge job; a delivery under way finishes" do
