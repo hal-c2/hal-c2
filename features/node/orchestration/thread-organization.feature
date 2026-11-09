@@ -123,8 +123,12 @@ Feature: Organizing threads in the engine
       | thread.pin.reorder    |
       | thread.active.reorder |
 
+  # Settling clears a pin and pinning clears a settle, so no one thread holds all three.
   @node
   Scenario: Organization state is per thread and survives a node restart
-    Given thread "t1" is pinned, snoozed and settled
+    Given thread "t1" is pinned and snoozed
+    And thread "t2" exists in "demo"
+    And thread "t2" is snoozed and settled
     When the node restarts
-    Then thread "t1" is still pinned, snoozed and settled
+    Then thread "t1" is still pinned and snoozed
+    And thread "t2" is still snoozed and settled

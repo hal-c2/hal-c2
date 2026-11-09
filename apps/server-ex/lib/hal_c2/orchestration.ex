@@ -441,8 +441,9 @@ defmodule HalC2.Orchestration do
             case refusal(type, command, thread, state) ||
                    with(
                      %{} = fields <- thread_fields(type, command, thread, at),
+                     %{} = unread <- unread_fields(type, command, state),
                      %{} = recovery <- limit_recovery(state, command, thread, at),
-                     do: Map.merge(fields, recovery)
+                     do: fields |> Map.merge(unread) |> Map.merge(recovery)
                    ) do
               {:error, _} = error ->
                 {[], error}
@@ -1212,7 +1213,80 @@ defmodule HalC2.Orchestration do
   end
 
   defp dispatch_message(thread_id, command) do
-    case HalC2.Streams.transact(thread_id, :thread, &decide_message(&1, thread_id, command)) do
+    decide = fn state ->
+      case decide_message(state, thread_id, command) do
+        {_, {:error, _}} = refused ->
+          refused
+
+        {changes, result} ->
+          {resumed, titled} = resumed(state, thread_id, command)
+          {Enum.reject([resumed | changes], &is_nil/1), {titled, result}}
+      end
+    end
+
+    case HalC2.Streams.transact(thread_id, :thread, decide) do
+      {:error, _} = error ->
+        error
+
+      {titled, decided} ->
+        if titled,
+          do: generate_title(thread_id, command["text"] || "", command["attachments"] || [])
+
+        sent_message(thread_id, command, decided)
+    end
+  end
+
+  # A message brings a settled or snoozed thread back to the active list, as in the Node
+  # server. A thread's first message titles it from the client's `titleSeed` until a
+  # title is generated, and so does the first real message after only /compact or /logout.
+  defp resumed(state, thread_id, command) do
+    thread = StreamState.get(state, "thread")[thread_id]
+    users = state |> StreamState.list("message") |> Enum.filter(&(&1["role"] == "user"))
+
+    titled =
+      not maintenance?(command) and
+        ((is_binary(command["titleSeed"]) and StreamState.get(state, "message") == %{}) or
+           ((command["createdBy"] || "user") == "user" and users != [] and
+              Enum.all?(users, &maintenance?/1)))
+
+    at = Entities.now()
+
+    fields =
+      %{}
+      |> Map.merge(
+        if thread["settledOverride"] != nil,
+          do: %{
+            "settledOverride" => nil,
+            "settledAt" => nil,
+            "unsettledAt" =>
+              if(thread["settledOverride"] == "active", do: thread["unsettledAt"], else: at)
+          },
+          else: %{}
+      )
+      |> Map.merge(
+        if thread["snoozedUntil"] != nil,
+          do: %{"snoozedUntil" => nil, "snoozedAt" => nil},
+          else: %{}
+      )
+      |> Map.merge(
+        if titled,
+          do: %{
+            "title" => command["titleSeed"] || thread["title"],
+            "titleRegeneration" => %{"requestId" => command["commandId"], "startedAt" => at}
+          },
+          else: %{}
+      )
+
+    {upsert(state, "thread", thread_id, &Map.merge(&1, fields)), titled}
+  end
+
+  defp maintenance?(message),
+    do:
+      (message["attachments"] || []) == [] and
+        String.downcase(String.trim(message["text"] || "")) in ["/compact", "/logout"]
+
+  defp sent_message(thread_id, command, decided) do
+    case decided do
       {:ok, :queued} ->
         {:ok, %{"sequence" => sequence(thread_id)}}
 
@@ -1412,19 +1486,60 @@ defmodule HalC2.Orchestration do
   defp thread_fields("thread.unarchive", _, _, _), do: %{"archivedAt" => nil}
   defp thread_fields("thread.delete", _, _, at), do: %{"deletedAt" => at}
 
-  defp thread_fields("thread.settle", command, _, at),
-    do: %{"settledOverride" => "settled", "settledAt" => command["settledAt"] || at}
+  # Settling is "I'm done with this": it parks the thread and clears its pin and place.
+  # Settling a thread that already is keeps the time it was settled.
+  defp thread_fields("thread.settle", command, thread, at) do
+    settled? = thread["settledOverride"] == "settled" and thread["settledAt"] != nil
 
-  defp thread_fields("thread.unsettle", _, _, at),
-    do: %{"settledOverride" => "active", "settledAt" => nil, "unsettledAt" => at}
+    %{
+      "settledOverride" => "settled",
+      "settledAt" =>
+        if(settled? and thread["pinnedAt"] == nil,
+          do: thread["settledAt"],
+          else: command["settledAt"] || at
+        ),
+      "unsettledAt" => nil,
+      "pinnedAt" => nil,
+      "pinOrderKey" => nil,
+      "activeOrderKey" => nil
+    }
+  end
 
-  defp thread_fields("thread.snooze", command, _, at),
-    do: %{"snoozedUntil" => command["snoozedUntil"], "snoozedAt" => at}
+  defp thread_fields("thread.unsettle", _, thread, at) do
+    unsettled_at = if thread["settledOverride"] == "active", do: thread["unsettledAt"], else: at
+    %{"settledOverride" => "active", "settledAt" => nil, "unsettledAt" => unsettled_at}
+  end
+
+  # Snoozing again to the same wake time keeps when it was snoozed; a snooze the user
+  # chose replaces the one a usage limit asked for.
+  defp thread_fields("thread.snooze", command, thread, at) do
+    until = command["snoozedUntil"]
+    same? = JS.epoch_ms(thread["snoozedUntil"]) == JS.epoch_ms(until) and until != nil
+    recovery = thread["limitRecovery"]
+
+    fields = %{"snoozedUntil" => until, "snoozedAt" => (same? && thread["snoozedAt"]) || at}
+
+    if is_map(recovery),
+      do: Map.put(fields, "limitRecovery", Map.put(recovery, "snooze", false)),
+      else: fields
+  end
 
   defp thread_fields("thread.unsnooze", _, _, _), do: %{"snoozedUntil" => nil, "snoozedAt" => nil}
 
-  defp thread_fields("thread.pin", command, _, at),
-    do: %{"pinnedAt" => at, "pinOrderKey" => command["orderKey"]}
+  # Pinning is a promotion: a settled thread is active again and a snooze is spent. A
+  # re-pin keeps its place, so a raced duplicate cannot move a thread the user placed.
+  defp thread_fields("thread.pin", command, thread, at) do
+    pinned? = thread["pinnedAt"] != nil
+    settled? = thread["settledOverride"] == "settled"
+
+    %{"pinnedAt" => thread["pinnedAt"] || at, "snoozedUntil" => nil, "snoozedAt" => nil}
+    |> Map.merge(if settled?, do: %{"settledOverride" => "active", "settledAt" => nil}, else: %{})
+    |> Map.merge(
+      if pinned? or not Map.has_key?(command, "orderKey"),
+        do: %{},
+        else: %{"pinOrderKey" => command["orderKey"]}
+    )
+  end
 
   defp thread_fields("thread.unpin", _, _, _), do: %{"pinnedAt" => nil, "pinOrderKey" => nil}
 
@@ -1443,7 +1558,7 @@ defmodule HalC2.Orchestration do
       else: %{"lastVisitedAt" => visited}
   end
 
-  defp thread_fields("thread.mark-unread", _, _, _), do: %{"lastVisitedAt" => nil}
+  defp thread_fields("thread.mark-unread", _, _, _), do: %{}
 
   defp thread_fields("thread.runtime-mode.set", command, _, at),
     do: %{"runtimeMode" => command["runtimeMode"], "updatedAt" => at}
@@ -1802,10 +1917,24 @@ defmodule HalC2.Orchestration do
     %{"linkedPullRequest" => linked, "pullRequests" => kept ++ added}
   end
 
-  # Visits and mark-unread change read state only, as in the TS server: the thread's
-  # last activity time stays where it is.
+  # Marking unread puts the last visit just before the latest run finished, as the Node
+  # server does: a thread with no visit at all is one this node never tracked.
+  defp unread_fields("thread.mark-unread", command, state) do
+    completed =
+      state |> StreamState.list("run") |> List.last() |> then(&(&1 && &1["completedAt"]))
+
+    case JS.epoch_ms(completed) do
+      nil -> {:error, "Thread #{command["threadId"]} has no completed run to mark unread."}
+      ms -> %{"lastVisitedAt" => JS.iso(ms - 1)}
+    end
+  end
+
+  defp unread_fields(_type, _command, _state), do: %{}
+
+  # Visits and mark-unread change read state only, and arranging the active list is not
+  # activity either, as in the TS server: the thread's last activity time stays put.
   defp quiet_read_state({kind, id, patch}, type)
-       when type in ["thread.visit", "thread.mark-unread"],
+       when type in ["thread.visit", "thread.mark-unread", "thread.active.reorder"],
        do: {kind, id, Map.put(patch, "q", true)}
 
   defp quiet_read_state(change, _type), do: change
