@@ -2248,6 +2248,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # How full the conversation's context is, for the context meter. It belongs to the
   # provider thread, so it outlives the run, and a model change, until Codex says more.
+  # The provider turn it came in keeps it too, with when it came: a turn Codex reports
+  # nothing in keeps none, never an earlier turn's.
   defp notification(
          "thread/tokenUsage/updated",
          %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
@@ -2270,14 +2272,24 @@ defmodule HalC2.Codex.ThreadRuntime do
     snapshot =
       if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
 
+    ids = state.turn.ids
+    reported = Map.put(snapshot, "updatedAt", Entities.now())
+
     commit(state, fn stream ->
       [
         Orchestration.upsert(
           stream,
           "provider-thread",
-          state.turn.ids.provider_thread,
+          ids.provider_thread,
           &Map.put(&1, "contextUsage", snapshot)
-        )
+        ),
+        HalC2.StreamState.get(stream, "provider-turn")[ids[:provider_turn]] &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            ids.provider_turn,
+            &Map.put(&1, "tokenUsage", reported)
+          )
       ]
     end)
 
@@ -2813,19 +2825,13 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{ids: ids} = turn = state.turn
     at = Entities.now()
 
-    # With the usage it ended with, as the run's end would leave it: the run may end
-    # before Codex starts another turn.
+    # As the run's end would leave it: the run may end before Codex starts another turn.
     commit(state, fn stream ->
       done = %{"status" => "completed", "completedAt" => at}
 
       [
         HalC2.StreamState.get(stream, "provider-turn")[ids.provider_turn] &&
-          Orchestration.upsert(
-            stream,
-            "provider-turn",
-            ids.provider_turn,
-            &Map.merge(&1, HalC2.Orchestration.TurnWriter.with_usage(stream, ids, done))
-          )
+          Orchestration.upsert(stream, "provider-turn", ids.provider_turn, &Map.merge(&1, done))
       ]
     end)
 
