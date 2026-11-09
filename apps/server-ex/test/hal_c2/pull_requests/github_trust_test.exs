@@ -179,6 +179,39 @@ defmodule HalC2.PullRequests.GitHubTrustTest do
     assert permission_reads(context) == []
   end
 
+  # Synthetic: a user with the login of the bot that opened the pull request labels it.
+  # They go by their own permission, never by the bot's association, low or high.
+  test "a user with a bot author's login goes by their own permission", context do
+    for {association, kind, role} <- [
+          {"CONTRIBUTOR", "admin", "admin"},
+          {"MEMBER", "read", "read"}
+        ] do
+      trust =
+        trust(context, "cli_cli_14906", "go", %{"dependabot" => kind}, fn answer ->
+          answer
+          |> put_in(["data", "repository", "pullRequest", "authorAssociation"], association)
+          |> update_in(["data", "repository", "pullRequest", "timelineItems", "nodes"], fn
+            nodes ->
+              Enum.map(nodes, fn
+                %{"label" => %{"name" => "go"}} = event ->
+                  put_in(event, ["actor", "__typename"], "User")
+
+                event ->
+                  event
+              end)
+          end)
+        end)
+
+      assert %{"login" => "dependabot", "isBot" => true, "association" => ^association} =
+               trust["author"]
+
+      assert %{"login" => "dependabot", "isUser" => true, "association" => nil, "role" => ^role} =
+               trust["labeled"]
+
+      assert [_] = permission_reads(context)
+    end
+  end
+
   # Synthetic: a bot with the login of the user who labelled at the same second.
   test "a bot with a user's login at the same time is someone else", context do
     trust =

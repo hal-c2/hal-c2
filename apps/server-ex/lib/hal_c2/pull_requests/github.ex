@@ -2448,9 +2448,10 @@ defmodule HalC2.PullRequests.GitHub do
   end
 
   # The event's actor with their permission on the repository: GitHub gives events no
-  # association. The author's own is their association already. Only a user's is read:
-  # the permission is read by login, and a bot, a mannequin of an import or any other
-  # kind of account may share its login with a user it is not. Unreadable, nil.
+  # association. A user who is the author has their association already. Only a user's
+  # is read, and a user goes by no other account's: the permission is read by login,
+  # and a bot, a mannequin of an import or any other kind of account may share its
+  # login with a user it is not. Unreadable, nil.
   defp event_actor(ctx, event, author) do
     case trust_actor(event["actor"], nil) do
       nil ->
@@ -2461,7 +2462,8 @@ defmodule HalC2.PullRequests.GitHub do
 
         actor =
           cond do
-            (user? and author) && same_login?(login, author["login"]) ->
+            user? and match?(%{"isUser" => true}, author) and
+                same_login?(login, author["login"]) ->
               %{actor | "association" => author["association"]}
 
             not user? ->
