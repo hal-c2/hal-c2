@@ -33,7 +33,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   #   - Without Safe, a protected tool, or one an agent used, is proposed and
   #     turned off by name.
   #   - Without Kept, a tool the person gave back, or refused while it was only
-  #     proposed or held, is proposed again at the next fold and auto takes it away.
+  #     proposed or held, is proposed again at the next fold and auto takes it away:
+  #     only applying it by name takes it off the kept list.
   #   - Without Frozen, applying a tool while a conversation runs changes that
   #     conversation's tools under way, and its prompt cache with them.
   #   - Without Gated, what auto held is applied under propose too, with nobody's
@@ -49,6 +50,11 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   #   - Without Unrecorded, the same conversation read back from a history that
   #     cannot show the use (a Codex goal or image call, a subagent's) folds as one
   #     that left the tool unused.
+  #
+  # Safe protects the uses the plugin can know of: heard, or missed and read back
+  # from the history. A missed use neither can show does not protect its tool, which
+  # can still be turned off on the other conversations' evidence; that is the case
+  # Partial and Unrecorded cover, by keeping its own conversation from being any.
   @counts "the exact prompt and session counters and thresholds: prop/hal_c2/token_economizer_tool_prune_prop_test.exs and test/hal_c2/token_economizer_tool_prune_test.exs"
   @guard "the loop guard's, modelled in proof/hal_c2/token_economizer_loop_guard_proof_test.exs"
 
@@ -75,7 +81,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.apply_pending/4" =>
         ~w(auto-apply begin canAuto2),
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.apply_named/3" =>
-        ~w(apply apply-name turnoff),
+        ~w(apply apply-name turnoff named),
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.restore/2" => "restore",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.note_used/3" => "use",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.activity/2" => "quiet",
@@ -177,6 +183,37 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
        %{proof: proof} do
     refute_reachable(proof, "start(#{@design}, off, false, true, 3, 2, 2, 1)", "unsafe", [])
     refute_reachable(proof, "start(#{@design}, off, false, false, 3, 2, 2, 1)", "unsafe", [])
+  end
+
+  # A missed use the history cannot show, or whose read back failed, protects
+  # nothing: the tool can be turned off though an agent used it.
+  test "a use neither the feed nor the history shows can be followed by the tool turned off",
+       %{proof: proof} do
+    assert_reachable(proof, "start(#{@design}, auto, false, false, 3, 2, 2, 1)", "unseenOff", [])
+    assert_reachable(proof, "start(#{@design}, auto, false, true, 3, 2, 2, 1)", "unseenOff", [])
+  end
+
+  # The negative controls: each part switched off, the law it keeps breaks. Rec is
+  # whether the history records the tool's uses.
+  for {{part, bad, rec}, i} <-
+        Enum.with_index([
+          {"Safe", "unsafeSafe", true},
+          {"Kept", "unsafeKept", true},
+          {"Frozen", "unsafeFrozen", true},
+          {"Gated", "unsafeGate", true},
+          {"Quiet", "unsafeGate", true},
+          {"Capped", "unsafeCap", true},
+          {"Evid", "unsafeEvid", true},
+          {"Persist", "unsafeSafe", true},
+          {"Partial", "unsafePartial", true},
+          {"Unrecorded", "unsafePartial", false}
+        ]) do
+    design = Enum.map_join(0..9, ", ", &(&1 != i))
+    init = "start(#{design}, auto, false, #{rec}, 3, 2, 2, 1)"
+
+    test "without #{part}, #{bad} is reachable", %{proof: proof} do
+      assert_reachable(proof, unquote(init), unquote(bad), [])
+    end
   end
 
   test "a protected tool is never turned off", %{proof: proof} do

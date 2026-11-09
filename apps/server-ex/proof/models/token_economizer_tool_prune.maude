@@ -21,8 +21,9 @@ sload model-checker
 --- switches each part
 --- of the design on, so that the design without it can be shown to fail (see the
 --- test's moduledoc for the counterexamples):
----   Safe    - a protected or ever-used tool is never proposed or turned off, and
----             comes back if it was off (proposable?/3, heal/2, denied/2).
+---   Safe    - a protected tool, or one used where the plugin could know of it,
+---             heard or missed and read back, is never proposed or turned off,
+---             and comes back if it was off (proposable?/3, heal/2, denied/2).
 ---   Kept    - a tool given back with restore, off or only proposed or held, is
 ---             never proposed or applied by itself again; only applying it by
 ---             name turns it off (restore/2, apply_named/3).
@@ -84,11 +85,14 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   op seg : Bool Bool Bool Bool -> Seg [ctor] .
 
   --- The switches, the mode, and the truth the plugin cannot see directly: whether
-  --- the tool is a protected one, and whether an agent has ever really used it.
+  --- the tool is a protected one, whether an agent has ever really used it, heard or
+  --- missed, and whether a use was ever one the plugin could know of: heard, or
+  --- missed and then read back from the thread's history.
   op cfg : Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool -> Item [ctor] .
   op mode : Mode -> Item [ctor] .
   op prot : Bool -> Item [ctor] .
   op truth : Bool -> Item [ctor] .
+  op seen : Bool -> Item [ctor] .
   --- Whether the thread's history records the tool's uses.
   op rec : Bool -> Item [ctor] .
   --- The evidence, the conversation and its segment, what auto holds, whether the
@@ -117,7 +121,7 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   op {_} : Conf -> Sys [ctor] .
 
   vars S N P F : Nat .
-  vars SF KP FR GT QU CP EV PS PA UR PR RU K O PP D U B B' Q M1 PD LD PT RS REC : Bool .
+  vars SF KP FR GT QU CP EV PS PA UR PR RU K O PP D U B B' Q M1 PD LD PT RS REC SN : Bool .
   var M : Mode .
   var CD : Cand .
   var CV : Conv .
@@ -132,10 +136,14 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   op isOff : Cand -> Bool .
   eq isOff(cand(S, RU, K, O, PP, D)) = O .
 
-  --- Turning the tool off: it leaves the kept and proposed lists (apply_named/3,
-  --- apply_pending/4). Without Frozen a conversation under way follows at once.
+  --- Turning the tool off: it leaves the proposed list (apply_pending/4, apply_named/3).
+  --- Only applied by name does it leave the kept list too (named); applied with the
+  --- proposal or by auto it stays kept, and a kept tool turned off that way shows.
+  --- Without Frozen a conversation under way follows at once.
   op turnoff : Cand -> Cand .
-  eq turnoff(cand(S, RU, K, O, PP, D)) = cand(S, RU, false, true, false, D) .
+  eq turnoff(cand(S, RU, K, O, PP, D)) = cand(S, RU, K, true, false, D) .
+  op named : Cand -> Cand .
+  eq named(cand(S, RU, K, O, PP, D)) = cand(S, RU, false, true, false, D) .
 
   op follow : Conv Bool Bool -> Conv .
   eq follow(none, FR, O) = none .
@@ -213,9 +221,10 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   --- use is noted at once (note_used/3): a tool applied by name for the next
   --- conversation and then used in this one comes back before any fold.
   rl [use] :
-    { conv(live(M1, false)) hearing(seg(U, B, PT, RS)) truth(B') prot(PR)
+    { conv(live(M1, false)) hearing(seg(U, B, PT, RS)) truth(B') seen(SN) prot(PR)
       tool(cand(S, RU, K, O, PP, D)) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
-    => { conv(live(M1, false)) hearing(seg(true, true, PT, true)) truth(true) prot(PR)
+    => { conv(live(M1, false)) hearing(seg(true, true, PT, true)) truth(true) seen(true)
+         prot(PR)
          tool(cand(S, true, K, O and allowed(cand(S, true, K, O, PP, D), PR, SF),
                    false, D))
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C } .
@@ -224,10 +233,12 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     => conv(live(M1, B)) hearing(seg(U, true, PT, RS)) .
   --- The agent uses the tool and the feed misses it, saying so with a later event:
   --- the plugin never hears the use. Under Partial it marks the segment partial.
+  --- The tool was used all the same; the plugin can know of it only once the
+  --- segment is read back from a history that records it (reread).
   rl [miss] :
-    { conv(live(M1, false)) hearing(seg(U, B, PT, RS)) faults(s F)
+    { conv(live(M1, false)) hearing(seg(U, B, PT, RS)) faults(s F) truth(B')
       cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
-    => { conv(live(M1, false)) hearing(seg(U, true, PT or PA, true)) faults(F)
+    => { conv(live(M1, false)) hearing(seg(U, true, PT or PA, true)) faults(F) truth(true)
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C } .
 
   --- The conversation ends; the plugin folds what it heard (observe/2, and an idle
@@ -246,8 +257,8 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   --- loaded in it unless it was heard used. A read that fails is the finish above.
   rl [reread] :
     { conv(live(M1, B)) hearing(seg(U, B', true, RS)) tool(CD) pend(PD) mode(M) prot(PR) demot(N)
-      pkgs(P) rec(REC) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
-    => { conv(none) hearing(noseg) mode(M) prot(PR) rec(REC)
+      pkgs(P) rec(REC) seen(SN) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
+    => { conv(none) hearing(noseg) mode(M) prot(PR) rec(REC) seen(SN or (RS and REC))
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
          folded(CD, seg(U or (RS and REC), B', false, RS), not B and (REC or U or not UR),
                 M, PR, SF, KP, CP, EV, P) } .
@@ -269,9 +280,9 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     if U or B' .
   crl [idle-reread] :
     { conv(live(M1, B)) hearing(seg(U, B', true, RS)) tool(CD) pend(PD) mode(M) prot(PR)
-      demot(N) pkgs(P) rec(REC) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
+      demot(N) pkgs(P) rec(REC) seen(SN) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
     => { conv(live(M1, B)) hearing(seg(false, false, false, false)) mode(M) prot(PR)
-         rec(REC) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
+         rec(REC) seen(SN or (RS and REC)) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
          folded(CD, seg(U or (RS and REC), B', false, RS), not B and (REC or U or not UR),
                 M, PR, SF, KP, CP, EV, P) }
     if U or B' .
@@ -301,7 +312,7 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   --- protected or used one is refused even by name under Safe.
   crl [apply-name] :
     { acts(s N) conv(CV) tool(CD) prot(PR) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
-    => { acts(N) conv(follow(CV, FR, true)) tool(turnoff(CD)) prot(PR)
+    => { acts(N) conv(follow(CV, FR, true)) tool(named(CD)) prot(PR)
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
     if allowed(CD, PR, SF) and not isOff(CD) .
 
@@ -345,15 +356,26 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     Nat -> Sys .
   eq start(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR, M, PR, REC, N, S, P, F) =
     { cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) mode(M) prot(PR) rec(REC) truth(false)
+      seen(false)
       tool(fresh) conv(none) hearing(noseg) pend(false) quiet(false)
       demot(0) pkgs(3) left(N) acts(S) switches(P) faults(F) } .
 
-  --- A protected or ever-used tool is off.
+  --- A protected tool is off, or one used where the plugin could know of it: a use
+  --- the feed heard, or one it missed that the thread's history read back. A use
+  --- neither shows (the read failed, or the history cannot record it) cannot
+  --- protect its tool; what the design keeps there is that its conversation is no
+  --- evidence the tool went unused (unsafePartial, under Partial and Unrecorded).
+  --- A missed use not read back yet is the same until the reread heals the tool.
   op unsafeSafe : Sys -> Bool .
-  eq unsafeSafe({ tool(cand(S, RU, K, true, PP, D)) prot(PR) truth(B) C }) = PR or B .
+  eq unsafeSafe({ tool(cand(S, RU, K, true, PP, D)) prot(PR) seen(B) C }) = PR or B .
   eq unsafeSafe({ C }) = false [owise] .
 
-  --- A tool given back is off without having been applied by name (which clears kept).
+  --- The tool is off though an agent used it, in a use the plugin could not know of.
+  op unseenOff : Sys -> Bool .
+  eq unseenOff({ tool(cand(S, RU, K, true, PP, D)) truth(true) seen(false) C }) = true .
+  eq unseenOff({ C }) = false [owise] .
+
+  --- A tool given back is off without having been applied by name (named clears kept).
   op unsafeKept : Sys -> Bool .
   eq unsafeKept({ tool(cand(S, RU, true, true, PP, D)) C }) = true .
   eq unsafeKept({ C }) = false [owise] .
