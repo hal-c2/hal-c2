@@ -446,10 +446,11 @@ jobs:
   # In the queue the first failure decides the entry: these stop the rest of the run so the
   # queue drops it now, not when the slowest proof ends. They hold the run's only write
   # permission, as they run no project code and no third-party action: every other job
-  # does, and setup-beam takes the token by default. Each waits only on the jobs it names.
-  stop_quick:
-    name: Stop the queue run
-    needs: [pr_assets, ledger, mc_audit, tui]
+  # does, and setup-beam takes the token by default. One per job, since `needs` waits for
+  # every job it lists.
+  stop_assets:
+    name: Stop the queue run (PR assets)
+    needs: pr_assets
     if: failure() && github.event_name == 'merge_group'
     permissions: &stop-permissions
       actions: write
@@ -459,6 +460,33 @@ jobs:
       - run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  stop_ledger:
+    name: Stop the queue run (Ledger check)
+    needs: ledger
+    if: failure() && github.event_name == 'merge_group'
+    permissions: *stop-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: *stop-steps
+
+  stop_audit:
+    name: Stop the queue run (MC audit)
+    needs: mc_audit
+    if: failure() && github.event_name == 'merge_group'
+    permissions: *stop-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: *stop-steps
+
+  stop_tui:
+    name: Stop the queue run (TUI)
+    needs: tui
+    if: failure() && github.event_name == 'merge_group'
+    permissions: *stop-permissions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps: *stop-steps
 
   stop_mc:
     name: Stop the queue run (MC tests)
