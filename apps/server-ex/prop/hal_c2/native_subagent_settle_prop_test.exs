@@ -13,7 +13,8 @@ defmodule HalC2.NativeSubagentSettlePropTest do
     are not its to settle;
   - a subagent that ends ends the tool calls still running in its thread, and plugins
     that hear turns hear each of them once, ended, as its parent turn's: a call cut
-    short is still a use;
+    short is still a use; the provider's own late report of a call's end
+    (`NativeSubagent.item/5`) is heard only for a call still running;
   - a subagent resumed keeps the spans it worked before, in order and apart, so the
     turns between them are none of its (`HalC2.Plugins.Host.history/3`).
   """
@@ -209,6 +210,15 @@ defmodule HalC2.NativeSubagentSettlePropTest do
       (spans == [] or (Enum.all?(ends, &is_binary/1) and ends == Enum.sort(ends)))
   end
 
+  # The provider reports the call's end: heard once, as it ends, and not for a call that
+  # had ended (its subagent's end cut it short).
+  def postcondition(state, {:call, _, :end_tool, [id]}, heard) do
+    case state.items[id] do
+      {_, "running"} -> match?([%{"itemId" => ^id, "status" => "completed"}], heard)
+      _ -> heard == []
+    end
+  end
+
   def postcondition(_state, _call, _result), do: true
 
   # The subagents the settle reaches: running, under the thread or under a subagent it
@@ -279,26 +289,26 @@ defmodule HalC2.NativeSubagentSettlePropTest do
 
   # Subagent `n` ends, as the provider's runtime ends it; returns what plugins heard.
   def finish(n) do
+    NativeSubagent.finish(handle(n), "completed", "Done")
+    heard([])
+  end
+
+  # The handle the provider's runtime holds for subagent `n`.
+  defp handle(n) do
     {under, _} = owner(n)
 
-    NativeSubagent.finish(
-      %{
-        id: "subagent-#{n}",
-        item: row(n),
-        thread: under,
-        run: "r1",
-        child: child(n),
-        root: "node:subagent-root:codex:native-#{n}",
-        native: "native-#{n}",
-        driver: "codex",
-        sender: under,
-        text: ""
-      },
-      "completed",
-      "Done"
-    )
-
-    heard([])
+    %{
+      id: "subagent-#{n}",
+      item: row(n),
+      thread: under,
+      run: "r1",
+      child: child(n),
+      root: "node:subagent-root:codex:native-#{n}",
+      native: "native-#{n}",
+      driver: "codex",
+      sender: under,
+      text: ""
+    }
   end
 
   defp heard(acc) do
@@ -319,9 +329,20 @@ defmodule HalC2.NativeSubagentSettlePropTest do
     {before, StreamState.get(stream(under), "subagent")[id]}
   end
 
-  def end_tool(id) do
-    thread = Enum.find(streams(), &StreamState.get(stream(&1), "turn-item")[id])
-    commit(thread, [{"turn-item", id, %{"status" => "completed"}}])
+  # The provider reports that tool call `id` ended, whenever it does: Codex keeps a
+  # finished subagent and still routes its calls' ends to it. Returns what plugins heard.
+  def end_tool("turn-item:codex:" <> native = id) do
+    "child-" <> n = Enum.find(streams(), &StreamState.get(stream(&1), "turn-item")[id])
+
+    NativeSubagent.item(
+      handle(String.to_integer(n)),
+      native,
+      "command_execution",
+      "completed",
+      %{}
+    )
+
+    heard([])
   end
 
   # The MC restarts and settles the thread; returns every subagent's and tool call's
@@ -341,7 +362,7 @@ defmodule HalC2.NativeSubagentSettlePropTest do
       items:
         for(
           state <- states,
-          %{"id" => "item-" <> _ = id, "status" => status} <-
+          %{"id" => "turn-item:codex:item-" <> _ = id, "status" => status} <-
             StreamState.list(state, "turn-item"),
           into: %{},
           do: {id, status}
@@ -360,7 +381,7 @@ defmodule HalC2.NativeSubagentSettlePropTest do
   # --- helpers --------------------------------------------------------------------
 
   defp child(n), do: "child-#{n}"
-  defp item(i), do: "item-#{i}"
+  defp item(i), do: "turn-item:codex:item-#{i}"
   defp row(n), do: "turn-item:subagent:subagent-#{n}"
 
   # The streams written so far: the thread and its subagents' threads.

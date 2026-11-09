@@ -60,6 +60,37 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
     refute_received {:observe, %{"tool" => "CronCreate"}}
   end
 
+  test "a call its subagent's end cut short is not heard again when the provider reports its end late" do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+    {:ok, _} =
+      Registry.register(HalC2.Plugins.Hooks, {:observe, "listener"}, %{
+        id: "listener",
+        dropped: :counters.new(1, [])
+      })
+
+    {:ok, _} = HalC2.Streams.commit("p", :thread, [{"thread", "p", %{"s" => %{"id" => "p"}}}])
+
+    ids = %{
+      thread: "p",
+      run: "r1",
+      root_node: "node:root:r1",
+      provider_thread: "pt",
+      driver: "codex"
+    }
+
+    sub = NativeSubagent.start(ids, "agent-1", %{"prompt" => "Schedule it"})
+    tool = %{"providerToolName" => "CronCreate"}
+    sub = NativeSubagent.item(sub, "tool-1", "dynamic_tool", "running", tool)
+    NativeSubagent.finish(sub, "interrupted", nil)
+    assert_received {:observe, %{"tool" => "CronCreate", "status" => "interrupted"}}
+
+    # Codex keeps the finished subagent and still routes the call's completion to it.
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", tool)
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", tool)
+    refute_received {:observe, %{"tool" => "CronCreate"}}
+  end
+
   test "settle_children ends a child thread's running work and leaves finished work" do
     {:ok, _} =
       HalC2.Streams.commit("p", :thread, [

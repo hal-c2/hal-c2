@@ -447,6 +447,11 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
             {[message, Orchestration.create("turn-item", item_id, item)], item}
 
+          # An item that had ended (`finish/4` cut it short) is heard of no more.
+          %{"status" => was} when was in @terminal ->
+            {[Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message],
+             nil}
+
           stored ->
             {[Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message],
              Map.merge(stored, put)}
@@ -454,7 +459,8 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
       {Enum.filter(changes, &is_tuple/1), stored}
     end)
-    |> then(&if(status in @terminal and type not in @unheard, do: observe(sub, &1)))
+    # Heard once, as it first ends (`TurnWriter`'s `heard_end/3`).
+    |> then(&if(&1 != nil and status in @terminal and type not in @unheard, do: observe(sub, &1)))
 
     if message_id, do: Map.put(sub, :said, fields["text"]), else: sub
   end
