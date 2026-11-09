@@ -262,6 +262,22 @@ defmodule HalC2.OpenShell.ReviewTest do
              Review.open(%{spec(repo) | thread_id: "Thread-2"} |> Map.put(:owner, "code-review"))
   end
 
+  # Every run's end and owner were kept for the life of the MC.
+  test "an ended thread's end and owner are forgotten in time, and an open one's never",
+       %{repo: repo} do
+    :ok = Review.close("Thread-2", "stopped", "code-review")
+    {:ok, _} = Review.open(Map.put(spec(repo), :owner, "code-review"))
+
+    # What the timer sends an hour after each end.
+    for thread <- [@thread, "Thread-2"], do: send(Review, {:forget, thread})
+    :sys.get_state(Review)
+
+    assert Review.ended("Thread-2") == nil
+    assert Review.opener("Thread-2") == nil
+    assert Review.binding(@thread)
+    assert Review.opener(@thread) == "code-review"
+  end
+
   test "a stop before the sandbox is made leaves none made", %{gateway: g, repo: repo} do
     :ok = Review.close(@thread, "stopped")
 

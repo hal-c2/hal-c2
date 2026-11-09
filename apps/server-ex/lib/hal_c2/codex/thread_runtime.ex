@@ -630,8 +630,11 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info({:json_rpc, conn, _message}, %{conn: current} = state) when conn != current,
     do: {:noreply, state}
 
-  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state),
-    do: {:noreply, notification(method, params || %{}, state)}
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state) do
+    params = params || %{}
+    if method == "thread/tokenUsage/updated", do: spent(state, params)
+    {:noreply, notification(method, params, state)}
+  end
 
   # A turn held for a left-over one (`stop_leftover/1`) has not started: what Codex asks
   # meanwhile is the left-over turn's, and is answered as between turns.
@@ -2132,10 +2135,6 @@ defmodule HalC2.Codex.ThreadRuntime do
   # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
   defp notification(method, %{"threadId" => thread} = params, %{subagents: subagents} = state)
        when is_map_key(subagents, thread) do
-    # A sandboxed review's subagents spend from its budget too; the context meter is the
-    # main thread's, so their usage goes nowhere else.
-    if method == "thread/tokenUsage/updated", do: spent(state, thread, params["tokenUsage"])
-
     entry =
       subagents[thread]
       |> Map.put_new(:final, nil)
@@ -2548,12 +2547,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # nothing in keeps none, never an earlier turn's.
   defp notification(
          "thread/tokenUsage/updated",
-         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage} = params,
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
          state
        )
        when is_integer(used) do
-    spent(state, params["threadId"] || "main", usage)
-
     counts =
       for {key, field} <- [
             {"inputTokens", "inputTokens"},
@@ -3835,13 +3832,17 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # What a sandboxed review spends counts against its budget (#1412): each native
   # thread's running total, under that thread, so the main thread's and each
-  # subagent's add up.
-  defp spent(%{turn: %{sandbox: true}} = state, thread, usage) do
-    with total when is_integer(total) <- get_in(usage, ["total", "totalTokens"]),
-         do: HalC2.OpenShell.Review.spent(state.thread_id, thread, total)
+  # subagent's add up. It counts whichever turn Codex tells it in, also once its
+  # turn ended, so nothing a notification is dropped for below hides it.
+  defp spent(state, params) do
+    with true <- Map.get(state, :sandboxed) || match?(%{sandbox: true}, state.turn),
+         %{"total" => %{"totalTokens" => total}} when is_integer(total) <-
+           params["tokenUsage"] do
+      HalC2.OpenShell.Review.spent(state.thread_id, params["threadId"] || "main", total)
+    else
+      _ -> :ok
+    end
   end
-
-  defp spent(_state, _thread, _usage), do: :ok
 
   defp spawned(state, %{"tool" => "spawnAgent", "id" => id} = item) do
     known = Map.get(state, :subagents, %{})

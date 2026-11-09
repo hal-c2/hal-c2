@@ -72,6 +72,8 @@ defmodule HalC2.ReviewLeaseProofTest do
         "starts the broker's listener once; the model's broker is always listening",
       "HalC2.OpenShell.Review handle_info {:EXIT, _, _}" => @link,
       "HalC2.OpenShell.Review handle_info {:EXIT, _, :normal}" => @link,
+      "HalC2.OpenShell.Review handle_info {:forget, _}" =>
+        "drops an ended thread's end and owner an hour on; each run has a thread of its own, so the model's review, once ended, is never opened again",
       "HalC2.OpenShell.Review handle_info _" => "a stray message; changes nothing",
       "HalC2.OpenShell.Review state :conn" => "the gateway connection; the model's is always up",
       "HalC2.OpenShell.Review state :broker" => "the broker's address; no lease depends on it",

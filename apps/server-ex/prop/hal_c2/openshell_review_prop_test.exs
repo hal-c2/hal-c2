@@ -1,19 +1,23 @@
 defmodule HalC2.OpenShellReviewPropTest do
   @moduledoc """
   `HalC2.OpenShell.Review` (#1412) against a model of a review sandbox's lease, over
-  any sequence of reviews opened, stopped, past their budget or their time, sandboxes
-  left on the gateway from before, reconciles and restarts of the review process,
-  reaps (some on a gateway that will not list sandboxes or providers), and a gateway
-  that for a while only accepts provider deletions. The gateway
-  is the TLS fake, each sandbox a directory of its own. The promises:
+  any sequence of reviews opened, stopped, past their budget or their time, ended
+  threads forgotten, sandboxes left on the gateway from before, reconciles and
+  restarts of the review process, reaps (some on a gateway that will not list
+  sandboxes or providers), and a gateway that for a while only accepts provider
+  deletions. The gateway is the TLS fake, each sandbox a directory of its own. The
+  promises:
 
-    * a review opens once: a thread stopped before its sandbox was made gets none;
+    * a review opens once: a thread stopped before its sandbox was made gets none
+      while its end is kept;
     * a thread's sandbox is the first owner's to open or close it: another owner's
-      open or close is refused and changes nothing, until a restart forgets owners;
+      open or close is refused and changes nothing, until a restart, or its end
+      being forgotten, forgets owners;
     * a review has a binding and a broker token exactly while it is open, and its
       sandbox and provider are on the gateway meanwhile;
-    * a review ends once, keeping the first reason it ended for, and its sandbox and
-      provider are deleted;
+    * a review ends once, keeping the first reason it ended for until that is
+      forgotten, which only an ended review's is, and its sandbox and provider are
+      deleted;
     * spending is counted per key, its latest value, and only past the budget does
       the review end;
     * a reconcile deletes what was left from before and nothing that is open;
@@ -146,6 +150,7 @@ defmodule HalC2.OpenShellReviewPropTest do
         {1, {:call, __MODULE__, :other_home_left, []}},
         {1, {:call, __MODULE__, :reconcile, []}},
         {1, {:call, __MODULE__, :restart, []}},
+        {1, {:call, __MODULE__, :forget, [oneof(@threads)]}},
         {2, {:call, __MODULE__, :stall, [boolean()]}}
       ] ++
         if(open == [],
@@ -196,6 +201,17 @@ defmodule HalC2.OpenShellReviewPropTest do
   end
 
   defp model(state, {:call, _, :deadline, [t]}), do: ended(state, t, "time")
+
+  # An ended thread is forgotten, its owner too, and is fresh again; any other stays.
+  defp model(state, {:call, _, :forget, [t]}) do
+    case state.threads[t] do
+      {:ended, _} ->
+        %{state | threads: Map.delete(state.threads, t), owners: Map.delete(state.owners, t)}
+
+      _ ->
+        state
+    end
+  end
 
   defp model(state, {:call, _, :spent, [t, key, n]}) do
     counts = Map.put(state.threads[t].spent, key, n)
@@ -355,6 +371,17 @@ defmodule HalC2.OpenShellReviewPropTest do
       send(Review, {:deadline, t})
       settle()
     end)
+  end
+
+  # What the review's timer sends a while after a thread ended.
+  def forget(t) do
+    observe(
+      fn ->
+        send(Review, {:forget, t})
+        settle()
+      end,
+      []
+    )
   end
 
   def left_behind do

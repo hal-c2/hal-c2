@@ -982,6 +982,20 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # Whether the run of `thread_id` is still the review's: `:finished` when its agent
+  # already reported, `:over` when it was stopped or the review started again.
+  def handle_call({:run, key, thread_id}, _from, state) do
+    reply =
+      case state.reviews[key] do
+        %{"threadId" => ^thread_id, "status" => "running"} -> :running
+        %{"threadId" => ^thread_id, "stopped" => true} -> :over
+        %{"threadId" => ^thread_id} -> :finished
+        _ -> :over
+      end
+
+    {:reply, reply, state}
+  end
+
   # Answered once the claim is shared, so the lock it was made under covers it.
   def handle_call({:started, key, thread_id, checkout}, _from, state) do
     case state.reviews[key] do
@@ -2092,29 +2106,20 @@ defmodule HalC2Plugins.CodeReview do
              if(sandboxed, do: open_sandbox(review, settings, model, clone, checkout), else: :ok) do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
         review = Map.merge(review, pull_request_context(review))
+        started = %{"root" => clone, "checkout" => checkout["path"]}
 
-        Host.launch_thread(
-          @id,
-          "review",
-          %{
-            "threadId" => thread_id,
-            "projectId" => review["projectId"],
-            "title" => "Review ##{review["number"]} #{review["title"]}",
-            "modelSelection" => model,
-            "runtimeMode" => settings["runtimeMode"],
-            "interactionMode" => "default",
-            "workspaceStrategy" => %{
-              "type" => "existing_worktree",
-              "worktreePath" => checkout["path"]
-            },
-            "initialMessage" => %{
-              "text" => prompt(settings, review, checkout),
-              "attachments" => []
-            }
-          },
-          listed: listed?(settings),
-          sandboxed: sandboxed
-        )
+        # Stop reaches a run past its claim only through the server: one stopped
+        # while it read the pull request starts no agent, and one stopped while its
+        # thread was made has that thread retired, which Stop could not find yet.
+        with :running <- server({:run, key, thread_id}),
+             {:ok, _} = launched <- launch_thread(review, settings, model, checkout, sandboxed) do
+          if server({:run, key, thread_id}) == :over, do: retire(started)
+          launched
+        else
+          :over -> {:stopped, started}
+          :finished -> {:stopped, started}
+          other -> other
+        end
       end
 
     case result do
@@ -2131,6 +2136,31 @@ defmodule HalC2Plugins.CodeReview do
       {:error, error} ->
         GenServer.cast(__MODULE__, {:start_failed, key, thread_id, message(error)})
     end
+  end
+
+  defp launch_thread(review, settings, model, checkout, sandboxed) do
+    Host.launch_thread(
+      @id,
+      "review",
+      %{
+        "threadId" => review["threadId"],
+        "projectId" => review["projectId"],
+        "title" => "Review ##{review["number"]} #{review["title"]}",
+        "modelSelection" => model,
+        "runtimeMode" => settings["runtimeMode"],
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{
+          "type" => "existing_worktree",
+          "worktreePath" => checkout["path"]
+        },
+        "initialMessage" => %{
+          "text" => prompt(settings, review, checkout),
+          "attachments" => []
+        }
+      },
+      listed: listed?(settings),
+      sandboxed: sandboxed
+    )
   end
 
   # A pull request the watch does not trust is reviewed only at the commit the user

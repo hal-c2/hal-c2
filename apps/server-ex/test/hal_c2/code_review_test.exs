@@ -1792,6 +1792,38 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running"} = review()
   end
 
+  # Stop reaches a run past its claim only through the server, so a launch reading the
+  # pull request as Stop came went on to start the agent of a review shown as stopped.
+  test "a review stopped between its claim and its launch never starts its agent", context do
+    fetch = Path.join(context.dir, "fetch.hold")
+    hold = Path.join(context.dir, "detail.hold")
+    on_exit(fn -> Enum.each([fetch, hold], &File.rm/1) end)
+
+    rules!(context,
+      head: 1,
+      detail: "while [ -e '#{hold}' ]; do sleep 0.05; done"
+    )
+
+    # Held at the fetch first, so the launch reads the pull request only once claimed.
+    File.write!(fetch, "")
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+    File.write!(hold, "")
+    File.rm!(fetch)
+    await_review(&is_binary(&1["checkout"]))
+
+    %{"checkout" => checkout, "threadId" => thread_id} = review()
+    assert File.dir?(checkout)
+    {:ok, _} = call("stop", %{"key" => @key})
+    File.rm!(hold)
+    settle()
+
+    assert %{"status" => "failed", "error" => "Stopped."} = review()
+    assert thread(thread_id) == nil
+    checkouts = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "checkouts")
+    assert Path.wildcard(Path.join(checkouts, "*/pr-1/*")) == []
+  end
+
   # Sandboxed reviews (#1412).
   describe "an untrusted pull request" do
     setup context, do: sandboxed!(context)
@@ -2146,6 +2178,34 @@ defmodule HalC2.CodeReviewTest do
       assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
       await_review(&(&1["status"] == "failed"))
       assert review()["error"] =~ "used up its token budget"
+    end
+
+    # The spend was counted only while a turn ran, so usage Codex told after it ended
+    # never reached the budget.
+    @tag sandbox: [hang: true, late_tokens: 1_000]
+    test "what a Codex review spends after its turn ended counts against its budget",
+         _context do
+      save_settings(%{"sandboxTokens" => 500})
+      start_untrusted()
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+      # The plugin, held, cannot close the sandbox as the turn ends: only the spend can.
+      plugin = Process.whereis(@server)
+      :sys.suspend(plugin)
+
+      try do
+        {:ok, _} =
+          HalC2.Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "threadId" => thread_id,
+            "holdQueue" => false
+          })
+
+        assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+        assert HalC2.OpenShell.Review.ended(thread_id) == "tokens"
+      after
+        :sys.resume(plugin)
+      end
     end
 
     @tag sandbox: [hang: true]
@@ -2920,6 +2980,7 @@ defmodule HalC2.CodeReviewTest do
       %{
         "args" => ["api graphql"],
         "stdin" => ["viewerCanUpdateBranch"],
+        "run" => opts[:detail] || "true",
         "stdout" => %{
           "data" => %{
             "repository" => %{

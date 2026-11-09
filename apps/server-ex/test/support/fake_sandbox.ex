@@ -14,7 +14,8 @@ defmodule HalC2.Test.FakeSandbox do
     `task_update: input` a TaskUpdate call that succeeds, and with `subagent_tokens: n` a subagent's message that used `n`,
     which its task's progress then says used `subagent_progress` (none), and its result
     says the turn used `cli_tokens` over every model (none). Codex, with `subagent_tokens`, spawns a subagent whose thread reports `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
-    to `test`, until it is interrupted.
+    to `test`, until it is interrupted. With `late_tokens: n` Codex tells, once its turn
+    ended, that the thread used `n`.
 
   `stat -f` of the review's writable paths answers the tmpfs mounts it asked for,
   or an overlay with `disk: :unbounded`.
@@ -207,13 +208,19 @@ defmodule HalC2.Test.FakeSandbox do
     else
       report(s)
       completed(io, ctx, "completed")
+      late_tokens(io, ctx, s)
       s
     end
   end
 
   defp codex(%{"method" => "turn/interrupt", "id" => id}, io, s) do
     out(io, %{"id" => id, "result" => %{}})
-    if s[:turn], do: completed(io, s.turn, "interrupted")
+
+    if s[:turn] do
+      completed(io, s.turn, "interrupted")
+      late_tokens(io, s.turn, s)
+    end
+
     Map.delete(s, :turn)
   end
 
@@ -223,6 +230,20 @@ defmodule HalC2.Test.FakeSandbox do
   end
 
   defp codex(_message, _io, s), do: s
+
+  # What the thread spent, told only after its turn ended.
+  defp late_tokens(io, ctx, s) do
+    if late = s.opts[:late_tokens] do
+      out(io, %{
+        "method" => "thread/tokenUsage/updated",
+        "params" =>
+          Map.put(ctx, "tokenUsage", %{
+            "last" => %{"totalTokens" => late, "inputTokens" => late, "outputTokens" => 0},
+            "total" => %{"totalTokens" => late, "inputTokens" => late, "outputTokens" => 0}
+          })
+      })
+    end
+  end
 
   defp completed(io, ctx, status),
     do:

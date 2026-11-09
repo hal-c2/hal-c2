@@ -39,6 +39,10 @@ defmodule HalC2.OpenShell.Review do
   @bundle "/sandbox/review.bundle"
   @limits %{cpu: "2", memory: "4Gi"}
   @ready_ms 300_000
+  # How long a thread's end and owner are kept once it ended: its plugin asks why it
+  # ended as its turn finishes, and a run stopped before its sandbox was made is
+  # refused one, well within this.
+  @forget_ms :timer.hours(1)
 
   # The drivers whose agent can run in a review sandbox, with the API it calls and the
   # requests the policy lets reach it (its model's endpoints alone: the key is the
@@ -534,6 +538,17 @@ defmodule HalC2.OpenShell.Review do
   def handle_info({:deadline, thread_id}, state),
     do: {:noreply, end_sandbox(state, thread_id, "time")}
 
+  # Only an ended thread is forgotten: one opened again since its end was forgotten
+  # keeps its owner.
+  def handle_info({:forget, thread_id}, state) do
+    if :ets.member(@table, {:ended, thread_id}) do
+      :ets.delete(@table, {:ended, thread_id})
+      :ets.delete(@table, {:opener, thread_id})
+    end
+
+    {:noreply, state}
+  end
+
   # The listener went: the next review starts it again.
   def handle_info({:EXIT, pid, _reason}, %{listener: pid} = state),
     do: {:noreply, %{state | broker: nil, listener: nil}}
@@ -553,8 +568,9 @@ defmodule HalC2.OpenShell.Review do
   def terminate(_reason, %{conn: conn}) when conn != nil, do: Client.disconnect(conn)
   def terminate(_reason, _state), do: :ok
 
-  # A thread ends once: the first reason is kept, and its sandbox, if it was made,
-  # goes. One that ends with none, its review's on this machine, costs no call.
+  # A thread ends once: the first reason is kept, until it is forgotten, and its
+  # sandbox, if it was made, goes. One that ends with none, its review's on this
+  # machine, costs no call.
   # Deleting runs off the server, since a deletion the gateway only accepted is
   # waited on (`Client.delete_sandbox/3`); one that fails is left to the reaper.
   defp end_sandbox(state, thread_id, reason) do
@@ -562,6 +578,7 @@ defmodule HalC2.OpenShell.Review do
     binding = binding(thread_id)
     :ets.delete(@table, {:binding, thread_id})
     :ets.insert_new(@table, {{:ended, thread_id}, reason || "closed"})
+    Process.send_after(self(), {:forget, thread_id}, @forget_ms)
     {timer, timers} = Map.pop(state.timers, thread_id)
     if timer, do: Process.cancel_timer(timer)
     if binding, do: later(fn -> remove(binding.conn, binding.sandbox) end)
