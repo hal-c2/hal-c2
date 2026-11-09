@@ -237,6 +237,21 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> refresh()
   end
 
+  # GitHub gives the last hundred events, all in one second, and has older ones: one
+  # of those may be in that second too, by anyone.
+  step "its author adds the label {string} to \#{int} in the earliest second of the last hundred events GitHub gives of it, with older ones left out",
+       %{args: [label, number]} = context do
+    others = for n <- 1..99, do: %{"label" => "area-#{n}", "by" => "octocat"}
+
+    context
+    |> open(number, %{
+      "labels" => [%{"name" => label, "color" => "0e8a16"}],
+      "labelEvents" => [%{"label" => label, "by" => "octocat"} | others],
+      "timelineCut" => true
+    })
+    |> refresh()
+  end
+
   step "\#{int} has the label {string} from someone who is not a member or collaborator, and once had {string} from its author",
        %{args: [number, label, earlier]} = context do
     context
@@ -2262,7 +2277,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   # author, a member unless `pr` says otherwise (`authorAssociation`), added each of
   # its labels (or `labeledBy` did, or `labelEvents` say who added which) and asked for
   # each of its reviews; its commits come from `headOwner`'s fork when it
-  # `isCrossRepository`; `comments` are its comments.
+  # `isCrossRepository`; `comments` are its comments. A `timelineCut` timeline has
+  # older events than it gives.
   defp trust_rule(pr, comments) do
     author = %{"__typename" => "User", "login" => pr["author"]["login"]}
     labeler = if by = pr["labeledBy"], do: %{"__typename" => "User", "login" => by}, else: author
@@ -2308,7 +2324,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
               "headRefOid" => pr["headRefOid"],
               "headRepositoryOwner" => %{"login" => pr["headOwner"] || "acme"},
               "comments" => %{"nodes" => comments},
-              "timelineItems" => %{"nodes" => events}
+              "timelineItems" => %{
+                "pageInfo" => %{"hasPreviousPage" => pr["timelineCut"] == true},
+                "nodes" => events
+              }
             }
           }
         }

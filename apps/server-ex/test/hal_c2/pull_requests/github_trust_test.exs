@@ -232,4 +232,64 @@ defmodule HalC2.PullRequests.GitHubTrustTest do
     assert [%{"login" => "MikeMcC399", "isUser" => true, "role" => "admin"}] =
              trust["labeled"]["tied"]
   end
+
+  # Synthetic: the trigger label's second is the earliest of a full page, so GitHub may
+  # have left out an event of the same second, by anyone. One unseen counts among the
+  # tied, unless GitHub says the page is all there is.
+  test "a trigger at the earliest time of a full page has an unseen actor tied", context do
+    page = fn has_previous, unrelated_at ->
+      fn answer ->
+        update_in(answer, ["data", "repository", "pullRequest", "timelineItems"], fn items ->
+          trigger = Enum.find(items["nodes"], &(&1["label"]["name"] == "invalid"))
+
+          unrelated =
+            for n <- 1..99,
+                do: %{trigger | "createdAt" => unrelated_at, "label" => %{"name" => "l#{n}"}}
+
+          %{
+            "pageInfo" => %{"hasPreviousPage" => has_previous},
+            "nodes" => [trigger | unrelated]
+          }
+        end)
+      end
+    end
+
+    at = "2026-11-07T22:50:50Z"
+
+    trust =
+      trust(context, "nodejs_node_67326", "invalid", %{"MikeMcC399" => "admin"}, page.(true, at))
+
+    assert %{"login" => "MikeMcC399", "role" => "admin"} = trust["labeled"]
+    assert [%{"login" => nil}] = trust["labeled"]["tied"]
+
+    # Not said either way, a full page is taken as cut.
+    trust =
+      trust(context, "nodejs_node_67326", "invalid", %{"MikeMcC399" => "admin"}, fn answer ->
+        answer
+        |> page.(true, at).()
+        |> update_in(
+          ["data", "repository", "pullRequest", "timelineItems"],
+          &Map.delete(&1, "pageInfo")
+        )
+      end)
+
+    assert [%{"login" => nil}] = trust["labeled"]["tied"]
+
+    trust =
+      trust(context, "nodejs_node_67326", "invalid", %{"MikeMcC399" => "admin"}, page.(false, at))
+
+    refute trust["labeled"]["tied"]
+
+    # The page's earliest time is before the trigger's, so nothing left out ties with it.
+    trust =
+      trust(
+        context,
+        "nodejs_node_67326",
+        "invalid",
+        %{"MikeMcC399" => "admin"},
+        page.(true, "2026-11-07T22:50:49Z")
+      )
+
+    refute trust["labeled"]["tied"]
+  end
 end

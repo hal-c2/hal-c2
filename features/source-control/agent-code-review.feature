@@ -245,6 +245,12 @@ Feature: Agent code review
       Then no review starts
 
     @mc
+    Scenario: A trigger label in a second GitHub's last hundred events may not all show starts no review
+      Given "code-review" watches "acme/api" selectively with the trigger "label"
+      When its author adds the label "agent-review" to #12 in the earliest second of the last hundred events GitHub gives of it, with older ones left out
+      Then no review starts
+
+    @mc
     Scenario: Who added one label does not count for another
       Given "code-review" watches "acme/api" selectively with the trigger "label"
       And #12 has the label "ship-it" from someone who is not a member or collaborator, and once had "agent-review" from its author

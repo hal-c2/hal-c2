@@ -280,6 +280,7 @@ defmodule HalC2.PullRequests.GitHub do
         headRepositoryOwner { login }
         comments(last: 100) { nodes { author { __typename login } authorAssociation body createdAt } }
         timelineItems(last: 100, itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT]) {
+          pageInfo { hasPreviousPage }
           nodes {
             __typename
             ... on LabeledEvent { createdAt actor { __typename login } label { name } }
@@ -2336,7 +2337,8 @@ defmodule HalC2.PullRequests.GitHub do
   where GitHub would not say. `comments` are the last hundred, each an actor with its
   `body` and `createdAt`; `labeled` and `requested` are that event's actor with its
   `createdAt`, or nil, and when other events matched at the same time, `tied` lists
-  their actors who are someone else (an unreadable one with a nil `login`). `isUser`
+  their actors who are someone else (an unreadable one, or one the last hundred events
+  may have left out at that time, with a nil `login`). `isUser`
   says the account is a user's: a bot or a mannequin of an import may have a user's
   login, so only a user's login can name the viewer or a user, and only a user has a
   `role` read.
@@ -2348,12 +2350,19 @@ defmodule HalC2.PullRequests.GitHub do
       author = trust_actor(pr["author"], pr["authorAssociation"])
       events = get_in(pr, ["timelineItems", "nodes"]) || []
       label = trimmed(label)
+      # A full page GitHub does not say is all there is may have left older events out:
+      # those at its earliest time are not all seen.
+      cut =
+        if length(events) >= 100 and
+             get_in(pr, ["timelineItems", "pageInfo", "hasPreviousPage"]) != false,
+           do: events |> Enum.filter(&is_map/1) |> Enum.map(&event_at/1) |> Enum.min(fn -> 0 end)
 
       labeled =
         if label,
           do:
             last_event(
               events,
+              cut,
               "LabeledEvent",
               &(String.downcase(trimmed(get_in(&1, ["label", "name"])) || "") ==
                   String.downcase(label))
@@ -2365,6 +2374,7 @@ defmodule HalC2.PullRequests.GitHub do
           do:
             last_event(
               events,
+              cut,
               "ReviewRequestedEvent",
               &same_login?(get_in(&1, ["requestedReviewer", "login"]), viewer)
             ),
@@ -2408,22 +2418,25 @@ defmodule HalC2.PullRequests.GitHub do
   # The latest of the matching events, last in timeline order, and the others GitHub
   # gives the same time: within one second its order cannot be relied on, so whoever
   # made any of them may be the one who made the latest. `{nil, []}` when none match.
-  defp last_event(events, type, match?) do
+  # At `cut`, the earliest time of a page with older events left out, some of those
+  # may be at the same time too: one unseen, with no actor, is among the tied.
+  defp last_event(events, cut, type, match?) do
     matching =
       Enum.filter(events, &(is_map(&1) and &1["__typename"] == type and match?.(&1)))
-
-    at = &(HalC2.Projection.JS.epoch_ms(&1["createdAt"]) || 0)
 
     case matching do
       [] ->
         {nil, []}
 
       _ ->
-        latest = matching |> Enum.map(at) |> Enum.max()
-        [last | tied] = matching |> Enum.filter(&(at.(&1) == latest)) |> Enum.reverse()
-        {last, tied}
+        latest = matching |> Enum.map(&event_at/1) |> Enum.max()
+        [last | tied] = matching |> Enum.filter(&(event_at(&1) == latest)) |> Enum.reverse()
+        unseen = if cut != nil and latest <= cut, do: [%{"actor" => nil}], else: []
+        {last, tied ++ unseen}
     end
   end
+
+  defp event_at(event), do: HalC2.Projection.JS.epoch_ms(event["createdAt"]) || 0
 
   # The latest event's actor, with `tied` holding the actors of the others at its time
   # who are someone else; the trigger counts only if all of them are trusted.
