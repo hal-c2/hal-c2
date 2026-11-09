@@ -359,9 +359,10 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   # A new conversation: read back what the thread ran while the plugin was not
-  # running, so a tool it used then is not denied now, apply whatever `auto` held once
-  # the quiet has passed, then answer what it runs without, and remember what it had
-  # loaded for its evidence.
+  # running, and what the segments heard in part ran, so a tool used then is not
+  # denied now, apply whatever `auto` held once the quiet has passed, then answer what
+  # it runs without, and remember what it had loaded for its evidence. A segment that
+  # cannot be read back may hold any use: the conversation is denied nothing.
   defp shape(state, run) do
     unit = run["toolUnit"] || Prune.unit_for_provider(run["provider"])
     project = {run["projectId"], run["provider"]}
@@ -371,12 +372,22 @@ defmodule HalC2Plugins.TokenEconomizer do
       cfg = prune_cfg(state)
       state = seed_history(state, run["threadId"], run["runId"], project, unit)
       {prune, state} = prune(state, project, unit)
-      {prune, applied} = Prune.apply_pending(prune, cfg, now_s(), active?(state, project))
-      state = put_prune(state, project, prune, applied != [])
-      denied = Prune.denied(prune, cfg)
+
+      {prune, denied} =
+        case recover_uses(prune, state, project, unit, run) do
+          {:ok, prune} ->
+            {prune, _} = Prune.apply_pending(prune, cfg, now_s(), active?(state, project))
+            {prune, Prune.denied(prune, cfg)}
+
+          :error ->
+            {prune, []}
+        end
+
+      changed? = prune != state.prunes[project]
+      state = put_prune(state, project, prune, changed?)
       loaded = Prune.candidate_tools(unit) -- denied
       state = put_in(state.shaped[{run["threadId"], project}], loaded)
-      state = if applied != [], do: publish_prune(state), else: state
+      state = if changed?, do: publish_prune(state), else: state
       {if(denied == [], do: nil, else: %{"deniedTools" => denied}), state}
     else
       {nil, state}
@@ -681,6 +692,30 @@ defmodule HalC2Plugins.TokenEconomizer do
       :error ->
         conv
     end
+  end
+
+  # The uses of the project's segments heard in part (`missed/2`) that the feed may
+  # have dropped, read back from their threads' histories and noted (`Prune.note_used/3`)
+  # before a conversation is shaped: each segment still folds as it ends, its runs
+  # read back then as they are now. `:error` when a history cannot be read.
+  defp recover_uses(prune, state, project, unit, run) do
+    Enum.reduce_while(state.convs, {:ok, prune}, fn
+      {thread_id, %{project: ^project, partial: true}}, {:ok, acc} ->
+        before = if thread_id == run["threadId"], do: run["runId"]
+
+        case history(thread_id, before) do
+          {:ok, history} ->
+            {_, runs} = unfolded(acc, history, thread_id, project, before)
+            used = Enum.flat_map(runs, &uses(&1, unit))
+            {:cont, {:ok, Prune.note_used(acc, used, prune_cfg(state))}}
+
+          :error ->
+            {:halt, :error}
+        end
+
+      _, acc ->
+        {:cont, acc}
+    end)
   end
 
   # The provider's runs of `thread_id`'s history that are still to fold, before

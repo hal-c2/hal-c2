@@ -1,6 +1,6 @@
 # Sources:
 #   plugins/token-economizer/mc/tool_prune_evidence.ex (the evidence, proposals, apply, restore)
-#   plugins/token-economizer/mc/token_economizer.ex (hears turns, shape_run/2, the toolPrune topic and calls)
+#   plugins/token-economizer/mc/token_economizer.ex (hears turns, shape_run/2 and the uses it reads back first, the toolPrune topic and calls)
 #   apps/server-ex/lib/hal_c2/orchestration/native_subagent.ex (a subagent's calls, heard as its parent turn's)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (a thread's history, which turns a subagent worked in)
 #   plugins/token-economizer/plugin.json (toolPrune, toolPruneEvidence, toolPruneMinSessions, toolPruneSessions, toolPruneQuietMinutes, toolPruneProtect)
@@ -64,6 +64,16 @@ Feature: TokenEconomizer's tool pruning
     And the plugin missed a turn of that thread in which Claude used "CronCreate"
     When that thread runs another turn
     Then tool pruning lists "CronCreate" as used for the project
+
+  @mc
+  Scenario: A tool used in a turn the plugin missed is not turned off for the next conversation, though the thread's conversation goes on
+    Given a Claude thread in the project runs a turn
+    And the person applies "CronCreate" by name for the project
+    And the plugin missed a turn of that thread in which Claude used "CronCreate"
+    And that thread runs another turn
+    When another Claude thread in the project runs a turn
+    Then Claude ran the turn with "CronCreate" available
+    And tool pruning lists nothing as off for the project
 
   @mc
   Scenario: Turns the plugin missed in which a Claude subagent worked are no evidence a tool went unused

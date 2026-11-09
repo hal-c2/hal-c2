@@ -74,6 +74,53 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert Prune.seeded_run(prune, thread) == %{"run" => "r2", "ordinal" => 2}
   end
 
+  test "a use the feed dropped from a segment still open is read back before the next conversation is shaped, and its runs count once",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    # Turned off for the next conversation, and then used in this one: the feed dropped
+    # the use, and says so as the turn ends.
+    state = apply_tools(state, p, ["CronCreate"])
+    state = observe(state, started(thread, "r2", p, %{}))
+    ended(thread, "r2", 2, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+
+    state =
+      observe(state, Map.merge(finished(thread, "r2", 2), %{"dropped" => 1, "waiting" => 0}))
+
+    {shape, state} = shape(state, thread, "r3", p)
+    refute "CronCreate" in ((shape || %{})["deniedTools"] || [])
+    assert "CronCreate" in state.prunes[project]["used"]
+
+    state = observe(state, started(thread, "r3", p, %{"newConversation" => true}))
+    prune = state.prunes[project]
+    assert prune["prompts"] == 2
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r2", "ordinal" => 2}
+  end
+
+  test "a conversation shaped while a segment heard in part cannot be read back is denied nothing",
+       %{thread: thread, project: p} do
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, "other", "o1", p)
+
+    state = observe(state, started(thread, "r2", p, %{"dropped" => 1, "waiting" => 0}))
+    state = observe(state, finished(thread, "r2", 2))
+    grant([])
+    assert {nil, state} = shape(state, "other", "o1", p)
+    assert state.shaped[{"other", {p, "claudeAgent"}}] == Prune.candidate_tools("tool")
+
+    # Read back, it is denied again what its segments did not use.
+    grant(["turns:observe"])
+    ended(thread, "r2", 2, [])
+    assert {%{"deniedTools" => ["CronCreate"]}, _} = shape(state, "other", "o1", p)
+  end
+
   test "a segment the feed dropped some of, whose runs cannot be read back, is no evidence and keeps the watermark",
        %{project: p} do
     project = {p, "claudeAgent"}
@@ -366,6 +413,21 @@ defmodule HalC2.TokenEconomizerHistoryTest do
 
     assert {:ok, runs} = HalC2.Plugins.Host.history("token-economizer", thread)
     assert Enum.map(runs, & &1["subagents"]) == [true, true, false, false]
+  end
+
+  defp apply_tools(state, p, tools) do
+    input = %{"projectId" => p, "provider" => "claudeAgent", "tools" => tools}
+
+    {:reply, {:ok, _}, state} =
+      TokenEconomizer.handle_call({:toolprune, :apply, input}, nil, state)
+
+    state
+  end
+
+  defp shape(state, thread, run, p) do
+    run = %{"threadId" => thread, "runId" => run, "projectId" => p, "provider" => "claudeAgent"}
+    {:reply, shape, state} = TokenEconomizer.handle_call({:shape, run}, nil, state)
+    {shape, state}
   end
 
   defp grant(granted) do

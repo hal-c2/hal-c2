@@ -36,9 +36,13 @@ sload model-checker
 ---             segments those are is the loop guard model's Window; here the miss
 ---             marks the segment under way. As it folds, a partial segment is read
 ---             back from the thread's history, missed uses and all, when it can be:
----             heard/3 in fold_conv/3, the reread rule. When it cannot, the use
----             missed cannot protect its tool: what the design keeps is that its
----             conversation is no evidence the tool went unused.
+---             heard/3 in fold_conv/3, the reread rule. The code folds it as the
+---             thread's next turn starts, after that turn's conversation was shaped,
+---             so shape/2 first reads its uses back (recover_uses/5): the order here,
+---             reread then shape-start, is the one the next conversation sees. When
+---             it cannot, the use missed cannot protect its tool: what the design
+---             keeps is that its conversation is no evidence the tool went unused,
+---             and the conversation shaped while it is open is denied nothing.
 ---   Unrecorded - nor is a segment read back whose history cannot show the tool's
 ---             use (rec false: any Codex package, whose goal and image calls Codex
 ---             keeps out of the turn's items, and of whose collaboration calls only

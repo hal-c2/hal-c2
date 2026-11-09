@@ -21,6 +21,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     the subagents' (which no history read shows);
   - it uses no tool no turn used;
   - no tool it must know is used is proposed, or turned off for a new conversation;
+  - a new conversation is turned off no tool a segment it heard in part used, dropped
+    use or not, in a turn the history still has, and nothing at all when that
+    history cannot be read;
   - no tool's streak counts more ended turns than those that did not use it, so a
     use it missed and could not read back is no evidence the tool went unused;
   - it counts no turn twice, whatever a rollback or a fork did to the history;
@@ -367,8 +370,28 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     subset?(next.owed, res.used) and subset?(res.used, next.used) and
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
+      shaped_whole?(s, res, denied) and
       res.prompts <= ended_runs(next) and
       Enum.all?(@tools, &(streak(res, &1) <= unused_runs(next, &1)))
+  end
+
+  # A conversation is shaped knowing the uses of the segments heard in part that the
+  # history still has, dropped ones too, or, when it cannot read them, denied nothing.
+  defp shaped_whole?(s, res, denied) do
+    partial = Map.get(res, :partial, [])
+
+    recovered =
+      for {t, ids} <- partial,
+          run <- s.threads[t].runs,
+          run.id in ids and run.status == "completed",
+          {tool, _period, :own} <- run.tools,
+          do: tool
+
+    cond do
+      partial == [] -> true
+      s.history -> disjoint?(denied, recovered)
+      true -> denied == []
+    end
   end
 
   defp streak(res, tool),
@@ -446,11 +469,20 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         "provider" => @provider
       }
 
+      # The segments it holds as heard in part as the conversation is shaped, and
+      # their runs: which those are is the feed's to say (`missed/2`), not the model's.
+      partial =
+        for {t, %{partial: true, runs: runs}} <- Process.get(:plugin).convs,
+            do: {t, Enum.map(runs, & &1["run"])}
+
       shape = if new?, do: call({:shape, event})
 
       deliver(Map.merge(event, %{"type" => "turn.started", "newConversation" => new?}))
 
-      snapshot(%{denied: (shape || %{})["deniedTools"] || []})
+      snapshot(%{
+        denied: (shape || %{})["deniedTools"] || [],
+        partial: if(new?, do: partial, else: [])
+      })
     else
       snapshot()
     end
