@@ -172,6 +172,12 @@ defmodule HalC2.Orchestration do
 
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
+  @doc """
+  Whether `run`, a run record or nil, is under way: from its preparation until it ends.
+  The one list of the statuses that count, which `HalC2.Plugins.Host.run_active?/3` reads.
+  """
+  def run_under_way?(run), do: match?(%{"status" => status} when status in @active_statuses, run)
+
   defp turn_diff(thread_id, from, to, input) do
     state = HalC2.Streams.state(thread_id)
     HalC2.Checkpoint.turn_diff(state, thread_id, from, to, input["ignoreWhitespace"] != false)
