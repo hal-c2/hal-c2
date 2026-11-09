@@ -1412,6 +1412,33 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert TokenEconomizer.learns?(state.turns["a"], true)
     end
 
+    test "a heredoc operator quoted, escaped or in a comment opens no heredoc" do
+      for line <- [
+            "printf '%s\\n' '<<EOF'",
+            ~s{echo "<<EOF"},
+            "echo \\<<EOF",
+            "echo 'a\n<<EOF'",
+            "# cat <<EOF",
+            "true # <<EOF"
+          ] do
+        cmd = line <> "\npytest -q"
+        assert Turn.status_of_tests(cmd) == "own", cmd
+
+        failing = heard_turn([edited("/r/a.py"), command(cmd, "1 failed in 0.02s", "failed")])
+        assert failing.turns["a"].guard.last_verify_failed, cmd
+        refute TokenEconomizer.learns?(failing.turns["a"], true), cmd
+
+        passing = heard_turn([edited("/r/a.py"), command(cmd, "1 passed in 0.02s")])
+        assert TokenEconomizer.learns?(passing.turns["a"], true), cmd
+      end
+
+      # One opened after a quoted line, or on a line a quote spans, is read after that line.
+      cmd = "echo '<<A'; cat <<B\npytest -q\nB\npytest -q"
+      assert ShellEdits.split_heredocs(cmd) == {"echo '<<A'; cat <<B\npytest -q", ["pytest -q"]}
+      cmd = "echo 'a\nb' <<B\nbody\nB\npytest -q"
+      assert ShellEdits.split_heredocs(cmd) == {"echo 'a\nb' <<B\npytest -q", ["body"]}
+    end
+
     test "a heredoc left open after an edit is not placed, so the turn is not learned" do
       cmd = "cat > notes.txt <<EOF\nx = 1\npytest -q"
       state = heard_turn([edited("/r/a.py"), command(cmd, "1 failed in 0.02s", "failed")])

@@ -39,9 +39,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @no_stdin_flag ~r/^(?:-[vVh]|--(?:version|help|test(?:-[\w-]+)?(?:=\S*)?))$/
   # Python's own flags that hand it no code, and those that take the next word.
   @python_flag ~r/^-[bBdEhiIOqsSuvVx]+$/
-  # A heredoc: `<<` or `<<-`, then its delimiter, any word, quoted in whole or part or
-  # not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`); not a here-string (`<<<`).
-  @heredoc_start ~r/(?<!<)<<(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/
+  # A heredoc's delimiter, after its `<<`: `-` for `<<-`, then any word, quoted in whole
+  # or part or not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`).
+  @heredoc_word ~r/\A(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/u
+  # What ends a word, so a `#` after it starts a comment.
+  @boundary ~c" \t;&|()<>"
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
   # Redirects that write their operand: any that may, `<>` opening it read-write too.
   @out [">", ">>", ">|", "&>", "&>>", "<>"]
@@ -163,13 +165,14 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   @doc """
   Whether this reads the whole of a shell command, so the commands it finds in it are
-  all it runs: it has the text (a command too long for a plugin to hear has none), every
-  character is legible (`legible?/1`), none of its words is code this does not read
-  (`opaque?/1`), and each heredoc ends at its delimiter.
+  all it runs: it has the text (a command too long for a plugin to hear has none), it
+  follows every quote and escape in it as `legible?/1` does (a comment aside, which runs
+  nothing), none of its words is code this does not read (`opaque?/1`), and each heredoc
+  is placed: opened outside quotes and ended at its delimiter.
   """
   def read?(cmd) when is_binary(cmd) do
-    String.trim(cmd) != "" and legible?(cmd) and not opaque?(cmd) and
-      elem(heredocs(script(cmd)), 2)
+    {shell, _, placed} = heredocs(script(cmd))
+    placed and String.trim(cmd) != "" and followed(shell) != :error and not opaque?(cmd)
   end
 
   def read?(_), do: false
@@ -234,15 +237,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   def legible?(cmd) when is_binary(cmd) do
     {shell, _} = cmd |> script() |> split_heredocs()
 
-    with false <- Regex.match?(~r/`|\$['"({]/, shell),
-         {:ok, toks} <- tokens(shell) do
-      unspaced(Enum.join(toks)) == unspaced(shell)
-    else
-      _ -> false
+    case followed(shell) do
+      {:ok, toks} -> unspaced(Enum.join(toks)) == unspaced(shell)
+      :error -> false
     end
   end
 
   def legible?(_), do: false
+
+  # The shell text's words, when its quotes and escapes close and nothing in it opens a
+  # quoting context this does not follow.
+  defp followed(shell) do
+    if Regex.match?(~r/`|\$['"({]/, shell), do: :error, else: tokens(shell)
+  end
 
   defp unspaced(text), do: String.replace(text, ~r/\s/u, "")
 
@@ -404,33 +411,89 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   @doc """
   The command's shell text without heredoc bodies, and the bodies: every heredoc a line
-  opens (`cat <<A <<B`), read in order. A body ends only at its delimiter alone on a line
-  (after leading tabs, for `<<-`), as the shell's does; one never ended runs to the end. A
-  line continued with a backslash is one line, and its heredocs start after it.
+  opens (`cat <<A <<B`), read in order. Only a `<<` the shell reads opens one: not one
+  quoted, escaped or in a comment (`echo '<<EOF'`), nor a here-string (`<<<`). A body
+  ends only at its delimiter alone on a line (after leading tabs, for `<<-`), as the
+  shell's does; one never ended runs to the end. A line continued with a backslash is one
+  line, and so is one a quote spans: its heredocs start after it.
   """
   def split_heredocs(cmd) do
     {shell, bodies, _} = heredocs(cmd)
     {shell, bodies}
   end
 
-  # `split_heredocs/1`, and whether every heredoc ended at its delimiter.
+  # `split_heredocs/1`, and whether every heredoc is placed: each `<<` had a delimiter,
+  # each body ended at it, and no quote was left open.
   defp heredocs(cmd) do
-    {shell, bodies, placed} = shell_lines(String.split(cmd, "\n"), [], [], true)
+    {shell, bodies, placed} = shell_lines(String.split(cmd, "\n"), :none, [], [], [], true)
     {shell |> Enum.reverse() |> Enum.join("\n"), Enum.reverse(bodies), placed}
   end
 
-  defp shell_lines([], shell, bodies, placed), do: {shell, bodies, placed}
+  # `quote`: the quote the lines so far end inside; `pending`: the heredocs they opened,
+  # whose bodies start after the line that closes it.
+  defp shell_lines([], quote, pending, shell, bodies, placed),
+    do: {shell, bodies, placed and quote == :none and pending == []}
 
-  defp shell_lines(lines, shell, bodies, placed) do
+  defp shell_lines(lines, quote, pending, shell, bodies, placed) do
     {line, rest} = logical_line(lines)
+    {docs, quote, found} = heredoc_starts(String.to_charlist(line), quote, true, [], true)
+    pending = pending ++ docs
 
-    docs =
-      for [_, dash, word] <- Regex.scan(@heredoc_start, line),
-          do: {dash == "-", Regex.replace(~r/\\(.)|['"]/, word, "\\1")}
-
-    {bodies, rest, ended} = read_bodies(docs, rest, bodies, true)
-    shell_lines(rest, [line | shell], bodies, placed and ended)
+    if quote == :none do
+      {bodies, rest, ended} = read_bodies(pending, rest, bodies, true)
+      shell_lines(rest, :none, [], [line | shell], bodies, placed and found and ended)
+    else
+      shell_lines(rest, quote, pending, [line | shell], bodies, placed and found)
+    end
   end
+
+  # The heredocs a line opens, `{dash, delimiter}`, the quote it ends inside, and whether
+  # each `<<` had a delimiter. `start`: whether the next character starts a word.
+  defp heredoc_starts([], quote, _, docs, found), do: {Enum.reverse(docs), quote, found}
+
+  defp heredoc_starts([?\\, _ | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :none, false, docs, found)
+
+  defp heredoc_starts([?$, ?' | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :ansi, false, docs, found)
+
+  defp heredoc_starts([q | rest], :none, _, docs, found) when q in [?', ?"],
+    do: heredoc_starts(rest, q, false, docs, found)
+
+  defp heredoc_starts([?# | _], :none, true, docs, found),
+    do: heredoc_starts([], :none, true, docs, found)
+
+  defp heredoc_starts([?<, ?<, ?< | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :none, true, docs, found)
+
+  defp heredoc_starts([?<, ?< | rest], :none, _, docs, found) do
+    text = List.to_string(rest)
+
+    case Regex.run(@heredoc_word, text) do
+      [all, dash, word] ->
+        doc = {dash == "-", Regex.replace(~r/\\(.)|['"]/, word, "\\1")}
+        rest = text |> binary_part(byte_size(all), byte_size(text) - byte_size(all))
+        heredoc_starts(String.to_charlist(rest), :none, false, [doc | docs], found)
+
+      nil ->
+        heredoc_starts(rest, :none, true, docs, false)
+    end
+  end
+
+  defp heredoc_starts([c | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :none, c in @boundary, docs, found)
+
+  defp heredoc_starts([?\\, _ | rest], quote, _, docs, found) when quote in [?", :ansi],
+    do: heredoc_starts(rest, quote, false, docs, found)
+
+  defp heredoc_starts([?' | rest], :ansi, _, docs, found),
+    do: heredoc_starts(rest, :none, false, docs, found)
+
+  defp heredoc_starts([q | rest], q, _, docs, found),
+    do: heredoc_starts(rest, :none, false, docs, found)
+
+  defp heredoc_starts([_ | rest], quote, _, docs, found),
+    do: heredoc_starts(rest, quote, false, docs, found)
 
   defp logical_line([line | rest]) do
     if rest != [] and Regex.match?(~r/(?<!\\)(?:\\\\)*\\$/, line) do
