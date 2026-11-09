@@ -968,7 +968,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert [%{"body" => first} | _] = review["comments"]
-    assert first =~ "🔴 **High:** Make the limit configurable."
+    assert first =~ "🔴 **High:**\n\nMake the limit configurable."
     assert review["body"] =~ "### Findings (2)"
     assert review["body"] =~ "🔴 **High:** `src/limits.ts:1`"
     assert first =~ "```suggestion\nexport const limit = configured();\n```"
@@ -1048,7 +1048,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert [%{"body" => body}] = review["comments"]
-    assert body == "🔵 **Low:** **Order:** This always allows."
+    assert body == "🔵 **Low:**\n\n**Order:** This always allows."
     await_review!(context, number, &(&1["status"] == "published"))
   end
 

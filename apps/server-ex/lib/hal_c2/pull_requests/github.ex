@@ -2425,7 +2425,7 @@ defmodule HalC2.PullRequests.GitHub do
             true ->
               case rest(ctx, "collaborators/#{encode(login)}/permission") do
                 {:ok, %{} = answer} ->
-                  %{actor | "role" => trimmed(answer["role_name"] || answer["permission"])}
+                  %{actor | "role" => collaborator_role(answer)}
 
                 _ ->
                   actor
@@ -2434,6 +2434,15 @@ defmodule HalC2.PullRequests.GitHub do
 
         Map.put(actor, "createdAt", event["createdAt"])
     end
+  end
+
+  # A collaborator's role on the repository: one of GitHub's own, or for a custom
+  # role the base permission it extends, which is all a reader of it can go by.
+  # Neither known, nil.
+  @standard_roles ~w(admin maintain write triage read none)
+  defp collaborator_role(answer) do
+    role = trimmed(answer["role_name"])
+    if role in @standard_roles, do: role, else: trimmed(answer["permission"])
   end
 
   defp same_login?(a, b) when is_binary(a) and is_binary(b),

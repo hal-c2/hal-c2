@@ -152,14 +152,16 @@ defmodule HalC2Plugins.CodeReview do
           end) ->
         {:error, "modelOptions: give them as {\"effort\": \"high\"}."}
 
-      not (is_number(settings["concurrency"]) and settings["concurrency"] >= 1) ->
+      # Counts are whole numbers: the review limits index the starts they count by
+      # them, and the settings page takes digits only.
+      not (is_integer(settings["concurrency"]) and settings["concurrency"] >= 1) ->
         {:error, "concurrency: at least one review must be able to run."}
 
-      not (is_number(settings["pollMinutes"]) and settings["pollMinutes"] >= 1) ->
-        {:error, "pollMinutes: look at least once a minute apart."}
+      not (is_integer(settings["pollMinutes"]) and settings["pollMinutes"] >= 1) ->
+        {:error, "pollMinutes: look at least once a minute apart, in whole minutes."}
 
-      not (is_number(settings["maxChangedLines"]) and settings["maxChangedLines"] >= 0) ->
-        {:error, "maxChangedLines: give a number of lines, or 0 for no limit."}
+      not (is_integer(settings["maxChangedLines"]) and settings["maxChangedLines"] >= 0) ->
+        {:error, "maxChangedLines: give a whole number of lines, or 0 for no limit."}
 
       not (is_list(settings["trustedLogins"] || []) and
                Enum.all?(settings["trustedLogins"] || [], &is_binary/1)) ->
@@ -168,9 +170,9 @@ defmodule HalC2Plugins.CodeReview do
       key =
           Enum.find(
             ~w(reviewsPerAuthorPerDay reviewsPerRepositoryPerDay),
-            &(not (is_number(settings[&1] || 0) and (settings[&1] || 0) >= 0))
+            &(not (is_integer(settings[&1] || 0) and (settings[&1] || 0) >= 0))
           ) ->
-        {:error, "#{key}: give a number of reviews, or 0 for no limit."}
+        {:error, "#{key}: give a whole number of reviews, or 0 for no limit."}
 
       String.trim(settings["prompt"] || "") == "" ->
         {:error, "prompt: the review prompt cannot be empty."}
@@ -560,11 +562,14 @@ defmodule HalC2Plugins.CodeReview do
         {:reply, {:error, "There is no review #{key}."}, state}
 
       # A review under way, being posted, or done at this commit only takes the
-      # approval: a retry uses it.
+      # approval: a retry uses it. Done means its findings are in: the commit is
+      # named when its checkout is claimed, and a run that ended without findings,
+      # such as at a usage limit, did not review it.
       %{"headSha" => ^sha} = review ->
         review = Map.put(review, "approved", sha)
 
-        if review["status"] in ~w(queued running publishing) or review["reviewedSha"] == sha,
+        if review["status"] in ~w(queued running publishing) or
+             (review["reviewedSha"] == sha and review["verdict"] != nil),
           do: {:reply, {:ok, nil}, state |> put(review) |> changed()} |> reply_snapshot(),
           else:
             {:reply, {:ok, nil},
@@ -2763,13 +2768,18 @@ defmodule HalC2Plugins.CodeReview do
   # The severity a report named, in today's words, or nil.
   defp severity(value), do: @severity_aliases[value] || if(value in @severities, do: value)
 
+  # The badge goes in a paragraph of its own: ahead of the body on its line, it would
+  # move a fence the body opens with off the start of that line, and the fences
+  # `closed/1` balanced would pair up otherwise.
   defp severity_prefix(%{"body" => body} = comment) do
     case @badges[severity(comment["severity"])] do
       nil ->
         body
 
       badge ->
-        if String.starts_with?(body, [badge, "🔴", "🟡", "🔵"]), do: body, else: "#{badge} #{body}"
+        if String.starts_with?(body, [badge, "🔴", "🟡", "🔵"]),
+          do: body,
+          else: "#{badge}\n\n#{body}"
     end
   end
 

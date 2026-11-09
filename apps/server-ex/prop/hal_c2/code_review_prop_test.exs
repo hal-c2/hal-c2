@@ -223,6 +223,20 @@ defmodule HalC2.CodeReviewPropTest do
     assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
   end
 
+  # From hal-c2/hal-c2#1423: a usage limit stops the run of a pull request nobody
+  # trusted after its commit was checked out; the user takes the approval back and
+  # gives it again, and nothing has reviewed the commit yet.
+  test "an approval given again after a usage limit stopped its run queues the review" do
+    replay([
+      {:distrust, ["acme/api#1"]},
+      {:refresh, []},
+      {:approve, ["acme/api#1", true]},
+      {:limited, [{"acme/api#1", 1}]},
+      {:unapprove, ["acme/api#1"]},
+      {:approve, ["acme/api#1", true]}
+    ])
+  end
+
   # From hal-c2/hal-c2#990: two reviews start with the gate closed.
   test "two reviews started with the gate closed both get a checkout and a thread" do
     Process.flag(:trap_exit, true)
@@ -606,16 +620,18 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # The user approves the head the Reviews page shows, or (`fresh` false) the other
-  # one. A review under way, being posted or done at that head only takes it.
+  # one. A review under way, being posted or done at that head only takes it; one
+  # whose run there ended without findings, as at a usage limit, is queued.
   defp step(m, {:call, _, :approve, [key, fresh]}) do
     case m.reviews[key] do
       %{seen: seen} = r when fresh ->
         r = %{r | approved: seen}
         m = put_review(m, key, r)
 
-        if r.status in [:queued, :running, :publishing] or r.reviewed == seen,
-          do: {m, :ok},
-          else: {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
+        if r.status in [:queued, :running, :publishing] or
+             (r.reviewed == seen and r.verdict != nil),
+           do: {m, :ok},
+           else: {m |> unpause() |> follow(key) |> queue(key, true) |> pump(), :ok}
 
       _ ->
         {m, :error}

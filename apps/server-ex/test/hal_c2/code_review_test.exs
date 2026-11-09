@@ -238,6 +238,48 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "ready", "untrusted" => nil} = review()
   end
 
+  test "a collaborator with a custom role is trusted by the permission it extends",
+       context do
+    save_settings(%{"label" => "ship-it"})
+
+    labeled = %{
+      "__typename" => "LabeledEvent",
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "actor" => %{"__typename" => "User", "login" => "custodian"},
+      "label" => %{"name" => "ship-it"}
+    }
+
+    label = fn answer, updated ->
+      rules!(context,
+        head: 1,
+        labels: ["ship-it"],
+        updated: updated,
+        timeline: [labeled],
+        permissions: [{"custodian", answer}]
+      )
+
+      refresh()
+      review()
+    end
+
+    # A custom role over read, and one GitHub names no permission for, are not trusted.
+    for {answer, at} <- [
+          {%{"role_name" => "Docs", "permission" => "read"}, "2026-09-02T00:00:00Z"},
+          {%{"role_name" => "Docs"}, "2026-09-03T00:00:00Z"}
+        ] do
+      assert %{"status" => "ready"} = review = label.(answer, at)
+      refute review["trigger"]
+      assert review["trust"]["labeled"]["login"] == "custodian"
+    end
+
+    # One over write is.
+    assert %{"trigger" => "label"} =
+             label.(
+               %{"role_name" => "Security reviewer", "permission" => "write"},
+               "2026-09-04T00:00:00Z"
+             )
+  end
+
   test "a head pushed back to the commit reviewed is no longer changed since the review",
        context do
     review = start_review()
@@ -616,6 +658,60 @@ defmodule HalC2.CodeReviewTest do
                "Suggested change:\n\n```\n#{bait}\n```"
   end
 
+  test "counts in the settings are whole numbers", _context do
+    for key <-
+          ~w(reviewsPerAuthorPerDay reviewsPerRepositoryPerDay maxChangedLines concurrency pollMinutes) do
+      assert {:error, %{"message" => message}} = save_settings_answer(%{key => 1.5})
+      assert message =~ key
+    end
+
+    assert {:ok, _} = put_settings(%{"reviewsPerAuthorPerDay" => 2, "concurrency" => 1})
+    settle()
+  end
+
+  test "a severity badge on an old-side comment that opens with a fence keeps its suggestion in its own block",
+       context do
+    # The pull request changes README.md, so its first line on the old side is in the diff.
+    seed = Path.join(context.dir, "seed")
+    git!(seed, ["checkout", "-q", context.shas[1]])
+    File.write!(Path.join(seed, "README.md"), "# API\n")
+    git!(seed, ["commit", "-q", "-am", "Rename"])
+    head = git!(seed, ["rev-parse", "HEAD"])
+    bare = Path.join(context.dir, "remotes/acme/api.git")
+    git!(seed, ["push", "-q", bare, "#{head}:refs/pull/1/head"])
+    context = put_in(context.shas[3], head)
+    rules!(context, head: 3)
+
+    review = start_review()
+    bait = "![x](https://example.com/p.png) @octocat"
+
+    comment = %{
+      "path" => "README.md",
+      "line" => 1,
+      "side" => "old",
+      "severity" => "high",
+      "body" => "```ts\nconst limit = 2;",
+      "suggestion" => bait
+    }
+
+    arguments = %{"verdict" => "comment", "summary" => "One note.", "comments" => [comment]}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    expected =
+      "🔴 **High:**\n\n```ts\nconst limit = 2;\n```\n\nSuggested change:\n\n```\n#{bait}\n```"
+
+    assert {:ok, preview} = call("preview", %{"key" => @key})
+    assert [%{"path" => "README.md", "body" => ^expected}] = preview["comments"]
+
+    assert {:ok, _} =
+             call("publish", Map.merge(seen(), Map.take(preview, ~w(version verdict))))
+
+    assert [post] = posts(context)
+    sent = post |> Jason.decode!() |> Map.fetch!("stdin") |> Jason.decode!()
+    assert Enum.map(sent["comments"], & &1["body"]) == [expected]
+  end
+
   test "a limit that asks of the user went past holds until enough reviews stop counting",
        context do
     report = fn review ->
@@ -937,6 +1033,42 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "queued"} = review()
     assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
     _ = context
+  end
+
+  test "an approval given again after a run stopped at a usage limit queues the review again",
+       context do
+    rules!(context, head: 1, association: "NONE")
+    settle()
+    {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    :ok =
+      apply(@server, :handle_event, [
+        %{
+          "type" => "turn.finished",
+          "threadId" => thread_id,
+          "status" => "failed",
+          "errorClass" => "usage_limit",
+          "error" => "Subscription quota exhausted.",
+          "resetAt" => reset
+        },
+        %{}
+      ])
+
+    settle()
+    assert %{"status" => "queued", "reviewedSha" => sha} = review()
+    assert sha == context.shas[1]
+
+    {:ok, _} = call("unapprove", %{"key" => @key})
+    assert %{"status" => "ready"} = review()
+
+    # Its commit was checked out, but nothing reviewed it: approved again, it is queued.
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert review()["status"] in ~w(queued running)
   end
 
   test "a finished review settles its thread in the sidebar", context do
@@ -1527,7 +1659,10 @@ defmodule HalC2.CodeReviewTest do
   end
 
   # Saves the settings without waiting for what the plugin does with them.
-  defp put_settings(overrides) do
+  defp put_settings(overrides), do: {:ok, _} = save_settings_answer(overrides)
+
+  # What the plugin answers a save of the settings with `overrides`.
+  defp save_settings_answer(overrides) do
     settings =
       Map.merge(
         %{
@@ -1544,7 +1679,7 @@ defmodule HalC2.CodeReviewTest do
         overrides
       )
 
-    {:ok, _} = HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
+    HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
   end
 
   # While the stop waits on the agent, which `hold_interrupts/1` keeps from answering, its
@@ -1752,6 +1887,11 @@ defmodule HalC2.CodeReviewTest do
               r
             )
 
+    # What GitHub answers for the role of each login in `permissions` on the repository.
+    permissions =
+      for {login, answer} <- opts[:permissions] || [],
+          do: %{"args" => ["collaborators/#{login}/permission"], "stdout" => answer}
+
     rules = [
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       # Who stands behind pull request #1: octocat, a member unless `association` says.
@@ -1830,7 +1970,7 @@ defmodule HalC2.CodeReviewTest do
       }
     ]
 
-    File.write!(Path.join(context.dir, "rules.json"), JSON.encode!(rules))
+    File.write!(Path.join(context.dir, "rules.json"), JSON.encode!(permissions ++ rules))
   end
 
   # `remotes/acme/api.git`: `main`, and two head commits of pull request #1 off it,
