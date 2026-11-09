@@ -19,7 +19,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   - turned off, it watches no turn and has no task out;
   - watching, it has no delivery out and no redirect on its way;
   - it watches exactly the turns under way that it heard start while on, by their run;
-  - a judge job is out only for a thread with a turn under way, at most one for each;
+  - a judge job is out only for a thread with a turn under way and not offered its
+    stop, at most one for each;
   - no run gets more redirects than the budget, nor more than one stop offer;
   - a turn teaches the project's envelope only when it ended completed, made calls and
     was heard whole, never when the next turn's start closes it; one heard whole that
@@ -270,7 +271,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         after_.mode != "watch" or
           (not Enum.any?(seen.tasks, &match?({_, :delivery}, &1)) and seen.redirecting == []),
       turns: seen.turns == Map.new(after_.open, fn {t, turn} -> {t, turn.run} end),
-      judge: Enum.all?(judged, fn {t, n} -> n == 1 and Map.has_key?(seen.turns, t) end),
+      judge:
+        Enum.all?(judged, fn {t, n} ->
+          n == 1 and Map.has_key?(seen.turns, t) and t not in seen.offered
+        end),
       budget:
         Enum.all?(seen.acts, fn {{_, _, action}, n} ->
           if action == "nudge", do: n <= state.budget, else: n <= 1
@@ -496,6 +500,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       turns: Map.new(plugin.turns, fn {t, turn} -> {t, turn.run} end),
       tasks: Map.values(plugin.tasks),
       redirecting: for({t, %{guard: %{redirecting: true}}} <- plugin.turns, do: t),
+      offered: for({t, %{guard: %{abort_delivered: true}}} <- plugin.turns, do: t),
       acts: Enum.frequencies_by(plugin.recent, &{&1["threadId"], &1["runId"], &1["action"]}),
       taught: taught
     }

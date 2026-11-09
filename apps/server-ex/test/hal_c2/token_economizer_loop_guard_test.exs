@@ -976,26 +976,44 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       pending = %{"id" => "a:0:1", "since" => since, "segment" => 0}
       state = update_in(state.turns["a"].guard, &%{&1 | judge_pending: pending, judge_calls: 1})
 
-      state =
-        Enum.reduce_while(1..60, state, fn i, state ->
-          item =
-            if rem(i, 2) == 0,
-              do: %{"itemType" => "file_change", "status" => "completed", "path" => "/r/a.py"},
-              else:
-                command("pytest -q", "FAILED t - AssertionError", "failed", %{"exitCode" => 1})
-
-          state =
-            observe(
-              state,
-              Map.merge(item, %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"})
-            )
-
-          if state.stats["judgeCalls"] > 0, do: {:halt, state}, else: {:cont, state}
-        end)
-
+      state = stuck_until(state, &(&1.stats["judgeCalls"] > 0))
       assert state.stats["judgeCalls"] == 1
       assert_receive {:DOWN, _, :process, ^old, _}
       assert [{_, {"a", :judge}}] = Map.to_list(state.tasks)
+    end
+
+    test "a stop offer stops the turn's judge job, whose verdict nothing would read" do
+      {:ok, state} = TokenEconomizer.init(%{"loopGuard" => "watch", "loopGuardNudges" => 0})
+      # Five learned four-call turns: the backstop at 12.5 calls.
+      saved = %{"level" => "default", "resolved_turns" => [4, 4, 4, 4, 4]}
+      state = put_in(state.trackers[{"p", "claudeAgent"}], Envelope.new("default", %{}, saved))
+      state = observe(state, started("a"))
+      {judge, state} = sleeper(state, "a", :judge)
+      pending = %{"id" => "a:0:1", "since" => System.monotonic_time(:second), "segment" => 0}
+      state = update_in(state.turns["a"].guard, &%{&1 | judge_pending: pending, judge_calls: 1})
+
+      state = stuck_until(state, &(&1.stats["aborts"] > 0))
+      assert state.stats["aborts"] == 1
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert state.tasks == %{}
+    end
+
+    # Feeds thread `a` an edit and a failing check, in turn, until `done?` holds.
+    defp stuck_until(state, done?) do
+      Enum.reduce_while(1..60, state, fn i, state ->
+        item =
+          if rem(i, 2) == 0,
+            do: %{"itemType" => "file_change", "status" => "completed", "path" => "/r/a.py"},
+            else: command("pytest -q", "FAILED t - AssertionError", "failed", %{"exitCode" => 1})
+
+        state =
+          observe(
+            state,
+            Map.merge(item, %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"})
+          )
+
+        if done?.(state), do: {:halt, state}, else: {:cont, state}
+      end)
     end
 
     test "a cancelled edit after a failing check changes nothing, so the turn does not end green" do

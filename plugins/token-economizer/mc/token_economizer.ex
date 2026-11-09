@@ -423,7 +423,9 @@ defmodule HalC2Plugins.TokenEconomizer do
     )
 
     guard = %{guard | abort_delivered: true}
-    state = update_in(state.stats["aborts"], &(&1 + 1))
+    # The guard decides nothing more in the turn, so a judge job still out is a paid
+    # answer no one reads.
+    state = state |> update_in([:stats, "aborts"], &(&1 + 1)) |> cancel_judge(thread_id)
     entry = entry(thread_id, run_id, "stop", reason, guard)
 
     if shadow?(state) do
