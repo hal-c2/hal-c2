@@ -249,6 +249,9 @@ defmodule HalC2.Plugins.Host do
   end
 
   defp answer({:ok, {:ok, %{} = answer}}), do: answer
+  # An MC from before `peer/3` named its machine says only `:none` for a plugin it
+  # does not run, or a function that plugin lacks.
+  defp answer({:ok, :none}), do: %{"result" => :none}
   defp answer({:ok, _other}), do: nil
   defp answer({:error, {:erpc, :noconnection}}), do: nil
   defp answer({:error, {:exception, :undef, [{__MODULE__, :peer, _, _} | _]}}), do: nil
