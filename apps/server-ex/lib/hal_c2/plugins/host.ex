@@ -177,11 +177,16 @@ defmodule HalC2.Plugins.Host do
   @doc """
   Starts a thread as `orchestration.launchThread` does (`input` in its shape),
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
-  thread list. Created by the system, from the server.
+  thread list. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
+  which asks the version that runs first) has its threads marked `"stays"`: its sandbox,
+  credentials and checkout for them do not travel, so a moved thread would run without
+  them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`).
+  Created by the system, from the server.
   """
   def launch_thread(id, kind, input, opts \\ []) do
     with :ok <- permit(id, "threads:create") do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
+      mark = if Plugins.threads_stay?(id), do: Map.put(mark, "stays", true), else: mark
 
       input
       |> Map.merge(%{"createdBy" => "system", "creationSource" => "server"})
@@ -301,6 +306,201 @@ defmodule HalC2.Plugins.Host do
     end
   catch
     :exit, _ -> %{}
+  end
+
+  @doc """
+  Steers run `run_id` of `thread_id` with `text`, as a user's steer does, and only it:
+  a run that has ended, is being stopped, or whose provider cannot take a message while
+  it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
+  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
+  also when `run_id` names no run of the thread.
+  """
+  def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
+    with :ok <- permit(id, "threads:steer"),
+         :ok <- run_of(thread_id, run_id) do
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "plugin:#{id}:#{HalC2.Environment.uuid4()}",
+        "threadId" => thread_id,
+        "text" => text,
+        "attachments" => [],
+        "createdBy" => "system",
+        "creationSource" => "server",
+        "deliveryIntent" => "steer",
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => run_id},
+        "steerOnly" => true
+      })
+    end
+  end
+
+  # A steer naming no run is refused as the orchestration refuses any steer meant only
+  # for its run that names none.
+  defp run_of(thread_id, run_id) when is_binary(run_id) and run_id != "" do
+    if HalC2.Streams.get(thread_id, "run", run_id),
+      do: :ok,
+      else: {:error, "Thread #{thread_id} has no run #{run_id}."}
+  end
+
+  defp run_of(_thread_id, _run_id), do: :ok
+
+  @doc """
+  Shows `message` in `thread_id`'s timeline, in run `run_id`, as a notice from the
+  plugin (`system_notice`, with its `pluginId`). `opts`: `title` (the message when
+  left out) and `interrupt: true`, which offers a button that stops the run while it
+  works. Needs `threads:notice`. `{:ok, item_id}`, or `{:error, message}` when the
+  thread has no such run.
+  """
+  def notice(id, thread_id, run_id, message, opts \\ []) when is_binary(message) do
+    alias HalC2.Orchestration.Entities
+
+    with :ok <- permit(id, "threads:notice") do
+      item_id = "turn-item:plugin:#{id}:#{HalC2.Environment.uuid4()}"
+      title = Keyword.get(opts, :title) || message
+
+      fields =
+        %{"title" => title, "message" => message, "pluginId" => id}
+        |> then(&if(opts[:interrupt], do: Map.put(&1, "actions", ["interrupt"]), else: &1))
+
+      HalC2.Streams.transact(thread_id, :thread, fn stream ->
+        case HalC2.StreamState.get(stream, "run")[run_id] do
+          %{} = run ->
+            ids = %{
+              thread: thread_id,
+              run: run_id,
+              root_node: run["rootNodeId"],
+              provider_thread: run["providerThreadId"]
+            }
+
+            item =
+              Entities.turn_item(
+                ids,
+                item_id,
+                "system_notice",
+                HalC2.Orchestration.next_ordinal(stream),
+                "completed",
+                Entities.now(),
+                fields
+              )
+
+            {[HalC2.Orchestration.create("turn-item", item_id, item)], {:ok, item_id}}
+
+          nil ->
+            {[], {:error, "Thread #{thread_id} has no run #{run_id}."}}
+        end
+      end)
+    end
+  end
+
+  @doc """
+  Asks the user's text generation model (`HalC2.TextGeneration.for_plugin/2`) for an
+  object with the `schema`'s keys (`%{"key" => "string" | "boolean"}`), in an empty
+  directory: `{:ok, object, usage}`, where `usage` is `%{"instanceId", "model",
+  "inputTokens", "cachedInputTokens", "outputTokens", "costUsd", "estimated"}`
+  (`estimated` when the provider reports none, from the lengths of the prompt and the
+  answer), or `{:error, message}`. Needs `textGeneration`.
+  """
+  def generate(id, prompt, schema) when is_binary(prompt) and is_map(schema) do
+    with :ok <- permit(id, "textGeneration"),
+         {:ok, schema} <- generation_schema(schema) do
+      case HalC2.TextGeneration.for_plugin(prompt, schema) do
+        {:ok, out, usage} -> {:ok, out, usage}
+        {:error, {:unavailable, message}} -> {:error, message}
+        {:error, message} when is_binary(message) -> {:error, message}
+        {:error, reason} -> {:error, inspect(reason)}
+      end
+    end
+  end
+
+  defp generation_schema(schema) do
+    Enum.reduce_while(schema, {:ok, %{}}, fn
+      {key, type}, {:ok, acc} when is_binary(key) and type in ["string", "boolean"] ->
+        {:cont, {:ok, Map.put(acc, key, String.to_existing_atom(type))}}
+
+      {key, _type}, _acc ->
+        {:halt, {:error, "#{inspect(key)} is not a key with type \"string\" or \"boolean\"."}}
+    end)
+  end
+
+  @doc """
+  The turns `thread_id` ran, oldest first, the newest `limit` (50 when left out) of
+  those that ended: `%{"runId", "ordinal", "status", "provider", "instanceId", "model",
+  "startedAt", "completedAt", "tokenUsage", "items"}`, each item as plugins hear it
+  (`HalC2.Orchestration.TurnWriter.observed_item/1`), in the turn's order. What a
+  plugin that hears turns missed while it was not running. Needs `turns:observe`.
+  `{:error, message}` when there is no such thread.
+
+  `"provider"` is the driver the turn ran on (`"claudeAgent"`, `"codex"`, ...), kept
+  with the thread, so it is known after the instance the turn ran on is deleted and
+  `providers/0` no longer lists it.
+
+  `before: run_id` keeps only the turns that ended before run `run_id` started (a lower
+  ordinal), whether that run ended or not, and takes `limit` of those: a plugin that
+  hears of a turn late, after more turns ended, still gets the turns before it. A run
+  the thread does not have cuts nothing off.
+  """
+  def history(id, thread_id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 50)
+    before = Keyword.get(opts, :before)
+
+    with :ok <- permit(id, "turns:observe") do
+      HalC2.Streams.read(thread_id, fn stream ->
+        if HalC2.StreamState.get(stream, "thread")[thread_id],
+          do: {:ok, turns(stream, limit, before)},
+          else: {:error, "There is no thread #{thread_id}."}
+      end)
+    end
+  end
+
+  @ended ~w(completed interrupted failed cancelled)
+
+  defp turns(stream, limit, before) do
+    alias HalC2.StreamState
+
+    attempts = StreamState.get(stream, "run-attempt")
+    provider_turns = StreamState.get(stream, "provider-turn")
+    provider_threads = StreamState.get(stream, "provider-thread")
+    runs = StreamState.get(stream, "run")
+
+    cutoff =
+      case runs[before] do
+        %{"ordinal" => ordinal} -> &(&1["ordinal"] < ordinal)
+        _ -> fn _run -> true end
+      end
+
+    selected =
+      runs
+      |> Map.values()
+      |> Enum.filter(&(&1["status"] in @ended and cutoff.(&1)))
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.take(-limit)
+
+    # The items of those runs alone, an older run's read back from the store once it
+    # has gone cold (`HalC2.StreamState`, "Hot and cold").
+    items =
+      for {"turn-item", _id, item} <- StreamState.run_rows(stream, Enum.map(selected, & &1["id"])),
+          reduce: %{} do
+        acc -> Map.update(acc, item["runId"], [item], &[item | &1])
+      end
+
+    Enum.map(selected, fn run ->
+      provider_turn = (attempts[run["activeAttemptId"]] || %{})["providerTurnId"]
+
+      %{
+        "runId" => run["id"],
+        "ordinal" => run["ordinal"],
+        "status" => run["status"],
+        "provider" => (provider_threads[run["providerThreadId"]] || %{})["driver"],
+        "instanceId" => run["providerInstanceId"],
+        "model" => get_in(run, ["modelSelection", "model"]),
+        "startedAt" => run["startedAt"],
+        "completedAt" => run["completedAt"],
+        "tokenUsage" => (provider_turns[provider_turn] || %{})["tokenUsage"],
+        "items" =>
+          (items[run["id"]] || [])
+          |> Enum.sort_by(& &1["ordinal"])
+          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1)
+      }
+    end)
   end
 
   @doc "Whether plugin `id` was granted `permission`."

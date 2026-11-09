@@ -1753,6 +1753,19 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "its thread stays on this machine", context do
+    assert %{"id" => @id, "stays" => true} = thread(context.thread)["plugin"]
+    context
+  end
+
+  step "the thread cannot be moved to another machine", context do
+    assert {:error, %{"code" => "thread_not_movable", "message" => message}} =
+             HalC2.ThreadMove.destinations(context.thread)
+
+    assert message =~ "keeps it on this machine"
+    context
+  end
+
   step "its thread is listed with the threads", context do
     assert %{"id" => @id, "kind" => "review", "listed" => true} = thread(context.thread)["plugin"]
     context

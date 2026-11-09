@@ -1128,6 +1128,8 @@ const OrchestrationV2TurnItemBaseFields = {
   /** Why the item ended as it did, when something other than its provider ended it. */
   statusDetail: Schema.optional(Schema.String),
   title: Schema.NullOr(Schema.String),
+  /** The provider's own name for the tool the item ran, where that names it (Claude's). */
+  providerToolName: Schema.optional(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
@@ -1276,6 +1278,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    /** The plugin that showed the notice (`Host.notice`), absent on the MC's own. */
+    pluginId: Schema.optional(Schema.String),
+    /** What the notice offers while its run works: `interrupt` stops the run. */
+    actions: Schema.optional(Schema.Array(Schema.Literal("interrupt"))),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2038,6 +2044,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    /** The plugin that showed the notice (`Host.notice`), absent on the MC's own. */
+    pluginId: Schema.optional(Schema.String),
+    /** What the notice offers while its run works: `interrupt` stops the run. */
+    actions: Schema.optional(Schema.Array(Schema.Literal("interrupt"))),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

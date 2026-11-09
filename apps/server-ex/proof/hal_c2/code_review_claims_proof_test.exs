@@ -130,7 +130,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.slack/3" => @host,
       "HalC2.Plugins.Host.pull_request_trust/2" => @trust,
       "HalC2.Plugins.Host.left_cluster?/2" =>
-        "a machine the user switched off or removed from the cluster stops counting with the others; the model's machines stay in it"
+        "a machine the user switched off or removed from the cluster stops counting with the others; the model's machines stay in it",
+      "HalC2.Plugins.Host.steer/4" => @host,
+      "HalC2.Plugins.Host.notice/5" => @shown,
+      "HalC2.Plugins.Host.generate/3" => @host,
+      "HalC2.Plugins.Host.history/3" => @host
     },
     environment: %{
       "push" => "a commit is pushed to the pull request",

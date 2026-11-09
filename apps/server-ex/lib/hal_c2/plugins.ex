@@ -58,9 +58,12 @@ defmodule HalC2.Plugins do
   @max_seconds 5
 
   @providers __MODULE__.Providers
+  # The ids whose loaded manifest declares `threadsStay`; see `threads_stay?/1`.
+  @stays __MODULE__.Stays
   # `{{:list, pid}, ref}`, `{{:topic, id, topic, pid}, ref}` and `{{:last, id, topic}, value}`.
   @watchers __MODULE__.Watchers
   @heir __MODULE__.Heir
+  @shapes __MODULE__.Shapes
 
   @kinds %{
     HalC2.Plugins.ProviderAdapter => "providerAdapter",
@@ -72,9 +75,13 @@ defmodule HalC2.Plugins do
   }
 
   # The heir starts first, and a restart of it takes this server with it.
+  # So does the registry of the plugins' hooks (`HalC2.Plugins.Feed`).
   def child_spec(_) do
     server = %{id: __MODULE__, start: {__MODULE__, :start_link, [nil]}}
-    HalC2.Heir.supervise(@heir, server, HalC2.Plugins.Supervisor)
+    hooks = {Registry, keys: :unique, name: HalC2.Plugins.Hooks}
+    # The plugins' answers to `shape_run/1`, unlinked from the turn that asks.
+    shapes = {Task.Supervisor, name: @shapes}
+    HalC2.Heir.supervise(@heir, server, HalC2.Plugins.Supervisor, [hooks, shapes])
   end
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -281,6 +288,23 @@ defmodule HalC2.Plugins do
   catch
     :exit, {:timeout, _} -> true
     :exit, _ -> false
+  end
+
+  @doc """
+  Whether plugin `id` declares that its threads never leave the machine
+  (`"threadsStay"`): the version loaded here says so, running or not, or the package
+  on disk does (`Package.threads_stay?/1`). The version loaded answers while a reload
+  that failed leaves it running and the manifest on disk does not declare it.
+
+  The loaded versions' declarations are in a table the host keeps (`sync/1`), so this
+  never waits on the host, however busy it is compiling a package. With no host here,
+  or one that has not scanned yet, the table says nothing and the disk answers.
+  """
+  def threads_stay?(id) do
+    (:ets.whereis(@stays) != :undefined and :ets.member(@stays, id)) or Package.threads_stay?(id)
+  rescue
+    # The host went away between looking for the table and reading it.
+    ArgumentError -> Package.threads_stay?(id)
   end
 
   @doc "Whether `id` is a running text-generation backend."
@@ -513,6 +537,113 @@ defmodule HalC2.Plugins do
     :ok
   end
 
+  @doc """
+  Whether a running extension hears turns (`observe/1`), so what drives a turn builds
+  an event only for someone. Reads the hook registry, never this server.
+  """
+  def observing?, do: HalC2.Plugins.Feed.lookup(:observe) != []
+
+  @doc """
+  Hands `event` (`HalC2.Plugins.Extension`'s `observe/2`) to every running extension
+  that hears turns, without waiting for any of them: a feed that is behind drops it
+  and counts it (`HalC2.Plugins.Feed`). A turn's events go from the process driving
+  it, so each feed hears them in order.
+  """
+  def observe(event) do
+    for {pid, %{dropped: dropped}} <- HalC2.Plugins.Feed.lookup(:observe) do
+      case Process.info(pid, :message_queue_len) do
+        {:message_queue_len, waiting} ->
+          if waiting < HalC2.Plugins.Feed.max_queue(),
+            do: send(pid, {:observe, event}),
+            else: :counters.add(dropped, 1, 1)
+
+        nil ->
+          :ok
+      end
+    end
+
+    :ok
+  end
+
+  # A plugin's answer to `shape_run/2`, as JSON; one that raises, throws or exits, or
+  # answers with what JSON cannot hold, has none, and never takes the starting turn down
+  # with it.
+  defp shaped(id, fun) do
+    case fun.() do
+      %{} = shape -> json(shape)
+      _ -> nil
+    end
+  rescue
+    e ->
+      Logger.warning("plugin #{id} failed shaping a run: #{Exception.message(e)}")
+      nil
+  catch
+    kind, reason ->
+      Logger.warning("plugin #{id} failed shaping a run: #{inspect({kind, reason})}")
+      nil
+  end
+
+  # How long a new conversation waits for the plugins that shape it.
+  @shape_ms 300
+
+  @doc """
+  What the running extensions granted `runs:shape` add to a new conversation (`run`
+  is what `shape_run/2` is called with), asked of all of them at once: their contexts
+  joined in plugin order and the union of their denied tools, `%{"context",
+  "deniedTools", "plugins"}`, or nil when none had anything. One that fails, or does
+  not answer within #{@shape_ms} ms, is left out: a plugin never holds an agent back.
+  """
+  def shape_run(run) do
+    # Each is asked with the settings saved last, read as it is asked: a save is seen at
+    # once, whatever the plugin's feed is still busy with.
+    asks =
+      for {_pid, %{id: id, module: module, fields: fields}} <-
+            HalC2.Plugins.Feed.lookup(:shape),
+          "runs:shape" in granted(id),
+          task =
+            ask_shape(id, fn ->
+              context = %{id: id, settings: current(id, fields), thread_id: run["threadId"]}
+              module.shape_run(run, context)
+            end),
+          task,
+          do: {id, task}
+
+    answers =
+      asks
+      |> Enum.map(&elem(&1, 1))
+      |> Task.yield_many(timeout: @shape_ms, on_timeout: :kill_task)
+      |> Enum.zip(asks)
+      |> Enum.flat_map(fn
+        {{_task, {:ok, %{} = shape}}, {id, _}} -> [{id, shape}]
+        {{_task, _}, {_id, _}} -> []
+      end)
+      |> Enum.flat_map(fn {id, shape} ->
+        context = if is_binary(shape["context"]) and shape["context"] != "", do: shape["context"]
+        denied = for name <- List.wrap(shape["deniedTools"]), is_binary(name), do: name
+        if context || denied != [], do: [{id, context, denied}], else: []
+      end)
+
+    if answers != [] do
+      contexts = for {_, context, _} <- answers, context, do: context
+
+      %{
+        "context" => if(contexts != [], do: Enum.join(contexts, "\n\n")),
+        "deniedTools" => answers |> Enum.flat_map(&elem(&1, 2)) |> Enum.uniq(),
+        "plugins" => Enum.map(answers, &elem(&1, 0))
+      }
+    end
+  end
+
+  # A shape asked apart from the asker, or nil when it cannot be (the supervisor of
+  # shapes restarting): that plugin has no answer, the others are still awaited.
+  defp ask_shape(id, fun) do
+    Task.Supervisor.async_nolink(@shapes, fn -> shaped(id, fun) end)
+  catch
+    :exit, reason ->
+      Logger.warning("plugin #{id} could not be asked to shape a run: #{inspect(reason)}")
+      nil
+  end
+
   defp failure_event(%{"class" => class} = failure) when is_binary(class) do
     %{"errorClass" => class, "error" => failure["message"], "resetAt" => failure["resetAt"]}
   end
@@ -650,12 +781,19 @@ defmodule HalC2.Plugins do
     end
   end
 
+  @doc false
+  # The settings plugin `id` runs with now, from the `fields` its manifest declares: what
+  # its feed reads each time it starts (`HalC2.Plugins.Feed`), so a restart after a save
+  # runs with the saved ones.
+  def settings_now(id, fields), do: current(id, fields)
+
   # --- server -------------------------------------------------------------------------
 
   @impl true
   def init(nil) do
     {:ok, supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
     :ets.new(@providers, [:named_table, :protected, :set, read_concurrency: true])
+    :ets.new(@stays, [:named_table, :protected, :set, read_concurrency: true])
     :ok = HalC2.Settings.watch(self())
     dir = Path.join(HalC2.Paths.data_dir(), "plugins")
 
@@ -997,9 +1135,14 @@ defmodule HalC2.Plugins do
   def handle_info(_other, state), do: {:noreply, state}
 
   # A host updated in place by a release upgrade from before crashes were charged to the
-  # supervisor that reported them: its workers are the running supervisors'.
+  # supervisor that reported them: its workers are the running supervisors'. One from
+  # before `threadsStay` has no table of declarations (`init/1` does not run again), and
+  # `sync/1` would crash on it: it is made and filled from the versions loaded.
   @impl true
   def code_change(_old, state, _extra) do
+    if :ets.whereis(@stays) == :undefined,
+      do: :ets.new(@stays, [:named_table, :protected, :set, read_concurrency: true])
+
     plugins =
       Map.new(state.plugins, fn {id, plugin} ->
         {id, plugin |> Map.put_new(:gave_up, nil) |> Map.put_new(:compile_check, nil)}
@@ -1011,7 +1154,7 @@ defmodule HalC2.Plugins do
         entry -> entry
       end)
 
-    {:ok, %{state | plugins: plugins, refs: refs}}
+    {:ok, sync(%{state | plugins: plugins, refs: refs})}
   end
 
   # One `HalC2.Watchers` entry per watched list or topic, so dropping one leaves the others.
@@ -1141,28 +1284,39 @@ defmodule HalC2.Plugins do
         previous
 
       {{:ok, _, _, _}, _} ->
-        copy = stage(id, dir)
+        case stage(id, dir) do
+          {:ok, copy} ->
+            load_copy(id, dir, copy, previous, bundled)
 
-        case Package.read(copy) do
-          {:ok, manifest, sources, hash} ->
-            plugin = %{
-              blank(id, dir, hash)
-              | manifest: manifest,
-                sources: sources,
-                package: dir,
-                files: copy,
-                bundled: MapSet.member?(bundled, id),
-                problem: api_problem(manifest.api_version)
-            }
-
-            if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
-
-          {:error, message, hash} ->
-            File.rm_rf(Path.dirname(copy))
-            failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+          # The package changed under the copy (an install replacing it), or the cache
+          # could not take it: the version that ran stays, and a rescan loads it again.
+          # The failure keeps no hash, so a rescan of the same package retries the copy.
+          {:error, message} ->
+            failed(previous, message, fn -> %{blank(id, dir, nil) | package: dir} end)
         end
 
       {{:error, message, hash}, _} ->
+        failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+    end
+  end
+
+  defp load_copy(id, dir, copy, previous, bundled) do
+    case Package.read(copy) do
+      {:ok, manifest, sources, hash} ->
+        plugin = %{
+          blank(id, dir, hash)
+          | manifest: manifest,
+            sources: sources,
+            package: dir,
+            files: copy,
+            bundled: MapSet.member?(bundled, id),
+            problem: api_problem(manifest.api_version)
+        }
+
+        if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
+
+      {:error, message, hash} ->
+        File.rm_rf(Path.dirname(copy))
         failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
     end
   end
@@ -1182,8 +1336,15 @@ defmodule HalC2.Plugins do
   # Each copy sits in a directory named for the package, as the manifest's id must be.
   defp stage(id, dir) do
     copy = Path.join([copies_dir(), id, "#{System.unique_integer([:positive])}", id])
-    :ok = Package.copy(dir, copy)
-    copy
+
+    case Package.copy(dir, copy) do
+      :ok ->
+        {:ok, copy}
+
+      {:error, _} = error ->
+        File.rm_rf(Path.dirname(copy))
+        error
+    end
   end
 
   defp copies_dir, do: Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
@@ -1437,8 +1598,15 @@ defmodule HalC2.Plugins do
     |> sync()
   end
 
-  # The running provider adapters, by the driver they serve, for `provider/1`.
+  # The running provider adapters, by the driver they serve, for `provider/1`, and the
+  # plugins whose loaded manifest declares `threadsStay`, for `threads_stay?/1`. The
+  # second follows the loaded versions (a scan, so an uninstall, drops a plugin from
+  # it) and is rebuilt as the plugins load when the host starts again.
   defp sync(state) do
+    stays = for {id, %{manifest: %{package: %{"threadsStay" => true}}}} <- state.plugins, do: {id}
+    for {id} <- :ets.tab2list(@stays), {id} not in stays, do: :ets.delete(@stays, id)
+    :ets.insert(@stays, stays)
+
     bundled = HalC2.Plugins.Bundled.modules()
 
     rows =
@@ -1478,6 +1646,12 @@ defmodule HalC2.Plugins do
       if module != nil and function_exported?(module, :start_link, 1),
         do: [%{id: module, start: {__MODULE__, :start_worker, [id, module, fields(plugin)]}}],
         else: []
+
+    # The extension's turn feed and run hooks (`observe/1`, `shape_run/1`).
+    children =
+      if "extension" in plugin.kinds and module != nil and HalC2.Plugins.Feed.hooks?(module),
+        do: children ++ [{HalC2.Plugins.Feed, {id, module, fields(plugin)}}],
+        else: children
 
     # A provider's thread processes (`sessions/1`).
     children =
@@ -1538,7 +1712,11 @@ defmodule HalC2.Plugins do
          false <- live?(module, pid, settings(plugin), old) do
       state |> stop(id) |> reconcile()
     else
-      _ -> sync(state)
+      _ ->
+        with {_, pid, _, _} when is_pid(pid) <- List.keyfind(children(sup), :feed, 0),
+             do: HalC2.Plugins.Feed.settings_changed(pid, settings(plugin))
+
+        sync(state)
     end
   end
 

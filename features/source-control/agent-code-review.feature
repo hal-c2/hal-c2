@@ -861,6 +861,14 @@ Feature: Agent code review
       When the user opens the review's thread
       Then the pull request, the verdict and the publish action are shown above the conversation
 
+    # The sandbox, the credential and the checkout of untrusted code are this machine's,
+    # so a review thread is never moved or exported (features/threads/moving-between-machines.feature).
+    @mc
+    Scenario: A review thread stays on the machine that reviewed
+      When #12 is reviewed
+      Then its thread stays on this machine
+      And the thread cannot be moved to another machine
+
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: Publishing from a review thread first shows what will be posted
       Given the review of #13 finished with the verdict "approved"

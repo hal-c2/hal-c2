@@ -231,6 +231,161 @@ defmodule HalC2.PluginsTest do
     assert "3" = busy(:version, [])
   end
 
+  # The version that still runs declares `threadsStay`; the update that failed to load
+  # does not, and its manifest is what the disk says. The declaration of the version
+  # loaded is read from a table, so a host too busy to answer (suspended here) cannot
+  # make it read false and let the plugin's threads leave.
+  test "the declaration of the version loaded is read without waiting on the host" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    manifest = Path.join(plugins_dir(), "busy/plugin.json")
+
+    File.write!(
+      manifest,
+      manifest |> File.read!() |> JSON.decode!() |> declare() |> JSON.encode!()
+    )
+
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+    assert Plugins.threads_stay?("busy")
+
+    code_package("busy", "2", [
+      {"a.ex", busy_source("2")},
+      {"b.ex", "defmodule HalC2PluginsTest.Broken do\n  def broken(, do: :x\nend\n"}
+    ])
+
+    Plugins.handle("rescan", %{})
+    assert %{"version" => "1", "reloadError" => error} = listed("busy")
+    assert error =~ "b.ex"
+    refute HalC2.Plugins.Package.threads_stay?("busy")
+    assert Plugins.threads_stay?("busy")
+
+    :ok = :sys.suspend(Plugins)
+    assert Plugins.threads_stay?("busy")
+    refute Plugins.threads_stay?("other")
+    :ok = :sys.resume(Plugins)
+
+    # The host starting again loses the version that ran, and the table with it: the
+    # disk answers, and the table fills as the plugins load.
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, Plugins)
+    {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, Plugins)
+    refute Plugins.threads_stay?("busy")
+
+    code_package("busy", "3", [{"a.ex", busy_source("3")}])
+
+    manifest
+    |> File.read!()
+    |> JSON.decode!()
+    |> declare()
+    |> JSON.encode!()
+    |> then(&File.write!(manifest, &1))
+
+    Plugins.handle("rescan", %{})
+    assert Plugins.threads_stay?("busy")
+
+    # Uninstalling frees the threads.
+    File.rm_rf!(Path.join(plugins_dir(), "busy"))
+    Plugins.handle("rescan", %{})
+    refute Plugins.threads_stay?("busy")
+  end
+
+  # A manifest that fails its validation might be one that meant to declare it.
+  test "a threadsStay that is no boolean keeps the threads on their machine" do
+    code_package("odd", "1", [{"a.ex", busy_source("1")}])
+    manifest = Path.join(plugins_dir(), "odd/plugin.json")
+    refute HalC2.Plugins.Package.threads_stay?("odd")
+
+    for value <- ["yes", nil, 1, %{}] do
+      manifest
+      |> File.read!()
+      |> JSON.decode!()
+      |> Map.put("threadsStay", value)
+      |> JSON.encode!()
+      |> then(&File.write!(manifest, &1))
+
+      assert HalC2.Plugins.Package.threads_stay?("odd"), inspect(value)
+    end
+  end
+
+  # A release upgrade updates the host in place: `init/1` does not run again, so a host
+  # from before `threadsStay` has no table of declarations. `code_change/3` makes it and
+  # fills it from the versions loaded, and the scans after it keep working.
+  test "a host updated in place by a release upgrade reads and keeps the declarations" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    manifest = Path.join(plugins_dir(), "busy/plugin.json")
+
+    File.write!(
+      manifest,
+      manifest |> File.read!() |> JSON.decode!() |> declare() |> JSON.encode!()
+    )
+
+    Plugins.handle("rescan", %{})
+    pid = Process.whereis(Plugins)
+
+    # The host as a release from before the table left it.
+    :sys.replace_state(Plugins, fn state ->
+      :ets.delete(HalC2.Plugins.Stays)
+      state
+    end)
+
+    :ok = :sys.suspend(Plugins)
+    :ok = :sys.change_code(Plugins, Plugins, "before", [])
+    :ok = :sys.resume(Plugins)
+
+    assert :ets.member(HalC2.Plugins.Stays, "busy")
+    Plugins.handle("rescan", %{})
+    assert Process.whereis(Plugins) == pid
+    assert Plugins.threads_stay?("busy")
+  end
+
+  # A file of a package that cannot be read, as one an install removes under a scan, is
+  # a package that does not load this time, not a host that crashes: the version that
+  # ran keeps running, and a rescan once the file is back loads the new one.
+  test "a package file that cannot be read fails the load and leaves the host running" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+    pid = Process.whereis(Plugins)
+
+    code_package("busy", "2", [{"a.ex", busy_source("2")}])
+    source = Path.join(plugins_dir(), "busy/mc/a.ex")
+    File.chmod!(source, 0o000)
+
+    try do
+      Plugins.handle("rescan", %{})
+      assert Process.whereis(Plugins) == pid
+      assert %{"version" => "1", "reloadError" => error} = listed("busy")
+      assert error =~ "a.ex"
+    after
+      File.chmod!(source, 0o644)
+    end
+
+    Plugins.handle("rescan", %{})
+    assert %{"version" => "2", "reloadError" => nil} = listed("busy")
+  end
+
+  # A copy the cache cannot take, as when it is briefly full or unwritable, fails that
+  # load only: once the cache takes copies again, a rescan of the unchanged package loads it.
+  test "a package whose copy failed loads on a rescan once the cache takes copies" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    copies = Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
+    File.mkdir_p!(copies)
+    File.chmod!(copies, 0o500)
+
+    try do
+      Plugins.handle("rescan", %{})
+      assert %{"status" => "error"} = listed("busy")
+    after
+      File.chmod!(copies, 0o755)
+    end
+
+    Plugins.handle("rescan", %{})
+    assert %{"status" => "disabled"} = listed("busy")
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+    assert %{"status" => "running", "version" => "1"} = listed("busy")
+  end
+
+  defp declare(manifest), do: Map.put(manifest, "threadsStay", true)
+
   # What a peer answers for a plugin: only a function the running version has, so a
   # machine on an older version or without the plugin says so rather than failing.
   test "a peer answers for a function its plugin has, and says none for what it lacks" do

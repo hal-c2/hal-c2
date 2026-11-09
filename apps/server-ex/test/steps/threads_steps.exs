@@ -1838,8 +1838,17 @@ defmodule HalC2.Steps.Threads do
 
   step ~r/^"(?<thread>[^"]+)" still records (?<time>\d{1,2}:\d{2}) as its reset time$/,
        %{args: [thread, time]} = context do
-    row = World.row(context, thread)
-    assert row["lastErrorClass"] == "usage_limit"
+    # The sidebar row follows the stream: it is read once it shows the rejected run.
+    id = World.thread_id(context, thread)
+    runs = HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "run")
+    last = Enum.max_by(runs, & &1["ordinal"])["id"]
+
+    row =
+      World.await_row(
+        id,
+        &(&1["latestRunId"] == last and &1["lastErrorClass"] == "usage_limit")
+      )
+
     assert JS.epoch_ms(row["usageLimitResetAt"]) == next_clock(time)
     context
   end

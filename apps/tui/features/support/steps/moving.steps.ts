@@ -448,6 +448,32 @@ step("the user asks the command palette to move the thread to another machine", 
   chooseCommand(ctx, MOVE_COMMAND),
 );
 
+step(
+  "{string} was started by the plugin {string}, which keeps its threads on the machine",
+  (ctx: World, title: string, plugin: string) => {
+    env(ctx).kept[threadNamed(ctx, title).id] = plugin;
+  },
+);
+
+// The picker asks the MC before it lists a machine: one it refused offers none to choose.
+step(
+  "the user moves the thread to {string} from the command palette",
+  async (ctx: World, machine: string) => {
+    await chooseCommand(ctx, MOVE_COMMAND);
+    await settle(ctx);
+    if (picker(ctx).options.some((option) => option.label === machine)) await choose(ctx, machine);
+  },
+);
+
+step("the running turn of {string} is not interrupted", (ctx: World, title: string) => {
+  expect(callsTo(ctx, "interrupt").map((call) => call.args[0])).not.toContain(
+    threadNamed(ctx, title).id,
+  );
+  expect(moves(ctx)).toEqual([]);
+  const { open, title: asked } = picker(ctx);
+  expect(open && asked.startsWith("Stop "), `the user is asked ${asked}`).toBe(false);
+});
+
 step("the user is asked which machine to move {string} to", async (ctx: World, title: string) => {
   const frame = await settle(ctx);
   const heading = `Move "${title}" to`;
