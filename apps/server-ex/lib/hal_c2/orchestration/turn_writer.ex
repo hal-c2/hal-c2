@@ -272,6 +272,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   command that printed the pull request it created links it to the thread
   (`HalC2.PullRequests.Opened`). Plugins that hear turns hear the item with `heard`
   over it: what the thread does not keep of the call, such as a web call's result.
+  They hear it the first time it ends only, not again when it is finished again.
   """
   def finish_item(state, native, status, fun, heard \\ %{}) do
     %{id: item_id, node: node_id, message: message_id} = item = Map.fetch!(state.items, native)
@@ -313,11 +314,15 @@ defmodule HalC2.Orchestration.TurnWriter do
             _ -> []
           end
 
-        # What plugins that hear turns get of the item, as the thread now has it.
+        # What plugins that hear turns get of the item, as the thread now has it: once,
+        # as it ends, never again for an item that had already ended.
         current =
           case observing && StreamState.get(stream, "turn-item")[item_id] do
-            %{} = current -> current |> fun.() |> Map.merge(heard)
-            _ -> nil
+            %{"status" => open} = current when open in @open ->
+              current |> fun.() |> Map.merge(heard)
+
+            _ ->
+              nil
           end
 
         {Enum.filter(changes, &is_tuple/1), {opened, current}}

@@ -406,6 +406,37 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"input" => nil} = Orchestration.TurnWriter.observed_item(%{web | "patterns" => []})
   end
 
+  # ACP agents report a tool call's end again with more of its output.
+  test "a plugin hears a call end once, though the provider reports its end twice",
+       %{thread_id: thread_id} do
+    grant(%{"listener" => ["turns:observe"]})
+    listener = feed("listener")
+    alias Orchestration.TurnWriter
+
+    ids = %{
+      thread: thread_id,
+      run: "run:1",
+      root_node: "node:root",
+      provider_thread: "provider-thread:opencode:#{thread_id}",
+      driver: "opencode"
+    }
+
+    state =
+      %{thread_id: thread_id, turn: %{ids: ids}, items: %{}}
+      |> TurnWriter.ensure_item("call-1", :tool, %{"toolName" => "read"})
+      |> TurnWriter.finish_item("call-1", "completed", &Map.put(&1, "output", "one"))
+      |> TurnWriter.finish_item("call-1", "completed", &Map.put(&1, "output", "one two"))
+
+    assert_receive {:observed, %{"type" => "turn.item", "tool" => "read"} = heard}, 5_000
+    assert heard["output"] == "one"
+    :sys.get_state(listener)
+    refute_received {:observed, %{"type" => "turn.item"}}
+
+    # The thread keeps the later report.
+    item_id = state.items["call-1"].id
+    assert %{"output" => "one two"} = StreamState.get(state(thread_id), "turn-item")[item_id]
+  end
+
   # Antigravity leaves a subagent batch its completed turn did not end "idle".
   test "a plugin hears and reads a subagent batch its completed turn left idle as completed",
        %{thread_id: thread_id} do
