@@ -44,8 +44,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
                          "expectation, verifying a new hypothesis before editing again).\n" <>
                          "HARD CONSTRAINTS: Do NOT tell it to stop, give up, or reduce effort — only redirect. " <>
                          "Do NOT infer the task's solution, name specific line numbers to change, or reference " <>
-                         "any code/identifier you cannot see in the digest. Answer with text: only the " <>
-                         "redirect, as plain text, with no preamble and no headings."
+                         "any code/identifier you cannot see in the digest. Return only a JSON object with " <>
+                         "one key: \"text\" (a string: the redirect alone, as plain text, with no " <>
+                         "preamble and no headings)."
 
   @verdict_schema %{"stuck" => "boolean", "confidence" => "string", "reason" => "string"}
   @writer_schema %{"text" => "string"}

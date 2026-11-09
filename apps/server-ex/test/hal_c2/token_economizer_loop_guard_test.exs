@@ -1121,6 +1121,10 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       asks_for_its_schema(asked(&Judge.stuck_judge("digest", &1)))
     end
 
+    test "asks for the redirect as the JSON object it is checked against" do
+      asks_for_its_schema(asked(&Judge.nudge_writer("digest", &1)))
+    end
+
     test "writes the redirect only for a stuck verdict it is sure of" do
       sure = fn
         _prompt, %{"stuck" => _} ->
