@@ -63,6 +63,8 @@ defmodule HalC2.MixProject do
   defp deps do
     [
       {:bandit, "~> 1.12"},
+      # Runs only HAL-C2's own checks (.credo.exs, credo/): `mix credo`.
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:cucumber, "~> 1.0", only: [:test, :prop, :proof]},
       # Drives the Maude model checker for the proofs in proof/ only: never compiled into
       # the MC. Maude itself is a separate GPL program it runs (proof/README.md).

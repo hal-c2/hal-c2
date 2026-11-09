@@ -24,13 +24,16 @@ defmodule HalC2.Upgrade.Release do
       after it restarts the node on the permanent release, which is still the old
       one (`error_action: restart`).
     * Making it permanent names the release in `start_erl.data`, so the next boot
-      runs it. Old code a process still runs (one waiting in a call it made from it,
-      say) is purged by the release handler once the process leaves it; an install
-      that finds code two updates old still running fails with `{:old_processes, M}`
-      before it changes anything.
+      runs it. A process moves to a module's new code only when it next calls the
+      module by name, and a module keeps one old version: an install that finds a
+      process still on code two updates old fails with `{:old_processes, M}` before
+      it changes anything. A process that waits in a module's code (a `receive`, or
+      a blocking call made from it) never leaves it while it waits, so processes
+      that may wait for long wait in `HalC2.Frozen` modules (`HalC2.Pump`).
 
-  What a relup cannot do (a new emulator, OTP applications, or code that loads a
-  NIF) the caller has the MC restart for; `plan/1` names it.
+  What a relup cannot do (a new emulator, OTP applications, code that loads a NIF, or
+  a change to a `HalC2.Frozen` module) the caller has the MC restart for; `plan/1`
+  names it.
   """
 
   # SASL is in the release to be started here, at the first update, not at boot.
@@ -83,7 +86,13 @@ defmodule HalC2.Upgrade.Release do
           to: vsn,
           dir: dir,
           instructions: HalC2.Upgrade.Appup.instructions(old, new),
-          native: for(mod <- HalC2.Upgrade.Appup.changed(old, new), new[mod].nif?, do: mod)
+          native: for(mod <- HalC2.Upgrade.Appup.changed(old, new), new[mod].nif?, do: mod),
+          frozen:
+            for(
+              mod <- HalC2.Upgrade.Appup.changed(old, new),
+              Map.has_key?(old, mod) and new[mod].frozen?,
+              do: mod
+            )
         }
       end
 
@@ -95,7 +104,9 @@ defmodule HalC2.Upgrade.Release do
         [
           otp != [] && "OTP applications change (#{Enum.join(Enum.sort(otp), ", ")})",
           (native = Enum.flat_map(apps, & &1.native)) != [] &&
-            "#{native |> Enum.map(&inspect/1) |> Enum.join(", ")} load native code"
+            "#{native |> Enum.map(&inspect/1) |> Enum.join(", ")} load native code",
+          (frozen = Enum.flat_map(apps, & &1.frozen)) != [] &&
+            "#{frozen |> Enum.map(&inspect/1) |> Enum.join(", ")} change, which processes wait in (HalC2.Frozen)"
         ],
         & &1
       )

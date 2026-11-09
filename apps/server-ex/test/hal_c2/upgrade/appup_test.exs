@@ -67,6 +67,13 @@ defmodule HalC2.Upgrade.AppupTest do
     assert Appup.changed(%{AppupT.Lazy => %{md5: :unloaded}}, new) == []
   end
 
+  # Processes wait in a frozen module's code, so a change to it takes a restart.
+  test "a frozen module is told apart" do
+    new = beams("defmodule AppupT.Frozen do use HalC2.Frozen end")
+    assert new[AppupT.Frozen].frozen?
+    refute Appup.info(elem(:code.get_object_code(HalC2.Upgrade.Appup), 1)).frozen?
+  end
+
   test "a module loading a NIF is told apart" do
     {:ok, mod, bin} =
       :compile.forms(

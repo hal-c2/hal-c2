@@ -509,7 +509,7 @@ defmodule HalC2.OpenShell.ReviewTest do
     sandbox =
       Review.binding(@thread)
       |> Review.subprocess()
-      |> Map.merge(%{output_limit: 10, on_limit: fn -> send(test, :limited) end})
+      |> Map.merge(%{output_limit: 10, on_limit: {Kernel, :send, [test, :limited]}})
 
     {:ok, sub} =
       HalC2.Subprocess.start(["sh", "-c", "printf '%s\\n' 0123456789abcdef"], sandbox: sandbox)
