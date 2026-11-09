@@ -6,8 +6,9 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   @moduledoc """
   A state machine model of TokenEconomizer's process (`HalC2Plugins.TokenEconomizer`):
   the turns of two threads of one project heard through the feed, which may say it
-  missed events, the mode changed between redirecting, watching and off, and the
-  answers of its judge jobs and deliveries reaching it late, in any order, or never.
+  missed events, the mode changed between redirecting, watching and off, the process
+  restarted while its feed still holds events, and the answers of its judge jobs and
+  deliveries reaching it late, in any order, or never.
 
   The case drives the process's callbacks itself. Its tasks run for real and, with no
   plugin host to grant them anything, end at once: what each sent and its end are held,
@@ -25,7 +26,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     are not its own; one heard whole that
     completed with nothing but passing checks does. A turn is heard whole unless it was
     under way when the feed said it missed events, or one of its events came in the
-    window that report opens: the reported event and those the feed had waiting.
+    window that report opens: the reported event and those the feed had waiting. A
+    restart opens such a window over every event the feed still holds.
 
   `prop/hal_c2/token_economizer_prop_test.exs` runs one turn's guard;
   `proof/hal_c2/token_economizer_loop_guard_proof_test.exs` explores the turns, the
@@ -45,7 +47,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   # The lengths of the project's turns that ended green, enough for an envelope.
   @learned [3, 3, 4, 4, 5]
 
-  property "the plugin keeps its laws over two threads, missed events, mode changes and late answers",
+  property "the plugin keeps its laws over two threads, missed events, restarts, mode changes and late answers",
     numtests: HalC2.Prop.numtests(1000) do
     forall budget <- integer(0, 2) do
       forall cmds <- more_commands(8, commands(__MODULE__, initial_state(budget))) do
@@ -70,6 +72,13 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
 
   defp open_case(budget) do
     HalC2.Prop.scratch_home("token-economizer")
+
+    # Where a restarted process finds its feed (`restart/3`).
+    case Registry.start_link(keys: :unique, name: HalC2.Plugins.Hooks) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
     path = TokenEconomizer.envelope_path(@project)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, JSON.encode!(%{"level" => "default", "resolved_turns" => @learned}))
@@ -82,11 +91,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   defp close_case do
     plugin = Process.delete(:plugin)
     Process.delete(:held)
-    ref = Process.monitor(plugin.sup)
-    Process.unlink(plugin.sup)
-    Process.exit(plugin.sup, :shutdown)
-    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
-    flush()
+    stop(plugin)
 
     cond do
       plugin.stats["aborts"] > 0 -> :offered_a_stop
@@ -95,6 +100,14 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       learned(plugin) > length(@learned) -> :taught
       true -> :watched
     end
+  end
+
+  defp stop(plugin) do
+    ref = Process.monitor(plugin.sup)
+    Process.unlink(plugin.sup)
+    Process.exit(plugin.sup, :shutdown)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+    flush()
   end
 
   defp flush do
@@ -149,7 +162,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       {5, {:call, __MODULE__, :answer, [integer(0, 3), frequency([{2, true}, {1, false}])]}},
       {1,
        {:call, __MODULE__, :mode,
-        [frequency([{2, "nudge"}, {2, "watch"}, {1, "off"}]), state.budget]}}
+        [frequency([{2, "nudge"}, {2, "watch"}, {1, "off"}]), state.budget]}},
+      {1, {:call, __MODULE__, :restart, [state.mode, state.budget, integer(0, 3)]}}
     ])
   end
 
@@ -197,6 +211,11 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
 
   def next_state(state, _result, {:call, _, :mode, [mode, _]}),
     do: %{state | mode: mode, open: if(mode == "off", do: %{}, else: state.open)}
+
+  # The process restarted, its feed holding `held` events: it watches no turn, and every
+  # event the feed holds may have been sent before ones it missed.
+  def next_state(state, _result, {:call, _, :restart, [_, _, held]}),
+    do: %{state | open: %{}, missing: held}
 
   def next_state(state, _result, _call), do: state
 
@@ -290,6 +309,31 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     {:reply, :ok, plugin} =
       TokenEconomizer.handle_call({:settings, settings(mode, budget)}, nil, Process.get(:plugin))
 
+    settle(plugin, false)
+  end
+
+  # The process goes down with its tasks and starts again in mode `mode`, while a feed
+  # that kept running holds `held` events.
+  def restart(mode, budget, held) do
+    stop(Process.get(:plugin))
+    Process.put(:held, [])
+    case_ = self()
+
+    feed =
+      spawn(fn ->
+        Registry.register(HalC2.Plugins.Hooks, {:observe, "token-economizer"}, %{
+          id: "token-economizer",
+          dropped: :counters.new(1, [])
+        })
+
+        send(case_, :registered)
+        receive do: (:stop -> :ok)
+      end)
+
+    receive do: (:registered -> :ok)
+    for i <- 1..held//1, do: send(feed, {:queued, i})
+    {:ok, plugin} = TokenEconomizer.init(settings(mode, budget))
+    send(feed, :stop)
     settle(plugin, false)
   end
 

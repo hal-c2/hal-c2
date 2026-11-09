@@ -3265,7 +3265,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp background_done(state, native, item) do
     {%{item: %{id: item_id, node: node_id}}, background} = Map.pop(state.background, native)
-    end_command(state, item_id, node_id, command_status(item), &command_result(&1, item))
+    end_item(state, item_id, node_id, command_status(item), &command_result(&1, item))
     # Codex does not hear of it by itself: the thread tells it, after any running turn.
     wake(state, item)
     %{state | background: background}
@@ -3335,29 +3335,12 @@ defmodule HalC2.Codex.ThreadRuntime do
             {Map.put(left, native, entry), [reason | errors]}
 
           :ok ->
-            end_command(state, item.id, item.node, status, & &1)
+            end_item(state, item.id, item.node, status)
             {left, errors}
         end
       end)
 
     {%{state | background: left}, Enum.reverse(errors)}
-  end
-
-  defp end_command(state, item_id, node_id, status, fun) do
-    at = Entities.now()
-    done = %{"status" => status, "completedAt" => at}
-
-    commit(state, fn stream ->
-      [
-        Orchestration.upsert(
-          stream,
-          "turn-item",
-          item_id,
-          &(fun.(&1) |> Map.merge(Map.put(done, "updatedAt", at)))
-        ),
-        Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
-      ]
-    end)
   end
 
   # Codex keeps a unified exec process running when its turn is interrupted; this

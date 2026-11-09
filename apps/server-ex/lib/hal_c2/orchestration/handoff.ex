@@ -14,9 +14,10 @@ defmodule HalC2.Orchestration.Handoff do
   (one cut short by an interrupt says so), which is what tells the next agent what
   has been tried and verified. Reasoning,
   other tool calls and attachments stay behind. One too long to hand over whole
-  keeps the newest request and answer, then the original request, then whatever
-  else fits from the newest back; anything left out is left out whole and stays
-  readable through `hal_c2_thread_read`.
+  keeps the newest request and answer, and the original request unless it would
+  cut a pair that fits without it; the pair shares what is left and is cut to their ends if it
+  must be, then whatever else fits from the newest back; anything else left out is left out whole and stays readable through
+  `hal_c2_thread_read`.
 
   A thread migrated from the version 1 orchestrator (`HalC2.Import.V1Thread`) keeps
   its messages outside any run, so no transcript covers them. Until one of its runs
@@ -528,14 +529,19 @@ defmodule HalC2.Orchestration.Handoff do
   @doc """
   The conversation of the runs before `ordinal` that finished, as `User:`,
   `Assistant:` and `Command:` entries in the order they happened, selected to fit
-  (see the module doc); nil when there is none.
+  (see the module doc) to `max_chars`; nil when there is none.
+
+  With `running: true` a run still running counts too, with what it has finished so
+  far, for a reader (the PR description writer) that works inside the turn it describes.
   """
-  def transcript(state, ordinal, after_ordinal \\ 0) do
+  def transcript(state, ordinal, after_ordinal \\ 0, max_chars \\ @max_chars, opts \\ []) do
+    statuses = if opts[:running], do: ["running" | @finished], else: @finished
+
     runs =
       state
       |> StreamState.list("run")
       |> Enum.filter(
-        &(&1["ordinal"] < ordinal and &1["ordinal"] > after_ordinal and &1["status"] in @finished)
+        &(&1["ordinal"] < ordinal and &1["ordinal"] > after_ordinal and &1["status"] in statuses)
       )
       |> Enum.sort_by(& &1["ordinal"])
 
@@ -556,7 +562,7 @@ defmodule HalC2.Orchestration.Handoff do
 
     case Enum.flat_map(runs, &Map.get(entries, &1["id"], [])) do
       [] -> nil
-      entries -> fit(entries)
+      entries -> fit(entries, max_chars)
     end
   end
 
@@ -620,41 +626,135 @@ defmodule HalC2.Orchestration.Handoff do
     |> Enum.join("\n")
   end
 
-  # Every entry when they fit; otherwise the selection of the module doc, in the
-  # order the entries happened, under a note that some were left out.
-  defp fit(entries) do
-    texts = Enum.map(entries, &elem(&1, 1))
-    whole = Enum.join(texts, "\n\n")
+  # Every entry when they fit. Otherwise the room the note leaves (each entry
+  # costs its length and the "\n\n" before it) is spent in this order:
+  #
+  # 1. the first request, whole, when it fits that room at all, unless the newest
+  #    request and answer would fit whole without it but not beside it (then it
+  #    is an older entry, step 3);
+  # 2. the newest request and the newest answer share what it leaves: each is held
+  #    half, one needing less than its half hands the rest to the other, and one
+  #    longer than its part keeps its end; one whose part cannot hold even that
+  #    hands the part to the other;
+  # 3. older entries fill what is left, newest first, each whole or not at all.
+  #
+  # What is kept stays in the order it happened, under a note counting what was
+  # kept, cut to its end and left out.
+  defp fit(entries, max_chars), do: fit(entries, max_chars, @omitted_note)
 
-    if String.length(whole) <= @max_chars do
+  # `reserve` is the room held back for the note. The note's real length is known only
+  # once the entries are chosen, so when it outgrew `reserve` the choice is made again
+  # with its real length; a `max_chars` the note cannot fit in cuts the note itself.
+  defp fit(entries, max_chars, reserve) do
+    whole = Enum.map_join(entries, "\n\n", &elem(&1, 1))
+
+    if String.length(whole) <= max_chars do
       whole
     else
       indexed = Enum.with_index(entries)
+      find = fn list, role -> Enum.find(list, &match?({{^role, _}, _}, &1)) end
       newest = Enum.reverse(indexed)
-      role = fn role -> &match?({{^role, _}, _}, &1) end
+      pair = Enum.reject([find.(newest, :user), find.(newest, :assistant)], &is_nil/1)
+      room = max(max_chars - reserve, 0)
+
+      # The first request does not push out a newest pair that would fit whole
+      # without it: then the newest history wins and it is an older entry.
+      pair_cost = Enum.sum(for {{_r, t}, _i} <- pair, do: cost(t))
 
       first =
-        [Enum.find(newest, role.(:user)), Enum.find(newest, role.(:assistant))] ++
-          [Enum.find(indexed, role.(:user))]
+        with {{_role, text}, _index} = first <- find.(indexed, :user),
+             true <- first not in pair,
+             true <- pair_cost > room or cost(text) + pair_cost <= room do
+          first
+        else
+          _ -> nil
+        end
+
+      kept =
+        case first do
+          {{_role, text}, index} = first ->
+            if first not in pair and cost(text) <= room, do: %{index => text}, else: %{}
+
+          nil ->
+            %{}
+        end
+
+      kept = Map.merge(kept, share(pair, room - used(kept)))
 
       {kept, _left} =
-        (Enum.reject(first, &is_nil/1) ++ newest)
-        |> Enum.reduce({MapSet.new(), @max_chars - @omitted_note}, fn {{_role, text}, index},
-                                                                      {kept, left} ->
-          cost = String.length(text) + 2
-
-          if MapSet.member?(kept, index) or cost > left,
-            do: {kept, left},
-            else: {MapSet.put(kept, index), left - cost}
+        newest
+        |> Enum.reject(&(&1 == first or &1 in pair))
+        |> Enum.reduce({kept, room - used(kept)}, fn {{_role, text}, index}, {kept, left} ->
+          if cost(text) <= left,
+            do: {Map.put(kept, index, text), left - cost(text)},
+            else: {kept, left}
         end)
 
-      selected = for {{_role, text}, index} <- indexed, MapSet.member?(kept, index), do: text
+      selected = for {_entry, index} <- indexed, is_map_key(kept, index), do: kept[index]
+      cut = Enum.count(indexed, fn {{_role, text}, index} -> kept[index] not in [nil, text] end)
       left_out = length(entries) - length(selected)
 
-      note =
-        "[earlier messages omitted: #{length(selected)} items kept whole, #{left_out} left out]"
+      # A newest message cut to its end is not "whole"; the note says so, so the
+      # next agent does not read a cut answer as complete.
+      kept_note =
+        if cut == 0,
+          do: "#{length(selected)} items kept whole",
+          else: "#{length(selected)} items kept, #{cut} of them cut to their end"
 
-      Enum.join([note | selected], "\n\n")
+      note = "[earlier messages omitted: #{kept_note}, #{left_out} left out]"
+
+      result = Enum.join([note | selected], "\n\n")
+
+      cond do
+        String.length(result) <= max_chars -> result
+        String.length(note) > reserve -> fit(entries, max_chars, String.length(note))
+        true -> String.slice(result, 0, max_chars)
+      end
+    end
+  end
+
+  defp cost(text), do: String.length(text) + 2
+
+  defp used(kept), do: kept |> Map.values() |> Enum.map(&cost/1) |> Enum.sum()
+
+  # The newest request and answer in `room`, as `%{index => text}` (step 2 of `fit`).
+  defp share([], _room), do: %{}
+
+  defp share([{{_role, text}, index}], room) do
+    case tail_to_fit(text, room) do
+      nil -> %{}
+      text -> %{index => text}
+    end
+  end
+
+  defp share([{{_, a}, ia} = first, {{_, b}, ib} = second], room) do
+    half = div(room, 2)
+
+    {part_a, part_b} =
+      cond do
+        cost(a) + cost(b) <= room -> {cost(a), cost(b)}
+        cost(a) <= half -> {cost(a), room - cost(a)}
+        cost(b) <= room - half -> {room - cost(b), cost(b)}
+        true -> {half, room - half}
+      end
+
+    case {tail_to_fit(a, part_a), tail_to_fit(b, part_b)} do
+      {nil, _} -> share([second], room)
+      {_, nil} -> share([first], room)
+      {a, b} -> %{ia => a, ib => b}
+    end
+  end
+
+  # A newest message as it fits `room`: whole, or as much of its end as fits
+  # (nil when not even a character of it does), instead of being left out whole.
+  defp tail_to_fit(text, room) do
+    if cost(text) <= room do
+      text
+    else
+      [label | _] = String.split(text, ": ", parts: 2)
+      body = String.slice(text, (String.length(label) + 2)..-1//1)
+      keep = room - String.length(label) - 8
+      if keep > 0, do: "#{label}: ... " <> String.slice(body, -keep, keep)
     end
   end
 

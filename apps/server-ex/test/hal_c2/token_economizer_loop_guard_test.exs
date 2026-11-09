@@ -876,6 +876,28 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
                TokenEconomizer.handle_call({:toolprune, :state, %{}}, nil, state)
     end
 
+    test "after a restart, take every event the feed still holds as possibly before missed ones" do
+      # This process stands in for the plugin's feed, still running, with three events
+      # queued: the report of missed events went to the process that went down. No
+      # synchronous test runs alongside this one, so the hooks' registry is this test's.
+      start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+      {:ok, _} =
+        Registry.register(HalC2.Plugins.Hooks, {:observe, "token-economizer"}, %{
+          id: "token-economizer",
+          dropped: :counters.new(1, [])
+        })
+
+      for i <- 1..3, do: send(self(), {:queued, i})
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> observe(started("a")) |> observe(%{"type" => "noop"})
+      state = observe(state, started("b"))
+      assert state.turns["a"].partial and state.turns["b"].partial
+
+      state = observe(state, started("c"))
+      refute state.turns["c"].partial
+    end
+
     test "count what was waiting, which a full queue does not bound" do
       {:ok, state} = TokenEconomizer.init(%{})
       # Senders that found room together put more than the limit in the queue.
