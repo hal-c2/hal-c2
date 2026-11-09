@@ -19,19 +19,48 @@ defmodule HalC2.Prop do
   @doc """
   Points the MC at a fresh directory under `tmp/prop` for one case and returns it.
   Every file a service writes lands there, never in a real HAL-C2 home.
+
+  The directory sits inside the checkout, so git would find the checkout from it and a
+  git action would commit and push the developer's work. `GIT_CEILING_DIRECTORIES` stops
+  that: git discovery gives up at `tmp`, so the folder is no repository unless the case
+  makes one (`scratch_repo/1`).
   """
   def scratch_home(name) do
+    tmp = Path.expand("../../tmp", __DIR__)
+    System.put_env("GIT_CEILING_DIRECTORIES", tmp)
+
     # The OS pid keeps two runs in one checkout out of each other's homes.
-    dir =
-      Path.expand(
-        "../../tmp/prop/#{name}-#{System.pid()}-#{System.unique_integer([:positive])}",
-        __DIR__
-      )
+    dir = Path.join(tmp, "prop/#{name}-#{System.pid()}-#{System.unique_integer([:positive])}")
 
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
     Application.put_env(:hal_c2, :home, dir)
     dir
+  end
+
+  @doc """
+  A scratch home holding a throwaway git repository on `main` with one commit, cloned
+  from a bare `origin.git` beside it, so commit and push stay in the scratch home.
+  Returns `{home, repo}`.
+  """
+  def scratch_repo(name) do
+    home = scratch_home(name)
+    origin = Path.join(home, "origin.git")
+    repo = Path.join(home, "repo")
+    git!(home, ["init", "-q", "--bare", "-b", "main", origin])
+    git!(home, ["clone", "-q", origin, repo])
+    git!(repo, ~w(config user.name t))
+    git!(repo, ~w(config user.email t@t))
+    File.write!(Path.join(repo, "a.txt"), "one\n")
+    git!(repo, ~w(add a.txt))
+    git!(repo, ~w(commit -q -m init))
+    git!(repo, ~w(push -q -u origin main))
+    {home, repo}
+  end
+
+  defp git!(cwd, args) do
+    {out, 0} = System.cmd("git", args, cd: cwd, stderr_to_stdout: true)
+    out
   end
 
   @doc """

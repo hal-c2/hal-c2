@@ -22,6 +22,26 @@ defmodule HalC2.SocketGitActionScopesPropTest do
   @actions ~w(commit push commit_push create_pr commit_push_pr)
   @pr_actions ~w(create_pr commit_push_pr)
 
+  @fake_claude Path.expand("../../test/support/fake_claude_text.sh", __DIR__)
+
+  setup_all do
+    keys = [:text_claude_command, :text_codex_command, :gh_command]
+    previous = Enum.map(keys, &{&1, Application.fetch_env(:hal_c2, &1)})
+    # No real agent writes the text, and no real `gh` opens a pull request.
+    Application.put_env(:hal_c2, :text_claude_command, @fake_claude)
+    Application.put_env(:hal_c2, :text_codex_command, "hal-c2-no-such-codex")
+    Application.put_env(:hal_c2, :gh_command, "hal-c2-no-such-gh")
+
+    on_exit(fn ->
+      for {key, old} <- previous do
+        case old do
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
+        end
+      end
+    end)
+  end
+
   # What the promise says, written apart from the socket's own table.
   defp required(action, thread) when action in @pr_actions and is_binary(thread),
     do: ["orchestration:operate", "orchestration:read"]
@@ -36,7 +56,10 @@ defmodule HalC2.SocketGitActionScopesPropTest do
              oneof([nil, "th-1"])
            } do
       trap_exit do
-        home = HalC2.Prop.scratch_home("socket-git-scopes")
+        # The action commits and pushes: it runs in a repository of the case's own, with
+        # a bare origin beside it, and its text comes from a fake agent, never a real one.
+        {_home, home} = HalC2.Prop.scratch_repo("socket-git-scopes")
+        File.write!(Path.join(home, "change.txt"), "change\n")
 
         {:push, _hello, state} = Socket.init([])
         state = %{state | scopes: granted}
