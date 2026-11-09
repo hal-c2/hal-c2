@@ -168,10 +168,11 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   # A verdict is read only in its own segment, a redirect lands only in its turn and its
   # notice only after it, a stop is offered at most once and never before the redirect
   # landed, no call under way when it landed is weighed after it, no judge job outlives
-  # its segment, and only a green turn heard whole teaches.
-  test "over two turns, with an event missed, a judge job lost and a redirect refused, the guard is safe",
+  # its segment, and only a green turn heard whole teaches. A redirect the provider's
+  # runtime holds (holding/2) lands late, in its own run, or never.
+  test "over two turns, with an event missed, a judge job lost and a redirect refused or held, the guard is safe",
        %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, 1, #{@two_turns})", "unsafe", [])
+    refute_reachable(proof, "holding(1, start(#{@design}, 1, #{@two_turns}))", "unsafe", [])
   end
 
   test "with no redirects allowed the same holds", %{proof: proof} do
@@ -188,19 +189,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
     refute_deadlock(proof, "start(#{@design}, 1, #{@two_turns})", "over", besides: @faults)
   end
 
-  # A redirect the provider's runtime holds forks every later step of its run, landing
-  # late or never, so it has searches of its own, each with one hold (holding/2) and
-  # fewer turns or calls than the searches above.
-  test "a redirect its runtime holds, landing late or never, keeps the guard safe",
-       %{proof: proof} do
-    refute_reachable(
-      proof,
-      "holding(1, start(#{@design}, 1, 2, 2, 0, 0, true, true, false))",
-      "unsafe",
-      []
-    )
-  end
-
+  # A held redirect doubles the two-turn search for a stuck state past its timeout, and
+  # it lands only in its own run, so its turn is searched alone, with every fault.
   test "in one long turn with a judge job lost, a held redirect keeps the guard safe",
        %{proof: proof} do
     refute_reachable(
