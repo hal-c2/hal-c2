@@ -442,6 +442,22 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert Enum.all?(~w(image_view image_generation collab_tool_call), &(&1 not in shown))
   end
 
+  test "a plugin hears a Codex image that failed as failed",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "make a failing image")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "image_generation"} = gen},
+                   5_000
+
+    assert gen["status"] == "failed"
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+  end
+
   test "a plugin hears and reads the usage a Codex goal's run ended with between Codex's turns",
        %{work: work} do
     grant(%{"listener" => ["turns:observe"]})

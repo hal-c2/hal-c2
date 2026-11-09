@@ -3531,7 +3531,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp complete_item(state, %{"type" => type} = item) when is_map_key(@unshown, type) do
-    observe_item(state, "completed", unshown_item(state.turn.ids, item))
+    heard = unshown_item(state.turn.ids, item)
+    observe_item(state, heard["status"], heard)
     state
   end
 

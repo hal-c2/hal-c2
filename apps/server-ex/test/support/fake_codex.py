@@ -528,6 +528,11 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-sub", "text": "The subagent found three modules."}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
+        # "make a failing image": the image Codex was making fails.
+        if "make a failing image" in text:
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "imageGeneration", "id": "gen-f", "status": "failed", "inputImages": []}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         # "use own tools": Codex views an image, makes one, and waits on its agents, none
         # of which the turn shows.
         if "use own tools" in text:
