@@ -254,7 +254,7 @@ defmodule HalC2.Plugins.Host do
 
   # A steer naming no run is refused as the orchestration refuses any steer meant only
   # for its run that names none.
-  defp run_of(thread_id, run_id) when is_binary(run_id) do
+  defp run_of(thread_id, run_id) when is_binary(run_id) and run_id != "" do
     if HalC2.Streams.get(thread_id, "run", run_id),
       do: :ok,
       else: {:error, "Thread #{thread_id} has no run #{run_id}."}

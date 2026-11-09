@@ -560,8 +560,12 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     # Nothing runs: neither a turn started nor a message kept.
     # Refused as the orchestration refuses a steer only for its run that names none.
-    assert {:error, "A steer meant only for its run must name the run."} =
-             Host.steer("steerer", thread_id, nil, "unnamed")
+    for unnamed <- [nil, ""],
+        do:
+          assert(
+            {:error, "A steer meant only for its run must name the run."} =
+              Host.steer("steerer", thread_id, unnamed, "unnamed")
+          )
 
     unnamed = %{
       "type" => "message.dispatch",
@@ -582,6 +586,11 @@ defmodule HalC2.PluginsTurnHooksTest do
     {:ok, _} = send_message(thread_id, "m1", "wait m1")
     [_running] = await_statuses(thread_id, ["running"])
     assert {:error, _} = Orchestration.dispatch(Map.put(unnamed, "commandId", "c2"))
+    empty = put_in(unnamed, ["dispatchMode", "targetRunId"], "")
+
+    assert {:error, "A steer meant only for its run must name the run."} =
+             Orchestration.dispatch(Map.put(empty, "commandId", "c3"))
+
     assert ["running"] = statuses(thread_id)
     refute Enum.any?(messages(thread_id), &(&1["text"] == "unnamed"))
   end
