@@ -2,6 +2,7 @@
 #   https://github.com/pingdotgg/t3code/pull/14519
 #   https://github.com/pingdotgg/t3code/pull/27176
 #   https://github.com/pingdotgg/t3code/pull/21299
+#   https://github.com/hal-c2/hal-c2/issues/1480 (ending a session's scope in HAL-C2)
 #   https://github.com/pingdotgg/t3code/pull/22826
 #   https://github.com/pingdotgg/t3code/pull/18329
 #   https://github.com/pingdotgg/t3code/pull/18549
@@ -789,8 +790,11 @@ Feature: The MC working with its host machine
     Then the agent starts directly, with no scope around it
 
   # Upstream #21299: agent-browser and Chrome left by an agent called setsid, escaped its process
-  # group and outlived it.
-  @backlog @mc
+  # group and outlived it. Upstream's Stop ended the session; HAL-C2's Stop interrupts the turn,
+  # and what that does to detached helpers waits on hal-c2/hal-c2#483's question, in
+  # mc/platform/agent-containment.feature. hal-c2/hal-c2#1480 adds force stop, stop session and
+  # delete.
+  @backlog @mc @priority-high
   Scenario Outline: An agent's detached helpers end with it on Linux
     Given the MC runs on Linux under a systemd user manager
     And a <provider> agent started a browser that detached from it
@@ -799,7 +803,9 @@ Feature: The MC working with its host machine
 
     Examples:
       | provider | ending                                               |
-      | Claude   | the user stops the thread                            |
+      | Claude   | the user force stops the thread                      |
+      | Claude   | the user stops the session of the thread             |
+      | Claude   | the user deletes the thread                          |
       | Claude   | a model change restarts the agent                    |
       | Pi       | the agent exits on its own                           |
       | Muse     | the agent is released after 30 minutes idle          |

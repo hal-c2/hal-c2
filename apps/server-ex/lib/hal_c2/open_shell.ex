@@ -1,7 +1,7 @@
 defmodule HalC2.OpenShell do
   @moduledoc """
-  NVIDIA OpenShell, the sandbox gateway review agents are to run in (#1411). Reviews
-  start using it with #1412.
+  NVIDIA OpenShell, the sandbox gateway review agents run in (#1411):
+  `HalC2.OpenShell.Review` makes a review's sandbox (#1412).
 
   The MC installs the gateway as a program of its own, under its own systemd user
   service or LaunchAgent (`HalC2.OpenShell.Service`), from the release this MC pins

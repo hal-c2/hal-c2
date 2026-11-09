@@ -30,6 +30,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   import HalC2.Orchestration.TurnWriter
 
+  alias HalC2.Claude.Budget
   alias HalC2.Claude.Provider
   alias HalC2.Subprocess.Durable
   alias HalC2.Claude.Session
@@ -124,6 +125,14 @@ defmodule HalC2.Claude.ThreadRuntime do
     workers = if workers_only, do: @agent_tools, else: []
     Enum.uniq(workers ++ Map.get(turn, :denied_tools, []))
   end
+
+  # A sandboxed review's agent gets the report broker, never HAL-C2's MCP server, and
+  # has no HAL-C2 workers to hand work to, so it keeps its own subagent tool.
+  defp mcp(_state, %{sandbox: true} = turn), do: HalC2.OpenShell.Review.mcp(turn)
+  defp mcp(state, turn), do: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
+
+  defp workers_only?(%{sandbox: true}, _mcp), do: false
+  defp workers_only?(_turn, mcp), do: HalC2.Mcp.workers_only?(mcp)
 
   def driver, do: "claudeAgent"
 
@@ -316,7 +325,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        # list id nil once Claude's own copy turned out unreadable; nil before any change
        # of this runtime's. And the task tool calls still to report back, by tool use id.
        task_list: nil,
-       task_calls: %{}
+       task_calls: %{},
+       # What a sandboxed review's CLI spent (#1412), a `Budget`; nil outside a sandbox.
+       sandbox_spent: nil
      }}
   end
 
@@ -385,6 +396,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_call({:start_turn, turn}, _from, state) do
+    turn = HalC2.OpenShell.Review.in_sandbox(turn)
     # The user's run holds the thread working now.
     state = release_notices(state)
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
@@ -395,9 +407,9 @@ defmodule HalC2.Claude.ThreadRuntime do
       turn.model
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
-      |> with_launch_args(Entities.instance(ids), Map.get(turn, :cwd))
-      |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
-      |> then(&Map.put(&1, :workers_only, HalC2.Mcp.workers_only?(&1.mcp)))
+      |> with_launch_args(turn, Entities.instance(ids))
+      |> Map.put(:mcp, mcp(state, turn))
+      |> then(&Map.put(&1, :workers_only, workers_only?(turn, &1.mcp)))
       |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.workers_only, turn)))
       |> Map.put(:instance, Entities.instance(ids))
 
@@ -437,7 +449,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         message = turn.launch[:launch_error] ->
           {:error, {:refused, message}}
 
-        message = Provider.too_old(turn.model, Entities.instance(ids)) ->
+        message = too_old(turn, Entities.instance(ids)) ->
           {:error, {:refused, message}}
 
         message = background_change(state, turn) ->
@@ -767,8 +779,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_info(:durable_save, state),
     do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
-  def handle_info({:claude, _session, {:message, message}}, state),
-    do: {:noreply, receive_message(result_meta(message), state)}
+  def handle_info({:claude, _session, {:message, message}}, state) do
+    message = result_meta(message)
+    {:noreply, receive_message(message, budget(state, message))}
+  end
 
   # The thread would not run the wake (`wake/2`): its messages go on as between turns.
   def handle_info(:wake_refused, %{turn: nil, wake: %{buffer: [_ | _] = buffer} = wake} = state) do
@@ -1058,6 +1072,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:goal_checked, false)
        |> Map.put_new(:task_list, nil)
        |> Map.put_new(:task_calls, %{})
+       |> Map.put_new(:sandbox_spent, nil)
        |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
@@ -1236,12 +1251,17 @@ defmodule HalC2.Claude.ThreadRuntime do
     # A `$skill` mention runs as Claude's own `/skill` command: the command is
     # the last block (where Claude expands it), after any leading text and the
     # message's images. Skills are re-read at each send, as they change
-    # mid-session; one that may not run for the user stays plain text.
+    # mid-session; one that may not run for the user stays plain text. A sandboxed
+    # review's message (#1412) is sent as it is: this machine's skills, and their
+    # paths, are not the sandbox's.
     skills =
-      HalC2.Claude.Skills.user_invocable(
-        turn.launch[:instance] || Entities.instance(turn[:ids] || %{}),
-        Map.get(turn, :cwd)
-      )
+      if Map.get(turn, :sandbox),
+        do: %{},
+        else:
+          HalC2.Claude.Skills.user_invocable(
+            turn.launch[:instance] || Entities.instance(turn[:ids] || %{}),
+            Map.get(turn, :cwd)
+          )
 
     case HalC2.Claude.Skills.dispatch(turn.text, skills) do
       nil ->
@@ -1277,8 +1297,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   # read fails the turn before Claude starts, naming no value from it. Claude
   # is asked for summaries of its thinking unless thinking is off or the
   # launch arguments already say how thinking is shown.
-  defp with_launch_args(launch, instance, cwd) do
-    case Provider.launch_args(instance) do
+  #
+  # A sandboxed review's CLI (#1412) takes none of the instance's launch arguments:
+  # they are this machine's, and may carry settings, keys, headers, MCP servers or
+  # paths that must not reach the sandbox or the agent's argv.
+  defp with_launch_args(launch, %{sandbox: true}, _instance),
+    do: launch |> apply_launch_args({:ok, []}, nil) |> Map.put(:sandbox, true)
+
+  defp with_launch_args(launch, turn, instance),
+    do: apply_launch_args(launch, Provider.launch_args(instance), Map.get(turn, :cwd))
+
+  defp apply_launch_args(launch, args, cwd) do
+    case args do
       {:ok, args} ->
         {override, rest} = take_permission_flag(args)
 
@@ -1458,6 +1488,16 @@ defmodule HalC2.Claude.ThreadRuntime do
   # (`:disabled`), asking the user before the tools those settings guard. Settings
   # that cannot be read limit only this turn to the default mode: each turn reads
   # them again.
+  #
+  # Why the installed CLI cannot run `turn`'s model, or nil. A sandboxed review's CLI
+  # is the review image's (#1412), not the one installed here, which it never needs.
+  defp too_old(%{sandbox: true}, _instance), do: nil
+  defp too_old(turn, instance), do: Provider.too_old(turn.model, instance)
+
+  # A sandboxed review's CLI has a home of its own in the sandbox, so this machine's
+  # Claude settings say nothing about it.
+  defp bypass_policy(%{sandbox: true} = turn), do: turn
+
   defp bypass_policy(turn) do
     if permission_mode(turn) == "bypassPermissions" and turn.launch[:permission_override] == nil do
       instance = Entities.instance(turn.ids)
@@ -1702,7 +1742,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # A fork names its own session, and a carried one is checked as it opens (`open_session/2`).
+  # A sandboxed review's transcripts are in its sandbox, so nothing here is read for it.
   defp saved_session(%{fork: %{}}), do: :new
+  defp saved_session(%{sandbox: true}), do: :new
 
   defp saved_session(%{native_thread_id: id} = turn) when is_binary(id) do
     instance = Entities.instance(turn.ids)
@@ -1731,7 +1773,6 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp start_session(state, turn) do
     opts = [
       handler: self(),
-      cd: turn.cwd,
       model: turn.launch.model,
       effort: turn.launch.effort,
       settings: turn.launch.settings,
@@ -1742,8 +1783,6 @@ defmodule HalC2.Claude.ThreadRuntime do
       partial_messages: true,
       thinking_display: Map.get(turn.launch, :thinking_summaries, false),
       tools: if(Map.get(turn, :read_only), do: ["Read", "Glob", "Grep"]),
-      # Claude can open a message's attached files where the MC saved them.
-      add_dirs: [HalC2.Attachments.dir()],
       mcp: turn.launch.mcp,
       mcp_allowed:
         if(Map.get(turn, :read_only) and turn.launch.mcp,
@@ -1753,21 +1792,57 @@ defmodule HalC2.Claude.ThreadRuntime do
       disallowed_tools: Map.get(turn.launch, :disallowed_tools, []),
       appended: Map.get(turn.launch, :appended, []),
       extra_args: Map.get(turn.launch, :extra_args, []),
-      # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude,
-      # over the project's environment when the project loads it.
-      env: HalC2.ProjectEnvironment.for_turn(turn, session_env(turn), command(turn)),
-      log: state.thread_id,
-      durable: state.thread_id
+      log: state.thread_id
     ]
 
-    case Session.start_link(Keyword.put(opts, :command, command(turn))) do
-      {:ok, session} ->
-        {:ok,
-         %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
+    with {:ok, opts} <- in_sandbox(opts, turn, state),
+         {:ok, session} <- Session.start_link(opts) do
+      spent = if Map.get(turn, :sandbox) == true, do: Budget.new(opts[:resume] != nil)
 
-      {:error, reason} ->
-        {:error, reason}
+      {:ok,
+       %{
+         state
+         | session: session,
+           permission_mode: permission_mode(turn),
+           launch: turn.launch,
+           sandbox_spent: spent
+       }}
     end
+  end
+
+  # A sandboxed review's CLI runs in its sandbox (#1412) with the sandbox's environment
+  # only: no instance command, variables or home of this machine's, no project
+  # environment (none is even loaded), no attachments directory, and nothing durable,
+  # since an exec stream ends with the MC.
+  defp in_sandbox(opts, %{sandbox: true} = turn, _state) do
+    env = %{
+      "MCP_TOOL_TIMEOUT" => to_string(HalC2.Mcp.tool_timeout_ms()),
+      # Its policy lets through the model's requests alone (`HalC2.OpenShell.Policy`).
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" => "1"
+    }
+
+    with {:ok, sandbox} <- HalC2.OpenShell.Review.for_turn(turn, env) do
+      {:ok,
+       Keyword.merge(opts,
+         add_dirs: [],
+         sandbox: sandbox,
+         command: HalC2.OpenShell.Review.command("claudeAgent")
+       )}
+    end
+  end
+
+  defp in_sandbox(opts, turn, state) do
+    {:ok,
+     Keyword.merge(opts,
+       cd: turn.cwd,
+       # Claude can open a message's attached files where the MC saved them.
+       add_dirs: [HalC2.Attachments.dir()],
+       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude,
+       # over the project's environment when the project loads it.
+       env: HalC2.ProjectEnvironment.for_turn(turn, session_env(turn), command(turn)),
+       durable: state.thread_id,
+       command: command(turn)
+     )}
   end
 
   # The environment of the turn's `claude`. Its MCP client gives up on a tool after 60 s
@@ -2064,7 +2139,11 @@ defmodule HalC2.Claude.ThreadRuntime do
     # `with_ids/1` recovers the latest turn's ids when this runtime has not
     # run one, so between-turns quota joins that turn's instance too.
     state = state |> with_ids() |> with_usage_instance()
-    HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
+
+    # A sandboxed review's quota is its sandbox key's (#1412), not this machine's account.
+    if not sandboxed?(state),
+      do: HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
+
     rate_limit(info, state)
   end
 
@@ -2187,6 +2266,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       with nil <- message["parent_tool_use_id"],
            %{} = usage <- get_in(message, ["message", "usage"]) do
+        state = spent(state, id, usage)
         turn = Map.merge(state.turn, %{last_usage: usage, usage_message: id, compacted: false})
         %{state | turn: turn}
       else
@@ -2492,7 +2572,10 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  # Claude names the list after the session, or CLAUDE_CODE_TASK_LIST_ID when set.
+  # Claude names the list after the session, or CLAUDE_CODE_TASK_LIST_ID when set. A
+  # sandboxed review's Claude has none of this machine's variables (#1412).
+  defp task_list_id(%{turn: %{sandbox: true}} = state), do: state.session_id
+
   defp task_list_id(state) do
     instance = Entities.instance(state.turn.ids)
 
@@ -2510,6 +2593,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   # when they cannot be read. The format is Claude's own and undocumented, so this is
   # best effort, and Claude's internal tasks are not the user's.
   defp stored_tasks(_state, nil), do: nil
+  # A sandboxed review's are in its sandbox.
+  defp stored_tasks(%{turn: %{sandbox: true}}, _list_id), do: nil
 
   # Reads only `<n>.json` files in Claude's own tasks folder; the list id is reduced to
   # `[a-zA-Z0-9_-]` first, so it cannot leave that folder.
@@ -3089,6 +3174,10 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp usage_instance(state), do: Map.get(state, :usage_instance) || "claudeAgent"
 
+  # Whether this runtime's Claude runs in a review sandbox (#1412), in a turn or after.
+  defp sandboxed?(state),
+    do: match?(%{sandbox: true}, state.turn) or match?(%{sandbox: true}, Map.get(state, :launch))
+
   # A state from before quota attribution was pinned at capture (upgraded
   # mid-turn) resolves it here, once, from the turn it is on: the running
   # turn's instance, else the latest turn's (work Claude starts between
@@ -3214,6 +3303,26 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  # What a sandboxed review's message cost counts against its budget (#1412), once per
+  # message however often its counts are reported.
+  defp spent(%{sandbox_spent: %Budget{} = budget} = state, message_id, usage)
+       when is_binary(message_id),
+       do: report(state, Budget.message(budget, message_id, usage))
+
+  defp spent(state, _message_id, _usage), do: state
+
+  # What else a sandboxed review's CLI spends (its subagents, its own count in each
+  # result), whatever the thread then does with the message.
+  defp budget(%{sandbox_spent: %Budget{} = budget} = state, message),
+    do: report(state, Budget.observe(budget, message))
+
+  defp budget(state, _message), do: state
+
+  defp report(state, {budget, counts}) do
+    for {key, tokens} <- counts, do: HalC2.OpenShell.Review.spent(state.thread_id, key, tokens)
+    %{state | sandbox_spent: budget}
+  end
+
   # Partial messages: text and thinking stream into their items as they arrive.
   defp stream_event(%{"type" => "message_start", "message" => %{"id" => id}}, state),
     do: %{state | message_id: id, blocks: %{}}
@@ -3250,7 +3359,8 @@ defmodule HalC2.Claude.ThreadRuntime do
       counts =
         for {key, value} <- usage, is_number(value) and value > 0, into: %{}, do: {key, value}
 
-      %{state | turn: Map.update!(turn, :last_usage, &Map.merge(&1, counts))}
+      turn = Map.update!(turn, :last_usage, &Map.merge(&1, counts))
+      %{spent(state, state.message_id, turn.last_usage) | turn: turn}
     else
       state
     end
@@ -3395,6 +3505,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # running in the background (a command, a monitor, a subagent of its own) runs in
   # this thread's Claude process, which must stay up for it, so that is this thread's
   # background work. Its partial messages are dropped: the complete message follows.
+  # What it spends counts in `budget/2`.
   defp sidechain(%{"type" => "stream_event"}, _parent, state), do: state
 
   defp sidechain(

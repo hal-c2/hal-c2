@@ -10,6 +10,8 @@ defmodule HalC2.PullRequests.GitHub do
   listings show. The executable is `Application.get_env(:hal_c2, :gh_command, "gh")`.
   """
 
+  require Logger
+
   @page 100
   @thread_pages 10
   @files_viewed_pages 5
@@ -938,18 +940,57 @@ defmodule HalC2.PullRequests.GitHub do
   # `comments` and `reviews` are the marker `HalC2.PullRequests.Wakes` reads news from:
   # the last few of each, enough to find the newest from a trusted author (`activity/2`).
   @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
+  # Kept apart: an Enterprise host whose schema has no merge queue rejects the whole
+  # document over these, so a chunk that fails for them is read again without them
+  # (`summaries_chunk/2`).
+  @summary_queue_selection " mergeQueueEntry { state position } mergeQueueRemoval: timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { createdAt reason } } }"
 
   # Review bots whose reviews and comments count as a member's (logins without `[bot]`).
   @trusted_bots ~w(copilot-pull-request-reviewer copilot chatgpt-codex-connector)
   @trusted_associations ~w(OWNER MEMBER COLLABORATOR)
 
+  # A host that proved to have no merge queue in its schema is asked without the
+  # queue fields from then on, so its summaries (and every wake that rides on them)
+  # keep flowing.
   defp summaries_chunk(ctx, chunk) do
+    queue? = :persistent_term.get({__MODULE__, :merge_queue, ctx.host}, true)
+
+    case summaries_chunk(ctx, chunk, queue?) do
+      {:error, reason} = error when queue? ->
+        if merge_queue_unknown?(reason) do
+          Logger.warning(
+            "pull request summaries on #{ctx.host}: its schema has no merge queue; " <>
+              "reading without the merge-queue fields from now on"
+          )
+
+          :persistent_term.put({__MODULE__, :merge_queue, ctx.host}, false)
+          summaries_chunk(ctx, chunk, false)
+        else
+          error
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp merge_queue_unknown?(reason),
+    do:
+      String.contains?(
+        inspect(reason),
+        ["mergeQueueEntry", "RemovedFromMergeQueueEvent", "REMOVED_FROM_MERGE_QUEUE_EVENT"]
+      )
+
+  defp summaries_chunk(ctx, chunk, queue?) do
+    selection =
+      if queue?, do: @summary_selection <> @summary_queue_selection, else: @summary_selection
+
     selections =
       for {{repository, number}, index} <- Enum.with_index(chunk),
           [owner, name] <- [String.split(repository, "/")],
           Regex.match?(~r/^[A-Za-z0-9._-]+$/, owner) and Regex.match?(~r/^[A-Za-z0-9._-]+$/, name),
           is_integer(number) and number > 0 do
-        ~s[s#{index}: repository(owner: "#{owner}", name: "#{name}") { pullRequest(number: #{number}) { #{@summary_selection} } }]
+        ~s[s#{index}: repository(owner: "#{owner}", name: "#{name}") { pullRequest(number: #{number}) { #{selection} } }]
       end
 
     with true <- selections != [],
@@ -990,7 +1031,9 @@ defmodule HalC2.PullRequests.GitHub do
             "changedFiles" => pr["changedFiles"] || 0,
             "reviewDecision" => review_decision(pr["reviewDecision"], pr["latestReviews"]),
             "checksState" => rollup(head_rollup),
-            "mergeability" => mergeability(pr["mergeable"])
+            "mergeability" => mergeability(pr["mergeable"]),
+            "mergeQueue" => merge_queue(pr["mergeQueueEntry"]),
+            "mergeQueueRemoval" => merge_queue_removal(pr["mergeQueueRemoval"])
           }
           |> Map.merge(activity(pr, viewer))}
        end}
@@ -2741,6 +2784,22 @@ defmodule HalC2.PullRequests.GitHub do
       _ -> "unknown"
     end
   end
+
+  # Whether the pull request is in the merge queue now, and where; nil when it is not.
+  defp merge_queue(%{"state" => state, "position" => position})
+       when is_binary(state) and is_integer(position),
+       do: %{
+         "state" => state |> String.downcase() |> String.replace("_", "-"),
+         "position" => position
+       }
+
+  defp merge_queue(_), do: nil
+
+  # The latest time the pull request left the merge queue, and why; nil when it never has.
+  defp merge_queue_removal(%{"nodes" => [%{"createdAt" => at} = node | _]}) when is_binary(at),
+    do: %{"at" => at, "reason" => trimmed(node["reason"])}
+
+  defp merge_queue_removal(_), do: nil
 
   defp merge_method(value) do
     case up(value) do

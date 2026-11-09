@@ -177,15 +177,19 @@ defmodule HalC2.Plugins.Host do
   @doc """
   Starts a thread as `orchestration.launchThread` does (`input` in its shape),
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
-  thread list. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
+  thread list. `sandboxed: true` runs its agent in the sandbox `open_sandbox/3`
+  made for it, and never on this machine; the plugin must have opened that sandbox
+  itself. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
   which asks the version that runs first) has its threads marked `"stays"`: its sandbox,
   credentials and checkout for them do not travel, so a moved thread would run without
-  them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`).
-  Created by the system, from the server.
+  them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`), as
+  they are of a sandboxed thread. Created by the system, from the server.
   """
   def launch_thread(id, kind, input, opts \\ []) do
-    with :ok <- permit(id, "threads:create") do
+    with :ok <- permit(id, "threads:create"),
+         :ok <- if(opts[:sandboxed], do: own_sandbox(id, input["threadId"]), else: :ok) do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
+      mark = if opts[:sandboxed], do: Map.put(mark, "sandboxed", true), else: mark
       mark = if Plugins.threads_stay?(id), do: Map.put(mark, "stays", true), else: mark
 
       input
@@ -203,6 +207,59 @@ defmodule HalC2.Plugins.Host do
   def organize_thread(id, thread_id, changes) do
     with :ok <- permit(id, "threads:organize"),
          do: HalC2.Orchestration.organize_plugin_thread(thread_id, id, changes)
+  end
+
+  @doc """
+  Makes the OpenShell sandbox thread `thread_id` will review in, before the thread
+  is launched with `sandboxed: true` (`HalC2.OpenShell.Review.open/1`, whose `spec`
+  this takes without `:thread_id`). `{:ok, %{sandbox, deadline}}` or
+  `{:error, message}`.
+  """
+  def open_sandbox(id, thread_id, spec) do
+    with :ok <- permit(id, "threads:create"),
+         :ok <- own_thread(id, thread_id),
+         do: HalC2.OpenShell.Review.open(Map.merge(spec, %{thread_id: thread_id, owner: id}))
+  end
+
+  @doc """
+  Deletes the sandbox of thread `thread_id`, if it has one: its agent can run no
+  more. `reason` says why for `sandbox_ended/2`.
+  """
+  def close_sandbox(id, thread_id, reason \\ nil) do
+    with :ok <- permit(id, "threads:organize"),
+         :ok <- own_thread(id, thread_id),
+         do: HalC2.OpenShell.Review.close(thread_id, reason, id)
+  end
+
+  @doc """
+  Why the sandbox of thread `thread_id` went before its agent was done, as a
+  sentence (a time, output or token limit), or nil.
+  """
+  def sandbox_ended(id, thread_id) do
+    with :ok <- permit(id, "threads:create"),
+         true <- HalC2.OpenShell.Review.opener(thread_id) in [nil, id] || nil do
+      case HalC2.OpenShell.Review.ended(thread_id) do
+        reason when reason in ~w(time output tokens) -> HalC2.OpenShell.Review.ended_text(reason)
+        _ -> nil
+      end
+    end
+  end
+
+  # A sandbox is its plugin's: one for a thread another plugin started, or that
+  # another plugin opened or closed first (`HalC2.OpenShell.Review.opener/1`), is not.
+  # The thread's own mark outlives the review process's table across a restart.
+  defp own_thread(id, thread_id) do
+    case HalC2.Streams.get(thread_id, "thread", thread_id) do
+      %{"plugin" => %{"id" => ^id}} -> :ok
+      nil -> :ok
+      _ -> {:error, "Thread #{thread_id} was not started by #{id}."}
+    end
+  end
+
+  defp own_sandbox(id, thread_id) do
+    if is_binary(thread_id) and HalC2.OpenShell.Review.opener(thread_id) == id,
+      do: :ok,
+      else: {:error, "A sandboxed thread runs only in a sandbox its plugin opened for it."}
   end
 
   @doc """

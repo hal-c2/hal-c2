@@ -18,7 +18,9 @@ defmodule HalC2.OpenShellExecPropTest do
     * nothing that happens to one command (a writer stuck on it, its cancel, its
       owner's exit) stops another, or the client's own calls, from working;
     * a command in a sandbox this MC does not own is refused before any stream or
-      connection is opened.
+      connection is opened;
+    * a command whose stream fails to open after its connection did leaves that
+      connection closed.
   """
 
   use ExUnit.Case, async: false
@@ -117,7 +119,8 @@ defmodule HalC2.OpenShellExecPropTest do
       [
         {3, {:call, __MODULE__, :start, [state.next, oneof([:cat, :stall, :spew])]}},
         {1, {:call, __MODULE__, :health, []}},
-        {1, {:call, __MODULE__, :foreign, []}}
+        {1, {:call, __MODULE__, :foreign, []}},
+        {1, {:call, __MODULE__, :unstartable, []}}
       ] ++
         if(cats == [],
           do: [],
@@ -170,6 +173,7 @@ defmodule HalC2.OpenShellExecPropTest do
   def postcondition(_state, {:call, _, :start, _}, result), do: result == :ok
   def postcondition(_state, {:call, _, :health, _}, result), do: match?({:ok, _}, result)
   def postcondition(_state, {:call, _, :foreign, _}, result), do: result == :refused
+  def postcondition(_state, {:call, _, :unstartable, _}, result), do: result == :closed
   def postcondition(_state, {:call, _, :write, _}, result), do: result == :ok
   def postcondition(_state, {:call, _, :flood, _}, result), do: result == :ok
 
@@ -232,6 +236,31 @@ defmodule HalC2.OpenShellExecPropTest do
       result != {:error, :not_owned} -> {:ran, result}
       opened != [] -> {:opened, opened}
       true -> :refused
+    end
+  end
+
+  # A stream that fails to open once the connection is up (an owner that is no
+  # process) fails the start and closes that connection.
+  def unstartable do
+    before = connections()
+    result = Client.exec(Process.get(:exec_prop).conn, "box", ["cat"], owner: "nobody")
+
+    left = Enum.reject(connections() -- before, &gone?/1)
+
+    cond do
+      not match?({:error, _}, result) -> {:ran, result}
+      left != [] -> {:left_open, left}
+      true -> :closed
+    end
+  end
+
+  defp gone?(pid) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> true
+    after
+      @wait -> false
     end
   end
 

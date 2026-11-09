@@ -129,15 +129,19 @@ defmodule HalC2.ThreadArchive do
   a fork copies it), or when its plugin's manifest has `threadsStay`
   (`HalC2.Plugins.threads_stay?/1`: the version loaded, or the package on disk, so with
   no MC running too), which covers a thread started before the manifest said so, and
-  its forks, whether or not the plugin runs.
+  its forks, whether or not the plugin runs. A thread run in a review sandbox
+  (`"sandboxed"`, #1412) is kept too: its sandbox is this machine's.
   """
   def stays(%{"plugin" => %{"id" => owner} = mark} = thread) do
-    if mark["stays"] == true or HalC2.Plugins.threads_stay?(owner),
+    if kept?(owner, mark),
       do: {:error, "#{thread["title"]} was started by #{owner}, which keeps it on this machine."},
       else: :ok
   end
 
   def stays(_thread), do: :ok
+
+  defp kept?(owner, mark),
+    do: mark["stays"] == true or mark["sandboxed"] == true or HalC2.Plugins.threads_stay?(owner)
 
   @doc """
   Writes a thread's archive to a new file at `path`, readable only by the user; a file
@@ -492,7 +496,7 @@ defmodule HalC2.ThreadArchive do
 
     Enum.find_value(rows, :ok, fn
       {"thread", _, %{"plugin" => %{"id" => owner} = mark}} when is_binary(owner) ->
-        if mark["stays"] == true or HalC2.Plugins.threads_stay?(owner),
+        if kept?(owner, mark),
           do:
             {:error,
              "#{title} was started by #{owner}, which keeps it on the machine it started on. #{title} was not imported."}

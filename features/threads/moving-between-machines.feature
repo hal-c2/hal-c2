@@ -470,6 +470,16 @@ Feature: Moving a thread and its agent to another machine
       And "Alpha" stays on "laptop" as it was
       And nothing of "Alpha" is left on "desktop"
 
+    # A thread run in a review sandbox (apps/server-ex/lib/hal_c2/open_shell/review.ex) is kept
+    # whatever its plugin's manifest says: the sandbox is this machine's.
+    @mc
+    Scenario: A thread run in a review sandbox is not moved
+      Given "Alpha" runs in a review sandbox the plugin "notes" opened on the machine
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by notes, which keeps it on this machine."
+      And "Alpha" stays on "laptop" as it was
+      And nothing of "Alpha" is left on "desktop"
+
     @mc
     Scenario: A thread its plugin keeps on the machine is refused while it is idle or running
       Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine

@@ -1,5 +1,8 @@
 # Sources:
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
+#   apps/server-ex/lib/hal_c2/open_shell/review.ex, broker.ex (review sandboxes, their lease and the report broker)
+#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex, codex/thread_runtime.ex (a sandboxed turn skips this machine's checks, skills, tasks and quota)
+#   apps/server-ex/lib/hal_c2/claude/budget.ex (what a sandboxed Claude CLI spent, its subagents and side requests included)
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, trust, submitReview through gh)
@@ -8,6 +11,7 @@
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 #   https://github.com/pingdotgg/t3code/pull/15427
+#   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
 
 @plugin-code-review
 Feature: Agent code review
@@ -277,6 +281,7 @@ Feature: Agent code review
     @mc
     Scenario: The user approves one untrusted pull request at the commit they looked at
       Given "code-review" watches "acme/api" automatically
+      And review sandboxes can run on this MC
       And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
       When the user approves #12 at its head commit
       Then a review of #12 starts
@@ -292,6 +297,7 @@ Feature: Agent code review
     @mc
     Scenario: An approval does not carry over to a new push
       Given "code-review" reviews new pushes
+      And review sandboxes can run on this MC
       And the user approved #12 by "stranger", who is not a member or collaborator, and it was reviewed
       And #12 has a new head commit
       When "code-review" looks at "acme/api" again
@@ -301,6 +307,7 @@ Feature: Agent code review
     @mc
     Scenario: A pull request pushed back to the commit the user approved needs their approval again
       Given "code-review" reviews new pushes
+      And review sandboxes can run on this MC
       And the user approved #12 by "stranger", who is not a member or collaborator, and it was reviewed
       And #12 has a new head commit
       And "code-review" looks at "acme/api" again
@@ -474,6 +481,180 @@ Feature: Agent code review
       When #12 is reviewed
       Then its thread works in a checkout of the head of #12
       And the user's own checkout of "api" is not touched
+
+  Rule: An untrusted pull request is reviewed in a sandbox
+
+    The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
+    sandbox: a checkout of the pull request made from a bundle, a home of its own, no
+    credential in its environment, and a network that reaches only its model's own
+    requests on the model's API and the one tool it reports with. Its turns take no
+    checkpoint: git here would run this machine's filters on whatever files the pull
+    request's attributes send through them. A pull request is untrusted as the rule on who gets
+    reviews says, and its review still waits for the user's approval of its head.
+
+    @mc
+    Scenario: An untrusted pull request is reviewed in a sandbox, deleted once the agent reports
+      Given pull requests are not trusted and OpenShell is installed
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the review of #12 is finished with the agent's verdict
+      And its sandbox and the sandbox's provider are deleted
+      And git on this machine took no checkpoint of the review's checkout
+
+    # The API key is the user's, and the rest of the API opens the rest of their
+    # account with it, their uploaded files among them.
+    @mc
+    Scenario: A review sandbox reaches its model's requests and nothing else on the model's API
+      Given pull requests are not trusted and OpenShell is installed
+      When #12 is reviewed
+      Then its sandbox lets the agent send its model's requests and nothing else on the model's API
+
+    @mc
+    Scenario: With "Sandbox every review" on, a trusted pull request is reviewed in a sandbox too
+      Given pull requests are trusted and OpenShell is installed
+      And "code-review" sandboxes every review
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: A sandboxed Claude review takes none of this machine's Claude settings
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude on this machine has launch arguments, a home and a project environment of its own
+      And "code-review" reviews with Claude
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox with none of this machine's launch arguments, home or project environment
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: A sandboxed review runs whatever version of its agent this machine has
+      Given pull requests are not trusted and OpenShell is installed
+      And this release marks the Codex on this machine broken
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed Claude review runs on a model the Claude on this machine is too old for
+      Given pull requests are not trusted and OpenShell is installed
+      And the Claude on this machine is too old for "claude-opus-5-5"
+      And "code-review" reviews with Claude on "claude-opus-5-5"
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox on "claude-opus-5-5"
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed review runs on an agent this machine has not installed, on the model it names
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      And "code-review" reviews with Claude on "claude-haiku-4-5" at high effort
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox on "claude-haiku-4-5"
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed review on an agent this machine has not installed asks for its model to be named
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      And "code-review" reviews with Claude on no model named
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Install it here, or name the model to review with in the settings."
+
+    @desktop @mobile @tui @backlog
+    Scenario: The settings name a model for an agent that only runs in a sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      When the user picks Claude in the review settings
+      Then the settings let them type the model to review with
+
+    @mc
+    Scenario: A sandboxed Claude review keeps to itself, away from this machine's skills, tasks and usage
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude on this machine has skills and task lists of its own
+      And "code-review" asks Claude to review "with $host-skill and then $other-skill"
+      And the sandboxed agent updates a task and reports its usage
+      When #12 is reviewed
+      Then the sandboxed Claude is sent "with $host-skill and then $other-skill" as written
+      And the review of #12 is finished with the agent's verdict
+      And the review's thread shows none of this machine's Claude tasks
+      And this machine's Claude usage is not the sandbox's
+
+    @mc
+    Scenario: An untrusted pull request on an MC without OpenShell is not reviewed, saying how to set it up
+      Given pull requests are not trusted
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Run `hal-c2-service openshell install`."
+
+    @mc
+    Scenario: A sandboxed review takes one report, however many its agent sends
+      Given pull requests are not trusted and OpenShell is installed
+      And the sandboxed agent sends its report twice at once
+      When #12 is reviewed
+      Then one report is taken and the other refused
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: A sandboxed review past its token budget fails and loses its sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And sandboxed reviews may use 500 tokens
+      And the sandboxed agent uses 1000 tokens without reporting
+      When #12 is reviewed
+      Then the review of #12 is failed saying it used up its token budget
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario Outline: A sandboxed Claude review's budget counts what only its subagents and the CLI report
+      Given pull requests are not trusted and OpenShell is installed
+      And sandboxed reviews may use 500 tokens
+      And "code-review" reviews with Claude on "claude-haiku-4-5"
+      And <spender> 1000 tokens without reporting
+      When #12 is reviewed
+      Then the review of #12 is failed saying it used up its token budget
+      And its sandbox and the sandbox's provider are deleted
+
+      Examples:
+        | spender                                       |
+        | the sandboxed agent's subagent writes         |
+        | the sandboxed agent's CLI alone counts        |
+
+    @mc
+    Scenario: Stopping a sandboxed review deletes its sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And the sandboxed agent works until it is stopped
+      And #12 is being reviewed in a sandbox
+      When the user stops the review of #12
+      Then the review of #12 is failed saying "Stopped."
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: Review sandboxes past their time are deleted while the MC is down
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox past its time and one within it are left on the gateway
+      And a review sandbox's provider past its time is left without its sandbox
+      When the reaper's timer runs without the MC
+      Then only the review sandbox within its time remains, with its provider
+
+    @mc
+    Scenario: A reaper whose gateway will not list its sandboxes still deletes their providers past their time
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox past its time and one within it are left on the gateway
+      And the gateway will not list its sandboxes
+      When the reaper's timer runs without the MC
+      Then the reap says the sandboxes were not listed
+      And only the provider within its time remains
+
+    @mc
+    Scenario: An MC starting deletes the review sandboxes left from before
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox within its time is left on the gateway from before
+      When the MC starts again
+      Then that sandbox and its provider are deleted
+
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: A sandboxed review says so, and offers to stop it
+      Given a review of #12 is running in a sandbox
+      When the user opens the review's thread
+      Then its header and its row in the thread list say it runs in a sandbox
+      And the header offers to stop it and delete the sandbox
 
   Rule: What the agent finds is structured
 
@@ -657,6 +838,7 @@ Feature: Agent code review
     @mc
     Scenario: A review of a pull request nobody trusted is not posted on its own
       Given the publishing mode for "acme/api" is "automatic"
+      And review sandboxes can run on this MC
       And the user approved #12 by "stranger", who is not a member or collaborator, and its review is running
       When the agent of #12 reports two comments
       Then the review waits for the user to publish it

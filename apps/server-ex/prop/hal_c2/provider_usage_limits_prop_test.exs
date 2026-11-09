@@ -11,6 +11,9 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   single-name state keeps that name for the built-in instance only. A cast
   in the pre-instance shape (queued across that upgrade) is the built-in's.
 
+  A sandboxed review's agent (#1412) runs on its sandbox's API key: what its runtime
+  hears of its quota, in a turn or between turns, changes no instance's windows.
+
   A redemption runs against its own instance's CLI: a failed one keeps that
   instance's idempotency key for its retry, whatever the other instance does
   meanwhile, a finished one starts the next attempt on a new key, and only a
@@ -222,6 +225,8 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
       {1, {:call, __MODULE__, :unsupported_probe, []}},
       {2, {:call, __MODULE__, :consume, [oneof(@codex), boolean()]}},
       {1, {:call, __MODULE__, :code_change_old, []}},
+      {2,
+       {:call, __MODULE__, :sandboxed_report, [oneof(@instances), integer(0, 100), boolean()]}},
       {4, {:call, __MODULE__, :read, []}}
     ])
   end
@@ -354,6 +359,50 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
       "utilization" => percent / 100,
       "resetsAt" => 1_790_000_000
     })
+
+    settle()
+  end
+
+  # A sandboxed review's runtime hearing of its quota, in its turn or after it.
+  def sandboxed_report(instance, percent, in_turn?) do
+    ids = %{instance: instance}
+
+    {:noreply, _} =
+      case @driver[instance] do
+        "codex" ->
+          HalC2.Codex.ThreadRuntime.handle_info(
+            {:json_rpc, nil,
+             {:notification, "account/rateLimits/updated",
+              %{
+                "rateLimits" => %{
+                  "limitId" => "codex",
+                  "primary" => %{"usedPercent" => percent, "windowDurationMins" => 300}
+                }
+              }}},
+            if(in_turn?,
+              do: %{instance: instance, turn: %{sandbox: true, ids: ids}, v: 0},
+              else: %{instance: instance, turn: nil, sandboxed: true, v: 0}
+            )
+          )
+
+        "claudeAgent" ->
+          HalC2.Claude.ThreadRuntime.handle_info(
+            {:claude, nil,
+             {:message,
+              %{
+                "type" => "rate_limit_event",
+                "rate_limit_info" => %{
+                  "rateLimitType" => "five_hour",
+                  "utilization" => percent / 100,
+                  "resetsAt" => 1_790_000_000
+                }
+              }}},
+            if(in_turn?,
+              do: %{turn: %{sandbox: true, ids: ids}, wake: nil, last_ids: nil},
+              else: %{turn: nil, wake: nil, last_ids: ids, launch: %{sandbox: true}}
+            )
+          )
+      end
 
     settle()
   end

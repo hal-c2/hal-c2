@@ -300,6 +300,19 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   // The newest by the account the MC reads the host as, kept apart because it may be the
   // agent's own.
   ownActivity: Schema.optional(Schema.NullOr(ThreadPullRequestActivity)),
+  // In the host's merge queue now, and where; null when it is not (or the host has none).
+  mergeQueue: Schema.optional(
+    Schema.NullOr(Schema.Struct({ state: Schema.String, position: NonNegativeInt })),
+  ),
+  // The latest time it left the merge queue, and why; null when it never has.
+  mergeQueueRemoval: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        at: IsoDateTime,
+        reason: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
 });
 export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
@@ -346,6 +359,7 @@ export const ThreadPullRequestLink = Schema.Struct({
       mergeability: Schema.optional(Schema.NullOr(PullRequestMergeability)),
       checksFailed: Schema.optional(Schema.Boolean),
       activityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+      mergeQueueRemovalAt: Schema.optional(Schema.NullOr(IsoDateTime)),
     }),
   ),
 });

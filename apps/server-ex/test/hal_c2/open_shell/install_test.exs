@@ -182,11 +182,14 @@ defmodule HalC2.OpenShell.InstallTest do
       assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, state)
 
       assert Storage.service_calls(ctx.log) == [
-               # Stopped before its unit is written.
+               # The reaper and then the gateway stop before their units are written.
+               "systemctl --user stop #{Service.reap_name(:timer)}",
+               "systemctl --user stop #{Service.reap_name(:systemd)}",
                "systemctl --user stop #{Service.name(:systemd)}",
                "systemctl --user daemon-reload",
                "systemctl --user enable #{Service.name(:systemd)}",
-               "systemctl --user restart #{Service.name(:systemd)}"
+               "systemctl --user restart #{Service.name(:systemd)}",
+               "systemctl --user enable --now #{Service.reap_name(:timer)}"
              ]
 
       assert_client_authority()
@@ -382,12 +385,16 @@ defmodule HalC2.OpenShell.InstallTest do
       assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, old)
       refute File.exists?(OpenShell.backup_dir("0.1.6"))
 
-      # Stopped for the backup, then started again on the unit it had.
+      # Stopped for the backup, its reaper first, then both started again on the units
+      # they had.
       assert Storage.service_calls(ctx.log) == [
+               "systemctl --user stop #{Service.reap_name(:timer)}",
+               "systemctl --user stop #{Service.reap_name(:systemd)}",
                "systemctl --user stop #{Service.name(:systemd)}",
                "systemctl --user daemon-reload",
                "systemctl --user enable #{Service.name(:systemd)}",
-               "systemctl --user restart #{Service.name(:systemd)}"
+               "systemctl --user restart #{Service.name(:systemd)}",
+               "systemctl --user enable --now #{Service.reap_name(:timer)}"
              ]
     end
 
@@ -655,9 +662,16 @@ defmodule HalC2.OpenShell.InstallTest do
       refute Enum.any?(Storage.service_calls(ctx.log), &(&1 =~ ~r/ (stop|restart|disable) /))
       assert File.read!(old_unit) == text
 
-      # Once that service is gone, the home installs under its new name.
+      # Its reaper alone still holds the old name.
       File.rm!(old_unit)
       File.rm!(Path.join(ctx.bin, "active"))
+      reapers = Service.reaper_paths(:systemd, state["instance"])
+      assert reapers != [] and Enum.all?(reapers, &File.exists?/1)
+      assert {:error, "[home-moved] " <> message} = install(ctx, "0.1.7")
+      assert message =~ Service.reap_name(:timer, state["instance"])
+
+      # Once that service and its reaper are gone, the home installs under its new name.
+      Enum.each(reapers, &File.rm!/1)
       assert {:ok, %{"instance" => instance}} = install(ctx, "0.1.7")
       assert instance == OpenShell.instance()
       refute instance == state["instance"]

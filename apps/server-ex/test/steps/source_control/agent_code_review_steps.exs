@@ -16,6 +16,8 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   alias HalC2.Steps.Plugins.Fixtures
   alias HalC2.Steps.SourceControl.Shared
+  alias HalC2.OpenShell
+  alias HalC2.Test.{FakeOpenShell, FakeSandbox}
   alias HalC2.Test.Machines
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
@@ -854,6 +856,411 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "the user's own checkout of {string} is not touched", context do
     assert checkout_state(context.root) == context.untouched
+    context
+  end
+
+  # --- sandboxes (#1412) -----------------------------------------------------------------------
+  # The fake gateway's sandbox is a directory here (`HalC2.Test.FakeSandbox`), whose Codex
+  # reports through the broker as the scenario's `sandbox` options say.
+
+  step "pull requests are not trusted and OpenShell is installed", context do
+    context |> trust(false) |> gateway()
+  end
+
+  step "pull requests are trusted and OpenShell is installed", context do
+    context |> trust(true) |> gateway()
+  end
+
+  # For pull requests the scenario opens as untrusted itself, whose agents report as
+  # the scenario says.
+  step "review sandboxes can run on this MC", context do
+    context |> trust(true) |> gateway() |> sandbox(hang: true)
+  end
+
+  step "pull requests are not trusted", context do
+    trust(context, false)
+  end
+
+  step "{string} sandboxes every review", %{args: [@id]} = context do
+    save(context, %{"sandboxEveryReview" => true})
+  end
+
+  step "sandboxed reviews may use {int} tokens", %{args: [tokens]} = context do
+    save(context, %{"sandboxTokens" => tokens})
+  end
+
+  step "the sandboxed agent sends its report twice at once", context do
+    sandbox(context, reports: 2)
+  end
+
+  step "the sandboxed agent uses {int} tokens without reporting", %{args: [tokens]} = context do
+    sandbox(context, report: nil, tokens: tokens)
+  end
+
+  # A subagent's messages carry only their starting counts; its task's progress, the rest.
+  step "the sandboxed agent's subagent writes {int} tokens without reporting",
+       %{args: [tokens]} = context do
+    sandbox(context, report: nil, tokens: 10, subagent_tokens: 10, subagent_progress: tokens)
+  end
+
+  # Spend no message reports, such as the CLI's side requests, shows only in its result.
+  step "the sandboxed agent's CLI alone counts {int} tokens without reporting",
+       %{args: [tokens]} = context do
+    sandbox(context, report: nil, tokens: 10, cli_tokens: tokens)
+  end
+
+  step "the sandboxed agent works until it is stopped", context do
+    sandbox(context, hang: true)
+  end
+
+  step "the user starts a review of \#{int}", %{args: [number]} = context do
+    context |> open(number) |> start(number)
+  end
+
+  step "\#{int} is being reviewed in a sandbox", %{args: [number]} = context do
+    context = running(context, number)
+    assert_receive {:sandbox_turn, _}, 15_000
+    context
+  end
+
+  step "the user stops the review of \#{int}", %{args: [number]} = context do
+    {review, context} = await_review(context, number, & &1)
+    {reply, context} = plugin(context, "stop", %{"key" => review["key"]})
+    assert {:ok, _} = reply
+    context
+  end
+
+  # Each of these is this machine's own: Claude's launch arguments (its settings, MCP
+  # servers, directories and a prompt file), its home, and the project environment.
+  step "Claude on this machine has launch arguments, a home and a project environment of its own",
+       context do
+    World.put_env("ANTHROPIC_API_KEY", "sk-test-anthropic")
+    dir = Mc.tmp_dir(context.mc, "host-claude")
+    prompt = Path.join(dir, "host-prompt.txt")
+    File.write!(prompt, "host-only instructions")
+
+    launch_args =
+      Enum.join(
+        [
+          ~s(--settings '{"env":{"HOST_TOKEN":"sk-host-token"},"apiKeyHelper":"host-helper"}'),
+          "--mcp-config #{Path.join(dir, "host-mcp.json")}",
+          "--add-dir #{dir}",
+          "--append-system-prompt-file #{prompt}",
+          "--dangerously-skip-permissions"
+        ],
+        " "
+      )
+
+    context
+    |> World.update_settings(%{
+      "providers" => %{
+        "claudeAgent" => %{"launchArgs" => launch_args, "homePath" => Path.join(dir, "home")}
+      },
+      "projectEnvironment" => "dotenv",
+      "projectEnvironmentFile" => Path.join(dir, "host.env")
+    })
+    |> Map.put(:host_claude, dir)
+  end
+
+  step "{string} reviews with Claude", %{args: [@id]} = context do
+    save(context, %{"provider" => World.instance("Claude"), "model" => "claude-haiku-4-5"})
+  end
+
+  step "{string} reviews with Claude on {string}", %{args: [@id, model]} = context do
+    claude(context, %{"model" => model})
+  end
+
+  step "{string} reviews with Claude on {string} at {word} effort",
+       %{args: [@id, model, effort]} = context do
+    claude(context, %{
+      "model" => model,
+      "modelOptions" => %{"effort" => effort}
+    })
+  end
+
+  step "{string} reviews with Claude on no model named", %{args: [@id]} = context do
+    claude(context, %{"model" => ""})
+  end
+
+  step "{string} asks Claude to review {string}", %{args: [@id, prompt]} = context do
+    claude(context, %{
+      "model" => "claude-haiku-4-5",
+      "prompt" => prompt
+    })
+  end
+
+  # Claude in a sandbox reviews on the MC's API key for Anthropic, which only its
+  # sandbox's provider gets.
+  defp claude(context, settings) do
+    World.put_env("ANTHROPIC_API_KEY", "sk-test-anthropic")
+    save(context, Map.put(settings, "provider", World.instance("Claude")))
+  end
+
+  # Each of these is this machine's alone, and none decides whether a sandbox's agent
+  # runs: a release that marks its Codex broken, a Claude too old for a model, or none.
+  step "this release marks the Codex on this machine broken", context do
+    World.put_app_env(:provider_compatibility, [
+      %{
+        "driver" => "codex",
+        "halC2Range" => ">=0",
+        "ranges" => [%{"range" => ">=0", "status" => "broken"}]
+      }
+    ])
+
+    context
+  end
+
+  step "the Claude on this machine is too old for {string}", context do
+    claude = Path.join(Mc.tmp_dir(context.mc, "old-claude"), "claude")
+    File.write!(claude, "#!/bin/sh\necho '2.1.0 (Claude Code)'\n")
+    File.chmod!(claude, 0o755)
+
+    World.update_settings(context, %{"providers" => %{"claudeAgent" => %{"binaryPath" => claude}}})
+  end
+
+  step "Claude is not installed on this machine", context do
+    World.put_app_env(:claude_command, ["hal-c2-test-no-claude"])
+    {:ok, providers} = HalC2.Plugins.Host.providers(@id)
+    refute Enum.any?(providers, &(&1["instanceId"] == "claudeAgent" and &1["installed"]))
+    context
+  end
+
+  # This machine's Claude skills, and task lists under its own list name and under the
+  # sandbox's session's, in the home this machine's Claude uses.
+  step "Claude on this machine has skills and task lists of its own", context do
+    home = Mc.tmp_dir(context.mc, "host-claude-home")
+
+    for {name, frontmatter} <- [
+          {"host-skill", "disable-model-invocation: true\n"},
+          {"other-skill", ""}
+        ] do
+      skill = Path.join([home, "skills", name])
+      File.mkdir_p!(skill)
+
+      File.write!(
+        Path.join(skill, "SKILL.md"),
+        "---\ndescription: Here only.\n#{frontmatter}---\nDo it.\n"
+      )
+    end
+
+    for list <- ["sandboxed-session", "host-list"] do
+      tasks = Path.join([home, "tasks", list])
+      File.mkdir_p!(tasks)
+      task = %{"id" => "1", "subject" => "A task here", "status" => "pending"}
+      File.write!(Path.join(tasks, "1.json"), JSON.encode!(task))
+    end
+
+    context
+    |> World.update_settings(%{
+      "providers" => %{
+        "claudeAgent" => %{
+          "homePath" => home,
+          "env" => %{"CLAUDE_CODE_TASK_LIST_ID" => "host-list"}
+        }
+      }
+    })
+    |> Map.put(:host_claude, home)
+  end
+
+  step "the sandboxed agent updates a task and reports its usage", context do
+    sandbox(context,
+      task_update: %{"taskId" => "1", "status" => "in_progress"},
+      rate_limit: %{
+        "rateLimitType" => "five_hour",
+        "utilization" => 0.66,
+        "resetsAt" => 1_790_000_000
+      }
+    )
+  end
+
+  step "its agent runs Claude in a sandbox on {string}", %{args: [model]} = context do
+    assert_receive {:sandbox_exec, ["claude" | args], %{workdir: "/sandbox/review"}}, 15_000
+    # The model as named, its context window (`[1m]`) aside.
+    models = for ["--model", named] <- Enum.chunk_every(args, 2, 1), do: named
+    assert Enum.map(models, &String.replace(&1, ~r/\[\w+\]$/, "")) == [model]
+    context
+  end
+
+  step "the sandboxed Claude is sent {string} as written", %{args: [prompt]} = context do
+    assert_receive {:sandbox_prompt, content}, 15_000
+
+    text =
+      content |> List.wrap() |> Enum.map_join("\n", &if(is_map(&1), do: &1["text"], else: &1))
+
+    assert text =~ prompt
+    refute text =~ context.host_claude
+    context
+  end
+
+  step "the review's thread shows none of this machine's Claude tasks", context do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.thread))
+    refute inspect(HalC2.StreamState.list(state, "plan")) =~ "A task here"
+    context
+  end
+
+  step "this machine's Claude usage is not the sandbox's", context do
+    if Process.whereis(HalC2.ProviderUsageLimits), do: :sys.get_state(HalC2.ProviderUsageLimits)
+    windows = (HalC2.ProviderUsageLimits.get("claudeAgent") || %{})["windows"] || []
+    refute 66.0 in Enum.map(windows, & &1["usedPercent"])
+    context
+  end
+
+  step "its agent runs Claude in a sandbox with none of this machine's launch arguments, home or project environment",
+       context do
+    assert_receive {:sandbox_exec, ["claude" | args], %{environment: env}}, 15_000
+    argv = Enum.join(args, " ")
+
+    for host <- [context.host_claude, "sk-host-token", "host-helper", "host-only", "--mcp-config"],
+        do: refute(argv =~ host, "#{host} reached the sandbox's argv")
+
+    refute "--dangerously-skip-permissions" in args
+    refute Map.has_key?(env, "CLAUDE_CONFIG_DIR")
+    refute Map.has_key?(env, "HOST_TOKEN")
+
+    # Loading it would have said on the thread that its file is not there.
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.thread))
+    items = HalC2.StreamState.get(state, "turn-item") || %{}
+    refute Enum.any?(Map.keys(items), &String.starts_with?(&1, "turn-item:project-environment"))
+    context
+  end
+
+  step "its agent runs in a sandbox, in a checkout of the head of \#{int}, with no credential in its environment",
+       %{args: [number]} = context do
+    assert_receive {:sandbox_exec, ["codex", "app-server"],
+                    %{workdir: "/sandbox/review", environment: env}},
+                   15_000
+
+    refute Enum.any?(Map.keys(env), &(&1 =~ ~r/KEY|TOKEN|SECRET/))
+    refute Map.has_key?(env, "PATH")
+    assert env["HOME"] == "/sandbox/home"
+    checkout = Path.join(context.sandbox_root, "review")
+    assert World.git!(checkout, ~w(rev-parse HEAD)) == context.heads[number]
+    assert World.git!(checkout, ~w(remote)) == ""
+    context
+  end
+
+  step "its sandbox lets the agent send its model's requests and nothing else on the model's API",
+       context do
+    assert_receive {:openshell_request, "CreateSandbox", %{spec: spec}}, 15_000
+    assert [model] = spec.policy.network_policies["model"].endpoints
+    assert model.host == "api.openai.com"
+    assert model.access == :NETWORK_ACCESS_PRESET_UNSPECIFIED
+
+    requests = Enum.map(model.rules, &{&1.allow.method, &1.allow.path})
+    assert {"POST", "/v1/responses"} in requests
+    assert Enum.all?(requests, fn {_, path} -> path =~ ~r"^/v1/(responses|models)(/|$)" end)
+    refute Enum.any?(requests, fn {method, path} -> method == "*" or path =~ "*" end)
+    context
+  end
+
+  step "the review of \#{int} is finished with the agent's verdict",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["verdict"] != nil))
+    assert %{"verdict" => "approve", "sandboxed" => true} = review
+    context
+  end
+
+  step "git on this machine took no checkpoint of the review's checkout", context do
+    {review, context} = await_review(context, 12, &(&1["threadId"] != nil))
+    thread_id = review["threadId"]
+    :ok = HalC2.Streams.watch(thread_id, self())
+    await_no_runs(thread_id)
+    HalC2.Streams.Server.unsubscribe(thread_id, self())
+
+    assert HalC2.StreamState.list(HalC2.Streams.state(thread_id), "checkpoint") == []
+    [clone] = Path.wildcard(Path.join([HalC2.Plugins.Host.data_dir(@id), "repos", "**/*.git"]))
+
+    assert {"", 0} =
+             System.cmd("git", ~w(for-each-ref refs/hal-c2/orchestration-v2/checkpoints),
+               cd: clone
+             )
+
+    context
+  end
+
+  step "one report is taken and the other refused", context do
+    answers =
+      for _ <- 1..2 do
+        assert_receive {:sandbox_reported, status, body}, 15_000
+        status == 200 and get_in(JSON.decode!(body), ["result", "structuredContent", "reported"])
+      end
+
+    assert Enum.count(answers, &(&1 == true)) == 1
+    context
+  end
+
+  step "the review of \#{int} is failed saying it used up its token budget",
+       %{args: [number]} = context do
+    {review, context} = await_review(context, number, &(&1["status"] == "failed"))
+    assert review["error"] =~ "used up its token budget"
+    context
+  end
+
+  step "its sandbox and the sandbox's provider are deleted", context do
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-" <> _ = name}}, 15_000
+    assert_receive {:openshell_request, "DeleteProvider", %{name: ^name}}, 15_000
+    refute Map.has_key?(FakeOpenShell.sandboxes(context.gateway), name)
+    refute Map.has_key?(FakeOpenShell.providers(context.gateway), name)
+    context
+  end
+
+  step "a review sandbox past its time and one within it are left on the gateway", context do
+    now = System.os_time(:second)
+    left(context, "review-old", OpenShell.Review.labels("old", now - 1))
+    left(context, "review-new", OpenShell.Review.labels("new", now + 600))
+    context
+  end
+
+  step "a review sandbox's provider past its time is left without its sandbox", context do
+    labels = owned(OpenShell.Review.labels("orphan", System.os_time(:second) - 1))
+    FakeOpenShell.put_provider(context.gateway, "review-orphan", labels)
+    context
+  end
+
+  step "a review sandbox within its time is left on the gateway from before", context do
+    left(context, "review-left", OpenShell.Review.labels("left", System.os_time(:second) + 600))
+    context
+  end
+
+  # What the reap said is the scenario's `reaped`; one that names no failure must have
+  # deleted the sandbox past its time.
+  step "the reaper's timer runs without the MC", context do
+    ExUnit.Callbacks.stop_supervised!(OpenShell.Review)
+    reaped = OpenShell.Command.command(["reap", "--root", OpenShell.root()])
+
+    with {:ok, _} <- reaped,
+         do: assert({:ok, "Deleted review sandboxes past their time: review-old"} = reaped)
+
+    Map.put(context, :reaped, reaped)
+  end
+
+  step "the gateway will not list its sandboxes", context do
+    FakeOpenShell.failing(context.gateway, ["ListSandboxes"])
+    context
+  end
+
+  step "the reap says the sandboxes were not listed", context do
+    assert {:error, message} = context.reaped
+    assert message =~ "sandboxes not listed"
+    context
+  end
+
+  step "only the provider within its time remains", context do
+    assert Map.keys(FakeOpenShell.providers(context.gateway)) == ["review-new"]
+    context
+  end
+
+  step "only the review sandbox within its time remains, with its provider", context do
+    assert Map.keys(FakeOpenShell.sandboxes(context.gateway)) == ["review-new"]
+    assert Map.keys(FakeOpenShell.providers(context.gateway)) == ["review-new"]
+    context
+  end
+
+  step "that sandbox and its provider are deleted", context do
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-left"}}, 15_000
+    assert_receive {:openshell_request, "DeleteProvider", %{name: "review-left"}}, 15_000
+    assert FakeOpenShell.sandboxes(context.gateway) == %{}
+    assert FakeOpenShell.providers(context.gateway) == %{}
     context
   end
 
@@ -2223,6 +2630,57 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     end
   end
 
+  # Whether the pull requests the scenario opens are trusted; they are unless it says
+  # not, and then each is opened by someone who is not a member or collaborator and
+  # its review starts on the user's approval of its head (`start/2`). No model's API
+  # key is in the MC's environment, whatever the runner's holds, until `gateway/1`
+  # puts one there.
+  defp trust(context, trusted) do
+    World.put_os_env("OPENAI_API_KEY", nil)
+    World.put_os_env("ANTHROPIC_API_KEY", nil)
+
+    FakeOpenShell.put_env(
+      openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
+    )
+
+    Mc.ensure(OpenShell.Review)
+    Map.put(context, :untrusted, not trusted)
+  end
+
+  # OpenShell installed: the fake gateway, its sandbox's agent playing `sandbox/2`'s
+  # options, and the model's API key on the MC, for its provider and never the sandbox.
+  defp gateway(context) do
+    World.put_env("OPENAI_API_KEY", "sk-test-openai")
+    {:ok, options} = Agent.start_link(fn -> [] end)
+    root = FakeSandbox.root()
+
+    gateway =
+      FakeOpenShell.start(OpenShell.pki_dir(),
+        notify: self(),
+        exec: FakeSandbox.exec(root, self(), fn -> Agent.get(options, & &1) end)
+      )
+
+    # This home's reaper, its units under a user home of the scenario's own.
+    World.put_app_env(:service_user_home, Mc.tmp_dir(context.mc, "user"))
+    World.put_app_env(:service_platform, {:unix, :linux})
+    FakeOpenShell.install!(gateway)
+
+    Map.merge(context, %{gateway: gateway, sandbox_root: root, sandbox_options: options})
+  end
+
+  # A review sandbox of this MC's, with its provider, on the gateway with no binding.
+  defp left(context, name, labels) do
+    FakeOpenShell.put_sandbox(context.gateway, name, owned(labels))
+    FakeOpenShell.put_provider(context.gateway, name, owned(labels))
+  end
+
+  defp owned(labels), do: Map.put(labels, OpenShell.owner_label(), OpenShell.owner())
+
+  defp sandbox(context, options) do
+    Agent.update(context.sandbox_options, &Keyword.merge(&1, options))
+    context
+  end
+
   defp plugin(context, method, input) do
     World.call(context, "plugins.call", %{"id" => @id, "method" => method, "input" => input})
   end
@@ -2280,6 +2738,15 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   defp review(snapshot, number), do: Enum.find(snapshot["reviews"], &(&1["number"] == number))
 
+  defp await_no_runs(thread_id) do
+    runs = HalC2.Streams.state(thread_id) |> HalC2.StreamState.list("run")
+
+    if Enum.any?(runs, &(&1["status"] in ~w(preparing starting running waiting))) do
+      assert_receive {:hal_c2_stream, ^thread_id, _}, 15_000
+      await_no_runs(thread_id)
+    end
+  end
+
   defp key(context, number), do: "#{context.repository}##{number}"
 
   # Lists pull request `number` (opened with a head commit if it is new) with `fields`
@@ -2301,6 +2768,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         "additions" => 5,
         "deletions" => 0
       })
+      |> Map.merge(if context[:untrusted], do: %{"authorAssociation" => "NONE"}, else: %{})
       |> Map.merge(context.prs[number] || %{})
       |> Map.merge(fields)
       |> Map.put("headRefOid", fields["headRefOid"] || context.heads[number])
@@ -2466,6 +2934,17 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     {reply, context} = plugin(context, "refresh", %{})
     assert {:ok, snapshot} = reply
     Map.put(context, :snapshot, snapshot)
+  end
+
+  # A pull request nobody trusted starts on the user's approval of its head, once
+  # asking for its review read it.
+  defp start(%{untrusted: true} = context, number) do
+    {reply, context} =
+      plugin(context, "start", %{"repository" => context.repository, "number" => number})
+
+    assert {:error, message, _} = reply
+    assert message =~ "Approve it on the Reviews page"
+    approve!(context, number)
   end
 
   defp start(context, number) do

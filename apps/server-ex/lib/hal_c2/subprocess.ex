@@ -27,19 +27,28 @@ defmodule HalC2.Subprocess do
   the helper program in between is the same lines, plus the byte offset they reach
   as `{:subprocess_offset, reader, offset}` after each batch.
 
+  With `:sandbox`, the program runs in an OpenShell sandbox over an exec stream
+  (`HalC2.Subprocess.Sandboxed`), with the same messages.
+
   Reader loops recurse through fully qualified calls, so a hot code load moves them
   onto the new module version at the next chunk.
   """
 
   alias Exile.Process, as: Proc
   alias HalC2.Subprocess.Durable
+  alias HalC2.Subprocess.Sandboxed
 
   require Logger
 
   @enforce_keys [:proc, :reader]
   defstruct [:proc, :reader, :durable, :errors]
 
-  @type t :: %__MODULE__{proc: Proc.t(), reader: pid, durable: map | nil, errors: pid | nil}
+  @type t :: %__MODULE__{
+          proc: Proc.t() | Sandboxed.t(),
+          reader: pid,
+          durable: map | nil,
+          errors: pid | nil
+        }
 
   @read_size 65_535
   # A stdout line longer than this is dropped, however it arrives: one
@@ -61,9 +70,19 @@ defmodule HalC2.Subprocess do
   def start(cmd, opts \\ []) do
     {durable, opts} = Keyword.pop(opts, :durable)
 
-    if durable && Durable.enabled?(),
-      do: start_durable(durable, cmd, opts),
-      else: start_owned(cmd, opts)
+    cond do
+      # In a sandbox the program gets only the sandbox's environment and directory,
+      # never `:env` or `:cd` (`HalC2.Subprocess.Sandboxed`).
+      sandbox = opts[:sandbox] ->
+        argv = if is_function(cmd, 1), do: cmd.(nil), else: cmd
+        HalC2.Subprocess.Sandboxed.start(argv, sandbox, self())
+
+      durable && Durable.enabled?() ->
+        start_durable(durable, cmd, opts)
+
+      true ->
+        start_owned(cmd, opts)
+    end
   end
 
   defp start_durable(thread_id, cmd, opts) do
@@ -301,6 +320,9 @@ defmodule HalC2.Subprocess do
   end
 
   @spec write_line(t, iodata) :: :ok | {:error, term}
+  def write_line(%__MODULE__{proc: %Sandboxed{} = proc}, line),
+    do: Sandboxed.write_line(proc, line)
+
   def write_line(%__MODULE__{proc: proc}, line), do: Proc.write(proc, [line, ?\n])
 
   @spec ack(t) :: :ok
@@ -309,11 +331,14 @@ defmodule HalC2.Subprocess do
     :ok
   end
 
-  @spec os_pid(t) :: pos_integer
+  @spec os_pid(t) :: pos_integer | nil
   def os_pid(%__MODULE__{durable: %{dir: dir}}) do
     %{"pid" => pid} = JSON.decode!(File.read!(Path.join(dir, "meta")))
     pid
   end
+
+  # A sandboxed program's process is the sandbox's, not this machine's.
+  def os_pid(%__MODULE__{proc: %Sandboxed{}}), do: nil
 
   def os_pid(%__MODULE__{proc: proc}) do
     {:ok, pid} = Proc.os_pid(proc)
@@ -328,6 +353,9 @@ defmodule HalC2.Subprocess do
   """
   @spec exit_status(t, term) :: {:ok, non_neg_integer} | :error
   def exit_status(%__MODULE__{durable: nil, proc: %Proc{exit_ref: ref}}, {ref, {:ok, status}}),
+    do: {:ok, status}
+
+  def exit_status(%__MODULE__{proc: %Sandboxed{exit_ref: ref}}, {ref, {:ok, status}}),
     do: {:ok, status}
 
   def exit_status(_sub, _message), do: :error
@@ -346,6 +374,7 @@ defmodule HalC2.Subprocess do
     end
   end
 
+  def exited(%__MODULE__{proc: %Sandboxed{} = proc}, timeout), do: Sandboxed.exited(proc, timeout)
   def exited(_sub, _timeout), do: :unknown
 
   @doc "Closes stdin and waits for the program to exit, escalating to signals after `timeout`."
@@ -366,6 +395,9 @@ defmodule HalC2.Subprocess do
       result
     end
   end
+
+  def stop(%__MODULE__{proc: %Sandboxed{} = proc, reader: reader}, timeout),
+    do: Sandboxed.stop(proc, reader, timeout)
 
   def stop(%__MODULE__{proc: proc}, timeout) do
     Proc.close_stdin(proc)
