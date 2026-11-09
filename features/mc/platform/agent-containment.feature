@@ -13,8 +13,9 @@
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (the 15-second sampler)
 #   Shared domain: mc/platform/host-integration.feature holds upstream's scope, slice and
 #   out-of-memory scenarios, and owns which endings stop an agent's scope ("An agent's
-#   detached helpers end with it on Linux"); this file owns what Stop does to them; mc/orchestration/recovery-and-idle-sessions.feature holds the
-#   boot kill by records and marks; threads/heavy-runs.feature holds what clients show.
+#   detached helpers end with it on Linux"); this file owns what Stop does to them;
+#   mc/orchestration/recovery-and-idle-sessions.feature holds the boot kill by records
+#   and marks; threads/heavy-runs.feature holds what clients show.
 Feature: Containing what an agent runs
 
   Every program an agent session runs, and everything it starts, is held together so it can be
