@@ -121,6 +121,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         "the loaded set a conversation was shaped with, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer state :seeded" =>
         "tool pruning's read-back of earlier turns, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :unresolved" =>
+        "tool pruning's segments heard in part still to read back, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer state :prune_timers" =>
         "tool pruning's quiet timers, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer.prune_status/1" =>
