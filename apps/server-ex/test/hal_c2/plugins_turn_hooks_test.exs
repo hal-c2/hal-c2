@@ -554,6 +554,22 @@ defmodule HalC2.PluginsTurnHooksTest do
     await_statuses(thread_id, ["completed"])
   end
 
+  test "a plugin hears a Codex collaboration call that failed as failed",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "run a collab call that fails")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "collab_tool_call"} = call},
+                   5_000
+
+    assert %{"tool" => "wait", "status" => "failed"} = call
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+  end
+
   test "a plugin hears and reads the usage a Codex goal's run ended with between Codex's turns",
        %{work: work} do
     grant(%{"listener" => ["turns:observe"]})

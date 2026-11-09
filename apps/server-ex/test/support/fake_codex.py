@@ -543,6 +543,13 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "imageGeneration", "id": "gen-f", "status": "failed", "inputImages": []}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
+        # "run a collab call that fails": Codex's wait on its agents fails.
+        if "run a collab call that fails" in text:
+            call = {"type": "collabAgentToolCall", "id": "collab-f", "tool": "wait", "senderThreadId": thread_id, "receiverThreadIds": [], "agentsStates": {}}
+            send({"method": "item/started", "params": {**ctx, "item": {**call, "status": "inProgress"}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {**call, "status": "failed"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
         # "use own tools": Codex views an image, makes one, and waits on its agents, none
         # of which the turn shows.
         if "use own tools" in text:

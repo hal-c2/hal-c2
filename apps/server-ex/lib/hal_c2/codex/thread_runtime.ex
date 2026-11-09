@@ -2112,7 +2112,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     # of an earlier turn that ends late is not this turn's use.
     if event == "completed" and this_turn?(params, state),
       do:
-        observe_item(state, "completed", %{
+        observe_item(state, if(item["status"] == "failed", do: "failed", else: "completed"), %{
           "id" => item_id(state.turn.ids, item["id"]),
           "type" => "collab_tool_call",
           "toolName" => item["tool"]
