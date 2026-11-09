@@ -125,6 +125,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         "tool pruning's segments heard in part still to read back, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer state :away" =>
         "tool pruning's threads moved to another MC, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
+      "HalC2Plugins.TokenEconomizer state :strays" =>
+        "tool pruning's uses heard with no project, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer state :prune_timers" =>
         "tool pruning's quiet timers, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer.prune_status/1" =>

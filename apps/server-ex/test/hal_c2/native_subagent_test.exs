@@ -60,6 +60,47 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
     refute_received {:observe, %{"tool" => "CronCreate"}}
   end
 
+  test "a subagent's call is heard with its parent thread's project, though its handle predates the project and run" do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+    {:ok, _} =
+      Registry.register(HalC2.Plugins.Hooks, {:observe, "listener"}, %{
+        id: "listener",
+        dropped: :counters.new(1, [])
+      })
+
+    {:ok, _} =
+      HalC2.Streams.commit("p", :thread, [
+        {"thread", "p", %{"s" => %{"id" => "p", "projectId" => "proj"}}}
+      ])
+
+    ids = %{
+      thread: "p",
+      run: "r1",
+      root_node: "node:root:r1",
+      provider_thread: "pt",
+      driver: "claudeAgent"
+    }
+
+    # The handle as an MC from before kept it, carried over by an upgrade in place.
+    sub =
+      NativeSubagent.start(ids, "agent-1", %{"prompt" => "Schedule it"})
+      |> Map.drop([:run, :project])
+
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", %{
+      "providerToolName" => "CronCreate"
+    })
+
+    assert_received {:observe,
+                     %{
+                       "tool" => "CronCreate",
+                       "threadId" => "p",
+                       "runId" => nil,
+                       "projectId" => "proj",
+                       "subagent" => true
+                     }}
+  end
+
   test "a call its subagent's end cut short is not heard again when the provider reports its end late" do
     start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
 

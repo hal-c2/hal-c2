@@ -494,13 +494,25 @@ defmodule HalC2.Orchestration.NativeSubagent do
         "runId" => Map.get(sub, :run),
         # The provider of the run that started it, though the thread went on in another.
         "provider" => sub.driver,
-        "projectId" => Map.get(sub, :project),
+        "projectId" => Map.get(sub, :project) || parent_project(sub.thread),
         "subagent" => true
       })
       |> HalC2.Plugins.observe()
     end
 
     :ok
+  end
+
+  # A handle from before it kept the project (one an upgrade in place left running)
+  # finds it on the parent thread.
+  defp parent_project(thread_id) do
+    HalC2.Streams.read(thread_id, fn state ->
+      (StreamState.get(state, "thread")[thread_id] || %{})["projectId"]
+    end)
+  rescue
+    _ -> nil
+  catch
+    _, _ -> nil
   end
 
   @doc "What the subagent said so far, or nil."

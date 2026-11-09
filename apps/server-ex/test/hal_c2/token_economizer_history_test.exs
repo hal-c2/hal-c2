@@ -834,6 +834,67 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert [%{"unresolved" => [], "away" => []}] = TokenEconomizer.prune_status(state)["projects"]
   end
 
+  test "a segment heard in part whose run is older than the last 50 is read back, not taken as rolled back",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose", "toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    state = observe(state, started(thread, "r2", p, %{}))
+
+    # The feed drops some of r2, the project goes quiet while r2 runs on, and r2 ends.
+    state = observe(state, started("other", "o1", p, %{"dropped" => 1, "waiting" => 0}))
+    ended("other", "o1", 1, [])
+    state = observe(state, finished("other", "o1", 1))
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    state = observe(state, finished(thread, "r2", 2))
+
+    # r2 used CronCreate, and 50 turns end after it before anything reads it back.
+    ended(thread, "r2", 2, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+    for n <- 3..52, do: ended(thread, "r#{n}", n, [])
+
+    assert {nil, state} = shape(state, "other", "o2", p)
+    assert state.unresolved == %{}
+  end
+
+  test "a subagent's use heard with no project holds its provider's pruning off until its thread names one",
+       %{thread: thread, project: p} do
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, "other", "o1", p)
+
+    # The plugin restarted under a subagent whose handle had neither run nor project.
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+
+    state =
+      observe(state, %{
+        "type" => "turn.item",
+        "threadId" => thread,
+        "runId" => nil,
+        "projectId" => nil,
+        "provider" => "claudeAgent",
+        "itemType" => "dynamic_tool_call",
+        "tool" => "CronCreate",
+        "status" => "completed",
+        "subagent" => true
+      })
+
+    assert {nil, state} = shape(state, "other", "o2", p)
+    assert [%{"unresolved" => [^thread]}] = TokenEconomizer.prune_status(state)["projects"]
+
+    # Its thread's next turn names the project: the use is the project's.
+    state = observe(state, started(thread, "r2", p, %{}))
+    assert state.strays == %{}
+    assert {nil, _state} = shape(state, "other", "o3", p)
+  end
+
   defp subagent(thread) do
     case HalC2.Streams.state(thread) |> HalC2.StreamState.list("subagent") do
       [entity] -> {:ok, entity}

@@ -139,6 +139,38 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       finish: ["a", "r4", 3],
       thread_returned: ["b"],
       start: ["a", "r5", 4, true, false]
+    ],
+    # b's turn ends here, then turns it runs on the other MC push it out of the
+    # last page of its history.
+    window: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      finish: ["a", "r1", 1],
+      start: ["b", "r2", 1, true, true],
+      use: ["b", "r2", 1, "CronCreate", true, :own],
+      start: ["a", "r3", 2, false, false],
+      finish: ["a", "r3", 2],
+      tick: [],
+      finish: ["b", "r2", 1],
+      thread_moved: ["b", nil, nil],
+      ran_away: ["b", "r4", 2],
+      ran_away: ["b", "r5", 3],
+      ran_away: ["b", "r6", 4],
+      ran_away: ["b", "r7", 5],
+      thread_returned: ["b"],
+      start: ["a", "r8", 3, true, false]
+    ],
+    stray: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      finish: ["a", "r1", 1],
+      down: [],
+      up: [],
+      stray_use: ["a", "CronCreate"],
+      start: ["b", "r2", 1, true, true],
+      start: ["a", "r3", 2, false, false],
+      finish: ["b", "r2", 1],
+      start: ["b", "r4", 2, true, false]
     ]
   ]
 
@@ -161,6 +193,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     home = HalC2.Prop.scratch_home("token-economizer-prune")
     File.write!(Path.join(home, "config.json"), "{}")
     Application.put_env(:hal_c2, :settings_check_ms, nil)
+    # Pages of 3 runs, so a segment's runs fall behind the last page.
+    Application.put_env(:hal_c2, :token_economizer_history_page, 3)
 
     HalC2.Prop.start_services([
       HalC2.Settings,
@@ -179,6 +213,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     Process.delete(:drop)
     HalC2.Prop.stop_services()
     Application.delete_env(:hal_c2, :settings_check_ms)
+    Application.delete_env(:hal_c2, :token_economizer_history_page)
   end
 
   # Thresholds low enough for one unused conversation to propose a tool, and no
@@ -247,7 +282,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # `%{thread, run, tool, period, told}`, `told` once the feed said it dropped them.
   # `named`: the tools the person last turned off by name, which turns go on to use
   # more often than others (a conversation shaped before still has them). `gone`: the
-  # deleted threads. `away`: those moved to another MC, which may come back.
+  # deleted threads. `away`: those moved to another MC, which may come back. `strays`:
+  # `{thread, tool}`, a subagent's uses heard with no project, until its thread's next
+  # turn names it.
   def initial_state,
     do: %{
       up: true,
@@ -265,7 +302,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       runs: 0,
       forked: false,
       gone: [],
-      away: []
+      away: [],
+      strays: []
     }
 
   def command(s) do
@@ -306,7 +344,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       forkable != [] and {1, fork_call(s, forkable)},
       live != [] and {1, {:call, __MODULE__, :thread_gone, [elements(live)]}},
       here != [] and {1, moved_call(s, here)},
-      s.away != [] and {2, {:call, __MODULE__, :thread_returned, [elements(s.away)]}}
+      s.away != [] and {2, {:call, __MODULE__, :thread_returned, [elements(s.away)]}},
+      s.away != [] and s.runs < @max_runs and {2, ran_away_call(s)},
+      s.up and here != [] and
+        {1, {:call, __MODULE__, :stray_use, [elements(here), elements(@tools)]}}
     ]
     |> Enum.filter(& &1)
     |> frequency()
@@ -322,6 +363,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   # A turn that ends before the feed tells of it starting, the quiet timer perhaps
   # firing between.
+  defp ran_away_call(s) do
+    let thread <- elements(s.away) do
+      {:call, __MODULE__, :ran_away, [thread, "r#{s.runs + 1}", next_ordinal(s, thread)]}
+    end
+  end
+
   # Its turn under way, if any, ends on the other MC.
   defp moved_call(s, threads) do
     let thread <- elements(threads) do
@@ -433,6 +480,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   def precondition(s, {:call, _, :thread_returned, [thread]}), do: thread in s.away
 
+  def precondition(s, {:call, _, :ran_away, [thread, _run, ordinal]}),
+    do: thread in s.away and s.runs < @max_runs and ordinal == next_ordinal(s, thread)
+
+  def precondition(s, {:call, _, :stray_use, [thread, _tool]}),
+    do: s.up and Map.has_key?(s.threads, thread) and thread not in (s.gone ++ s.away)
+
   def precondition(_s, _call), do: true
 
   def next_state(s, _res, {:call, _, :start, [thread, run, ordinal, _new?, _first?]}) do
@@ -446,6 +499,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       )
       |> put_in([:open, thread], run)
       |> Map.update!(:runs, &(&1 + 1))
+
+    # Its turn names its project, which the uses heard with none are then the evidence of.
+    {settled, strays} = Enum.split_with(s.strays, &(elem(&1, 0) == thread and s.up))
+    s = %{s | strays: strays, owed: Enum.uniq(s.owed ++ Enum.map(settled, &elem(&1, 1)))}
 
     cond do
       not s.up ->
@@ -535,8 +592,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def next_state(s, _res, {:call, _, :restore, [tools]}),
     do: %{s | named: s.named -- (tools || s.named)}
 
+  # A restart loses the uses heard with no project.
   def next_state(s, _res, {:call, _, :down, _}),
-    do: untold(%{s | up: false, heard: [], read: []})
+    do: untold(%{s | up: false, heard: [], read: [], strays: []})
 
   def next_state(s, _res, {:call, _, :up, _}), do: %{s | up: true, period: s.period + 1}
   def next_state(s, _res, {:call, _, :history, [on]}), do: %{s | history: on}
@@ -578,6 +636,22 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def next_state(s, _res, {:call, _, :thread_returned, [thread]}),
     do: %{s | away: List.delete(s.away, thread)}
 
+  def next_state(s, _res, {:call, _, :ran_away, [thread, run, ordinal]}) do
+    s
+    |> update_in(
+      [:threads, thread, :runs],
+      &(&1 ++ [%{id: run, ordinal: ordinal, status: "completed", tools: []}])
+    )
+    |> Map.update!(:runs, &(&1 + 1))
+  end
+
+  def next_state(s, _res, {:call, _, :stray_use, [thread, tool]}),
+    do: %{
+      told(s)
+      | strays: Enum.uniq(s.strays ++ [{thread, tool}]),
+        used: Enum.uniq(s.used ++ [tool])
+    }
+
   def next_state(s, _res, _call), do: s
 
   # The feed delivers an event, which says what it dropped before it.
@@ -598,6 +672,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     subset?(next.owed, res.used) and subset?(res.used, next.used) and
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
       shaped_whole?(s, res, denied) and disjoint?(denied, lost(s)) and gone_holds_nothing?(s, res) and
+      disjoint?(denied, strayed(s)) and
       res.prompts <= ended_runs(next) and
       Enum.all?(@tools -- res.used, &(streak(res, &1) <= unused_runs(next, &1)))
   end
@@ -654,6 +729,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         Enum.any?(s.threads[t].runs, &(&1.id == id and &1.status != "rolled_back")),
         do: tool
   end
+
+  # The uses heard with no project, of threads neither deleted nor, for now, away.
+  defp strayed(s), do: for({t, tool} <- s.strays, t not in (s.gone ++ s.away), do: tool)
 
   defp streak(res, tool),
     do: max(res.streaks[tool]["prompts"] || 0, res.live_streaks[tool]["prompts"] || 0)
@@ -737,7 +815,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
       partial =
         for({t, %{partial: true, runs: runs}} <- plugin.convs, do: {t, runs}) ++
-          for({{t, _}, marks} <- Map.get(plugin, :unresolved, %{}), do: {t, marks})
+          for({{t, _}, marks} <- Map.get(plugin, :unresolved, %{}), do: {t, marks}) ++
+          for({{t, _}, _} <- Map.get(plugin, :strays, %{}), do: {t, []})
 
       partial = for {t, marks} <- partial, do: {t, Enum.map(marks, & &1["run"])}
 
@@ -915,6 +994,30 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     moved = %{"mc" => "elsewhere@host", "label" => "Elsewhere", "at" => "2026-11-09T00:00:00Z"}
     ended = if run, do: [run_row(thread, run, ordinal, "completed")], else: []
     commit(thread, [{"thread", thread, %{"s" => %{"movedTo" => moved}}} | ended])
+    snapshot()
+  end
+
+  # It runs a turn on the other MC, which its history has once it is back.
+  def ran_away(thread, run, ordinal) do
+    commit(thread, [run_row(thread, run, ordinal, "completed")])
+    snapshot()
+  end
+
+  # A subagent of the thread's, its handle from before it kept its run and project,
+  # uses `tool` (its child thread keeps the call).
+  def stray_use(thread, tool) do
+    deliver(%{
+      "type" => "turn.item",
+      "threadId" => thread,
+      "runId" => nil,
+      "projectId" => nil,
+      "provider" => @provider,
+      "itemType" => "dynamic_tool_call",
+      "tool" => tool,
+      "status" => "completed",
+      "subagent" => true
+    })
+
     snapshot()
   end
 
