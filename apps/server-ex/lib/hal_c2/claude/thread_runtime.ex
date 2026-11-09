@@ -122,7 +122,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp mcp(_state, %{sandbox: true} = turn), do: HalC2.OpenShell.Review.mcp(turn)
   defp mcp(state, turn), do: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
 
-  defp disallowed_tools(mcp), do: if(HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: [])
+  # A sandboxed review's agent has no HAL-C2 workers to hand work to, so it keeps its own.
+  defp disallowed_tools(%{sandbox: true}, _mcp), do: []
+
+  defp disallowed_tools(_turn, mcp),
+    do: if(HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: [])
 
   def driver, do: "claudeAgent"
 
@@ -396,7 +400,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> auto_compact(Entities.instance(ids))
       |> with_launch_args(turn, Entities.instance(ids))
       |> Map.put(:mcp, mcp(state, turn))
-      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
+      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(turn, &1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
 
     # Where the turn resumes the conversation, until Claude writes (`kept_head/3`).

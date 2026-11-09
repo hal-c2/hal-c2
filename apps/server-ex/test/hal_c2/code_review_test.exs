@@ -1063,6 +1063,28 @@ defmodule HalC2.CodeReviewTest do
       assert FakeOpenShell.sandboxes(g) == %{}
     end
 
+    # A sandboxed agent has no HAL-C2 workers, so keeping agents to them takes nothing.
+    test "keeps the subagents of Claude in a sandbox while agents here are kept to the workers of HAL-C2" do
+      {:ok, _} = HalC2.Settings.update(&Map.put(&1, "nativeSubagents", "hal-c2"))
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+
+      assert_receive {:sandbox_exec, ["claude" | args], _}, 15_000
+      refute "--disallowedTools" in args
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+    end
+
+    test "keeps the subagents of Codex in a sandbox while agents here are kept to the workers of HAL-C2" do
+      {:ok, _} = HalC2.Settings.update(&Map.put(&1, "nativeSubagents", "hal-c2"))
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+
+      assert_receive {:sandbox_thread_start, params}, 15_000
+      refute get_in(params, ["config", "features"])
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+    end
+
     # Claude's launch arguments and home are this machine's: none of them reach the
     # sandbox or the agent's argv.
     test "gives Claude in a sandbox none of the launch arguments of this machine",

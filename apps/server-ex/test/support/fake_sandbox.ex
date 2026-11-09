@@ -21,7 +21,8 @@ defmodule HalC2.Test.FakeSandbox do
   `opts` may be a function giving them, asked again for each command. `test` hears
   `{:sandbox_exec, argv, %{workdir, environment}}` for every command, and
   `{:sandbox_reported, status, body}` for each answer the broker gave the agent, and
-  Claude's `{:sandbox_prompt, content}` for each message it is sent. With
+  Claude's `{:sandbox_prompt, content}` for each message it is sent, and Codex's
+  `{:sandbox_thread_start, params}` for each thread it starts. With
   `hold: program`, a command of `program` waits to start for `:release`, sent to the
   pid of `{:sandbox_held, pid}`.
   """
@@ -136,6 +137,7 @@ defmodule HalC2.Test.FakeSandbox do
   end
 
   defp codex(%{"method" => "thread/start", "id" => id, "params" => params}, io, s) do
+    send(s.test, {:sandbox_thread_start, params})
     server = get_in(params, ["config", "mcp_servers", "hal-c2"]) || %{}
     out(io, %{"id" => id, "result" => %{"thread" => %{"id" => "sandboxed-thread"}}})
 

@@ -1661,6 +1661,9 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # Codex takes `features` only when a native thread starts, so the choice is read then
   # and kept for the thread's turns.
+  # A sandboxed review's agent has no HAL-C2 workers to hand work to, so it keeps its own.
+  defp workers_only(state, %{sandbox: true}), do: %{state | workers_only: false}
+
   defp workers_only(state, turn),
     do: %{state | workers_only: HalC2.Mcp.workers_only?(mcp(state, turn))}
 
