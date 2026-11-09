@@ -117,9 +117,10 @@ What a running plugin adds reaches every app connected to that machine:
   the conversation. A plugin can keep its threads out of the list and show them
   on its page instead. They stay on their machine while the plugin runs there.
   Turn the plugin off and they are ordinary threads again, free to move, unless
-  the plugin keeps its threads on their machine for good, as Code Review does:
-  those cannot be moved or exported, even once the plugin is off or removed.
-  Threads it started before it kept them stay too, until you remove the plugin.
+  the plugin keeps its threads on their machine for good, as Code Review does.
+  The threads it starts from then on cannot be moved or exported, even once the
+  plugin is off or removed. The ones it started before stay too, but only while
+  the plugin is installed.
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.

@@ -383,7 +383,7 @@ function installClient(ctx: World): void {
   const refuseKept = (id: string) => {
     const plugin = environment.kept[id];
     if (plugin === undefined) return;
-    const title = environment.threads.find((candidate) => candidate.id === id)?.title;
+    const title = environment.threads.find((candidate) => candidate.id === id)?.title ?? id;
     throw new Error(`${title} was started by ${plugin}, which keeps it on this machine.`);
   };
   // The MC that holds a thread moves it, under the rules of HalC2.ThreadMove.
