@@ -284,8 +284,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
       {a, b} =
         (params["examples"] || %{"x x" => 1})
         |> Map.keys()
-        |> Enum.map(&String.split(&1, " ", parts: 2))
-        |> Enum.min_by(fn [a | _] -> String.length(a) end)
+        |> Enum.min_by(&example_rank/1)
+        |> String.split(" ", parts: 2)
         |> List.to_tuple()
         |> then(fn
           {a, b} -> {a, b}
@@ -456,6 +456,26 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
       "dropped" => state.dropped |> MapSet.to_list() |> Enum.sort()
     }
   end
+
+  # An arg repair keeps the one example its claim shows, the shortest label it
+  # rewrote, and how often that one came back; every label it ever saw would
+  # grow the stored fact with each new test file.
+  defp keep_example(examples, key) do
+    case Enum.min_by(Map.keys(examples), &example_rank/1, fn -> nil end) do
+      nil ->
+        %{key => 1}
+
+      ^key ->
+        %{key => examples[key] + 1}
+
+      best ->
+        if example_rank(key) < example_rank(best),
+          do: %{key => 1},
+          else: %{best => examples[best]}
+    end
+  end
+
+  defp example_rank(key), do: {key |> String.split(" ", parts: 2) |> hd() |> String.length(), key}
 
   # --- helpers over forms ----------------------------------------------------------------------
 
@@ -853,9 +873,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
                   state
 
                 fact ->
-                  examples =
-                    Map.update(fact.params["examples"] || %{}, "#{a} #{b}", 1, &(&1 + 1))
-
+                  examples = keep_example(fact.params["examples"] || %{}, "#{a} #{b}")
                   put_in(state.facts[id], put_in(fact.params["examples"], examples))
               end
           end

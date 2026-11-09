@@ -963,6 +963,28 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
                "spec/models/user_spec.rb models/user_spec.rb" => 6
              }
     end
+
+    test "a fact keeps one example however many labels it rewrote" do
+      tasks =
+        Enum.map(0..40, fn i ->
+          [
+            edit("/r/app/m#{i}.rb"),
+            bash(
+              "rspec spec/models/user#{i}_spec.rb",
+              "ERROR: file or directory not found: spec/models/user#{i}_spec.rb",
+              1
+            ),
+            bash("rspec models/user#{i}_spec.rb", "3 examples, 0 failures", 0)
+          ]
+        end)
+
+      {state, _} = stream(tasks)
+      [fact] = Enum.filter(Map.values(state.facts), &(&1.family == "arg_repair"))
+
+      # The shortest rewrite, the one the claim shows.
+      assert fact.params["examples"] == %{"spec/models/user0_spec.rb models/user0_spec.rb" => 1}
+      assert EnvFacts.claim(fact) =~ "(`models/user0_spec.rb`, not `spec/models/user0_spec.rb`)"
+    end
   end
 
   # --- env value -----------------------------------------------------------------------------------
