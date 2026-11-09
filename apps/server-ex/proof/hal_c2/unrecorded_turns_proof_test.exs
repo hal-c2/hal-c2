@@ -39,6 +39,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       # And every call: one that ends a dry turn (a stop the provider refuses) hands its
       # end over, and the failure goes with the turn.
       "HalC2.Orchestration.Unrecorded.handle_call/4" => ~w(interrupt-dry interrupt-driven),
+      # The end a runtime hands over goes as its handling of the message or call returns,
+      # in the same step, with all the work that handling ended.
+      "HalC2.Orchestration.Unrecorded.hand_over/3" => ~w(hand-over interrupt-dry),
       "HalC2.Orchestration.TurnWatch.claim/2" => "take",
       "HalC2.Orchestration.TurnWatch.release/1" => "finish",
       "HalC2.Orchestration.TurnWatch.driven?/1" => ~w(interrupt-driven interrupt-undriven),

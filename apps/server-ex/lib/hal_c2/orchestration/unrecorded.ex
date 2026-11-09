@@ -33,6 +33,9 @@ defmodule HalC2.Orchestration.Unrecorded do
   alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.Streams
 
+  # The end `hand_over/3` holds until the runtime's handling returns, or `:none`.
+  @handing :hal_c2_unrecorded_hand_over
+
   @doc """
   Handles `message` with `handle` (the runtime's own `handle_info/2`). A turn the store
   fails starts its runtime's stop (`module.handle_call(:interrupt, ...)`).
@@ -97,11 +100,45 @@ defmodule HalC2.Orchestration.Unrecorded do
     end)
   end
 
-  # The turn's end, once handed over, takes the runtime out of dry mode.
+  @doc """
+  Hands the end of a turn that went unrecorded to TurnWatch (`TurnWriter.finish/3`),
+  with the work the runtime ended (`ended:`), so what it keeps running in the
+  background stays. In the runtime's handling of a message or call the hand-over waits
+  for the handling to return: the work it ends after the turn's end (the background
+  work an ACP agent's stopped process takes with it) goes with that end too.
+  """
+  def hand_over(thread_id, run, ending) do
+    if Process.get(@handing),
+      do: Process.put(@handing, {thread_id, run, ending}),
+      else: send_over(thread_id, run, ending)
+  end
+
+  defp send_over(thread_id, run, ending),
+    do:
+      TurnWatch.unrecorded(
+        thread_id,
+        run,
+        Map.put(ending, :ended, Streams.take_unrecorded_ends(thread_id))
+      )
+
+  # The turn's end, once handed over, takes the runtime out of dry mode. One inside
+  # another (the stop `failed/6` starts) leaves both to the outer one.
   defp dry(state, fun) do
-    state.thread_id
-    |> Streams.unrecorded(fun)
-    |> map_state(&unmark(&1, state.unrecorded.run))
+    if Process.get(@handing) do
+      Streams.unrecorded(state.thread_id, fun)
+    else
+      Process.put(@handing, :none)
+
+      result =
+        try do
+          Streams.unrecorded(state.thread_id, fun)
+        after
+          with {thread_id, run, ending} <- Process.delete(@handing),
+               do: send_over(thread_id, run, ending)
+        end
+
+      map_state(result, &unmark(&1, state.unrecorded.run))
+    end
   end
 
   # A marker whose turn is no longer the runtime's is gone, however that turn ended.

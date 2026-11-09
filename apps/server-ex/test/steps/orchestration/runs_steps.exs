@@ -2492,8 +2492,57 @@ defmodule HalC2.Steps.Orchestration.Runs do
   # --- the same on an ACP agent (Grok), which never answers the MC's stop -------------
 
   step "a Grok turn is running on a Grok that never answers the MC's stop", context do
+    context |> unanswering_grok() |> long_grok_turn()
+  end
+
+  step "a Grok turn is running on a Grok that never answers the MC's stop, after a turn that left a command running in the background",
+       context do
+    context = unanswering_grok(context)
+    context = HalC2.Test.FakeAcp.send_message(context, "Start the dev server in the background")
+    World.await_row(World.thread_id(context, "Grok"), &(&1["runningBackgroundTasks"] != []))
+    World.await_runs(context, "Grok", ["completed"])
+
+    background =
+      for %{"status" => "running", "id" => id} <- World.entities(context, "Grok", "turn-item"),
+          do: id
+
+    assert background != []
+    context |> Map.put(:background, background) |> long_grok_turn()
+  end
+
+  # Grok's background shell (task-sh), as `fake_acp.py` starts one.
+  @grok_background [
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "sh-1",
+        "title" => "npm run dev",
+        "kind" => "execute",
+        "status" => "in_progress",
+        "rawInput" => %{"command" => "npm run dev"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "sh-1",
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "Started."}}
+        ],
+        "rawOutput" => %{
+          "type" => "BackgroundTaskStarted",
+          "task_id" => "task-sh",
+          "command" => "npm run dev"
+        }
+      }
+    }
+  ]
+
+  defp unanswering_grok(context) do
     turns = [
-      %{"match" => "a long task", "steps" => [%{"text" => "Working on it."}, %{"hang" => true}]}
+      %{"match" => "a long task", "steps" => [%{"text" => "Working on it."}, %{"hang" => true}]},
+      %{"match" => "in the background", "steps" => @grok_background}
       | HalC2.Test.FakeAcp.turns()
     ]
 
@@ -2509,14 +2558,20 @@ defmodule HalC2.Steps.Orchestration.Runs do
         enabled: true
       )
       |> HalC2.Test.FakeAcp.thread("Grok")
-      |> HalC2.Test.FakeAcp.send_message("a long task")
+  end
+
+  defp long_grok_turn(context) do
+    context = HalC2.Test.FakeAcp.send_message(context, "a long task")
+    run = World.await_latest_run(context, "Grok", "running")
 
     # Its text streams into the message as the turn goes.
     World.await_stream(World.thread_id(context, "Grok"), fn state ->
-      Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
+      Enum.any?(
+        HalC2.StreamState.list(state, "message"),
+        &(&1["role"] == "assistant" and &1["runId"] == run["id"])
+      )
     end)
 
-    [run] = World.entities(context, "Grok", "run")
     Map.put(context, :running, run["id"])
   end
 
@@ -2538,16 +2593,38 @@ defmodule HalC2.Steps.Orchestration.Runs do
     send(pid, {:json_rpc, conn, {:notification, "session/update", params}})
     assert %{unrecorded: %{run: run}, interrupted: true} = :sys.get_state(pid)
     assert run == context.running
-    assert [%{"status" => "running"}] = World.entities(context, "Grok", "run")
+    assert %{"status" => "running"} = grok_run(context)
     context
   end
 
   step "the Grok run is failed because it could not be saved", context do
-    World.await_runs(context, "Grok", ["failed"])
-    [run] = World.entities(context, "Grok", "run")
-    assert run["failure"] =~ "The turn could not be saved"
+    World.await_thread(context, "Grok", fn state ->
+      HalC2.StreamState.get(state, "run")[context.running]["status"] == "failed"
+    end)
+
+    assert grok_run(context)["failure"] =~ "The turn could not be saved"
     context
   end
+
+  # Stopping Grok's process, for the turn it never stopped, took the earlier turn's
+  # background shell with it.
+  step "the earlier Grok turn's background command is failed", context do
+    items = World.entities(context, "Grok", "turn-item")
+
+    assert for(%{"id" => id, "status" => status} <- items, id in context.background, do: status) ==
+             Enum.map(context.background, fn _ -> "failed" end)
+
+    assert Enum.filter(
+             items ++ World.entities(context, "Grok", "node"),
+             &(&1["status"] == "running")
+           ) ==
+             []
+
+    context
+  end
+
+  defp grok_run(context),
+    do: Enum.find(World.entities(context, "Grok", "run"), &(&1["id"] == context.running))
 
   step "the next message to Grok runs and its reply is recorded", context do
     context = HalC2.Test.FakeAcp.send_message(context, "Next", "Grok")

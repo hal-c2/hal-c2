@@ -376,6 +376,17 @@ Feature: Runs and turns
     Then the Grok run is failed because it could not be saved
     And the next message to Grok runs and its reply is recorded
 
+  # Review of hal-c2#1398: the MC stops a Grok that never answers its stop, which ends the
+  # background work it kept from earlier turns, but the run's end recorded later left that
+  # work running.
+  @mc
+  Scenario: A run whose events cannot be recorded ends the background work its stopped ACP agent took with it
+    Given a Grok turn is running on a Grok that never answers the MC's stop, after a turn that left a command running in the background
+    And Grok has half a second to answer a stop
+    When the MC fails to record the Grok turn's events
+    Then the Grok run is failed because it could not be saved
+    And the earlier Grok turn's background command is failed
+
   # hal-c2#1398: a Pi turn that had shown output and went on after the MC's abort of it,
   # when the store could not record it, had no deadline and left the run running.
   @mc

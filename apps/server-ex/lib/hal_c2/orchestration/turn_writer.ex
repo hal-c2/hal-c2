@@ -17,6 +17,7 @@ defmodule HalC2.Orchestration.TurnWriter do
     Entities,
     NativeSubagent,
     TurnWatch,
+    Unrecorded,
     UserFacingErrors
   }
 
@@ -653,15 +654,12 @@ defmodule HalC2.Orchestration.TurnWriter do
         provider_turn =
           if unrecorded.provider_turn == :pending, do: status, else: unrecorded.provider_turn
 
-        # With the work it ended, so what it keeps running in the background stays.
-        ended = HalC2.Streams.take_unrecorded_ends(state.thread_id)
-
         # TurnWatch watches the runtime until the end records: one that goes first
         # takes its app-server, and the work it kept running, with it.
-        TurnWatch.unrecorded(
+        Unrecorded.hand_over(
           state.thread_id,
           run_id,
-          Map.merge(unrecorded, %{provider_turn: provider_turn, ended: ended})
+          Map.put(unrecorded, :provider_turn, provider_turn)
         )
 
         :ok
