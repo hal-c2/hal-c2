@@ -3044,15 +3044,14 @@ defmodule HalC2.Steps.Providers.Pi do
     run = World.latest_run(context, context.thread)
     instance = context.provider
 
-    assert [%{"unconfirmedRunId" => run_id}] =
-             for(
-               t <- StreamState.list(state(context), "provider-thread"),
-               t["providerInstanceId"] == instance,
-               do: t
-             )
+    unconfirmed = fn ->
+      for t <- StreamState.list(state(context), "provider-thread"),
+          t["providerInstanceId"] == instance,
+          do: t["unconfirmedRunId"]
+    end
 
-    assert run_id == run["id"]
-    # A turn still waiting on the compaction stops at once.
+    assert unconfirmed.() == [run["id"]]
+    # A turn still waiting on the compaction stops at once, and Pi never had its prompt.
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "run.interrupt",
@@ -3060,6 +3059,62 @@ defmodule HalC2.Steps.Providers.Pi do
       })
 
     FakeAcp.await_run(context, "interrupted")
+    assert unconfirmed.() == [run["id"]]
+    context
+  end
+
+  # Pi compacts for longer than the scenario runs once the first turn settled, and says
+  # so only as the next prompt reaches it, just before turning that prompt back.
+  step "Pi is compacting a thread's conversation it has not said it compacts", context do
+    turns = [
+      %{
+        "match" => "compact after",
+        "compactAfter" => 600,
+        "compactUnheard" => true,
+        "steps" => [%{"text" => "Done."}]
+      }
+    ]
+
+    context
+    |> install(%{"turns" => turns ++ FakeAcp.pi_turns(), "rejectWhileCompacting" => true})
+    |> FakeAcp.thread()
+    |> turn("compact after this")
+  end
+
+  step "the thread comes back to Pi from Codex and Pi turns its prompt back for the compaction",
+       context do
+    thread_id = World.thread_id(context, context.thread)
+    context = World.providers(context)
+    codex = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+    pi = %{"instanceId" => context.provider, "model" => "fake/one"}
+
+    switch = fn context, selection ->
+      context =
+        World.command(context, %{
+          "type" => "provider.switch",
+          "threadId" => thread_id,
+          "modelSelection" => selection
+        })
+
+      assert {:ok, _} = context.reply
+      context
+    end
+
+    context = context |> switch.(codex) |> turn("work on Codex")
+    context = context |> switch.(pi) |> FakeAcp.send_message("back on Pi")
+    FakeAcp.await_run(context, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+    await_runtime(pid, &(&1.prompt_held == :rejected), "Pi never turned the prompt back")
+    context
+  end
+
+  step "the run shows the compaction while its prompt waits", context do
+    run = World.latest_run(context, context.thread)
+    assert [%{"runId" => run_id}] = items(context, "compaction")
+    assert run_id == run["id"]
+    log = FakeAcp.log(context)
+    assert Enum.any?(log, &match?(%{"rejected" => _}, &1))
+    refute Enum.any?(log, &match?(%{"accepted" => "back on Pi"}, &1))
     context
   end
 
@@ -4251,6 +4306,25 @@ defmodule HalC2.Steps.Providers.Pi do
            ) == []
 
     context
+  end
+
+  # Until the Pi runtime's state shows `done?`, which nothing outside it says yet.
+  defp await_runtime(pid, done?, failure, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 10_000
+
+    cond do
+      done?.(:sys.get_state(pid)) ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk(failure)
+
+      true ->
+        receive do
+        after
+          20 -> await_runtime(pid, done?, failure, deadline)
+        end
+    end
   end
 
   # The runtime holds the steer while Pi compacts; nothing outside it says so yet.

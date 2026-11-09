@@ -1691,7 +1691,12 @@ defmodule HalC2.Pi.ThreadRuntime do
     |> flush()
     |> Map.put(:compactions, n)
     |> Map.put(:compacting, true)
-    |> ensure_item(native, :compaction, %{"driver" => "pi", "title" => "Compacting context..."})
+    # A compaction is Pi's own work, and may have begun before the prompt went
+    # out (its start can arrive after the turn's): Pi may yet turn the prompt
+    # back, so it is no proof Pi took it.
+    |> ensure_item(native, :compaction, %{"driver" => "pi", "title" => "Compacting context..."},
+      confirms: false
+    )
   end
 
   defp event("compaction_end", event, state) do

@@ -17,7 +17,11 @@
 #                    (a turn may also set "afterCompaction": true, to start only once a
 #                    running compaction ends, "startDelaySec": n, to start its agent late,
 #                    "startUntil": name, to start it once the file FAKE_DIR/<name> exists,
-#                    or "compactAfter": n, to compact for n seconds once it settled,
+#                    or "compactAfter": n, to compact for n seconds once it settled
+#                    (with "compactUnheard": true, its `compaction_start` is sent only
+#                    once the next prompt reaches Pi, just before Pi turns it back, and
+#                    its n seconds count from then; "compactUnheardUntil": name holds
+#                    that prompt until the file FAKE_DIR/<name> exists),
 #                    or "wake": {"text", "steps"[, "quiet": true]}: once it settled, Pi runs
 #                    that turn by itself, as when an extension wakes it, once per
 #                    process; a "quiet" one shows nothing until a prompt reaches Pi, and
@@ -80,6 +84,9 @@ SEND_LOCK = threading.Lock()
 # its call to its answer, counted apart so scripted events do not end it).
 compacting = [False]
 compacts_out = [0]
+# A compaction whose `compaction_start` the next prompt overtakes (`compactUnheard`):
+# the turn that compacts, or None.
+unheard_compaction = [None]
 
 
 def is_compacting():
@@ -306,10 +313,28 @@ def read():
     return msg
 
 
+def end_compaction_in(seconds):
+    """Ends the compaction a turn left running, `seconds` from now."""
+    def later():
+        time.sleep(float(seconds))
+        send({"type": "compaction_end", "aborted": False,
+              "result": {"summary": "Compacted after the turn.", "tokensBefore": 1000,
+                         "estimatedTokensAfter": 200}})
+
+    threading.Thread(target=later, daemon=True).start()
+
+
 def rejected(msg, compacting=False):
     """Pi 1.4 turns a prompt back while it compacts (`compacting`: it is, mid-turn)."""
     if msg.get("type") == "prompt" and (compacting or (
             config().get("rejectWhileCompacting") and is_compacting())):
+        turn, unheard_compaction[0] = unheard_compaction[0], None
+        if turn:
+            if "compactUnheardUntil" in turn:
+                gate = os.path.join(DIR, turn["compactUnheardUntil"])
+                serve_while(lambda: not os.path.exists(gate))
+            send({"type": "compaction_start", "reason": "threshold"})
+            end_compaction_in(turn["compactAfter"])
         log({"rejected": msg.get("message")})
         respond(msg, error=COMPACTING_ERROR)
         return True
@@ -668,15 +693,12 @@ def run_turn(text, wake=None):
     # between turns), once per process.
     if "compactAfter" in turn:
         # Pi compacts once the turn settled: its events come between turns.
-        send({"type": "compaction_start", "reason": "threshold"})
-
-        def later():
-            time.sleep(float(turn["compactAfter"]))
-            send({"type": "compaction_end", "aborted": False,
-                  "result": {"summary": "Compacted after the turn.", "tokensBefore": 1000,
-                             "estimatedTokensAfter": 200}})
-
-        threading.Thread(target=later, daemon=True).start()
+        if turn.get("compactUnheard"):
+            compacting[0] = True
+            unheard_compaction[0] = turn
+        else:
+            send({"type": "compaction_start", "reason": "threshold"})
+            end_compaction_in(turn["compactAfter"])
     global settled_sent
     if not settled_sent:
         settled_sent = True

@@ -691,6 +691,15 @@ Feature: Pi
     Then the run shows the extension's failure while its prompt waits
     And the history it hands over is still unconfirmed
 
+  # Pi may have begun compacting before the prompt went out and say so only after it:
+  # the compaction shows in the run, but Pi still turns the prompt back, so it is no
+  # proof Pi took the prompt, and the history stays unconfirmed (#1363 review).
+  Scenario: A compaction Pi began before the prompt does not confirm its handoff
+    Given Pi is compacting a thread's conversation it has not said it compacts
+    When the thread comes back to Pi from Codex and Pi turns its prompt back for the compaction
+    Then the run shows the compaction while its prompt waits
+    And the history it hands over is still unconfirmed
+
   # Taking over Pi's wake replays what Pi said before it began compacting: Pi's own work,
   # not Pi taking the prompt, so the history it hands over stays unconfirmed too.
   Scenario: A prompt that takes over a compacting Pi wake does not confirm its handoff

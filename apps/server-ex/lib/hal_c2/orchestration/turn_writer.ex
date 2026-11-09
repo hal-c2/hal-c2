@@ -47,9 +47,10 @@ defmodule HalC2.Orchestration.TurnWriter do
   while it compacts), replays work the provider did before the turn (`replaying`, as
   Pi's does taking over a wake), has sent the prompt to follow work the provider is
   still at and not seen the provider deliver it (`follow_up: :sent`, or `:queued` once
-  Pi answered that it queued it, on the turn), or the item is one
-  the runtime kept from before the turn (`confirms: false`): none is the provider
-  answering the prompt.
+  Pi answered that it queued it, on the turn), or the item is no answer to the
+  prompt (`confirms: false`: one the runtime kept from before the turn, or a Pi
+  compaction, which may have begun before the prompt and still turn it back): none
+  is the provider answering the prompt.
   """
   def ensure_item(state, native, kind, fields \\ %{}, opts \\ []) do
     if Map.has_key?(state.items, native) do
