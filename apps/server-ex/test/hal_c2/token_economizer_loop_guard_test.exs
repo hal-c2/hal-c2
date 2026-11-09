@@ -2171,6 +2171,43 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert fired(state) == 1
     end
 
+    test "a turn the sweep drops is read back whole, or learned nothing from" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      at = %{"threadId" => "t", "runId" => "run-cut"}
+
+      state =
+        observe(
+          state,
+          started("t", %{
+            "runId" => "run-cut",
+            "projectId" => "seam",
+            "instanceId" => "claude-work"
+          })
+        )
+
+      looked =
+        Map.merge(at, %{
+          "type" => "turn.item",
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "ls",
+          "output" => "tests"
+        })
+
+      # Its last call, the test run the fact is for, and its end are lost.
+      state = observe(state, looked)
+      before = state.skills["seam"]
+      state = %{state | active?: fn _thread, run -> run != "run-cut" end}
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      Process.cancel_timer(state.sweep)
+
+      refute Map.has_key?(state.turns, "t")
+      assert state.skills["seam"] == before or fired(state) == 1
+    end
+
     test "with the guard off a settings save keeps the turns learning hears" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})

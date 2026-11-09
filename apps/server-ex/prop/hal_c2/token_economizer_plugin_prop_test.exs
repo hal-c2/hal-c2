@@ -39,7 +39,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     under way when the feed said it missed events, or one of its events came in the
     window that report opens: the reported event and those the feed had waiting, heard
     while on or off. A restart opens such a window over every event the feed still
-    holds and the one it may be blocked delivering.
+    holds and the one it may be blocked delivering;
+  - a turn a sweep closes, its end lost and maybe its last calls with it, teaches the
+    micro-skills nothing from what was heard of it: they read the ended run back whole,
+    which with no thread here to read is nothing.
 
   `prop/hal_c2/token_economizer_prop_test.exs` runs one turn's guard;
   `proof/hal_c2/token_economizer_loop_guard_proof_test.exs` explores the turns, the
@@ -192,12 +195,16 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         do: elements(@threads),
         else: frequency([{6, elements(open)}, {1, elements(@threads)}])
 
-    # A run whose end the feed loses for good, only of a turn under way.
+    # A run whose end the feed loses for good, only of a turn under way. Lost ends and the
+    # sweeps that drop them come oftener while the micro-skills learn, whose fold they cut.
+    losing = if state.micro == "off", do: 1, else: 3
+
     lose =
       if open == [],
         do: [],
         else: [
-          {1, let(t <- elements(open), do: {:call, __MODULE__, :lose, [t, run_of(state, t)]})}
+          {losing,
+           let(t <- elements(open), do: {:call, __MODULE__, :lose, [t, run_of(state, t)]})}
         ]
 
     frequency([
@@ -212,7 +219,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
          {:call, __MODULE__, :finish,
           [t, run_of(state, t), elements(~w(completed interrupted)), dropped()]}
        end},
-      {1, {:call, __MODULE__, :sweep, []}},
+      {losing, {:call, __MODULE__, :sweep, []}},
       {5,
        {:call, __MODULE__, :answer,
         [integer(0, 3), frequency([{2, true}, {1, false}, {1, :held}])]}},
@@ -367,7 +374,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
           if action == "nudge", do: n <= state.budget, else: n <= 1
         end),
       teaches: teaches?(state, name, args, seen.taught),
-      held: not Map.get(seen, :held_delivered, false)
+      held: not Map.get(seen, :held_delivered, false),
+      swept_whole: not Map.get(seen, :folded, false)
     ]
 
     case for {law, false} <- laws, do: law do
@@ -420,8 +428,11 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   def sweep do
     plugin = Process.get(:plugin)
     before = learned(plugin)
-    {:noreply, plugin} = TokenEconomizer.handle_info(:sweep, plugin)
-    settle(plugin, learned(plugin, before) > before)
+    {:noreply, swept} = TokenEconomizer.handle_info(:sweep, plugin)
+
+    swept
+    |> settle(learned(swept, before) > before)
+    |> Map.put(:folded, swept.skills != plugin.skills)
   end
 
   # The MC's answer to a sweep: a run is under way until it ended unheard. One heard to

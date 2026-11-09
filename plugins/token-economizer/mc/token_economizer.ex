@@ -490,8 +490,12 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     gone = MapSet.intersection(ended, state.ended)
 
+    # The feed may have lost the turn's tail with its end: partial, the micro-skills read
+    # the ended run back whole rather than learn from what was heard of it.
     state =
-      Enum.reduce(gone, state, fn {thread_id, _}, state -> close(state, thread_id, false) end)
+      Enum.reduce(gone, state, fn {thread_id, _}, state ->
+        state |> put_in([:turns, thread_id, :partial], true) |> close(thread_id, false)
+      end)
 
     {:noreply, %{state | ended: MapSet.difference(ended, gone), sweep: arm(state.sweep)}}
   end
