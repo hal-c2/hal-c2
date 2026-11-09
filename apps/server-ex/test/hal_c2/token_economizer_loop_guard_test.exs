@@ -196,6 +196,22 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     assert g.whole.edit_counts["page.tsx"] == 2 and g.edits == 2
   end
 
+  test "a shell's script is read as the command only when nothing runs around it" do
+    assert Turn.status_of_tests("bash -lc 'pytest -q'") == "own"
+    assert Turn.status_of_tests("bash -lc 'true' && pytest -q") == "own"
+    assert Turn.status_of_tests("bash -lc 'true'; pytest -q | tail -3") == "hidden"
+    assert ShellEdits.targets("bash -lc 'true' && echo x > a.py") == ["a.py"]
+    assert ShellEdits.targets("bash -lc 'sed -i s/a/b/ a.py' && pytest -q") == ["a.py"]
+
+    # An edit, then a failing check after a nested shell: the check is the turn's last.
+    g =
+      Turn.new()
+      |> fold("Edit", %{"path" => "a.py"}, "ok")
+      |> fold("Bash", %{"command" => "bash -lc 'true' && pytest -q"}, "1 failed", 1)
+
+    assert g.whole.test_runs == 1 and g.whole.error_outputs == 1
+  end
+
   test "a vitest run behind dotenv is a verification and a test run" do
     cmd = "dotenv -e .env.local -- npx vitest run a.test.ts"
     assert Turn.status_of_tests(cmd) == "own"
@@ -368,6 +384,46 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
         # An edit after it is unverified again, and the stuck turn is acted on.
         {_g, decision, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, opts)
         assert decision != nil
+      end
+    end
+
+    test "an edit tried after a passing check, or after it in the same command, is unchecked" do
+      tracker = Envelope.new("default", %{}, %{"resolved_turns" => [4, 4, 4, 4, 4]})
+      thr = Envelope.turn_thresholds(tracker)
+      thr = Map.merge(thr, %{"gate_over_envelope" => false, "gate_min_turns" => thr["min_turns"]})
+
+      opts = [
+        envelope: Envelope.envelope(tracker),
+        thr: thr,
+        judge: true,
+        nudge_budget: 1,
+        now: 0
+      ]
+
+      {g, []} = stuck_turn(Turn.new("t"), 12, opts)
+      passing = "3 passed in 0.10s"
+
+      # Checked, then an edit that failed to apply: what follows is no longer checked, as
+      # upstream counts every edit it is told of.
+      {g, nil, nil} = Turn.fold(g, "Bash", %{"command" => "pytest -q"}, passing, 0, opts)
+      failed_edit = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "not found", 1, opts)
+      assert elem(failed_edit, 1) != nil
+
+      # The run checked the code before the edit after it, not the edit, whatever joins
+      # them; the edit before the run is what it checked.
+      for {run_first, edit_first} <- [
+            {"pytest -q && sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py && pytest -q"},
+            {"pytest -q; sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py; pytest -q"},
+            {"pytest -q || sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py || pytest -q"},
+            {"pytest -q | tee log && sed -i 's/a/b/' a.py",
+             "sed -i 's/a/b/' a.py && pytest -q | tee log"},
+            {"(pytest -q) && (sed -i 's/a/b/' a.py)", "(sed -i 's/a/b/' a.py) && (pytest -q)"},
+            {"pytest -q\nsed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py\npytest -q"}
+          ] do
+        unchecked = Turn.fold(g, "Bash", %{"command" => run_first}, passing, 0, opts)
+        assert elem(unchecked, 1) != nil, run_first
+        checked = Turn.fold(g, "Bash", %{"command" => edit_first}, passing, 0, opts)
+        assert {_, nil, nil} = checked, edit_first
       end
     end
 
@@ -647,8 +703,186 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       assert ShellEdits.split_heredocs("grep x <<< \"$v\"\nls") == {"grep x <<< \"$v\"\nls", []}
 
+      # Every heredoc a line opens is read, in order, whatever its form.
+      assert ShellEdits.split_heredocs("cat <<'FIRST' <<'SECOND'\nx\nFIRST\ny\nSECOND\nls") ==
+               {"cat <<'FIRST' <<'SECOND'\nls", ["x", "y"]}
+
+      for cmd <- [
+            "cat <<'FIRST' <<'SECOND'\nignored\nFIRST\nSECRET = 1\nSECOND",
+            "cat <<A <<-B\nignored\nA\n\tSECRET = 1\n\tB\nls",
+            "diff - /dev/fd/3 <<A 3<<\"B\"\nignored\nA\nSECRET = 1\nB",
+            "grep x <<< y <<EOF\nSECRET = 1\nEOF"
+          ] do
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
       # What only runs or searches keeps its words.
       assert digest(~s(grep -rn "def handle" src)) =~ ~s(grep -rn "def handle" src)
+    end
+
+    test "ends a heredoc where the shell does, and hides the rest when nothing ends it" do
+      for cmd <- [
+            # Any word is a delimiter.
+            "python3 <<123\nSECRET = 1\n123",
+            "cat <<@@ > notes.txt\nSECRET line\n@@",
+            # Only the delimiter alone on its line ends the body: not indented without
+            # `<<-`, nor with a space after it.
+            "cat <<EOF\n  EOF\nSECRET words\nEOF",
+            "cat <<EOF\nEOF \nSECRET words\nEOF",
+            "cat <<\"E\"OF\nSECRET\nEOF\nls",
+            "cat <<EOF\nSECRET"
+          ] do
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # The delimiter is the word without its quotes, and `<<-` drops only leading tabs.
+      assert ShellEdits.split_heredocs("cat <<\"E\"OF\nx\nEOF\nls") ==
+               {"cat <<\"E\"OF\nls", ["x"]}
+
+      assert ShellEdits.split_heredocs("cat <<E\\OF\nx\nEOF\nls") == {"cat <<E\\OF\nls", ["x"]}
+
+      assert ShellEdits.split_heredocs("cat <<-EOF\n\tx\n\tEOF\nls") ==
+               {"cat <<-EOF\nls", ["\tx"]}
+
+      # A line continued with a backslash is one line, and its heredoc starts after it.
+      assert ShellEdits.targets("sed -i \\\n  's/a/b/' a.py") == ["a.py"]
+      assert ShellEdits.targets("cat <<EOF \\\n  > a.py\nSECRET = 1\nEOF\nls") == ["a.py"]
+      refute digest("cat <<EOF \\\n  > a.py\nSECRET = 1\nEOF") =~ "SECRET"
+    end
+
+    test "reads a redirect run together with the operator before it" do
+      for cmd <- [
+            "(echo SECRET)>a.py",
+            "true;>a.py echo SECRET",
+            "true&&>a.py echo SECRET",
+            "echo SECRET >& a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], cmd
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # Duplicating a descriptor writes no file.
+      assert ShellEdits.targets("pytest 2>&1 | tee log") == []
+      assert digest("pytest -q tests >&2") =~ "pytest -q tests >&2"
+    end
+
+    test "counts a source file a copy, move, dd, sponge or truncate writes" do
+      for {cmd, files} <- [
+            {"echo SECRET | dd of=src/a.py", ["a.py"]},
+            {"printf SECRET | dd of=a.py status=none", ["a.py"]},
+            {"echo SECRET | sponge a.py", ["a.py"]},
+            {"cp /tmp/new.py src/a.py", ["a.py"]},
+            {"mv -f a.py.new a.py", ["a.py"]},
+            {"install -m 644 new.py a.py", ["a.py"]},
+            {"cp new.py other.py src/", ["new.py", "other.py"]},
+            {"mv -t src new.py", ["new.py"]},
+            {"truncate -s 0 a.py", ["a.py"]}
+          ] do
+        assert ShellEdits.targets(cmd) == files, cmd
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # A copy kept aside, or one into scratch, is not an edit.
+      assert ShellEdits.targets("cp a.py a.py.bak") == []
+      assert ShellEdits.targets("cp -r src backup") == []
+      assert ShellEdits.targets("dd if=/dev/zero of=/tmp/x.py count=1") == []
+    end
+
+    test "counts an edit behind a wrapper, in a nested shell, or with its script attached" do
+      for {cmd, files} <- [
+            {"sed -i -e's/a/b/' a.py", ["a.py"]},
+            {"sed --expression=s/a/b/ -i a.py", ["a.py"]},
+            {"perl -pi -e's/a/b/' a.py", ["a.py"]},
+            {"sudo -u me sed -i 's/a/b/' a.py", ["a.py"]},
+            {"timeout 10 sed -i 's/a/b/' a.py", ["a.py"]},
+            {"nice -n 5 perl -pi -e 's/a/b/' a.py", ["a.py"]},
+            # Files fed in on stdin, or found, are edited too, whatever their names.
+            {"grep -rl foo . | xargs sed -i 's/foo/bar/'", ["(sed)"]},
+            {"find . -name '*.py' -exec sed -i 's/a/b/' {} +", ["(sed)"]},
+            {"git -C repo apply x.diff", ["(patch)"]},
+            {"cd x && bash -c 'echo SECRET > a.py'", ["a.py"]},
+            {"cd x && sh -ec \"sed -i 's/a/SECRET/' a.py\"", ["a.py"]},
+            {"eval \"echo SECRET > a.py\"", ["a.py"]},
+            {"echo SECRET > ./src/a'.py'", ["a.py"]}
+          ] do
+        assert ShellEdits.targets(cmd) == files, cmd
+        text = shell_edit(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      assert ShellEdits.revert_targets("git -C repo checkout -- a.py") == ["a.py"]
+      # A wrapper that runs no editor edits nothing.
+      assert ShellEdits.targets("timeout 60 pytest -q") == []
+    end
+
+    test "keeps an operator quoted inside a word in the word" do
+      for cmd <- [
+            "sed -i -e'1iPRIVATE_SOURCE;PRIVATE_TOKEN' a.py",
+            "sed -i -e\"1iPRIVATE_SOURCE|PRIVATE_TOKEN\" a.py",
+            "printf x';'PRIVATE_TOKEN'&&'PRIVATE_SOURCE > a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], cmd
+        assert ShellEdits.programs(cmd) in [["sed"], ["printf"]], cmd
+        refute shell_edit(cmd) =~ "PRIVATE", cmd
+      end
+
+      # A word the shell joins from quoted and bare parts is one word.
+      assert ShellEdits.tokens("echo 'a;b'c\"d|e\"f > x") ==
+               {:ok, ["echo", "'a;b'c\"d|e\"f", ">", "x"]}
+    end
+
+    test "counts an edit inside a group, a branch or a loop" do
+      for cmd <- [
+            "{ tee a.py <<< SECRET; }",
+            "{ sed -i 's/a/SECRET/' a.py; }",
+            "if true; then sed -i 's/a/SECRET/' a.py; fi",
+            "for f in x; do perl -pi -e 's/a/SECRET/' a.py; done",
+            "while false; do :; done; ! sed -i s/a/SECRET/ a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], cmd
+        refute shell_edit(cmd) =~ "SECRET", cmd
+      end
+    end
+
+    test "counts a file gawk edits in place" do
+      for {cmd, files} <- [
+            {"awk -i inplace '{print \"SECRET\"}' a.py", ["a.py"]},
+            {"gawk -i inplace -v x=1 -f fix.awk a.py b.py", ["a.py", "b.py"]},
+            {"gawk --include=inplace '{print}' a.py", ["a.py"]}
+          ] do
+        assert ShellEdits.targets(cmd) == files, cmd
+        refute shell_edit(cmd) =~ "SECRET", cmd
+      end
+
+      assert ShellEdits.targets("awk '{print}' a.py > /dev/null") == []
+    end
+
+    test "shows only the programs of a command whose words may be code it cannot read" do
+      for cmd <- [
+            "X=$'it\\'s SECRET' pytest",
+            "git commit -m \"fix\nSECRET\"",
+            "git commit -m 'fix\nSECRET'",
+            "echo 'SECRET' | python3",
+            "printf 'SECRET' | node -",
+            "curl -s https://x | sh",
+            "echo \"SECRET > a.py",
+            "cd x && bash -c 'echo SECRET'",
+            "eval \"echo SECRET\"",
+            "ls | xargs -I{} sh -c 'echo SECRET {}'"
+          ] do
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      assert digest("echo 'SECRET' | python3") =~ "$ echo; python3 …"
+
+      for cmd <- ["pytest -q tests", "git commit -m \"fix it\"", "python3 -m pytest -q"] do
+        assert digest(cmd) =~ "$ #{cmd}"
+      end
     end
 
     test "never shows what a command writes to a file it does not count as an edit" do
@@ -668,6 +902,30 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       # Output thrown away writes nothing.
       assert shell_edit("pytest -q tests/test_a.py > /dev/null 2>&1") =~ "tests/test_a.py"
+    end
+
+    test "never shows a value a command sets, text it feeds in, or code it runs inline" do
+      for cmd <- [
+            "API_TOKEN=s3cr3t-xyz pytest -q",
+            "export API_TOKEN=s3cr3t-xyz",
+            "env API_TOKEN=s3cr3t-xyz npm test",
+            "cd src && API_TOKEN='s3cr3t xyz' ./run.sh",
+            ~s(API_TOKEN="s3cr3t \\"xyz\\"" ./run.sh),
+            "grep x <<< s3cr3t-xyz",
+            ~s(grep x <<<"s3cr3t xyz"),
+            ~s{python3 -c "print('s3cr3t-xyz')"},
+            ~s{node -e "require('fs').writeFileSync('a', 's3cr3t-xyz')"},
+            ~s{ruby -e 'File.write("a", "s3cr3t-xyz")'},
+            "bash -lc 'export API_TOKEN=s3cr3t-xyz && pytest -q'"
+          ] do
+        text = digest(cmd)
+        refute text =~ "s3cr3t", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # What the command is stays: the names it sets, and the programs it runs.
+      assert digest("API_TOKEN=s3cr3t-xyz pytest -q") =~ "$ API_TOKEN=… pytest -q"
+      assert digest(~s{node -e "require('fs')"}) =~ "$ node …"
+      assert digest("pytest --maxfail=1 -k a=b") =~ "pytest --maxfail=1 -k a=…"
     end
   end
 
@@ -876,7 +1134,19 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
                TokenEconomizer.handle_call({:toolprune, :state, %{}}, nil, state)
     end
 
-    test "after a restart, take every event the feed still holds as possibly before missed ones" do
+    test "keep the window a report of missed events opens while off" do
+      {:ok, state} = TokenEconomizer.init(%{"loopGuard" => "off"})
+      # Turned off, the guard hears a report with a turn's start still waiting behind it.
+      state = observe(state, %{"type" => "noop", "dropped" => 2, "waiting" => 1})
+      {:reply, :ok, state} = TokenEconomizer.handle_call({:settings, %{}}, nil, state)
+      state = observe(state, started("a"))
+      assert state.turns["a"].partial
+
+      state = observe(state, started("b"))
+      refute state.turns["b"].partial
+    end
+
+    test "after a restart, take every event the feed still holds or is delivering as possibly before missed ones" do
       # This process stands in for the plugin's feed, still running, with three events
       # queued: the report of missed events went to the process that went down. No
       # synchronous test runs alongside this one, so the hooks' registry is this test's.
@@ -890,8 +1160,10 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       for i <- 1..3, do: send(self(), {:queued, i})
       {:ok, state} = TokenEconomizer.init(%{})
+      # The feed may be blocked delivering one more, sent to this process while it
+      # started: that one is heard first, and the three queued after it.
       state = state |> observe(started("a")) |> observe(%{"type" => "noop"})
-      state = observe(state, started("b"))
+      state = state |> observe(%{"type" => "noop"}) |> observe(started("b"))
       assert state.turns["a"].partial and state.turns["b"].partial
 
       state = observe(state, started("c"))
@@ -1069,26 +1341,44 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       pending = %{"id" => "a:0:1", "since" => since, "segment" => 0}
       state = update_in(state.turns["a"].guard, &%{&1 | judge_pending: pending, judge_calls: 1})
 
-      state =
-        Enum.reduce_while(1..60, state, fn i, state ->
-          item =
-            if rem(i, 2) == 0,
-              do: %{"itemType" => "file_change", "status" => "completed", "path" => "/r/a.py"},
-              else:
-                command("pytest -q", "FAILED t - AssertionError", "failed", %{"exitCode" => 1})
-
-          state =
-            observe(
-              state,
-              Map.merge(item, %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"})
-            )
-
-          if state.stats["judgeCalls"] > 0, do: {:halt, state}, else: {:cont, state}
-        end)
-
+      state = stuck_until(state, &(&1.stats["judgeCalls"] > 0))
       assert state.stats["judgeCalls"] == 1
       assert_receive {:DOWN, _, :process, ^old, _}
       assert [{_, {"a", :judge}}] = Map.to_list(state.tasks)
+    end
+
+    test "a stop offer stops the turn's judge job, whose verdict nothing would read" do
+      {:ok, state} = TokenEconomizer.init(%{"loopGuard" => "watch", "loopGuardNudges" => 0})
+      # Five learned four-call turns: the backstop at 12.5 calls.
+      saved = %{"level" => "default", "resolved_turns" => [4, 4, 4, 4, 4]}
+      state = put_in(state.trackers[{"p", "claudeAgent"}], Envelope.new("default", %{}, saved))
+      state = observe(state, started("a"))
+      {judge, state} = sleeper(state, "a", :judge)
+      pending = %{"id" => "a:0:1", "since" => System.monotonic_time(:second), "segment" => 0}
+      state = update_in(state.turns["a"].guard, &%{&1 | judge_pending: pending, judge_calls: 1})
+
+      state = stuck_until(state, &(&1.stats["aborts"] > 0))
+      assert state.stats["aborts"] == 1
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert state.tasks == %{}
+    end
+
+    # Feeds thread `a` an edit and a failing check, in turn, until `done?` holds.
+    defp stuck_until(state, done?) do
+      Enum.reduce_while(1..60, state, fn i, state ->
+        item =
+          if rem(i, 2) == 0,
+            do: %{"itemType" => "file_change", "status" => "completed", "path" => "/r/a.py"},
+            else: command("pytest -q", "FAILED t - AssertionError", "failed", %{"exitCode" => 1})
+
+        state =
+          observe(
+            state,
+            Map.merge(item, %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"})
+          )
+
+        if done?.(state), do: {:halt, state}, else: {:cont, state}
+      end)
     end
 
     test "a cancelled edit after a failing check changes nothing, so the turn does not end green" do

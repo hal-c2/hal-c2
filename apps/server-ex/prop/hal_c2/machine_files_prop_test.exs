@@ -79,6 +79,7 @@ defmodule HalC2.MachineFilesPropTest do
 
   defp setup do
     home = HalC2.Prop.scratch_home("machine-files")
+    Process.put(:home, home)
     shop = Path.join(home, "shop")
     File.mkdir_p!(shop)
     File.write!(Path.join(shop, "a.ts"), "a")
@@ -120,7 +121,8 @@ defmodule HalC2.MachineFilesPropTest do
     Agent.stop(Process.delete(:cluster))
     Application.delete_env(:hal_c2, :machine_files_prop)
     Application.delete_env(:hal_c2, :shell_transport)
-    File.rm_rf!(Application.fetch_env!(:hal_c2, :home))
+    # The case's own home: `stop_services/0` has put the MC's `:home` back by now.
+    File.rm_rf!(Process.delete(:home))
   end
 
   defp server do

@@ -37,8 +37,9 @@ sload model-checker
 ---   Landed - a redirect starts its segment once its task says the MC took it, and the
 ---           guard decides nothing while it is on its way (Turn.redirect/1); one refused
 ---           leaves the segment as it was.
----   Cancel - a judge job of a segment or turn that has ended is stopped (cancel_judge/2),
----           and so is one gone stale that a new job replaces (start_judge/5).
+---   Cancel - a judge job of a segment or turn that has ended, or of a turn offered its
+---           stop, is stopped (cancel_judge/2), and so is one gone stale that a new job
+---           replaces (start_judge/5).
 
 mod TOKEN-ECONOMIZER-LOOP-GUARD is
   protecting NAT .
@@ -222,8 +223,9 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
 
   --- act/5: the guard found the turn stuck. Under the budget it redirects, the redirect
   --- and its notice going out in one task, and waits to hear it was taken (Landed), or
-  --- starts the next segment at once; then it offers the stop. After the offer it does
-  --- nothing (Once), nor while a redirect is on its way.
+  --- starts the next segment at once; then it offers the stop, and stops the turn's jobs
+  --- asked (Cancel). After the offer it does nothing (Once), nor while a redirect is on
+  --- its way.
   op act : Watch Nat Bool Bool Bool Bool Bool -> Conf .
   ceq act(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), BU, ON, RS, TO, LA, CA) =
     watching(turn(R, g(S, N, O, P, A, RD, PT, J, RO))) if (ON and O > 0) or RO .
@@ -234,7 +236,8 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
     task(R, if TO then steer then notice else notice then steer fi)
     if not (ON and O > 0) /\ N < BU .
   eq act(turn(R, g(S, N, O, P, A, RD, PT, J, RO)), BU, ON, RS, TO, LA, CA) =
-    watching(turn(R, g(S, N, s O, P, A, RD, PT, J, RO))) task(R, offer) [owise] .
+    watching(turn(R, g(S, N, s O, P, A, RD, PT, J, RO))) task(R, offer)
+    (if CA then drop(R) else empty fi) [owise] .
 
   --- ask_judge/3: a verdict back is read, and acted on if it says stuck; a fresh job
   --- out answers nothing yet; otherwise a new job goes out (the rate limit only spaces
@@ -401,10 +404,11 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   eq hasty({ C }) = false [owise] .
 
   --- A judge job still asked that is not the job out of the turn and segment the guard is
-  --- in: one of a segment or turn it has left, or one a new job replaced.
+  --- in: one of a segment or turn it has left, one a new job replaced, or one whose turn
+  --- has been offered its stop, after which nothing reads a verdict.
   op wasted : Sys -> Bool .
   op on : Watch Job -> Bool .
-  eq on(turn(R, g(S, N, O, out(job(R, S, J'), T), A, RD, PT, J, RO)), job(R, S, J')) = true .
+  eq on(turn(R, g(S, N, 0, out(job(R, S, J'), T), A, RD, PT, J, RO)), job(R, S, J')) = true .
   eq on(W, JB) = false [owise] .
   ceq wasted({ asking(JB) watching(W) C }) = true if not on(W, JB) .
   eq wasted({ C }) = false [owise] .

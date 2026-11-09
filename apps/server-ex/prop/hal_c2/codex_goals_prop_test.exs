@@ -6,7 +6,8 @@ defmodule HalC2.CodexGoalsPropTest do
   it, runs out of budget), or does not go on before the grace runs out; the user may
   press Stop; the app-server may exit; and once the run has ended Codex may still
   start a turn for the goal, or a grace armed before it ended may still fire. While a
-  turn runs Codex may report the context's usage on the thread.
+  turn runs Codex may report the context's usage on the thread, of that turn or of
+  another turn or thread.
 
   The promise: the goal's turns are one run, running until the goal stops being
   active between turns, the grace runs out, or the user stops it, and each turn
@@ -18,7 +19,7 @@ defmodule HalC2.CodexGoalsPropTest do
   between turns too, the last provider turn it names keeps the usage Codex reported
   last during that turn, with the time it was reported, from the report on (a running
   turn shows it at once), and none if Codex reported none in it: never an earlier
-  turn's.
+  turn's, nor what Codex reported of another turn or thread.
 
   The goal runs on the fake app-server in `test/support/fake_codex.py` with
   FAKE_CODEX_GOAL_STALL set, so Codex never goes on by itself: the test plays its
@@ -220,7 +221,7 @@ defmodule HalC2.CodexGoalsPropTest do
   def command(%{phase: :turn}) do
     frequency([
       {4, {:call, __MODULE__, :finish_turn, []}},
-      {2, {:call, __MODULE__, :report_usage, [integer(1, 200_000)]}},
+      {2, {:call, __MODULE__, :report_usage, [integer(1, 200_000), whose()]}},
       {2, {:call, __MODULE__, :goal_update, [oneof(Map.keys(@shown))]}},
       {1, {:call, __MODULE__, :stop, []}},
       {1, {:call, __MODULE__, :exit_app_server, []}}
@@ -235,14 +236,15 @@ defmodule HalC2.CodexGoalsPropTest do
   def precondition(state, {:call, _, :continue_goal, []}), do: state.phase == :held
   def precondition(state, {:call, _, :grace, []}), do: state.phase == :held
   def precondition(state, {:call, _, :finish_turn, []}), do: state.phase == :turn
-  def precondition(state, {:call, _, :report_usage, [_]}), do: state.phase == :turn
+  def precondition(state, {:call, _, :report_usage, [_, _]}), do: state.phase == :turn
   def precondition(state, {:call, _, _, _}), do: state.phase in [:held, :turn]
 
   def next_state(state, _result, {:call, _, :continue_goal, []}),
     do: %{state | phase: :turn, turns: state.turns + 1, late: nil, kept: nil}
 
-  # The running turn keeps it as it comes, and keeps it however it ends.
-  def next_state(state, _result, {:call, _, :report_usage, [n]}), do: %{state | kept: n}
+  # The running turn keeps its own as it comes, and keeps it however it ends.
+  def next_state(state, _result, {:call, _, :report_usage, [n, :own]}), do: %{state | kept: n}
+  def next_state(state, _result, {:call, _, :report_usage, [_n, _other]}), do: state
 
   def next_state(state, result, call), do: step(state, result, call)
 
@@ -328,12 +330,16 @@ defmodule HalC2.CodexGoalsPropTest do
     observed()
   end
 
+  # Whose usage Codex reports: the running turn's, an earlier turn's, or another
+  # thread's under the running turn's id.
+  defp whose, do: frequency([{3, :own}, {1, :other_turn}, {1, :other_thread}])
+
   # Codex reports the context's usage on the thread, as it does while a turn runs.
-  def report_usage(n) do
-    notify("thread/tokenUsage/updated", %{
-      "turnId" => Process.get(:native_turn),
-      "tokenUsage" => %{"last" => %{"totalTokens" => n}}
-    })
+  def report_usage(n, whose) do
+    turn = if whose == :other_turn, do: "an-earlier-turn", else: Process.get(:native_turn)
+    params = %{"turnId" => turn, "tokenUsage" => %{"last" => %{"totalTokens" => n}}}
+    params = if whose == :other_thread, do: Map.put(params, "threadId", "other"), else: params
+    notify("thread/tokenUsage/updated", params)
 
     settle_runtime()
     observed()
@@ -414,7 +420,7 @@ defmodule HalC2.CodexGoalsPropTest do
   # so what is read back is what its handling committed.
   defp notify(method, params) do
     {pid, runtime} = runtime()
-    params = Map.put(params, "threadId", Process.get(:native_thread))
+    params = Map.put_new(params, "threadId", Process.get(:native_thread))
     send(pid, {:json_rpc, runtime.conn, {:notification, method, params}})
   end
 

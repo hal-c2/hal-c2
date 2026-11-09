@@ -150,6 +150,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       last_edit: 0,
       last_verify: 0,
       last_verify_failed: false,
+      # Whether an edit was tried after the last check ran: one that failed to apply too,
+      # and one later in the check's own command (`pytest && sed -i ...`).
+      unchecked: false,
       edits: 0,
       verifications: 0,
       # %{"id", "since", "segment"} of the judge job out, or nil.
@@ -263,8 +266,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     stages = pieces |> Enum.with_index() |> Enum.filter(fn {_, i} -> rem(i, 2) == 0 end)
 
     Enum.reduce(stages, nil, fn {stage, i}, found ->
-      if Regex.match?(@verify, Regex.replace(@prefix, stage, "")) and
-           not Regex.match?(@not_a_run, stage) do
+      if run?(stage) do
         rest = pieces |> after_each(pipefail) |> Enum.drop(div(i, 2))
         status = after_run(rest)
         if found == nil or @rank[status] > @rank[found], do: status, else: found
@@ -275,6 +277,34 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   end
 
   def status_of_tests(_), do: nil
+
+  defp run?(stage),
+    do:
+      Regex.match?(@verify, Regex.replace(@prefix, stage, "")) and
+        not Regex.match?(@not_a_run, stage)
+
+  # Whether `cmd` writes one of `edits` after its last test run (`pytest && sed -i ... a.py`),
+  # which that run then did not check. Quotes are masked to their own length, so a command's
+  # place in the mask is its place in the script.
+  defp writes_after_run?(cmd, edits) do
+    {script, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
+    masked = Regex.replace(@quoted, script, &String.duplicate("Q", byte_size(&1)))
+    masked = Regex.replace(~r/[(){}]/, masked, " ")
+    cuts = for [{at, len} | _] <- Regex.scan(@sep, masked, return: :index), do: {at, at + len}
+    starts = [0 | Enum.map(cuts, &elem(&1, 1))]
+    ends = Enum.map(cuts, &elem(&1, 0)) ++ [byte_size(masked)]
+
+    case Enum.zip(starts, ends)
+         |> Enum.filter(fn {from, to} -> run?(binary_part(masked, from, to - from)) end)
+         |> List.last() do
+      nil ->
+        false
+
+      {_, to} ->
+        tail = binary_part(script, to, byte_size(script) - to)
+        Enum.any?(ShellEdits.targets(tail), &(&1 in edits))
+    end
+  end
 
   defp after_run(rest) do
     Enum.reduce_while(rest, "own", fn
@@ -308,12 +338,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     canon = State.canon_tool(name)
 
     cond do
-      # An edit that failed ("String to replace not found") changed nothing to verify.
+      # An edit that failed ("String to replace not found") changed nothing to verify, but
+      # a turn that tries edits after its checks passed is not done with them.
       canon in ["edit", "create"] and exit_code not in [nil, 0] ->
-        g
+        %{g | unchecked: true}
 
       canon in ["edit", "create"] ->
-        %{g | last_edit: g.cum_turns, edits: g.edits + 1}
+        %{g | last_edit: g.cum_turns, edits: g.edits + 1, unchecked: true}
 
       true ->
         cmd = if canon == "bash", do: args["command"]
@@ -327,11 +358,16 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
             # `sed -i 's/x/y/' missing.py` failed and, as a failed edit tool's does, changed
             # nothing to verify. A failed run after a write is the run's failure.
             exit_code not in [nil, 0] and not verifies ->
-              g
+              %{g | unchecked: true}
 
             # `sed -i ... && pytest`: the edit comes first, so the run verifies it.
             true ->
-              %{g | last_edit: g.cum_turns - if(verifies, do: 1, else: 0), edits: g.edits + 1}
+              %{
+                g
+                | last_edit: g.cum_turns - if(verifies, do: 1, else: 0),
+                  edits: g.edits + 1,
+                  unchecked: true
+              }
           end
 
         if verifies do
@@ -345,7 +381,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
             g
             | last_verify: g.cum_turns,
               verifications: g.verifications + 1,
-              last_verify_failed: failed
+              last_verify_failed: failed,
+              # The proxy takes every write in a command that runs checks as checked, as
+              # upstream's does; whether the run passed on the last edit keeps the order.
+              unchecked: shell_edits != [] and writes_after_run?(cmd, shell_edits)
           }
         else
           g
@@ -529,8 +568,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       else: decide(g, envelope, thr, budget, opts)
   end
 
-  defp verified?(g),
-    do: g.verifications > 0 and not g.last_verify_failed and g.last_verify > g.last_edit
+  defp verified?(g), do: g.verifications > 0 and not g.last_verify_failed and not g.unchecked
 
   defp decide(g, envelope, thr, budget, opts) do
     backstop =

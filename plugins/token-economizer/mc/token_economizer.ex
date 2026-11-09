@@ -273,6 +273,9 @@ defmodule HalC2Plugins.TokenEconomizer do
     {:reply, reply, state}
   end
 
+  # Off, the guard hears no turn, but the window a report of missed events opens still
+  # runs over the events heard, so a turn that starts in it once on again is partial;
+  # tool pruning hears every turn whatever the guard's mode.
   def handle_call({:observe, event}, _from, state) do
     state = state |> missed(event) |> hear_prune(event)
     state = if on?(state), do: hear(state, event), else: state
@@ -1125,7 +1128,9 @@ defmodule HalC2Plugins.TokenEconomizer do
     )
 
     guard = %{guard | abort_delivered: true}
-    state = update_in(state.stats["aborts"], &(&1 + 1))
+    # The guard decides nothing more in the turn, so a judge job still out is a paid
+    # answer no one reads.
+    state = state |> update_in([:stats, "aborts"], &(&1 + 1)) |> cancel_judge(thread_id)
     entry = entry(thread_id, run_id, "stop", reason, guard)
 
     if shadow?(state) do

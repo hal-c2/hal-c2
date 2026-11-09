@@ -2127,7 +2127,10 @@ defmodule HalC2.Test.Mc.World do
   fails it, unless the MC still has effects waiting or running (a checkpoint's git
   fsyncs on a busy disk take seconds): those are waited out on the effect worker's
   drain (each effect once, for at most six times `timeout`, 30s at most), and a
-  stalled one fails it, named.
+  stalled one fails it, named. With none in flight, the thread's own processes are
+  drained instead (`drain_thread/2`): its stream, which answers once the commit it
+  is writing has landed, and its provider runtime, once the work it does between
+  effects is done. Only a drain that moved the stream on keeps the wait going.
   """
   def await_thread(context, title, fun, timeout \\ 5_000) do
     id = thread_id(context, title)
@@ -2144,7 +2147,24 @@ defmodule HalC2.Test.Mc.World do
       timeout ->
         case Enum.reject(effects_in_flight(), &MapSet.member?(drained, &1["id"])) do
           [] ->
-            flunk("#{id} never reached the expected state (runs: #{run_statuses(last)})")
+            # Nothing recorded is in flight, but a commit can still be on its way: one the
+            # stream is writing to a slow disk, or one the provider runtime makes after
+            # inline work. Each answers once that is done, so a turn that is only slow
+            # moves the stream on, and one that is stuck fails here, as it is now.
+            case drain_thread(id, min(6 * timeout, 30_000)) do
+              {:busy, what} ->
+                flunk(
+                  "#{id} never reached the expected state (runs: #{run_statuses(last)}): #{what}"
+                )
+
+              %{seq: seq} = state when seq > last.seq ->
+                if fun.(state),
+                  do: state,
+                  else: await_stream_next(id, fun, timeout, state, drained)
+
+              state ->
+                flunk("#{id} never reached the expected state (runs: #{run_statuses(state)})")
+            end
 
           effects ->
             # Bounded well under ExUnit's 60s, so a stuck effect is named, not killed.
@@ -2169,6 +2189,56 @@ defmodule HalC2.Test.Mc.World do
               do: state,
               else: await_stream_next(id, fun, timeout, state, drained)
         end
+    end
+  end
+
+  @runtime_registries [
+    HalC2.Codex.Registry,
+    HalC2.Claude.Registry,
+    HalC2.Acp.Registry,
+    HalC2.Pi.Registry,
+    HalC2.Muse.Registry
+  ]
+
+  # The thread's stream as it stands once its provider runtime has handled what it
+  # had been sent, and the stream has written what that committed: each call is
+  # answered after the work in hand. `{:busy, why}` when either is still at it
+  # `bound` ms after the drain began: one deadline for both, so a caller's wait is
+  # never twice `bound`.
+  defp drain_thread(id, bound) do
+    deadline = System.monotonic_time(:millisecond) + bound
+    left = fn -> max(deadline - System.monotonic_time(:millisecond), 0) end
+
+    busy =
+      Enum.find_value(
+        for(registry <- @runtime_registries, Process.whereis(registry), do: registry),
+        fn registry ->
+          Enum.find_value(Registry.lookup(registry, id), fn {pid, _} ->
+            try do
+              _ = :sys.get_state(pid, left.())
+              nil
+            catch
+              :exit, {:timeout, _} ->
+                "its provider runtime was still busy after #{bound}ms in " <>
+                  inspect(Process.info(pid, :current_stacktrace))
+
+              # A runtime that ended meanwhile has nothing more in hand.
+              :exit, _ ->
+                nil
+            end
+          end)
+        end
+      )
+
+    if busy do
+      {:busy, busy}
+    else
+      task = Task.async(fn -> HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) end)
+
+      case Task.yield(task, left.()) || Task.shutdown(task) do
+        {:ok, state} -> state
+        _ -> {:busy, "its stream was still writing #{bound}ms after the drain began"}
+      end
     end
   end
 

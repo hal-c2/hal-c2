@@ -2202,6 +2202,16 @@ defmodule HalC2.Codex.ThreadRuntime do
        when turn_id != current,
        do: state
 
+  # So is a usage report of another turn, or of a thread that is not the conversation's
+  # (those routed above aside): the running turn keeps only its own usage.
+  defp notification(
+         "thread/tokenUsage/updated",
+         %{"threadId" => thread, "turnId" => turn_id},
+         %{native_thread_id: own, turn: %{native_turn_id: current}} = state
+       )
+       when thread != own or turn_id != current,
+       do: state
+
   # A turn's first final answer streams as it comes; a later one is held back
   # until it finishes, when a repeat of an earlier answer (or an empty one) is
   # dropped instead of shown twice.

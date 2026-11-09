@@ -65,6 +65,15 @@ mod THREAD-MOVE is
   --- A let-go stopped the session of a thread that is not in its move on X.
   op hurt : Mc -> Item [ctor] .
   op moves : Nat -> Item [ctor] .
+  --- The thread's plugin keeps it on this machine (ThreadArchive.stays/1), by the thread's
+  --- own mark or by the plugin's manifest (the version loaded, or the one on disk, set
+  --- aside while an install replaces it), running or not: move/3 and destinations/1
+  --- refuse it before anything begins, and an export does too.
+  op kept : -> Item [ctor] .
+  --- The thread's source runs a release from before plugins kept their threads, so its
+  --- move/3 begins a move of a kept thread; the destination's import_archive/2 refuses
+  --- it, by the mark the archive carries or by the plugin's manifest there.
+  op lax : -> Item [ctor] .
   op faults : Nat -> Item [ctor] .
   op next : Nat -> Item [ctor] .
 
@@ -99,6 +108,13 @@ mod THREAD-MOVE is
   eq split?(X, Y, split(X, Y) C) = true .
   eq split?(X, Y, split(Y, X) C) = true .
   eq split?(X, Y, C) = false [owise] .
+
+  op kept? : Conf -> Bool .
+  eq kept?(kept C) = true .
+  eq kept?(C) = false [owise] .
+  op lax? : Conf -> Bool .
+  eq lax?(lax C) = true .
+  eq lax?(C) = false [owise] .
 
   --- Whether D holds the thread's lock: an `accept/3` there is asking to take it.
   op locked : Mc Conf -> Bool .
@@ -172,13 +188,15 @@ mod THREAD-MOVE is
 
   --- source: move/3 ------------------------------------------------------------------
 
-  --- begin/4 marks the thread moving; transfer/6 calls the destination's accept/3 with
-  --- an archive of the thread.
+  --- movable/3 refuses a kept thread first, whatever it is doing (but on a lax source);
+  --- begin/4 marks the thread moving; transfer/6 calls the destination's accept/3 with an
+  --- archive of the thread.
   crl [begin] :
     { mc(S, true, live(still, Ms), Q) moves(s K) next(N) C }
     => { mc(S, true, live(mv(N, D, false), Ms), Q) moves(K) next(s N) sent(N, Ms)
          mover(N, S, D, waiting) msg(S, D, acceptReq(N)) C }
-    if mc(D, T, R, Q') C' := C /\ linked(S, D, mc(S, true, live(still, Ms), Q) C) .
+    if mc(D, T, R, Q') C' := C /\ linked(S, D, mc(S, true, live(still, Ms), Q) C)
+       /\ (not kept?(C) or lax?(C)) .
 
   --- accept/3 returned the thread imported: let_go/4, under the thread's let-go lock
   --- here, checks whether the thread is still in this move.
@@ -249,15 +267,19 @@ mod THREAD-MOVE is
     if not locked(D, C) .
 
   --- import_archive/2 keeps the archive's moves, with this one as the last from S;
-  --- not_here/2 refuses a thread that is here already.
-  rl [import] :
-    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, nothing, Q) sent(N, Ms)
-    => mc(D, true, live(still, put(S, N, Ms)), Q) sent(N, Ms) got(D, N) msg(D, S, acceptOk(N)) .
-  rl [import] :
-    msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, fwd(Ms'), Q) sent(N, Ms)
-    => mc(D, true, live(still, put(S, N, Ms)), Q) sent(N, Ms) got(D, N) msg(D, S, acceptOk(N)) .
+  --- not_kept/1 refuses a thread its plugin keeps, and not_here/2 one that is here already.
+  crl [import] :
+    { msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, nothing, Q) sent(N, Ms) C }
+    => { mc(D, true, live(still, put(S, N, Ms)), Q) sent(N, Ms) got(D, N) msg(D, S, acceptOk(N))
+         C }
+    if not kept?(C) .
+  crl [import] :
+    { msg(S, D, takingOk(N)) accept(N, S, D, held) mc(D, true, fwd(Ms'), Q) sent(N, Ms) C }
+    => { mc(D, true, live(still, put(S, N, Ms)), Q) sent(N, Ms) got(D, N) msg(D, S, acceptOk(N))
+         C }
+    if not kept?(C) .
 
-  --- The import failed: the thread is here already, or its project went away.
+  --- The import failed: the thread is kept, is here already, or its project went away.
   rl [import-failed] :
     msg(S, D, takingOk(N)) accept(N, S, D, held) => msg(D, S, acceptErr(N)) .
 
@@ -399,10 +421,19 @@ mod THREAD-MOVE is
   eq three(K, F) = { mc(a, true, live(still, none), idle) mc(b, true, nothing, idle)
                      mc(c, true, nothing, idle) moves(K) faults(F) next(1) } .
 
+  --- The same, kept on a by its plugin; and with a's MC from before plugins kept threads.
+  ops kept old : Nat Nat -> Sys .
+  eq kept(K, F) = { mc(a, true, live(still, none), idle) mc(b, true, nothing, idle)
+                    kept moves(K) faults(F) next(1) } .
+  eq old(K, F) = { mc(a, true, live(still, none), idle) mc(b, true, nothing, idle)
+                   kept lax moves(K) faults(F) next(1) } .
+
   --- The thread writable on two MCs of the cluster, one switched off included (a removed
   --- one's copy is no longer the cluster's); on none, removed ones included; a session stopped under a thread that
-  --- stays; a source told its move did not arrive when it did; and nothing left to do.
-  ops twice lost hurts wrong broken settled : Sys -> Bool .
+  --- stays; a source told its move did not arrive when it did; a kept thread that begins
+  --- to move (one a lax source moves: that arrives, or leaves a forwarding record); and
+  --- nothing left to do.
+  ops twice lost hurts wrong escaped broken settled : Sys -> Bool .
   eq twice({ mc(X, T, live(still, Ms), Q) mc(Y, U, live(still, Ms'), Q') C }) = true .
   eq twice({ mc(X, T, live(still, Ms), Q) off(Y, live(still, Ms')) C }) = true .
   eq twice({ off(X, live(still, Ms)) off(Y, live(still, Ms')) C }) = true .
@@ -416,9 +447,15 @@ mod THREAD-MOVE is
   eq wrong({ msg(D, S, arrivedAns(no)) mc(S, T, live(mv(N, D, true), Ms), asked(D, mv(N, D, true)))
               got(D, N) C }) = true .
   eq wrong({ C }) = false [owise] .
+  --- A kept thread that is moving, being moved, or has left a forwarding record.
+  ceq escaped({ kept mc(X, T, live(mv(N, D, U), Ms), Q) C }) = true if not lax?(C) .
+  ceq escaped({ kept mover(N, S, D, W) C }) = true if not lax?(C) .
+  eq escaped({ kept mc(X, T, fwd(Ms), Q) C }) = true .
+  eq escaped({ kept got(D, N) C }) = true .
+  eq escaped({ C }) = false [owise] .
   --- Any of them: one search looks for all.
   var Sy : Sys .
-  eq broken(Sy) = twice(Sy) or lost(Sy) or hurts(Sy) or wrong(Sy) .
+  eq broken(Sy) = twice(Sy) or lost(Sy) or hurts(Sy) or wrong(Sy) or escaped(Sy) .
   eq settled({ mc(X, T, live(mv(N, D, U), Ms), Q) C }) = false .
   eq settled({ mc(X, T, R, asked(D, M)) C }) = false .
   eq settled({ mc(X, T, R, letting(N, P)) C }) = false .

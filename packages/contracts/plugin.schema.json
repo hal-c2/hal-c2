@@ -426,6 +426,9 @@
         }
       },
       "additionalProperties": false
+    },
+    "threadsStay": {
+      "type": "boolean"
     }
   },
   "required": ["id", "name", "version", "apiVersion", "description"],
