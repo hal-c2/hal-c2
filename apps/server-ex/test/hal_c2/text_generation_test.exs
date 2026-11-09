@@ -65,11 +65,28 @@ defmodule HalC2.TextGenerationTest do
     )
   end
 
+  defp sha256(text), do: Base.encode16(:crypto.hash(:sha256, text), case: :lower)
+
   defp calls(log) do
     case File.read(log) do
       {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
       _ -> []
     end
+  end
+
+  # A Codex whose MCP servers cannot be listed, with `home` as its home; both are put back.
+  defp put_codex_home(home) do
+    previous = System.get_env("CODEX_HOME")
+    System.put_env("CODEX_HOME", home)
+    System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("CODEX_HOME", previous),
+        else: System.delete_env("CODEX_HOME")
+
+      System.delete_env("FAKE_CODEX_MCP_FAIL")
+    end)
   end
 
   defp after_flag(argv, flag), do: Enum.at(argv, Enum.find_index(argv, &(&1 == flag)) + 1)
@@ -114,6 +131,28 @@ defmodule HalC2.TextGenerationTest do
       assert after_flag(codex["argv"], "--model") == "gpt-text"
       assert ~s(model_reasoning_effort="medium") in codex["argv"]
       assert codex["prompt"] =~ "User message:\nFix the login page"
+    end
+
+    test "options that are not a list of id/value maps are ignored, not a crash", %{
+      repo: repo,
+      log: log
+    } do
+      install([:claude])
+
+      for options <- [%{"effort" => "high"}, ["high", %{"id" => "effort", "value" => "low"}]] do
+        settings!(%{
+          "textGenerationModelSelection" => %{
+            "instanceId" => "claudeAgent",
+            "model" => "claude-text",
+            "options" => options
+          }
+        })
+
+        assert {:ok, %{"branch" => _}} = TextGeneration.branch_name(repo, "Add login")
+      end
+
+      assert [_, second] = calls(log)
+      assert after_flag(second["argv"], "--effort") == "low"
     end
 
     test "a writer on a disabled provider falls back to the text generation model", %{
@@ -192,6 +231,308 @@ defmodule HalC2.TextGenerationTest do
       assert after_flag(argv, "--model") == "claude-haiku-5-5"
     end
 
+    test "a Codex that cannot list its MCP servers runs in a home with only the login", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      home = Path.join(dir, "user-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "auth.json"), ~s({"token":"t"}))
+      File.write!(Path.join(home, "config.toml"), "[mcp_servers.augmenter]\ncommand = \"x\"\n")
+
+      put_codex_home(home)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexHome" => scratch, "codexFiles" => files}] = calls(log)
+      assert scratch != home
+      assert files == %{"auth.json" => sha256(~s({"token":"t"})), "config.toml" => ""}
+      # The call log carries a hash of the login, never the login.
+      refute File.read!(log) =~ ~s("token")
+      refute File.exists?(scratch)
+    end
+
+    test "the scratch Codex home is 0700 and its copied login 0600, whatever the source's mode",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      home = Path.join(dir, "user-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "auth.json"), ~s({"token":"t"}))
+      File.chmod!(Path.join(home, "auth.json"), 0o644)
+      put_codex_home(home)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexModes" => modes}] = calls(log)
+      assert modes == %{"." => "0o700", "auth.json" => "0o600"}
+    end
+
+    test "a Codex run whose caller is killed leaves no scratch home with a copied login behind",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      home = Path.join(dir, "user-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "auth.json"), ~s({"token":"t"}))
+      put_codex_home(home)
+
+      started = Path.join(dir, "started")
+      {_, 0} = System.cmd("mkfifo", [started])
+      # `cat` opens the fifo, so a call that never starts cannot block this test.
+      reader =
+        Port.open({:spawn_executable, System.find_executable("cat")}, [:binary, args: [started]])
+
+      System.put_env("FAKE_TEXT_STARTED", started)
+      System.put_env("FAKE_TEXT_HANG", "1")
+
+      on_exit(fn ->
+        System.delete_env("FAKE_TEXT_STARTED")
+        System.delete_env("FAKE_TEXT_HANG")
+      end)
+
+      test = self()
+
+      caller =
+        spawn(fn ->
+          Process.put(:scratch_notify, test)
+          TextGeneration.thread_title(repo, "Fix it")
+        end)
+
+      assert_receive {^reader, {:data, "started"}}, 10_000
+      assert [%{"codexHome" => scratch}] = calls(log)
+      assert File.read!(Path.join(scratch, "auth.json")) =~ "token"
+
+      ref = Process.monitor(caller)
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^ref, _, _, :killed}
+      assert_receive {:scratch_removed, folder}
+      assert String.starts_with?(scratch, folder)
+      refute File.exists?(scratch)
+      refute File.exists?(folder)
+    end
+
+    test "a Codex that cannot list its MCP servers and has no auth.json file says so", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      # An account on the OS credential store has a config but no auth.json.
+      home = Path.join(dir, "keyring-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "config.toml"), ~s(cli_auth_credentials_store = "keyring"\n))
+      put_codex_home(home)
+
+      assert {:error, message} = TextGeneration.thread_title(repo, "Fix it")
+      assert message =~ "auth.json"
+      assert message =~ "OS credential store"
+      assert calls(log) == []
+    end
+
+    test "a Codex that cannot list its MCP servers drops the servers its launch arguments define",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"},
+        "providers" => %{
+          "codex" => %{
+            "launchArgs" =>
+              ~s(-c mcp_servers.launched.command="x" --config=mcp_servers.other.command="y" -c model_verbosity="low")
+          }
+        }
+      })
+
+      File.write!(Path.join(dir, "auth.json"), ~s({"token":"t"}))
+      put_codex_home(dir)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"argv" => argv}] = calls(log)
+      refute Enum.any?(argv, &(&1 =~ "mcp_servers"))
+      assert "model_verbosity=low" in argv
+    end
+
+    test "a Codex that cannot list its MCP servers keeps the login of its shadow home", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([:codex])
+      shared = Path.join(dir, "shared-codex")
+      shadow = Path.join(dir, "shadow-codex")
+      File.mkdir_p!(shared)
+      File.write!(Path.join(shared, "auth.json"), ~s({"token":"shared"}))
+      File.mkdir_p!(shadow)
+      File.write!(Path.join(shadow, "auth.json"), ~s({"token":"shadow"}))
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"homePath" => shared, "shadowHomePath" => shadow}
+          }
+        }
+      })
+
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+      on_exit(fn -> System.delete_env("FAKE_CODEX_MCP_FAIL") end)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexFiles" => files}] = calls(log)
+      assert files == %{"auth.json" => sha256(~s({"token":"shadow"})), "config.toml" => ""}
+    end
+
+    test "a Codex that cannot list its MCP servers and whose shadow home cannot be made does not use the shared login",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      shared = Path.join(dir, "shared-codex")
+      File.mkdir_p!(shared)
+      File.write!(Path.join(shared, "auth.json"), ~s({"token":"another-account"}))
+
+      # A shadow home that is the shared home is refused by `Codex.Home.env/1`.
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"homePath" => shared, "shadowHomePath" => shared}
+          }
+        }
+      })
+
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+      on_exit(fn -> System.delete_env("FAKE_CODEX_MCP_FAIL") end)
+
+      assert {:error, message} = TextGeneration.thread_title(repo, "Fix it")
+      assert message =~ "Failed to materialize the Codex shadow home."
+      assert message =~ "must be different"
+      # Codex never ran, so no login was copied anywhere.
+      assert calls(log) == []
+      refute File.exists?(Path.join(dir, "codex-home"))
+    end
+
+    test "a Codex that cannot list its MCP servers keeps the login of the CODEX_HOME its instance sets",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      own = Path.join(dir, "own-codex")
+      other = Path.join(dir, "other-codex")
+
+      for {home, token} <- [{own, "own"}, {other, "other"}] do
+        File.mkdir_p!(home)
+        File.write!(Path.join(home, "auth.json"), ~s({"token":"#{token}"}))
+      end
+
+      # The MC's own CODEX_HOME and the instance's home setting both name another login.
+      put_codex_home(other)
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"homePath" => other},
+            "environment" => [%{"name" => "CODEX_HOME", "value" => own}]
+          }
+        }
+      })
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexFiles" => files}] = calls(log)
+      assert files == %{"auth.json" => sha256(~s({"token":"own"})), "config.toml" => ""}
+    end
+
+    test "the MCP servers switched off are those of the home the instance runs in",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      ambient = Path.join(dir, "ambient-codex")
+      own = Path.join(dir, "own-codex")
+
+      for {home, server} <- [{ambient, "ambient"}, {own, "instance"}] do
+        File.mkdir_p!(home)
+        File.write!(Path.join(home, "mcp.json"), ~s([{"name":"#{server}","enabled":true}]))
+      end
+
+      previous = System.get_env("CODEX_HOME")
+      System.put_env("CODEX_HOME", ambient)
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("CODEX_HOME", previous),
+          else: System.delete_env("CODEX_HOME")
+      end)
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "environment" => [%{"name" => "CODEX_HOME", "value" => own}]
+          }
+        }
+      })
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"argv" => argv}] = calls(log)
+      assert "mcp_servers.instance.enabled=false" in argv
+      refute "mcp_servers.ambient.enabled=false" in argv
+    end
+
+    test "a connected ChatGPT account whose MCP servers cannot be listed keeps its own login",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      shared = Path.join(dir, "shared-codex")
+      File.mkdir_p!(shared)
+      File.write!(Path.join(shared, "auth.json"), ~s({"token":"cli"}))
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"setupMode" => "managed"},
+            "environment" => [%{"name" => "CODEX_HOME", "value" => shared}]
+          }
+        }
+      })
+
+      managed = HalC2.Codex.ChatGpt.home("codex-work")
+      File.mkdir_p!(managed)
+      File.write!(Path.join(managed, "auth.json"), ~s({"token":"managed"}))
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+      on_exit(fn -> System.delete_env("FAKE_CODEX_MCP_FAIL") end)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexFiles" => files}] = calls(log)
+      assert files["auth.json"] == sha256(~s({"token":"managed"}))
+    end
+
     test "a writer whose check only warned keeps generating", %{repo: repo} do
       install([:claude, :codex])
 
@@ -223,6 +564,55 @@ defmodule HalC2.TextGenerationTest do
 
       assert {:ok, %{"branch" => branch}} = TextGeneration.branch_name(repo, "Add login")
       assert branch =~ ~r{^acp-branch-fake/two-in-hal-c2-text-\d+-\d+$}
+    end
+
+    test "an ACP run whose caller is killed leaves its folder behind no longer", %{
+      repo: repo,
+      log: log,
+      tmp_dir: dir
+    } do
+      install([])
+      Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
+
+      settings!(%{
+        "providers" => %{"opencode" => %{"enabled" => true}},
+        "textGenerationModelSelection" => %{
+          "instanceId" => "opencode",
+          "model" => "fake/two"
+        }
+      })
+
+      started = Path.join(dir, "started")
+      {_, 0} = System.cmd("mkfifo", [started])
+
+      reader =
+        Port.open({:spawn_executable, System.find_executable("cat")}, [:binary, args: [started]])
+
+      System.put_env("FAKE_TEXT_STARTED", started)
+      System.put_env("FAKE_TEXT_HANG", "1")
+
+      on_exit(fn ->
+        System.delete_env("FAKE_TEXT_STARTED")
+        System.delete_env("FAKE_TEXT_HANG")
+      end)
+
+      test = self()
+
+      caller =
+        spawn(fn ->
+          Process.put(:scratch_notify, test)
+          TextGeneration.thread_title(repo, "Fix it")
+        end)
+
+      assert_receive {^reader, {:data, "started"}}, 10_000
+      assert [%{"cwd" => folder}] = calls(log)
+      assert File.dir?(folder)
+
+      ref = Process.monitor(caller)
+      Process.exit(caller, :kill)
+      assert_receive {:DOWN, ^ref, _, _, :killed}
+      assert_receive {:scratch_removed, ^folder}
+      refute File.exists?(folder)
     end
 
     test "an ACP agent dying mid-generation fails it, not as a cancellation", %{repo: repo} do

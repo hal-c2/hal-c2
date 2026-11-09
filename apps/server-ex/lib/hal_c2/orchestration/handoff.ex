@@ -852,9 +852,14 @@ defmodule HalC2.Orchestration.Handoff do
   @doc """
   The history of the runs before `ordinal` that finished, as `history/2` gives it; nil
   when there is none.
+
+  With `running: true` a run still running counts too, with what it has finished so
+  far, for a reader (the PR description writer) that works inside the turn it describes.
   """
-  def transcript(state, ordinal, after_ordinal \\ 0, max_chars \\ @max_chars),
-    do: transcript_of(state, ordinal, after_ordinal, max_chars, fn _run -> true end)
+  def transcript(state, ordinal, after_ordinal \\ 0, max_chars \\ @max_chars, opts \\ []) do
+    statuses = if opts[:running], do: ["running" | @finished], else: @finished
+    transcript_of(state, ordinal, after_ordinal, max_chars, statuses, fn _run -> true end)
+  end
 
   # The transcript of the runs between `after_ordinal` and `ordinal` that
   # `provider_thread`'s conversation may not hold: all but its own that completed (a
@@ -862,7 +867,7 @@ defmodule HalC2.Orchestration.Handoff do
   defp missed(state, provider_thread, ordinal, after_ordinal) do
     own = provider_thread["id"]
 
-    transcript_of(state, ordinal, after_ordinal, @max_chars, fn run ->
+    transcript_of(state, ordinal, after_ordinal, @max_chars, @finished, fn run ->
       run["providerThreadId"] != own or run["status"] != "completed"
     end)
   end
@@ -873,12 +878,12 @@ defmodule HalC2.Orchestration.Handoff do
 
   # A run refused before it reached a provider (`plan/6`'s refusal) was said to no one,
   # and a run a rewind dropped (`rolled_back`) is not part of the conversation.
-  defp transcript_of(state, ordinal, after_ordinal, max_chars, keep?) do
+  defp transcript_of(state, ordinal, after_ordinal, max_chars, statuses, keep?) do
     runs =
       state
       |> StreamState.list("run")
       |> Enum.filter(
-        &(&1["ordinal"] < ordinal and &1["ordinal"] > after_ordinal and &1["status"] in @finished and
+        &(&1["ordinal"] < ordinal and &1["ordinal"] > after_ordinal and &1["status"] in statuses and
             &1["refused"] != true and keep?.(&1))
       )
       |> Enum.sort_by(& &1["ordinal"])

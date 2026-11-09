@@ -18,6 +18,8 @@ defmodule HalC2.GitActions do
   alias HalC2.TextGeneration.Style
 
   @commit_actions ~w(commit commit_push commit_push_pr)
+  # How much of a thread's history a pull request writer is given.
+  @thread_history_chars 8_000
 
   @doc "Runs the action (`GitRunStackedActionInput`) in a new process."
   def start(%{"actionId" => action_id} = input, subscriber) do
@@ -40,6 +42,7 @@ defmodule HalC2.GitActions do
   def run(%{"cwd" => cwd} = input, emit) do
     # The phase running when an error is thrown, for the failure event.
     Process.put(:git_action_phase, nil)
+    Process.put(:git_action_thread, input["threadId"])
 
     try do
       result = run_action(input, emit)
@@ -636,12 +639,27 @@ defmodule HalC2.GitActions do
 
     case TextGeneration.pr_content(cwd, base, branch, commits, stat, patch,
            policy: Style.policy(cwd),
-           template: Style.pr_template(cwd, base_ref, kind)
+           template: Style.pr_template(cwd, base_ref, kind),
+           thread_history: thread_history(Process.get(:git_action_thread))
          ) do
       {:ok, content} -> content
       {:error, reason} -> fail!("Could not write the PR description: #{reason}")
     end
   end
+
+  # What the thread the action ran beside did, so the description can say which checks it
+  # ran, including in the turn that is running it. The thread's runs that were rolled back are not part of it. A thread this MC does
+  # not hold gives nothing.
+  defp thread_history(thread_id) when is_binary(thread_id) do
+    HalC2.Streams.read(
+      thread_id,
+      &HalC2.Orchestration.Handoff.transcript(&1, 1_000_000, 0, @thread_history_chars,
+        running: true
+      )
+    )
+  end
+
+  defp thread_history(_thread_id), do: nil
 
   defp base_ref(cwd, base) do
     remote = Git.primary_remote(cwd)

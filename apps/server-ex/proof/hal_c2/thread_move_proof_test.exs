@@ -67,7 +67,7 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.Orchestration.Handoff.plan/6" => @handoff,
       "HalC2.Orchestration.Handoff.room/3" => @handoff,
       "HalC2.Orchestration.Handoff.prompt/2" => @handoff,
-      "HalC2.Orchestration.Handoff.transcript/4" => @handoff,
+      "HalC2.Orchestration.Handoff.transcript/5" => @handoff,
       "HalC2.Orchestration.Handoff.legacy_summary/1" => @handoff,
       "HalC2.Orchestration.Handoff.history/2" => @handoff,
       "HalC2.Orchestration.Handoff.select/2" => @handoff,

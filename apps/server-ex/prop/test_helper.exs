@@ -9,3 +9,6 @@ ExUnit.start(exclude: [:slow])
 
 # Keep the MC's git include, if we run inside one, out of the tests.
 HalC2.Test.GitEnv.scrub()
+
+# Scratch homes sit in `tmp` inside the checkout; git must not find the checkout from them.
+System.put_env("GIT_CEILING_DIRECTORIES", Path.expand("../tmp", __DIR__))

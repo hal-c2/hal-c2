@@ -51,7 +51,7 @@ defmodule HalC2.ProviderHandoffProofTest do
       "HalC2.Orchestration.Handoff.plan/6" =>
         ~w(resume restart resend busy refuse fresh? mark overfull unsent),
       "HalC2.Orchestration.Handoff.room/3" => ~w(occ reserve unsent),
-      "HalC2.Orchestration.Handoff.transcript/4" => ~w(fit done),
+      "HalC2.Orchestration.Handoff.transcript/5" => ~w(fit done),
       "HalC2.Orchestration.Handoff.fresh_start/2" => "restart",
       "HalC2.Orchestration.TurnWriter.ensure_item/5" => ~w(confirm late-ack clear background),
       "HalC2.Orchestration.TurnWriter.confirmed/2" => ~w(confirm late-ack clear),

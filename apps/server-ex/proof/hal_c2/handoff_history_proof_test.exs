@@ -45,7 +45,7 @@ defmodule HalC2.HandoffHistoryProofTest do
       "HalC2.Orchestration.Handoff.plan/6" => @provider_handoff,
       "HalC2.Orchestration.Handoff.room/3" => @provider_handoff,
       "HalC2.Orchestration.Handoff.fresh_start/2" => @provider_handoff,
-      "HalC2.Orchestration.Handoff.transcript/4" =>
+      "HalC2.Orchestration.Handoff.transcript/5" =>
         "gathers a thread's runs for history/2 and wraps what it gives",
       "HalC2.Orchestration.Handoff.prompt/2" =>
         "puts what history/2 gives ahead of the user's text",
