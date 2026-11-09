@@ -980,8 +980,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # of them lack a vowel than have one, its digits sit in three places at
   # most, and at most two pieces are neither a word nor a known acronym (`V2`,
   # `LRU`), one of them an unknown acronym. Keeping a credential is worse than
-  # redacting a name, so random base62 tokens of 20 to 40 characters never
-  # pass, and dense names (`BenchmarkC128AxpyIncN100000IncM1`) are redacted.
+  # redacting a name, so dense names (`BenchmarkC128AxpyIncN100000IncM1`) are
+  # redacted, but a random base62 token of 20 to 40 characters with a digit
+  # still passes now and then: 10 of 1.2 million (400k each with `:exsss`
+  # seeds {7,8,9}, {9,9,9} and {1,2,3}), under one per 100k, and none of the
+  # first 100k of the last two. Seed {7,8,9}'s five are known escapes, left
+  # alone because no small rule closes them: `grzevdzXnea2Eac1Tb9A`,
+  # `waxratauy05Wo0TluEW2`, `vseWj008Esed4IokEJ58`, `KkuP4ArourOroyCQSGhuj`,
+  # `schkysvLKT2JEddIxgyv269`.
   @camel_split ~r/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/
   @two_letter_words ~w(am an as at be by do go if in is it me my no of on or so to up us we id ok
                        db fs io js os rx ts tx ui ws)
@@ -1002,11 +1008,16 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @coda_onset ~r/^[^aeiouy]{1,2}(?:[bcdfgkpt][lr]|s[cklmnptw]|[dt]w|s[cpt]r|spl)$/
 
   defp camel_words?(run) do
-    # An acronym's plural (`IPs`, `URLs`) is the acronym.
+    # A known acronym's plural (`IPs`, `URLs`) is the acronym; an unknown
+    # one keeps its `s` (`FHVRs1` is no versioned acronym).
     text =
       run
       |> String.replace(@mixed_case_terms, "Term")
-      |> String.replace(~r/(?<=[A-Z]{2})s(?=[A-Z\d]|$)/, "")
+      |> then(
+        &Regex.replace(~r/([A-Z]{2,})s(?=[A-Z\d]|$)/, &1, fn whole, caps ->
+          if known_acronyms?(caps), do: caps, else: whole
+        end)
+      )
 
     pieces = Regex.split(@camel_split, text)
     words = Enum.filter(pieces, &(lowercase(&1) >= 2))

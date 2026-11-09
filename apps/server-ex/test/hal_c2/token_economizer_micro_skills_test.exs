@@ -294,6 +294,14 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     for token <- tokens, do: assert(Observe.secret_value?(token), token)
   end
 
+  # A run of capitals and an `s` is an acronym's plural only when the acronym
+  # is known: an unknown one is no versioned acronym.
+  test "an unknown acronym's plural does not make a token a name" do
+    assert Observe.secret_value?("NumNFnekoOuapSobFHVRs1")
+    refute Observe.secret_value?("TestParseURLsV2Config")
+    refute Observe.secret_value?("TestListIPs4HandlerRuns")
+  end
+
   test "a saved fact that holds a credential is never read back" do
     fact = fn id, family, params ->
       {id, %{"id" => id, "family" => family, "params" => params, "life" => %{}}}
