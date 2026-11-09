@@ -839,16 +839,45 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
   defp mixes?(text, classes), do: Enum.all?(classes, &Regex.match?(&1, text))
 
-  # A camelCase or PascalCase name: split where a capital follows, every piece
-  # is a word (`Parse`, `test`, `Utf8`) or a short acronym (`V2`, `HTTP`), and
-  # two of them are words. A random token always leaves a piece that is
-  # neither (`Xk9f`, `b`, `51`), so it stays a token.
-  defp camel_words?(run) do
-    pieces = Regex.split(~r/(?<=[a-z0-9])(?=[A-Z])/, run)
+  # A camelCase or PascalCase name (`TestHTTPServerV2Handler`,
+  # `shouldReturn404WhenIdIsMissing`): split where a word starts, after a
+  # lowercase letter or digit or at an acronym's last capital, every piece is
+  # an acronym or two run together, with a version (`HTTP`, `V2`, `UTF8`,
+  # `K8s`, `JSONAPI`), a word with its digits (`Parse`, `Auth2`, `Pv6`) or a
+  # two-letter word (`At`, `is`). Two words of two or more lowercase letters
+  # hold at least half its letters, no more of them lack a vowel (`Ctx`,
+  # `Http`) than have one, and its digits sit in three places at most. A random
+  # token rarely passes all of that: about one in five hundred base62 tokens of
+  # 20 to 40 characters does, and as many generated test names fail it.
+  @camel_split ~r/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/
+  @two_letter_words ~w(am an as at be by do go if in is it me my no of on or so to up us we id ok)
 
-    Enum.all?(pieces, &Regex.match?(~r/^(?:[A-Z]?[a-z]{2,}|[A-Z]{1,4})\d*$/, &1)) and
-      Enum.count(pieces, &Regex.match?(~r/[a-z]{2}/, &1)) >= 2
+  defp camel_words?(run) do
+    pieces = Regex.split(@camel_split, run)
+    words = Enum.filter(pieces, &(lowercase(&1) >= 2))
+    {voiced, mute} = Enum.split_with(words, &Regex.match?(~r/[aeiouy]/, &1))
+
+    Enum.all?(pieces, &camel_piece?/1) and length(words) >= 2 and
+      2 * letters(words) >= letters(pieces) and length(mute) <= length(voiced) and
+      length(Regex.scan(~r/\d+/, run)) <= 3
   end
+
+  defp camel_piece?(piece) do
+    Regex.match?(~r/^[A-Z]{1,8}(?:\d+[a-z]?)?$/, piece) or
+      (Regex.match?(~r/^[A-Za-z][a-z]{2,}\d*$/, piece) and spoken?(piece)) or
+      Regex.match?(~r/^[A-Za-z][a-z]\d+$/, piece) or
+      String.downcase(piece) in @two_letter_words
+  end
+
+  # A word of four or more lowercase letters has a vowel and no run of five
+  # consonants; a shorter one may be an abbreviation (`Ctx`, `Http`).
+  defp spoken?(word) do
+    lowercase(word) <= 3 or
+      (Regex.match?(~r/[aeiouy]/i, word) and not Regex.match?(~r/[^aeiouy\d]{5}/i, word))
+  end
+
+  defp lowercase(text), do: length(Regex.scan(~r/[a-z]/, text))
+  defp letters(pieces), do: pieces |> Enum.join() |> then(&length(Regex.scan(~r/[A-Za-z]/, &1)))
 
   # A segment that cannot stop the work after it: an assignment, a directory
   # change, an activation, or a command that only sets, reads or reports.

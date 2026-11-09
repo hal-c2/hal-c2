@@ -159,7 +159,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
              test_parse_v2_config_ok x86_64-unknown-linux-gnu
              app/Http/Controllers/Api/V1/UserController 550e8400-e29b-41d4-a716-446655440000
              TestParseV2ConfigWithDefaults -Dtest=ParseV2ConfigurationIntegrationTest
-             testHandlesUtf8InputCorrectly) do
+             testHandlesUtf8InputCorrectly TestHTTPServerV2Handler TestParseJSONConfigV2Defaults
+             TestOAuth2TokenRefreshFlow) do
       refute Observe.secret_value?(value), value
       refute Observe.secret_value?("node #{value} x.js"), value
     end
@@ -188,6 +189,60 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
 
     [o] = Observe.classify_command("python -m pytest tests/a.py testHandlesUtf8InputCorrectly")
     assert Observe.test_labels(o) == ["tests/a.py", "testHandlesUtf8InputCorrectly"]
+  end
+
+  # Go, Java and Jest test names, made from words, acronyms with their
+  # versions, two-letter words and a number, against random base62 tokens of
+  # 20 to 40 characters: no name is taken for a credential and every token is.
+  # Seeded, so a case either side gets wrong is found here and stays found.
+  test "generated test names are not credentials, generated tokens are" do
+    :rand.seed(:exsss, {1407, 847, 2})
+    pick = fn list -> Enum.at(list, :rand.uniform(length(list)) - 1) end
+
+    words =
+      ~w(Parse Config Defaults Handler Server Client Token Refresh Flow Request Response User
+         Account Create Update Delete Get List Fetch Load Save Store Cache Retry Timeout Error
+         Invalid Valid Empty Returns Handles When With Without Input Output Stream Buffer Reader
+         Writer File Path Router Middleware Session Context Ctx Cfg Msg Http Html Grpc Auth
+         Integration Concurrent Batch Queue Worker Event Payload Schema Migration Version Rollback
+         Encode Decode Missing Unicode Nested Expired Pagination Filter Accepts Rejects)
+
+    acronyms = ~w(HTTP JSON XML ID URL API IO DB SQL AWS S3 V2 V3 UTF8 OAuth2 TLS GRPC K8s IPv6
+                  SHA256 MD5 E2E UI CSV)
+
+    small = ~w(Is At On By To Of In Or If No As)
+
+    name = fn ->
+      body =
+        Enum.map_join(1..(2 + :rand.uniform(4)), fn i ->
+          case :rand.uniform(10) do
+            1 when i > 1 -> pick.(small)
+            2 when i > 1 -> pick.(acronyms)
+            _ -> pick.(words)
+          end
+        end) <> pick.(words)
+
+      body = if :rand.uniform(2) == 1, do: "#{body}#{:rand.uniform(500)}", else: body
+      pick.(["Test#{body}", "test#{body}", "should#{body}", "Benchmark#{body}", "#{body}IT"])
+    end
+
+    names =
+      Stream.repeatedly(name)
+      |> Stream.filter(&(String.length(&1) >= 20 and &1 =~ ~r/\d/))
+      |> Enum.take(60)
+
+    for name <- names, do: refute(Observe.secret_value?(name), name)
+
+    alphabet = Enum.concat([?a..?z, ?A..?Z, ?0..?9])
+
+    tokens =
+      Stream.repeatedly(fn ->
+        for _ <- 1..(19 + :rand.uniform(21)), into: "", do: <<pick.(alphabet)>>
+      end)
+      |> Stream.filter(&(&1 =~ ~r/\d/ and &1 =~ ~r/[A-Za-z]/))
+      |> Enum.take(100)
+
+    for token <- tokens, do: assert(Observe.secret_value?(token), token)
   end
 
   test "a saved fact that holds a credential is never read back" do
