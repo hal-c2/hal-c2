@@ -387,16 +387,19 @@ defmodule HalC2.PluginsTest do
   defp declare(manifest), do: Map.put(manifest, "threadsStay", true)
 
   # What a peer answers for a plugin: only a function the running version has, so a
-  # machine on an older version or without the plugin is left out rather than failing.
-  test "a peer answers for a function its plugin has, and leaves out what it lacks" do
+  # machine on an older version or without the plugin says so rather than failing.
+  test "a peer answers for a function its plugin has, and says none for what it lacks" do
     code_package("busy", "1", [{"a.ex", busy_source("1")}])
     Plugins.handle("rescan", %{})
     assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
 
     label = HalC2.Environment.label()
     assert {:ok, %{"machine" => ^label, "result" => "1"}} = Host.peer("busy", :version, [])
-    assert :none = Host.peer("busy", :claims, [["acme/api#1"]])
-    assert :none = Host.peer("missing", :version, [])
+
+    assert {:ok, %{"machine" => ^label, "result" => :none}} =
+             Host.peer("busy", :claims, [["acme/api#1"]])
+
+    assert {:ok, %{"result" => :none}} = Host.peer("missing", :version, [])
     # Not distributed: no other machine to ask.
     assert [] = Host.peers("busy", :version, [])
   end

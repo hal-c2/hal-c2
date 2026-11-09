@@ -21,7 +21,8 @@ defmodule HalC2.TokenEconomizerPropTest do
     the level's; an edit that failed does not make a failing check look old;
   - what the judge is shown of an edit through the shell: whatever writes the file,
     behind whatever wrapper, inside whatever list, group or nested shell, the file is
-    counted and what was written into it is never shown.
+    counted and what was written into it is never shown; a secret quoted or escaped
+    into a command's words, however, is never shown.
 
   The plugin's process, the MC's turns and the delivery of redirects and notices are
   covered by `features/plugins/token-economizer-loop-guard.feature`.
@@ -409,4 +410,88 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp carry(_, run, false), do: run
 
   defp heredoc?(run), do: String.contains?(run, "\n")
+
+  property "a secret quoted or escaped into a command's words is never shown",
+    numtests: HalC2.Prop.numtests(500) do
+    forall {cmd, secret} <- secret_command() do
+      st = State.update(State.new(), "Bash", %{"command" => cmd}, "", false)
+      shown = State.recent_digest(st)
+
+      not String.contains?(shown, secret)
+      |> when_fail(IO.puts("Command: #{inspect(cmd)}\nShown: #{shown}"))
+    end
+  end
+
+  # How a word may hide what it holds from a reader that does not read it as the shell
+  # does: quoted, escaped, or inside a quoting context nested in double quotes.
+  @hiding ~w(single double ansi escaped subst param backtick)a
+
+  # A command that writes a word holding a random secret, or sets a variable to it: the
+  # secret inside a quoted or escaped part, among other parts, the word run alone, after
+  # a command, in a group or in a nested shell.
+  defp secret_command do
+    let {secret, kind, inner, before, after_, use, carrier} <-
+          {secret(), elements(@hiding), chunks(), list(fragment()), list(fragment()),
+           elements([
+             "printf %s @W > a.py",
+             "echo @W >> src/a.py",
+             "sed -i -e @W a.py",
+             "perl -pi -e @W a.py",
+             "printf %s @W | tee a.py",
+             "cat > a.py <<< @W",
+             "sudo tee a.py <<< @W",
+             "X=@W pytest -q"
+           ]), elements(~w(alone and_before braces nested)a)} do
+      word = Enum.join(before) <> hide(kind, inner <> secret <> inner) <> Enum.join(after_)
+      {secret_carry(carrier, String.replace(use, "@W", word)), secret}
+    end
+  end
+
+  defp secret do
+    let cs <- vector(6, elements(~c"ABCDEFGHJKLMNPRSTUVWY")), do: "QZ" <> List.to_string(cs)
+  end
+
+  # Text full of what a shell reads specially.
+  defp chunks do
+    let parts <-
+          list(
+            elements(
+              ["a", "9", " ", ";", "|", "&&", "&", ">", "<", "<<", "(", ")", "#", "\n"] ++
+                ["'", "\"", "\\", "$", "`", "*", "{", "}", "=", "-e", "$(", "${"]
+            )
+          ),
+        do: Enum.join(parts)
+  end
+
+  defp fragment do
+    let {kind, text} <- {elements([:plain | @hiding]), chunks()}, do: hide(kind, text)
+  end
+
+  defp hide(:plain, _), do: "x9"
+  defp hide(:single, text), do: "'" <> String.replace(text, "'", "") <> "'"
+  defp hide(:double, text), do: "\"" <> escape(text, ~w(\\ " $ `)) <> "\""
+  defp hide(:ansi, text), do: "$'" <> escape(text, ~w(\\ ')) <> "'"
+
+  defp hide(:escaped, text) do
+    text
+    |> String.replace("\n", "")
+    |> String.graphemes()
+    |> Enum.map_join(&if(&1 =~ ~r/^[A-Za-z0-9]$/, do: &1, else: "\\" <> &1))
+  end
+
+  defp hide(:subst, text), do: "\"$(printf %s " <> hide(:single, text) <> ")\""
+  defp hide(:param, text), do: "\"${X:-" <> hide(:double, text) <> "}\""
+
+  defp hide(:backtick, text),
+    do: "\"`printf %s " <> hide(:single, String.replace(text, ~w(` \\ $ "), "")) <> "`\""
+
+  defp escape(text, special),
+    do: text |> String.graphemes() |> Enum.map_join(&if(&1 in special, do: "\\" <> &1, else: &1))
+
+  defp secret_carry(:alone, run), do: run
+  defp secret_carry(:and_before, run), do: "cd x && " <> run
+  defp secret_carry(:braces, run), do: "{ " <> run <> "; }"
+
+  defp secret_carry(:nested, run),
+    do: "bash -lc '" <> String.replace(run, "'", "'\"'\"'") <> "'"
 end

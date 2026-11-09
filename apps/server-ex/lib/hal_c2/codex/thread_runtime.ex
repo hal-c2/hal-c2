@@ -27,7 +27,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   alias HalC2.Codex.{GeneratedImages, Goals}
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.Orchestration.{Entities, TurnWatch, Unrecorded}
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
 
@@ -55,6 +55,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 60_000)
 
   @queued_stop "Codex did not start the queued turn within 10 seconds; Stop could not be delivered."
+  @leftover_running "The previous turn is still running. Wait for it to finish."
 
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
   def interrupt(thread_id, run_id) do
@@ -286,6 +287,10 @@ defmodule HalC2.Codex.ThreadRuntime do
        # last turn (a subagent starting under it is interrupted at once).
        interrupting: nil,
        stopped: false,
+       # A turn Codex did not end when asked to stop (`{:interrupt_deadline, _}`), so may
+       # still be running: `%{turn:, thread:, provider_turn:}`, and `hold:` while the next
+       # turn waits for it to end (`stop_leftover/1`). The next turn stops it first.
+       leftover: nil,
        # A usage-limit failure whose reset Codex had not named when the turn
        # stopped: `%{item: failure item id}` while its reset is still unknown.
        usage_failure: nil,
@@ -322,6 +327,13 @@ defmodule HalC2.Codex.ThreadRuntime do
         deadline = Application.get_env(:hal_c2, :codex_interrupt_deadline_ms, 10_000)
         Process.send_after(self(), {:interrupt_deadline, restored.interrupting}, deadline)
       end
+
+      # A turn held for a left-over one waits its deadline again.
+      restored =
+        case restored do
+          %{leftover: %{hold: _}, turn: %{ids: %{run: _}}} -> hold_for_leftover(restored)
+          _ -> restored
+        end
 
       # As a goal's run waiting on Codex's next turn does its grace.
       if restored.goal_hold,
@@ -378,34 +390,10 @@ defmodule HalC2.Codex.ThreadRuntime do
         goal_stop: false
       })
 
-    case begin_turn(state, turn) do
-      {:ok, state} ->
-        {:reply, :ok, state}
-
-      {:error, %{"message" => "Codex App Server process exited" <> _} = exit, state} ->
-        Logger.warning("codex turn failed to start: the app-server exited\n#{exit["stderr"]}")
-        finish(state, "failed", stopped_while_starting(exit))
-        {:reply, :ok, %{state | turn: nil}}
-
-      {:error, {:broken_version, message}, state} ->
-        finish(state, "failed", message)
-        {:reply, :ok, %{state | turn: nil}}
-
-      # A goal Codex would refuse is refused before Codex is asked.
-      {:error, {:goal_refused, message}, state} ->
-        finish(state, "failed", message)
-        {:reply, :ok, %{state | turn: nil}}
-
-      # The app-server exited before the turn began.
-      {:error, :closed, state} ->
-        Logger.warning("codex turn failed to start: the app-server exited")
-        finish(state, "failed", "The provider stopped while starting the turn.")
-        {:reply, :ok, %{state | turn: nil}}
-
-      {:error, reason, state} ->
-        Logger.warning("codex turn failed to start: #{inspect(reason)}")
-        finish(state, "failed", start_failure("Codex", reason))
-        {:reply, :ok, %{state | turn: nil}}
+    # A turn an earlier stop left running is stopped first, and this one waits for it.
+    case stop_leftover(state) do
+      {:held, state} -> {:reply, :ok, state}
+      state -> {:reply, :ok, turn_begun(begin_turn(state, turn))}
     end
   end
 
@@ -460,6 +448,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_call(:interrupt, _from, %{turn: %{}, goal_hold: hold} = state) when hold != nil do
     state = state |> pause_goal() |> Map.merge(%{goal_hold: nil, goal_stop: true, stopped: true})
     {:reply, :ok, end_turn(state, "interrupted", nil)}
+  end
+
+  # A turn held for a left-over one to end (`stop_leftover/1`) has not started: it ends.
+  def handle_call(:interrupt, _from, %{turn: %{}, leftover: %{hold: _} = leftover} = state) do
+    finish(state, "interrupted", nil)
+    {:reply, :ok, %{state | turn: nil, leftover: Map.delete(leftover, :hold)}}
   end
 
   def handle_call(:interrupt, _from, %{turn: %{native_turn_id: turn_id}} = state)
@@ -638,6 +632,17 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state),
     do: {:noreply, notification(method, params || %{}, state)}
 
+  # A turn held for a left-over one (`stop_leftover/1`) has not started: what Codex asks
+  # meanwhile is the left-over turn's, and is answered as between turns.
+  def handle_info(
+        {:json_rpc, conn, {:request, id, method, params}},
+        %{turn: %{} = turn, leftover: %{hold: _}} = state
+      ) do
+    message = {:json_rpc, conn, {:request, id, method, params}}
+    {:noreply, state} = handle_info(message, %{state | turn: nil})
+    {:noreply, %{state | turn: turn}}
+  end
+
   # Codex may not pile up requests on the user: with 32 already waiting, another
   # is refused at once and the waiting ones are unaffected.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state)
@@ -782,6 +787,12 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info({:EXIT, conn, reason}, %{conn: conn} = state) do
     state = %{state | conn: nil}
 
+    # A turn left running went with the app-server.
+    state =
+      if HalC2.Orchestration.Recovery.stopping?(),
+        do: state,
+        else: leftover_ended(state, "interrupted")
+
     # A connection that could no longer write to the app-server says why.
     message =
       case reason do
@@ -815,11 +826,43 @@ defmodule HalC2.Codex.ThreadRuntime do
     {:noreply, %{GeneratedImages.forget(state) | conn: nil, native_thread_id: nil}}
   end
 
+  # Codex may go on running the turn: the next one stops it first (`stop_leftover/1`),
+  # and a turn the store failed leaves its provider turn reading as running until then.
   def handle_info({:interrupt_deadline, turn_id}, %{turn: %{native_turn_id: turn_id}} = state) do
+    leftover = %{
+      turn: turn_id,
+      thread: state.native_thread_id,
+      provider_turn: state.turn.ids[:provider_turn]
+    }
+
+    state =
+      case Map.put(state, :leftover, leftover) do
+        %{unrecorded: %{} = unrecorded} = state ->
+          %{state | unrecorded: %{unrecorded | provider_turn: "running"}}
+
+        state ->
+          state
+      end
+
     {:noreply, end_turn(state, "interrupted", nil)}
   end
 
   def handle_info({:interrupt_deadline, _turn_id}, state), do: {:noreply, state}
+
+  # Codex did not end the left-over turn in time: the turn held for it fails, and the
+  # left-over turn is stopped again before the next one.
+  def handle_info({:leftover_deadline, hold}, %{leftover: %{hold: hold} = leftover} = state) do
+    Logger.warning("codex left-over turn #{leftover.turn} did not end when stopped")
+    state = %{state | leftover: Map.delete(leftover, :hold)}
+    {:noreply, turn_begun({:error, {:leftover, @leftover_running}, state})}
+  end
+
+  def handle_info({:leftover_deadline, _hold}, state), do: {:noreply, state}
+
+  def handle_info({:leftover_ended, id, status}, state) do
+    record_leftover_end(state, id, status)
+    {:noreply, state}
+  end
 
   # A grace whose run already ended (Stop, or the app-server exited) has nothing
   # left to end.
@@ -852,6 +895,17 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   def handle_info(_other, state), do: {:noreply, state}
 
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2, handle_call: 3
+
+  @impl true
+  def handle_info(message, state),
+    do: Unrecorded.handle_info(__MODULE__, message, state, fn m, s -> super(m, s) end)
+
+  @impl true
+  def handle_call(request, from, state),
+    do: Unrecorded.handle_call(request, from, state, fn r, f, s -> super(r, f, s) end)
+
   # The app-server, and the terminals it runs, stop with this process: released when
   # idle, or stopped with its thread. Its writes may fail when the MC itself is
   # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
@@ -859,8 +913,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   def terminate(_reason, state) do
     Durable.leaving(state, &flush(&1, :timer))
 
+    # A turn left running goes with the app-server, as do its terminals.
     unless HalC2.Orchestration.Recovery.stopping?(),
-      do: end_background(%{state | conn: nil}, "interrupted")
+      do:
+        state
+        |> leftover_ended("interrupted")
+        |> Map.put(:conn, nil)
+        |> end_background("interrupted")
 
     :ok
   catch
@@ -900,6 +959,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:interrupting, nil)
      |> Map.put_new(:stopped, false)
      |> Map.put_new(:usage_failure, nil)
+     |> Map.put_new(:leftover, nil)
      |> Map.put_new(:goal, nil)
      |> Map.put_new(:goal_thread, nil)
      |> Map.put_new(:goal_hold, nil)
@@ -986,6 +1046,64 @@ defmodule HalC2.Codex.ThreadRuntime do
          state}
     end
   end
+
+  # The turn's start, as `begin_turn/2` went: started, or failed before Codex took it.
+  defp turn_begun(result) do
+    case result do
+      {:ok, state} ->
+        state
+
+      {:error, {:leftover, message}, state} ->
+        finish(state, "failed", message)
+        %{state | turn: nil}
+
+      {:error, %{"message" => "Codex App Server process exited" <> _} = exit, state} ->
+        Logger.warning("codex turn failed to start: the app-server exited\n#{exit["stderr"]}")
+        finish(state, "failed", stopped_while_starting(exit))
+        %{state | turn: nil}
+
+      {:error, {:broken_version, message}, state} ->
+        finish(state, "failed", message)
+        %{state | turn: nil}
+
+      # A goal Codex would refuse is refused before Codex is asked.
+      {:error, {:goal_refused, message}, state} ->
+        finish(state, "failed", message)
+        %{state | turn: nil}
+
+      # The app-server exited before the turn began.
+      {:error, :closed, state} ->
+        Logger.warning("codex turn failed to start: the app-server exited")
+        finish(state, "failed", "The provider stopped while starting the turn.")
+        %{state | turn: nil}
+
+      {:error, reason, state} ->
+        Logger.warning("codex turn failed to start: #{inspect(reason)}")
+        finish(state, "failed", start_failure("Codex", reason))
+        %{state | turn: nil}
+    end
+  end
+
+  # Codex may have started the held turn when the store refuses its start: replayed dry
+  # (`Unrecorded`), it would start another. The runtime stops instead, Codex's turn with
+  # it, as a `start_turn` call the store refuses does, and TurnWatch, which holds the
+  # run's claim (`hold_for_leftover/1`), fails the run, and records the left-over turn's
+  # end the store refused with it.
+  defp begin_held(state, leftover) do
+    turn_begun(begin_turn(state, state.turn))
+  rescue
+    error in HalC2.Streams.Unrecorded ->
+      TurnWatch.unrecorded(state.thread_id, state.turn.ids.run, %{
+        at: Entities.now(),
+        failure: "The turn could not be saved: #{error.message}",
+        provider_turn: nil,
+        leftover: leftover
+      })
+
+      exit({:unrecorded_start, error.message})
+  end
+
+  defp begin_turn({:leftover, message, state}, _turn), do: {:error, {:leftover, message}, state}
 
   defp begin_turn(state, turn) do
     state = goal_thread(state, turn)
@@ -1265,19 +1383,7 @@ defmodule HalC2.Codex.ThreadRuntime do
              # One that closes its output and runs on fails its calls now (upstream #24600).
              eof_grace: 250
            ),
-         {:ok, _} <-
-           Connection.call(conn, "initialize", %{
-             "clientInfo" => %{
-               "name" => "hal_c2_desktop",
-               "title" => "HAL-C2 Desktop",
-               "version" => "0.1.0"
-             },
-             "capabilities" => %{
-               "experimentalApi" => true,
-               "optOutNotificationMethods" => ["turn/diff/updated"],
-               "extensions" => HalC2.McpApps.client_extensions()
-             }
-           }) do
+         {:ok, _} <- initialize(conn) do
       Connection.notify(conn, "initialized", nil)
       # A new app-server's turns are its own: an id an earlier connection used
       # is not an earlier run's turn here.
@@ -1309,6 +1415,25 @@ defmodule HalC2.Codex.ThreadRuntime do
       stop_conn(state.conn)
       connect(%{state | conn: nil, native_thread_id: nil}, turn)
     end
+  end
+
+  # An app-server that dies at once can stop its connection before this call reaches
+  # it; the call then fails with its exit and what it printed (`Connection.gone/2`).
+  defp initialize(conn) do
+    Connection.call(conn, "initialize", %{
+      "clientInfo" => %{
+        "name" => "hal_c2_desktop",
+        "title" => "HAL-C2 Desktop",
+        "version" => "0.1.0"
+      },
+      "capabilities" => %{
+        "experimentalApi" => true,
+        "optOutNotificationMethods" => ["turn/diff/updated"],
+        "extensions" => HalC2.McpApps.client_extensions()
+      }
+    })
+  catch
+    :exit, reason -> Connection.gone(conn, reason)
   end
 
   # An app-server that has just exited (its `:EXIT` not handled yet) is already stopped.
@@ -2120,9 +2245,25 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     # Between turns only their states still land (a subagent finishing after
     # its parent's turn): nothing new is spawned for a turn that has ended.
-    if state.turn,
+    if state.turn && not held?(state),
       do: state |> flush() |> spawned(item) |> subagent_states(item),
       else: subagent_states(state, item)
+  end
+
+  # A turn Codex kept running past its stop ends on its own: its provider turn reads
+  # as it ended.
+  defp notification(
+         "turn/completed",
+         %{"turn" => %{"id" => id} = turn},
+         %{leftover: %{turn: id}} = state
+       ) do
+    status = if turn["status"] in ["completed", "failed"], do: turn["status"], else: "interrupted"
+    held? = Map.has_key?(state.leftover, :hold)
+    leftover = {state.leftover[:provider_turn], status}
+    state = leftover_ended(state, status)
+
+    # The turn held for it (`stop_leftover/1`) starts now.
+    if held? and state.turn, do: begin_held(state, leftover), else: state
   end
 
   # Codex's goal for this thread, and the turns Codex starts for it (see "Codex
@@ -2187,6 +2328,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification(_method, _params, %{turn: %{native_turn_id: nil}, goal_hold: hold} = state)
        when hold != nil,
        do: state
+
+  # Nor are the left-over turn's reports the turn held for it (`stop_leftover/1`), which
+  # has not started: everything above (its end, background commands, subagents) lands.
+  defp notification(_method, _params, %{turn: %{}, leftover: %{hold: _}} = state), do: state
 
   # Between turns, everything above (background commands, memory threads,
   # subagents and images) still lands; a turn's own notifications need its turn.
@@ -2627,6 +2772,82 @@ defmodule HalC2.Codex.ThreadRuntime do
     state
   end
 
+  # A turn an earlier stop left running (`state.leftover`) is stopped before the
+  # next one starts, so Codex never runs two turns of the thread at once. Codex's
+  # answer to the stop is not its end: the next turn is held until Codex reports the
+  # left-over one ended (`turn/completed`), and fails if it has not by the stop's
+  # deadline (`{:leftover_deadline, _}`), the turn still left over for the one after.
+  # One that cannot be stopped (the app-server does not answer) fails the next at once.
+  defp stop_leftover(%{leftover: %{turn: turn_id, thread: thread}, conn: conn} = state)
+       when conn != nil do
+    reply =
+      try do
+        Connection.call(
+          conn,
+          "turn/interrupt",
+          %{"threadId" => thread, "turnId" => turn_id},
+          5_000
+        )
+      catch
+        :exit, reason -> {:error, reason}
+      end
+
+    case reply do
+      {:error, reason} when not is_map(reason) ->
+        Logger.warning("codex left-over turn #{turn_id} did not stop: #{inspect(reason)}")
+        {:leftover, @leftover_running, state}
+
+      reply ->
+        with {:error, reason} <- reply,
+             do:
+               Logger.warning(
+                 "codex refused to stop left-over turn #{turn_id}: #{inspect(reason)}"
+               )
+
+        {:held, hold_for_leftover(state)}
+    end
+  end
+
+  defp stop_leftover(state), do: %{state | leftover: nil}
+
+  defp held?(state), do: match?(%{turn: %{}, leftover: %{hold: _}}, state)
+
+  # The held run is the runtime's from here, so its crash ends the run (TurnWatch).
+  defp hold_for_leftover(state) do
+    TurnWatch.claim(state.thread_id, state.turn.ids.run)
+    hold = make_ref()
+    deadline = Application.get_env(:hal_c2, :codex_interrupt_deadline_ms, 10_000)
+    Process.send_after(self(), {:leftover_deadline, hold}, deadline)
+    %{state | leftover: Map.put(state.leftover, :hold, hold)}
+  end
+
+  defp leftover_ended(%{leftover: %{provider_turn: id}} = state, status) do
+    if is_binary(id), do: record_leftover_end(state, id, status)
+    %{state | leftover: nil}
+  end
+
+  defp leftover_ended(state, _status), do: state
+
+  # Nothing else ends the left-over turn's provider turn, its run long over: an end the
+  # store refuses, or that a turn it failed drops (`Unrecorded`), is tried again until
+  # it records.
+  defp record_leftover_end(state, id, status) do
+    recorded? =
+      not Map.has_key?(state, :unrecorded) and
+        try do
+          HalC2.Orchestration.TurnWriter.provider_turn_ended(state.thread_id, id, status)
+        rescue
+          error in HalC2.Streams.Unrecorded ->
+            Logger.warning("codex left-over turn #{id} ended unrecorded: #{error.message}")
+            false
+        end
+
+    unless recorded? do
+      retry = Application.get_env(:hal_c2, :unrecorded_retry_ms, 1_000)
+      Process.send_after(self(), {:leftover_ended, id, status}, retry)
+    end
+  end
+
   # `stream` is `:ended` when the turn ends because its app-server (and with
   # it the event stream) is gone, not because Codex reported the turn's end.
   defp end_turn(state, status, failure, stream \\ :open) do
@@ -3001,8 +3222,16 @@ defmodule HalC2.Codex.ThreadRuntime do
     end)
 
     turn = %{turn | ids: Map.delete(ids, :provider_turn), native_turn_id: nil}
-    wait_for_goal_turn(%{state | turn: turn, items: %{}, requests: %{}})
+    state = provider_turn_completed(%{state | turn: turn, items: %{}, requests: %{}}, ids.run)
+    wait_for_goal_turn(state)
   end
+
+  # A provider turn completed for a run the store failed (`HalC2.Orchestration.Unrecorded`)
+  # reads as completed, however the run ends after.
+  defp provider_turn_completed(%{unrecorded: %{run: run, provider_turn: :pending}} = state, run),
+    do: put_in(state.unrecorded.provider_turn, "completed")
+
+  defp provider_turn_completed(state, _run), do: state
 
   defp wait_for_goal_turn(state) do
     hold = System.unique_integer([:positive])

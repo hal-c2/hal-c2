@@ -4,7 +4,9 @@
 # (microsoft/TokenEconomizer@cb42207e3e09), into Elixir for HAL-C2's MC. Changed: both
 # calls go to the user's text generation model (`HalC2.Plugins.Host.generate/3`), which
 # answers an object, so the reply is not parsed out of free text; a job is a process of
-# the plugin's, not a detached CLI, and its spend is the provider's token counts.
+# the plugin's, not a detached CLI, and its spend is the provider's token counts; each
+# prompt names the JSON object its reply is checked against, confidence a decimal string,
+# for a provider given the prompt alone (Pi, ACP agents).
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
   @moduledoc """
@@ -27,8 +29,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
                         "Judge ONLY the workflow from the digest; do NOT infer the task's solution or which " <>
                         "lines to change. Favor SPARING (stuck=false) when there is any sign of progress; " <>
                         "only return stuck=true with high confidence for a clear, repetitive dead-end.\n" <>
-                        "Answer with stuck (true or false), confidence (a number from 0.0 to 1.0) and " <>
-                        "reason (a short leakage-safe justification)."
+                        "Return only a JSON object with these keys: \"stuck\" (a boolean: true or false), " <>
+                        "\"confidence\" (a string holding a decimal from 0.0 to 1.0, such as \"0.85\") and " <>
+                        "\"reason\" (a string: a short leakage-safe justification)."
 
   @nudge_writer_system "An AI coding agent is stuck in a REPETITIVE, UNPRODUCTIVE loop partway through one " <>
                          "task in a software repo. You are given a leakage-safe digest of its RECENT ACTIONS " <>
@@ -41,8 +44,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Judge do
                          "expectation, verifying a new hypothesis before editing again).\n" <>
                          "HARD CONSTRAINTS: Do NOT tell it to stop, give up, or reduce effort — only redirect. " <>
                          "Do NOT infer the task's solution, name specific line numbers to change, or reference " <>
-                         "any code/identifier you cannot see in the digest. Answer with text: only the " <>
-                         "redirect, as plain text, with no preamble and no headings."
+                         "any code/identifier you cannot see in the digest. Return only a JSON object with " <>
+                         "one key: \"text\" (a string: the redirect alone, as plain text, with no " <>
+                         "preamble and no headings)."
 
   @verdict_schema %{"stuck" => "boolean", "confidence" => "string", "reason" => "string"}
   @writer_schema %{"text" => "string"}

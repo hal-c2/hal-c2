@@ -1,0 +1,18 @@
+{
+  "admin": { "stdout": { "permission": "admin", "role_name": "admin" } },
+  "read": { "stdout": { "permission": "read", "role_name": "read" } },
+  "bot": { "stdout": { "permission": "none", "role_name": "" } },
+  "no push access": {
+    "stdout": {
+      "message": "Must have push access to view collaborator permission.",
+      "status": "403"
+    },
+    "stderr": "gh: Must have push access to view collaborator permission. (HTTP 403)\n",
+    "exit": 1
+  },
+  "not a user": {
+    "stdout": { "message": "no-such-user is not a user", "status": "404" },
+    "stderr": "gh: no-such-user is not a user (HTTP 404)\n",
+    "exit": 1
+  }
+}
