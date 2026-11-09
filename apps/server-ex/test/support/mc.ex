@@ -1963,6 +1963,8 @@ defmodule HalC2.Test.Mc.World do
     )
 
     Mc.ensure(HalC2.Terminal.Hub)
+    # Setups in one repository take turns on it here, as in an MC.
+    Mc.ensure(HalC2.WorkspaceLease)
     Mc.ensure(HalC2.WorktreeSetup)
     fake_codex()
   end
