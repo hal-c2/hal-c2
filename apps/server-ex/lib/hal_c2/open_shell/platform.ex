@@ -30,22 +30,36 @@ defmodule HalC2.OpenShell.Platform do
   @root_docker_sockets ["/var/run/docker.sock", "/run/docker.sock"]
 
   @doc """
-  `{:ok, %{target, driver, socket}}`: the gateway archive (`HalC2.OpenShell.Manifest`)
-  and compute driver to use, and the runtime socket the gateway gets; or
-  `{:error, problems}`, codes `problem_message/1` explains.
+  `{:ok, %{target, driver, socket, network}}`: the gateway archive
+  (`HalC2.OpenShell.Manifest`) and compute driver to use, the runtime socket the
+  gateway gets, and how the Docker driver's supervisors reach the gateway (`nil` for
+  Podman); or `{:error, problems}`, codes `problem_message/1` explains.
+
+  Docker's supervisors run on the host's network (OpenShell's default) on Linux,
+  where that is the gateway's loopback. Docker Desktop runs them in its VM, whose
+  host network is not the Mac's unless the user turned on Desktop's host networking,
+  so there they run on a bridge and reach the gateway as `host.docker.internal`.
   """
   def check(facts) do
     case host(facts) do
       {:ok, target} ->
         case runtime(facts) do
-          {:ok, driver, socket} -> {:ok, %{target: target, driver: driver, socket: socket}}
-          {:error, problems} -> {:error, problems}
+          {:ok, driver, socket} ->
+            {:ok,
+             %{target: target, driver: driver, socket: socket, network: network(facts, driver)}}
+
+          {:error, problems} ->
+            {:error, problems}
         end
 
       {:error, problems} ->
         {:error, problems}
     end
   end
+
+  defp network(_facts, "podman"), do: nil
+  defp network(%{os: :darwin}, "docker"), do: "bridge"
+  defp network(_facts, "docker"), do: "host"
 
   defp host(%{os: :linux} = facts) do
     problems =

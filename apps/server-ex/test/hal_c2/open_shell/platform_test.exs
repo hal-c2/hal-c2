@@ -107,15 +107,18 @@ defmodule HalC2.OpenShell.PlatformTest do
       assert {:error, ["docker-too-old"]} =
                Platform.check(linux(%{runtime: docker(%{version: "27.5.1"})}))
 
-      assert {:ok, %{driver: "docker", socket: "/run/user/1000/docker.sock"}} =
+      assert {:ok, %{driver: "docker", socket: "/run/user/1000/docker.sock", network: "host"}} =
                Platform.check(linux(%{runtime: docker(%{})}))
+
+      assert {:ok, %{network: nil}} = Platform.check(linux())
     end
 
     test "macOS needs Apple Silicon and Docker Desktop" do
       desktop =
         docker(%{desktop: true, rootless: false, socket: "/Users/me/.docker/run/docker.sock"})
 
-      assert {:ok, %{target: "aarch64-apple-darwin", driver: "docker"}} =
+      # Desktop's supervisors run in its VM, whose host network is not the Mac's.
+      assert {:ok, %{target: "aarch64-apple-darwin", driver: "docker", network: "bridge"}} =
                Platform.check(%{os: :darwin, arch: "aarch64", runtime: desktop})
 
       assert {:error, ["intel-mac"]} =

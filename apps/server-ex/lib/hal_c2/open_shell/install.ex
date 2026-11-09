@@ -78,6 +78,7 @@ defmodule HalC2.OpenShell.Install do
           "port" => (previous && previous["port"]) || free_port(),
           "driver" => platform.driver,
           "socket" => platform.socket,
+          "network" => platform.network,
           "previous" => previous && previous["version"],
           "instance" => OpenShell.instance()
         }
@@ -560,7 +561,12 @@ defmodule HalC2.OpenShell.Install do
   end
 
   defp atomize(state),
-    do: %{port: state["port"], driver: state["driver"], socket: state["socket"]}
+    do: %{
+      port: state["port"],
+      driver: state["driver"],
+      socket: state["socket"],
+      network: state["network"]
+    }
 
   @doc false
   def free_port do

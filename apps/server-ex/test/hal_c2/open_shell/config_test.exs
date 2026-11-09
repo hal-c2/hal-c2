@@ -35,7 +35,13 @@ defmodule HalC2.OpenShell.ConfigTest do
   end
 
   test "images are pinned by digest" do
-    toml = Config.render(%{port: 1, driver: "docker", socket: "/run/user/1000/docker.sock"})
+    toml =
+      Config.render(%{
+        port: 1,
+        driver: "docker",
+        socket: "/run/user/1000/docker.sock",
+        network: "host"
+      })
 
     for key <- ~w(default_image sandbox_runtime_image supervisor_image) do
       assert [_, ref] = Regex.run(~r/^#{key} = "([^"]+)"$/m, toml)
@@ -45,7 +51,12 @@ defmodule HalC2.OpenShell.ConfigTest do
 
   test "each home's gateway keeps its sandboxes apart from another home's", %{tmp_dir: dir} do
     render = fn driver ->
-      Config.render(%{port: 1, driver: driver, socket: "/run/user/1000/#{driver}.sock"})
+      Config.render(%{
+        port: 1,
+        driver: driver,
+        socket: "/run/user/1000/#{driver}.sock",
+        network: if(driver == "docker", do: "host")
+      })
     end
 
     scope = "hal-c2-" <> OpenShell.instance()
@@ -56,6 +67,26 @@ defmodule HalC2.OpenShell.ConfigTest do
     FakeOpenShell.put_env(home: Path.join(dir, "other"))
     refute render.("docker") =~ scope
     refute render.("podman") =~ scope
+  end
+
+  # On Docker Desktop the supervisors' host network is the VM's, where the gateway's
+  # loopback is not; over a bridge they reach it as `host.docker.internal`.
+  test "Docker's supervisors reach the gateway on the network the platform chose" do
+    docker = fn network ->
+      Config.render(%{port: 1, driver: "docker", socket: "/d.sock", network: network})
+    end
+
+    assert docker.("bridge") =~ ~s(\nsupervisor_network_mode = "bridge"\n)
+    assert docker.("host") =~ ~s(\nsupervisor_network_mode = "host"\n)
+    # The gateway still listens on loopback only; Desktop forwards the name to it.
+    assert docker.("bridge") =~ ~s(bind_address = "127.0.0.1:1"\n)
+    refute docker.("bridge") =~ "grpc_endpoint"
+
+    refute Config.render(%{port: 1, driver: "podman", socket: "/p.sock"}) =~
+             "supervisor_network_mode"
+
+    # No silent default: OpenShell's would leave a Mac's sandboxes unable to start.
+    assert_raise FunctionClauseError, fn -> docker.(nil) end
   end
 
   test "a path with quotes or control characters stays one TOML string" do
