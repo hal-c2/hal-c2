@@ -161,8 +161,11 @@ defmodule HalC2.JsonRpc.ConnectionTest do
       "ended" => true
     }
 
+    # Waits for the stop only: a monitor set after `start_link/1` may find the
+    # connection gone already and say `:noproc`. Its reason is the `:EXIT` below, left
+    # in the mailbox for `gone/2` to read.
     ref = Process.monitor(conn)
-    assert_receive {:DOWN, ^ref, :process, ^conn, {:shutdown, {:ended, ^error}}}, 5_000
+    assert_receive {:DOWN, ^ref, :process, ^conn, _}, 5_000
 
     reply =
       try do
