@@ -5,9 +5,11 @@
 #   named                  every directory those groups name, for `rest` to leave out
 #   proofs                 a JSON list of the Maude proofs to run
 #
-# Run with HEAD a pull request's merge commit, a merge queue entry or a push to main, so
-# HEAD^1..HEAD is the whole change, unless a push to main holds several commits (a rebase merge). Then it is
-# the last one, and at worst that merge's build isn't saved until the next. The argument
+# Run with HEAD a pull request's merge commit or a push to main, so HEAD^1..HEAD is the
+# whole change, unless a push to main holds several commits (a rebase merge). Then it is
+# the last one, and at worst that merge's build isn't saved until the next. A merge queue
+# entry sets CI_BASE to the queue's base, which replaces HEAD^1: the queue may rebase, and
+# in a group only the last entry runs. The argument
 # says how much to test:
 #   all       every job (the nightly run)
 #   merged    only mc_check, whose build is what every pull request restores: the merge's
@@ -76,7 +78,7 @@ if [ "$mode" = all ] || ! git rev-parse -q --verify HEAD^1 >/dev/null; then
   scenarios=$(printf '%s\n' "${scenario_groups[@]}")
 else
   # Without rename detection a moved file lists both paths: it left one place and reached another.
-  changed=$(git diff --no-renames --name-only HEAD^1 HEAD)
+  changed=$(git diff --no-renames --name-only "${CI_BASE:-HEAD^1}" HEAD)
   mc=$(needed '^$')
   if [ "$mode" = merged ]; then
     unit=false props=false tui=false scenarios='' selected=''

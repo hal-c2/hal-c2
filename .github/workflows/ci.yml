@@ -54,6 +54,13 @@ jobs:
           sparse-checkout: .github
           persist-credentials: false
 
+      # A queue entry's HEAD^1 is the PR's last commit when the queue rebases, and in a
+      # group only the last entry runs: diff against what the queue builds on instead.
+      - if: github.event_name == 'merge_group'
+        run: git fetch --no-tags --depth=1 --filter=blob:none origin "$BASE" && echo "CI_BASE=$BASE" >>"$GITHUB_ENV"
+        env:
+          BASE: ${{ github.event.merge_group.base_sha }}
+
       - id: changes
         # Naming the shell turns on pipefail. Without it a failed script is tee's success:
         # no outputs, every job skipped, and a run that tested nothing looks clean.
