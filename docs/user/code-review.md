@@ -63,9 +63,9 @@ someone untrusted made the same ask at the same time. A review you start in HAL-
 yours to ask for.
 
 **Reviews per author a day** and **Reviews per repository a day** hold back
-reviews over the limit, across all your machines, until a day has passed since
-the first of them; the page says until when. Reviews you start yourself are
-never held back. While one of your machines in the cluster is out of reach,
+reviews over the limit, across all your machines, until enough of the day's
+reviews are a day old to make room; the page says until when. Reviews you start
+yourself are never held back, but they count toward the limits. While one of your machines in the cluster is out of reach,
 even one that has never been in reach, each machine counts only its share of the
 limits, so machines apart cannot each spend the whole day's allowance; the full
 limits are back once it is in reach. If a machine is gone for good, switch it
