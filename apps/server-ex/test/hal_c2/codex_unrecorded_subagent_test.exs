@@ -271,12 +271,13 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
     send(store, {:go, gate})
 
+    # The try after settles the child thread, then the subagent in a write of its own.
     await(fn ->
       match?([%{"status" => "failed"}], list(@tid, "run")) and
-        match?(%{"status" => "failed"}, command(child))
+        match?([%{"status" => "failed"}], list(@tid, "subagent"))
     end)
 
-    assert [%{"status" => "failed"}] = list(@tid, "subagent")
+    assert %{"status" => "failed"} = command(child)
     assert %{"status" => "failed"} = item(@tid, "subagent")
   end
 

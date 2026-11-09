@@ -1066,10 +1066,17 @@ defmodule HalC2.Orchestration.TurnWriter do
           key <- [{"subagent", id}, {"node", id}, {"turn-item", "turn-item:subagent:#{id}"}],
           do: key
 
+    # A task delegated through HAL-C2 runs in its own thread, not in the runtime.
+    delegated =
+      for {id, %{"origin" => "app_owned"}} <- StreamState.get(stream, "subagent"),
+          into: MapSet.new(),
+          do: id
+
     items =
       for {id, %{"type" => type, "status" => status, "runId" => run} = item} <-
             StreamState.get(stream, "turn-item"),
-          type in @background_work and status in @open and run in of_instance,
+          type in @background_work and status in @open and run in of_instance and
+            item["nodeId"] not in delegated,
           key <- [{"turn-item", id}, {"node", item["nodeId"]}],
           do: key
 
