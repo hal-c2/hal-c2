@@ -87,6 +87,14 @@ jobs:
             exit 1
           fi
 
+      # In the queue the first failure decides: stop the rest so the queue drops the entry now.
+      - &stop-queue-run
+        name: Stop the queue run
+        if: failure() && github.event_name == 'merge_group'
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # The ledger claims only what a runner selects: every @desktop/@mobile
   # scenario without a backlog tag must be named by that surface's
   # kDefaultGlobs. Cheap enough to run on every change, including ones
@@ -102,6 +110,8 @@ jobs:
 
       - name: Claimed desktop/mobile scenarios are selected by their runners
         run: python3 mise-tasks/features/check
+
+      - *stop-queue-run
 
   # The one job that saves the build every other MC job restores.
   mc_check:
@@ -155,13 +165,7 @@ jobs:
             apps/server-ex/_build
           key: ${{ steps.mc.outputs.cache-key }}
 
-      # In the queue the first failure decides: stop the rest so the queue drops the entry now.
-      - &stop-queue-run
-        name: Stop the queue run
-        if: failure() && github.event_name == 'merge_group'
-        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - *stop-queue-run
 
   # Its own job, so an advisory published against a dep fails this, not the tests; the
   # nightly run is what catches one between changes. Not on a merge to main, which runs
