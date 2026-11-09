@@ -155,9 +155,9 @@ defmodule HalC2.Web.Socket do
         {:push, Protocol.encode(%{"t" => "pong"}), state}
 
       {:ok, {:sub, id, shape, offset}} ->
-        scope = shape_scope(shape)
+        scope = Enum.find(List.wrap(shape_scope(shape)), &(not allowed?(state, &1)))
 
-        if allowed?(state, scope),
+        if scope == nil,
           do: subscribe(state, id, shape, offset),
           else: {:push, Protocol.encode(error_frame(id, "#{scope} is required")), state}
 
@@ -1305,6 +1305,12 @@ defmodule HalC2.Web.Socket do
   end
 
   defp shape_scope(:auth_access), do: "access:read"
+
+  # Pull request text is written from the thread's history, so a pull request action for a
+  # thread needs to read threads as well as write.
+  defp shape_scope({:git_action, _, %{"action" => action, "threadId" => thread}})
+       when action in ["create_pr", "commit_push_pr"] and is_binary(thread),
+       do: ["orchestration:operate", "orchestration:read"]
 
   defp shape_scope({kind, _, _}) when kind in [:server_update, :git_action, :preview_automation],
     do: "orchestration:operate"

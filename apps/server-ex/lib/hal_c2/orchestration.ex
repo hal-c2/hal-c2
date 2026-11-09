@@ -4793,7 +4793,7 @@ defmodule HalC2.Orchestration do
 
   # A steer or restart naming a run other than the active one (or naming one
   # when nothing runs) cannot be delivered as asked, whatever the provider. A steer
-  # meant only for its run (`steerOnly`) that names none has no run to go to: it
+  # meant only for its run (`steerOnly`) that names none (or "") has no run to go to: it
   # neither steers whatever runs nor starts a turn.
   defp untargeted_delivery(runs, command) do
     mode = get_in(command, ["dispatchMode", "type"])
@@ -4801,7 +4801,7 @@ defmodule HalC2.Orchestration do
     active = Enum.find(runs, &(&1["status"] in @active_statuses))
 
     cond do
-      command["steerOnly"] == true and not is_binary(target) ->
+      command["steerOnly"] == true and (not is_binary(target) or target == "") ->
         "A steer meant only for its run must name the run."
 
       mode in ["steer_active", "restart_active"] and is_binary(target) and

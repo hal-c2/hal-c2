@@ -232,11 +232,11 @@ defmodule HalC2.Plugins.Host do
   a run that has ended, is being stopped, or whose provider cannot take a message while
   it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
   `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
-  also when `run_id` names no run.
+  also when `run_id` names no run of the thread.
   """
   def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
     with :ok <- permit(id, "threads:steer"),
-         :ok <- if(is_binary(run_id), do: :ok, else: {:error, "A steer must name its run."}) do
+         :ok <- run_of(thread_id, run_id) do
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "commandId" => "plugin:#{id}:#{HalC2.Environment.uuid4()}",
@@ -251,6 +251,16 @@ defmodule HalC2.Plugins.Host do
       })
     end
   end
+
+  # A steer naming no run is refused as the orchestration refuses any steer meant only
+  # for its run that names none.
+  defp run_of(thread_id, run_id) when is_binary(run_id) and run_id != "" do
+    if HalC2.Streams.get(thread_id, "run", run_id),
+      do: :ok,
+      else: {:error, "Thread #{thread_id} has no run #{run_id}."}
+  end
+
+  defp run_of(_thread_id, _run_id), do: :ok
 
   @doc """
   Shows `message` in `thread_id`'s timeline, in run `run_id`, as a notice from the

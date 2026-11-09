@@ -10,6 +10,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   import ExUnit.Assertions
 
   alias HalC2.Acp.Antigravity
+  alias HalC2.Test.AcpFixtures, as: Acp
   alias HalC2.Test.FakeAcp
   alias HalC2.TextGeneration
   alias HalC2.TextGeneration.Style
@@ -133,6 +134,207 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
 
     assert [_, %{"prompt" => without}] = calls(context)
     assert without == String.replace(with_text, section, "")
+    context
+  end
+
+  step "no usable text generation model is chosen", context do
+    context
+    |> install(["claudeAgent"])
+    |> World.update_settings(%{"textGenerationModelSelection" => selection("codex", "chosen")})
+  end
+
+  step "the default thread model is {string}, a custom model of the Claude instance text falls back to",
+       %{args: [model]} = context do
+    World.update_settings(context, %{
+      "defaultModelSelection" => %{
+        "instanceId" => "claudeAgent",
+        "model" => model,
+        "options" => [%{"id" => "effort", "value" => "high"}]
+      },
+      "providers" => %{"claudeAgent" => %{"enabled" => true, "customModels" => [model]}}
+    })
+  end
+
+  step "{string} writes it with {string} and that model's options",
+       %{args: [provider, model]} = context do
+    assert {:ok, _} = context.reply, "text generation failed: #{inspect(context.reply)}"
+    assert [call] = calls(context)
+    assert writer(call) == provider
+    assert after_flag(call, "--model") == model
+    assert after_flag(call, "--effort") == "high"
+    context
+  end
+
+  step "when the default thread model is a built-in one the fallback still uses {string}",
+       %{args: [model]} = context do
+    context =
+      World.update_settings(context, %{
+        "defaultModelSelection" => %{
+          "instanceId" => "claudeAgent",
+          "model" => "claude-sonnet-5-5"
+        }
+      })
+
+    context = commit(context, root(context))
+    assert {:ok, _} = context.reply
+    assert after_flag(List.last(calls(context)), "--model") == model
+    context
+  end
+
+  # The fallback when Codex cannot list its MCP servers copies the account's login, so such
+  # a scenario gets its own Codex home with a fake one and never reads the developer's
+  # `~/.codex`.
+  defp seed_codex_home(context) do
+    codex_home = HalC2.Test.Mc.tmp_dir(context.mc, "codex-home")
+    File.write!(Path.join(codex_home, "auth.json"), ~s({"token":"fake"}))
+    World.put_env("CODEX_HOME", codex_home)
+  end
+
+  step "the user's Codex configuration enables the MCP server {string}",
+       %{args: [name]} = context do
+    World.put_env("FAKE_CODEX_MCP", JSON.encode!([%{"name" => name, "enabled" => true}]))
+    context
+  end
+
+  step "{string} writes a branch name for a prompt that asks to call {string}",
+       %{args: [provider, name]} = context do
+    context =
+      context
+      |> install([provider])
+      |> World.update_settings(%{"textGenerationModelSelection" => selection(provider)})
+
+    System.put_env("FAKE_TEXT_ANSWER", JSON.encode!(%{"branch" => "Add a login page"}))
+
+    reply(
+      context,
+      TextGeneration.branch_name(root(context), "Call #{name} and then add a login page")
+    )
+  end
+
+  step "{string} is not started and nothing reaches it", %{args: [name]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = calls(context)
+    assert "mcp_servers.#{name}.enabled=false" in call["argv"]
+    assert "plugins" in call["argv"] and "apps" in call["argv"]
+    context
+  end
+
+  step "the branch name is still written, in a Codex home with no MCP servers, when Codex cannot list them",
+       context do
+    seed_codex_home(context)
+    World.put_env("FAKE_CODEX_MCP_FAIL", "1")
+    context = reply(context, TextGeneration.branch_name(root(context), "Add a login page"))
+    assert {:ok, _} = context.reply
+    call = List.last(calls(context))
+    refute Enum.any?(call["argv"], &String.starts_with?(&1, "mcp_servers."))
+    assert call["codexFiles"]["config.toml"] == ""
+
+    assert call["codexFiles"]["auth.json"] ==
+             Base.encode16(:crypto.hash(:sha256, ~s({"token":"fake"})), case: :lower)
+
+    context
+  end
+
+  step "the text model has a thinking switch turned off and an effort chosen", context do
+    context
+    |> install(["claudeAgent"])
+    |> World.update_settings(%{
+      "textGenerationModelSelection" => %{
+        "instanceId" => "claudeAgent",
+        "model" => "claude-haiku-4-5",
+        "options" => [
+          %{"id" => "thinking", "value" => false},
+          %{"id" => "effort", "value" => "high"}
+        ]
+      }
+    })
+  end
+
+  step "the model does not take an effort option", context do
+    refute HalC2.Claude.Provider.offers_option?("claude-haiku-4-5", "effort")
+    context
+  end
+
+  step "Claude is run with thinking turned off in its settings", context do
+    assert {:ok, _} = context.reply
+    assert [call] = calls(context)
+    assert %{"alwaysThinkingEnabled" => false} = JSON.decode!(after_flag(call, "--settings"))
+    context
+  end
+
+  step "no effort option is passed", context do
+    refute "--effort" in List.last(calls(context))["argv"]
+    context
+  end
+
+  # The fake Cursor SDK (`fake_cursor.mjs`) runs the MC's own command for Cursor, so the
+  # credential is read from the instance's `cursor.json` as in production.
+  defp cursor_key(key) do
+    path =
+      Path.join([
+        Application.fetch_env!(:hal_c2, :home),
+        "provider-auth",
+        "cursor",
+        "cursor.json"
+      ])
+
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, JSON.encode!(%{"apiKey" => key}))
+  end
+
+  step "Cursor wrote a title while one account was signed in", context do
+    context = context |> Acp.ready() |> World.text_writers([])
+    Acp.put_provider("cursor", %{"enabled" => true})
+    cursor_key("key-of-first-account")
+
+    context =
+      World.update_settings(context, %{"textGenerationModelSelection" => selection("cursor")})
+
+    context = title(context, "Fix the login redirect loop")
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "the user signs in with another account and a title is generated", context do
+    cursor_key("key-of-second-account")
+    title(context, "Fix the login redirect loop")
+  end
+
+  step "Cursor is called with the other account's credential", context do
+    assert {:ok, _} = context.reply
+
+    keys =
+      for %{"event" => "agent", "apiKey" => key} <- Acp.log(context, "cursor-cursor"), do: key
+
+    assert keys == ["key-of-first-account", "key-of-second-account"]
+    context
+  end
+
+  step "a Cursor title run does not finish within 3 minutes", context do
+    context =
+      context
+      |> install(["cursor"])
+      |> World.update_settings(%{"textGenerationModelSelection" => selection("cursor")})
+
+    World.put_app_env(:text_generation_timeout, 2_000)
+    World.put_env("FAKE_TEXT_HANG", "1")
+    context
+  end
+
+  step "the Cursor run is cancelled", context do
+    context = title(context, "Fix the login redirect loop")
+    assert {:error, "Cursor request timed out.", _} = context.reply
+    assert [%{"pid" => pid}] = calls(context)
+    # `tail --pid` returns once the process is gone.
+    assert {_, 0} =
+             System.cmd("timeout", ["5", "tail", "--pid=#{pid}", "-s", "0.05", "-f", "/dev/null"])
+
+    context
+  end
+
+  step "the SDK's resources are released even if they only become available late", context do
+    assert [%{"cwd" => cwd}] = calls(context)
+    refute File.exists?(cwd)
     context
   end
 
@@ -1221,6 +1423,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   step "a commit message is generated and the writer's process fails with an error that holds an access token",
        context do
     context = install(context)
+    seed_codex_home(context)
     # A working folder that does not exist: the process cannot start, and the error
     # names the folder, which carries the token.
     cwd = Path.join(context.mc.home, "ghp_secrettoken123/missing")
@@ -1790,6 +1993,8 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     "a github.com repository page" => "https://github.com/acme/app",
     "a gitlab.com merge request or issue in a nested group" =>
       "https://gitlab.com/acme/platform/app/-/merge_requests/12",
+    "a gitlab.com merge request in the older link form" =>
+      "https://gitlab.com/acme/platform/app/merge_requests/12",
     "a github.com pull request over plain http" => "http://github.com/acme/app/pull/12",
     "a github.com pull request whose link carries a user name" =>
       "https://someone@github.com/acme/app/pull/12",
@@ -1805,6 +2010,12 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     "a title is generated for a message linking a gitlab.com merge request or issue in a nested group",
     context,
     do: linking(context, "a gitlab.com merge request or issue in a nested group")
+  )
+
+  step(
+    "a title is generated for a message linking a gitlab.com merge request in the older link form",
+    context,
+    do: linking(context, "a gitlab.com merge request in the older link form")
   )
 
   step(
@@ -2026,6 +2237,8 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   # another host (`context.forge`, its URL) pushes to a local bare repository but names the
   # host in its URL, and `gh` is the fake: the host kind reaches the template the real way.
   defp pull_request(%{forge: url} = context) do
+    extra = Map.get(context, :git_extra, %{})
+
     context =
       github(context, [
         %{"args" => ["pr list"], "stdout" => "[]"},
@@ -2042,7 +2255,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     World.git!(root, ["remote", "add", "origin", url])
     World.git!(root, ["config", "remote.origin.pushurl", bare])
 
-    {events, context} = World.git_action(context, root, "create_pr")
+    {events, context} = World.git_action(context, root, "create_pr", extra)
     context |> Map.put(:cwd, root) |> Map.put(:git_events, events)
   end
 
@@ -2064,6 +2277,129 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
         template: Style.pr_template(cwd, "main")
       )
     )
+  end
+
+  # --- text from a thread ---------------------------------------------------------------
+
+  # A run that completed with a command, and a rolled-back run with another, so what the
+  # writer is given can be told from what the thread undid.
+  step "a thread ran {string} and it passed", %{args: [command]} = context do
+    context =
+      context
+      |> World.create_thread("Login work")
+      |> World.numbered_run("Login work", 1, "completed")
+      |> World.numbered_run("Login work", 2, "rolled_back")
+
+    context =
+      context
+      |> World.add_item("Login work", "cmd-1", "command_execution", "run-1", %{
+        "input" => command,
+        "exitCode" => 0,
+        "output" => "0 failures"
+      })
+      |> World.add_item("Login work", "cmd-2", "command_execution", "run-2", %{
+        "input" => "mix undone",
+        "exitCode" => 0
+      })
+
+    context
+    |> Map.put(:forge, "https://github.com/acme/shop.git")
+    |> Map.put(:git_extra, %{"threadId" => World.thread_id(context, "Login work")})
+    |> Map.put(:thread_command, command)
+  end
+
+  step "a thread's only turn is still running and has run {string} and it passed",
+       %{args: [command]} = context do
+    context =
+      context
+      |> World.create_thread("Login work")
+      |> World.numbered_run("Login work", 1, "running")
+      |> World.add_item("Login work", "cmd-1", "command_execution", "run-1", %{
+        "input" => command,
+        "exitCode" => 0,
+        "output" => "0 failures"
+      })
+
+    context
+    |> Map.put(:forge, "https://github.com/acme/shop.git")
+    |> Map.put(:git_extra, %{"threadId" => World.thread_id(context, "Login work")})
+    |> Map.put(:thread_command, command)
+  end
+
+  step "pull request text is generated for that thread's branch", context do
+    pull_request(install(context))
+  end
+
+  step "the writer is given a short account of the thread's visible history with the check and its result",
+       context do
+    prompt = pr_prompt(context)
+    assert prompt =~ "Thread history"
+    assert prompt =~ context.thread_command
+    assert prompt =~ "0 failures" or prompt =~ "exit"
+    context
+  end
+
+  step "turns that were rolled back are left out of it", context do
+    refute pr_prompt(context) =~ "mix undone"
+    context
+  end
+
+  step "a client that may write to source control but may not read threads", context do
+    context = World.create_thread(context, "Login work")
+
+    context
+    |> Map.put(:forge, "https://github.com/acme/shop.git")
+    |> Map.put(:git_extra, %{"threadId" => World.thread_id(context, "Login work")})
+    |> install()
+    |> then(fn context ->
+      access = HalC2.Test.Mc.pair(["orchestration:operate"], "Source control only")
+      World.put_client(context, "device", HalC2.Test.Mc.connect_as(context.mc, access))
+    end)
+  end
+
+  step "it asks for pull request text for a thread", context do
+    id = System.unique_integer([:positive])
+    root = root(context)
+
+    client =
+      HalC2.Test.Mc.sub(World.client(context, "device"), id, %{
+        "type" => "gitAction",
+        "mc" => Atom.to_string(node()),
+        "input" => %{
+          "actionId" => "act-#{id}",
+          "cwd" => root,
+          "action" => "create_pr",
+          "threadId" => context.git_extra["threadId"]
+        }
+      })
+
+    {frame, client} =
+      HalC2.Test.Mc.await(client, &(&1["t"] == "error" and &1["id"] == id), 10_000)
+
+    context |> World.put_client("device", client) |> Map.put(:refused, frame)
+  end
+
+  @doc false
+  def refused(%{refused: frame} = context) do
+    assert frame["reason"] =~ "orchestration:read is required"
+    context
+  end
+
+  step "committing and pushing for that thread are still allowed", context do
+    {events, context} =
+      World.git_action(context, root(context), "commit", context.git_extra, "device")
+
+    refute Enum.any?(events, &(&1["kind"] == "action_failed")),
+           "commit was refused: #{inspect(events)}"
+
+    context
+  end
+
+  defp pr_prompt(context) do
+    calls(context)
+    |> Enum.map(& &1["prompt"])
+    |> Enum.find(&(is_binary(&1) and &1 =~ "Head branch:"))
+    |> Kernel.||(flunk("no pull request prompt in #{inspect(calls(context))}"))
   end
 
   defp commit_files(context, files) do

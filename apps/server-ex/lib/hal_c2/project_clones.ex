@@ -746,33 +746,7 @@ defmodule HalC2.ProjectClones do
 
   @doc false
   # `path` with every link in it resolved; a missing tail is kept as written.
-  def canonical(path), do: canonical(Path.split(Path.expand(path)), "/", 0)
-
-  defp canonical(_parts, _at, 40), do: nil
-  defp canonical([], at, _depth), do: at
-  defp canonical(["/" | rest], _at, depth), do: canonical(rest, "/", depth)
-
-  defp canonical([part | rest], at, depth) do
-    next = Path.join(at, part)
-
-    case File.lstat(next) do
-      {:ok, %{type: :symlink}} ->
-        case :file.read_link_all(next) do
-          {:ok, target} ->
-            target = Path.expand(to_string(target), at)
-            canonical(Path.split(target) ++ rest, "/", depth + 1)
-
-          _ ->
-            nil
-        end
-
-      {:ok, _} ->
-        canonical(rest, next, depth)
-
-      {:error, _} ->
-        Path.join([next | rest])
-    end
-  end
+  defdelegate canonical(path), to: HalC2.Paths
 
   @stages [
     {~r/^(?:remote: )?(?:Enumerating|Counting|Compressing) objects:\s+(\d+)%\s*(.*)$/,
