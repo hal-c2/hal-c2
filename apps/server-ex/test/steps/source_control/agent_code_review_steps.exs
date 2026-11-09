@@ -1160,6 +1160,24 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "git on this machine took no checkpoint of the review's checkout", context do
+    {review, context} = await_review(context, 12, &(&1["threadId"] != nil))
+    thread_id = review["threadId"]
+    :ok = HalC2.Streams.watch(thread_id, self())
+    await_no_runs(thread_id)
+    HalC2.Streams.Server.unsubscribe(thread_id, self())
+
+    assert HalC2.StreamState.list(HalC2.Streams.state(thread_id), "checkpoint") == []
+    [clone] = Path.wildcard(Path.join([HalC2.Plugins.Host.data_dir(@id), "repos", "**/*.git"]))
+
+    assert {"", 0} =
+             System.cmd("git", ~w(for-each-ref refs/hal-c2/orchestration-v2/checkpoints),
+               cd: clone
+             )
+
+    context
+  end
+
   step "one report is taken and the other refused", context do
     answers =
       for _ <- 1..2 do
@@ -2719,6 +2737,15 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   defp await_review!(context, number, fun), do: context |> await_review(number, fun) |> elem(1)
 
   defp review(snapshot, number), do: Enum.find(snapshot["reviews"], &(&1["number"] == number))
+
+  defp await_no_runs(thread_id) do
+    runs = HalC2.Streams.state(thread_id) |> HalC2.StreamState.list("run")
+
+    if Enum.any?(runs, &(&1["status"] in ~w(preparing starting running waiting))) do
+      assert_receive {:hal_c2_stream, ^thread_id, _}, 15_000
+      await_no_runs(thread_id)
+    end
+  end
 
   defp key(context, number), do: "#{context.repository}##{number}"
 

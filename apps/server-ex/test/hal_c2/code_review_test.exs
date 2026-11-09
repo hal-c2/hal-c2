@@ -2132,6 +2132,26 @@ defmodule HalC2.CodeReviewTest do
       assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
     end
 
+    # Git here would run this machine's filters on what the pull request's attributes
+    # route through them, and the agent changed only the sandbox's copy anyway.
+    test "a sandboxed review takes no checkpoint of its checkout", _context do
+      start_untrusted()
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+      thread_id = review()["threadId"]
+      await_idle(thread_id)
+
+      assert HalC2.StreamState.list(HalC2.Streams.state(thread_id), "checkpoint") == []
+
+      repos = Path.join(HalC2.Plugins.Host.data_dir("code-review"), "repos")
+      [clone] = Path.wildcard(Path.join(repos, "**/*.git"))
+
+      assert {"", 0} =
+               System.cmd("git", ~w(for-each-ref refs/hal-c2/orchestration-v2/checkpoints),
+                 cd: clone
+               )
+    end
+
     # A run stopped as its sandbox was made fails to open it, which for a review no
     # longer running removed nothing from its checkout.
     @tag sandbox: [hold: "tar"]

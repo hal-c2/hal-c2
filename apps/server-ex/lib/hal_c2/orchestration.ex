@@ -1679,7 +1679,11 @@ defmodule HalC2.Orchestration do
 
     case restore_worktree(thread_id) do
       :ok ->
-        :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
+        # A sandboxed agent changes its sandbox's copy, never this folder, and git here
+        # would run the filters the folder's own attributes pick (`TurnWriter`).
+        unless Map.get(turn, :sandbox),
+          do: :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
+
         # A run that starts a new conversation first stops the provider's idle session,
         # which would go on in the conversation it holds.
         :ok = leave_conversation(thread_id, turn)
