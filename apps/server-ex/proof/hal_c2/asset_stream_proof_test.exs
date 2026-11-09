@@ -38,6 +38,10 @@ defmodule HalC2.AssetStreamProofTest do
         "the byte bound is checked by the unit and feature tests; the model counts chunks",
       "HalC2.Attachments.dir/0" => @storage,
       "HalC2.Attachments.thread_segment/1" => @storage,
+      "HalC2.Attachments.copy_into/2" => @storage,
+      "HalC2.Attachments.fold_long_text/3" => @storage,
+      "HalC2.Attachments.folded_into/2" => @storage,
+      "HalC2.Attachments.left_behind/4" => @storage,
       "HalC2.Attachments.GitHubMedia.fetch_url/1" =>
         "selects the upstream URL; it changes no chunk order or backpressure",
       "HalC2.Attachments.GitHubMedia.file_name/1" =>

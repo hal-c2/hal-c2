@@ -143,3 +143,17 @@ Feature: Inline context in messages
     Given a message carries a Snap Shot whose window data would take the prompt past the provider's input limit
     When it is sent to "t1"
     Then the provider receives the message and the image without the window data
+
+  @mc @priority-high
+  Scenario: A message over 120,000 characters reaches the agent as a file
+    When a message of 130,000 characters is sent to "t1"
+    Then the provider receives the message's first 8,000 and last 2,000 characters around a note of the 120,000 cut
+    And the provider is told the whole message is saved at the path of "message.txt"
+    And "message.txt" holds the whole message
+    And the thread shows the message as the agent was sent it, with "message.txt" attached
+
+  @mc
+  Scenario: A message of 120,000 characters is sent whole
+    When a message of 120,000 characters is sent to "t1"
+    Then the provider receives the whole message
+    And the message has no attachments

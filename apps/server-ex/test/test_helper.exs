@@ -1,3 +1,5 @@
+HalC2.Test.StopSignal.fail_run()
+
 # A machine's own shell startup is not a test's: it may outlast a wait. A test that cares sets its own.
 System.put_env("SHELL", "/bin/sh")
 

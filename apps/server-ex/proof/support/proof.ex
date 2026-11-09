@@ -48,7 +48,13 @@ defmodule HalC2.Proof do
       # Maude gives up first, so a slow check fails rather than leave Maude busy.
       @moduletag timeout: Keyword.get(unquote(opts), :timeout, 300_000) + 30_000
       import HalC2.Proof,
-        only: [refute_reachable: 4, assert_reachable: 4, refute_deadlock: 4, assert_ltl: 4]
+        only: [
+          refute_reachable: 4,
+          refute_deadlock: 4,
+          assert_ltl: 4,
+          assert_reachable: 3,
+          assert_reachable: 4
+        ]
 
       # A Maude of each test's own. Maude keeps the memory a search took and every later
       # search in it pays for that (a check of 130k states takes ten times as long after
@@ -125,7 +131,7 @@ defmodule HalC2.Proof do
   the code's fix switched off in the model, it shows that part is what keeps `bad`
   out. `depth: n` bounds the search.
   """
-  def assert_reachable(proof, init, bad, opts) do
+  def assert_reachable(proof, init, bad, opts \\ []) do
     bound = if opts[:depth], do: "[1, #{opts[:depth]}]", else: "[1]"
     s = "S:#{proof.state}"
     search = "search #{bound} in #{proof.check} : #{init} =>* #{s} such that #{bad}(#{s}) ."

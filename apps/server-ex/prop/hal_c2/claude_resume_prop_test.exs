@@ -4,21 +4,24 @@ defmodule HalC2.ClaudeResumePropTest do
   its conversation, on the fake CLI in `test/support/fake_claude.py`: turns Claude
   answers ("where are we", which says the message its process resumed at), turns the
   user stops after Claude wrote part of its answer ("answer halfway") or before it
-  wrote anything ("wait"), turns Claude cannot be started for, turns whose run ended
+  wrote anything ("start and wait"), turns Claude cannot be started for, turns whose run ended
   while Claude started for them (and the next turn that started meanwhile), rewinds to a message an earlier turn ended at (or to
   the thread's start, or to a message Claude cannot resume at, which ends its process
   at startup as a subagent's message does), and the idle sweep letting go of the
   thread's Claude process.
 
   A rewind is played as the orchestration plays one: `ThreadRuntime.rollback/2`, and
-  its patch on the provider thread.
+  its patch on the provider thread; one to the thread's start rolls its runs back
+  (`HalC2.Orchestration.Rollback`).
 
   The promise: a new Claude process resumes at the message the last rewind went back
   to, as long as no turn since had Claude write anything; once one did, it resumes
-  the whole conversation. A live process keeps the conversation it has. A turn that
-  fails because Claude cannot resume at the message lets the next one resume the whole
-  conversation, so the thread recovers by itself. A turn whose run ended before Claude
+  the whole conversation. A live process keeps the conversation it has. A turn Claude cannot
+  resume at the message for goes on in a new conversation handed the thread
+  (`Handoff.fresh_start/2`), so the thread recovers by itself. A turn whose run ended before Claude
   got it leaves where to resume as it found it, unless a later turn started meanwhile.
+  A turn stopped before Claude wrote leaves where to resume as it found it too, unless
+  it went on in a new conversation: that one is resumed whole.
   """
 
   use ExUnit.Case, async: false
@@ -43,6 +46,7 @@ defmodule HalC2.ClaudeResumePropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :claude_command)
+        System.delete_env("FAKE_CLAUDE_USAGE")
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -57,6 +61,10 @@ defmodule HalC2.ClaudeResumePropTest do
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
+    # Each result reports its usage, as Claude's do: without, the handoff's room counts
+    # every turn's reserve as spent, and the message an unstarted turn leaves to hand
+    # over soon no longer fits the conversation, which the run then replaces.
+    System.put_env("FAKE_CLAUDE_USAGE", "1")
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -142,37 +150,33 @@ defmodule HalC2.ClaudeResumePropTest do
   # Claude only resumes at a message, @broken included, in a conversation it has.
   def precondition(state, {:call, _, :rewind, [@broken]}), do: state.heads != []
   def precondition(state, {:call, _, :rewind, _}), do: state.n > 1
-  # A new process fails at startup on @broken, before the user could stop it.
-  def precondition(state, {:call, _, :stopped, _}), do: not broken?(state)
-  def precondition(state, {:call, _, :abandoned, _}), do: not broken?(state)
   # A live process takes the message whatever its command is now.
   def precondition(state, {:call, _, :unstarted, _}), do: not state.session
   def precondition(_state, _call), do: true
 
-  # The process exits at startup; no turn of Claude's resumed anywhere.
-  def next_state(state, _result, {:call, _, :answered, [_n]})
-      when not state.session and state.pinned == @broken,
-      do: %{state | pinned: nil, n: state.n + 1}
-
   def next_state(state, _result, {:call, _, :answered, [_n]}) do
-    state = message(state)
+    state = message(unbroken(state))
     %{state | pinned: nil, heads: Enum.uniq(["uuid-#{state.turns}" | state.heads])}
   end
 
+  # A new process fails at startup on @broken, and the turn goes on in a new
+  # conversation, where the user stops it.
   def next_state(state, _result, {:call, _, :stopped, [_n, :halfway]}),
-    do: %{message(state) | pinned: nil}
+    do: %{message(unbroken(state)) | pinned: nil}
 
-  def next_state(state, _result, {:call, _, :stopped, [_n, :silent]}), do: message(state)
+  def next_state(state, _result, {:call, _, :stopped, [_n, :silent]}),
+    do: message(unbroken(state))
 
   # Claude never got the message: nothing about the conversation changed.
   def next_state(state, _result, {:call, _, :unstarted, [_n]}), do: %{state | n: state.n + 1}
 
   # Nor here, but the runtime had a process started for the turn, at the pinned
   # message, unless it had one. A turn that started meanwhile is answered on it.
-  def next_state(state, _result, {:call, _, :abandoned, [_n, false]}), do: opened(state)
+  def next_state(state, _result, {:call, _, :abandoned, [_n, false]}),
+    do: opened(unbroken(state))
 
   def next_state(state, _result, {:call, _, :abandoned, [_n, true]}) do
-    state = message(opened(state))
+    state = message(opened(unbroken(state)))
     %{state | pinned: nil, heads: Enum.uniq(["uuid-#{state.turns}" | state.heads])}
   end
 
@@ -196,25 +200,28 @@ defmodule HalC2.ClaudeResumePropTest do
   defp message(state),
     do: %{state | session: true, resumed: state.pinned, turns: 1, n: state.n + 1}
 
-  def postcondition(state, {:call, _, :answered, [_n]}, seen)
-      when not state.session and state.pinned == @broken,
-      do: seen.status == "failed"
+  def postcondition(state, {:call, _, :answered, [_n]}, seen),
+    do: answered?(unbroken(state), seen)
 
-  def postcondition(state, {:call, _, :answered, [_n]}, seen), do: answered?(state, seen)
+  # Where a new process would resume, as the provider thread says, is the model's.
+  def postcondition(state, {:call, _, :stopped, _} = call, seen),
+    do: seen.status == "interrupted" and seen.head == next_state(state, seen, call).pinned
 
-  def postcondition(_state, {:call, _, :stopped, _}, seen), do: seen.status == "interrupted"
   def postcondition(_state, {:call, _, :unstarted, _}, seen), do: seen.status == "failed"
 
-  def postcondition(_state, {:call, _, :abandoned, [_n, false]}, seen),
-    do: seen.status == "interrupted"
+  def postcondition(state, {:call, _, :abandoned, [_n, false]} = call, seen),
+    do: seen.status == "interrupted" and seen.head == next_state(state, seen, call).pinned
 
   def postcondition(state, {:call, _, :abandoned, [_n, true]}, seen),
-    do: seen.status == "interrupted" and answered?(opened(state), seen.next)
+    do: seen.status == "interrupted" and answered?(opened(unbroken(state)), seen.next)
 
   def postcondition(_state, {:call, _, :rewind, _}, seen), do: seen == :ok
   def postcondition(_state, {:call, _, :release, []}, seen), do: seen == :ok
 
   defp broken?(state), do: not state.session and state.pinned == @broken
+
+  # The process exits at startup, and the turn goes on in a new conversation.
+  defp unbroken(state), do: if(broken?(state), do: %{state | pinned: nil}, else: state)
 
   defp answered?(state, seen) do
     resumed = message(state).resumed
@@ -244,15 +251,16 @@ defmodule HalC2.ClaudeResumePropTest do
 
   # A turn the user stops, after Claude wrote part of its answer or before it wrote anything.
   def stopped(n, how) do
-    text = if how == :halfway, do: "answer halfway", else: "wait for me"
+    text = if how == :halfway, do: "answer halfway", else: "start and wait for me"
     run = send_message(n, text)
 
     # Stopped once Claude has the message, and has written in it when it is to.
     await_run(run, fn seen ->
       case runtime() do
         %{turn: %{ids: %{run: id}} = turn} when id == run ->
-          # `:resumed_at` goes once Claude writes.
-          how == :silent or not Map.has_key?(turn, :resumed_at)
+          # Claude says it started the prompt, which confirms what the run handed over
+          # (`unconfirmedRunId`), and `:resumed_at` goes once Claude writes.
+          not unconfirmed?(run) and (how == :silent or not Map.has_key?(turn, :resumed_at))
 
         _ ->
           if seen["status"] in ["completed", "failed", "interrupted"],
@@ -262,7 +270,7 @@ defmodule HalC2.ClaudeResumePropTest do
 
     {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
     run = await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
-    %{status: run["status"]}
+    %{status: run["status"], head: head()}
   end
 
   # A turn whose Claude cannot be started, so it fails before Claude gets the message.
@@ -321,7 +329,7 @@ defmodule HalC2.ClaudeResumePropTest do
     # The runtime took the turn before it answers this.
     _ = :sys.get_state(pid)
     run = await_run(run, &(&1["status"] in ["completed", "failed", "interrupted"]))
-    seen = %{status: run["status"]}
+    seen = %{status: run["status"], head: head()}
     if next, do: Map.put(seen, :next, reply(next)), else: seen
   end
 
@@ -352,7 +360,18 @@ defmodule HalC2.ClaudeResumePropTest do
         [id] = Map.keys(stream.entities["provider-thread"])
         # A patch that changes nothing is no change.
         change = Orchestration.upsert(stream, "provider-thread", id, &Map.merge(&1, patch))
-        {Enum.filter([change], &is_tuple/1), :ok}
+
+        rolled_back =
+          if head == nil,
+            do:
+              for(
+                {run, _} <- stream.entities["run"] || %{},
+                do:
+                  Orchestration.upsert(stream, "run", run, &Map.put(&1, "status", "rolled_back"))
+              ),
+            else: []
+
+        {Enum.filter([change | rolled_back], &is_tuple/1), :ok}
       end)
     end
   end
@@ -395,6 +414,20 @@ defmodule HalC2.ClaudeResumePropTest do
         if not MapSet.member?(runs, run["id"]), do: run["id"]
       end)
     end)
+  end
+
+  # The message a new process would resume at: the provider thread's head.
+  defp head do
+    case StreamState.list(current(), "provider-thread") do
+      [thread] -> get_in(thread, ["nativeConversationHeadRef", "nativeId"])
+      [] -> nil
+    end
+  end
+
+  defp unconfirmed?(run) do
+    current()
+    |> StreamState.list("provider-thread")
+    |> Enum.any?(&(&1["unconfirmedRunId"] == run))
   end
 
   defp runtime do

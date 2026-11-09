@@ -123,7 +123,8 @@ defmodule HalC2.Attachments do
   @doc """
   Moves a message's pending uploads into its thread: each is copied under a
   thread-scoped id of its own, which the message then names, so two messages naming
-  one upload hold two copies. Attachments the thread already has pass through.
+  one upload hold two copies. Attachments the thread already has pass through, without
+  the mark only the MC's own folds carry.
   """
   def claim(thread_id, attachments) when is_list(attachments) do
     Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
@@ -175,7 +176,7 @@ defmodule HalC2.Attachments do
       # can never take a file another message names (proof/models/asset_stream.maude).
       claimed_id = "#{thread_segment(thread_id)}-#{copy_tag()}-#{rest}"
       File.cp!(source, Path.join(dir(), claimed_id <> Path.extname(source)))
-      {:ok, Map.put(attachment, "id", claimed_id)}
+      {:ok, attachment |> unmarked() |> Map.put("id", claimed_id)}
     else
       [] -> {:error, "Attachment '#{attachment["name"]}' was not uploaded."}
       {:error, message} when is_binary(message) -> {:error, message}
@@ -183,7 +184,7 @@ defmodule HalC2.Attachments do
     end
   end
 
-  defp claim_one(_thread_id, attachment), do: {:ok, attachment}
+  defp claim_one(_thread_id, attachment), do: {:ok, unmarked(attachment)}
 
   @doc """
   Copies the stored attachment `id` into `thread_id` under an id of its own, so a thread
@@ -292,6 +293,163 @@ defmodule HalC2.Attachments do
       "sizeBytes" => byte_size(bytes)
     }
     |> then(&if(attachment["source"], do: Map.put(&1, "source", attachment["source"]), else: &1))
+  end
+
+  # What of a message too long to send whole stays in its text (`fold_long_text/3`).
+  @long_text_chars 120_000
+  @long_text_start 8_000
+  @long_text_end 2_000
+  @folded_source %{"_tag" => "pasted-text", "folded" => true}
+
+  @doc """
+  A message too long to send whole, folded as a client folds a long paste: past
+  120,000 characters its text becomes its start and end around a mark saying what was
+  cut, and the whole of it a text file attached to the message (a `pasted-text` file,
+  which providers are given as a path). The thread shows what the agent was sent, and
+  the file goes wherever the thread does. Shorter text passes through.
+  """
+  # The file is the attachments folder, a thread segment of `[a-z0-9_-]` and a fresh
+  # uuid, never a path a client or an agent names.
+  # sobelow_skip ["Traversal.FileModule"]
+  def fold_long_text(thread_id, text, attachments) when is_binary(text) do
+    chars = String.length(text)
+
+    cond do
+      chars <= @long_text_chars ->
+        {:ok, text, attachments}
+
+      byte_size(text) > @max_file_bytes ->
+        {:error,
+         "The message is too long to send, even as a file: at most #{div(@max_file_bytes, 1024 * 1024)} MB."}
+
+      true ->
+        id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+        name = free_name(attachments, "message")
+        file = Path.join(dir(), id <> ".txt")
+
+        case with(:ok <- File.mkdir_p(dir()), do: File.write(file, text)) do
+          :ok ->
+            cut = chars - @long_text_start - @long_text_end
+
+            folded =
+              String.slice(text, 0, @long_text_start) <>
+                "\n\n[... #{cut} characters cut here; the whole message is in the attached #{name} ...]\n\n" <>
+                String.slice(text, chars - @long_text_end, @long_text_end)
+
+            file = %{
+              "type" => "file",
+              "id" => id,
+              "name" => name,
+              "mimeType" => "text/plain",
+              "sizeBytes" => byte_size(text),
+              "source" => @folded_source
+            }
+
+            {:ok, folded, attachments ++ [file]}
+
+          # No message names what a failed write left, so it goes here.
+          {:error, reason} ->
+            File.rm(file)
+
+            {:error,
+             "The message is too long to send whole, and saving it as a file failed: #{:file.format_error(reason)}."}
+        end
+    end
+  end
+
+  def fold_long_text(_thread_id, text, attachments), do: {:ok, text, attachments}
+
+  @doc """
+  The files `fold_long_text/3` folded a message's `text` into, among its
+  `attachments`: those the MC marked as its folds whose name a cut mark in `text`
+  names. Only the MC marks a file (`claim/2` drops a client's mark), so text quoting a cut mark, or a
+  pasted text of the same name, never makes another file a fold.
+  """
+  def folded_into(text, attachments) when is_binary(text) and is_list(attachments) do
+    named =
+      ~r/\[\.\.\. \d+ characters cut here; the whole message is in the attached (.+?) \.\.\.\]/
+      |> Regex.scan(text, capture: :all_but_first)
+      |> MapSet.new(fn [name] -> name end)
+
+    Enum.filter(attachments, &(&1["source"] == @folded_source and &1["name"] in named))
+  end
+
+  def folded_into(_text, _attachments), do: []
+
+  # An attachment a client names, without the mark only the MC gives the files it folds
+  # long messages into (`folded_into/2`).
+  defp unmarked(%{"source" => %{"_tag" => "pasted-text"} = source} = attachment),
+    do: Map.put(attachment, "source", Map.delete(source, "folded"))
+
+  defp unmarked(attachment), do: attachment
+
+  @doc """
+  What an edit of a message's text from `old` to `new` leaves behind among its
+  `attachments`: the file `old` was folded into, unless `new` still names it among the
+  attachments the edit `kept`, as an edit of the stored folded text does.
+  """
+  def left_behind(old, new, attachments, kept),
+    do: folded_into(old, attachments) -- folded_into(new, kept)
+
+  # `message.txt`, or `message-2.txt` and on when the message already has one.
+  defp free_name(attachments, base) do
+    taken = MapSet.new(attachments, & &1["name"])
+
+    Stream.iterate(1, &(&1 + 1))
+    |> Stream.map(&if(&1 == 1, do: "#{base}.txt", else: "#{base}-#{&1}.txt"))
+    |> Enum.find(&(not MapSet.member?(taken, &1)))
+  end
+
+  @doc """
+  A thread's own copies of attachments another thread's messages name (a fork copies
+  its source's), under ids of its own, so they stay when that thread and its files are
+  deleted: `{:ok, copies}`, in order. An
+  attachment whose file is not on this MC, or goes while it is copied, passes through.
+  A copy that cannot be made of a file that is there (a full disk) is `{:error,
+  reason}`, and the copies already made go: passed through, the thread would name
+  files that go with the other thread's.
+  """
+  # The source comes from `path/1` (a `safe_id?` id inside the attachments folder) and
+  # the target is that folder, a thread segment and a fresh uuid.
+  # sobelow_skip ["Traversal.FileModule"]
+  def copy_into(thread_id, attachments) when is_list(attachments) do
+    attachments
+    |> Enum.reduce_while({:ok, []}, fn attachment, {:ok, copies} ->
+      case copy_file(thread_id, attachment) do
+        {:ok, copy} ->
+          {:cont, {:ok, [copy | copies]}}
+
+        {:error, reason} ->
+          for copy <- copies, copy not in attachments, path = path(copy), do: File.rm(path)
+
+          {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, copies} -> {:ok, Enum.reverse(copies)}
+      error -> error
+    end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp copy_file(thread_id, attachment) do
+    with source when is_binary(source) <- match?(%{"id" => _}, attachment) && path(attachment) do
+      id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+      target = Path.join(dir(), id <> Path.extname(source))
+
+      # A copy, not a link: an agent is given each file's path and may write into
+      # it, which a link would carry into the other thread's file.
+      case File.cp(source, target) do
+        :ok ->
+          {:ok, Map.put(attachment, "id", id)}
+
+        {:error, reason} ->
+          File.rm(target)
+          if File.exists?(source), do: {:error, reason}, else: {:ok, attachment}
+      end
+    else
+      _ -> {:ok, attachment}
+    end
   end
 
   @doc "The file of an attachment on this MC, or `nil`."
