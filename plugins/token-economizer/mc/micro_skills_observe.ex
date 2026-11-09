@@ -695,7 +695,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   defp env_calls(cmd, out, success) do
     sets =
       @env_prefix_re
-      |> Regex.scan(cmd)
+      |> Regex.scan(assignments(cmd))
       |> Map.new(fn [_, var, _quote, value] -> {var, value} end)
 
     sets =
@@ -713,6 +713,28 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
       sets: sets,
       ok: success == true and not Regex.match?(@failed_re, out || "")
     }
+  end
+
+  # The assignments a command makes: each segment's leading `K=V`s, after an
+  # `export` or `env` and around an `rtk`. Text that only looks like one, as
+  # in `echo K=V` or a string in the code a command runs, sets nothing.
+  defp assignments(cmd) do
+    cmd
+    |> unwrap()
+    |> segments()
+    |> Enum.map_join(" ", fn seg ->
+      seg = Regex.replace(~r/^(?:export|env)\s+/, String.trim(seg), "") <> " "
+      first = leading_assigns(seg)
+      rest = seg |> binary_part(byte_size(first), byte_size(seg) - byte_size(first))
+      first <> leading_assigns(strip_rtk_prefix(rest) <> " ")
+    end)
+  end
+
+  defp leading_assigns(text) do
+    case Regex.run(@env_assign_re, text) do
+      [block] -> block
+      nil -> ""
+    end
   end
 
   @doc """

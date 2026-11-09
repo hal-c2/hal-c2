@@ -986,6 +986,32 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert [%{sets: %{"APP_SETTINGS" => "conf.dev"}, ok: true}] = digest.env
   end
 
+  test "only an assignment sets a variable, never text that looks like one" do
+    sets = fn cmd ->
+      case Observe.observe_turn([bash(cmd, "ran", 0)]).env do
+        [] -> %{}
+        [entry] -> entry.sets
+      end
+    end
+
+    assert sets.("echo APP_SETTINGS=conf.dev") == %{}
+    assert sets.("grep -r APP_SETTINGS=conf.dev .") == %{}
+    assert sets.(~s{python -c "print('APP_SETTINGS=conf.dev')"}) == %{}
+    assert sets.("export APP_SETTINGS=conf.dev") == %{"APP_SETTINGS" => "conf.dev"}
+
+    assert sets.("export APP_SETTINGS=conf.dev && python -c 'import app'") ==
+             %{"APP_SETTINGS" => "conf.dev"}
+
+    assert sets.("cd app; APP_SETTINGS=conf.dev DEBUG_LEVEL=2 python -c 'import app'") ==
+             %{"APP_SETTINGS" => "conf.dev", "DEBUG_LEVEL" => "2"}
+
+    assert sets.("env APP_SETTINGS=conf.dev python -c 'import app'") ==
+             %{"APP_SETTINGS" => "conf.dev"}
+
+    assert sets.("APP_SETTINGS='conf.dev' python -c 'import app'") ==
+             %{"APP_SETTINGS" => "conf.dev"}
+  end
+
   test "an unknown exit status is no evidence of success" do
     digest =
       Observe.observe_turn([
