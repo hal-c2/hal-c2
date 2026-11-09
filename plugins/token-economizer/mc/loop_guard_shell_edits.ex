@@ -316,6 +316,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp subst([?$, q | rest], :none, acc, w) when q in [?', ?"],
     do: subst(rest, if(q == ?', do: :ansi, else: ?"), [q, ?$ | acc], w)
 
+  # A comment runs nothing to the end of its line, as `tokens/1` reads it: `# don't`.
+  defp subst([?# | rest], :none, acc, w) when acc == [] or hd(acc) in [?\n | @boundary],
+    do: subst(Enum.drop_while(rest, &(&1 != ?\n)), :none, acc, w)
+
   defp subst([q | rest], :none, acc, w) when q in [?', ?"], do: subst(rest, q, [q | acc], w)
   defp subst([?' | rest], :ansi, acc, w), do: subst(rest, :none, [?' | acc], w)
   defp subst([q | rest], q, acc, w) when q in [?', ?"], do: subst(rest, :none, [q | acc], w)

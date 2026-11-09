@@ -1438,6 +1438,9 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "pytest -q $(git ls-files 'test_*.py')",
             "cd \"$(git rev-parse --show-toplevel)\" && npm test",
             "source .venv/bin/activate && pytest -q",
+            "pytest -q  # don't stop at the first failure",
+            "pytest -q # $(",
+            "pytest -q a#b.py",
             "cat <<'EOF' > /dev/null\nhi\nEOF\npytest -q"
           ] do
         state = heard_turn([edited("/r/a.py"), command(cmd, "1 passed in 0.02s")])
@@ -1462,7 +1465,8 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "node a.js -e 'x()'",
             "source run.sh",
             ". ./run.sh && echo ok",
-            "bash run.sh || true"
+            "bash run.sh || true",
+            "echo $(bash -c 'pytest -q') # don't"
           ] do
         state =
           heard_turn([edited("/r/run.sh"), command(cmd, "1 failed in 0.02s", "completed")])
