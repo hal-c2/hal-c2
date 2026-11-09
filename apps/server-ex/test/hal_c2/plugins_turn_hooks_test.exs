@@ -129,6 +129,8 @@ defmodule HalC2.PluginsTurnHooksTest do
                    5_000
 
     assert %{"runId" => ^run_id, "text" => "Hello from claude"} = said
+    # Each in its place in the thread, given as it started.
+    assert is_integer(item["ordinal"]) and said["ordinal"] > item["ordinal"]
 
     assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id} = finished}, 5_000
     assert finished["status"] == "completed"
@@ -288,6 +290,30 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert shape["plugins"] == ["good"]
   end
 
+  test "a plugin that missed events hears how many, and how many were still waiting then" do
+    grant(%{"slow" => ["turns:observe"]})
+    feed("slow", nil, nil, true)
+    [{_, %{dropped: dropped}}] = Feed.lookup(:observe)
+
+    HalC2.Plugins.observe(%{"type" => "turn.started", "n" => 1})
+    assert_receive {:holding, busy}, 5_000
+    HalC2.Plugins.observe(%{"type" => "turn.item", "n" => 2})
+    HalC2.Plugins.observe(%{"type" => "turn.item", "n" => 3})
+    # As a sender that found the queue full does.
+    :counters.add(dropped, 1, 2)
+
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 1} = first}, 5_000
+    refute Map.has_key?(first, "dropped")
+    assert_receive {:holding, ^busy}, 5_000
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 2, "dropped" => 2, "waiting" => 1}}, 5_000
+    assert_receive {:holding, ^busy}, 5_000
+    send(busy, :release)
+    assert_receive {:observed, %{"n" => 3} = last}, 5_000
+    refute Map.has_key?(last, "dropped")
+  end
+
   test "a conversation is left unshaped, and the asker lives, while the plugins' shapes cannot be asked" do
     grant(%{"good" => ["runs:shape"]})
     feed("good", nil, %{"context" => "Keep answers short."})
@@ -367,6 +393,7 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     assert %{"path" => "a.txt", "status" => "completed"} = edit
     assert edit["output"] =~ "+new"
+    assert is_integer(edit["ordinal"])
 
     assert_receive {:observed, %{"type" => "turn.finished"} = finished}, 5_000
     assert %{"usedTokens" => 1000} = finished["tokenUsage"]
@@ -383,6 +410,25 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert is_binary(two["tokenUsage"]["updatedAt"])
     assert is_binary(finished["tokenUsage"]["updatedAt"])
     assert Enum.any?(one["items"], &(&1["itemType"] == "file_change"))
+  end
+
+  test "a Codex file edit takes its place in the thread as it starts, not as it ends",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "edit-around a.txt")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "command_execution"} = run},
+                   5_000
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "file_change"} = edit},
+                   5_000
+
+    assert %{"path" => "a.txt", "status" => "completed"} = edit
+    assert is_integer(edit["ordinal"]) and edit["ordinal"] < run["ordinal"]
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
   end
 
   test "a Codex turn that reports no usage ends with none, not the turn before's",
@@ -541,7 +587,17 @@ defmodule HalC2.PluginsTurnHooksTest do
     {:ok, _} = send_message(thread_id, "m1", "wait m1")
     [running] = await_statuses(thread_id, ["running"])
 
-    assert {:ok, _} = Host.steer("steerer", thread_id, running["id"], "use the cache")
+    assert {:ok, %{"ordinal" => last, "confirmed" => true}} =
+             Host.steer("steerer", thread_id, running["id"], "use the cache")
+
+    # The receipt's ordinal is the thread's last place once the provider took it: the
+    # steered message's, or an item's after it.
+    steered =
+      HalC2.Streams.read(thread_id, &HalC2.StreamState.get(&1, "turn-item"))
+      |> Map.values()
+      |> Enum.find(&(&1["runId"] == running["id"] and &1["text"] == "use the cache"))
+
+    assert steered["ordinal"] <= last
     # The fake answers a steer in the turn it cut short, which then ends.
     [ended] = await_statuses(thread_id, ["completed"])
     assert Enum.any?(prompts(dir), &(&1 =~ "use the cache"))
@@ -628,6 +684,22 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert {:error, _} = Host.notice("noticer", thread_id, "run:none", "hi")
     :ok = HalC2.Claude.ThreadRuntime.interrupt(thread_id, running["id"])
     await_statuses(thread_id, ["interrupted"])
+  end
+
+  test "a plugin asks whether a run it heard start is under way: not once it ended, nor a run the thread lacks",
+       %{thread_id: thread_id} do
+    grant(%{"reader" => ["turns:observe"]})
+    {:ok, _} = send_message(thread_id, "m1", "wait m1")
+    [running] = await_statuses(thread_id, ["running"])
+
+    assert Host.run_active?("reader", thread_id, running["id"])
+    refute Host.run_active?("reader", thread_id, "run:missing")
+    # Without turns:observe a plugin is told nothing of the thread's runs.
+    refute Host.run_active?("stranger", thread_id, running["id"])
+
+    :ok = HalC2.Claude.ThreadRuntime.interrupt(thread_id, running["id"])
+    await_statuses(thread_id, ["interrupted"])
+    refute Host.run_active?("reader", thread_id, running["id"])
   end
 
   test "a plugin reads the turns a thread ran, oldest first, each with its calls",

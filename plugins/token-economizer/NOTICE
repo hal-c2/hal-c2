@@ -1,0 +1,25 @@
+TokenEconomizer for HAL-C2
+Copyright The TokenEconomizer authors and HAL-C2 contributors
+
+This package is a port of TokenEconomizer (https://github.com/microsoft/TokenEconomizer),
+by Aaron J. Li, Weijia Xu, Chandan Singh, Zixiao Chen, Jeevana Priya Inala, Charlotte
+Siska, Acar Tamersoy, Bin Yu, Ion Stoica, Michel Galley and Jianfeng Gao (UC Berkeley,
+Microsoft Research and Microsoft Security), at commit
+cb42207e3e0937f191bf1ca4897a54b07a23a92c, licensed under the Apache License, Version
+2.0. This package is licensed under the same license; see LICENSE.
+
+The port rewrites upstream's Python in Elixir to run in a plugin on HAL-C2's MC. Each
+file in mc/ names the upstream files it was ported from and what it changed. In short:
+
+- The loop guard hears each turn's tool calls from the MC as they end, instead of from
+  an agent CLI's hooks, and keeps its state in the plugin's process, not in files
+  between hook processes.
+- The judge is the user's text generation model in HAL-C2, run in the background as
+  a job of the plugin's; the in-line (sampled) judge is not ported. The judge's verdict
+  carries the redirect, which upstream wrote with a separate call.
+- A redirect is delivered as a steer of the turn under way, with a notice in the
+  thread that says why. The plugin never stops a turn itself: the last step is a
+  notice that offers the person a stop.
+- What counts as stuck is learned per project and provider from turns that ended
+  green, kept as JSON in the plugin's data directory.
+- Upstream's tool pruning, micro-skills and distiller are not part of this port yet.

@@ -4,12 +4,13 @@ defmodule HalC2.RuntimeSteerTest do
   alias HalC2.RuntimeSteer
 
   # The contract every bundled runtime's steer shares: only the steer call's
-  # own timeout is answered `:ok` (the runtime still holds the request).
+  # own timeout is answered `:held` (the runtime still holds the request, and nobody
+  # has heard the provider take it).
 
-  test "its own timeout is answered :ok" do
+  test "its own timeout is answered :held" do
     pid = stand_in(:hold)
 
-    assert :ok = RuntimeSteer.call(pid, "run-1", %{text: "hi", attachments: []}, 50)
+    assert :held = RuntimeSteer.call(pid, "run-1", %{text: "hi", attachments: []}, 50)
   end
 
   test "a refusal is answered as the refusal" do

@@ -98,11 +98,12 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   When Codex refuses, whatever it said before refusing (a `turn/completed`, say) is
   applied before this returns, so the caller sees whether the turn is still running.
+  `:held` when the runtime did not answer in time and may still take it.
   Non-timeout exits (the runtime stopping mid-call, its nested provider call
   timing out) propagate: the caller must treat them as a refusal. See
   `HalC2.RuntimeSteer`.
   """
-  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  @spec steer(String.t(), String.t(), map) :: :ok | :held | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
       [{pid, _}] -> steer_call(pid, run_id, message)
@@ -2424,11 +2425,13 @@ defmodule HalC2.Codex.ThreadRuntime do
            "title" => "Compacting context..."
          })
 
-  # The files a change will touch, kept for the approval Codex may ask for it:
-  # that request names only the change, not its files.
+  # A change takes its place in the thread as it starts, so a plugin reading the
+  # turn orders it by when Codex began it. The files it will touch are kept for the
+  # approval Codex may ask for it: that request names only the change, not its files.
   defp notification("item/started", %{"item" => %{"type" => "fileChange"} = item}, state) do
-    Map.put(
-      state,
+    state
+    |> ensure_item(item["id"], :file, file_fields(item["changes"] || []))
+    |> Map.put(
       :file_changes,
       Map.put(Map.get(state, :file_changes, %{}), item["id"], item["changes"] || [])
     )
@@ -3706,60 +3709,18 @@ defmodule HalC2.Codex.ThreadRuntime do
       else: state
   end
 
-  # One patch can touch several files: every one is listed on the item (a
-  # rename under its new path, with where it came from), not only the first,
-  # and `diffStr` carries every file's diff, as the clients render that one
-  # string.
-  defp complete_item(state, %{
-         "type" => "fileChange",
-         "id" => native,
-         "changes" => [_ | _] = changes
-       }) do
-    ids = state.turn.ids
-    at = Entities.now()
-    item_id = item_id(ids, native)
+  # A change ends on the item it started (`notification/3`), or one written now when
+  # its start was not seen.
+  defp complete_item(state, %{"type" => "fileChange", "id" => native} = item) do
+    fields = file_fields(item["changes"] || [])
 
-    details =
-      for change <- changes do
-        kind = change["kind"] || %{}
-        move = if kind["type"] == "update", do: kind["move_path"]
-
-        %{"operation" => kind["type"] || "update", "path" => move || change["path"] || "file"}
-        |> then(&if(move, do: Map.put(&1, "oldPath", change["path"]), else: &1))
-      end
-
-    diff =
-      changes
-      |> Enum.zip(details)
-      |> Enum.map(fn {change, detail} -> file_diff(change, detail) end)
-      |> Enum.join()
-
-    fields = %{"fileName" => hd(details)["path"], "diffStr" => diff, "changes" => details}
-
-    commit(state, fn stream ->
-      [
-        Orchestration.create(
-          "turn-item",
-          item_id,
-          Entities.turn_item(
-            ids,
-            item_id,
-            "file_change",
-            Orchestration.next_ordinal(stream),
-            "completed",
-            at,
-            fields
-          )
-        )
-      ]
-    end)
-
-    # Written ended, never through `finish_item/5`: plugins that hear turns hear it here.
-    observe_item(
-      state,
-      "completed",
-      Map.merge(fields, %{"id" => item_id, "type" => "file_change", "status" => "completed"})
-    )
+    state =
+      if fields == %{} and not Map.has_key?(state.items, native),
+        do: state,
+        else:
+          state
+          |> ensure_item(native, :file, fields)
+          |> finish_item(native, command_status(item), &Map.merge(&1, fields))
 
     Map.put(
       state,
@@ -3807,6 +3768,30 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
 
     state
+  end
+
+  # A change's fields: every file it touches is listed on the item (a rename under its
+  # new path, with where it came from), not only the first, and `diffStr` carries every
+  # file's diff, as the clients render that one string. None for a change with no files.
+  defp file_fields([]), do: %{}
+
+  defp file_fields(changes) do
+    details =
+      for change <- changes do
+        kind = change["kind"] || %{}
+        move = if kind["type"] == "update", do: kind["move_path"]
+
+        %{"operation" => kind["type"] || "update", "path" => move || change["path"] || "file"}
+        |> then(&if(move, do: Map.put(&1, "oldPath", change["path"]), else: &1))
+      end
+
+    diff =
+      changes
+      |> Enum.zip(details)
+      |> Enum.map(fn {change, detail} -> file_diff(change, detail) end)
+      |> Enum.join()
+
+    %{"fileName" => hd(details)["path"], "diffStr" => diff, "changes" => details}
   end
 
   # Codex sends each change's `diff` without file headers: bare `@@` hunks for

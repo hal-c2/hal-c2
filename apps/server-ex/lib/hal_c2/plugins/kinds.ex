@@ -118,8 +118,9 @@ defmodule HalC2.Plugins.ProviderAdapter do
   `run_id`, or answers `{:error, reason}` when the provider does not take it. The
   message is already recorded in the turn when `steer/3` is called and only an
   `{:error, _}` (or an exit) takes it back out, so an adapter whose own call times
-  out after the request reached the provider answers `:ok` itself; a timeout exit
-  out of `steer/3` counts as a refusal.
+  out after the request reached the provider answers `:held` itself (the provider
+  may still take it, but nobody heard it do so); a timeout exit out of `steer/3`
+  counts as a refusal.
   """
   use HalC2.Plugins.Kind
 
@@ -133,7 +134,7 @@ defmodule HalC2.Plugins.ProviderAdapter do
               run_id :: String.t(),
               message :: %{text: String.t(), attachments: [map]}
             ) ::
-              :ok | {:error, String.t()}
+              :ok | :held | {:error, String.t()}
   @callback respond(thread_id :: String.t(), request_id :: String.t(), response :: map) ::
               :ok | {:error, String.t()}
   @callback rollback(thread_id :: String.t(), plan :: map) :: {:ok, map} | {:error, String.t()}
@@ -356,14 +357,16 @@ defmodule HalC2.Plugins.Extension do
       "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
       "status"` (`"completed"`, `"failed"`, `"interrupted"` or `"cancelled"`), `"input",
       "output"` and an assistant message's `"text"`, each cut to its last 4,000
-      characters, `"exitCode"` and, for a file change, the file's `"path"`) and
+      characters, `"exitCode"`, `"ordinal"`, its place in the thread, given as it
+      started, and, for a file change, the file's `"path"`) and
       `turn.finished` (`"threadId", "runId", "status", "tokenUsage"`: the provider's
       last report of the conversation's context, `%{"usedTokens", "inputTokens",
       "cachedInputTokens", "outputTokens", "maxTokens"}` as far as it reports them, or
       nil when it has not). Events reach the plugin one at a time, in the order
       each thread's turns had them, in a process of the plugin's own. A plugin too slow
       to keep up misses events rather than holding agents back: the next event it gets
-      counts what it missed in `"dropped"`. What it missed while it was not running
+      counts what it missed in `"dropped"`, and in `"waiting"` the events queued behind
+      it then, which with it are all that may have come before the missed ones. What it missed while it was not running
       stays in the threads (`HalC2.Plugins.Host.history/2`).
     * `shape_run(run, context)`: with `runs:shape`, called as an agent starts a new
       conversation, never for one it resumes, with `%{"threadId", "runId",

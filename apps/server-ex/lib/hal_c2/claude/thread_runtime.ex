@@ -150,9 +150,10 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @doc """
   Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once.
-  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  `:held` when the runtime did not answer in time and may still take it. Non-timeout
+  exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
   """
-  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  @spec steer(String.t(), String.t(), map) :: :ok | :held | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
       [{pid, _}] -> steer_call(pid, run_id, message)
