@@ -1225,6 +1225,26 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "staging keeps the latest 128 conversations" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      future = System.monotonic_time(:millisecond) + 60_000
+
+      state =
+        Enum.reduce(1..130, state, fn n, state ->
+          run = %{"threadId" => "t#{n}", "projectId" => "p", "instanceId" => "codex"}
+
+          {:reply, nil, state, {:continue, :save_staged}} =
+            TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+          state
+        end)
+
+      assert length(state.staged_order) == 128
+      assert hd(state.staged_order) == {"t3", "codex"}
+      assert Map.keys(state.staged) |> Enum.sort() == Enum.sort(state.staged_order)
+    end
+
     test "a run naming no conversation stages nothing" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"microSkills" => "envfacts"})

@@ -393,17 +393,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   # waste, and learn from failures as an unstaged conversation does.
   defp stage(state, key, ids) do
     order = (state.staged_order -- [key]) ++ [key]
-    staged = Map.put(state.staged, key, ids)
-
-    {order, staged} =
-      Enum.reduce_while(order, {order, staged}, fn _oldest, {order, staged} ->
-        if length(order) > @staged_kept do
-          [oldest | rest] = order
-          {:cont, {rest, Map.delete(staged, oldest)}}
-        else
-          {:halt, {order, staged}}
-        end
-      end)
+    {evicted, order} = Enum.split(order, max(length(order) - @staged_kept, 0))
+    staged = Map.drop(Map.put(state.staged, key, ids), evicted)
 
     %{state | staged: staged, staged_order: order}
   end
