@@ -899,16 +899,18 @@ defmodule HalC2.Orchestration.TurnWriter do
   the turn later (a plugin's `HalC2.Plugins.Host.history/3`) gets what plugins heard as
   it ended. Those reports carry no time, which a turn's usage must
   (`OrchestrationV2ProviderTurnTokenUsage`): it is stamped with the turn's end. A Codex
-  goal settles each of its turns this way before its run ends.
+  goal settles each of its turns this way before its run ends. A stamped report is
+  one a provider also gave the turn it belongs to (Muse, whose report can land as the
+  next turn starts), so a turn without usage of its own does not take it.
   """
   def with_usage(stream, ids, done) do
     with %{} = turn <- StreamState.get(stream, "provider-turn")[ids.provider_turn],
          nil <- turn["tokenUsage"],
-         %{} = usage <-
+         %{} = usage when not is_map_key(usage, "updatedAt") <-
            (StreamState.get(stream, "provider-thread")[ids[:provider_thread]] || %{})[
              "contextUsage"
            ] do
-      Map.put(done, "tokenUsage", Map.put_new(usage, "updatedAt", done["completedAt"]))
+      Map.put(done, "tokenUsage", Map.put(usage, "updatedAt", done["completedAt"]))
     else
       _ -> done
     end
