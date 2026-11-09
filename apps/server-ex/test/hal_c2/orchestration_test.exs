@@ -5110,7 +5110,8 @@ defmodule HalC2.OrchestrationTest do
       Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_append, [fork_id]})
       on_exit(fn -> Application.delete_env(:hal_c2, :store_hook) end)
 
-      assert_raise RuntimeError, "the disk is full", fn ->
+      # The store's refusal reaches the caller as Unrecorded, with what it raised as its message.
+      assert_raise HalC2.Streams.Unrecorded, "the disk is full", fn ->
         Orchestration.dispatch(%{
           "type" => "thread.fork",
           "commandId" => "cmd-fork-#{fork_id}",
