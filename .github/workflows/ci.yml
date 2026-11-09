@@ -28,6 +28,8 @@ on:
 
 permissions:
   contents: read
+  # A failed job in the merge queue cancels its run (the stop-queue-run step).
+  actions: write
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
@@ -153,6 +155,14 @@ jobs:
             apps/server-ex/_build
           key: ${{ steps.mc.outputs.cache-key }}
 
+      # In the queue the first failure decides: stop the rest so the queue drops the entry now.
+      - &stop-queue-run
+        name: Stop the queue run
+        if: failure() && github.event_name == 'merge_group'
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # Its own job, so an advisory published against a dep fails this, not the tests; the
   # nightly run is what catches one between changes. Not on a merge to main, which runs
   # only mc_check: its pull request ran this.
@@ -184,6 +194,8 @@ jobs:
       # Fails only on findings sobelow_baseline.txt lacks (scripts/sobelow_check.exs).
       - name: Sobelow against its baseline
         run: mix sobelow.check
+
+      - *stop-queue-run
 
   mc:
     name: MC tests
@@ -227,6 +239,8 @@ jobs:
       - name: Test
         run: mix test
 
+      - *stop-queue-run
+
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
   # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
   # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
@@ -268,6 +282,8 @@ jobs:
         env:
           MIX_TEST_PARTITION: ${{ matrix.partition }}
 
+      - *stop-queue-run
+
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
   # Only the proofs whose model changed (ci-changes.sh); mc_check holds every model to the
   # code. One job per proof, as model checking peaks at several GB and a proof's checks
@@ -302,6 +318,8 @@ jobs:
         env:
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
+
+      - *stop-queue-run
 
   # The @mc scenarios of features/, in the groups ci-changes.sh defines and selects.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);
@@ -381,6 +399,8 @@ jobs:
           echo "$globs"
           HAL_C2_FEATURES="$globs" mix test test/hal_c2/scenarios_test.exs
 
+      - *stop-queue-run
+
   tui:
     name: TUI
     needs: changes
@@ -434,12 +454,15 @@ jobs:
           MISE_CONFIG_ROOT: ${{ github.workspace }}
         run: ../../mise-tasks/features/tui/all
 
+      - *stop-queue-run
+
   # The check main's ruleset requires, since the jobs above vary with the change and matrix
   # entries change their names. A skipped job passes; a failed or cancelled one does not.
   result:
     name: CI result
     needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui]
-    if: ${{ !cancelled() }}
+    # Also after a cancel in the queue, which stop-queue-run causes: the queue needs an answer.
+    if: ${{ always() && (github.event_name == 'merge_group' || !cancelled()) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
