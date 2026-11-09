@@ -824,8 +824,14 @@ defmodule HalC2Plugins.TokenEconomizer do
   # --- settings and the envelope's files ----------------------------------------------
 
   # The micro-skills' mode: upstream's `on` gains the paid proposer in a later
-  # version; today it and `envfacts` both learn the free environment facts.
-  defp micro_mode(state), do: state.settings["microSkills"] || "off"
+  # version; today it and `envfacts` both learn the free environment facts. The
+  # host checks a save against plugin.json's choices but not a stored value (a
+  # settings file edited by hand): anything else is off.
+  defp micro_mode(state) do
+    mode = state.settings["microSkills"]
+    if mode in ["envfacts", "on"], do: mode, else: "off"
+  end
+
   defp micro_on?(state), do: micro_mode(state) != "off"
 
   defp skills_caps(state) do

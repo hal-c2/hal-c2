@@ -1210,6 +1210,21 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
                [{"t", "claude-work"}, {"t", "claudeAgent"}, {"t", "codex"}]
     end
 
+    test "a stored micro-skills mode that is not a choice is off" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      future = System.monotonic_time(:millisecond) + 60_000
+      run = %{"threadId" => "t", "projectId" => "p", "instanceId" => "claudeAgent"}
+
+      for mode <- ["envfact", "disabled", true] do
+        state = settings(state, %{"microSkills" => mode})
+
+        assert {:reply, nil, %{staged: staged}} =
+                 TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+        assert staged == %{}
+      end
+    end
+
     test "a run naming no conversation stages nothing" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"microSkills" => "envfacts"})
