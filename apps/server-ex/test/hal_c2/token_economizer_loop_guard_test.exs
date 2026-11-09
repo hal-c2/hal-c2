@@ -18,7 +18,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
   alias HalC2Plugins.TokenEconomizer
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Rules, ShellEdits, State, Turn}
-  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.{Distiller, EnvFacts}
 
   # Printed by Playwright on Windows as it exits, after a passing run as after a failing one.
   @libuv ~S"Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76"
@@ -2021,6 +2021,31 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       state = ran_tests(state, "t", "claude-work")
       assert fired(state) == 1
+    end
+
+    test "a proposal's spend is the project's, whatever its answer and the mode it arrives in" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "on"}) |> learned()
+      state = put_in(state.skills["seam"].proposer, %Distiller{})
+      usage = %{"inputTokens" => 100, "outputTokens" => 20}
+
+      answer = fn state, result ->
+        {:noreply, state} = TokenEconomizer.handle_info({:proposed, "seam", result}, state)
+        state
+      end
+
+      # A reply that is not the facts asked for, then one arriving after the
+      # proposer was turned off, then a call that failed.
+      state = answer.(state, {:ok, %{"payload" => "not json"}, usage})
+      assert state.skills["seam"].proposer.tokens == 120
+
+      state = state |> settings(%{"microSkills" => "envfacts"})
+      state = answer.(state, {:ok, %{"payload" => "{}"}, usage})
+      state = answer.(state, {:error, "the model is unavailable"})
+
+      assert state.skills["seam"].proposer.tokens == 240
+      assert state.stats["proposerTokens"] == 240
+      assert state.stats["proposerReplies"] == 3
     end
 
     test "a project's change publishes that project's entry alone, on its own topic" do

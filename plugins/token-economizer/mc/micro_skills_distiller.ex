@@ -53,7 +53,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
   @raw_sample 3
   # A call abstains when the commands the senses read are less than this share.
   @abstain_gate 0.5
-  # Characters of a saved digest's raw commands (twice that of output).
+  # Characters of a digest's raw commands, kept from the newest (twice that of output).
   @blob_cap 20_000
   # Facts' lines and claims, at most.
   @line_cap 400
@@ -183,7 +183,9 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
 
   @doc """
   One finished turn's digest: what the proposer reads (keys not starting with `_`) and
-  the raw blobs the detectors read, which never reach a prompt.
+  the turn's `[command, output]` pairs the detectors and extractors read, which never
+  reach a prompt. The pairs are the newest that fit the blob caps, so a digest is
+  bounded when it is folded and reads the same after a restart.
   """
   def digest(calls, iid) do
     cmds = commands(calls)
@@ -215,10 +217,32 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
       "missing_dependency" => Regex.match?(@missing_dep_re, out_blob),
       "bad_usage" => Regex.match?(@bad_usage_re, out_blob),
       "_ran_tests" => Enum.any?(cmds, &Regex.match?(@test_re, elem(&1, 0))),
-      "_cmd_blob" => Enum.map_join(cmds, "\n", &elem(&1, 0)),
-      "_out_blob" => out_blob
+      "_pairs" => cmds |> Enum.map(fn {c, o, _code} -> [c, o] end) |> capped()
     }
   end
+
+  # The newest pairs whose commands fit `@blob_cap` characters and outputs twice that,
+  # the oldest one kept cut to its end.
+  defp capped(pairs) do
+    pairs
+    |> Enum.reverse()
+    |> Enum.reduce_while({[], @blob_cap, 2 * @blob_cap}, fn [c, o], {kept, c_left, o_left} ->
+      if c_left <= 0 or o_left <= 0 do
+        {:halt, {kept, c_left, o_left}}
+      else
+        c = String.slice(c, -c_left, c_left)
+        o = String.slice(o, -o_left, o_left)
+        {:cont, {[[c, o] | kept], c_left - String.length(c) - 1, o_left - String.length(o) - 1}}
+      end
+    end)
+    |> elem(0)
+  end
+
+  # A digest's `{command, output}` pairs, as folded.
+  defp pairs(dg), do: for([c, o] <- dg["_pairs"] || [], do: {c, o})
+
+  defp cmd_blob(dg), do: Enum.map_join(pairs(dg), "\n", &elem(&1, 0))
+  defp out_blob(dg), do: Enum.map_join(pairs(dg), "\n", &elem(&1, 1))
 
   # The token-cheap projection the model is shown: no raw blobs.
   defp proposer_view(dg), do: Map.reject(dg, fn {key, _} -> String.starts_with?(key, "_") end)
@@ -279,14 +303,6 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
         Map.new(extractors, fn {name, spec} -> {name, compute(spec, cmds)} end)
       )
 
-  # A digest's pairs recovered from its blobs, for features authored after it was folded.
-  defp reparse(dg) do
-    cmds = String.split(dg["_cmd_blob"] || "", "\n")
-    outs = String.split(dg["_out_blob"] || "", "\n")
-    outs = outs ++ List.duplicate("", max(length(cmds) - length(outs), 0))
-    Enum.zip(cmds, outs)
-  end
-
   # --- the detector ----------------------------------------------------------------------
 
   @doc """
@@ -302,7 +318,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
     fired_name = detector["fired"] || scope
 
     if lookup(scope, dg, features) do
-      blob = (dg["_cmd_blob"] || "") <> "\n" <> (dg["_out_blob"] || "")
+      blob = cmd_blob(dg) <> "\n" <> out_blob(dg)
 
       cond do
         search?(rx(detector["contradict"]), blob) ->
@@ -328,7 +344,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
         value
 
       true ->
-        search?(rx(name), dg["_cmd_blob"] || "")
+        search?(rx(name), cmd_blob(dg))
     end
   end
 
@@ -351,13 +367,11 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
       skills
     else
       proposer = skills.proposer || %__MODULE__{}
-      cmds = commands(calls)
-      pairs = Enum.map(cmds, fn {c, o, _} -> {c, o} end)
+      dg = digest(calls, iid)
 
       dg =
-        calls
-        |> digest(iid)
-        |> featurize(proposer.extractors, pairs)
+        dg
+        |> featurize(proposer.extractors, pairs(dg))
         |> Map.put("_at", skills.now)
 
       files = MapSet.new(dg["edited_files"])
@@ -381,7 +395,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
         proposer
         | turns: proposer.turns + 1,
           window: Enum.take(proposer.window ++ [dg], -@window),
-          raw_window: Enum.take(proposer.raw_window ++ [Enum.map(pairs, &elem(&1, 0))], -@window)
+          raw_window:
+            Enum.take(proposer.raw_window ++ [Enum.map(pairs(dg), &elem(&1, 0))], -@window)
       }
 
       %{skills | facts: facts, proposer: proposer}
@@ -662,8 +677,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
             Map.update(
               dg,
               "features",
-              %{name => compute(spec, reparse(dg))},
-              &Map.put(&1, name, compute(spec, reparse(dg)))
+              %{name => compute(spec, pairs(dg))},
+              &Map.put(&1, name, compute(spec, pairs(dg)))
             )
           end)
 
@@ -859,12 +874,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
       "calls" => p.calls,
       "tokens" => p.tokens,
       "extractors" => p.extractors,
-      "window" =>
-        Enum.map(p.window, fn dg ->
-          dg
-          |> Map.update("_cmd_blob", "", &String.slice(&1, -@blob_cap, @blob_cap))
-          |> Map.update("_out_blob", "", &String.slice(&1, -2 * @blob_cap, 2 * @blob_cap))
-        end),
+      "window" => p.window,
       "rawCmds" => p.raw_window
     }
   end
@@ -888,9 +898,15 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Distiller do
       window:
         saved["window"]
         |> list()
-        |> Enum.filter(
-          &(is_map(&1) and is_binary(&1["_cmd_blob"]) and is_binary(&1["_out_blob"]))
-        )
+        |> Enum.flat_map(fn
+          %{"_pairs" => saved} = dg when is_list(saved) ->
+            # A file edited by hand is held to the same caps a fold keeps.
+            kept = for [c, o] <- saved, is_binary(c) and is_binary(o), do: [c, o]
+            [%{dg | "_pairs" => capped(kept)}]
+
+          _ ->
+            []
+        end)
         |> Enum.take(-@window),
       raw_window:
         saved["rawCmds"]

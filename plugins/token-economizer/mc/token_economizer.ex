@@ -553,35 +553,38 @@ defmodule HalC2Plugins.TokenEconomizer do
       |> update_in([:stats, "proposerTokens"], &(&1 + tokens))
       |> update_in([:stats, "proposerReplies"], &(&1 + 1))
 
-    skills = state.skills[project_id]
+    case state.skills[project_id] do
+      %EnvFacts{held: nil} = skills ->
+        # The project pays for every answer; only a payload, while still on, is read.
+        skills = Distiller.spent(skills, tokens)
 
-    case result do
-      {:ok, %{"payload" => raw}, _usage}
-      when is_binary(raw) and skills != nil and skills.held == nil ->
-        if micro_mode(state) == "on" do
-          {skills, outcomes} = skills |> Distiller.spent(tokens) |> Distiller.admit(raw)
+        skills =
+          case result do
+            {:ok, %{"payload" => raw}, _usage} when is_binary(raw) ->
+              if micro_mode(state) == "on" do
+                {skills, outcomes} = Distiller.admit(skills, raw)
+                log_proposal(project_id, outcomes)
+                skills
+              else
+                log_proposal(project_id, :off)
+                skills
+              end
 
-          Logger.info(
-            "token-economizer: proposal for project #{project_id}: #{inspect(outcomes)}"
-          )
+            other ->
+              log_proposal(project_id, other)
+              skills
+          end
 
-          save_skills(project_id, skills)
+        save_skills(project_id, skills)
 
-          {:noreply,
-           state
-           |> put_in([:skills, project_id], skills)
-           |> publish_skills(project_id)
-           |> publish()}
-        else
-          {:noreply, publish(state)}
-        end
+        {:noreply,
+         state
+         |> put_in([:skills, project_id], skills)
+         |> publish_skills(project_id)
+         |> publish()}
 
-      other ->
-        Logger.info(
-          "token-economizer: proposal for project #{project_id} admitted nothing: " <>
-            inspect(other, limit: 5, printable_limit: 200)
-        )
-
+      _gone_or_held ->
+        log_proposal(project_id, result)
         {:noreply, publish(state)}
     end
   end
@@ -766,6 +769,16 @@ defmodule HalC2Plugins.TokenEconomizer do
     else
       state
     end
+  end
+
+  defp log_proposal(project_id, outcomes) when is_list(outcomes),
+    do: Logger.info("token-economizer: proposal for project #{project_id}: #{inspect(outcomes)}")
+
+  defp log_proposal(project_id, other) do
+    Logger.info(
+      "token-economizer: proposal for project #{project_id} admitted nothing: " <>
+        inspect(other, limit: 5, printable_limit: 200)
+    )
   end
 
   # One proposal per project at a time, when one is due: the prompt is built

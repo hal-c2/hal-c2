@@ -162,8 +162,28 @@ defmodule HalC2.TokenEconomizerDistillerTest do
       skills = fold(EnvFacts.new(proposing: true), calls, "s0")
       prompt = Distiller.prompt(skills, "acme/web")
       refute prompt =~ home
-      refute prompt =~ "_cmd_blob"
-      refute prompt =~ "_out_blob"
+      refute prompt =~ "_pairs"
+      refute prompt =~ "Finished dev"
+    end
+
+    test "keeps the newest commands and output within its caps, the same after a restart" do
+      long = String.duplicate("x", 50_000)
+
+      calls = [
+        bash("make old", "old output"),
+        bash("make build", long),
+        bash("make test", "PASS")
+      ]
+
+      skills = fold(EnvFacts.new(proposing: true), calls, "s0")
+      [dg] = skills.proposer.window
+
+      [[cmd, out], [last_cmd, last_out]] = dg["_pairs"]
+      assert {cmd, last_cmd, last_out} == {"make build", "make test", "PASS"}
+      assert String.length(out) + String.length(last_out) + 1 <= 40_000
+      assert String.ends_with?(long, out)
+
+      assert reload(skills).proposer.window == skills.proposer.window
     end
 
     test "reads a failure from the exit code when there is one, else from the output" do
@@ -443,6 +463,27 @@ defmodule HalC2.TokenEconomizerDistillerTest do
 
       assert Enum.all?(skills.proposer.window, &(&1["features"]["built"] == true))
       assert EnvFacts.view(skills)["extractors"] == ["built"]
+    end
+
+    test "read the window as its turns were folded, whatever their lines" do
+      turn = fn i ->
+        [
+          edit("src/m#{i}.go"),
+          bash("cat <<'EOF' > gen.txt\nx\nEOF", ""),
+          bash("make build", Enum.map_join(~w(a b c d e), "\n", &"compiling #{&1}") <> "\nbuilt"),
+          bash("make test", "ok\nPASS")
+        ]
+      end
+
+      skills = windowed(2, turn)
+      extractor = %{"name" => "built", "kind" => "out_regex", "pattern" => "(?m)^built$"}
+      fact = put_in(@build_first["detector"]["scope"], "built")
+      {skills, outcomes} = Distiller.admit(skills, payload([fact], [extractor]))
+      assert {:fact, "build-before-test", "admitted"} in outcomes
+
+      # What the window was read as is what a later fold reads.
+      skills = fold(skills, turn.(2), "s2")
+      assert Enum.map(skills.proposer.window, & &1["features"]["built"]) == [true, true, true]
     end
 
     test "are append-only and bounded, and one that does not compile is refused" do
