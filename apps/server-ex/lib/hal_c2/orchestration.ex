@@ -5466,12 +5466,14 @@ defmodule HalC2.Orchestration do
     # Its earlier runs' native turns are in the native thread it no longer has
     # (`HalC2.Orchestration.Fork`), and what that thread's session could do is not
     # known of the new one until it opens. So with a new conversation the plan
-    # starts in its place: how full the old one was says nothing of it.
+    # starts in its place: how full the old one was says nothing of it, nor does the
+    # goal the old one worked on (Claude's or Codex's), which the new one does not hold.
     replaced = %{
       "nativeThreadRef" => nil,
       "canSwitchModel" => nil,
       "nativeSinceRunOrdinal" => ordinal,
-      "contextUsage" => nil
+      "contextUsage" => nil,
+      "goal" => nil
     }
 
     # A run that hands over history marks it unconfirmed until the provider answers

@@ -339,6 +339,16 @@ Feature: Changing model and provider mid-thread
     Then the turn starts on a new provider conversation
     And the provider receives a summary of the whole thread before the message
 
+  # A goal lives in the conversation it was set in, and a new one holds none: shown as
+  # still active, the new conversation's first answer would read as meeting it.
+  @mc
+  Scenario: A goal goes with the conversation a handoff replaces
+    Given the MC could not confirm that the handed-over history of "t1" reached "claudeAgent"
+    And the conversation of "t1" there works on a goal
+    When the user sends the next message to "t1"
+    Then the turn starts on a new provider conversation
+    And "t1" shows no goal
+
   # CodexAdapterV2.ts injectHistory (thread/inject_items).
   @backlog @mc @plugin-codex
   Scenario: Codex takes a handed-over conversation as its own history

@@ -985,6 +985,22 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     |> Map.put(:claude_starts, length(World.claude_starts(context)))
   end
 
+  step "the conversation of {string} there works on a goal", %{args: [thread]} = context do
+    run = World.latest_run(context, thread)
+
+    World.put_entity(context, thread, "provider-thread", run["providerThreadId"], %{
+      "s" => %{
+        "goal" => %{"objective" => "make the tests pass", "status" => "active", "checks" => 1}
+      }
+    })
+  end
+
+  step "{string} shows no goal", %{args: [thread]} = context do
+    run = World.await_latest_run(context, thread, "completed")
+    assert provider_thread(context, thread, run)["goal"] == nil
+    context
+  end
+
   step "the user sends the next message to {string}", %{args: [thread]} = context do
     run(context, thread, "Where were we?")
   end

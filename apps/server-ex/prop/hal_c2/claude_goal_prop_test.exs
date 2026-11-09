@@ -6,7 +6,8 @@ defmodule HalC2.ClaudeGoalPropTest do
   background subagent, sends an ordinary turn, has a turn stopped by a hook of their
   own, clears the goal, or sends `/goal pause` or `/goal resume`; a background
   subagent finishes, which Claude answers in a turn of its own; and Claude goes down
-  before saving the prompt it was sent, so the next turn starts a new conversation.
+  before saving the prompt it was sent, or the MC cannot confirm the history it handed
+  over reached Claude, so the next turn starts a new conversation.
 
   The promise: the thread shows the goal Claude has, active until a turn Claude worked
   in ends normally with no background subagent left running, then complete
@@ -107,7 +108,8 @@ defmodule HalC2.ClaudeGoalPropTest do
   # statuses. goal: nil or {objective, status, checks}. background: the background
   # subagents still running, oldest first. said_background: whether a message said "in
   # the background", which a new conversation's history would repeat to the fake.
-  # lost: Claude went down before saving the prompt it was sent.
+  # lost: the next turn starts a new conversation, as Claude went down before saving the
+  # prompt it was sent or the MC does not know the history it handed over reached Claude.
   def initial_state,
     do: %{
       n: 1,
@@ -138,7 +140,10 @@ defmodule HalC2.ClaudeGoalPropTest do
           else: [{3, {:call, __MODULE__, :subagent_finishes, [hd(state.background)]}}]
         ) ++
         if(state.turns > 0 and state.background == [] and not state.said_background,
-          do: [{1, {:call, __MODULE__, :lose_session, []}}],
+          do: [
+            {1, {:call, __MODULE__, :lose_session, []}},
+            {1, {:call, __MODULE__, :replace_conversation, []}}
+          ],
           else: []
         )
     )
@@ -147,10 +152,11 @@ defmodule HalC2.ClaudeGoalPropTest do
   def precondition(state, {:call, _, :subagent_finishes, [agent]}),
     do: agent in state.background and not state.lost
 
-  def precondition(state, {:call, _, :lose_session, []}),
-    do:
-      state.turns > 0 and state.background == [] and not state.said_background and
-        not state.lost
+  def precondition(state, {:call, _, name, []})
+      when name in [:lose_session, :replace_conversation],
+      do:
+        state.turns > 0 and state.background == [] and not state.said_background and
+          not state.lost
 
   def precondition(%{lost: true}, {:call, _, name, _}), do: name == :user_turn
   def precondition(_state, _call), do: true
@@ -190,8 +196,9 @@ defmodule HalC2.ClaudeGoalPropTest do
       ended(%{state | runs: state.runs ++ ["completed"], background: state.background -- [agent]})
 
   # The goal still shows until the next turn finds the conversation gone.
-  def next_state(state, _result, {:call, _, :lose_session, []}),
-    do: %{state | lost: true, fake_turns: 0}
+  def next_state(state, _result, {:call, _, name, []})
+      when name in [:lose_session, :replace_conversation],
+      do: %{state | lost: true, fake_turns: 0}
 
   # A turn after a loss starts a new conversation, which holds no goal.
   defp message_sent(state, status) do
@@ -319,6 +326,24 @@ defmodule HalC2.ClaudeGoalPropTest do
       kept = path |> File.stream!() |> Enum.reject(&(JSON.decode!(&1)["type"] == "user"))
       File.write!(path, kept)
     end
+
+    settled(run_count())
+  end
+
+  # The MC could not confirm that the history its last turn handed over reached Claude,
+  # so the next turn starts a new conversation with the whole thread
+  # (`HalC2.Orchestration.Handoff.plan/6`).
+  def replace_conversation do
+    run =
+      current()
+      |> StreamState.list("run")
+      |> Enum.filter(&(&1["providerThreadId"] && &1["startedAt"]))
+      |> Enum.max_by(& &1["ordinal"])
+
+    {:ok, _} =
+      HalC2.Streams.commit(@tid, :thread, [
+        {"provider-thread", run["providerThreadId"], %{"s" => %{"unconfirmedRunId" => run["id"]}}}
+      ])
 
     settled(run_count())
   end
