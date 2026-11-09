@@ -482,33 +482,36 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
   defp typed_ok?(o), do: Observe.form_worked(o) and not o.env
 
   @run_words ~w(run exec npx uv uvx pipx poetry pipenv conda bundle yarn pnpm -m python python3)
+  @script_runners ~w(npm bun)
 
   # Can `form` stand in for the failing `a_form`? Another form -- and, outside
   # test runs and builds, not a bare one. A build or check is repaired only by
-  # the same tool spelled another way: `make build` does not repair `ruff`.
+  # the same tool spelled another way: `make build` does not repair `ruff`, nor
+  # `cargo build`.
   defp repairs?(form, a_form, intent) do
     cond do
       form == a_form ->
         false
 
       intent == "run_build" ->
-        shared = MapSet.intersection(tool_words(form), tool_words(a_form))
-        MapSet.size(MapSet.difference(shared, MapSet.new(@run_words))) > 0
+        build_tool(form) != nil and build_tool(form) == build_tool(a_form)
 
       true ->
         intent == "run_tests" or not Observe.bare?(form)
     end
   end
 
-  # The words of the command a form runs, past its `cd x &&` and activation
-  # prefixes, each by its basename: `./gradlew build` and `gradlew build` share
-  # `gradlew`, while `cd web && tsc` and `cd web && eslint` share nothing.
-  defp tool_words(form) do
+  # The tool a build form runs: its first word past the `cd x &&` and
+  # activation prefixes and the launchers, by its basename. `./gradlew build`
+  # and `gradlew build` run `gradlew`, `uv run ruff` and `.venv/bin/ruff` run
+  # `ruff`, and `npm run build` and `yarn build` both run the `build` script.
+  defp build_tool(form) do
     form
     |> String.split(" && ")
     |> List.last()
     |> String.split()
-    |> MapSet.new(&Path.basename/1)
+    |> Enum.map(&Path.basename/1)
+    |> Enum.find(&(&1 not in @run_words and &1 not in @script_runners))
   end
 
   # The executable a form runs, by its last word.

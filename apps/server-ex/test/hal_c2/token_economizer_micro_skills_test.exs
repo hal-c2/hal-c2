@@ -1302,6 +1302,33 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       end
     end
 
+    test "a shared subcommand does not make one tool repair another" do
+      task = fn i ->
+        [
+          edit("/r/src/m#{i}.rs"),
+          bash("cargo build", "Exit code 127\nbash: cargo: command not found", 127),
+          bash("make build", "built", 0)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..5, task))
+      refute Enum.any?(Map.keys(state.facts), &String.starts_with?(&1, "form_repair")), "cargo"
+
+      # One package script by another runner is the same tool.
+      task = fn i ->
+        [
+          edit("/r/web/m#{i}.ts"),
+          bash("yarn build", "Exit code 127\nbash: yarn: command not found", 127),
+          bash("npm run build", "built", 0)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..5, task))
+
+      assert render(state) =~
+               "`yarn build …` fails here with command not found; `npm run build …` works."
+    end
+
     test "a shared launcher does not make one tool repair another" do
       for {failing, other} <- [
             {"python -m mypy .", "python -m ruff check ."},
