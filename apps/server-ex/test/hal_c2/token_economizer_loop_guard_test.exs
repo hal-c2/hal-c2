@@ -1732,6 +1732,14 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             # `pytest` runs is not one, nor is a bare assignment.
             {"hash -p /bin/true pytest && bash run.sh && pytest -q", false},
             {"export PATH=./bin:$PATH && bash run.sh && pytest -q", false},
+            {"printf -v PATH %s ./bin && bash run.sh && pytest -q", false},
+            # An expansion assigns in the chain's own shell, quoted or not.
+            {~s|: "${PATH:=./bin}" && bash run.sh && pytest -q|, false},
+            {~s|echo "$((PATH=1))" && bash run.sh && pytest -q|, false},
+            # A `cd` changes which file a relative path names.
+            {"cd web && bash run.sh && ./bin/test", false},
+            {"cd web && bash run.sh && pytest ./tests", false},
+            {"pushd web && bash run.sh && bin/pytest -q", false},
             {"PATH=./bin && bash run.sh && pytest -q", false},
             {"set -f && bash run.sh && pytest -q", false},
             {~s{"$RUN" && bash run.sh && pytest -q}, false},

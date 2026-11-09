@@ -339,6 +339,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     end
   end
 
+  # The builtins that change the directory a relative path is read from.
+  @moves ~w(cd pushd popd)
+
   # Whether `cmd`, one `&&` chain that exited 0, ran its last check after every command in
   # it that may hide one (`bash scripts/check.sh && pytest -q`): each of those exited 0,
   # and the check after them is the last word. A hiding command after the check (`pytest
@@ -346,7 +349,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # failed unread, so its pass is not taken, deliberately: a redirect there is the cost of
   # not reading the script. A comment or an escape could hide where the chain ends, so
   # neither is read as one. Every command before the check must also have run apart from
-  # it (`apart?/3`), or it may have changed the check in the chain's own shell.
+  # it (`apart?/3`), or it may have changed the check in the chain's own shell, and a `cd`
+  # before a check that names a relative path changed which file that path is.
   defp checked_last?(cmd, "own", 0, written) do
     {script, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
     script = String.trim_trailing(script)
@@ -366,10 +370,16 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         Enum.all?(cuts, fn {from, to} -> binary_part(masked, from, to - from) == "&&" end)
 
     case last_run do
-      {from, _} when chain? ->
+      {from, last} when chain? ->
         before = Enum.take_while(Enum.zip(starts, ends), fn {at, _} -> at < from end)
 
+        moved? =
+          Enum.any?(before, fn {at, to} ->
+            match?([dir | _] when dir in @moves, words(binary_part(script, at, to - at)))
+          end)
+
         ShellEdits.plain?(cmd) and
+          not (moved? and relative?(words(binary_part(script, from, last - from)))) and
           Enum.all?(before, fn {at, to} ->
             apart?(binary_part(unquoted, at, to - at), binary_part(script, at, to - at), written)
           end) and
@@ -391,9 +401,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # builtins below that cannot change what a later command runs, or a `source`/`.` of a
   # plain path the turn did not write (`. venv/bin/activate`). Anything else (a keyword,
   # `eval`, a function definition, `alias`, `export PATH=...`, a bare assignment) may
-  # change the check in the chain's own shell, so the chain is not read. `masked` is the
-  # segment with its quotes masked, so a bracket in a quoted word is no bracket.
-  @apart_builtins ~w(cd pushd popd echo printf true false : test [ pwd)
+  # change the check in the chain's own shell, so the chain is not read, and so does an
+  # expansion that assigns (`"${PATH:=./bin}"`, `"$((N=1))"`), quoted or not. `masked` is
+  # the segment with its quotes masked, so a bracket in a quoted word is no bracket. A
+  # builtin here has no form that assigns (`printf -v` does, so `printf` is not one).
+  @apart_builtins ~w(cd pushd popd echo true false : test [ pwd)
   # Bash's builtins and keywords: a name among them is not a program run apart.
   @shell_builtins ~w(
     . : [ alias bg bind break builtin caller cd command compgen complete compopt continue
@@ -405,13 +417,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   )
 
   defp apart?(masked, segment, written) do
-    words =
-      segment
-      |> String.split()
-      |> Enum.drop_while(&Regex.match?(~r/^\w+=\S*$/, &1))
-
     not String.contains?(masked, ["(", ")", "{", "}", "[["]) and
-      case words do
+      not String.contains?(segment, ["${", "$((", "$["]) and
+      case words(segment) do
         [dot, file] when dot in ["source", "."] ->
           Regex.match?(~r{^[\w./-]+$}, file) and Path.basename(file) not in written
 
@@ -422,6 +430,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         [] ->
           false
       end
+  end
+
+  # A command's words, from its name: the assignments to its environment left out.
+  defp words(segment),
+    do: segment |> String.split() |> Enum.drop_while(&Regex.match?(~r/^\w+=\S*$/, &1))
+
+  # Whether a command runs or reads a path relative to the directory it runs in: its
+  # name is one (`bin/pytest`), or a word is `./`- or `../`-relative (`pytest ./tests`).
+  defp relative?([]), do: false
+
+  defp relative?([name | args]) do
+    (String.contains?(name, "/") and not String.starts_with?(name, ["/", "~"])) or
+      Enum.any?(args, &String.starts_with?(&1, ["./", "../"]))
   end
 
   defp after_run(rest) do

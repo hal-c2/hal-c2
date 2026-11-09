@@ -326,8 +326,9 @@ defmodule HalC2.TokenEconomizerPropTest do
   # A passing check and a command that may hide one in one `&&` chain, in either order:
   # a check after a script run apart is the last word, one before it is not (the command
   # may have undone it, or failed a check of its own unread). An `eval`, a function
-  # definition, or a source of the `a.py` an edit writes, runs in the check's own shell
-  # and may redefine it, so a check after one is not the last word either.
+  # definition, a builtin or an expansion that assigns, or a source of the `a.py` an edit
+  # writes, runs in the check's own shell and may redefine it, so a check after one is
+  # not the last word either.
   defp ordered do
     let {check_last, {how, hider}, runner, between} <-
           {boolean(),
@@ -340,6 +341,8 @@ defmodule HalC2.TokenEconomizerPropTest do
              {"defined", "{ function pytest [[ 1 ]]; }"},
              {"defined", "{ pytest() [[ 1 ]]; }"},
              {"defined", "hash -p /bin/true pytest && bash -c 'x'"},
+             {"defined", "printf -v PATH %s ./bin && bash -c 'x'"},
+             {"defined", ~s|: "${PATH:=./bin}" && bash -c 'x'|},
              {"sourced", "source ./a.py"},
              {"sourced", ". ./a.py"}
            ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"]),
