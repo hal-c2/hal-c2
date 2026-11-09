@@ -195,6 +195,22 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     assert g.whole.edit_counts["page.tsx"] == 2 and g.edits == 2
   end
 
+  test "a shell's script is read as the command only when nothing runs around it" do
+    assert Turn.status_of_tests("bash -lc 'pytest -q'") == "own"
+    assert Turn.status_of_tests("bash -lc 'true' && pytest -q") == "own"
+    assert Turn.status_of_tests("bash -lc 'true'; pytest -q | tail -3") == "hidden"
+    assert ShellEdits.targets("bash -lc 'true' && echo x > a.py") == ["a.py"]
+    assert ShellEdits.targets("bash -lc 'sed -i s/a/b/ a.py' && pytest -q") == ["a.py"]
+
+    # An edit, then a failing check after a nested shell: the check is the turn's last.
+    g =
+      Turn.new()
+      |> fold("Edit", %{"path" => "a.py"}, "ok")
+      |> fold("Bash", %{"command" => "bash -lc 'true' && pytest -q"}, "1 failed", 1)
+
+    assert g.whole.test_runs == 1 and g.whole.error_outputs == 1
+  end
+
   test "a vitest run behind dotenv is a verification and a test run" do
     cmd = "dotenv -e .env.local -- npx vitest run a.test.ts"
     assert Turn.status_of_tests(cmd) == "own"

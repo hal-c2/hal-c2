@@ -532,17 +532,17 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   @doc """
   The script of a command recorded as `bash -lc '<script>'` (as Codex records them), else
-  the command itself.
+  the command itself: also when anything runs around the shell (`bash -lc 'true' &&
+  pytest`), whose script is then read as a nested shell's.
   """
   def script(cmd) when is_binary(cmd) do
-    case posix_split(cmd) do
-      [shell, "-" <> flags, script | _] ->
-        if State.basename(shell) in @shells and String.contains?(flags, "c"),
-          do: script,
-          else: cmd
-
-      _ ->
-        cmd
+    with [shell, "-" <> flags, script | _] <- posix_split(cmd),
+         true <- State.basename(shell) in @shells and String.contains?(flags, "c"),
+         {:ok, toks} <- tokens(cmd),
+         false <- Enum.any?(toks, &(&1 in @ops or &1 in @out or &1 in @skip_operand)) do
+      script
+    else
+      _ -> cmd
     end
   end
 
