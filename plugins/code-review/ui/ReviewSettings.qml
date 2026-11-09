@@ -286,6 +286,32 @@ ColumnLayout {
             settings.set(count.key, Number(text))
     }
 
+    // Logins separated by commas. The text stays as typed while it is edited, with
+    // what it names set as it changes, and is shown from the setting again once
+    // editing ends, or when the setting changes to other logins (a reset, a load).
+    component Logins: ShellTextField {
+        id: logins
+
+        property string key
+        readonly property var list: settings.values[logins.key] ?? []
+
+        function parse(text) {
+            return text.split(",").map(each => each.trim()).filter(each => each.length > 0);
+        }
+
+        function show() {
+            logins.text = logins.list.join(", ");
+        }
+
+        objectName: "codeReviewSetting:" + key
+        Layout.fillWidth: true
+        Component.onCompleted: show()
+        onListChanged: if (JSON.stringify(logins.parse(logins.text)) !== JSON.stringify(logins.list))
+            logins.show()
+        onTextEdited: settings.set(logins.key, logins.parse(logins.text))
+        onEditingFinished: show()
+    }
+
     component Area: TextArea {
         Layout.fillWidth: true
         wrapMode: TextEdit.Wrap
@@ -471,11 +497,8 @@ ColumnLayout {
                 label: qsTr("Ignored authors")
                 hint: qsTr("Logins, separated by commas.")
 
-                ShellTextField {
-                    objectName: "codeReviewSetting:ignoredAuthors"
-                    Layout.fillWidth: true
-                    text: (settings.values.ignoredAuthors ?? []).join(", ")
-                    onTextEdited: settings.set("ignoredAuthors", text.split(",").map(each => each.trim()).filter(each => each.length > 0))
+                Logins {
+                    key: "ignoredAuthors"
                 }
             }
 
@@ -499,11 +522,8 @@ ColumnLayout {
             label: qsTr("Trusted logins")
             hint: qsTr("Logins, separated by commas. Besides the repository's members and collaborators, these may have their pull requests reviewed and ask for reviews. Approve anyone else's pull request on the Reviews page.")
 
-            ShellTextField {
-                objectName: "codeReviewSetting:trustedLogins"
-                Layout.fillWidth: true
-                text: (settings.values.trustedLogins ?? []).join(", ")
-                onTextEdited: settings.set("trustedLogins", text.split(",").map(each => each.trim()).filter(each => each.length > 0))
+            Logins {
+                key: "trustedLogins"
             }
         }
 
@@ -766,6 +786,7 @@ ColumnLayout {
             }
 
             ShellButton {
+                objectName: "codeReviewDiscard"
                 subtle: true
                 text: qsTr("Discard changes")
                 enabled: settings.dirty && !settings.saving
