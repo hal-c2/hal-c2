@@ -18,7 +18,10 @@ defmodule HalC2.TokenEconomizerPropTest do
     not out changes nothing but the spend; every call is counted;
   - what the envelope learns: from any run of turns, exactly the ones that ended
     green, no envelope before enough of them, and the signal thresholds never below
-    the level's; an edit that failed does not make a failing check look old.
+    the level's; an edit that failed does not make a failing check look old;
+  - what the judge is shown of an edit through the shell: whatever writes the file,
+    behind whatever wrapper, inside whatever list, group or nested shell, the file is
+    counted and what was written into it is never shown.
 
   The plugin's process, the MC's turns and the delivery of redirects and notices are
   covered by `features/plugins/token-economizer-loop-guard.feature`.
@@ -27,7 +30,7 @@ defmodule HalC2.TokenEconomizerPropTest do
   use PropCheck
   use PropCheck.StateM
 
-  alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Rules, Turn}
+  alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Rules, ShellEdits, State, Turn}
 
   @stale 300
 
@@ -326,4 +329,84 @@ defmodule HalC2.TokenEconomizerPropTest do
 
     if outcome == "guard_stopped", do: %{guard | aborted: true}, else: guard
   end
+
+  # --- what the judge is shown of an edit through the shell --------------------------------
+
+  property "an edit through the shell is counted and its words never shown, however run",
+    numtests: HalC2.Prop.numtests(300) do
+    forall cmd <- shell_edit() do
+      st = State.update(State.new(), "Bash", %{"command" => cmd}, "", false)
+      shown = State.recent_digest(st)
+
+      ("a.py" in ShellEdits.targets(cmd) and not String.contains?(shown, "SECRET"))
+      |> when_fail(
+        IO.puts("""
+        Command: #{inspect(cmd)}
+        Targets: #{inspect(ShellEdits.targets(cmd))}
+        Shown: #{shown}
+        """)
+      )
+    end
+  end
+
+  # A command that writes SECRET into a.py: a writer, behind a wrapper, on a path spelt
+  # one of the ways a path is, inside a carrier (a list, a group, a nested shell, a line
+  # continued).
+  defp shell_edit do
+    let {{writer, nestable}, wrapper, path, carrier} <-
+          {elements(writers()),
+           elements([
+             "",
+             "sudo ",
+             "sudo -u me ",
+             "env X=1 ",
+             "command ",
+             "timeout 10 ",
+             "nice -n 5 ",
+             "X=1 "
+           ]), elements(["a.py", "./src/a.py", "\"src/a.py\"", "'a.py'", "src/a'.py'"]),
+           elements(
+             ~w(alone and_before semi_after subshell braces pipe_from continued nested eval)a
+           )} do
+      run = String.replace(wrapper <> writer, "@P", path)
+      carry(carrier, run, nestable and not String.contains?(path, "'"))
+    end
+  end
+
+  # Writers, and whether one can go inside a quoted script (it has no quotes or heredoc).
+  defp writers do
+    [
+      {"echo SECRET > @P", true},
+      {"printf SECRET >> @P", true},
+      {"echo SECRET >| @P", true},
+      {"echo SECRET &> @P", true},
+      {"echo SECRET 1> @P", true},
+      {">@P echo SECRET", true},
+      {"echo SECRET | tee -a @P", true},
+      {"tee @P <<< SECRET", true},
+      {"dd of=@P <<< SECRET", true},
+      {"sed -i s/x/SECRET/ @P", true},
+      {"sed -i.bak -e s/x/SECRET/ @P", true},
+      {"sed --in-place -Ee's/x/SECRET/' @P", false},
+      {"sed -i -e'1iSECRET;SECRET' @P", false},
+      {"perl -pi -e 's/x/SECRET/' @P", false},
+      {"printf 'SECRET\n' > @P", false},
+      {"printf $'SECRET\\n' > @P", false},
+      {"cat > @P <<'EOF'\nSECRET\nEOF", false},
+      {"cat <<-EOF > @P\n\tSECRET\n\tEOF", false}
+    ]
+  end
+
+  defp carry(:alone, run, _), do: run
+  defp carry(:and_before, run, _), do: "cd x && " <> run
+  defp carry(:semi_after, run, _), do: if(heredoc?(run), do: run, else: run <> "; ls")
+  defp carry(:subshell, run, _), do: if(heredoc?(run), do: run, else: "(" <> run <> ")")
+  defp carry(:braces, run, _), do: if(heredoc?(run), do: run, else: "{ " <> run <> "; }")
+  defp carry(:pipe_from, run, _), do: "true | " <> run
+  defp carry(:continued, run, _), do: String.replace(run, " ", " \\\n  ", global: false)
+  defp carry(:nested, run, true), do: "cd x && bash -c '" <> run <> "'"
+  defp carry(:eval, run, true), do: "eval '" <> run <> "'"
+  defp carry(_, run, false), do: run
+
+  defp heredoc?(run), do: String.contains?(run, "\n")
 end

@@ -323,15 +323,13 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
+  # With neither the guard nor the micro-skills listening no turn is heard, but the
+  # window a report of missed events opens still runs over the events heard, so a turn
+  # that starts in it once one is on again is partial.
   def handle_call({:observe, event}, _from, state) do
-    state =
-      if on?(state) or micro_on?(state) do
-        state |> missed(event) |> hear(event) |> suspect(event)
-      else
-        state
-      end
-
-    {:reply, :ok, state}
+    state = missed(state, event)
+    state = if on?(state) or micro_on?(state), do: hear(state, event), else: state
+    {:reply, :ok, suspect(state, event)}
   end
 
   @impl GenServer
@@ -702,7 +700,9 @@ defmodule HalC2Plugins.TokenEconomizer do
     )
 
     guard = %{guard | abort_delivered: true}
-    state = update_in(state.stats["aborts"], &(&1 + 1))
+    # The guard decides nothing more in the turn, so a judge job still out is a paid
+    # answer no one reads.
+    state = state |> update_in([:stats, "aborts"], &(&1 + 1)) |> cancel_judge(thread_id)
     entry = entry(thread_id, run_id, "stop", reason, guard)
 
     if shadow?(state) do

@@ -209,6 +209,13 @@ export const PluginManifest = Schema.Struct({
   permissions: Schema.optionalKey(Schema.Array(PluginPermissionRequest)),
   settings: Schema.optionalKey(Schema.Array(PluginSettingField)),
   contributes: Schema.optionalKey(PluginContributions),
+  /**
+   * The plugin's threads never leave the machine they were started on: what it keeps
+   * around them (a sandbox, a credential, a checkout) does not travel. They are refused
+   * a move and an export whether the plugin runs or not, and once it is removed too:
+   * each such thread is marked `stays` when it starts.
+   */
+  threadsStay: Schema.optionalKey(Schema.Boolean),
 });
 export type PluginManifest = typeof PluginManifest.Type;
 
@@ -390,5 +397,10 @@ export const ThreadPluginMark = Schema.Struct({
   kind: TrimmedNonEmptyString,
   /** False keeps the thread out of the thread list; it still opens by id. */
   listed: Schema.Boolean,
+  /**
+   * True when the plugin's manifest has `threadsStay` (a fork copies it): the thread is
+   * refused a move and an export, and is offered no destination.
+   */
+  stays: Schema.optionalKey(Schema.Boolean),
 });
 export type ThreadPluginMark = typeof ThreadPluginMark.Type;

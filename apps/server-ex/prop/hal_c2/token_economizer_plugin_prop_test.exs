@@ -19,14 +19,16 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   - turned off, it watches no turn and has no task out;
   - watching, it has no delivery out and no redirect on its way;
   - it watches exactly the turns under way that it heard start while on, by their run;
-  - a judge job is out only for a thread with a turn under way, at most one for each;
+  - a judge job is out only for a thread with a turn under way and not offered its
+    stop, at most one for each;
   - no run gets more redirects than the budget, nor more than one stop offer;
   - a turn teaches the project's envelope only when it ended completed, made calls and
     was heard whole, never when the next turn's start closes it; one heard whole that
     completed with nothing but passing checks does. A turn is heard whole unless it was
     under way when the feed said it missed events, or one of its events came in the
-    window that report opens: the reported event and those the feed had waiting. A
-    restart opens such a window over every event the feed still holds.
+    window that report opens: the reported event and those the feed had waiting, heard
+    while on or off. A restart opens such a window over every event the feed still
+    holds and the one it may be blocked delivering.
 
   `prop/hal_c2/token_economizer_prop_test.exs` runs one turn's guard;
   `proof/hal_c2/token_economizer_loop_guard_proof_test.exs` explores the turns, the
@@ -50,9 +52,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     numtests: HalC2.Prop.numtests(1000) do
     forall budget <- integer(0, 2) do
       forall cmds <- more_commands(8, commands(__MODULE__, initial_state(budget))) do
-        open_case(budget)
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        reached = close_case()
+        {history, state, result, reached} = run_case(budget, cmds)
 
         (result == :ok)
         |> when_fail(
@@ -66,6 +66,25 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         |> aggregate(command_names(cmds))
         |> collect(reached)
       end
+    end
+  end
+
+  test "a case leaves the MC's home and environment as it found them" do
+    before = {Application.fetch_env(:hal_c2, :home), System.fetch_env("GIT_CEILING_DIRECTORIES")}
+    {_, _, :ok, :watched} = run_case(0, [])
+
+    assert {Application.fetch_env(:hal_c2, :home), System.fetch_env("GIT_CEILING_DIRECTORIES")} ==
+             before
+  end
+
+  defp run_case(budget, cmds) do
+    open_case(budget)
+
+    try do
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      {history, state, result, close_case()}
+    after
+      HalC2.Prop.restore_env()
     end
   end
 
@@ -210,19 +229,19 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   def next_state(state, _result, {:call, _, :mode, [mode, _]}),
     do: %{state | mode: mode, open: if(mode == "off", do: %{}, else: state.open)}
 
-  # The process restarted, its feed holding `held` events: it watches no turn, and every
-  # event the feed holds may have been sent before ones it missed.
+  # The process restarted, its feed holding `held` events and maybe blocked delivering
+  # one more: it watches no turn, and each of those may have been sent before ones it
+  # missed.
   def next_state(state, _result, {:call, _, :restart, [_, _, held]}),
-    do: %{state | open: %{}, missing: held}
+    do: %{state | open: %{}, missing: held + 1}
 
   def next_state(state, _result, _call), do: state
 
-  # An event of thread `t`, heard while on: a report of missed events marks the turns
-  # under way partial and opens a window over the reported event and those waiting
-  # behind it; `hear` applies the event; each event in the window marks its thread's
-  # turn partial.
-  defp heard(%{mode: "off"} = state, _t, _dropped, _hear), do: state
-
+  # An event of thread `t`: a report of missed events marks the turns under way partial
+  # and opens a window over the reported event and those waiting behind it; `hear`
+  # applies the event, only while on; each event in the window marks its thread's turn
+  # partial. Turned off, the process watches no turn, but the window still runs over
+  # the events it hears, so a turn that starts in it once on again is partial.
   defp heard(state, t, dropped, hear) do
     state =
       if dropped == false,
@@ -233,7 +252,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
             missing: max(state.missing, dropped + 1)
         }
 
-    state = hear.(state)
+    state = if state.mode == "off", do: state, else: hear.(state)
 
     cond do
       state.missing == 0 -> state
@@ -253,7 +272,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         after_.mode != "watch" or
           (not Enum.any?(seen.tasks, &match?({_, :delivery}, &1)) and seen.redirecting == []),
       turns: seen.turns == Map.new(after_.open, fn {t, turn} -> {t, turn.run} end),
-      judge: Enum.all?(judged, fn {t, n} -> n == 1 and Map.has_key?(seen.turns, t) end),
+      judge:
+        Enum.all?(judged, fn {t, n} ->
+          n == 1 and Map.has_key?(seen.turns, t) and t not in seen.offered
+        end),
       budget:
         Enum.all?(seen.acts, fn {{_, _, action}, n} ->
           if action == "nudge", do: n <= state.budget, else: n <= 1
@@ -479,6 +501,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       turns: Map.new(plugin.turns, fn {t, turn} -> {t, turn.run} end),
       tasks: Map.values(plugin.tasks),
       redirecting: for({t, %{guard: %{redirecting: true}}} <- plugin.turns, do: t),
+      offered: for({t, %{guard: %{abort_delivered: true}}} <- plugin.turns, do: t),
       acts: Enum.frequencies_by(plugin.recent, &{&1["threadId"], &1["runId"], &1["action"]}),
       taught: taught
     }

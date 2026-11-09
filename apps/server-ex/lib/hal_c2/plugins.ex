@@ -58,6 +58,8 @@ defmodule HalC2.Plugins do
   @max_seconds 5
 
   @providers __MODULE__.Providers
+  # The ids whose loaded manifest declares `threadsStay`; see `threads_stay?/1`.
+  @stays __MODULE__.Stays
   # `{{:list, pid}, ref}`, `{{:topic, id, topic, pid}, ref}` and `{{:last, id, topic}, value}`.
   @watchers __MODULE__.Watchers
   @heir __MODULE__.Heir
@@ -286,6 +288,23 @@ defmodule HalC2.Plugins do
   catch
     :exit, {:timeout, _} -> true
     :exit, _ -> false
+  end
+
+  @doc """
+  Whether plugin `id` declares that its threads never leave the machine
+  (`"threadsStay"`): the version loaded here says so, running or not, or the package
+  on disk does (`Package.threads_stay?/1`). The version loaded answers while a reload
+  that failed leaves it running and the manifest on disk does not declare it.
+
+  The loaded versions' declarations are in a table the host keeps (`sync/1`), so this
+  never waits on the host, however busy it is compiling a package. With no host here,
+  or one that has not scanned yet, the table says nothing and the disk answers.
+  """
+  def threads_stay?(id) do
+    (:ets.whereis(@stays) != :undefined and :ets.member(@stays, id)) or Package.threads_stay?(id)
+  rescue
+    # The host went away between looking for the table and reading it.
+    ArgumentError -> Package.threads_stay?(id)
   end
 
   @doc "Whether `id` is a running text-generation backend."
@@ -774,6 +793,7 @@ defmodule HalC2.Plugins do
   def init(nil) do
     {:ok, supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
     :ets.new(@providers, [:named_table, :protected, :set, read_concurrency: true])
+    :ets.new(@stays, [:named_table, :protected, :set, read_concurrency: true])
     :ok = HalC2.Settings.watch(self())
     dir = Path.join(HalC2.Paths.data_dir(), "plugins")
 
@@ -1115,9 +1135,14 @@ defmodule HalC2.Plugins do
   def handle_info(_other, state), do: {:noreply, state}
 
   # A host updated in place by a release upgrade from before crashes were charged to the
-  # supervisor that reported them: its workers are the running supervisors'.
+  # supervisor that reported them: its workers are the running supervisors'. One from
+  # before `threadsStay` has no table of declarations (`init/1` does not run again), and
+  # `sync/1` would crash on it: it is made and filled from the versions loaded.
   @impl true
   def code_change(_old, state, _extra) do
+    if :ets.whereis(@stays) == :undefined,
+      do: :ets.new(@stays, [:named_table, :protected, :set, read_concurrency: true])
+
     plugins =
       Map.new(state.plugins, fn {id, plugin} ->
         {id, plugin |> Map.put_new(:gave_up, nil) |> Map.put_new(:compile_check, nil)}
@@ -1129,7 +1154,7 @@ defmodule HalC2.Plugins do
         entry -> entry
       end)
 
-    {:ok, %{state | plugins: plugins, refs: refs}}
+    {:ok, sync(%{state | plugins: plugins, refs: refs})}
   end
 
   # One `HalC2.Watchers` entry per watched list or topic, so dropping one leaves the others.
@@ -1259,28 +1284,39 @@ defmodule HalC2.Plugins do
         previous
 
       {{:ok, _, _, _}, _} ->
-        copy = stage(id, dir)
+        case stage(id, dir) do
+          {:ok, copy} ->
+            load_copy(id, dir, copy, previous, bundled)
 
-        case Package.read(copy) do
-          {:ok, manifest, sources, hash} ->
-            plugin = %{
-              blank(id, dir, hash)
-              | manifest: manifest,
-                sources: sources,
-                package: dir,
-                files: copy,
-                bundled: MapSet.member?(bundled, id),
-                problem: api_problem(manifest.api_version)
-            }
-
-            if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
-
-          {:error, message, hash} ->
-            File.rm_rf(Path.dirname(copy))
-            failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+          # The package changed under the copy (an install replacing it), or the cache
+          # could not take it: the version that ran stays, and a rescan loads it again.
+          # The failure keeps no hash, so a rescan of the same package retries the copy.
+          {:error, message} ->
+            failed(previous, message, fn -> %{blank(id, dir, nil) | package: dir} end)
         end
 
       {{:error, message, hash}, _} ->
+        failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
+    end
+  end
+
+  defp load_copy(id, dir, copy, previous, bundled) do
+    case Package.read(copy) do
+      {:ok, manifest, sources, hash} ->
+        plugin = %{
+          blank(id, dir, hash)
+          | manifest: manifest,
+            sources: sources,
+            package: dir,
+            files: copy,
+            bundled: MapSet.member?(bundled, id),
+            problem: api_problem(manifest.api_version)
+        }
+
+        if runnable?(plugin), do: compile_package(plugin, previous), else: [plugin]
+
+      {:error, message, hash} ->
+        File.rm_rf(Path.dirname(copy))
         failed(previous, message, fn -> %{blank(id, dir, hash) | package: dir} end)
     end
   end
@@ -1300,8 +1336,15 @@ defmodule HalC2.Plugins do
   # Each copy sits in a directory named for the package, as the manifest's id must be.
   defp stage(id, dir) do
     copy = Path.join([copies_dir(), id, "#{System.unique_integer([:positive])}", id])
-    :ok = Package.copy(dir, copy)
-    copy
+
+    case Package.copy(dir, copy) do
+      :ok ->
+        {:ok, copy}
+
+      {:error, _} = error ->
+        File.rm_rf(Path.dirname(copy))
+        error
+    end
   end
 
   defp copies_dir, do: Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
@@ -1555,8 +1598,15 @@ defmodule HalC2.Plugins do
     |> sync()
   end
 
-  # The running provider adapters, by the driver they serve, for `provider/1`.
+  # The running provider adapters, by the driver they serve, for `provider/1`, and the
+  # plugins whose loaded manifest declares `threadsStay`, for `threads_stay?/1`. The
+  # second follows the loaded versions (a scan, so an uninstall, drops a plugin from
+  # it) and is rebuilt as the plugins load when the host starts again.
   defp sync(state) do
+    stays = for {id, %{manifest: %{package: %{"threadsStay" => true}}}} <- state.plugins, do: {id}
+    for {id} <- :ets.tab2list(@stays), {id} not in stays, do: :ets.delete(@stays, id)
+    :ets.insert(@stays, stays)
+
     bundled = HalC2.Plugins.Bundled.modules()
 
     rows =

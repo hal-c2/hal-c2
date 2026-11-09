@@ -169,11 +169,16 @@ defmodule HalC2.Plugins.Host do
   @doc """
   Starts a thread as `orchestration.launchThread` does (`input` in its shape),
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
-  thread list. Created by the system, from the server.
+  thread list. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
+  which asks the version that runs first) has its threads marked `"stays"`: its sandbox,
+  credentials and checkout for them do not travel, so a moved thread would run without
+  them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`).
+  Created by the system, from the server.
   """
   def launch_thread(id, kind, input, opts \\ []) do
     with :ok <- permit(id, "threads:create") do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
+      mark = if Plugins.threads_stay?(id), do: Map.put(mark, "stays", true), else: mark
 
       input
       |> Map.merge(%{"createdBy" => "system", "creationSource" => "server"})
@@ -371,16 +376,18 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
-  How many turn events plugin `id`'s feed holds, still to deliver: 0 when it has no
-  feed. A plugin process restarted while its feed ran has lost what it knew of the
-  events before: any of these may have been sent before events it missed, and a report
-  of missed events may have reached the process that went down.
+  How many turn events plugin `id`'s feed may still deliver: 0 when it has no feed. A
+  plugin process restarted while its feed ran has lost what it knew of the events
+  before: any of these may have been sent before events it missed, and a report of
+  missed events may have reached the process that went down. Besides those the feed
+  holds, each feed may be blocked delivering one more, its call already in the
+  restarted process's mailbox, so each counts one more.
   """
   def feed_backlog(id) do
     Enum.sum(
       for {pid, %{id: ^id}} <- Plugins.Feed.lookup(:observe),
           {:message_queue_len, n} <- [Process.info(pid, :message_queue_len)],
-          do: n
+          do: n + 1
     )
   end
 

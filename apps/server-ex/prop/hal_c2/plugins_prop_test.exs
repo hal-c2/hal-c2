@@ -8,7 +8,8 @@ defmodule HalC2.PluginsPropTest do
   Commands write packages (good ones, new versions, ones whose manifest is broken or
   whose code does not compile, updates that ask for more or fewer permissions), rescan,
   install one while a process is parked in the code now loaded (an update the host
-  refuses must leave that version loaded), enable with whatever a client sends as accepted permissions, disable, restart, save
+  refuses must leave that version loaded), install one the cache cannot copy (a later
+  scan must load it), enable with whatever a client sends as accepted permissions, disable, restart, save
   settings (version 2 of a package takes them live, so its process stays; version 1
   is restarted with them), call the running plugin (whose process must run with the
   settings saved last, after a crash too), read its files, follow, publish and drop topics,
@@ -177,6 +178,9 @@ defmodule HalC2.PluginsPropTest do
         {1, {:call, __MODULE__, :kill_client, [client()]}},
         {1, {:call, __MODULE__, :kill_plugins, []}},
         {1, {:call, __MODULE__, :stale_worker, [held]}},
+        {1, {:call, __MODULE__, :update_in_place, []}},
+        {1, {:call, __MODULE__, :unreadable_scan, [held]}},
+        {1, {:call, __MODULE__, :install_uncopied, [id(), desc()]}},
         {2, {:call, __MODULE__, :listen, [id(), oneof(["1", "2"])]}},
         {2, {:call, __MODULE__, :hook, [id(), oneof(["1", "2"])]}},
         {2, {:call, __MODULE__, :observe_turn, [integer(1, 9)]}},
@@ -334,6 +338,12 @@ defmodule HalC2.PluginsPropTest do
   def precondition(state, {:call, _, :release, [id, n]}),
     do: match?([{_, ^n} | _], state.queue[id])
 
+  # Of a version the host holds as it is on disk, so the scan has nothing else to load.
+  def precondition(state, {:call, _, :unreadable_scan, [id]}),
+    do:
+      is_map_key(state.disk, id) and state.held[id] != nil and
+        state.held[id].desc == state.disk[id] and not MapSet.member?(state.unrevoked, id)
+
   def precondition(state, {:call, _, :break_settings, []}), do: not state.broken
   def precondition(state, {:call, _, :mend_settings, []}), do: state.broken
   def precondition(_state, _call), do: true
@@ -487,6 +497,10 @@ defmodule HalC2.PluginsPropTest do
   defp act(s, {:call, _, :remove, [id]}), do: {%{s | disk: Map.delete(s.disk, id)}, :ok}
   defp act(s, {:call, _, :rescan, []}), do: {scan(s), :ok}
   defp act(s, {:call, _, :install, [id, desc]}), do: {scan(put_in(s.disk[id], desc)), :ok}
+
+  # The same, but the scan cannot copy a package it would load anew.
+  defp act(s, {:call, _, :install_uncopied, [id, desc]}),
+    do: {scan(put_in(s.disk[id], desc), false), :ok}
 
   # The same: a process in the loaded version's code only changes how the host loads.
   defp act(s, {:call, _, :install_busy, [id, desc]}),
@@ -651,6 +665,19 @@ defmodule HalC2.PluginsPropTest do
   # Its supervisor is not known, so it is no one's, whatever runs now.
   defp act(s, {:call, _, :stale_worker, [_id]}), do: {s, :ok}
 
+  # A release upgrade changes nothing the host holds.
+  defp act(s, {:call, _, :update_in_place, []}), do: {s, :ok}
+
+  # A scan that cannot read `id`'s manifest refuses the package as one whose manifest is
+  # broken, though it is the version held: the next scan reads it again. The version
+  # refused is no version on disk, so that scan loads the package anew.
+  defp act(s, {:call, _, :unreadable_scan, [id]}) do
+    {_, version, permissions} = s.disk[id]
+    unreadable = entry({:unreadable, version, permissions}, :error_manifest)
+    s = scan(s)
+    {reconcile(put_in(s.held[id], keep(s.held[id], unreadable))), :ok}
+  end
+
   # Killed until its supervisor gives up: how many kills that took is not known.
   defp act(s, {:call, _, :crash_hard, [id]}) do
     e = s.held[id]
@@ -692,9 +719,10 @@ defmodule HalC2.PluginsPropTest do
       e.st in [:compiled, :uncompiled] and conf(s, id).enabled == true and
         perms(e) -- conf(s, id).granted == []
 
-  # The packages on disk as a scan loads them, then what is enabled started.
-  defp scan(s) do
-    held = Map.new(s.disk, fn {id, desc} -> {id, load(s, id, s.held[id], desc)} end)
+  # The packages on disk as a scan loads them, then what is enabled started. A scan
+  # that cannot `copy` refuses every package it would load anew.
+  defp scan(s, copy \\ true) do
+    held = Map.new(s.disk, fn {id, desc} -> {id, load(s, id, s.held[id], desc, copy)} end)
 
     # A version that stops asking for a permission gives it up, unless the document
     # cannot be saved.
@@ -719,10 +747,16 @@ defmodule HalC2.PluginsPropTest do
     reconcile(%{s | held: held})
   end
 
-  defp load(s, id, held, desc) do
+  defp load(s, id, held, desc, copy) do
     cond do
       held != nil and held.desc == desc ->
         if valid?(id, desc), do: %{held | reload_error: false}, else: held
+
+      # Refused as a package without a manifest, that is no version on disk: the next
+      # scan that can copy it loads it anew.
+      valid?(id, desc) and not copy ->
+        {_, version, permissions} = desc
+        keep(held, entry({:uncopied, version, permissions}, :error_manifest))
 
       valid?(id, desc) ->
         new = entry(desc, if(code?(desc), do: :uncompiled, else: :compiled))
@@ -1159,6 +1193,56 @@ defmodule HalC2.PluginsPropTest do
 
     receive do
       {:DOWN, ^ref, _, _, _} -> :ok
+    end
+
+    {:ok, observe()}
+  end
+
+  # The host updated in place by a release upgrade from a version without the table of
+  # `threadsStay` declarations: `init/1` does not run again, so the table is not there
+  # until `code_change/3` makes it. Every later step then needs the host to have kept
+  # working; the reply says whether the table is there.
+  def update_in_place do
+    :sys.replace_state(Plugins, fn state ->
+      :ets.delete(HalC2.Plugins.Stays)
+      state
+    end)
+
+    :ok = :sys.suspend(Plugins)
+    :ok = :sys.change_code(Plugins, Plugins, "before", [])
+    :ok = :sys.resume(Plugins)
+    reply = if :ets.whereis(HalC2.Plugins.Stays) == :undefined, do: :no_table, else: :ok
+    {reply, observe()}
+  end
+
+  # A scan while `id`'s manifest cannot be read, as when an install replaces the package
+  # under it; readable again afterwards.
+  # An install the scan cannot copy, as when the cache is briefly full or unwritable;
+  # it takes copies again afterwards.
+  def install_uncopied(id, desc) do
+    put_package(id, desc)
+    copies = Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
+    File.mkdir_p!(copies)
+    dirs = [copies | Path.wildcard(Path.join(copies, "*"))]
+    Enum.each(dirs, &File.chmod!(&1, 0o500))
+
+    try do
+      Plugins.handle("rescan", %{})
+    after
+      Enum.each(dirs, &File.chmod!(&1, 0o755))
+    end
+
+    {:ok, observe()}
+  end
+
+  def unreadable_scan(id) do
+    manifest = Path.join([plugins_dir(), id, "plugin.json"])
+    File.chmod!(manifest, 0o000)
+
+    try do
+      Plugins.handle("rescan", %{})
+    after
+      File.chmod!(manifest, 0o644)
     end
 
     {:ok, observe()}

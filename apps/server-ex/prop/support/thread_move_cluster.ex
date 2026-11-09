@@ -13,6 +13,9 @@ defmodule HalC2.Prop.ThreadMoveCluster do
   @support Path.expand("../../test/support", __DIR__)
   # The plugin each machine has installed, off until a case turns it on (`plugin/1`).
   @plugin "prop-mover"
+  # A package that declares its threads stay (`"threadsStay"`), installed and never run,
+  # but granted to start threads (`create_kept_thread/3`).
+  @keeper "prop-keeper"
 
   @doc """
   Starts a machine for each label; returns `%{label => %{mc, peer, home}}`. A peer stops
@@ -206,6 +209,22 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     history(id, title)
   end
 
+  @doc """
+  A thread carrying the plugin mark `mark`, as one an earlier MC or a plugin since
+  removed left: `create_thread/3` with the mark put on it.
+  """
+  def create_marked_thread(id, project, title, mark) do
+    :ok = create_thread(id, project, title)
+
+    :ok =
+      HalC2.Streams.transact(id, :thread, fn state ->
+        {[HalC2.Orchestration.upsert(state, "thread", id, &Map.put(&1, "plugin", mark))], :ok}
+      end)
+
+    HalC2.Streams.flush_shell(id)
+    :ok
+  end
+
   defp history(id, title) do
     attachment = "att-#{id}"
     path = Path.join(HalC2.Attachments.dir(), attachment <> ".bin")
@@ -273,8 +292,134 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     end
     """)
 
+    {settings, version} = HalC2.Settings.get()
+    granted = %{@keeper => %{"granted" => ["threads:create"]}}
+    settings = Map.update(settings, "plugins", granted, &Map.merge(&1, granted))
+    {:ok, _} = HalC2.Settings.put(settings, version)
+    keeper(:installed)
+  end
+
+  @doc """
+  Puts the keeper package in a state: `:installed`; `:broken`, a new version whose
+  manifest is not valid JSON, which fails to load and leaves the one before it loaded;
+  or `:replacing`, moved aside as `mix hal_c2.plugins.install` leaves it between its
+  two renames (`HalC2.Plugins.Package.aside_dir/2`), which a scan then finds gone;
+  `:cut_off`, that install cut off between its renames and the next one
+  (`HalC2.Plugins.Package.replace/3`) cut off while it copies; or `:removed`,
+  uninstalled, as on an MC from before plugins kept their threads.
+  """
+  def keeper(how) do
+    plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+    installed = Path.join(plugins, @keeper)
+    aside = HalC2.Plugins.Package.aside_dir(plugins, @keeper)
+
+    case how do
+      :installed ->
+        File.rm_rf!(aside)
+        File.rm_rf!(HalC2.Plugins.Package.staged_dir(plugins, @keeper))
+        File.mkdir_p!(installed)
+        File.write!(Path.join(installed, "plugin.json"), JSON.encode!(keeper_manifest()))
+
+      :broken ->
+        File.write!(Path.join(installed, "plugin.json"), "{ \"id\": ")
+
+      :replacing ->
+        File.rename!(installed, aside)
+
+      :cut_off ->
+        File.rename!(installed, aside)
+
+        try do
+          HalC2.Plugins.Package.replace(plugins, @keeper, fn staged ->
+            File.mkdir_p!(staged)
+            raise File.CopyError, source: "plugin.json", destination: staged, reason: :enospc
+          end)
+        rescue
+          File.CopyError -> :ok
+        end
+
+      :removed ->
+        File.rm_rf!(installed)
+    end
+
     {:ok, _} = HalC2.Plugins.handle("rescan", %{})
     :ok
+  end
+
+  defp keeper_manifest do
+    %{
+      "id" => @keeper,
+      "name" => "Keeper",
+      "version" => "1.0.0",
+      "apiVersion" => 1,
+      "description" => "Keeps its threads on the machine.",
+      "permissions" => [%{"id" => "threads:create", "reason" => "It starts threads."}],
+      "threadsStay" => true
+    }
+  end
+
+  @doc """
+  A thread the keeper starts (`HalC2.Plugins.Host.launch_thread/4`), with the history of
+  `create_thread/3`, whatever state `keeper/1` left it in.
+  """
+  def create_kept_thread(id, project, title) do
+    {:ok, _} =
+      HalC2.Plugins.Host.launch_thread(
+        @keeper,
+        "review",
+        %{
+          "threadId" => id,
+          "projectId" => project,
+          "title" => title,
+          "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
+        },
+        listed: false
+      )
+
+    history(id, title)
+  end
+
+  @doc """
+  Imports into `project` a version 1 thread file of `id`, as an earlier install wrote
+  one: the thread as events, the first carrying the plugin mark `mark`.
+  """
+  def import_v1(id, project, title, mark) do
+    at = "2026-09-01T00:00:00.000Z"
+
+    events =
+      [{"thread.created", %{"id" => id, "title" => title, "plugin" => mark}}] ++
+        for n <- 1..3 do
+          {"message.updated",
+           %{"id" => "#{id}-m#{n}", "threadId" => id, "role" => "user", "text" => "message #{n}"}}
+        end
+
+    HalC2.ThreadArchive.import_archive(
+      %{
+        "format" => "hal-c2-thread-export",
+        "version" => 1,
+        "exportedAt" => at,
+        "thread" => %{
+          "id" => id,
+          "title" => title,
+          "sourceProjectId" => "proj-elsewhere",
+          "sourceWorkspaceRoot" => "/elsewhere/proj"
+        },
+        "events" =>
+          for {type, payload} <- events do
+            %{
+              "aggregateKind" => "thread",
+              "streamId" => id,
+              "eventType" => type,
+              "payloadJson" => JSON.encode!(Map.put_new(payload, "createdAt", at)),
+              "occurredAt" => at,
+              "applicationEventVersion" => 2
+            }
+          end,
+        "attachments" => [],
+        "terminalLogs" => []
+      },
+      project: project
+    )
   end
 
   @doc "Turns the plugin on or off, as a client does; returns whether it now runs."

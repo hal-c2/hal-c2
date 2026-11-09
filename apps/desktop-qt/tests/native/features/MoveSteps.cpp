@@ -5,6 +5,7 @@
 // The cluster is machines known by one name each, the MC's own among them,
 // whose rows change as the real MCs' do during a move (thread_move.ex).
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -50,6 +51,8 @@ struct FakeMove {
   // The machines the palette offered, and the thread it named.
   QList<Choice> choices;
   QString paletteThread;
+  // The threads a plugin keeps on their machine, by id, with the plugin.
+  QHash<QString, QString> kept;
 };
 
 const QString kAt = QStringLiteral("2026-09-23T10:00:00Z");
@@ -523,6 +526,31 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user asks the command palette to move the thread to another machine"),
        [](World& world, const Captures&, const Table&) { askPalette(world); });
+  step(QStringLiteral("the user moves the thread to %1 from the command palette").arg(q), [](World& world, const Captures& c, const Table&) {
+    askPalette(world);
+    auto* palette = world.native().controller<CommandPaletteController>();
+    for (int row = 0; row < palette->count(); ++row) {
+      if (palette->data(palette->index(row), CommandPaletteController::TitleRole) != c[0]) continue;
+      palette->run(row);
+      world.sync();
+      return;
+    }
+    fail(offered(world));
+  });
+  step(QStringLiteral("%1 was started by the plugin %1, which keeps its threads on the machine").arg(q),
+       [](World& world, const Captures& c, const Table&) { fake(world).kept.insert(idOf(world, c[0]), c[1]); });
+  step(QStringLiteral("the running turn of %1 is not interrupted").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString id = idOf(world, c[0]);
+    world.sync();
+    const QVariant question = world.state(QStringLiteral("confirmation"));
+    expect(question.isNull() || at(question, QStringLiteral("title")).toString().isEmpty(),
+           QStringLiteral("the user is asked %1").arg(show(question)));
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+      expect(command.value(QLatin1String("type")) != QLatin1String("run.interrupt") || command.value(QLatin1String("threadId")) != id,
+             QStringLiteral("the run was interrupted: %1").arg(world.describeCommands()));
+    }
+    expect(world.mc.part<FakeMove>().asked.isEmpty(), QStringLiteral("a move was asked: %1").arg(world.describeCommands()));
+  });
   step(QStringLiteral("the user is asked which machine to move %1 to").arg(q), [](World& world, const Captures& c, const Table&) {
     auto* palette = world.native().controller<CommandPaletteController>();
     QStringList wanted = machines(world.mc);
@@ -661,6 +689,13 @@ bool answerMachineMove(FakeMc& mc, const FakeMc::Rpc& rpc) {
   FakeMove& fake = mc.part<FakeMove>();
   if (!fake.cluster) return false;
   const QString from = rpc.environment.isEmpty() ? mc.environmentId : rpc.environment;
+  // What ThreadArchive.stays/1 says, before anything else is asked.
+  const QString threadId = rpc.payload.value(QLatin1String("threadId")).toString();
+  if (const auto plugin = fake.kept.constFind(threadId); plugin != fake.kept.cend()) {
+    mc.refuse(rpc, QStringLiteral("%1 was started by %2, which keeps it on this machine.")
+                       .arg(rowOn(mc, from, threadId).value(QLatin1String("title")).toString(), *plugin));
+    return true;
+  }
   if (rpc.method == QLatin1String("hal-c2.moveDestinations")) {
     QJsonArray destinations;
     for (const QString& machine : machines(mc)) {

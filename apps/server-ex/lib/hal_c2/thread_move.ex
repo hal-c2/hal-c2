@@ -233,8 +233,17 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  # `after_turn`: the thread's own agent asked, so its running turn is expected.
+  # A plugin that declared its threads stay (`ThreadArchive.stays/1`) refuses for good,
+  # whatever the thread is doing.
   defp movable(state, thread, after_turn \\ false) do
+    case ThreadArchive.stays(thread) do
+      :ok -> movable_now(state, thread, after_turn)
+      {:error, message} -> error(:thread_not_movable, message)
+    end
+  end
+
+  # `after_turn`: the thread's own agent asked, so its running turn is expected.
+  defp movable_now(state, thread, after_turn) do
     title = thread["title"]
     runs = StreamState.list(state, "run")
     requests = StreamState.list(state, "runtime-request")
