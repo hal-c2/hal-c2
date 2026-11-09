@@ -4817,6 +4817,59 @@ defmodule HalC2.OrchestrationTest do
       end
     end
 
+    # Called by `HalC2.Store` inside its append (`hook/2` there): stream `id` cannot be
+    # written, as on a full disk.
+    def refuse_append(id, :append_change, id), do: raise("the disk is full")
+    def refuse_append(_id, _stage, _stream_id), do: :ok
+
+    test "a fork whose thread cannot be written leaves no file of its own behind" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      [user] =
+        for m <- StreamState.list(current(source_id), "message"), m["role"] == "user", do: m
+
+      file = "#{HalC2.Attachments.thread_segment(source_id)}-#{HalC2.Environment.uuid4()}"
+      File.mkdir_p!(HalC2.Attachments.dir())
+      File.write!(Path.join(HalC2.Attachments.dir(), file <> ".txt"), "the notes")
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"message", user["id"],
+           %{
+             "s" => %{
+               "attachments" => [%{"type" => "file", "id" => file, "name" => "notes.txt"}]
+             }
+           }}
+        ])
+
+      fork_id = "thread-#{System.unique_integer([:positive])}"
+      Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_append, [fork_id]})
+      on_exit(fn -> Application.delete_env(:hal_c2, :store_hook) end)
+
+      assert_raise RuntimeError, "the disk is full", fn ->
+        Orchestration.dispatch(%{
+          "type" => "thread.fork",
+          "commandId" => "cmd-fork-#{fork_id}",
+          "createdBy" => "user",
+          "creationSource" => "web",
+          "sourceThreadId" => source_id,
+          "targetThreadId" => fork_id,
+          "sourcePoint" => %{"type" => "run", "runId" => run["id"]}
+        })
+      end
+
+      Application.delete_env(:hal_c2, :store_hook)
+      refute StreamState.get(current(fork_id), "thread")[fork_id]
+
+      assert Path.wildcard(
+               Path.join(
+                 HalC2.Attachments.dir(),
+                 HalC2.Attachments.thread_segment(fork_id) <> "-*"
+               )
+             ) == []
+    end
+
     test "a fork on another provider gets the history as a transcript" do
       source_id = launch("hello")
       [run] = runs(await_statuses(source_id, ["completed"]))

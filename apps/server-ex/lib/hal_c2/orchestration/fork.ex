@@ -68,15 +68,22 @@ defmodule HalC2.Orchestration.Fork do
         # A delete of the source after it was read may have removed files before they
         # were copied. Its files go only once the delete is written, so a source still
         # live after the copies had every file while they were made.
+        # A store that refuses the append raises; the copies go with it all the same.
         result =
-          if live(state(source_id), source_id) do
-            HalC2.Streams.transact(target_id, :thread, fn state ->
-              if StreamState.get(state, "thread")[target_id],
-                do: {[], {:error, "Thread #{target_id} already exists."}},
-                else: {changes, :ok}
-            end)
-          else
-            {:error, "Thread #{source_id} was deleted."}
+          try do
+            if live(state(source_id), source_id) do
+              HalC2.Streams.transact(target_id, :thread, fn state ->
+                if StreamState.get(state, "thread")[target_id],
+                  do: {[], {:error, "Thread #{target_id} already exists."}},
+                  else: {changes, :ok}
+              end)
+            else
+              {:error, "Thread #{source_id} was deleted."}
+            end
+          catch
+            kind, reason ->
+              drop_copies(copies)
+              :erlang.raise(kind, reason, __STACKTRACE__)
           end
 
         unless result == :ok, do: drop_copies(copies)
