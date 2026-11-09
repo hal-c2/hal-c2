@@ -2203,15 +2203,19 @@ defmodule HalC2.Test.Mc.World do
   # The thread's stream as it stands once its provider runtime has handled what it
   # had been sent, and the stream has written what that committed: each call is
   # answered after the work in hand. `{:busy, why}` when either is still at it
-  # after `bound` ms.
+  # `bound` ms after the drain began: one deadline for both, so a caller's wait is
+  # never twice `bound`.
   defp drain_thread(id, bound) do
+    deadline = System.monotonic_time(:millisecond) + bound
+    left = fn -> max(deadline - System.monotonic_time(:millisecond), 0) end
+
     busy =
       Enum.find_value(
         for(registry <- @runtime_registries, Process.whereis(registry), do: registry),
         fn registry ->
           Enum.find_value(Registry.lookup(registry, id), fn {pid, _} ->
             try do
-              _ = :sys.get_state(pid, bound)
+              _ = :sys.get_state(pid, left.())
               nil
             catch
               :exit, {:timeout, _} ->
@@ -2226,12 +2230,15 @@ defmodule HalC2.Test.Mc.World do
         end
       )
 
-    task = Task.async(fn -> HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) end)
+    if busy do
+      {:busy, busy}
+    else
+      task = Task.async(fn -> HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) end)
 
-    case {busy, Task.yield(task, bound) || Task.shutdown(task)} do
-      {nil, {:ok, state}} -> state
-      {nil, _} -> {:busy, "its stream was still writing after #{bound}ms"}
-      {busy, _} -> {:busy, busy}
+      case Task.yield(task, left.()) || Task.shutdown(task) do
+        {:ok, state} -> state
+        _ -> {:busy, "its stream was still writing #{bound}ms after the drain began"}
+      end
     end
   end
 
