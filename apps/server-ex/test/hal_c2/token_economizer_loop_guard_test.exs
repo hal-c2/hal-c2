@@ -802,6 +802,19 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert ShellEdits.targets("timeout 60 pytest -q") == []
     end
 
+    test "counts an edit inside a group, a branch or a loop" do
+      for cmd <- [
+            "{ tee a.py <<< SECRET; }",
+            "{ sed -i 's/a/SECRET/' a.py; }",
+            "if true; then sed -i 's/a/SECRET/' a.py; fi",
+            "for f in x; do perl -pi -e 's/a/SECRET/' a.py; done",
+            "while false; do :; done; ! sed -i s/a/SECRET/ a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], cmd
+        refute shell_edit(cmd) =~ "SECRET", cmd
+      end
+    end
+
     test "counts a file gawk edits in place" do
       for {cmd, files} <- [
             {"awk -i inplace '{print \"SECRET\"}' a.py", ["a.py"]},

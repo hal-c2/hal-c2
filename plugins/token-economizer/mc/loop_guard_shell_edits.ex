@@ -35,6 +35,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
   # Redirects that write their operand.
   @out [">", ">>", ">|", "&>", "&>>"]
+  # The shell's words that open or close a group, a branch or a loop, before a command.
+  @reserved ~w({ } ! if then else elif fi do done while until)
   # Programs that run another, given after their own words, and the programs this reads
   # writes off, which a wrapper is unwrapped to.
   @wrappers ~w(sudo doas command env time nohup timeout nice ionice stdbuf chronic flock xargs find)
@@ -490,13 +492,14 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp restored(_), do: []
 
-  # Each command as the program it runs: the `VAR=1` before it dropped, a wrapper's
+  # Each command as the program it runs: the `VAR=1` and the shell's own words (`{`,
+  # `then`, `do`, `!`) before it dropped, a wrapper's
   # (`sudo -u me`, `timeout 10`, `xargs`, `find ... -exec`) words up to the editor it
   # runs, and git's global options (`git -C repo`); empty ones left out.
   defp bare(cmds), do: cmds |> Enum.map(&unwrap/1) |> Enum.reject(&(&1 == []))
 
   defp unwrap(tokens) do
-    case Enum.drop_while(tokens, &Regex.match?(~r/^\w+=/, &1)) do
+    case Enum.drop_while(tokens, &(&1 in @reserved or Regex.match?(~r/^\w+=/, &1))) do
       [first | args] = tokens ->
         cond do
           head([first]) == "git" ->
