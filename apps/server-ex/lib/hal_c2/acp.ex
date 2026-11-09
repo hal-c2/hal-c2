@@ -139,10 +139,14 @@ defmodule HalC2.Acp do
              do: {:ok, command, env ++ instance_env(instance)}
 
       {"cursor", _entry} ->
+        migrate_cursor_credentials(instance)
         credentials = cursor_credentials(instance)
 
         {:ok, [node_command(), cursor_script(), "--mode", runtime_mode || "approval-required"],
-         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | instance_env(instance)]}
+         [
+           {"HAL_C2_CURSOR_CREDENTIALS", credentials},
+           {"HAL_C2_CURSOR_PLATFORM", cursor_platform()} | instance_env(instance)
+         ]}
 
       {"pi", entry} ->
         {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(instance)}
@@ -363,6 +367,78 @@ defmodule HalC2.Acp do
       Enum.any?(instance_env(id), fn {k, v} ->
         k == "CURSOR_API_KEY" and String.trim(v) != ""
       end)
+
+  # The platform the Cursor sidecar runs for, in Node's words: the MC's own
+  # (`:os_type` stands in for it in tests, as elsewhere). Cursor's sandbox
+  # does not exist on Windows, which the sidecar decides from this.
+  defp cursor_platform do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} -> "win32"
+      {:unix, :darwin} -> "darwin"
+      _ -> "linux"
+    end
+  end
+
+  @doc "How long a stopped Cursor turn waits for Cursor to confirm before it ends anyway."
+  def cursor_cancel_timeout,
+    do: Application.get_env(:hal_c2, :cursor_cancel_timeout_ms, 10_000)
+
+  # An older Cursor login lives in the SDK's own file (`~/.cursor/sdk/auth.json`):
+  # it is copied into this instance's sign-in once, when this instance has none
+  # it can read. The SDK's file stays where it was — other SDK clients (and a
+  # T3 Code install on the default store) may still sign in from it, and a
+  # second Cursor instance copies it too. A marker beside the sign-in remembers
+  # the copy, so signing out does not bring the old login back.
+  # Both paths are fixed: the SDK's file under the user's home and this
+  # instance's sign-in under the MC's data directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp migrate_cursor_credentials(instance) do
+    target = cursor_credentials(instance)
+    marker = Path.join(Path.dirname(target), "legacy-migrated")
+    legacy = Path.join([HalC2.Paths.user_home(), ".cursor", "sdk", "auth.json"])
+
+    if legacy != target && !File.exists?(marker) && File.regular?(legacy) do
+      try do
+        copied? =
+          if not cursor_credentials_valid?(target) && cursor_credentials_valid?(legacy) do
+            File.mkdir_p!(Path.dirname(target))
+            File.cp!(legacy, target)
+            File.chmod!(target, 0o600)
+            true
+          else
+            false
+          end
+
+        # Remembered only once this instance holds a sign-in it can read: a
+        # legacy file that could not be copied is tried again next start.
+        if copied? || cursor_credentials_valid?(target) do
+          File.mkdir_p!(Path.dirname(target))
+          File.write!(marker, "")
+        end
+      rescue
+        error ->
+          require Logger
+
+          Logger.warning(
+            "Could not migrate legacy Cursor credentials: #{Exception.message(error)}"
+          )
+      end
+    end
+
+    :ok
+  end
+
+  # Reads only the two credential paths `migrate_cursor_credentials/1` named.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp cursor_credentials_valid?(path) do
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"apiKey" => key}} <- JSON.decode(text),
+         true <- is_binary(key) && key != "" do
+      true
+    else
+      _ -> false
+    end
+  end
 
   @doc false
   # Each instance keeps its own Cursor sign-in, owner-only, in the MC's data.
@@ -714,6 +790,12 @@ defmodule HalC2.Acp do
   defp error_message(_id, {:error, :antigravity_health_failed}),
     do: "Antigravity could not complete its local health check."
 
+  defp error_message(_id, {:error, :cursor_catalog_failed}),
+    do: "Cursor SDK catalog request failed. Check server logs for details."
+
+  defp error_message(_id, {:error, :cursor_catalog_timeout}),
+    do: "Cursor SDK catalog request timed out. Check your connection and try again."
+
   defp error_message(id, {:error, :probe_timeout}),
     do: "#{label(id)} CLI version probe timed out."
 
@@ -1012,7 +1094,17 @@ defmodule HalC2.Acp do
           # Antigravity skips `session/new`, so its success proves no sign-in;
           # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
           if driver != "antigravity", do: stage(id, :unauthenticated, false)
-          :ok
+
+          # Cursor's agent says who its key belongs to, and whether the
+          # catalog itself failed, on the session it opened.
+          if driver == "cursor" && is_map(get_in(session, ["_meta", "account"])),
+            do: stage(id, :account, get_in(session, ["_meta", "account"]))
+
+          case {driver, get_in(session, ["_meta", "catalogError"])} do
+            {"cursor", "timeout"} -> {:error, :cursor_catalog_timeout}
+            {"cursor", "failed"} -> {:error, :cursor_catalog_failed}
+            _ -> :ok
+          end
 
         # ACP's "authentication required".
         {:error, %{"code" => -32000}} ->
@@ -1031,7 +1123,13 @@ defmodule HalC2.Acp do
   # Grok may refresh an expired sign-in inside the probe that first reports it
   # signed out, so that answer is checked once more before it stands.
   defp new_probe_session(conn, id, dir, driver) do
-    params = %{"cwd" => dir, "mcpServers" => []}
+    # A Cursor probe says so in `_meta`: its sidecar then also reads who the key
+    # belongs to (and may fail saying it cannot), which a real thread's session
+    # must never wait on or fail for.
+    params =
+      if driver == "cursor",
+        do: %{"cwd" => dir, "mcpServers" => [], "_meta" => %{"probe" => true}},
+        else: %{"cwd" => dir, "mcpServers" => []}
 
     case call_serving(conn, id, "session/new", params) do
       {:error, %{"code" => -32000}} = first when driver == "grok" ->
@@ -1617,8 +1715,47 @@ defmodule HalC2.Acp do
     do: HalC2.Acp.Antigravity.entry_fields(entry, id)
 
   # Cursor has a plan mode of its own, which the thread's plan toggle chooses.
-  defp driver_fields(entry, "cursor", _id, _instance),
-    do: Map.put(entry, "showInteractionModeToggle", true)
+  # Its account (who the key belongs to) comes from the probe's session, and
+  # before any probe has answered the entry says it is still checking.
+  defp driver_fields(entry, "cursor", id, _instance) do
+    entry =
+      entry
+      |> Map.put("showInteractionModeToggle", true)
+      |> Map.put("workspaceSnapshots", HalC2.Acp.CursorSkills.workspaces(id))
+
+    account = :persistent_term.get({__MODULE__, id, :account}, nil)
+
+    entry =
+      if is_map(account) && entry["auth"]["status"] == "authenticated" do
+        auth =
+          entry["auth"]
+          |> then(
+            &if(is_binary(account["email"]),
+              do: Map.put(&1, "email", account["email"]),
+              else: &1
+            )
+          )
+          |> then(
+            &if(is_binary(account["label"]),
+              do: Map.put(&1, "label", account["label"]),
+              else: &1
+            )
+          )
+
+        Map.put(entry, "auth", auth)
+      else
+        entry
+      end
+
+    if entry["enabled"] &&
+         :persistent_term.get({__MODULE__, id, :models}, nil) == nil &&
+         :persistent_term.get({__MODULE__, id, :error}, nil) == nil &&
+         not Map.has_key?(entry, "message") do
+      Map.put(entry, "message", "Checking Cursor SDK availability...")
+    else
+      entry
+    end
+  end
 
   # What a registry agent's running session advertises (`put_commands/2`), and its
   # session options with every model (`session_options/1`).
@@ -1979,35 +2116,28 @@ defmodule HalC2.Acp do
   @skill_mention ~r/(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u
 
   @doc """
-  `text` with each `$name` that mentions one of Cursor's skills in `cwd` written as
-  Cursor takes it, `/name`. Other
-  mentions, and amounts of money, are left as they are.
+  `text` with each `$name` that mentions one of instance `instance`'s Cursor
+  skills in `cwd` written as Cursor takes it, `/name`. Other mentions, and
+  amounts of money, are left as they are. The entry's workspace snapshot for
+  `cwd` names the skills when one was read; only a send with no snapshot yet
+  pays for a discovery scan.
   """
-  def cursor_skill_mentions(text, cwd) do
-    names = cursor_skills(cwd)
+  def cursor_skill_mentions(text, instance, cwd, home \\ nil) do
+    names =
+      case Enum.find(HalC2.Acp.CursorSkills.workspaces(instance), &(&1["cwd"] == cwd)) do
+        %{"skills" => skills} ->
+          MapSet.new(skills, & &1["name"])
+
+        _ ->
+          skills =
+            HalC2.Acp.CursorSkills.discover(cwd, home || HalC2.Acp.CursorSkills.home(instance))
+
+          MapSet.new(skills, & &1["name"])
+      end
 
     Regex.replace(@skill_mention, text, fn match, prefix, name ->
       if MapSet.member?(names, name), do: prefix <> "/" <> name, else: match
     end)
-  end
-
-  # The names of the skills Cursor loads in `cwd`: each folder with a SKILL.md under
-  # the project's and the user's `.cursor`, `.agents`, `.codex` and `.claude` skills,
-  # by its frontmatter `name`, else the folder's.
-  defp cursor_skills(cwd) do
-    for base <- [cwd, HalC2.Paths.user_home()],
-        is_binary(base),
-        root <- ~w(.cursor .agents .codex .claude),
-        dir = Path.join([base, root, "skills"]),
-        {:ok, entries} <- [File.ls(dir)],
-        entry <- entries,
-        {:ok, body} <- [File.read(Path.join([dir, entry, "SKILL.md"]))],
-        into: MapSet.new() do
-      case Regex.run(~r/\A---\s*\n.*?^name:\s*["']?([^"'\n]+?)["']?\s*$/ms, body) do
-        [_, name] -> String.trim(name)
-        _ -> entry
-      end
-    end
   end
 
   @doc """
@@ -2096,9 +2226,48 @@ defmodule HalC2.Acp do
     :ok
   end
 
-  @doc "Forgets what was read from an instance's agent, so it is probed again."
+  @doc """
+  Forgets what was read from an instance's agent, so it is probed again. Workspace
+  snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
+  the user already saw for a folder, and only the next workspace refresh replaces
+  them. `drop/1` is for an instance that is gone.
+  """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
+  end
+
+  @doc "Forgets an instance that was removed: `forget/1`, and its workspace snapshots too."
+  def drop(id) do
+    locked(id, fn ->
+      forget_now(id)
+      :persistent_term.erase({__MODULE__, id, :workspaces})
+      :persistent_term.put({__MODULE__, id, :workspaces_epoch}, workspaces_epoch(id) + 1)
+      :ok
+    end)
+  end
+
+  @doc """
+  The count of times `drop/1` has erased the instance's workspace snapshots. A refresh
+  reads it before scanning and hands it to `put_workspace/4`, so a scan that outlived
+  its instance cannot write a snapshot back.
+  """
+  def workspaces_epoch(id), do: :persistent_term.get({__MODULE__, id, :workspaces_epoch}, 0)
+
+  @doc """
+  Keeps `snapshot` as the instance's snapshot for `cwd`, under the instance's lock so
+  two refreshes of different folders both stay. `:dropped` (nothing kept) when the
+  instance was dropped since `epoch` was read. Callers scan and notify outside it.
+  """
+  def put_workspace(id, cwd, snapshot, epoch) do
+    locked(id, fn ->
+      if workspaces_epoch(id) == epoch do
+        key = {__MODULE__, id, :workspaces}
+        :persistent_term.put(key, Map.put(:persistent_term.get(key, %{}), cwd, snapshot))
+        :ok
+      else
+        :dropped
+      end
+    end)
   end
 
   defp forget_now(id) do
@@ -2112,10 +2281,10 @@ defmodule HalC2.Acp do
           :loading,
           :meta,
           :notice,
+          :account,
           :config,
           :commands,
           :skills,
-          :workspaces,
           :pi_signed_out,
           :muse_signed_out
         ],

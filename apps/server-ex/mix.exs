@@ -94,7 +94,9 @@ defmodule HalC2.MixProject do
   # The Cursor sidecar (packages/cursor-acp) ships in the release's priv/, bundled to
   # plain JavaScript so any Node 22+ runs it, including an Electron binary. Its SDK is
   # installed flat by npm (no symlinks, this platform's native package only), so the
-  # tree survives copying into an app bundle and code signing.
+  # tree survives copying into an app bundle and code signing. Workspace packages the
+  # sidecar imports (bundled in by esbuild) therefore stay in its devDependencies:
+  # `dependencies` below is copied verbatim for npm, which knows no `workspace:`.
   defp stage_cursor_acp(release) do
     root = Path.expand("../..", __DIR__)
     package = Path.join(root, "packages/cursor-acp")

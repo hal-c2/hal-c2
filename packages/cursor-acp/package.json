@@ -13,6 +13,7 @@
     "@cursor/sdk": "1.2.0"
   },
   "devDependencies": {
+    "@hal-c2/shared": "workspace:*",
     "@types/node": "catalog:",
     "esbuild": "0.28.2",
     "vite-plus": "catalog:"

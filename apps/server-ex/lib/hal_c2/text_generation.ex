@@ -672,7 +672,9 @@ defmodule HalC2.TextGeneration do
   end
 
   # One ACP prompt in its own process, which outlives neither the agent nor the timeout.
-  defp acp(selection, prompt, label, attachments) do
+  # A Cursor run its sandbox stopped is retried once without the sandbox, and
+  # only that run: `retried` carries the retry's mode.
+  defp acp(selection, prompt, label, attachments, retried \\ nil) do
     id = selection["instanceId"]
     antigravity = driver(id) == "antigravity"
     cursor = driver(id) == "cursor"
@@ -705,7 +707,12 @@ defmodule HalC2.TextGeneration do
 
               true ->
                 # Cursor plans read-only there, without the user's Cursor settings or tools.
-                mode = if driver(id) == "cursor", do: "text-generation"
+                mode =
+                  cond do
+                    driver(id) != "cursor" -> nil
+                    retried -> retried
+                    true -> "text-generation"
+                  end
 
                 HalC2.Acp.with_agent(
                   id,
@@ -735,16 +742,37 @@ defmodule HalC2.TextGeneration do
 
       # The user text stays generic; what Cursor said is only for the log.
       {:ok, {:error, %{} = reason}} when cursor ->
-        Logger.warning("Cursor text generation ended with an error: #{inspect(reason)}")
-        {:error, "Cursor SDK request finished with an error."}
+        message = reason["message"]
+
+        cond do
+          # A sandbox stop is retried unsandboxed; a usage limit is said plainly.
+          is_binary(message) and cursor_sandbox_retry?(selection, retried, message) ->
+            acp(selection, prompt, label, attachments, "text-generation-unsandboxed")
+
+          is_binary(message) and String.contains?(String.downcase(message), "usage limit") ->
+            {:error, "#{label} request failed: #{message}"}
+
+          true ->
+            Logger.warning("Cursor text generation ended with an error: #{inspect(reason)}")
+            {:error, "Cursor SDK request finished with an error."}
+        end
 
       {:ok, {:error, reason}} when is_binary(reason) ->
-        {:error, reason}
+        if cursor_sandbox_retry?(selection, retried, reason),
+          do: acp(selection, prompt, label, attachments, "text-generation-unsandboxed"),
+          else: {:error, reason}
 
-      {:ok, {:error, %{"message" => _} = error}} ->
-        if driver(id) == "opencode",
-          do: {:error, opencode_failure(error)},
-          else: {:error, "#{label} request failed: #{error["message"]}"}
+      {:ok, {:error, %{"message" => message} = error}} ->
+        cond do
+          cursor_sandbox_retry?(selection, retried, message) ->
+            acp(selection, prompt, label, attachments, "text-generation-unsandboxed")
+
+          driver(id) == "opencode" ->
+            {:error, opencode_failure(error)}
+
+          true ->
+            {:error, "#{label} request failed: #{message}"}
+        end
 
       {:ok, {:error, %{} = error}} ->
         if driver(id) == "opencode",
@@ -762,6 +790,13 @@ defmodule HalC2.TextGeneration do
           do: {:error, "OpenCode did not finish generating in time."},
           else: {:error, "#{label} request timed out."}
     end
+  end
+
+  # Only Cursor's first, sandboxed attempt is retried, and only when its
+  # sandbox is what stopped it.
+  defp cursor_sandbox_retry?(selection, retried, message) do
+    retried == nil && driver(selection["instanceId"]) == "cursor" &&
+      String.contains?(String.downcase(message), "sandbox")
   end
 
   # An OpenCode generation the model provider failed, in fixed plain words: the

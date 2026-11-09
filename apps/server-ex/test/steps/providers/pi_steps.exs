@@ -2409,7 +2409,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  step "the thread shows a file change naming the file", context do
+  step "the thread shows a file change naming the file Pi edited", context do
     assert [%{"fileName" => "src/app.ts"}] = items(context, "file_change")
     context
   end
@@ -2680,7 +2680,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
-  step "the work log shows \"Pi provider request failed.\"", context do
+  step "the work log shows the error \"Pi provider request failed.\"", context do
     assert [%{"failure" => %{"message" => "Pi provider request failed."}}] =
              items(context, "error")
 

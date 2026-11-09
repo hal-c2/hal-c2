@@ -720,7 +720,7 @@ Feature: Pi
     Examples:
       | outcome                         | shown                                                            |
       | Pi waits to try again           | the attempt number, the most attempts allowed and the wait      |
-      | Pi gives no reason for it       | "Pi provider request failed."                                    |
+      | Pi gives no reason for it       | the error "Pi provider request failed."                          |
       | every attempt fails             | the turn failing with Pi's last error, or "Pi auto-retry failed." |
 
   Scenario Outline: A Pi failure without a reason gets a plain message
@@ -953,8 +953,8 @@ Feature: Pi
     Examples:
       | tool                         | entry                                                          |
       | bash                         | a command with what was run, its output and its exit code      |
-      | edit                         | a file change naming the file                                  |
-      | write                        | a file change naming the file                                  |
+      | edit                         | a file change naming the file Pi edited                       |
+      | write                        | a file change naming the file Pi edited                       |
       | edit, without naming a file  | a plain tool call named after the tool, with what it was given |
       | grep                         | a plain tool call named after the tool, with what it was given |
 
