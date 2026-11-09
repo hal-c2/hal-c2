@@ -775,6 +775,33 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert ShellEdits.targets("dd if=/dev/zero of=/tmp/x.py count=1") == []
     end
 
+    test "counts an edit behind a wrapper, in a nested shell, or with its script attached" do
+      for {cmd, files} <- [
+            {"sed -i -e's/a/b/' a.py", ["a.py"]},
+            {"sed --expression=s/a/b/ -i a.py", ["a.py"]},
+            {"perl -pi -e's/a/b/' a.py", ["a.py"]},
+            {"sudo -u me sed -i 's/a/b/' a.py", ["a.py"]},
+            {"timeout 10 sed -i 's/a/b/' a.py", ["a.py"]},
+            {"nice -n 5 perl -pi -e 's/a/b/' a.py", ["a.py"]},
+            # Files fed in on stdin, or found, are edited too, whatever their names.
+            {"grep -rl foo . | xargs sed -i 's/foo/bar/'", ["(sed)"]},
+            {"find . -name '*.py' -exec sed -i 's/a/b/' {} +", ["(sed)"]},
+            {"git -C repo apply x.diff", ["(patch)"]},
+            {"cd x && bash -c 'echo SECRET > a.py'", ["a.py"]},
+            {"cd x && sh -ec \"sed -i 's/a/SECRET/' a.py\"", ["a.py"]},
+            {"eval \"echo SECRET > a.py\"", ["a.py"]},
+            {"echo SECRET > ./src/a'.py'", ["a.py"]}
+          ] do
+        assert ShellEdits.targets(cmd) == files, cmd
+        text = shell_edit(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      assert ShellEdits.revert_targets("git -C repo checkout -- a.py") == ["a.py"]
+      # A wrapper that runs no editor edits nothing.
+      assert ShellEdits.targets("timeout 60 pytest -q") == []
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",

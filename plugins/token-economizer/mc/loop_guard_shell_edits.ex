@@ -6,8 +6,10 @@
 # but for a run of operators (`)>`), split as the shell splits it; `fold_shell_edits` lives
 # in State; a heredoc ends where the shell's does, its delimiter any word (`<<'EOF-CODE'`,
 # `<<123`), and every heredoc a line opens is read; `dd`, `sponge`, `cp`, `mv`, `install`
-# and `truncate` write files too; `programs/1` and `writes?/1` are new; QML counts as
-# source.
+# and `truncate` write files too; an editor behind a wrapper (`sudo -u me`, `timeout 10`,
+# `xargs`, `find -exec`), in a nested shell or `eval`, with its script attached
+# (`-e's/a/b/'`) or after git's global options is read; `programs/1` and `writes?/1` are
+# new; QML counts as source.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @moduledoc """
@@ -31,6 +33,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
   # Redirects that write their operand.
   @out [">", ">>", ">|", "&>", "&>>"]
+  # Programs that run another, given after their own words, and the programs this reads
+  # writes off, which a wrapper is unwrapped to.
+  @wrappers ~w(sudo doas command env time nohup timeout nice ionice stdbuf chronic flock xargs find)
+  @writers ~w(sed perl tee dd sponge truncate cp mv install patch git apply_patch eval) ++ @shells
+  # The operands `find -exec` and `xargs -I` put file names in place of.
+  @fed ["{}", "+", ";", "\\"]
   # Input, heredoc tags, fd duplication.
   @skip_operand ["<", "<<", "<<<", "<&", ">&", "<>"]
   # Redirect and `tee` targets count only when they look like source, so `> out.log` or
@@ -128,22 +136,22 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp written_by("sed", tokens, _),
     do:
-      edits(
-        inplace_files(
-          tokens,
-          &Regex.match?(~r/^(?:-[a-zA-Z]*i|--in-place)/, &1),
-          &(&1 in ["-e", "-f", "--expression", "--file"])
-        )
+      in_place(
+        "sed",
+        tokens,
+        &Regex.match?(~r/^(?:-[a-zA-Z]*i|--in-place)/, &1),
+        &(&1 in ["-e", "-f", "--expression", "--file"]),
+        &Regex.match?(~r/^(?:-[a-zA-Z]*[ef].|--(?:expression|file)=)/, &1)
       )
 
   defp written_by("perl", tokens, _),
     do:
-      edits(
-        inplace_files(
-          tokens,
-          &Regex.match?(~r/^-[a-zA-Z]*i/, &1),
-          &Regex.match?(~r/^-[a-zA-Z]*e$/, &1)
-        )
+      in_place(
+        "perl",
+        tokens,
+        &Regex.match?(~r/^-[a-zA-Z]*i/, &1),
+        &Regex.match?(~r/^-[a-zA-Z]*e$/, &1),
+        &Regex.match?(~r/^-[a-zA-Z]*[eE]./, &1)
       )
 
   defp written_by("tee", [_ | args], _),
@@ -167,6 +175,17 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp written_by(copier, [_ | args], _) when copier in ~w(cp mv install),
     do: for(p <- copied(args), do: {:capture, p})
+
+  # A nested shell's script (`bash -c '...'`), and `eval`'s, write what they would run
+  # alone.
+  defp written_by(shell, [_ | args], _) when shell in @shells do
+    case Enum.drop_while(args, &(not Regex.match?(~r/^-[a-zA-Z]*c[a-zA-Z]*$/, &1))) do
+      [_, script | _] -> writes(script)
+      _ -> []
+    end
+  end
+
+  defp written_by("eval", [_ | args], _), do: writes(Enum.join(args, " "))
 
   defp written_by("patch", _, _), do: [{:edit, "(patch)"}]
   defp written_by("git", [_, "apply" | _], _), do: [{:edit, "(patch)"}]
@@ -225,14 +244,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp not_scratch(path),
     do: path != "" and not String.starts_with?(path, ["/dev/", "/proc/", "/tmp/"])
 
-  defp unquote_word(t) do
-    size = byte_size(t)
-
-    if size >= 2 and binary_part(t, 0, 1) == binary_part(t, size - 1, 1) and
-         binary_part(t, 0, 1) in ["'", "\""],
-       do: binary_part(t, 1, size - 2),
-       else: t
-  end
+  # A word without its quotes, whole (`'a.py'`) or in part (`a'.py'`, `-e's/a/b/'`).
+  defp unquote_word(t), do: Regex.replace(~r/'([^']*)'|"((?:\\.|[^"\\])*)"/, t, "\\1\\2")
 
   @doc """
   The command's shell text without heredoc bodies, and the bodies: every heredoc a line
@@ -327,31 +340,41 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp simple([t | rest], cmds, writes, cur),
     do: simple(rest, cmds, writes, [unquote_word(t) | cur])
 
-  # File operands of an in-place editor (`sed -i`, `perl -pi`), or [] if not in place.
-  defp inplace_files([_ | args], inplace?, script_flag?) do
+  # The files an in-place editor (`sed -i`, `perl -pi`) edits: its file operands, or
+  # "(sed)" when it names none, as when `xargs` or `find -exec` feeds them in; [] when it
+  # is not in place. A script flag takes the next word (`-e 's/a/b/'`) or carries it
+  # (`-e's/a/b/'`); without one the first operand is the script.
+  defp in_place(name, [_ | args], inplace?, script_flag?, attached?) do
     if Enum.any?(args, inplace?) do
-      {files, _, _} =
-        Enum.reduce(args, {[], false, false}, fn t, {files, have_script, skip} ->
-          cond do
-            skip ->
-              {files, true, false}
-
-            t == "" or String.starts_with?(t, "-") ->
-              {files, have_script, t != "" and script_flag?.(t)}
-
-            # The first operand is the script.
-            not have_script ->
-              {files, true, false}
-
-            true ->
-              {[t | files], have_script, false}
-          end
-        end)
-
-      Enum.reverse(files)
+      case args |> inplace_files(script_flag?, attached?) |> Enum.reject(&(&1 in @fed)) do
+        [] -> [{:edit, "(#{name})"}]
+        files -> edits(files)
+      end
     else
       []
     end
+  end
+
+  defp inplace_files(args, script_flag?, attached?) do
+    {files, _, _} =
+      Enum.reduce(args, {[], false, false}, fn t, {files, have_script, skip} ->
+        cond do
+          skip ->
+            {files, true, false}
+
+          t == "" or String.starts_with?(t, "-") ->
+            {files, have_script or attached?.(t), t != "" and script_flag?.(t)}
+
+          # The first operand is the script.
+          not have_script ->
+            {files, true, false}
+
+          true ->
+            {[t | files], have_script, false}
+        end
+      end)
+
+    Enum.reverse(files)
   end
 
   # Paths an inline Python script writes; "(script)" for a write whose path this cannot
@@ -411,17 +434,41 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp restored(_), do: []
 
-  # Each command with the `sudo`, `env`, `VAR=1` ... before it dropped; empty ones left out.
-  defp bare(cmds) do
-    cmds
-    |> Enum.map(fn tokens ->
-      Enum.drop_while(
-        tokens,
-        &(&1 in ~w(sudo command env time nohup) or Regex.match?(~r/^\w+=/, &1))
-      )
-    end)
-    |> Enum.reject(&(&1 == []))
+  # Each command as the program it runs: the `VAR=1` before it dropped, a wrapper's
+  # (`sudo -u me`, `timeout 10`, `xargs`, `find ... -exec`) words up to the editor it
+  # runs, and git's global options (`git -C repo`); empty ones left out.
+  defp bare(cmds), do: cmds |> Enum.map(&unwrap/1) |> Enum.reject(&(&1 == []))
+
+  defp unwrap(tokens) do
+    case Enum.drop_while(tokens, &Regex.match?(~r/^\w+=/, &1)) do
+      [first | args] = tokens ->
+        cond do
+          head([first]) == "git" ->
+            ["git" | git_command(args)]
+
+          head([first]) not in @wrappers ->
+            tokens
+
+          (run = Enum.drop_while(args, &(head([&1]) not in @writers))) != [] ->
+            unwrap(run)
+
+          first in ~w(sudo command env time nohup) ->
+            unwrap(args)
+
+          true ->
+            tokens
+        end
+
+      [] ->
+        []
+    end
   end
+
+  defp git_command([opt, _ | rest]) when opt in ~w(-C -c --git-dir --work-tree --namespace),
+    do: git_command(rest)
+
+  defp git_command(["-" <> _ | rest]), do: git_command(rest)
+  defp git_command(args), do: args
 
   @doc """
   The script of a command recorded as `bash -lc '<script>'` (as Codex records them), else
