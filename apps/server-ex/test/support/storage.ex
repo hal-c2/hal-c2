@@ -398,6 +398,9 @@ defmodule HalC2.Test.Storage do
   them, or `no-user-manager` and `no-logind` to make those questions fail.
   `stop-fails` makes the stop of an active unit (or a loaded agent's bootout) fail,
   `reap-stop-fails` makes the reaper's stop or bootout fail while it runs, and
+  `reap-service-stop-fails` makes only the stop of systemd's reap service fail,
+  `start-fails` makes the gateway's restart (or its agent's bootstrap) fail,
+  `reap-start-fails` makes the reaper's start (or its agent's bootstrap) fail, and
   `not-loaded` makes systemd answer a stop as a unit it does not have. launchctl's
   agent is `loaded` between a bootstrap and a bootout. The reaper's state is its
   own, `reap-active` (systemd's timer, from `enable --now` or `start` to a stop or disable) and
@@ -418,8 +421,9 @@ defmodule HalC2.Test.Storage do
     case "$*" in
       *-reap.*)
         case "$2" in
-          enable|start) touch "$state/reap-active" ;;
-          stop) [ -f "$state/reap-stop-fails" ] && [ -f "$state/reap-active" ] && exit 1
+          enable|start) [ -f "$state/reap-start-fails" ] && exit 1; touch "$state/reap-active" ;;
+          stop) [ -f "$state/reap-service-stop-fails" ] && [ "$3" = "${3%.timer}" ] && exit 1
+                [ -f "$state/reap-stop-fails" ] && [ -f "$state/reap-active" ] && exit 1
                 rm -f "$state/reap-active" ;;
           disable) rm -f "$state/reap-active" ;;
         esac
@@ -427,7 +431,7 @@ defmodule HalC2.Test.Storage do
     esac
     case "$2" in
       enable) touch "$state/enabled" ;;
-      restart) touch "$state/active" ;;
+      restart) [ -f "$state/start-fails" ] && exit 1; touch "$state/active" ;;
       stop)
         [ -f "$state/stop-fails" ] && [ -f "$state/active" ] && exit 1
         [ -f "$state/not-loaded" ] && [ ! -f "$state/active" ] && { echo "Unit $3 not loaded."; exit 5; }
@@ -476,7 +480,10 @@ defmodule HalC2.Test.Storage do
         [ -f "$state/loaded" ] || { echo "Boot-out failed: 3: No such process"; exit 3; }
         [ -f "$state/stop-fails" ] && { echo "Boot-out failed: 5: Input/output error"; exit 5; }
         rm -f "$state/loaded" ;;
-      bootstrap) touch "$state/$agent" ;;
+      bootstrap)
+        [ "$agent" = loaded ] && [ -f "$state/start-fails" ] && { echo "Bootstrap failed: 5: Input/output error"; exit 5; }
+        [ "$agent" = reap-loaded ] && [ -f "$state/reap-start-fails" ] && { echo "Bootstrap failed: 5: Input/output error"; exit 5; }
+        touch "$state/$agent" ;;
     esac
     exit 0
     """)

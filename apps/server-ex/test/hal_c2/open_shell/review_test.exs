@@ -344,6 +344,41 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert Map.has_key?(FakeOpenShell.providers(g), "review-old")
   end
 
+  # A gateway that lists one kind and not the other still has the other reaped.
+  test "a reaper that cannot list sandboxes still deletes every provider past its lease",
+       %{gateway: g} do
+    now = System.os_time(:second)
+    FakeOpenShell.put_sandbox(g, "review-old", owned(Review.labels("old", now - 1)))
+    FakeOpenShell.put_provider(g, "review-old", owned(Review.labels("old", now - 1)))
+    FakeOpenShell.put_provider(g, "review-orphan", owned(Review.labels("orphan", now - 1)))
+    FakeOpenShell.put_provider(g, "review-new", owned(Review.labels("new", now + 600)))
+    FakeOpenShell.failing(g, ["ListSandboxes"])
+
+    assert {:error, "Reaping review sandboxes left some behind: sandboxes not listed: " <> _} =
+             OpenShell.Command.command(["reap"])
+
+    assert Map.keys(FakeOpenShell.providers(g)) == ["review-new"]
+    assert Map.has_key?(FakeOpenShell.sandboxes(g), "review-old")
+
+    FakeOpenShell.failing(g, [])
+    assert {:ok, _} = OpenShell.Command.command(["reap"])
+    refute Map.has_key?(FakeOpenShell.sandboxes(g), "review-old")
+  end
+
+  test "a reaper that cannot list providers still deletes every sandbox past its lease",
+       %{gateway: g} do
+    now = System.os_time(:second)
+    FakeOpenShell.put_sandbox(g, "review-old", owned(Review.labels("old", now - 1)))
+    FakeOpenShell.put_provider(g, "review-old", owned(Review.labels("old", now - 1)))
+    FakeOpenShell.failing(g, ["ListProviders"])
+
+    assert {:error, message} = OpenShell.Command.command(["reap"])
+    assert message =~ "providers not listed"
+    assert message =~ "Deleted: review-old."
+    assert FakeOpenShell.sandboxes(g) == %{}
+    assert FakeOpenShell.providers(g) == %{}
+  end
+
   test "a fresh gateway gets HAL-C2's key-only profile, and the review's provider is of it",
        %{gateway: g, repo: repo} do
     assert {:ok, %{sandbox: name}} = Review.open(spec(repo))

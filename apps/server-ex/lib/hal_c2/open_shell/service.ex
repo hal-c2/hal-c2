@@ -310,13 +310,18 @@ defmodule HalC2.OpenShell.Service do
   defp halt(manager) do
     with :ok <- shutdown_reaper(manager) do
       case shutdown(manager) do
-        :ok ->
-          :ok
-
-        error ->
-          resume_reaper(manager)
-          error
+        :ok -> :ok
+        error -> resumed(error, manager)
       end
+    end
+  end
+
+  # `error`, with why the reaper did not start again if it did not: a gateway that
+  # still runs keeps its reaper.
+  defp resumed({:error, why} = error, manager) do
+    case resume_reaper(manager) do
+      :ok -> error
+      {:error, other} -> {:error, "#{why}; the reaper did not start again: #{other}"}
     end
   end
 
@@ -325,22 +330,31 @@ defmodule HalC2.OpenShell.Service do
     [_service, timer] = reaper_paths(:systemd)
 
     if File.exists?(timer),
-      do: Service.run_all([{"systemctl", ["--user", "start", reap_name(:timer)]}])
+      do: Service.run_all([{"systemctl", ["--user", "start", reap_name(:timer)]}]),
+      else: :ok
   end
 
   defp resume_reaper(:launchd) do
     [plist] = reaper_paths(:launchd)
 
     if File.exists?(plist),
-      do: Service.run_all([{"launchctl", ["bootstrap", "gui/#{Service.uid()}", plist]}])
+      do: Service.run_all([{"launchctl", ["bootstrap", "gui/#{Service.uid()}", plist]}]),
+      else: :ok
   end
 
   defp shutdown(:systemd), do: stop_unit(name(:systemd))
   defp shutdown(:launchd), do: bootout(name(:launchd))
 
-  # The reaper, timer first so it starts no run while its service stops.
-  defp shutdown_reaper(:systemd),
-    do: with(:ok <- stop_unit(reap_name(:timer)), do: stop_unit(reap_name(:systemd)))
+  # The reaper, timer first so it starts no run while its service stops. A service
+  # that then does not stop gets its timer back, as the gateway still runs.
+  defp shutdown_reaper(:systemd) do
+    with :ok <- stop_unit(reap_name(:timer)) do
+      case stop_unit(reap_name(:systemd)) do
+        :ok -> :ok
+        error -> resumed(error, :systemd)
+      end
+    end
+  end
 
   defp shutdown_reaper(:launchd), do: bootout(reap_name(:launchd))
 
@@ -415,9 +429,11 @@ defmodule HalC2.OpenShell.Service do
 
   defp activate(:launchd, path), do: with(:ok <- halt(:launchd), do: load(:launchd, path))
 
-  # Starts the unit at `path` as it is on disk.
+  # Starts the unit at `path` as it is on disk. Every step runs, so a gateway that
+  # does not start still gets its reaper: one that comes up later has its leases
+  # enforced, and leases left on it are reaped.
   defp load(:systemd, _path) do
-    Service.run_all([
+    run_each([
       {"systemctl", ["--user", "daemon-reload"]},
       {"systemctl", ["--user", "enable", name(:systemd)]},
       {"systemctl", ["--user", "restart", name(:systemd)]},
@@ -428,10 +444,28 @@ defmodule HalC2.OpenShell.Service do
   defp load(:launchd, path) do
     [{reap_path, _}] = reaper(:launchd)
 
-    Service.run_all([
+    run_each([
       {"launchctl", ["bootstrap", "gui/#{Service.uid()}", path]},
       {"launchctl", ["bootstrap", "gui/#{Service.uid()}", reap_path]}
     ])
+  end
+
+  # Runs every step, failed or not: `:ok`, or an error naming each that failed.
+  defp run_each(steps) do
+    failures =
+      for {exe, args} <- steps,
+          failure = step_failure(exe, args),
+          do: failure
+
+    if failures == [], do: :ok, else: {:error, Enum.join(failures, "; ")}
+  end
+
+  defp step_failure(exe, args) do
+    case Service.command(exe, args) do
+      {:exit, 0, _} -> nil
+      {:exit, _, out} -> Service.failure(exe, args, out)
+      {:error, why} -> why
+    end
   end
 
   # `hal-c2-service openshell reap` from a release, `mix hal_c2.openshell reap` in

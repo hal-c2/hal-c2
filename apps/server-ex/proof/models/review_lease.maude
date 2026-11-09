@@ -6,8 +6,8 @@ sload model-checker
 --- up or the first report taken closes the review: its token is revoked, its binding goes
 --- and its sandbox and provider are deleted. The agent reports through the broker, which
 --- takes one report per token. The review process restarts, the whole MC goes down and
---- comes back, the gateway refuses a step, and the reaper's timer deletes what is past
---- its lease whether the MC runs or not.
+--- comes back, the gateway refuses a step (a reap's listing too), and the reaper's timer
+--- deletes what is past its lease whether the MC runs or not.
 --- proof/hal_c2/review_lease_proof_test.exs maps it to the code and checks it.
 
 mod REVIEW-LEASE is
@@ -135,6 +135,13 @@ mod REVIEW-LEASE is
   --- The lease and the reaper's timer -------------------------------------------------
   rl [tick] : late(false) => late(true) .
   crl [reap] : late(true) box(B) prov(B') => late(true) box(false) prov(false) if B or B' .
+  --- A reap whose gateway does not list one kind deletes what the other listing found:
+  --- with no sandboxes listed, the provider past its lease; with no providers listed,
+  --- the sandbox, its provider with it.
+  rl [reap-no-sandboxes] : { late(true) prov(true) fails(s K) C }
+    => { late(true) prov(false) fails(K) C } .
+  rl [reap-no-providers] : { late(true) box(true) prov(B) fails(s K) C }
+    => { late(true) box(false) prov(false) fails(K) C } .
 
   op start : Nat Nat Nat Nat -> Sys .
   eq start(N, K, J, F) =

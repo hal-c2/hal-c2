@@ -246,6 +246,12 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
+  # systemd's reap timer stops; the service it starts does not.
+  step "the gateway's reap service will not stop", context do
+    File.write!(Path.join(context.openshell.bin, "reap-service-stop-fails"), "")
+    context
+  end
+
   # The service manager stand-in's reaper: systemd's timer active, launchd's agent loaded.
   step "its reaper runs", context do
     assert Enum.any?(

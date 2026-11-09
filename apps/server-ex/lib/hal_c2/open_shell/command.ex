@@ -144,12 +144,9 @@ defmodule HalC2.OpenShell.Command do
             {:ok, "Deleted review sandboxes past their time: #{Enum.join(names, ", ")}"}
 
           {:error, {:not_deleted, deleted, failed}} ->
-            left = Enum.map_join(failed, "; ", fn {name, why} -> "#{name}: #{inspect(why)}" end)
+            left = Enum.map_join(failed, "; ", &left_behind/1)
             done = if deleted == [], do: "", else: " Deleted: #{Enum.join(deleted, ", ")}."
             {:error, "Reaping review sandboxes left some behind: #{left}.#{done}"}
-
-          {:error, reason} ->
-            {:error, "Reaping review sandboxes failed: #{inspect(reason)}"}
         end
 
       {:error, :not_installed} ->
@@ -159,6 +156,9 @@ defmodule HalC2.OpenShell.Command do
         {:error, "Reaping review sandboxes failed: #{inspect(reason)}"}
     end
   end
+
+  defp left_behind({kind, why}) when is_atom(kind), do: "#{kind} not listed: #{inspect(why)}"
+  defp left_behind({name, why}), do: "#{name}: #{inspect(why)}"
 
   @doc "What `status` prints for an `HalC2.OpenShell.Install.status/0`."
   def format_status(status) do

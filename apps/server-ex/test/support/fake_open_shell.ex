@@ -227,6 +227,13 @@ defmodule HalC2.Test.FakeOpenShell do
   def provider_deletions(%{store: store}, mode),
     do: Agent.update(store, &Map.put(&1, :delete_provider, mode))
 
+  @doc """
+  Makes each method of `methods` (gRPC names, "ListSandboxes") fail with UNAVAILABLE
+  from now on, as a gateway that answers some calls and not others; `[]` heals it.
+  """
+  def failing(%{store: store}, methods),
+    do: Agent.update(store, &Map.put(&1, :failing, methods))
+
   @doc "The providers in the fake's store, by name: `%{type, credentials, labels}`."
   def providers(%{store: store}), do: Agent.get(store, & &1.providers)
 
@@ -390,6 +397,9 @@ defmodule HalC2.Test.FakeOpenShell do
       cond do
         method != "Health" and get_peer_data(conn)[:ssl_cert] == nil ->
           error(conn, 16, "no client certificate")
+
+        method in (Agent.get(config.store, & &1[:failing]) || []) ->
+          error(conn, 14, "#{method} is unavailable")
 
         method == "ExecSandboxInteractive" ->
           exec(conn, config)

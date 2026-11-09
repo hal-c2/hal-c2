@@ -27,7 +27,7 @@ defmodule HalC2.ReviewLeaseProofTest do
       "HalC2.OpenShell.Review.close/2" => ~w(stop reported),
       "HalC2.OpenShell.Review.spent/3" => "spent",
       "HalC2.OpenShell.Review.reconcile/0" => ~w(reconcile wiped),
-      "HalC2.OpenShell.Review.reap/2" => "reap",
+      "HalC2.OpenShell.Review.reap/2" => ~w(reap reap-no-sandboxes reap-no-providers),
       "HalC2.OpenShell.Review.expired/2" => "reap",
       "HalC2.OpenShell.Review handle_call {:opening, _}" => ~w(opening stopped-first),
       "HalC2.OpenShell.Review handle_call {:bind, _}" => ~w(bind bind-refused),

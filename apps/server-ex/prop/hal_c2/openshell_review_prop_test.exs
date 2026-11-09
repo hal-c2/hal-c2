@@ -3,7 +3,8 @@ defmodule HalC2.OpenShellReviewPropTest do
   `HalC2.OpenShell.Review` (#1412) against a model of a review sandbox's lease, over
   any sequence of reviews opened, stopped, past their budget or their time, sandboxes
   left on the gateway from before, reconciles and restarts of the review process,
-  reaps, and a gateway that for a while only accepts provider deletions. The gateway
+  reaps (some on a gateway that will not list sandboxes or providers), and a gateway
+  that for a while only accepts provider deletions. The gateway
   is the TLS fake, each sandbox a directory of its own. The promises:
 
     * a review opens once: a thread stopped before its sandbox was made gets none;
@@ -18,6 +19,8 @@ defmodule HalC2.OpenShellReviewPropTest do
     * a provider whose deletion the gateway only accepted is not taken as gone: it is
       asked for again by the next reconcile, restart or reap, a reap reports it as
       left behind, and it goes once the gateway deletes again;
+    * a reap whose gateway does not list one kind still deletes the other kind past
+      its lease, and reports the listing that failed;
     * another HAL-C2 home's review sandboxes, with this MC's environment id on the
       same gateway (a copied home), are never deleted.
   """
@@ -121,8 +124,10 @@ defmodule HalC2.OpenShellReviewPropTest do
   # there is fresh. left: sandboxes put on the gateway since the last reconcile, each
   # with its provider. others: another home's sandboxes put there, which stay.
   # stalled: the gateway only accepts provider deletions; pending: the providers it
-  # accepted deleting and kept.
-  def initial_state, do: %{threads: %{}, left: 0, others: 0, stalled: false, pending: []}
+  # accepted deleting and kept. bare: left sandboxes whose provider was asked to go by
+  # a reap that could not list sandboxes.
+  def initial_state,
+    do: %{threads: %{}, left: 0, others: 0, stalled: false, pending: [], bare: []}
 
   def command(state) do
     open = for {t, %{spent: _}} <- state.threads, do: t
@@ -137,7 +142,13 @@ defmodule HalC2.OpenShellReviewPropTest do
         {1, {:call, __MODULE__, :restart, []}},
         {2, {:call, __MODULE__, :stall, [boolean()]}}
       ] ++
-        if(open == [], do: [{2, {:call, __MODULE__, :reap, []}}], else: []) ++
+        if(open == [],
+          do: [
+            {2, {:call, __MODULE__, :reap, []}},
+            {1, {:call, __MODULE__, :reap_unlisted, [oneof(["ListSandboxes", "ListProviders"])]}}
+          ],
+          else: []
+        ) ++
         if(open == [],
           do: [],
           else: [
@@ -154,7 +165,7 @@ defmodule HalC2.OpenShellReviewPropTest do
     do: not open?(state, t) and Review.name(t) not in state.pending
 
   # A reap here deletes everything past a far deadline, open reviews' sandboxes too.
-  def precondition(state, {:call, _, :reap, []}),
+  def precondition(state, {:call, _, op, _}) when op in [:reap, :reap_unlisted],
     do: not Enum.any?(Map.keys(state.threads), &open?(state, &1))
 
   def precondition(state, {:call, _, op, [t | _]}) when op in [:spent, :deadline],
@@ -188,8 +199,11 @@ defmodule HalC2.OpenShellReviewPropTest do
   defp model(state, {:call, _, :stall, [on]}), do: %{state | stalled: on}
 
   # Both ask for every provider no open review holds to go, the pending ones too.
-  defp model(state, {:call, _, op, []}) when op in [:reconcile, :reap],
-    do: kept(%{state | left: 0}, left_names(state) ++ state.pending)
+  defp model(state, {:call, _, :reconcile, []}),
+    do: kept(%{state | left: 0, bare: []}, held(state))
+
+  defp model(state, {:call, _, :reap, []}), do: reaped(state, nil)
+  defp model(state, {:call, _, :reap_unlisted, [method]}), do: reaped(state, method)
 
   # The review process's tables go with it: no binding, and no ending, is kept.
   defp model(state, {:call, _, :restart, []}) do
@@ -197,9 +211,45 @@ defmodule HalC2.OpenShellReviewPropTest do
 
     kept(
       %{initial_state() | others: state.others, stalled: state.stalled, pending: state.pending},
-      open ++ left_names(state) ++ state.pending
+      open ++ held(state)
     )
   end
+
+  # A reap with every review closed. Without sandboxes listed, the left ones stay and
+  # every provider is asked to go; without providers listed, the left ones go with
+  # theirs and no other provider is asked.
+  defp reaped(state, unlisted) do
+    {_deleted, asked, _failed} = reap_expected(state, unlisted)
+
+    if unlisted == "ListSandboxes",
+      do: kept(%{state | bare: left_names(state)}, asked),
+      else: kept(%{state | left: 0, bare: []}, asked)
+  end
+
+  # What a reap that could not make `unlisted` (nil when it could list everything)
+  # deletes: `{sandboxes deleted, providers asked for, failed}`. A provider the gateway
+  # only accepted deleting is reported as left behind, never as gone, and so is the
+  # sandbox it went with.
+  defp reap_expected(state, unlisted) do
+    left = left_names(state)
+    held = held(state)
+
+    {swept, asked} =
+      case unlisted do
+        nil -> {left, held}
+        "ListSandboxes" -> {[], held}
+        "ListProviders" -> {left, Enum.filter(held, &(&1 in left))}
+      end
+
+    kept = if state.stalled, do: asked, else: []
+    kinds = %{nil => [], "ListSandboxes" => [:sandboxes], "ListProviders" => [:providers]}
+
+    {Enum.sort(swept -- kept), asked,
+     {kinds[unlisted], Enum.sort(for name <- kept, do: {name, {:delete_pending, name}})}}
+  end
+
+  # The providers on the gateway that no open review holds.
+  defp held(state), do: Enum.uniq((left_names(state) -- state.bare) ++ state.pending)
 
   # The first reason a thread ends for is the one kept; one that was open had its
   # provider deleted.
@@ -232,7 +282,8 @@ defmodule HalC2.OpenShellReviewPropTest do
       observed.bound == Enum.sort(open) and observed.tokens == Enum.sort(open) and
       observed.ended == ends and
       observed.sandboxes == Enum.sort(names ++ observed.left ++ observed.others) and
-      observed.providers == Enum.sort(Enum.uniq(names ++ observed.left ++ after_.pending))
+      observed.providers ==
+        Enum.sort(Enum.uniq(names ++ (observed.left -- after_.bare) ++ after_.pending))
   end
 
   defp result_ok(state, {:call, _, :open, [t]}, result) do
@@ -242,27 +293,28 @@ defmodule HalC2.OpenShellReviewPropTest do
     end
   end
 
-  # A reap deletes what was left and every provider kept; one the gateway only
-  # accepted deleting is reported as left behind, never as gone.
-  defp result_ok(state, {:call, _, :reap, []}, result) do
-    left = left_names(state)
+  defp result_ok(state, {:call, _, :reap, []}, result), do: reap_ok(state, nil, result)
 
-    case {state.stalled, Enum.sort(Enum.uniq(state.pending ++ left)), result} do
-      {true, [_ | _] = kept, {:error, {:not_deleted, [], failed}}} ->
-        Enum.sort(failed) == for(name <- kept, do: {name, {:delete_pending, name}})
+  defp result_ok(state, {:call, _, :reap_unlisted, [method]}, result),
+    do: reap_ok(state, method, result)
 
-      {true, [_ | _], _} ->
-        false
+  defp result_ok(_state, _call, result), do: result == :ok
 
-      {_, _, {:ok, deleted}} ->
-        Enum.sort(deleted) == left
+  defp reap_ok(state, unlisted, result) do
+    case {reap_expected(state, unlisted), result} do
+      {{deleted, _, {[], []}}, {:ok, names}} ->
+        Enum.sort(names) == deleted
+
+      {{deleted, _, {kinds, kept}}, {:error, {:not_deleted, names, failed}}} ->
+        {listings, rest} = Enum.split_with(failed, fn {name, _} -> is_atom(name) end)
+
+        Enum.sort(names) == deleted and Enum.sort(rest) == kept and
+          Enum.map(listings, &elem(&1, 0)) == kinds
 
       _ ->
         false
     end
   end
-
-  defp result_ok(_state, _call, result), do: result == :ok
 
   # --- commands -------------------------------------------------------------------
 
@@ -362,6 +414,35 @@ defmodule HalC2.OpenShellReviewPropTest do
         try do
           Review.reap(conn, System.os_time(:second) + 86_400)
         after
+          Client.disconnect(conn)
+        end
+      end,
+      deleting
+    )
+  end
+
+  # The same, on a gateway that does not answer `method`: without sandboxes listed the
+  # left ones stay, and without providers listed only theirs are asked to go.
+  def reap_unlisted(method) do
+    %{gateway: g, left: left} = Process.get(:review_prop)
+
+    deleting =
+      if method == "ListSandboxes" do
+        providers()
+      else
+        forget_left()
+        Enum.filter(providers(), &(&1 in left))
+      end
+
+    observe(
+      fn ->
+        {:ok, conn} = Client.connect()
+        FakeOpenShell.failing(g, [method])
+
+        try do
+          Review.reap(conn, System.os_time(:second) + 86_400)
+        after
+          FakeOpenShell.failing(g, [])
           Client.disconnect(conn)
         end
       end,

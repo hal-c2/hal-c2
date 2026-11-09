@@ -301,27 +301,34 @@ defmodule HalC2.OpenShell.Review do
   Deletes this home's review sandboxes whose lease ended by `now` (unix seconds), with
   their providers, over `conn`, and any provider past its lease whose sandbox never
   came. Run by `hal-c2-service openshell reap` without the MC. `{:ok, names}` of the
-  sandboxes deleted, or, when any deletion failed, `{:error, {:not_deleted, names,
+  sandboxes deleted, or, when anything failed, `{:error, {:not_deleted, names,
   failed}}` with the sandboxes deleted anyway and each `{name, reason}` that was not.
+  A listing that fails is `{:sandboxes, reason}` or `{:providers, reason}` there, and
+  what the other listing found is still deleted: with no sandboxes listed, every
+  provider past its lease goes, as its credential matters most.
   """
   def reap(conn, now) do
-    with {:ok, sandboxes} <- Client.list_sandboxes(conn, selector()),
-         {:ok, providers} <- Client.providers(conn, selector()) do
-      names = for sandbox <- expired(sandboxes, now), do: sandbox.name
-      removed = for name <- names, do: {name, remove(conn, name)}
+    sandboxes = Client.list_sandboxes(conn, selector())
+    providers = Client.providers(conn, selector())
+    names = for {:ok, listed} <- [sandboxes], sandbox <- expired(listed, now), do: sandbox.name
+    removed = for name <- names, do: {name, remove(conn, name)}
 
-      # A provider of a sandbox removed above went with it.
-      orphans =
-        for %{name: name} <- expired(providers, now),
-            name not in names,
-            do: {name, Client.delete_provider(conn, name)}
+    # A provider of a sandbox removed above went with it.
+    orphans =
+      for {:ok, listed} <- [providers],
+          %{name: name} <- expired(listed, now),
+          name not in names,
+          do: {name, attempt(fn -> Client.delete_provider(conn, name) end)}
 
-      deleted = for {name, :ok} <- removed, do: name
+    unlisted =
+      for {kind, {:error, reason}} <- [sandboxes: sandboxes, providers: providers],
+          do: {kind, {:error, reason}}
 
-      case for({name, {:error, reason}} <- removed ++ orphans, do: {name, reason}) do
-        [] -> {:ok, deleted}
-        failed -> {:error, {:not_deleted, deleted, failed}}
-      end
+    deleted = for {name, :ok} <- removed, do: name
+
+    case for({name, {:error, reason}} <- unlisted ++ removed ++ orphans, do: {name, reason}) do
+      [] -> {:ok, deleted}
+      failed -> {:error, {:not_deleted, deleted, failed}}
     end
   end
 
@@ -774,14 +781,21 @@ defmodule HalC2.OpenShell.Review do
   # The provider is tried even when the sandbox is not, as its credential matters most.
   defp remove(conn, name) do
     results = [
-      sandbox: Client.delete_sandbox(conn, name),
-      provider: Client.delete_provider(conn, name)
+      sandbox: attempt(fn -> Client.delete_sandbox(conn, name) end),
+      provider: attempt(fn -> Client.delete_provider(conn, name) end)
     ]
 
     for {what, {:error, reason}} <- results,
         do: Logger.warning("openshell: deleting #{what} #{name} failed: #{inspect(reason)}")
 
     Enum.find(Keyword.values(results), :ok, &(&1 != :ok))
+  end
+
+  # One deletion's result, an exit or raise of its call included, so the next is tried.
+  defp attempt(fun) do
+    fun.()
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   defp failure({:error, reason}), do: why(reason)

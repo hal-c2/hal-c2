@@ -225,6 +225,44 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert %{"running" => true, "current" => true} = Service.status(@state)
     end
 
+    test "a reap service that does not stop gets its timer back", %{log: log} do
+      assert :ok = Service.install(@state)
+      Storage.service_state(log, "reap-service-stop-fails", true)
+      File.rm!(log)
+
+      assert {:error, _} = Service.stop()
+      calls = Storage.service_calls(log)
+      refute "systemctl --user stop #{Service.name(:systemd)}" in calls
+      assert %{"running" => true} = Service.status(@state)
+      # The gateway runs on, and its leases are still reaped.
+      assert "systemctl --user start #{Service.reap_name(:timer)}" in calls
+      assert File.exists?(Path.join(Path.dirname(log), "reap-active"))
+    end
+
+    test "a reaper that does not start again after a failed stop says so", %{log: log} do
+      assert :ok = Service.install(@state)
+      Storage.service_state(log, "stop-fails", true)
+      Storage.service_state(log, "reap-start-fails", true)
+
+      assert {:error, message} = Service.stop()
+      assert message =~ "stop #{Service.name(:systemd)}"
+      assert message =~ "the reaper did not start again"
+      assert message =~ "start #{Service.reap_name(:timer)}"
+    end
+
+    test "a gateway that does not start still gets its reaper", %{log: log} do
+      Storage.service_state(log, "start-fails", true)
+
+      assert {:error, message} = Service.install(@state)
+      assert message =~ "restart #{Service.name(:systemd)}"
+
+      assert "systemctl --user enable --now #{Service.reap_name(:timer)}" in Storage.service_calls(
+               log
+             )
+
+      assert File.exists?(Path.join(Path.dirname(log), "reap-active"))
+    end
+
     test "uninstall stops a gateway whose unit file is already gone", %{log: log} do
       assert :ok = Service.install(@state)
       File.rm!(Service.unit_path(:systemd))
@@ -365,6 +403,30 @@ defmodule HalC2.OpenShell.ServiceTest do
       # The gateway was never booted out, and runs on.
       refute Enum.any?(calls, &String.ends_with?(&1, "/" <> Service.name(:launchd)))
       assert %{"running" => true, "current" => true} = Service.status(@state)
+    end
+
+    test "an agent that does not bootstrap still gets its reaper", %{log: log} do
+      Storage.service_state(log, "start-fails", true)
+
+      assert {:error, message} = Service.install(@state)
+      assert message =~ "Bootstrap failed: 5"
+      [reaper] = Service.reaper_paths(:launchd)
+
+      assert "launchctl bootstrap gui/#{HalC2.Service.uid()} #{reaper}" in Storage.service_calls(
+               log
+             )
+
+      assert File.exists?(Path.join(Path.dirname(log), "reap-loaded"))
+    end
+
+    test "a reaper that does not bootstrap again after a failed bootout says so", %{log: log} do
+      assert :ok = Service.install(@state)
+      Storage.service_state(log, "stop-fails", true)
+      Storage.service_state(log, "reap-start-fails", true)
+
+      assert {:error, message} = Service.stop()
+      assert message =~ "Boot-out failed: 5"
+      assert message =~ "the reaper did not start again"
     end
 
     test "uninstall boots out an agent whose plist is already gone", %{log: log} do
