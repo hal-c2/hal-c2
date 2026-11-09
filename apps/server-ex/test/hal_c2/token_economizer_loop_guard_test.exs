@@ -3,7 +3,7 @@
 # tests/test_config_integer_thresholds.py (microsoft/TokenEconomizer@cb42207e3e09).
 
 for file <-
-      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history micro_skills_distiller token_economizer),
+      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history micro_skills_distiller tool_prune_evidence token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerLoopGuardTest do
@@ -17,6 +17,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
   use ExUnit.Case, async: true
 
   alias HalC2Plugins.TokenEconomizer
+  alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Rules, ShellEdits, State, Turn}
   alias HalC2Plugins.TokenEconomizer.MicroSkills.{Distiller, EnvFacts}
 
@@ -1311,9 +1312,179 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
         |> observe(started("c"))
 
       assert state.turns["a"].partial and state.turns["b"].partial and state.turns["c"].partial
+      # Tool pruning's conversations too, which no longer hold their project active.
+      assert Enum.all?(~w(a b c), &match?(%{partial: true, active: false}, state.convs[&1]))
 
       state = observe(state, started("d"))
       refute state.turns["d"].partial
+      assert %{partial: false, active: true} = state.convs["d"]
+    end
+  end
+
+  describe "tool pruning's conversations" do
+    # A project of its own: what earlier runs of the test saved is never read back. The
+    # files outlive the run, and `System.unique_integer/1` starts over with each VM.
+    defp project, do: "p" <> Base.url_encode64(:crypto.strong_rand_bytes(9))
+
+    defp finished(thread, run),
+      do: %{
+        "type" => "turn.finished",
+        "threadId" => thread,
+        "runId" => run,
+        "status" => "completed"
+      }
+
+    test "a handoff back to a conversation it resumes is the provider's own, with the tools it was shaped with" do
+      p = project()
+      claude = {p, "claudeAgent"}
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = put_in(state.shaped[{"a", claude}], ["Workflow"])
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      codex = %{"projectId" => p, "provider" => "codex", "newConversation" => true}
+      state = observe(state, started("a", codex))
+      assert %{project: {^p, "codex"}} = state.convs["a"]
+
+      # Claude resumes its conversation: its segment, not Codex's.
+      state = observe(state, started("a", %{"projectId" => p}))
+      assert %{project: ^claude, loaded: ["Workflow"], runs: [_]} = state.convs["a"]
+      assert state.prunes[claude]["sessions"] == 1
+    end
+
+    test "a subagent's call counts as a use of its tool, and is no call of the turn's to the loop guard" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = put_in(state.seeded[{"a", {p, "claudeAgent"}}], :read)
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      guard = state.turns["a"].guard
+
+      call = %{
+        "type" => "turn.item",
+        "threadId" => "a",
+        "runId" => "run-a",
+        "itemType" => "command_execution",
+        "tool" => "CronCreate",
+        "status" => "completed",
+        "input" => "ls",
+        "subagent" => true
+      }
+
+      state = observe(state, call)
+      assert "CronCreate" in state.convs["a"].used
+      assert state.turns["a"].guard == guard
+
+      # The turn's own call is the loop guard's.
+      refute observe(state, Map.delete(call, "subagent")).turns["a"].guard == guard
+    end
+
+    test "a thread's watermark moves when its segment folds, not when its turn ends" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      # Its earlier turns read back (no thread here has any to read).
+      state = put_in(state.seeded[{"a", {p, "claudeAgent"}}], :read)
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      state = observe(state, finished("a", "r1"))
+      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == nil
+
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a")["run"] == "r1"
+    end
+
+    test "a thread whose earlier turns could not be read keeps its watermark, to read them later" do
+      p = project()
+      key = {"a", {p, "claudeAgent"}}
+      {:ok, state} = TokenEconomizer.init(%{})
+      # Thread "a" is no thread the MC has, so reading its turns fails.
+      state = observe(state, started("a", %{"projectId" => p, "runId" => "r1"}))
+      assert state.seeded[key] == {:unread, "r1"}
+
+      state = observe(state, finished("a", "r1"))
+
+      state =
+        observe(
+          state,
+          started("a", %{"projectId" => p, "runId" => "r2", "newConversation" => true})
+        )
+
+      # The segment folded, and the watermark stayed: the next read is still up to the
+      # first run heard since.
+      assert state.prunes[{p, "claudeAgent"}]["sessions"] == 1
+      assert Prune.seeded_run(state.prunes[{p, "claudeAgent"}], "a") == nil
+      assert state.seeded[key] == {:unread, "r1"}
+    end
+
+    test "apply and restore need a project and a list of names, and refusing a proposed tool is saved" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a", %{"projectId" => p}))
+
+      for action <- [:apply, :restore] do
+        assert {:reply, {:error, _}, _} =
+                 TokenEconomizer.handle_call(
+                   {:toolprune, action, %{"tools" => ["Workflow"]}},
+                   nil,
+                   state
+                 )
+      end
+
+      input = %{"projectId" => p, "provider" => "claudeAgent", "tools" => ["Workflow"]}
+
+      # A name that is not a list is not read as all of them.
+      for action <- [:apply, :restore], tools <- ["Workflow", [1]] do
+        assert {:reply, {:error, _}, _} =
+                 TokenEconomizer.handle_call(
+                   {:toolprune, action, %{input | "tools" => tools}},
+                   nil,
+                   state
+                 )
+      end
+
+      assert {:reply, {:ok, %{"projects" => [%{"restored" => []}]}}, _} =
+               TokenEconomizer.handle_call({:toolprune, :restore, input}, nil, state)
+
+      saved =
+        {p, "claudeAgent"} |> TokenEconomizer.toolprune_path() |> File.read!() |> JSON.decode!()
+
+      assert saved["kept"] == ["Workflow"]
+    end
+
+    test "a call naming a project with no evidence holds nothing for it and saves no file" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      never = {project(), "claudeAgent"}
+      input = %{"projectId" => elem(never, 0), "provider" => "claudeAgent"}
+
+      assert {:reply, {:ok, %{"projects" => []}}, state} =
+               TokenEconomizer.handle_call({:toolprune, :state, input}, nil, state)
+
+      refute Map.has_key?(state.prunes, never)
+
+      assert {:reply, {:error, _}, state} =
+               TokenEconomizer.handle_call(
+                 {:toolprune, :apply, Map.put(input, "tools", ["Workflow"])},
+                 nil,
+                 state
+               )
+
+      refute Map.has_key?(state.prunes, never)
+      refute File.exists?(TokenEconomizer.toolprune_path(never))
+    end
+
+    test "a call whose input is not an object, or names its project or provider with no string, answers an error" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = observe(state, started("a", %{"projectId" => p}))
+
+      inputs =
+        ["x", [], 5, true] ++
+          [%{"projectId" => 5}, %{"projectId" => p, "provider" => ["claudeAgent"]}]
+
+      for action <- [:state, :apply, :restore], input <- inputs do
+        assert {:reply, {:error, _}, ^state} =
+                 TokenEconomizer.handle_call({:toolprune, action, input}, nil, state)
+      end
+
+      # An empty one is still the state of every project held.
+      assert {:reply, {:ok, %{"projects" => [%{"projectId" => ^p}]}}, _} =
+               TokenEconomizer.handle_call({:toolprune, :state, %{}}, nil, state)
     end
 
     test "keep the window a report of missed events opens while off" do

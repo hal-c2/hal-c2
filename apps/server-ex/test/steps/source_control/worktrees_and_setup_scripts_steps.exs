@@ -2252,7 +2252,14 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
       receive do
         {:hal_c2_stream, ^id, _} -> follow_thread(id, fun)
       after
-        10_000 -> flunk("the thread never got there: #{inspect(thread)}")
+        10_000 ->
+          state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+
+          flunk("""
+          the thread never got there: #{inspect(thread)}
+          its runs: #{inspect(HalC2.StreamState.list(state, "run"))}
+          its setup: #{inspect(HalC2.WorktreeSetup.subscribe(id, self()))}
+          """)
       end
     end
   end

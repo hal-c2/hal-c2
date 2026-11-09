@@ -142,6 +142,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.generate/3" => @host,
       "HalC2.Plugins.Host.history/3" => @host,
       "HalC2.Plugins.Host.project_threads/2" => @host,
+      "HalC2.Plugins.Host.thread_project/2" => @host,
       "HalC2.Plugins.Host.feed_backlog/1" => @host,
       "HalC2.Plugins.Host.run_active?/3" => @host
     },

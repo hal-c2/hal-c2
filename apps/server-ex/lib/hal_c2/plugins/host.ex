@@ -500,7 +500,14 @@ defmodule HalC2.Plugins.Host do
   "startedAt", "completedAt", "tokenUsage", "items"}`, each item as plugins hear it
   (`HalC2.Orchestration.TurnWriter.observed_item/1`), in the turn's order. What a
   plugin that hears turns missed while it was not running. Needs `turns:observe`.
-  `{:error, message}` when there is no such thread.
+  `{:error, {:gone, message}}` when there is no such thread or it was deleted: its
+  turns will never be read. `{:error, {:away, message}}` while it is on another MC,
+  which keeps its turns until it moves back here (`HalC2.ThreadMove`).
+
+  `"subagents"` says whether a provider's own subagent worked during the turn, started
+  in it or before: plugins hear a subagent's calls as its parent turn's
+  (`HalC2.Orchestration.NativeSubagent.observe/2`), but its child thread keeps them,
+  so the turn's `"items"` do not have them.
 
   `"provider"` is the driver the turn ran on (`"claudeAgent"`, `"codex"`, ...), kept
   with the thread, so it is known after the instance the turn ran on is deleted and
@@ -527,9 +534,12 @@ defmodule HalC2.Plugins.Host do
 
     with :ok <- permit(id, "turns:observe") do
       HalC2.Streams.read(thread_id, fn stream ->
-        if HalC2.StreamState.get(stream, "thread")[thread_id],
-          do: {:ok, turns(stream, limit, cut)},
-          else: {:error, "There is no thread #{thread_id}."}
+        case HalC2.StreamState.get(stream, "thread")[thread_id] do
+          nil -> {:error, {:gone, "There is no thread #{thread_id}."}}
+          %{"deletedAt" => at} when at != nil -> {:error, {:gone, "#{thread_id} was deleted."}}
+          %{"movedTo" => %{}} -> {:error, {:away, "#{thread_id} is on another machine."}}
+          _thread -> {:ok, turns(stream, limit, cut)}
+        end
       end)
     end
   end
@@ -568,6 +578,27 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  The project a thread is in, from its stream: `{:ok, project id}`, kept once the
+  thread is deleted or moved away. When its record names none, `{:error, {:gone,
+  message}}` for a thread deleted or never here, `{:error, {:away, message}}` for one
+  on another machine and `{:error, {:unknown, message}}` otherwise. Needs
+  `turns:observe`.
+  """
+  def thread_project(id, thread_id) do
+    with :ok <- permit(id, "turns:observe") do
+      HalC2.Streams.read(thread_id, fn stream ->
+        case HalC2.StreamState.get(stream, "thread")[thread_id] do
+          nil -> {:error, {:gone, "There is no thread #{thread_id}."}}
+          %{"projectId" => project_id} when is_binary(project_id) -> {:ok, project_id}
+          %{"deletedAt" => at} when at != nil -> {:error, {:gone, "#{thread_id} was deleted."}}
+          %{"movedTo" => %{}} -> {:error, {:away, "#{thread_id} is on another machine."}}
+          _thread -> {:error, {:unknown, "#{thread_id} names no project."}}
+        end
+      end)
+    end
+  end
+
+  @doc """
   How many turn events plugin `id`'s feed may still deliver: 0 when it has no feed. A
   plugin process restarted while its feed ran has lost what it knew of the events
   before: any of these may have been sent before events it missed, and a report of
@@ -592,6 +623,10 @@ defmodule HalC2.Plugins.Host do
     provider_turns = StreamState.get(stream, "provider-turn")
     provider_threads = StreamState.get(stream, "provider-thread")
     runs = StreamState.get(stream, "run")
+
+    subagents =
+      for {_id, %{"origin" => "provider_native"} = sub} <- StreamState.get(stream, "subagent"),
+          do: sub
 
     cutoff =
       case {cut, runs[elem(cut, 1)]} do
@@ -631,9 +666,31 @@ defmodule HalC2.Plugins.Host do
         "items" =>
           (items[run["id"]] || [])
           |> Enum.sort_by(& &1["ordinal"])
-          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1)
+          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1),
+        # A thread it delegated to (`"app_owned"`) makes its calls in turns of its own.
+        "subagents" =>
+          Enum.any?(
+            items[run["id"]] || [],
+            &(&1["type"] == "subagent" and &1["origin"] == "provider_native")
+          ) or Enum.any?(subagents, &worked_in?(&1, run))
       }
     end)
+  end
+
+  # A subagent worked during `run` if it started in it, or one of the spans it worked
+  # overlaps it: each before it was resumed (`HalC2.Orchestration.NativeSubagent.resume/3`),
+  # and the last, from its start or latest resume, still open while it runs.
+  defp worked_in?(sub, run) do
+    spans =
+      (sub["workedSpans"] || []) ++
+        [%{"from" => sub["resumedAt"] || sub["startedAt"], "to" => sub["completedAt"]}]
+
+    sub["runId"] == run["id"] or Enum.any?(spans, &overlaps?(&1, run))
+  end
+
+  defp overlaps?(%{"from" => from, "to" => to}, run) do
+    is_binary(from) and is_binary(run["completedAt"]) and from <= run["completedAt"] and
+      (to == nil or to >= (run["startedAt"] || ""))
   end
 
   @doc "Whether plugin `id` was granted `permission`."

@@ -1,5 +1,5 @@
 for file <-
-      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_distiller token_economizer),
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_distiller tool_prune_evidence token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerPluginPropTest do
@@ -34,7 +34,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     stop, at most one for each;
   - no run gets more redirects than the budget, nor more than one stop offer;
   - a turn teaches the project's envelope only when it ended completed, made calls and
-    was heard whole, never when the next turn's start or a sweep closes it; one heard whole that
+    was heard whole, never when the next turn's start or a sweep closes it, and a subagent's
+    calls are not its own; one heard whole that
     completed with nothing but passing checks does. A turn is heard whole unless it was
     under way when the feed said it missed events, or one of its events came in the
     window that report opens: the reported event and those the feed had waiting, heard
@@ -237,7 +238,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
 
   # false, or the events the feed had waiting when it said it missed some.
   defp dropped, do: frequency([{6, false}, {1, integer(0, 2)}])
-  defp kind, do: frequency([{5, "fail"}, {3, "edit"}, {2, "pass"}])
+  # "sub": a failing call of a subagent the turn runs, which is no call of the turn's.
+  defp kind, do: frequency([{5, "fail"}, {3, "edit"}, {2, "pass"}, {1, "sub"}])
 
   defp run_of(state, t) do
     case state.open[t] do
@@ -270,7 +272,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   def next_state(state, _result, {:call, _, :item, [t, run, kind, dropped]}) do
     heard(state, t, dropped, fn state ->
       case state.open[t] do
-        %{run: ^run} -> update_in(state.open[t].kinds, &(&1 ++ [kind]))
+        %{run: ^run} when kind != "sub" -> update_in(state.open[t].kinds, &(&1 ++ [kind]))
         _ -> state
       end
     end)
@@ -548,6 +550,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       "output" => "3 passed in 0.10s",
       "exitCode" => 0
     }
+
+  defp tool("sub"), do: Map.put(tool("fail"), "subagent", true)
 
   defp tool("edit"),
     do: %{"itemType" => "file_change", "status" => "completed", "path" => "/r/a.py"}

@@ -32,8 +32,22 @@ file in mc/ names the upstream files it was ported from and what it changed. In 
   a directory per call, so a `cd` inside one command still shapes its forms
   but a directory an earlier call left the shell in is not known. A person
   may drop a fact so it is never learned again, and restore it, which
-  upstream had no way to do. The paid distiller that proposes facts beyond
-  the environment's is not part of this port yet; `microSkills=on` does the
-  same as `envfacts` until it lands, and its candidates will go through the
-  lifecycle this port already has.
-- Upstream's tool pruning is not part of this port yet.
+  upstream had no way to do.
+- The distiller asks the MC's text generation model, off the plugin's
+  process, and holds each proposed fact to its detector on the turns it
+  cites before the lifecycle above takes it. The first fold from history
+  reads the project's earlier threads from the MC's own store, not upstream's
+  foreign session logs.
+- Tool pruning keeps upstream's evidence rule and protected sets, Codex's
+  capability packages (two demotions per session at most, three times the
+  evidence for image/media) and its modes (auto after a quiet spell, propose,
+  off), with restore that sticks. It differs in how it is fed and applied:
+  the evidence comes from turns the MC hears (and earlier turns read back from
+  a thread, folded as imported, which on its own never applies under auto),
+  and a decision takes effect through the MC as a provider conversation
+  starts, so no provider settings file is read or written and there is no
+  catalog probe -- the tools taken as loaded are the ones the MC can turn off
+  (upstream's live Codex packages exactly; for Claude, its known built-in tools
+  outside the protected sets, so other tools, MCP ones included, are never
+  proposed until that list grows). The experiments' per-task tool judge is not
+  ported: the plugin never calls a model to prune, as upstream's plugin does not.

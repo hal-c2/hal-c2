@@ -2147,6 +2147,14 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{state | subagents: Map.put(subagents, thread, entry)}
   end
 
+  # Codex's own tools whose calls no thread shows as calls (an image it viewed, or one it
+  # made, which joins the reply), as the item type and tool name plugins that hear turns
+  # hear them under (`observe_item/3`).
+  @unshown %{
+    "imageView" => {"image_view", "view_image"},
+    "imageGeneration" => {"image_generation", "image_generation"}
+  }
+
   # A subagent's own thread reports under its thread id: its answer goes to its child
   # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
   defp notification(method, %{"threadId" => thread} = params, %{subagents: subagents} = state)
@@ -2261,6 +2269,21 @@ defmodule HalC2.Codex.ThreadRuntime do
                 )
           }
 
+        # Its use of tools its child thread does not show, heard as the turn's are.
+        {"item/completed", %{"item" => %{"type" => type} = item}}
+        when is_map_key(@unshown, type) ->
+          HalC2.Orchestration.NativeSubagent.observe(entry.sub, unshown_item(entry.sub, item))
+          entry
+
+        # A subagent started before an update in place has a handle with no run.
+        {"thread/goal/updated", _} ->
+          HalC2.Orchestration.NativeSubagent.observe(
+            entry.sub,
+            goal_item(Map.get(entry.sub, :run))
+          )
+
+          entry
+
         _ ->
           entry
       end
@@ -2270,10 +2293,21 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp notification(
          "item/" <> event,
-         %{"item" => %{"type" => "collabAgentToolCall"} = item},
+         %{"item" => %{"type" => "collabAgentToolCall"} = item} = params,
          state
        )
        when event in ["started", "completed"] do
+    # Plugins that hear turns hear each call end: the agent working its subagents,
+    # whose start alone the subagent's item tells (`NativeSubagent.start/3`). A call
+    # of an earlier turn that ends late is not this turn's use.
+    if event == "completed" and this_turn?(params, state),
+      do:
+        observe_item(state, if(item["status"] == "failed", do: "failed", else: "completed"), %{
+          "id" => item_id(state.turn.ids, item["id"]),
+          "type" => "collab_tool_call",
+          "toolName" => item["tool"]
+        })
+
     # Between turns only their states still land (a subagent finishing after
     # its parent's turn): nothing new is spawned for a turn that has ended.
     if state.turn && not held?(state),
@@ -2353,8 +2387,14 @@ defmodule HalC2.Codex.ThreadRuntime do
        when event in ["started", "completed"] and is_binary(turn_id) do
     if params["threadId"] in [nil, state.native_thread_id] do
       case event do
-        "started" -> GeneratedImages.started(state, turn_id, item["id"])
-        "completed" -> GeneratedImages.completed(flush(state), turn_id, item)
+        "started" ->
+          GeneratedImages.started(state, turn_id, item["id"])
+
+        "completed" ->
+          state
+          |> flush()
+          |> hear_image(turn_id, item)
+          |> GeneratedImages.completed(turn_id, item)
       end
     else
       state
@@ -2643,6 +2683,21 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp notification(_method, _params, state), do: state
+
+  # Whether a notification is of the turn under way, as the notification clauses that drop
+  # the others have it: none is between turns or a goal's turns, nor another turn's item.
+  defp this_turn?(_params, %{turn: nil}), do: false
+
+  defp this_turn?(_params, %{turn: %{native_turn_id: nil}, goal_hold: hold}) when hold != nil,
+    do: false
+
+  defp this_turn?(
+         %{"threadId" => thread, "turnId" => turn_id},
+         %{native_thread_id: thread, turn: %{native_turn_id: current}}
+       ),
+       do: turn_id == current
+
+  defp this_turn?(_params, _state), do: true
 
   # How full the conversation's context is, for the context meter. It belongs to the
   # provider thread, so it outlives the run, and a model change, until Codex says more.
@@ -2948,6 +3003,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           state
       end
 
+    state = hear_unfinished_images(state)
     state = GeneratedImages.turn_ended(state, status, stream)
     state = close_open_items(state, status)
     finish(state, status, failure)
@@ -3125,6 +3181,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       :ok ->
         state = %{state | turn: turn}
         observe_started(state)
+        observe_item(state, "completed", goal_item(ids.run))
         {:ok, state}
 
       :ended ->
@@ -3182,6 +3239,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp put_goal(%{goal: goal} = state, goal), do: state
 
   defp put_goal(state, goal) do
+    if state.turn, do: observe_item(state, "completed", goal_item(state.turn.ids.run))
+
     if id = state.goal_thread do
       at = Entities.now()
 
@@ -3752,7 +3811,55 @@ defmodule HalC2.Codex.ThreadRuntime do
     |> capture_app(native, item)
   end
 
+  defp complete_item(state, %{"type" => type} = item) when is_map_key(@unshown, type) do
+    heard = unshown_item(state.turn.ids, item)
+    observe_item(state, heard["status"], heard)
+    state
+  end
+
   defp complete_item(state, _item), do: state
+
+  # Plugins hear a generated image in the turn that made it; one finished after its turn
+  # ended is heard by none, as the turn's other late reports are: they heard it as the
+  # turn ended (`hear_unfinished_images/1`).
+  defp hear_image(%{turn: %{native_turn_id: turn_id}} = state, turn_id, item),
+    do: complete_item(state, item)
+
+  defp hear_image(state, _turn_id, _item), do: state
+
+  # The images the turn ends still generating: plugins hear each as the turn's, still
+  # `inProgress`, before the turn ends, for it used Codex's image tool whether or not
+  # the image ever arrives.
+  defp hear_unfinished_images(state) do
+    for native <- GeneratedImages.generating(state) do
+      heard = unshown_item(state.turn.ids, %{"type" => "imageGeneration", "id" => native})
+      observe_item(state, "inProgress", %{heard | "status" => "inProgress"})
+    end
+
+    state
+  end
+
+  # An item of `@unshown` as plugins hear it, under the id its turn item would have.
+  defp unshown_item(ids, %{"type" => type, "id" => native} = item) do
+    {item_type, tool} = @unshown[type]
+
+    %{
+      "id" => "turn-item:#{Entities.driver(ids)}:#{native}",
+      "type" => item_type,
+      "toolName" => tool,
+      "status" => if(item["status"] == "failed", do: "failed", else: "completed")
+    }
+  end
+
+  # The goal's use (a `/goal` command, or the agent setting or updating it), as plugins
+  # that hear turns hear it: no thread shows it as a call.
+  defp goal_item(run),
+    do: %{
+      "id" => "turn-item:codex:goal:#{run}",
+      "type" => "goal",
+      "toolName" => "update_goal",
+      "status" => "completed"
+    }
 
   # The MCP app a tool item names is read from its server off the runtime: a slow
   # server must not hold a Stop, an approval or the turn's streamed text behind
