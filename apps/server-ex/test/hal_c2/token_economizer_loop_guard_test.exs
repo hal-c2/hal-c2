@@ -392,13 +392,22 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       failed_edit = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "not found", 1, opts)
       assert elem(failed_edit, 1) != nil
 
-      # The run checked the code before the edit after it, not the edit.
-      cmd = "pytest -q && sed -i 's/a/b/' a.py"
-      assert elem(Turn.fold(g, "Bash", %{"command" => cmd}, passing, 0, opts), 1) != nil
-
-      # The edit before the run is what it checked.
-      cmd = "sed -i 's/a/b/' a.py && pytest -q"
-      assert {_, nil, nil} = Turn.fold(g, "Bash", %{"command" => cmd}, passing, 0, opts)
+      # The run checked the code before the edit after it, not the edit, whatever joins
+      # them; the edit before the run is what it checked.
+      for {run_first, edit_first} <- [
+            {"pytest -q && sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py && pytest -q"},
+            {"pytest -q; sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py; pytest -q"},
+            {"pytest -q || sed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py || pytest -q"},
+            {"pytest -q | tee log && sed -i 's/a/b/' a.py",
+             "sed -i 's/a/b/' a.py && pytest -q | tee log"},
+            {"(pytest -q) && (sed -i 's/a/b/' a.py)", "(sed -i 's/a/b/' a.py) && (pytest -q)"},
+            {"pytest -q\nsed -i 's/a/b/' a.py", "sed -i 's/a/b/' a.py\npytest -q"}
+          ] do
+        unchecked = Turn.fold(g, "Bash", %{"command" => run_first}, passing, 0, opts)
+        assert elem(unchecked, 1) != nil, run_first
+        checked = Turn.fold(g, "Bash", %{"command" => edit_first}, passing, 0, opts)
+        assert {_, nil, nil} = checked, edit_first
+      end
     end
 
     test "with no redirects left is offered a stop straight away" do
