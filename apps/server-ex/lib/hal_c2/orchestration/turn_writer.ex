@@ -999,6 +999,8 @@ defmodule HalC2.Orchestration.TurnWriter do
         do: opts[:ended],
         else: MapSet.union(MapSet.new(opts[:ended] || []), held(stream, run_id))
 
+    ended = unless_later(ended, stream, run_id)
+
     # First, so a child thread the store refuses leaves the run to be tried again.
     if active?(stream, run_id) or not keep?,
       do: NativeSubagent.settle_run_children(thread_id, run_id, status, at, ended, keep?)
@@ -1080,7 +1082,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   # cold), and background items in memory with their nodes, as `{kind, id}`s. A later
   # run's is a later runtime's: the run's first end can start the next before a try
   # after it ends what its own runtime took. So is a subagent a later run resumed
-  # (`NativeSubagent.resume/3`), whatever run started it.
+  # (`NativeSubagent.run/1`), whatever run started it.
   defp held(stream, run_id) do
     runs = StreamState.get(stream, "run")
     own = runs[run_id] || %{}
@@ -1097,14 +1099,13 @@ defmodule HalC2.Orchestration.TurnWriter do
     {own_subagents, elsewhere} =
       StreamState.get(stream, "subagent")
       |> Enum.split_with(fn {_id, sub} ->
-        sub["origin"] == "provider_native" and
-          (sub["resumedRunId"] || sub["runId"]) in of_instance
+        sub["origin"] == "provider_native" and NativeSubagent.run(sub) in of_instance
       end)
 
     subagents =
       for {id, %{"status" => status}} <- own_subagents,
           status in @open,
-          key <- [{"subagent", id}, {"node", id}, {"turn-item", "turn-item:subagent:#{id}"}],
+          key <- NativeSubagent.keys(id),
           do: key
 
     elsewhere = MapSet.new(elsewhere, &elem(&1, 0))
@@ -1122,6 +1123,22 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   defp later?(ordinal, than) when is_integer(ordinal) and is_integer(than), do: ordinal > than
   defp later?(_ordinal, _than), do: false
+
+  # The work among `keys`, the `{kind, id}`s a runtime of run `run_id` ended, that no
+  # later run drives now: a subagent a later run resumed is that run's runtime's
+  # (`NativeSubagent.run/1`), whatever an end of this run kept for it.
+  defp unless_later(nil, _stream, _run_id), do: nil
+
+  defp unless_later(keys, stream, run_id) do
+    runs = StreamState.get(stream, "run")
+    own = (runs[run_id] || %{})["ordinal"]
+    driven = NativeSubagent.driven(stream)
+
+    for key <- keys,
+        not later?((runs[driven[key]] || %{})["ordinal"], own),
+        into: MapSet.new(),
+        do: key
+  end
 
   @doc """
   Records how provider turn `id` of `thread_id` ended after its run did: one the
@@ -1222,21 +1239,40 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   # The items, nodes, provider subagents and prompts a run left open, and its message
   # still streaming. Its root node ends with the run. A task it delegated runs on in its
-  # own thread and settles when that ends (`Delegation.finished/3`).
+  # own thread and settles when that ends (`Delegation.finished/3`). A provider
+  # subagent, its node and item are of the run that drives it now
+  # (`NativeSubagent.run/1`): one a later run resumed is left to that run, and one this
+  # run resumed is its, though an earlier run's item and node may be cold.
   defp left_open(
          stream,
-         %{"id" => run_id, "rootNodeId" => root} = run,
+         %{"id" => run_id, "rootNodeId" => root},
          status,
          at,
          ended \\ nil,
          keep? \\ true
        ) do
-    kept = if keep?, do: kept(stream, run, ended), else: MapSet.new()
+    ended = unless_later(ended, stream, run_id)
+    driven = NativeSubagent.driven(stream)
+    taken = StreamState.lookup(stream, for({key, ^run_id} <- driven, do: key))
 
-    nodes =
-      for {id, %{"runId" => ^run_id}} <- StreamState.get(stream, "node"),
-          into: MapSet.new(),
-          do: id
+    of_run =
+      Map.new(~w(turn-item node subagent message), fn kind ->
+        entities =
+          for {{^kind, id}, entity} <- taken,
+              into: StreamState.get(stream, kind),
+              do: {id, entity}
+
+        own =
+          for {id, entity} <- entities,
+              Map.get(driven, {kind, id}, entity["runId"]) == run_id,
+              into: %{},
+              do: {id, entity}
+
+        {kind, own}
+      end)
+
+    kept = if keep?, do: kept(of_run, ended), else: MapSet.new()
+    nodes = of_run["node"] |> Map.keys() |> MapSet.new()
 
     delegated =
       for {id, %{"runId" => ^run_id, "origin" => "app_owned"}} <-
@@ -1252,33 +1288,33 @@ defmodule HalC2.Orchestration.TurnWriter do
           do: id
 
     specs = [
-      {"turn-item",
-       &(&1["runId"] == run_id and &1["nodeId"] not in delegated and &1["status"] in @open and
+      {"turn-item", of_run["turn-item"],
+       &(&1["nodeId"] not in delegated and &1["status"] in @open and
            &1["requestId"] not in asked),
        %{"status" => status, "streaming" => false, "completedAt" => at, "updatedAt" => at}},
-      {"node",
-       &(&1["runId"] == run_id and &1["id"] != root and &1["id"] not in delegated and
-           &1["status"] in @open), %{"status" => status, "completedAt" => at}},
-      {"subagent",
-       &(&1["runId"] == run_id and &1["origin"] == "provider_native" and
-           &1["status"] in @open), %{"status" => status, "completedAt" => at, "updatedAt" => at}},
-      {"message", &(&1["runId"] == run_id and &1["streaming"] == true),
+      {"node", of_run["node"],
+       &(&1["id"] != root and &1["id"] not in delegated and &1["status"] in @open),
+       %{"status" => status, "completedAt" => at}},
+      {"subagent", of_run["subagent"],
+       &(&1["origin"] == "provider_native" and &1["status"] in @open),
+       %{"status" => status, "completedAt" => at, "updatedAt" => at}},
+      {"message", of_run["message"], &(&1["streaming"] == true),
        %{"streaming" => false, "updatedAt" => at}},
-      {"runtime-request",
+      {"runtime-request", StreamState.get(stream, "runtime-request"),
        &(&1["nodeId"] in nodes and &1["status"] == "pending" and not message_request?(&1)),
        %{"status" => "cancelled", "resolvedAt" => at}}
     ]
 
     open =
-      for {kind, open?, changes} <- specs,
-          {id, entity} <- StreamState.get(stream, kind),
+      for {kind, entities, open?, changes} <- specs,
+          {id, entity} <- entities,
           open?.(entity) and id not in kept,
           into: %{},
           do: {{kind, id}, changes}
 
     # The work the runtime ended, of whichever run: an earlier run's item and node may
     # be in cold storage, which `StreamState.get/2` does not read.
-    changes = Map.new(specs, fn {kind, _open?, changes} -> {kind, changes} end)
+    changes = Map.new(specs, fn {kind, _entities, _open?, changes} -> {kind, changes} end)
 
     ended =
       for {{kind, _id} = key, entity} <- StreamState.lookup(stream, ended || []),
@@ -1291,22 +1327,20 @@ defmodule HalC2.Orchestration.TurnWriter do
         do: change
   end
 
-  # Work a runtime keeps running after its turn's end (`@background_work`): the run's,
-  # open, and not among what it `ended`. The ids of its items, their nodes, and its
-  # subagents.
-  defp kept(_stream, _run, nil), do: MapSet.new()
+  # Work a runtime keeps running after its turn's end (`@background_work`): the run's
+  # (`of_run`, by kind and id), open, and not among what it `ended`. The ids of its items,
+  # their nodes, and its subagents.
+  defp kept(_of_run, nil), do: MapSet.new()
 
-  defp kept(stream, %{"id" => run_id}, ended) do
+  defp kept(of_run, ended) do
     items =
-      for {id, %{"runId" => ^run_id, "type" => type, "status" => status} = item} <-
-            StreamState.get(stream, "turn-item"),
+      for {id, %{"type" => type, "status" => status} = item} <- of_run["turn-item"],
           type in @background_work and status in @open and {"turn-item", id} not in ended,
           id <- [id, item["nodeId"]],
           do: id
 
     subagents =
-      for {id, %{"runId" => ^run_id, "origin" => "provider_native", "status" => status}} <-
-            StreamState.get(stream, "subagent"),
+      for {id, %{"origin" => "provider_native", "status" => status}} <- of_run["subagent"],
           status in @open and {"subagent", id} not in ended,
           do: id
 

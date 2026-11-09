@@ -213,6 +213,28 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
+  @doc """
+  The run whose runtime drives provider subagent `entity` now: the run that last
+  resumed it (`resume/3`), else the one that started it. A run's cleanup takes a
+  subagent, with its node and item (`keys/1`), only as this run's.
+  """
+  def run(entity), do: entity["resumedRunId"] || entity["runId"]
+
+  @doc "The `{kind, id}`s of provider subagent `id` in its parent thread: it, its node and item."
+  def keys(id), do: [{"subagent", id}, {"node", id}, {"turn-item", "turn-item:subagent:#{id}"}]
+
+  @doc """
+  The run that drives each provider subagent of thread `state` now (`run/1`), by each
+  of its `keys/1`: where a run's cleanup reads which run records are of, these read
+  as of that run, whatever run started them.
+  """
+  def driven(state) do
+    for {id, %{"origin" => "provider_native"} = entity} <- StreamState.get(state, "subagent"),
+        key <- keys(id),
+        into: %{},
+        do: {key, run(entity)}
+  end
+
   @doc "Appends streamed answer text to the subagent's child thread."
   def append(sub, ""), do: sub
 
@@ -489,11 +511,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
   Ends the still-running work in the child threads of the provider subagents of
   `thread_id`'s run `run_id`, each as its subagent ended or as `status`: for a run
   ended from the thread's record (`TurnWriter.abandon/5`), whose runtime's own end of
-  them the store refused or that crashed before it. With `ended`, the `{kind, id}`s
-  that runtime ended, the subagents it ended are settled whichever run they are of
-  (one it resumed), and the run's it keeps running are left to it, unless `keep?` is
-  false (the runtime went, and its app-server with them). A child thread the store
-  refuses raises.
+  them the store refused or that crashed before it. The run's subagents are those it
+  drives now (`run/1`): one a later run resumed is that run's. With `ended`, the
+  `{kind, id}`s that runtime ended, less any a later run drives now, the subagents it
+  ended are settled whichever run they are of (one it resumed), and the run's it keeps
+  running are left to it, unless `keep?` is false (the runtime went, and its
+  app-server with them). A child thread the store refuses raises.
   """
   def settle_run_children(thread_id, run_id, status, at, ended \\ nil, keep? \\ true) do
     for subagent <- StreamState.list(stream(thread_id), "subagent"),
@@ -506,12 +529,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
     :ok
   end
 
-  defp settles?(subagent, run_id, nil, _keep?), do: subagent["runId"] == run_id
+  defp settles?(subagent, run_id, nil, _keep?), do: run(subagent) == run_id
 
   defp settles?(%{"id" => id} = subagent, run_id, ended, keep?),
     do:
       {"subagent", id} in ended or
-        (subagent["runId"] == run_id and (not keep? or subagent["status"] in @terminal))
+        (run(subagent) == run_id and (not keep? or subagent["status"] in @terminal))
 
   # Work still open in the child thread (a tool call, the progress) ends with it.
   defp settle_child(sub, status, at) do

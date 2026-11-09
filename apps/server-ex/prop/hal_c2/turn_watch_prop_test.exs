@@ -27,8 +27,9 @@ defmodule HalC2.TurnWatchPropTest do
   settles the work in the subagents' threads is the one that ends the run, so they
   read alike, and so is one the store refused after those threads took it, ahead of a
   Stop that comes once the store recovers (`late_stop/0`) (review of #1398). The next
-  run's runtime can resume a subagent an earlier run started (Claude's SendMessage)
-  before the lost runtime's last try: that try leaves it running (`recover/3`).
+  run's runtime can resume a subagent an earlier run started (Claude's SendMessage),
+  the lost run itself among them, before the lost runtime's last try: that try leaves
+  it, its records and the work in its thread running (`recover/3`).
 
   TurnWatch's mailbox is traced, so each step waits on the messages it receives (a
   runtime's `:DOWN`, a try's answer, a state read) rather than on time.
@@ -163,10 +164,11 @@ defmodule HalC2.TurnWatchPropTest do
   defp ended([]), do: []
   defp ended(open), do: let(ids <- resize(3, list(oneof(open))), do: Enum.uniq(ids))
 
-  # Provider subagents an earlier end failed, which a later run can resume.
+  # Provider subagents the next run can resume once the held end records: those an
+  # earlier end failed, and those that end fails, its own run's among them.
   defp resumable(state) do
     state.work
-    |> Enum.filter(&match?({_, %{kind: :native, status: :failed}}, &1))
+    |> Enum.filter(&match?({_, %{kind: :native}}, &1))
     |> Enum.map(&elem(&1, 0))
     |> ended()
   end
@@ -208,7 +210,7 @@ defmodule HalC2.TurnWatchPropTest do
   def precondition(state, {:call, _, :recover, [_at, _next, resumed]}),
     do:
       state.refusing and state.runtime != nil and driving(state) == :held and
-        Enum.all?(resumed, &match?(%{kind: :native, status: :failed}, state.work[&1]))
+        Enum.all?(resumed, &match?(%{kind: :native}, state.work[&1]))
 
   def precondition(state, {:call, _, :late_stop, []}),
     do: late_stop?(state) and driving(state) == nil
@@ -344,17 +346,13 @@ defmodule HalC2.TurnWatchPropTest do
            (IO.puts("the subagents' threads read #{inspect(children)}") && false))
 
   # And the work in each subagent's thread reads as the subagent does.
-  def postcondition(state, {:call, _, :late_stop, []} = call, {observed, children}) do
-    expected =
-      for {id, %{kind: :native, status: status}} <- next_state(state, nil, call).work,
-          into: %{},
-          do: {id, Atom.to_string(status)}
+  def postcondition(state, {:call, _, :late_stop, []} = call, {observed, children}),
+    do:
+      postcondition(state, {:call, __MODULE__, :accept, []}, observed) and
+        children?(next_state(state, nil, call), children)
 
-    postcondition(state, {:call, __MODULE__, :accept, []}, observed) and
-      (children == expected or
-         (IO.puts("the subagents' threads read #{inspect(children)}, not #{inspect(expected)}") &&
-            false))
-  end
+  def postcondition(state, {:call, _, :recover, _} = call, {observed, children}),
+    do: postcondition(state, call, observed) and children?(next_state(state, nil, call), children)
 
   def postcondition(state, call, observed) do
     expected = expected(next_state(state, nil, call))
@@ -363,6 +361,17 @@ defmodule HalC2.TurnWatchPropTest do
       (IO.puts(
          "expected #{inspect(expected, pretty: true)}\nobserved #{inspect(observed, pretty: true)}"
        ) &&
+         false)
+  end
+
+  defp children?(state, children) do
+    expected =
+      for {id, %{kind: :native, status: status}} <- state.work,
+          into: %{},
+          do: {id, Atom.to_string(status)}
+
+    children == expected or
+      (IO.puts("the subagents' threads read #{inspect(children)}, not #{inspect(expected)}") &&
          false)
   end
 
@@ -425,17 +434,7 @@ defmodule HalC2.TurnWatchPropTest do
     :ok = TurnWriter.abandon(@tid, run, "interrupted", nil)
     :global.del_lock(lock, [node()])
     drain()
-
-    children =
-      for {id, :native} <- Process.get({__MODULE__, :work}, %{}),
-          into: %{},
-          do:
-            {id,
-             HalC2.Streams.state(child_id(id))
-             |> StreamState.get("turn-item")
-             |> get_in([child_item(id), "status"])}
-
-    {observe(), children}
+    {observe(), children()}
   end
 
   # The live runtime starts the next run and claims it, a new runtime if none lives.
@@ -624,7 +623,7 @@ defmodule HalC2.TurnWatchPropTest do
     :sys.resume(watch)
     drain()
     if claim, do: :ok = answer(claim)
-    observe()
+    {observe(), children()}
   end
 
   # --- the store -----------------------------------------------------------------
@@ -789,6 +788,17 @@ defmodule HalC2.TurnWatchPropTest do
       claimed: MapSet.new(Map.keys(claims)),
       monitors: length(monitors)
     }
+  end
+
+  # How the work in each provider subagent's thread reads, by its piece's id.
+  defp children do
+    for {id, :native} <- Process.get({__MODULE__, :work}, %{}),
+        into: %{},
+        do:
+          {id,
+           HalC2.Streams.state(child_id(id))
+           |> StreamState.get("turn-item")
+           |> get_in([child_item(id), "status"])}
   end
 
   # Waits until no try at recording a held end is running; with the store taking writes,

@@ -81,6 +81,48 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
   # `lost:`). Before that try, the next run's runtime resumed a subagent an earlier
   # run started (Claude's SendMessage), and the try ended it under that runtime.
   test "a lost runtime's end leaves the subagent a later run resumed running" do
+    resumed_subagent(%{1 => "completed", 2 => "failed", 3 => "running"}, "run-1", "run-3")
+
+    # The lost runtime drove run 2, whose end already recorded.
+    assert :ok = TurnWriter.abandon("p", "run-2", "failed", "gone", lost: true)
+
+    assert_running("run-1")
+  end
+
+  # Review of #1398: the try of the run that started the subagent took it by the run it
+  # was recorded under, as did the work its runtime had ended, which an end the store
+  # refused keeps for the tries after it (`TurnWatch.ending/2`).
+  for ended? <- [false, true] do
+    test "the lost end of the run that started a subagent leaves it to the run that resumed it (ended: #{ended?})" do
+      resumed_subagent(%{1 => "failed", 2 => "running"}, "run-1", "run-2")
+      ended = if unquote(ended?), do: [ended: NativeSubagent.keys("sub")], else: []
+
+      assert :ok = TurnWriter.abandon("p", "run-1", "failed", "gone", [lost: true] ++ ended)
+
+      assert_running("run-1")
+    end
+  end
+
+  # And an end of the run that resumed it ends it as that run's, whatever run started it.
+  test "the end of the run that resumed a subagent ends it" do
+    resumed_subagent(%{1 => "failed", 2 => "running"}, "run-1", "run-2")
+
+    assert :ok = TurnWriter.abandon("p", "run-2", "failed", "gone")
+
+    parent = HalC2.Streams.state("p")
+    assert %{"status" => "failed"} = StreamState.get(parent, "subagent")["sub"]
+    assert %{"status" => "failed"} = StreamState.get(parent, "node")["sub"]
+
+    assert %{"status" => "failed"} =
+             StreamState.get(parent, "turn-item")["turn-item:subagent:sub"]
+
+    assert %{"status" => "failed"} =
+             StreamState.get(HalC2.Streams.state("c"), "turn-item")["turn-item:claudeAgent:cmd-1"]
+  end
+
+  # Thread "p" with runs of `statuses` by ordinal, and a provider subagent run `origin`
+  # started and ended, which run `resumer` resumed: it runs a command in its thread "c".
+  defp resumed_subagent(statuses, origin, resumer) do
     run = fn ordinal, status ->
       id = "run-#{ordinal}"
 
@@ -97,36 +139,38 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
        }}
     end
 
-    done = %{"runId" => "run-1", "status" => "completed", "completedAt" => @at}
+    done = %{"runId" => origin, "status" => "completed", "completedAt" => @at}
 
     {:ok, _} =
-      HalC2.Streams.commit("p", :thread, [
-        {"thread", "p", %{"s" => %{"id" => "p", "title" => "p"}}},
-        run.(1, "completed"),
-        run.(2, "failed"),
-        run.(3, "running"),
-        {"subagent", "sub",
-         %{
-           "s" =>
-             Map.merge(done, %{
-               "id" => "sub",
-               "threadId" => "p",
-               "origin" => "provider_native",
-               "childThreadId" => "c",
-               "nativeTaskRef" => %{"nativeId" => "task-1"}
-             })
-         }},
-        {"node", "sub", %{"s" => Map.put(done, "id", "sub")}},
-        {"turn-item", "turn-item:subagent:sub",
-         %{
-           "s" =>
-             Map.merge(done, %{
-               "id" => "turn-item:subagent:sub",
-               "type" => "subagent",
-               "nodeId" => "sub"
-             })
-         }}
-      ])
+      HalC2.Streams.commit(
+        "p",
+        :thread,
+        [{"thread", "p", %{"s" => %{"id" => "p", "title" => "p"}}}] ++
+          Enum.map(statuses, fn {ordinal, status} -> run.(ordinal, status) end) ++
+          [
+            {"subagent", "sub",
+             %{
+               "s" =>
+                 Map.merge(done, %{
+                   "id" => "sub",
+                   "threadId" => "p",
+                   "origin" => "provider_native",
+                   "childThreadId" => "c",
+                   "nativeTaskRef" => %{"nativeId" => "task-1"}
+                 })
+             }},
+            {"node", "sub", %{"s" => Map.put(done, "id", "sub")}},
+            {"turn-item", "turn-item:subagent:sub",
+             %{
+               "s" =>
+                 Map.merge(done, %{
+                   "id" => "turn-item:subagent:sub",
+                   "type" => "subagent",
+                   "nodeId" => "sub"
+                 })
+             }}
+          ]
+      )
 
     {:ok, _} =
       HalC2.Streams.commit("c", :thread, [
@@ -134,7 +178,7 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
       ])
 
     entity = StreamState.get(HalC2.Streams.state("p"), "subagent")["sub"]
-    ids = %{thread: "p", run: "run-3", driver: "claudeAgent", instance: "claudeAgent"}
+    ids = %{thread: "p", run: resumer, driver: "claudeAgent", instance: "claudeAgent"}
     NativeSubagent.resume(ids, entity, "go on")
 
     command = %{
@@ -146,13 +190,13 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
 
     {:ok, _} =
       HalC2.Streams.commit("c", :thread, [{"turn-item", command["id"], %{"s" => command}}])
+  end
 
-    # The lost runtime drove run 2, whose end already recorded.
-    assert :ok = TurnWriter.abandon("p", "run-2", "failed", "gone", lost: true)
-
+  # The subagent, its node and item, and the command in its thread all still run.
+  defp assert_running(origin) do
     parent = HalC2.Streams.state("p")
 
-    assert %{"status" => "running", "runId" => "run-1"} =
+    assert %{"status" => "running", "runId" => ^origin} =
              StreamState.get(parent, "subagent")["sub"]
 
     assert %{"status" => "running"} = StreamState.get(parent, "node")["sub"]
@@ -161,6 +205,6 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
              StreamState.get(parent, "turn-item")["turn-item:subagent:sub"]
 
     assert %{"status" => "running"} =
-             StreamState.get(HalC2.Streams.state("c"), "turn-item")[command["id"]]
+             StreamState.get(HalC2.Streams.state("c"), "turn-item")["turn-item:claudeAgent:cmd-1"]
   end
 end
