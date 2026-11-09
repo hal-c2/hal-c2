@@ -168,7 +168,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
              app/Http/Controllers/Api/V1/UserController 550e8400-e29b-41d4-a716-446655440000
              TestParseV2ConfigWithDefaults -Dtest=ParseV2ConfigurationIntegrationTest
              testHandlesUtf8InputCorrectly TestHTTPServerV2Handler TestParseJSONConfigV2Defaults
-             TestOAuth2TokenRefreshFlow) do
+             TestOAuth2TokenRefreshFlow TestLRUCacheEvictsFIFOOrder TestDialIPv6LoopbackOverTCP
+             shouldReturn404WhenIdIsMissing) do
       refute Observe.secret_value?(value), value
       refute Observe.secret_value?("node #{value} x.js"), value
     end
@@ -201,7 +202,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
 
   # Go, Java and Jest test names, made from words, acronyms with their
   # versions, two-letter words and a number, against random base62 tokens of
-  # 20 to 40 characters: no name is taken for a credential and every token is.
+  # 20 to 40 characters: no name is taken for a credential and every one of
+  # five thousand tokens is.
   # Seeded, so a case either side gets wrong is found here and stays found.
   test "generated test names are not credentials, generated tokens are" do
     :rand.seed(:exsss, {1407, 847, 2})
@@ -248,7 +250,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
         for _ <- 1..(19 + :rand.uniform(21)), into: "", do: <<pick.(alphabet)>>
       end)
       |> Stream.filter(&(&1 =~ ~r/\d/ and &1 =~ ~r/[A-Za-z]/))
-      |> Enum.take(100)
+      |> Enum.take(5000)
 
     for token <- tokens, do: assert(Observe.secret_value?(token), token)
   end

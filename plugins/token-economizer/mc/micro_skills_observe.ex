@@ -962,39 +962,95 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
   # A camelCase or PascalCase name (`TestHTTPServerV2Handler`,
   # `shouldReturn404WhenIdIsMissing`): split where a word starts, after a
-  # lowercase letter or digit or at an acronym's last capital, every piece is
-  # an acronym or two run together, with a version (`HTTP`, `V2`, `UTF8`,
-  # `K8s`, `JSONAPI`), a word with its digits (`Parse`, `Auth2`, `Pv6`) or a
-  # two-letter word (`At`, `is`). Two words of two or more lowercase letters
-  # hold at least half its letters, no more of them lack a vowel (`Ctx`,
-  # `Http`) than have one, and its digits sit in three places at most. A random
-  # token rarely passes all of that: about one in five hundred base62 tokens of
-  # 20 to 40 characters does, and as many generated test names fail it.
+  # lowercase letter or digit or at an acronym's last capital, every piece
+  # looks like a word. It is an acronym of four capitals at most, or known
+  # acronyms run together, with a version (`HTTP`, `V2`, `UTF8`, `K8s`), a
+  # word with its digits (`Parse`, `Auth2`) or a two-letter word (`At`,
+  # `is`); a mixed-case term (`IPv6`, `OAuth`) is one word. A word of three or
+  # more letters has a vowel or `y`, no four consonants in a row (a digraph is
+  # one) and no letter pair English never writes (`qz`, `jx`), unless it is a
+  # common abbreviation (`Ctx`, `Http`). Two words of two or more lowercase
+  # letters hold at least half its letters, no more of them lack a vowel than
+  # have one, its digits sit in three places at most, and at most two pieces
+  # are neither a word nor a known acronym (`V2`, `LRU`), one of them an
+  # unknown acronym. Keeping a credential is worse than redacting a name, so
+  # random base62 tokens of 20 to 40 characters never pass.
   @camel_split ~r/(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/
   @two_letter_words ~w(am an as at be by do go if in is it me my no of on or so to up us we id ok)
+  @abbreviations ~w(ctx cfg msg http html grpc src dst cmd pkg lib tmp std fmt str len mgr svc req
+                    res txn png jpg sql xml rpc cb fn)
+
+  @mixed_case_terms ~r/IPv(?=\d)|OAuth|GraphQL|MySQL|PostgreSQL|NoSQL|macOS|iOS/
+
+  @unwritten_pairs ~w(bk bq cj cw dx fq fv fx gq gv gx hj hx hz jb jc jd jf jg jh jj jk jl jm jn jp
+                      jq jr jt jw jx jy jz kq kx kz lq mg mz pq px qb qd qf qh qi qj qk ql qm qn qo
+                      qp qq qr qs qt qv qy qz tq tx vf vg vm vn vq vt vw vx wq wv xj xk xz zc zj zq)
+                   |> Enum.join("|")
+                   |> Regex.compile!()
 
   defp camel_words?(run) do
-    pieces = Regex.split(@camel_split, run)
+    pieces = Regex.split(@camel_split, Regex.replace(@mixed_case_terms, run, "Term"))
     words = Enum.filter(pieces, &(lowercase(&1) >= 2))
     {voiced, mute} = Enum.split_with(words, &Regex.match?(~r/[aeiouy]/, &1))
 
     Enum.all?(pieces, &camel_piece?/1) and length(words) >= 2 and
       2 * letters(words) >= letters(pieces) and length(mute) <= length(voiced) and
-      length(Regex.scan(~r/\d+/, run)) <= 3
+      length(Regex.scan(~r/\d+/, run)) <= 3 and Enum.count(pieces, &odd_piece?/1) <= 2 and
+      Enum.count(pieces, &(odd_piece?(&1) and Regex.match?(~r/^[A-Z]{2}/, &1))) <= 1
+  end
+
+  # A piece of fewer than two lowercase letters that is no known acronym and
+  # no two-letter word: a lone capital (`V2`), an unknown acronym (`LRU`).
+  defp odd_piece?(piece) do
+    known =
+      case Regex.run(~r/^([A-Z]{2,})(?:\d+s?)?$/, piece) do
+        [_, caps] -> known_acronyms?(caps)
+        _ -> false
+      end
+
+    lowercase(piece) < 2 and not known and String.downcase(piece) not in @two_letter_words
   end
 
   defp camel_piece?(piece) do
-    Regex.match?(~r/^[A-Z]{1,8}(?:\d+[a-z]?)?$/, piece) or
+    acronym?(piece) or
       (Regex.match?(~r/^[A-Za-z][a-z]{2,}\d*$/, piece) and spoken?(piece)) or
-      Regex.match?(~r/^[A-Za-z][a-z]\d+$/, piece) or
+      (Regex.match?(~r/^[A-Za-z][a-z]\d+$/, piece) and
+         not Regex.match?(@unwritten_pairs, String.downcase(piece))) or
       String.downcase(piece) in @two_letter_words
   end
 
-  # A word of four or more lowercase letters has a vowel and no run of five
-  # consonants; a shorter one may be an abbreviation (`Ctx`, `Http`).
+  # Four capitals at most, or acronyms run together (`TLSURL`), with a
+  # version.
+  defp acronym?(piece) do
+    case Regex.run(~r/^([A-Z]+)(?:\d+s?)?$/, piece) do
+      [_, caps] -> String.length(caps) <= 4 or known_acronyms?(caps)
+      _ -> false
+    end
+  end
+
+  @acronyms ~w(ACL AES AI API AST AWS CDN CI CLI CORS CPU CRUD CSRF CSS CSV DB DNS DOM DTO EOF FIFO FS
+               GC GCP GCS GPU GRPC HMAC HTML HTTP HTTPS IAM ID IO IP IPC JS JSON JWT KMS KV LDAP LLM LRU
+               MD MFA ML OAUTH OIDC OOM ORM OS OTP PDF PID PNG PR RAM REST RPC RSA SDK SHA SMTP SQL SQS
+               SSH SSL SSO SVG TCP TLS TS TTL TTY UDP UI URI URL UTC UTF UUID UX VM VPC WS XML XSS YAML)
+
+  defp known_acronyms?(""), do: true
+
+  defp known_acronyms?(caps),
+    do:
+      Enum.any?(
+        @acronyms,
+        &(String.starts_with?(caps, &1) and known_acronyms?(String.replace_prefix(caps, &1, "")))
+      )
+
+  # A word has a vowel or `y` and no run of four consonants, a digraph
+  # counting as one (`Benchmark`), or is a common abbreviation.
   defp spoken?(word) do
-    lowercase(word) <= 3 or
-      (Regex.match?(~r/[aeiouy]/i, word) and not Regex.match?(~r/[^aeiouy\d]{5}/i, word))
+    letters = word |> String.replace(~r/\d+$/, "") |> String.downcase()
+    sounds = String.replace(letters, ~r/ch|ck|gh|ng|ph|sh|th|wh/, "c")
+
+    letters in @abbreviations or
+      (Regex.match?(~r/[aeiouy]/, letters) and not Regex.match?(~r/[^aeiouy]{4}/, sounds) and
+         not Regex.match?(@unwritten_pairs, letters))
   end
 
   defp lowercase(text), do: length(Regex.scan(~r/[a-z]/, text))
