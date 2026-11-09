@@ -3056,6 +3056,42 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi's wake says something, then compacts for longer than the scenario runs; its run
+  # waits (`hold_wakes/1`), so the output stays buffered for the turn that takes it.
+  step "a Pi extension has woken Pi, which compacts after its first words", context do
+    wake = %{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [%{"text" => "Working on the extension's task."}, %{"compactFor" => 600}]
+    }
+
+    context
+    |> hold_wakes()
+    |> install(%{
+      "turns" => [
+        %{"match" => "second", "steps" => [%{"text" => "Second done."}], "wake" => wake}
+        | FakeAcp.pi_turns()
+      ],
+      "rejectWhileCompacting" => true
+    })
+    |> FakeAcp.thread()
+    |> turn("first")
+    |> turn("second")
+    |> held_wake()
+  end
+
+  step "the run shows the wake's work while its prompt waits", context do
+    run = World.latest_run(context, context.thread)
+
+    # The wake's words, replayed into the run (its text still buffered).
+    assert Enum.any?(
+             StreamState.list(state(context), "message"),
+             &(&1["runId"] == run["id"] and &1["role"] == "assistant")
+           )
+
+    refute Enum.any?(FakeAcp.log(context), &match?(%{"accepted" => "back on Pi"}, &1))
+    context
+  end
+
   step "a Pi extension shows the warning {string}", %{args: [warning]} = context do
     event_thread(
       context,

@@ -1550,12 +1550,14 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp take_wake(%{wake: %{open: true} = wake} = state) do
     {taken, cut} = Enum.split_while(wake.buffer || [], &(&1 != :exited))
 
+    # What Pi did by itself is not Pi taking the prompt: it confirms no handoff.
+    replaying = Map.merge(state, %{turn_active: true, replaying: true})
+
     state =
       taken
       |> Enum.reverse()
-      |> Enum.reduce(%{state | turn_active: true}, fn {type, event}, state ->
-        event(type, event, state)
-      end)
+      |> Enum.reduce(replaying, fn {type, event}, state -> event(type, event, state) end)
+      |> Map.delete(:replaying)
 
     {%{state | wake: if(cut != [], do: %{wake | open: false, buffer: cut})}, true}
   end
