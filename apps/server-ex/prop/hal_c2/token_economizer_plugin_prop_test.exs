@@ -26,8 +26,9 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     was heard whole, never when the next turn's start closes it; one heard whole that
     completed with nothing but passing checks does. A turn is heard whole unless it was
     under way when the feed said it missed events, or one of its events came in the
-    window that report opens: the reported event and those the feed had waiting. A
-    restart opens such a window over every event the feed still holds.
+    window that report opens: the reported event and those the feed had waiting, heard
+    while on or off. A restart opens such a window over every event the feed still
+    holds.
 
   `prop/hal_c2/token_economizer_prop_test.exs` runs one turn's guard;
   `proof/hal_c2/token_economizer_loop_guard_proof_test.exs` explores the turns, the
@@ -235,12 +236,11 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
 
   def next_state(state, _result, _call), do: state
 
-  # An event of thread `t`, heard while on: a report of missed events marks the turns
-  # under way partial and opens a window over the reported event and those waiting
-  # behind it; `hear` applies the event; each event in the window marks its thread's
-  # turn partial.
-  defp heard(%{mode: "off"} = state, _t, _dropped, _hear), do: state
-
+  # An event of thread `t`: a report of missed events marks the turns under way partial
+  # and opens a window over the reported event and those waiting behind it; `hear`
+  # applies the event, only while on; each event in the window marks its thread's turn
+  # partial. Turned off, the process watches no turn, but the window still runs over
+  # the events it hears, so a turn that starts in it once on again is partial.
   defp heard(state, t, dropped, hear) do
     state =
       if dropped == false,
@@ -251,7 +251,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
             missing: max(state.missing, dropped + 1)
         }
 
-    state = hear.(state)
+    state = if state.mode == "off", do: state, else: hear.(state)
 
     cond do
       state.missing == 0 -> state

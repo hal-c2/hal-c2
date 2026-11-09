@@ -190,15 +190,12 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   def handle_call(:status, _from, state), do: {:reply, status(state), state}
 
+  # Off, the guard hears no turn, but the window a report of missed events opens still
+  # runs over the events heard, so a turn that starts in it once on again is partial.
   def handle_call({:observe, event}, _from, state) do
-    state =
-      if on?(state) do
-        state |> missed(event) |> hear(event) |> suspect(event)
-      else
-        state
-      end
-
-    {:reply, :ok, state}
+    state = missed(state, event)
+    state = if on?(state), do: hear(state, event), else: state
+    {:reply, :ok, suspect(state, event)}
   end
 
   @impl GenServer

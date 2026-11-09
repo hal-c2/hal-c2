@@ -963,6 +963,18 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute state.turns["d"].partial
     end
 
+    test "keep the window a report of missed events opens while off" do
+      {:ok, state} = TokenEconomizer.init(%{"loopGuard" => "off"})
+      # Turned off, the guard hears a report with a turn's start still waiting behind it.
+      state = observe(state, %{"type" => "noop", "dropped" => 2, "waiting" => 1})
+      {:reply, :ok, state} = TokenEconomizer.handle_call({:settings, %{}}, nil, state)
+      state = observe(state, started("a"))
+      assert state.turns["a"].partial
+
+      state = observe(state, started("b"))
+      refute state.turns["b"].partial
+    end
+
     test "after a restart, take every event the feed still holds as possibly before missed ones" do
       # This process stands in for the plugin's feed, still running, with three events
       # queued: the report of missed events went to the process that went down. No
