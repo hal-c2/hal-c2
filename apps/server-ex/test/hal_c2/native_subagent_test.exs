@@ -103,6 +103,37 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
     end
   end
 
+  # Review of #1398 (Copilot): the end read the thread of every provider subagent the
+  # thread ever had before it asked which run drives it, and again on each try the
+  # store refused. Subagents of earlier runs are none of its business, and their
+  # threads stay closed.
+  for opts <- [[], [lost: true], [ended: [{"node", "other"}]]] do
+    test "the end of a run leaves the threads of earlier runs' subagents unread (#{inspect(opts)})" do
+      subagent(%{1 => "completed", 2 => "running"}, "run-1")
+
+      stale = %{
+        "id" => "turn-item:claudeAgent:cmd-1",
+        "type" => "command_execution",
+        "status" => "running",
+        "createdAt" => @at
+      }
+
+      {:ok, _} = HalC2.Streams.commit("c", :thread, [{"turn-item", stale["id"], %{"s" => stale}}])
+      HalC2.Streams.stop("c")
+      refute open?("c")
+
+      assert :ok = TurnWriter.abandon("p", "run-2", "failed", "gone", unquote(opts))
+
+      refute open?("c")
+
+      assert %{"status" => "completed"} =
+               StreamState.get(HalC2.Streams.state("p"), "subagent")["sub"]
+
+      assert %{"status" => "running"} =
+               StreamState.get(HalC2.Streams.state("c"), "turn-item")[stale["id"]]
+    end
+  end
+
   # And an end of the run that resumed it ends it as that run's, whatever run started it.
   test "the end of the run that resumed a subagent ends it" do
     resumed_subagent(%{1 => "failed", 2 => "running"}, "run-1", "run-2")
@@ -238,6 +269,10 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
     {:ok, _} =
       HalC2.Streams.commit("c", :thread, [{"turn-item", command["id"], %{"s" => command}}])
   end
+
+  # Whether stream `id`'s server runs: the registry forgets one a moment after it stops.
+  defp open?(id),
+    do: Enum.any?(Registry.lookup(HalC2.Streams.Registry, id), &Process.alive?(elem(&1, 0)))
 
   # The subagent, its node and item, and the command in its thread all still run.
   defp assert_running(origin) do

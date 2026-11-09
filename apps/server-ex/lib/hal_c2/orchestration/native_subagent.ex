@@ -524,9 +524,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
   of a run whose resume this does not see is not among it.
   """
   def settle_run_children(thread_id, run_id, status, at, ended \\ nil, keep? \\ true) do
-    for %{"id" => id, "origin" => "provider_native", "childThreadId" => child} <-
+    for %{"id" => id, "origin" => "provider_native", "childThreadId" => child} = subagent <-
           StreamState.list(stream(thread_id), "subagent"),
         is_binary(child),
+        # Only the run's own or the ones its runtime ended can settle: a subagent passes
+        # from a run only to a later one, so no other's thread is read.
+        run(subagent) == run_id or (ended != nil and {"subagent", id} in ended),
         # Its thread's work, then the subagent as it stands after it.
         open = running(child),
         parent = stream(thread_id),
