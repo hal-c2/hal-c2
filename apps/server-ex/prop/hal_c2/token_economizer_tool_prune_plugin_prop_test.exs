@@ -195,6 +195,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       down: [],
       corrupt_strays: [],
       up: [],
+      apply_elsewhere: [nil],
+      apply_elsewhere: ["claudeAgent"],
+      down: [],
+      up: [],
       start: ["b", "r2", 1, true, true],
       finish: ["b", "r2", 1],
       apply_tools: [["CronCreate"]],
@@ -233,6 +237,11 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     ])
 
     grant(true)
+    # The project's evidence is kept from the start, empty, so a person's call on it
+    # acts on it, however little the plugin heard yet (`apply_elsewhere/1` fails).
+    path = TokenEconomizer.toolprune_path(@project)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "{}")
     Process.put(:mode, "propose")
     start_plugin()
   end
@@ -372,6 +381,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       {1, {:call, __MODULE__, :mode, [elements(~w(off propose auto))]}},
       {2, {:call, __MODULE__, :apply_tools, [tools]}},
       {1, {:call, __MODULE__, :restore, [tools]}},
+      {1, {:call, __MODULE__, :apply_elsewhere, [elements([nil, @provider])]}},
       s.up and {1, {:call, __MODULE__, :down, []}},
       not s.up and {3, {:call, __MODULE__, :up, []}},
       {1, {:call, __MODULE__, :history, [not s.history]}},
@@ -543,10 +553,11 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       |> Map.update!(:runs, &(&1 + 1))
 
     # Its turn names its project, which the uses heard with none are then the evidence
-    # of; so does, as a conversation is shaped, the record of any thread that names it.
+    # of; so does, as a conversation is shaped, the record of any thread that names it,
+    # when the record can be read.
     {settled, strays} =
       Enum.split_with(s.strays, fn {t, _} ->
-        s.up and (t == thread or (new? and t in s.placed))
+        s.up and (t == thread or (new? and s.history and t in s.placed))
       end)
 
     s = %{s | strays: strays, owed: Enum.uniq(s.owed ++ Enum.map(settled, &elem(&1, 1)))}
@@ -994,6 +1005,18 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   def apply_tools(tools), do: person(:apply, tools)
   def restore(tools), do: person(:restore, tools)
+
+  # A person applies tools to a project the plugin has no evidence of, for `provider` or
+  # every provider: the call fails, and changes nothing.
+  def apply_elsewhere(provider) do
+    if plugin = Process.get(:plugin) do
+      input = %{"projectId" => "nowhere", "provider" => provider, "tools" => nil}
+      {:error, _} = call({:toolprune, :apply, Map.reject(input, fn {_, v} -> v == nil end)})
+      true = Process.get(:plugin) == plugin
+    end
+
+    snapshot()
+  end
 
   defp person(action, tools) do
     if Process.get(:plugin) do

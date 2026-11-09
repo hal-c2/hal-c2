@@ -460,14 +460,6 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     named? = is_binary(input["projectId"])
 
-    # Applying or restoring a provider's tools by hand is a person's word over the saved
-    # uses it could not read.
-    state =
-      if action != :state and named? and tools?,
-        do:
-          release_unreadable(state, if(p = input["provider"], do: [p], else: unreadable(state))),
-        else: state
-
     case prune_targets(state, input) do
       _ when action != :state and not named? ->
         {{:error, "Name the project to apply or restore tools for."}, state}
@@ -479,6 +471,13 @@ defmodule HalC2Plugins.TokenEconomizer do
         {{:error, "TokenEconomizer has no tool evidence for that project and provider."}, state}
 
       {:ok, targets, state} ->
+        # Applying or restoring a provider's tools by hand is a person's word over the
+        # saved uses it could not read: those of the providers acted on.
+        state =
+          if action == :state,
+            do: state,
+            else: release_unreadable(state, for({_, provider} <- targets, do: provider))
+
         {results, state} =
           Enum.map_reduce(targets, state, fn project, acc ->
             prune = acc.prunes[project]

@@ -995,6 +995,24 @@ defmodule HalC2.TokenEconomizerHistoryTest do
       state
     end
 
+    # A call that fails acts on nothing, so it releases nothing, now or after a restart.
+    state = corrupt.()
+
+    for {action, input} <- [
+          {:apply, %{"projectId" => "nowhere", "tools" => ["CronCreate"]}},
+          {:apply, %{"projectId" => "nowhere", "provider" => "claudeAgent"}},
+          {:restore, %{"projectId" => "nowhere"}},
+          {:apply, %{"projectId" => p, "tools" => "CronCreate"}},
+          {:apply, %{"tools" => ["CronCreate"]}}
+        ] do
+      assert {:reply, {:error, _}, after_call} =
+               TokenEconomizer.handle_call({:toolprune, action, input}, nil, state)
+
+      assert TokenEconomizer.prune_status(after_call)["unreadable"] == ["claudeAgent", "codex"]
+    end
+
+    assert TokenEconomizer.prune_status(restarted.())["unreadable"] == ["claudeAgent", "codex"]
+
     # Applying the provider's tools releases that provider's hold, across a restart.
     state = apply_tools(corrupt.(), p, ["CronCreate"])
     assert TokenEconomizer.prune_status(state)["unreadable"] == ["codex"]
