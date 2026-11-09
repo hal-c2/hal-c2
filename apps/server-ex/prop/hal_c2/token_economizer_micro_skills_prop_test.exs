@@ -449,7 +449,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
   # What each workload surely got: its own values, and those exported before
   # it that the shell passes on down a plain `&&` chain -- not an export beside
   # a pipe (its subshell loses it), nor one past a `;`, `||` or `|`, nor one
-  # unset or cleared anywhere or reassigned after it, and none where a
+  # unset anywhere, or cleared or reassigned after it, and none where a
   # subshell runs.
   defp env_received(segs) do
     seps = Enum.map(segs, &elem(&1, 1))
@@ -482,7 +482,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
       seps |> Enum.slice(i..(j - 1)//1) |> Enum.all?(&(&1 == "&&")) and
         (i == 0 or Enum.at(seps, i - 1) != "|") and
         not Enum.any?(Enum.with_index(segs), fn {{seg, _sep}, k} ->
-          match?({:unset, ^var}, seg) or clears?(seg, var) or
+          match?({:unset, ^var}, seg) or (k > i and clears?(seg, var)) or
             (match?({:plain, _}, seg) and k > i and List.keymember?(elem(seg, 1), var, 0))
         end)
     end)

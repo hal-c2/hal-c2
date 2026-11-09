@@ -1634,6 +1634,17 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       end
     end
 
+    # A scrub clears only what was exported before it, as the shell does
+    # (found by the env property).
+    test "a value exported after a scrub is the one the workload got" do
+      for scrub <- ["env -u APP_SETTINGS true", "env -i true", "export -n APP_SETTINGS"] do
+        cmd = "#{scrub} && export APP_SETTINGS=conf.a && python -c 'import app'"
+        assert [entry] = Observe.observe_turn([bash(cmd, "1", 0)]).env, cmd
+        assert entry.sets == %{"APP_SETTINGS" => "conf.a"}, cmd
+        assert entry.ok == true, cmd
+      end
+    end
+
     test "no value that worked means no fact" do
       tasks =
         Enum.map(0..5, fn i ->
