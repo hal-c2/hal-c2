@@ -222,6 +222,10 @@ defmodule HalC2.Test.FakeOpenShell do
     Agent.update(store, &put_in(&1, [:providers, name], entry))
   end
 
+  @doc "Makes DeleteProvider answer as `:delete_provider` (`start/2`) says, from now on."
+  def provider_deletions(%{store: store}, mode),
+    do: Agent.update(store, &Map.put(&1, :delete_provider, mode))
+
   @doc "The providers in the fake's store, by name: `%{type, credentials, labels}`."
   def providers(%{store: store}), do: Agent.get(store, & &1.providers)
 
@@ -593,10 +597,10 @@ defmodule HalC2.Test.FakeOpenShell do
 
     defp unary(conn, "DeleteProvider", body, config) do
       request = Pb.DeleteProviderRequest.decode(body)
-      notify(config, "DeleteProvider", request)
+      mode = Agent.get(config.store, & &1[:delete_provider])
 
       outcome =
-        case config[:delete_provider] || :completed do
+        case mode || config[:delete_provider] || :completed do
           :completed ->
             Agent.update(
               config.store,
@@ -612,6 +616,8 @@ defmodule HalC2.Test.FakeOpenShell do
             :DELETION_OUTCOME_UNSPECIFIED
         end
 
+      # Told once the store has it, so what is waited on is there to read.
+      notify(config, "DeleteProvider", request)
       reply(conn, %Pb.DeleteProviderResponse{outcome: outcome})
     end
 

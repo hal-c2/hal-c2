@@ -2,8 +2,9 @@ defmodule HalC2.OpenShellReviewPropTest do
   @moduledoc """
   `HalC2.OpenShell.Review` (#1412) against a model of a review sandbox's lease, over
   any sequence of reviews opened, stopped, past their budget or their time, sandboxes
-  left on the gateway from before, reconciles and restarts of the review process. The
-  gateway is the TLS fake, each sandbox a directory of its own. The promises:
+  left on the gateway from before, reconciles and restarts of the review process,
+  reaps, and a gateway that for a while only accepts provider deletions. The gateway
+  is the TLS fake, each sandbox a directory of its own. The promises:
 
     * a review opens once: a thread stopped before its sandbox was made gets none;
     * a review has a binding and a broker token exactly while it is open, and its
@@ -14,6 +15,9 @@ defmodule HalC2.OpenShellReviewPropTest do
       the review end;
     * a reconcile deletes what was left from before and nothing that is open;
     * a restart keeps no binding, and deletes every review sandbox there was;
+    * a provider whose deletion the gateway only accepted is not taken as gone: it is
+      asked for again by the next reconcile, restart or reap, a reap reports it as
+      left behind, and it goes once the gateway deletes again;
     * another HAL-C2 home's review sandboxes, with this MC's environment id on the
       same gateway (a copied home), are never deleted.
   """
@@ -23,7 +27,7 @@ defmodule HalC2.OpenShellReviewPropTest do
   use PropCheck.StateM
 
   alias HalC2.OpenShell
-  alias HalC2.OpenShell.{Broker, Review}
+  alias HalC2.OpenShell.{Broker, Client, Review}
   alias HalC2.Test.{FakeOpenShell, FakeSandbox}
 
   @moduletag timeout: :infinity
@@ -114,9 +118,11 @@ defmodule HalC2.OpenShellReviewPropTest do
   # --- model ----------------------------------------------------------------------
 
   # threads: by id, `:open` with its `spent` counts, or `{:ended, reason}`; one not
-  # there is fresh. left: sandboxes put on the gateway since the last reconcile.
-  # others: another home's sandboxes put there, which stay.
-  def initial_state, do: %{threads: %{}, left: 0, others: 0}
+  # there is fresh. left: sandboxes put on the gateway since the last reconcile, each
+  # with its provider. others: another home's sandboxes put there, which stay.
+  # stalled: the gateway only accepts provider deletions; pending: the providers it
+  # accepted deleting and kept.
+  def initial_state, do: %{threads: %{}, left: 0, others: 0, stalled: false, pending: []}
 
   def command(state) do
     open = for {t, %{spent: _}} <- state.threads, do: t
@@ -128,8 +134,10 @@ defmodule HalC2.OpenShellReviewPropTest do
         {1, {:call, __MODULE__, :left_behind, []}},
         {1, {:call, __MODULE__, :other_home_left, []}},
         {1, {:call, __MODULE__, :reconcile, []}},
-        {1, {:call, __MODULE__, :restart, []}}
+        {1, {:call, __MODULE__, :restart, []}},
+        {2, {:call, __MODULE__, :stall, [boolean()]}}
       ] ++
+        if(open == [], do: [{2, {:call, __MODULE__, :reap, []}}], else: []) ++
         if(open == [],
           do: [],
           else: [
@@ -140,7 +148,14 @@ defmodule HalC2.OpenShellReviewPropTest do
     )
   end
 
-  def precondition(state, {:call, _, :open, [t]}), do: not open?(state, t)
+  # A provider the gateway kept takes its name: a review of that thread cannot open
+  # until it goes (`CreateProvider` refuses it).
+  def precondition(state, {:call, _, :open, [t]}),
+    do: not open?(state, t) and Review.name(t) not in state.pending
+
+  # A reap here deletes everything past a far deadline, open reviews' sandboxes too.
+  def precondition(state, {:call, _, :reap, []}),
+    do: not Enum.any?(Map.keys(state.threads), &open?(state, &1))
 
   def precondition(state, {:call, _, op, [t | _]}) when op in [:spent, :deadline],
     do: open?(state, t)
@@ -170,17 +185,40 @@ defmodule HalC2.OpenShellReviewPropTest do
 
   defp model(state, {:call, _, :left_behind, []}), do: %{state | left: state.left + 1}
   defp model(state, {:call, _, :other_home_left, []}), do: %{state | others: state.others + 1}
-  defp model(state, {:call, _, :reconcile, []}), do: %{state | left: 0}
-  # The review process's tables go with it: no binding, and no ending, is kept.
-  defp model(state, {:call, _, :restart, []}), do: %{initial_state() | others: state.others}
+  defp model(state, {:call, _, :stall, [on]}), do: %{state | stalled: on}
 
-  # The first reason a thread ends for is the one kept.
+  # Both ask for every provider no open review holds to go, the pending ones too.
+  defp model(state, {:call, _, op, []}) when op in [:reconcile, :reap],
+    do: kept(%{state | left: 0}, left_names(state) ++ state.pending)
+
+  # The review process's tables go with it: no binding, and no ending, is kept.
+  defp model(state, {:call, _, :restart, []}) do
+    open = for {t, %{spent: _}} <- state.threads, do: Review.name(t)
+
+    kept(
+      %{initial_state() | others: state.others, stalled: state.stalled, pending: state.pending},
+      open ++ left_names(state) ++ state.pending
+    )
+  end
+
+  # The first reason a thread ends for is the one kept; one that was open had its
+  # provider deleted.
   defp ended(state, t, reason) do
     case state.threads[t] do
       {:ended, _} -> state
-      _ -> put_in(state.threads[t], {:ended, reason})
+      nil -> put_in(state.threads[t], {:ended, reason})
+      %{spent: _} -> kept(put_in(state.threads[t], {:ended, reason}), [Review.name(t)])
     end
   end
+
+  # Providers `names` are asked to go: a stalled gateway keeps them, one that deletes
+  # again does not.
+  defp kept(%{stalled: true} = state, names),
+    do: %{state | pending: Enum.sort(Enum.uniq(state.pending ++ names))}
+
+  defp kept(state, names), do: %{state | pending: state.pending -- names}
+
+  defp left_names(state), do: for(n <- 0..(state.left - 1)//1, do: "review-left-#{n}")
 
   defp open?(state, t), do: match?(%{spent: _}, state.threads[t])
 
@@ -194,13 +232,33 @@ defmodule HalC2.OpenShellReviewPropTest do
       observed.bound == Enum.sort(open) and observed.tokens == Enum.sort(open) and
       observed.ended == ends and
       observed.sandboxes == Enum.sort(names ++ observed.left ++ observed.others) and
-      Enum.all?(names, &(&1 in observed.providers))
+      observed.providers == Enum.sort(Enum.uniq(names ++ observed.left ++ after_.pending))
   end
 
   defp result_ok(state, {:call, _, :open, [t]}, result) do
     case state.threads[t] do
       nil -> match?({:ok, %{sandbox: _}}, result)
       {:ended, _} -> result == {:error, "The review was stopped before its sandbox was made."}
+    end
+  end
+
+  # A reap deletes what was left and every provider kept; one the gateway only
+  # accepted deleting is reported as left behind, never as gone.
+  defp result_ok(state, {:call, _, :reap, []}, result) do
+    left = left_names(state)
+
+    case {state.stalled, Enum.sort(Enum.uniq(state.pending ++ left)), result} do
+      {true, [_ | _] = kept, {:error, {:not_deleted, [], failed}}} ->
+        Enum.sort(failed) == for(name <- kept, do: {name, {:delete_pending, name}})
+
+      {true, [_ | _], _} ->
+        false
+
+      {_, _, {:ok, deleted}} ->
+        Enum.sort(deleted) == left
+
+      _ ->
+        false
     end
   end
 
@@ -230,13 +288,13 @@ defmodule HalC2.OpenShellReviewPropTest do
   def left_behind do
     %{gateway: g, left: left} = ctx = Process.get(:review_prop)
     name = "review-left-#{length(left)}"
-    labels = Review.labels("left", System.os_time(:second) + 600)
 
-    FakeOpenShell.put_sandbox(
-      g,
-      name,
-      Map.put(labels, OpenShell.owner_label(), OpenShell.owner())
-    )
+    labels =
+      Review.labels("left", System.os_time(:second) + 600)
+      |> Map.put(OpenShell.owner_label(), OpenShell.owner())
+
+    FakeOpenShell.put_sandbox(g, name, labels)
+    FakeOpenShell.put_provider(g, name, labels)
 
     Process.put(:review_prop, %{ctx | left: [name | left]})
     observe(fn -> :ok end, [])
@@ -257,30 +315,62 @@ defmodule HalC2.OpenShellReviewPropTest do
     observe(fn -> :ok end, [])
   end
 
+  def stall(on) do
+    FakeOpenShell.provider_deletions(
+      Process.get(:review_prop).gateway,
+      if(on, do: :accepted, else: :completed)
+    )
+
+    observe(fn -> :ok end, [])
+  end
+
+  # A reconcile asks for every provider no open review holds to go.
   def reconcile do
-    left = forget_left()
+    bound = for t <- @threads, b = Review.binding(t), do: b.sandbox
+    forget_left()
 
     observe(
       fn ->
         Review.reconcile()
         settle()
       end,
-      left
+      providers() -- bound
     )
   end
 
   def restart do
-    bound = for t <- @threads, b = Review.binding(t), do: b.sandbox
-    left = forget_left()
+    forget_left()
 
     observe(
       fn ->
         HalC2.Prop.restart_service(Review)
         settle()
       end,
-      bound ++ left
+      providers()
     )
   end
+
+  # What `hal-c2-service openshell reap` runs, a day on, with every review closed.
+  def reap do
+    forget_left()
+    deleting = providers()
+
+    observe(
+      fn ->
+        {:ok, conn} = Client.connect()
+
+        try do
+          Review.reap(conn, System.os_time(:second) + 86_400)
+        after
+          Client.disconnect(conn)
+        end
+      end,
+      deleting
+    )
+  end
+
+  # Every provider on the gateway is this home's: other homes leave only sandboxes.
+  defp providers, do: Map.keys(FakeOpenShell.providers(Process.get(:review_prop).gateway))
 
   # A thread open before `fun` and not after has its sandbox deleted.
   defp ending(t, fun) do
@@ -309,7 +399,7 @@ defmodule HalC2.OpenShellReviewPropTest do
       left: left,
       others: others,
       sandboxes: Enum.sort(Map.keys(FakeOpenShell.sandboxes(g))),
-      providers: Map.keys(FakeOpenShell.providers(g))
+      providers: Enum.sort(Map.keys(FakeOpenShell.providers(g)))
     }
   end
 
