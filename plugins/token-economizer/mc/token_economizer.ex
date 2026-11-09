@@ -203,7 +203,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   def status(state) do
     Map.merge(state.stats, %{
       "mode" => if(on?(state), do: if(shadow?(state), do: "watch", else: "nudge"), else: "off"),
-      "watching" => map_size(state.turns),
+      "watching" => if(on?(state), do: map_size(state.turns), else: 0),
       "recent" => state.recent
     })
   end
@@ -215,6 +215,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   @impl GenServer
   def handle_call({:settings, settings}, _from, state) do
+    was_on = on?(state)
     was_micro = micro_on?(state)
 
     # The level and pinned thresholds shape each tracker, and the micro-skills'
@@ -223,9 +224,11 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     # Learning switched under a turn leaves what it folds from incomplete
     # either way (its calls were not all kept, or its context predates the
-    # switch): the turns under way are partial, and read back whole.
+    # switch): the turns under way are partial, and read back whole. So does
+    # the guard switched on under one, which folded none of its calls so far
+    # and must not teach the envelope from the rest.
     state =
-      if micro_on?(state) != was_micro do
+      if micro_on?(state) != was_micro or (on?(state) and not was_on) do
         %{
           state
           | turns: Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)
@@ -236,25 +239,19 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     state =
       cond do
-        not on?(state) ->
-          # The turns under way are dropped, micro-skills included: they
-          # hear the next turn from its start again.
+        not on?(state) and not micro_on?(state) ->
+          # Nothing listens: the turns under way are dropped, and the next
+          # turn is heard from its start again.
           %{cancel(state, fn _ -> true end) | turns: %{}}
+
+        # The guard off leaves the turns to the micro-skills, which still
+        # learn from them; it judges and delivers nothing.
+        not on?(state) ->
+          state |> cancel(fn _ -> true end) |> stop_redirects()
 
         # Watching delivers nothing: a redirect on its way is stopped, and did not land.
         shadow?(state) ->
-          state = cancel(state, &match?({_, :delivery}, &1))
-
-          turns =
-            Map.new(state.turns, fn {id, turn} ->
-              {id,
-               update_in(
-                 turn.guard,
-                 &if(&1.redirecting, do: Turn.redirected(&1, false), else: &1)
-               )}
-            end)
-
-          %{state | turns: turns}
+          state |> cancel(&match?({_, :delivery}, &1)) |> stop_redirects()
 
         true ->
           state
@@ -718,6 +715,20 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # A thread's judge jobs, once their segment or turn is over: a paid answer no one reads.
   defp cancel_judge(state, thread_id), do: cancel(state, &(&1 == {thread_id, :judge}))
+
+  # A redirect on its way when delivering stopped did not land.
+  defp stop_redirects(state) do
+    turns =
+      Map.new(state.turns, fn {id, turn} ->
+        {id,
+         update_in(
+           turn.guard,
+           &if(&1.redirecting, do: Turn.redirected(&1, false), else: &1)
+         )}
+      end)
+
+    %{state | turns: turns}
+  end
 
   # --- settings and the envelope's files ----------------------------------------------
 

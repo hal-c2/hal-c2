@@ -84,7 +84,7 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
     },
     abstracts: %{
       "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" =>
-        "the settings are fixed for a run of the model; a change reads the trackers afresh and, turned off, drops the turns",
+        "the settings are fixed for a run of the model; a change reads the trackers afresh and, with the guard and learning both off, drops the turns",
       "HalC2Plugins.TokenEconomizer handle_call :status" => "reads the counts, changes nothing",
       "HalC2Plugins.TokenEconomizer handle_call {:micro_skills, _}" =>
         "reads a project's learned facts, changes nothing the guard decides; their lifecycle is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",

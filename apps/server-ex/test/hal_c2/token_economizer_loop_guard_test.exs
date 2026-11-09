@@ -1059,6 +1059,29 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert fired(state) == 1
     end
 
+    test "with the guard off a settings save keeps the turns learning hears" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+
+      state =
+        settings(state, %{
+          "loopGuard" => "off",
+          "microSkills" => "envfacts",
+          "microSkillsMaxFacts" => 4
+        })
+
+      assert Map.has_key?(state.turns, "a")
+      refute state.turns["a"].partial
+      # The guard watches nothing while it is off.
+      assert TokenEconomizer.status(state)["watching"] == 0
+
+      # Switched on under the turn, it folded none of its calls so far.
+      state = settings(state, %{"microSkills" => "envfacts"})
+      assert state.turns["a"].partial
+      assert TokenEconomizer.status(state)["watching"] == 1
+    end
+
     test "switching learning under a turn leaves it partial, and only then" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"microSkills" => "envfacts"})
