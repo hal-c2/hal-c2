@@ -142,8 +142,10 @@ defmodule HalC2.Subprocess.Sandboxed do
     send(s.owner, {:subprocess_eof, self()})
   end
 
+  # `lines` is kept newest first while the owner has not acknowledged, so a long run
+  # of short lines costs one reverse per batch rather than an append per chunk.
   def reader_loop(%{waiting: false, lines: [_ | _]} = s) do
-    send(s.owner, {:subprocess_lines, self(), s.lines})
+    send(s.owner, {:subprocess_lines, self(), Enum.reverse(s.lines)})
     __MODULE__.reader_loop(%{s | lines: [], waiting: true})
   end
 
@@ -159,7 +161,7 @@ defmodule HalC2.Subprocess.Sandboxed do
           __MODULE__.reader_loop(s)
         else
           {lines, rest} = Subprocess.split_lines(s.partial, data)
-          __MODULE__.reader_loop(%{s | lines: s.lines ++ lines, partial: rest})
+          __MODULE__.reader_loop(%{s | lines: Enum.reverse(lines, s.lines), partial: rest})
         end
 
       {:openshell_exec, ^exec, {:stderr, data}} ->
