@@ -122,8 +122,9 @@ General (or from the command palette in the terminal client) to list them there.
 A review thread stays on the machine that ran the review. The agent works in a
 checkout of the pull request's code, with that machine's credentials and
 sandbox, so the thread cannot be moved or exported to another machine, and
-HAL-C2 says so when you try. This holds for reviews started before this was the
-rule, and for forks of a review, even while Code Review is turned off.
+HAL-C2 says so when you try. This holds for forks of a review, and even while
+Code Review is turned off or removed. Reviews started before this was the rule
+stay too, but only until you remove Code Review.
 
 The **Reviews** page is a tab next to **Threads** with every review by state, and
 the picked one's verdict, summary and comments. Publish, retry, dismiss comments
