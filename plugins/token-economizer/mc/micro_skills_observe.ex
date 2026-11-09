@@ -77,11 +77,16 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # The host and port a URL names. Its userinfo (`alice:secret@`) is left out:
   # a learned host is shown and staged, and a credential must not be.
   @url_host_re ~r|https?://(?:[^/\s'"`@?#]*@)?([^/\s'"`@?#]+)|
-  # Variables whose values are credentials: never learned, so never staged.
-  @secret_var_re ~r/TOKEN|SECRET|PASS|PWD|CRED|AUTH|KEY|PRIVATE|COOKIE|SESSION|SALT|SIGN|CERT|DSN|(?:^|_)PAT(?:_|$)/
-  # A value shaped as a credential, whatever it is called: a known token's
-  # prefix, or one long word of letters and digits with no path or module in it.
-  @secret_value_re ~r/^(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-|sk_live_|rk_live_|AKIA|ASIA|AIza|ya29\.|eyJ)|^(?=[^.\/:]*\d)(?=[^.\/:]*[A-Za-z])[\w\-+=]{20,}$/
+  # Name parts (split on `_`) that say a variable holds a credential, and the
+  # endings that say so of a part written as one word (`PGPASSWORD`).
+  @secret_parts ~w(TOKEN TOKENS SECRET SECRETS PASS PASSWD PASSWORD PASSWORDS PASSPHRASE
+                   CRED CREDS CREDENTIAL CREDENTIALS AUTH OAUTH AUTHORIZATION KEY KEYS APIKEY
+                   PRIVATE COOKIE COOKIES SESSION SALT DSN PAT)
+  @secret_endings ~w(TOKEN SECRET PASSWORD PASSWD APIKEY)
+  # A known token's prefix.
+  @token_prefix_re ~r/^(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-|sk_live_|rk_live_|AKIA|ASIA|AIza|ya29\.|eyJ)/
+  # A word that could be an opaque token: no path, module, URL or option in it.
+  @opaque_word_re ~r|^[A-Za-z0-9_+/-]+$|
   @userinfo_re ~r|://[^/\s'"`]*@|
   @rtk_prefix_re ~r/^rtk\s+(?:proxy\s+)?(?=\S)/
 
@@ -794,13 +799,45 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   end
 
   @doc "Whether a variable's name says it holds a credential."
-  def secret_var?(var), do: Regex.match?(@secret_var_re, var)
+  # Whole parts only, so `KEYBOARD_LAYOUT` and `DESIGN_MODE` are not; `PWD`
+  # alone is the working directory, `DB_PWD` a password.
+  def secret_var?(var) do
+    parts = var |> String.upcase() |> String.split("_", trim: true)
+
+    Enum.any?(parts, &(&1 in @secret_parts or String.ends_with?(&1, @secret_endings))) or
+      (length(parts) > 1 and "PWD" in parts)
+  end
 
   @doc "Whether text holds a credential-shaped word or a URL's userinfo."
   def secret_value?(text) do
-    Regex.match?(@userinfo_re, text) or
-      text |> String.split() |> Enum.any?(&Regex.match?(@secret_value_re, &1))
+    Regex.match?(@userinfo_re, text) or text |> String.split() |> Enum.any?(&secret_word?/1)
   end
+
+  # A word is a credential when it starts as a known token does, or is opaque
+  # and dense: one run of 20 letters and digits mixed (`a1b2c3...`), or 32
+  # characters mixing cases and digits around a long run (a base64 key). An
+  # option's value (`--key=VALUE`, `K=VALUE`) is judged alone; an option, an
+  # identifier (`test_parse_v2_config_ok`) or a triple (`x86_64-unknown-linux-gnu`)
+  # is none.
+  defp secret_word?(word) do
+    case word |> String.trim_trailing("=") |> String.split("=", parts: 2) do
+      [_name, value] -> secret_word?(value)
+      [word] -> Regex.match?(@token_prefix_re, word) or opaque_dense?(word)
+    end
+  end
+
+  defp opaque_dense?(word) do
+    runs =
+      if Regex.match?(@opaque_word_re, word) and not String.starts_with?(word, ["-", "/"]),
+        do: Regex.scan(~r/[A-Za-z0-9]+/, word) |> List.flatten(),
+        else: []
+
+    Enum.any?(runs, &(String.length(&1) >= 20 and mixes?(&1, [~r/[A-Za-z]/, ~r/\d/]))) or
+      (String.length(word) >= 32 and mixes?(word, [~r/[a-z]/, ~r/[A-Z]/, ~r/\d/]) and
+         Enum.any?(runs, &(String.length(&1) >= 16)))
+  end
+
+  defp mixes?(text, classes), do: Enum.all?(classes, &Regex.match?(&1, text))
 
   # A segment that cannot stop the work after it: an assignment, a directory
   # change, an activation, or a command that only sets, reads or reports.

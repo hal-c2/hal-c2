@@ -848,9 +848,18 @@ defmodule HalC2Plugins.TokenEconomizer do
         saved = read_skills(project_id)
         skills = EnvFacts.load(saved, skills_caps(state))
 
-        # A fact the load left out for holding a credential leaves the file too.
+        # A fact the load left out for holding a credential leaves the file
+        # too, and the log says so by family: an id can hold the credential.
         with %{"facts" => %{} = facts} <- saved,
-             true <- map_size(skills.facts) < map_size(facts) do
+             [_ | _] = gone <- Map.keys(facts) -- Map.keys(skills.facts) do
+          families =
+            gone |> Enum.map(&(get_in(facts, [&1, "family"]) || "?")) |> Enum.frequencies()
+
+          Logger.warning(
+            "token-economizer: dropped #{length(gone)} saved micro-skill fact(s) of " <>
+              "project #{project_id} that hold a credential: #{inspect(families)}"
+          )
+
           save_skills(project_id, skills)
         end
 

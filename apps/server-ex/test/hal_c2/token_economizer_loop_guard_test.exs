@@ -1577,9 +1577,17 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       run = %{"threadId" => "t", "projectId" => "seam", "instanceId" => "codex"}
       future = System.monotonic_time(:millisecond) + 60_000
-      TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+        end)
 
       refute File.read!(path) =~ "hunter2"
+      # The drop leaves a trace, and the trace no credential.
+      assert log =~ "dropped 1 saved micro-skill fact(s) of project seam"
+      assert log =~ ~s("env_value" => 1)
+      refute log =~ "hunter2"
     end
 
     test "a run naming no conversation stages nothing" do

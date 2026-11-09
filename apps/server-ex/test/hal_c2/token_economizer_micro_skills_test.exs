@@ -125,21 +125,47 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     end
 
     # By name, however it is spelled.
-    for var <- ~w(DB_PASS DB_PWD AWS_ACCESS_KEY_ID GH_PAT STRIPE_KEY SIGNING_SALT SENTRY_DSN) do
+    for var <-
+          ~w(DB_PASS DB_PWD AWS_ACCESS_KEY_ID GH_PAT STRIPE_KEY SIGNING_SALT SENTRY_DSN
+             PGPASSWORD GITHUB_TOKEN OPENAI_API_KEY AWS_SESSION_TOKEN MYSQL_PWD db_password) do
+      assert Observe.secret_var?(var), var
       assert env.("#{var}=v1 PYTHONPATH=src python -m pytest -q") == %{"PYTHONPATH" => "src"}
+    end
+
+    # A name part, not a substring: these are settings.
+    for var <- ~w(PWD KEYBOARD_LAYOUT DESIGN_MODE SSL_CERT_FILE GIT_ASKPASS) do
+      refute Observe.secret_var?(var), var
+      assert env.("#{var}=v1 python -m pytest -q") == %{var => "v1"}
     end
 
     # By shape, whatever it is called.
     for value <-
-          ~w(ghp_abc123def456 AKIAABCDEFGH12345678 eyJhbGciOiJIUzI1NiJ9 a1b2c3d4e5f6a7b8c9d0e1f2) do
+          ~w(ghp_abc123def456 AKIAABCDEFGH12345678 eyJhbGciOiJIUzI1NiJ9 a1b2c3d4e5f6a7b8c9d0e1f2
+             wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY tok_demo_51HabcDEF123ghi456JKL789
+             --token=a1b2c3d4e5f6a7b8c9d0e1f2 dGhpcyBpcyBhIHNlY3JldCBrZXkgMTIzNA==) do
+      assert Observe.secret_value?(value), value
+
       assert env.("MY_VAR=#{value} PYTHONPATH=src python -m pytest -q") == %{
                "PYTHONPATH" => "src"
              }
     end
 
-    # A module, a path or a flag is not a credential.
-    assert env.("DJANGO_SETTINGS_MODULE=proj.settings_test_2024 python -m pytest -q") ==
-             %{"DJANGO_SETTINGS_MODULE" => "proj.settings_test_2024"}
+    # A module, a path, a flag, an identifier or a triple is not a credential.
+    # (A flag's `=` keeps it from being learned as a variable's value at all,
+    # but labels and saved facts are read for credentials too.)
+    for value <-
+          ~w(proj.settings_test_2024 --max-old-space-size=4096 test_handles_utf8_input
+             test_parse_v2_config_ok x86_64-unknown-linux-gnu
+             app/Http/Controllers/Api/V1/UserController 550e8400-e29b-41d4-a716-446655440000) do
+      refute Observe.secret_value?(value), value
+      refute Observe.secret_value?("node #{value} x.js"), value
+    end
+
+    for value <-
+          ~w(proj.settings_test_2024 test_handles_utf8_input test_parse_v2_config_ok
+             x86_64-unknown-linux-gnu) do
+      assert env.("MY_VAR=#{value} python -m pytest -q") == %{"MY_VAR" => value}
+    end
 
     # A URL's host leaves out its userinfo, query and fragment.
     hosts = fn command -> command |> Observe.classify_command() |> Enum.flat_map(& &1.hosts) end
@@ -147,9 +173,14 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert hosts.("curl 'https://h.example.com#k=abc'") == ["h.example.com"]
     assert hosts.("curl https://u:p@h.example.com/x?a=b@c") == ["h.example.com"]
 
-    # A test label shaped as a credential is not one.
+    # A test label shaped as a credential is not one; an ordinary name is one.
     [o] = Observe.classify_command("python -m pytest tests/a.py ghp_abc123def456")
     assert Observe.test_labels(o) == ["tests/a.py"]
+
+    [o] =
+      Observe.classify_command("python -m pytest test_handles_utf8_input test_parse_v2_config_ok")
+
+    assert Observe.test_labels(o) == ["test_handles_utf8_input", "test_parse_v2_config_ok"]
   end
 
   test "a saved fact that holds a credential is never read back" do
@@ -179,6 +210,33 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     }
 
     assert Map.keys(EnvFacts.load(saved).facts) == ["env_value:PYTHONPATH"]
+  end
+
+  test "an ordinary saved fact is read back" do
+    fact = fn id, family, params ->
+      {id, %{"id" => id, "family" => family, "params" => params, "life" => %{}}}
+    end
+
+    env_value = fn var, value ->
+      fact.("env_value:#{var}", "env_value", %{"var" => var, "good" => %{value => 2}})
+    end
+
+    saved = %{
+      "facts" =>
+        Map.new([
+          env_value.("NODE_OPTIONS", "--max-old-space-size=4096"),
+          env_value.("KEYBOARD_LAYOUT", "us"),
+          env_value.("DESIGN_MODE", "dark"),
+          env_value.("CARGO_BUILD_TARGET", "x86_64-unknown-linux-gnu"),
+          fact.("arg_repair:python -m pytest:label:test_parse_v2_config_ok", "arg_repair", %{
+            "form" => "python -m pytest",
+            "bad" => "test_handles_utf8_input",
+            "good" => "test_parse_v2_config_ok"
+          })
+        ])
+    }
+
+    assert Map.keys(EnvFacts.load(saved).facts) == Enum.sort(Map.keys(saved["facts"]))
   end
 
   test "classify forms and intents" do
