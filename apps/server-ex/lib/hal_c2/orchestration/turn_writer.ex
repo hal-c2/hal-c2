@@ -45,8 +45,10 @@ defmodule HalC2.Orchestration.TurnWriter do
   `fields` are the item type's own fields. An item confirms the run reached its provider
   (`confirmed/2`) unless the runtime still holds its prompt (`prompt_held`, as Pi's does
   while it compacts), replays work the provider did before the turn (`replaying`, as
-  Pi's does taking over a wake), or the item is one the runtime kept from before the
-  turn (`confirms: false`): none is the provider answering the prompt.
+  Pi's does taking over a wake), has sent the prompt to follow work the provider is
+  still at and not heard it taken (`follow_up: :sent` on the turn), or the item is one
+  the runtime kept from before the turn (`confirms: false`): none is the provider
+  answering the prompt.
   """
   def ensure_item(state, native, kind, fields \\ %{}, opts \\ []) do
     if Map.has_key?(state.items, native) do
@@ -64,7 +66,8 @@ defmodule HalC2.Orchestration.TurnWriter do
       confirms? =
         driver not in @acknowledging and Keyword.get(opts, :confirms, true) and
           Map.get(state, :prompt_held, false) == false and
-          Map.get(state, :replaying, false) == false
+          Map.get(state, :replaying, false) == false and
+          Map.get(state.turn, :follow_up) != :sent
 
       {node_kind, type, item_fields} = shape(kind, message_id, fields)
       item_fields = if plan_id, do: Map.put(item_fields, "planId", plan_id), else: item_fields

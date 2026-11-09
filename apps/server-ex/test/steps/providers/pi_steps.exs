@@ -3092,6 +3092,90 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi's wake says something, then waits for a message to follow it and runs a command
+  # before Pi answers that message (`lateFollowUps`), until the scenario lets it.
+  step "a Pi extension has woken Pi, which runs a command once a message follows it",
+       context do
+    wake = %{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [
+        %{"text" => "Working on the extension's task."},
+        %{"waitFollowUp" => true},
+        %{"tool" => "bash", "args" => %{"command" => "make lint"}, "output" => "ok"},
+        %{"answerFollowUps" => "take"}
+      ]
+    }
+
+    context
+    |> hold_wakes()
+    |> install(%{
+      "turns" => [
+        %{"match" => "second", "steps" => [%{"text" => "Second done."}], "wake" => wake}
+        | FakeAcp.pi_turns()
+      ],
+      "lateFollowUps" => true
+    })
+    |> FakeAcp.thread()
+    |> turn("first")
+    |> turn("second")
+    |> held_wake()
+  end
+
+  step "the thread comes back to Pi from Codex while the wake runs", context do
+    thread_id = World.thread_id(context, context.thread)
+    context = World.providers(context)
+    codex = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+    pi = %{"instanceId" => context.provider, "model" => "fake/one"}
+
+    switch = fn context, selection ->
+      context =
+        World.command(context, %{
+          "type" => "provider.switch",
+          "threadId" => thread_id,
+          "modelSelection" => selection
+        })
+
+      assert {:ok, _} = context.reply
+      context
+    end
+
+    context = context |> switch.(codex) |> turn("work on Codex")
+    context = context |> switch.(pi) |> FakeAcp.send_message("back on Pi")
+    FakeAcp.await_run(context, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+    assert :sys.get_state(pid).turn.follow_up == :sent
+    context
+  end
+
+  step "the run shows the wake's command before Pi takes its prompt", context do
+    run = World.latest_run(context, context.thread)
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      state
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["runId"] == run["id"] and &1["type"] == "command_execution"))
+    end)
+
+    refute Enum.any?(FakeAcp.log(context), &match?(%{"accepted" => "back on Pi"}, &1))
+    context
+  end
+
+  step "the history it hands over stays unconfirmed until Pi takes the prompt", context do
+    run = World.latest_run(context, context.thread)
+
+    unconfirmed = fn ->
+      for t <- StreamState.list(state(context), "provider-thread"),
+          t["providerInstanceId"] == context.provider,
+          do: t["unconfirmedRunId"]
+    end
+
+    assert unconfirmed.() == [run["id"]]
+    File.touch!(Path.join(FakeAcp.fake(context, "pi").dir, "take"))
+    FakeAcp.await_run(context, "completed")
+    assert unconfirmed.() == [nil]
+    context
+  end
+
   step "a Pi extension shows the warning {string}", %{args: [warning]} = context do
     event_thread(
       context,

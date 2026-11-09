@@ -24,6 +24,9 @@
 #                    one with a "wake" of its own is followed by that one)
 #   startupUi        fire-and-forget extension UI requests (as a turn's `uiEmit`) Pi's
 #                    extensions send as an RPC Pi starts, before any command
+#   lateFollowUps    a followUp prompt is queued but not answered until an
+#                    `answerFollowUps` step (or the run's end): the work Pi was at goes on
+#                    in between, as it can before Pi's answer reaches the MC
 #   rejectWhileCompacting  as Pi 1.4: every prompt, steers included, sent while Pi
 #                    compacts is rejected (logged as `rejected`); a prompt Pi takes up
 #                    is logged as `accepted`, and compaction events as `compaction`
@@ -37,7 +40,8 @@
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
 # or n steer prompts, which reach Pi only once this run has settled, in the order of their
 # text, and each start a run of its own), {"exit": code}, {"waitFollowUp": true} (until a
-# followUp prompt is queued), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
+# followUp prompt is queued), {"answerFollowUps": name} (once the file FAKE_DIR/<name>
+# exists, answers the followUps `lateFollowUps` held back), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
 # While Pi runs, a prompt without a streamingBehavior is turned back as Pi does ("Agent is
 # already processing"), and a followUp one is answered after the run's own work, before
 # it settles. While a turn waits, a steer saying "refuse" is rejected, and
@@ -267,6 +271,8 @@ aborted = [False]
 # While Pi runs (from a prompt to its settle): followUp prompts wait in `follow_ups`.
 running = [False]
 follow_ups = []
+# followUps queued but not yet answered (`lateFollowUps`).
+unanswered = []
 woken = set()
 BUSY_ERROR = ("Agent is already processing. Specify streamingBehavior ('steer' or "
               "'followUp') to queue the message.")
@@ -345,13 +351,25 @@ def steer(msg):
 
 def busy_prompt(msg):
     """A prompt while Pi runs: a followUp waits for the run's end, any other is turned back."""
-    if msg.get("streamingBehavior") == "followUp":
+    if msg.get("streamingBehavior") == "followUp" and config().get("lateFollowUps"):
+        log({"queued": msg.get("message"), "followUp": True})
+        unanswered.append(msg)
+    elif msg.get("streamingBehavior") == "followUp":
         log({"accepted": msg.get("message"), "followUp": True})
         respond(msg)
         follow_ups.append(msg.get("message", ""))
     else:
         log({"busy": msg.get("message")})
         respond(msg, error=BUSY_ERROR)
+
+
+def answer_follow_ups():
+    """Answers the followUps held back (`lateFollowUps`): they run once the work ends."""
+    while unanswered:
+        msg = unanswered.pop(0)
+        log({"accepted": msg.get("message"), "followUp": True})
+        respond(msg)
+        follow_ups.append(msg.get("message", ""))
 
 
 def workspace_commands():
@@ -604,8 +622,12 @@ def run_turn(text, wake=None):
                   "result": {"summary": "Compacted mid-turn.", "tokensBefore": 1000,
                              "estimatedTokensAfter": 200}})
         elif "waitFollowUp" in step:
-            if not follow_ups and not aborted[0]:
-                wait_for(lambda m: follow_ups or aborted[0])
+            if not follow_ups and not unanswered and not aborted[0]:
+                wait_for(lambda m: follow_ups or unanswered or aborted[0])
+        elif "answerFollowUps" in step:
+            path = os.path.join(DIR, step["answerFollowUps"])
+            serve_while(lambda: not os.path.exists(path))
+            answer_follow_ups()
         elif "until" in step:
             path = os.path.join(DIR, step["until"])
             serve_while(lambda: not os.path.exists(path) and not follow_ups)
@@ -620,6 +642,7 @@ def run_turn(text, wake=None):
     final["stopReason"] = stop
     send({"type": "message_end", "message": final})
     session.append("assistant", "".join(said))
+    answer_follow_ups()
     # Messages queued as followUps run before Pi settles, each answered in turn.
     while follow_ups and not aborted[0]:
         asked = follow_ups.pop(0)
