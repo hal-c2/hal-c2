@@ -22,6 +22,11 @@ defmodule HalC2.TurnWatchPropTest do
   a later run's, and never a delegated task. A runtime that stops with no run of its
   own left alone changes nothing.
 
+  A provider subagent's work runs in a thread of its own. A Stop of a run whose
+  runtime crashed can race TurnWatch's end of it (`stop_crashed/0`): the end that
+  settles the work in the subagents' threads is the one that ends the run, so they
+  read alike (review of #1398).
+
   TurnWatch's mailbox is traced, so each step waits on the messages it receives (a
   runtime's `:DOWN`, a try's answer, a state read) rather than on time.
   """
@@ -31,7 +36,7 @@ defmodule HalC2.TurnWatchPropTest do
   use PropCheck.StateM
 
   alias HalC2.{Orchestration, StreamState}
-  alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.Orchestration.{Entities, TurnWatch, TurnWriter}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
@@ -77,7 +82,10 @@ defmodule HalC2.TurnWatchPropTest do
   defp stop do
     for pid <- Process.get({__MODULE__, :spawned}, []), do: Process.exit(pid, :kill)
     HalC2.Prop.stop_services()
-    for key <- ~w(store_hook unrecorded_retry_ms)a, do: Application.delete_env(:hal_c2, key)
+
+    for key <- ~w(store_hook unrecorded_retry_ms streams_hook abandon_hook)a,
+        do: Application.delete_env(:hal_c2, key)
+
     flush_traces()
   end
 
@@ -119,7 +127,8 @@ defmodule HalC2.TurnWatchPropTest do
               do: [],
               else: [
                 {4, {:call, __MODULE__, :add_work, [oneof(@kinds)]}},
-                {2, {:call, __MODULE__, :complete, []}}
+                {2, {:call, __MODULE__, :complete, []}},
+                {1, {:call, __MODULE__, :stop_crashed, []}}
               ]
             ) ++
               [
@@ -169,7 +178,7 @@ defmodule HalC2.TurnWatchPropTest do
   def precondition(state, {:call, _, :start_run, []}),
     do: active(state) == nil and not state.refusing
 
-  def precondition(state, {:call, _, cmd, _}) when cmd in [:add_work, :complete],
+  def precondition(state, {:call, _, cmd, _}) when cmd in [:add_work, :complete, :stop_crashed],
     do: not state.refusing and driving(state) == :running
 
   def precondition(state, {:call, _, :fail_unrecorded, [ended]}),
@@ -234,6 +243,11 @@ defmodule HalC2.TurnWatchPropTest do
     if state.refusing, do: state, else: recorded(state, ordinal)
   end
 
+  # TurnWatch's end of the crashed runtime settles the subagents' threads first, so it
+  # ends the run, as on a crash alone.
+  def next_state(state, result, {:call, mod, :stop_crashed, []}),
+    do: next_state(state, result, {:call, mod, :exit_runtime, [:crash]})
+
   def next_state(state, _result, {:call, _, :exit_runtime, [reason]}) do
     ordinal = map_size(state.runs)
     driving = driving(state)
@@ -290,6 +304,13 @@ defmodule HalC2.TurnWatchPropTest do
         claimed: MapSet.delete(state.claimed, ordinal)
     }
   end
+
+  # And the work in the run's subagents' threads ended as the run did.
+  def postcondition(state, {:call, _, :stop_crashed, []}, {observed, children}),
+    do:
+      postcondition(state, {:call, __MODULE__, :exit_runtime, [:crash]}, observed) and
+        (Enum.all?(children, &(&1 == "failed")) or
+           (IO.puts("the subagents' threads read #{inspect(children)}") && false))
 
   def postcondition(state, call, observed) do
     expected = expected(next_state(state, nil, call))
@@ -355,9 +376,96 @@ defmodule HalC2.TurnWatchPropTest do
   end
 
   def add_work(kind) do
-    seed(work(new_work(kind), latest(), kind))
+    id = new_work(kind)
+    seed(work(id, latest(), kind))
+    child_thread(id, kind)
     observe()
   end
+
+  # The live runtime crashes and the run is stopped (`TurnWriter.abandon/5` as
+  # `Orchestration.interrupt_undriven/2` calls it, the runtime gone) while TurnWatch's
+  # try at ending it holds after the subagents' threads, if it settles any. The Stop
+  # waits for that end, or ends the run itself.
+  def stop_crashed do
+    watch = Process.whereis(TurnWatch)
+    pid = Process.get({__MODULE__, :runtime})
+    run = run_id(latest())
+    test = self()
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :hold_try, [test, watch]})
+    Application.put_env(:hal_c2, :abandon_hook, {__MODULE__, :waiting, [test]})
+    stop_runtime(pid, :crash)
+    await_down(watch, pid)
+
+    held =
+      receive do
+        {:held_try, try} -> try
+        {:trace, ^watch, :receive, {:attempted, ^run, _}} -> nil
+      after
+        @wait_ms -> raise "no try at ending #{run}"
+      end
+
+    spawn_link(fn ->
+      send(test, {:stopped, TurnWriter.abandon(@tid, run, "interrupted", nil)})
+    end)
+
+    receive do
+      {:waiting, ^run} -> :ok
+      {:stopped, :ok} -> send(test, {:stopped, :ok})
+    after
+      @wait_ms -> raise "the Stop neither waited nor ended #{run}"
+    end
+
+    if held, do: send(held, :go)
+
+    receive do
+      {:stopped, :ok} -> :ok
+    after
+      @wait_ms -> raise "the Stop of #{run} never ended"
+    end
+
+    for key <- ~w(streams_hook abandon_hook)a, do: Application.delete_env(:hal_c2, key)
+    if held, do: await_trace(watch, &match?({:attempted, ^run, _}, &1))
+    drain()
+
+    children =
+      for {id, :native} <- Process.get({__MODULE__, :work}, %{}),
+          HalC2.Streams.state(@tid)
+          |> StreamState.get("subagent")
+          |> get_in(["sub-#{id}", "runId"]) ==
+            run,
+          do:
+            HalC2.Streams.state(child_id(id))
+            |> StreamState.get("turn-item")
+            |> get_in([child_item(id), "status"])
+
+    {observe(), children}
+  end
+
+  # TurnWatch's try waits for the test's go at its first use of the thread after a
+  # subagent's thread.
+  def hold_try(test, watch, :ensured, stream_id) do
+    # The try itself, not the tasks its end starts.
+    if Process.get(:"$callers") == [watch] do
+      cond do
+        stream_id != @tid ->
+          Process.put({__MODULE__, :child_seen}, true)
+
+        Process.get({__MODULE__, :child_seen}, false) and
+            Process.put({__MODULE__, :held}, true) == nil ->
+          send(test, {:held_try, self()})
+          receive do: (:go -> :ok)
+
+        true ->
+          :ok
+      end
+    end
+
+    :ok
+  end
+
+  def hold_try(_test, _watch, _stage, _stream_id), do: :ok
+
+  def waiting(test, run_id), do: send(test, {:waiting, run_id})
 
   # The runtime records its run completed and releases it, its work left running.
   def complete do
@@ -434,7 +542,9 @@ defmodule HalC2.TurnWatchPropTest do
     claim =
       if next? do
         ordinal = new_run()
-        seed(Enum.flat_map(@kinds, &work(new_work(&1), ordinal, &1)))
+        ids = Enum.map(@kinds, &{new_work(&1), &1})
+        seed(Enum.flat_map(ids, fn {id, kind} -> work(id, ordinal, kind) end))
+        for {id, kind} <- ids, do: child_thread(id, kind)
         runtime() |> ask(fn -> TurnWatch.claim(@tid, run_id(ordinal)) end)
       end
 
@@ -502,7 +612,8 @@ defmodule HalC2.TurnWatchPropTest do
     case kind do
       :native ->
         [
-          {"subagent", "sub-#{id}", Map.put(open, "origin", "provider_native")},
+          {"subagent", "sub-#{id}",
+           Map.merge(open, %{"origin" => "provider_native", "childThreadId" => child_id(id)})},
           {"node", "sub-#{id}", open},
           {"turn-item", "turn-item:subagent:sub-#{id}",
            Map.merge(open, %{"type" => "subagent", "nodeId" => "sub-#{id}"})}
@@ -527,6 +638,24 @@ defmodule HalC2.TurnWatchPropTest do
       Orchestration.create(kind, id, Map.put(entity, "id", id))
     end)
   end
+
+  # A provider subagent's own thread, a command of its running.
+  defp child_thread(id, :native) do
+    item = %{"id" => child_item(id), "status" => "running", "type" => "command_execution"}
+
+    :ok =
+      HalC2.Streams.transact(child_id(id), :thread, fn _stream ->
+        {[
+           Orchestration.create("thread", child_id(id), %{"id" => child_id(id), "title" => "Sub"}),
+           Orchestration.create("turn-item", child_item(id), item)
+         ], :ok}
+      end)
+  end
+
+  defp child_thread(_id, _kind), do: :ok
+
+  defp child_id(id), do: "child-#{id}"
+  defp child_item(id), do: "child-item-#{id}"
 
   # The next run, created running.
   defp new_run do

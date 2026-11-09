@@ -6,7 +6,7 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
   use ExUnit.Case, async: false
 
   alias HalC2.{Orchestration, StreamState}
-  alias HalC2.Orchestration.TurnWatch
+  alias HalC2.Orchestration.{TurnWatch, TurnWriter}
 
   @moduletag :tmp_dir
   @fake_codex Path.expand("../support/fake_codex.py", __DIR__)
@@ -66,6 +66,74 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
   def hold_then_refuse(test, gate, refused, stage, stream_id) do
     hold_once(test, gate, stage, stream_id)
     HalC2.Test.Machines.refuse_change(refused, stage, stream_id)
+  end
+
+  # A process that marked itself (`:hold_after`, the subagent's thread) waits for the
+  # test's go at its first use of the parent thread after the subagent's.
+  def hold_after_child(test, :ensured, stream_id) do
+    case Process.get(:hold_after) do
+      ^stream_id ->
+        Process.put(:child_seen, true)
+
+      child when is_binary(child) and stream_id == @tid ->
+        if Process.get(:child_seen, false) and Process.put(:held, true) == nil do
+          send(test, {:held_after_child, self()})
+
+          receive do
+            :go -> :ok
+          end
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  def hold_after_child(_test, _stage, _stream_id), do: :ok
+
+  def waiting(test, run_id), do: send(test, {:waiting, run_id})
+
+  # Review of #1398: a crash's end of a run and a Stop's can race. The first ended the
+  # work in the subagent's thread as failed, then the second won the run, which read
+  # interrupted, the subagent's work failed.
+  test "of two ends of a run, the one that ends its subagent's work ends the run",
+       %{work: work} do
+    {pid, runtime, run} = running_turn(work)
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    child_command(pid, runtime, native)
+    [%{"childThreadId" => child}] = list(@tid, "subagent")
+    test = self()
+    HalC2.Test.Env.put_app(:streams_hook, {__MODULE__, :hold_after_child, [test]})
+    HalC2.Test.Env.put_app(:abandon_hook, {__MODULE__, :waiting, [test]})
+
+    failed =
+      Task.async(fn ->
+        Process.put(:hold_after, child)
+        TurnWriter.abandon(@tid, run, "failed", "The provider stopped")
+      end)
+
+    assert_receive {:held_after_child, held}, 5_000
+    assert %{"status" => "failed"} = command(child)
+
+    interrupted =
+      Task.async(fn ->
+        result = TurnWriter.abandon(@tid, run, "interrupted", nil)
+        send(test, :interrupted)
+        result
+      end)
+
+    # The Stop waits for the crash's end to finish, or ends the run under it.
+    receive do
+      {:waiting, ^run} -> :ok
+      :interrupted -> :ok
+    end
+
+    send(held, :go)
+    assert :ok = Task.await(failed)
+    assert :ok = Task.await(interrupted)
+
+    assert [%{"status" => "failed"}] = list(@tid, "run")
+    assert %{"status" => "failed"} = command(child)
   end
 
   test "a run the store failed ends the work in its subagents' threads once it recovers",

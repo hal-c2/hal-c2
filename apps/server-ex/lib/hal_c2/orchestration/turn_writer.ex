@@ -940,7 +940,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   Ends run `run_id` of `thread_id` with `status` when nothing drives it any more: its
   runtime crashed, or stopped without ending it. What the run left open ends with it,
   from what the thread recorded, in the same transaction as the run, so of two
-  callers racing (a crash and a stop) only the first ends it. `at:` is when it ended
+  callers racing (a crash and a stop) only the first ends it. They end it one at a
+  time: the work in its subagents' threads, which ends first, ends as the run does.
+  `at:` is when it ended
   (now if omitted), and `provider_turn:` how its provider turn did, if not as the run.
 
   `ended:`, the `{kind, id}`s of the work a runtime that drove the turn to its end
@@ -958,6 +960,31 @@ defmodule HalC2.Orchestration.TurnWriter do
   ended, which the runtime heard and the store refused (`provider_turn_ended/3`).
   """
   def abandon(thread_id, run_id, status, failure, opts \\ []) do
+    lock = {{__MODULE__, :abandon, run_id}, self()}
+    nodes = [node()]
+
+    unless :global.set_lock(lock, nodes, 0) do
+      waiting(run_id)
+      :global.set_lock(lock, nodes)
+    end
+
+    try do
+      abandon_now(thread_id, run_id, status, failure, opts)
+    after
+      :global.del_lock(lock, nodes)
+    end
+  end
+
+  # Tests see an ending wait for another of the same run: `{module, function, args}`,
+  # called with the run's id.
+  defp waiting(run_id) do
+    case Application.get_env(:hal_c2, :abandon_hook) do
+      {m, f, a} -> apply(m, f, a ++ [run_id])
+      nil -> :ok
+    end
+  end
+
+  defp abandon_now(thread_id, run_id, status, failure, opts) do
     at = opts[:at] || Entities.now()
     failure = UserFacingErrors.sanitize_failure(failure)
     keep? = opts[:lost] != true
