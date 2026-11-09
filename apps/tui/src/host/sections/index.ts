@@ -8,6 +8,7 @@ import { projectSearchSection } from "./projectSearch.ts";
 import { pluginsSection, type PluginsPageHost } from "./plugins.ts";
 import { projectsSection } from "./projects.ts";
 import { resourceMonitorSection } from "./resourceMonitor.ts";
+import { sandboxesSection } from "./sandboxes.ts";
 import { scheduledTasksSection } from "./scheduledTasks.ts";
 import { sourceControlSection } from "./sourceControl.ts";
 
@@ -53,6 +54,7 @@ export function registerSettingsSections(
   sections.register("sourceControl", sourceControlSection);
   sections.register("backgroundActivity", backgroundActivitySection);
   sections.register("subagents", subagentsSection);
+  sections.register("sandboxes", sandboxesSection);
   sections.register("diagnostics", diagnosticsSection);
   sections.register("resourceMonitor", resourceMonitorSection);
   sections.register("plugins", (host) => pluginsSection(host, options.plugins));

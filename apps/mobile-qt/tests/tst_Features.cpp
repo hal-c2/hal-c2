@@ -146,6 +146,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("threads/creating.feature:A new thread cannot be created while the environment is offline"),
     QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
     QStringLiteral("mc/orchestration/queue-and-steering.feature:A usage limit keeps the queue*"),
+    QStringLiteral("mc/platform/openshell.feature:Settings*"),
     QStringLiteral("settings/updates.feature"),
     QStringLiteral("source-control/worktrees-and-setup-scripts.feature"),
     QStringLiteral("source-control/review-diffs.feature"),
