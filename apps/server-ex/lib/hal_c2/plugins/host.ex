@@ -169,11 +169,16 @@ defmodule HalC2.Plugins.Host do
   @doc """
   Starts a thread as `orchestration.launchThread` does (`input` in its shape),
   marked as a `kind` thread of the plugin. `listed: false` keeps it out of the
-  thread list. Created by the system, from the server.
+  thread list. A plugin whose manifest has `threadsStay` (`HalC2.Plugins.threads_stay?/1`,
+  which asks the version that runs first) has its threads marked `"stays"`: its sandbox,
+  credentials and checkout for them do not travel, so a moved thread would run without
+  them, and moves and exports of them are refused (`HalC2.ThreadArchive.stays/1`).
+  Created by the system, from the server.
   """
   def launch_thread(id, kind, input, opts \\ []) do
     with :ok <- permit(id, "threads:create") do
       mark = %{"id" => id, "kind" => kind, "listed" => Keyword.get(opts, :listed, true)}
+      mark = if Plugins.threads_stay?(id), do: Map.put(mark, "stays", true), else: mark
 
       input
       |> Map.merge(%{"createdBy" => "system", "creationSource" => "server"})

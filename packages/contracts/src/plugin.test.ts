@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { PluginCompileCheck, PluginEntry, PluginManifest, PluginSettingField } from "./plugin.ts";
+import {
+  PluginCompileCheck,
+  PluginEntry,
+  PluginManifest,
+  PluginSettingField,
+  ThreadPluginMark,
+} from "./plugin.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
@@ -144,5 +150,14 @@ describe("PluginEntry", () => {
   it("takes an entry from an MC older than the compile check", () => {
     expect(decode(entry)).toEqual(entry);
     expect(decode({ ...entry, compileCheck: null }).compileCheck).toBeNull();
+  });
+});
+
+describe("ThreadPluginMark", () => {
+  // The MC marks a thread its plugin keeps on the machine; a client that decodes the
+  // mark must still see it, or it would offer a move the MC refuses.
+  it("keeps the mark of a thread that stays", () => {
+    const mark = { id: "code-review", kind: "review", listed: false, stays: true };
+    expect(Schema.decodeUnknownSync(ThreadPluginMark)(mark)).toEqual(mark);
   });
 });
