@@ -13,16 +13,25 @@ defmodule HalC2.Store do
   Patches larger than `@compress_over` bytes (mostly command output) are stored
   zstd-compressed behind a zero byte, which a JSON document can never start with.
 
+  The writer never checkpoints the WAL itself: a checkpoint syncs the database file,
+  which can take seconds on a busy disk, and every write queued behind it would wait
+  long enough to time out a running turn. A linked process checkpoints from its own
+  connection instead, which SQLite runs alongside writes.
+
   The meta table records the schema version the file was written with. A node
   refuses to open a store from a newer schema rather than misread it.
   """
 
   use GenServer
 
+  require Logger
+
   alias Exqlite.Sqlite3
 
   @schema_version 1
   @compress_over 1024
+  @write_timeout 60_000
+  @checkpoint_every :timer.seconds(10)
 
   @schema [
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -103,16 +112,16 @@ defmodule HalC2.Store do
   @spec append(GenServer.server(), [{stream_kind, String.t(), [change]}], integer) ::
           {:ok, non_neg_integer} | {:error, term}
   def append(store \\ __MODULE__, batches, at \\ System.os_time(:millisecond)),
-    do: GenServer.call(store, {:append, batches, at}, 60_000)
+    do: GenServer.call(store, {:append, batches, at}, @write_timeout)
 
   @spec put_snapshot(GenServer.server(), String.t(), non_neg_integer, term) :: :ok
   def put_snapshot(store \\ __MODULE__, stream_id, seq, state),
-    do: GenServer.call(store, {:put_snapshot, stream_id, seq, state})
+    do: GenServer.call(store, {:put_snapshot, stream_id, seq, state}, @write_timeout)
 
   @doc "Stores a stream's sidebar row (see `HalC2.Projection.row/3`) as of `seq`."
   @spec put_shell(GenServer.server(), String.t(), non_neg_integer, {String.t(), map}) :: :ok
   def put_shell(store \\ __MODULE__, stream_id, seq, {kind, row}),
-    do: GenServer.call(store, {:put_shell, stream_id, seq, kind, row})
+    do: GenServer.call(store, {:put_shell, stream_id, seq, kind, row}, @write_timeout)
 
   @doc "Every stored sidebar row as `{stream_id, kind, row}`."
   @spec list_shell(String.t()) :: [{String.t(), String.t(), map}]
@@ -169,7 +178,15 @@ defmodule HalC2.Store do
   end
 
   def put_meta(store \\ __MODULE__, key, value),
-    do: GenServer.call(store, {:put_meta, key, value})
+    do: GenServer.call(store, {:put_meta, key, value}, @write_timeout)
+
+  @doc """
+  Copies the WAL back into the database now rather than at the next periodic
+  checkpoint. Returns the frames the WAL held and how many of them were copied.
+  """
+  @spec checkpoint(GenServer.server()) ::
+          {:ok, %{log: integer, checkpointed: integer}} | {:error, term}
+  def checkpoint(store \\ __MODULE__), do: GenServer.call(store, :checkpoint, @write_timeout)
 
   @doc "The node's database in its data directory, which the application and mix tasks open."
   def home_path, do: Path.join(HalC2.Paths.data_dir(), "hal-c2.sqlite")
@@ -261,7 +278,8 @@ defmodule HalC2.Store do
           "journal_mode = WAL",
           "synchronous = NORMAL",
           "foreign_keys = ON",
-          "busy_timeout = 5000"
+          "busy_timeout = 5000",
+          "wal_autocheckpoint = 0"
         ],
         do: :ok = Sqlite3.execute(db, "PRAGMA " <> pragma)
 
@@ -290,6 +308,9 @@ defmodule HalC2.Store do
         "INSERT OR IGNORE INTO meta VALUES ('schema_version', '#{@schema_version}')"
       )
 
+    store = self()
+    checkpointer = spawn_link(fn -> checkpointer(path, store) end)
+
     {:ok, stream_key} = Sqlite3.prepare(db, "SELECT key FROM streams WHERE id = ?1")
 
     {:ok, insert_stream} =
@@ -305,10 +326,54 @@ defmodule HalC2.Store do
      %{
        path: path,
        db: db,
+       checkpointer: checkpointer,
        stmts: %{stream_key: stream_key, insert_stream: insert_stream, insert_event: insert_event},
        # Stream keys never change, so they are cached for the life of the process.
        keys: %{}
      }}
+  end
+
+  # Copies the WAL back into the database every `@checkpoint_every` until the store
+  # stops. A passive checkpoint with nothing to copy does no I/O.
+  defp checkpointer(path, store) do
+    ref = Process.monitor(store)
+    {:ok, db} = Sqlite3.open(path)
+    checkpoint_loop(db, ref)
+  end
+
+  defp checkpoint_loop(db, ref) do
+    receive do
+      {:DOWN, ^ref, :process, _, _} ->
+        Sqlite3.close(db)
+
+      {:checkpoint, from} ->
+        GenServer.reply(from, wal_checkpoint(db))
+        checkpoint_loop(db, ref)
+    after
+      @checkpoint_every ->
+        wal_checkpoint(db)
+        checkpoint_loop(db, ref)
+    end
+  end
+
+  # A failed checkpoint is retried at the next tick; the warning repeats until one
+  # succeeds, since the WAL grows until then.
+  defp wal_checkpoint(db) do
+    result =
+      with {:ok, stmt} <- Sqlite3.prepare(db, "PRAGMA wal_checkpoint(PASSIVE)") do
+        rows = Sqlite3.fetch_all(db, stmt)
+        Sqlite3.release(db, stmt)
+        rows
+      end
+
+    case result do
+      {:ok, [[_busy, log, checkpointed]]} ->
+        {:ok, %{log: log, checkpointed: checkpointed}}
+
+      {:error, reason} ->
+        Logger.warning("the store could not checkpoint its WAL: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 
   # The schema version a store was written with, or 0 for a new file.
@@ -391,6 +456,11 @@ defmodule HalC2.Store do
   end
 
   def handle_call(:path, _from, state), do: {:reply, state.path, state}
+
+  def handle_call(:checkpoint, from, state) do
+    send(state.checkpointer, {:checkpoint, from})
+    {:noreply, state}
+  end
 
   def handle_call({:put_meta, key, value}, _from, state) do
     :ok =

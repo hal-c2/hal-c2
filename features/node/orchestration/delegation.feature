@@ -5,6 +5,7 @@
 #     turn-item.updated)
 #   packages/contracts/src/orchestratorMcp.ts (delegate_task, task_status, task_cancel, error codes)
 #   apps/server-ex/lib/hal_c2/orchestration/delegation.ex
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (abandon: a crashed caller's run)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (delegate_task, task_status, task_cancel)
 #   apps/server/src/orchestration-v2/ (delegated task reactor and completion delivery)
 #   apps/server/src/mcp/ (orchestrator toolkit)
@@ -108,6 +109,16 @@ Feature: Delegating tasks to subagents
     And the turn of "parent" ended
     When the subagent completes
     Then "parent" receives the delegated task result as a message
+
+  # The task runs in its own thread, so it outlives the caller's runtime.
+  @node
+  Scenario: A task keeps working when its caller's runtime crashes
+    Given the agent in "parent" delegated a task that is still working
+    When the runtime running the turn of "parent" crashes
+    Then the turn of "parent" fails
+    And the task, its node and its turn item are "running"
+    When the subagent completes
+    Then the task, its node and its turn item are "completed"
 
   @node
   Scenario: The task result is the subagent's last answer

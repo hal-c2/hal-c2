@@ -33,7 +33,9 @@ defmodule HalC2.Plugins.ProviderAdapter do
   An adapter writes its turn into the thread's log with `HalC2.Orchestration.TurnWriter`
   (`started/1` when the turn runs, `finish/3` when it ends). `start_turn/2` returns
   once the turn is under way; a process it starts for the thread belongs under
-  `HalC2.Plugins.sessions(driver)`, the plugin's own sessions supervisor.
+  `HalC2.Plugins.sessions(driver)`, the plugin's own sessions supervisor. The process
+  that calls `started/1` drives the turn: if it crashes before `finish/3`, the node
+  ends the turn as failed.
 
   The manifest's `provider:` map declares the rest (atom keys, all optional):
 

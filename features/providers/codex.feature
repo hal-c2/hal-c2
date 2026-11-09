@@ -177,6 +177,11 @@ Feature: Codex
     When the user declines
     Then the tool is told access was declined
 
+  Scenario: Codex exiting mid-turn is reported
+    Given a Codex turn is running
+    When the Codex app-server exits unexpectedly
+    Then the turn fails saying Codex exited unexpectedly
+
   Scenario: Codex stopping on a usage limit names the limit and the reset
     When Codex stops because the weekly limit is used up
     Then the thread says the weekly limit is used up and when it resets

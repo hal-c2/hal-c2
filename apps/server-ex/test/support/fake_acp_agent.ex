@@ -227,6 +227,7 @@ defmodule HalC2.Test.FakeAcp do
     )
 
     Node.ensure(HalC2.Acp.UrlAuth)
+    Node.ensure(HalC2.Orchestration.TurnWatch)
     :ok
   end
 

@@ -73,6 +73,12 @@ Feature: Grok
     When Grok starts a subagent
     Then the subagent's work is grouped under the step that started it
 
+  # Grok runs its subagents in its own process, so they end with it.
+  Scenario: Grok's subagent fails with a turn whose runtime crashes
+    Given Grok is running a subagent
+    When the runtime running the turn of "Work" crashes
+    Then the subagent, its node and its turn item have failed
+
   Scenario: Grok's always-approve command is not offered
     When the user types a slash in a Grok thread
     Then Grok's own always-approve command is not offered

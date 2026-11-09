@@ -2445,7 +2445,8 @@ defmodule HalC2.Test.Node.World do
             {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
             id: HalC2.Codex.Supervisor
           ),
-          HalC2.Mcp
+          HalC2.Mcp,
+          HalC2.Orchestration.TurnWatch
         ],
         do: Node.ensure(child)
 
@@ -2719,7 +2720,10 @@ defmodule HalC2.Test.Node.World do
         ],
         do: Node.ensure(Supervisor.child_spec(spec, id: name))
 
-    Enum.each([HalC2.Settings, HalC2.Terminal.Hub, HalC2.Mcp], &Node.ensure/1)
+    Enum.each(
+      [HalC2.Settings, HalC2.Terminal.Hub, HalC2.Mcp, HalC2.Orchestration.TurnWatch],
+      &Node.ensure/1
+    )
   end
 
   @doc """

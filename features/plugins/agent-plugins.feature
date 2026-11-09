@@ -3,6 +3,7 @@
 #   docs/internals/providers.md (route by instance, unknown drivers)
 #   docs/user/providers-acp.md
 #   apps/server-ex/lib/hal_c2/orchestration.ex (driver_for, runtime, steerable?)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_watch.ex (a turn whose process crashes)
 #   apps/server-ex/lib/hal_c2/acp.ex (built-in ACP agents, acpRegistry driver)
 #   apps/server-ex/lib/hal_c2/acp/catalog.ex, apps/server-ex/lib/hal_c2/acp/thread_runtime.ex
 #   apps/server-ex/lib/hal_c2/claude/provider.ex, apps/server-ex/lib/hal_c2/codex/provider.ex
@@ -72,6 +73,16 @@ Feature: Agent providers are plugins
     When the plugin is installed and enabled
     Then "acme-native" is listed as a provider
     And it can run turns in "shop"
+
+  # The process that calls `TurnWriter.started/1` drives the turn.
+  @node
+  Scenario: A plugin's turn ends as failed when the process running it crashes
+    Given a provider plugin "acme-native" that implements the adapter contract directly
+    And the plugin is installed and enabled
+    And the plugin "acme-native" is running a turn with a message queued behind it
+    When the process running that turn crashes
+    Then the run fails saying the provider's session ended unexpectedly
+    And the queued message runs
 
   @node
   Scenario: A turn on an instance whose plugin is missing is refused clearly

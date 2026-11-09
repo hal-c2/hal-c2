@@ -158,51 +158,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       {:ok, state, turn} ->
         state = %{state | turn: turn}
         Session.send_message(state.session, claude_content(turn))
-        at = Entities.now()
-
-        commit(state, fn stream ->
-          [
-            Orchestration.create(
-              "provider-turn",
-              ids.provider_turn,
-              Entities.provider_turn(ids, nil, turn.run_ordinal, at)
-            ),
-            Orchestration.upsert(
-              stream,
-              "run-attempt",
-              ids.attempt,
-              &Map.merge(&1, %{
-                "status" => "running",
-                "providerTurnId" => ids.provider_turn,
-                "startedAt" => at
-              })
-            ),
-            Orchestration.upsert(
-              stream,
-              "run",
-              ids.run,
-              &Map.merge(&1, %{"status" => "running", "startedAt" => at})
-            ),
-            Orchestration.upsert(
-              stream,
-              "node",
-              ids.root_node,
-              &Map.merge(&1, %{"status" => "running", "providerTurnId" => ids.provider_turn})
-            ),
-            Orchestration.upsert(
-              stream,
-              "provider-thread",
-              ids.provider_thread,
-              &Map.merge(&1, %{"status" => "active", "updatedAt" => at})
-            ),
-            Orchestration.upsert(
-              stream,
-              "thread",
-              ids.thread,
-              &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
-            )
-          ]
-        end)
+        started(state)
 
         {:reply, :ok, state}
 

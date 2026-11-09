@@ -1,5 +1,5 @@
 # Sources:
-#   apps/server-ex/lib/hal_c2/store.ex (event log, snapshots, compression, read-only readers)
+#   apps/server-ex/lib/hal_c2/store.ex (event log, snapshots, compression, read-only readers, WAL checkpoints)
 #   apps/server-ex/lib/hal_c2/patch.ex (set, append, unset, delete, quiet)
 #   apps/server-ex/lib/hal_c2/stream_state.ex (folded state, snapshot migration)
 #   apps/server-ex/lib/hal_c2/streams/server.ex (snapshot every 500 events, sidebar debounce)
@@ -101,6 +101,14 @@ Feature: The node's event store and projections
     When the node starts
     Then their finished messages are indexed once
     And search finds them
+
+  # A checkpoint syncs the database file, which can take seconds on a busy disk.
+  @node
+  Scenario: The WAL is checkpointed beside the writer, not by it
+    When a thread changes twice
+    Then the store's writer never checkpoints the WAL itself
+    And a checkpoint from its own connection copies the changes into the database
+    And that connection closes when the store stops
 
   @node
   Scenario: The store records its schema version
