@@ -472,14 +472,23 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
         false
 
       intent == "run_build" ->
-        shared =
-          MapSet.intersection(MapSet.new(String.split(form)), MapSet.new(String.split(a_form)))
-
+        shared = MapSet.intersection(tool_words(form), tool_words(a_form))
         MapSet.size(MapSet.difference(shared, MapSet.new(@run_words))) > 0
 
       true ->
         intent == "run_tests" or not Observe.bare?(form)
     end
+  end
+
+  # The words of the command a form runs, past its `cd x &&` and activation
+  # prefixes, each by its basename: `./gradlew build` and `gradlew build` share
+  # `gradlew`, while `cd web && tsc` and `cd web && eslint` share nothing.
+  defp tool_words(form) do
+    form
+    |> String.split(" && ")
+    |> List.last()
+    |> String.split()
+    |> MapSet.new(&Path.basename/1)
   end
 
   # The executable a form runs, by its last word.

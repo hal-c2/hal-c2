@@ -465,20 +465,20 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
         cond do
           kind == "test" ->
-            observation(call, "run_tests", form.("#{base} run #{script}"), head, seg)
+            observation(call, "run_tests", form.("#{head} run #{script}"), head, seg)
 
           kind in @build_subs ->
-            observation(call, "run_build", form.("#{base} run #{script}"), head, seg)
+            observation(call, "run_build", form.("#{head} run #{script}"), head, seg)
 
           true ->
             classify_rest(call, head, base, rest, body, form, seg)
         end
 
       base in @task_heads and hd(rest ++ [nil]) in @build_subs ->
-        observation(call, "run_build", form.("#{base} #{hd(rest)}"), head, seg)
+        observation(call, "run_build", form.("#{head} #{hd(rest)}"), head, seg)
 
       base in @build_heads ->
-        observation(call, "run_build", form.(base), head, seg)
+        observation(call, "run_build", form.(head), head, seg)
 
       true ->
         classify_rest(call, head, base, rest, body, form, seg)
@@ -545,7 +545,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
             hosts: hosts(body)
           )
         else
-          observation(call, "package_tool", form.(base), head, seg)
+          observation(call, "package_tool", form.(head), head, seg)
         end
 
       true ->

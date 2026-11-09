@@ -129,7 +129,6 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert form("cargo build --release") == {"run_build", "cargo build"}
     assert form("tsc -p .") == {"run_build", "tsc"}
     assert form("go test ./...") == {"run_tests", "go test"}
-    assert form("./gradlew test") == {"run_tests", "gradlew test"}
     assert form("bundle install") == {"package_tool", "bundle"}
   end
 
@@ -138,6 +137,17 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert form("bun run build") == {"run_build", "bun run build"}
     assert form("bun run dev") == {"run_interpreter", "bun"}
     assert form("bun src/index.ts") == {"run_interpreter", "bun"}
+  end
+
+  test "a tool run by its path keeps the path in its form" do
+    assert form("./gradlew test") == {"run_tests", "./gradlew test"}
+    assert form("./gradlew build") == {"run_build", "./gradlew build"}
+
+    assert form("node_modules/.bin/pnpm run lint") ==
+             {"run_build", "node_modules/.bin/pnpm run lint"}
+
+    assert form(".venv/bin/ruff check .") == {"run_build", ".venv/bin/ruff"}
+    assert form(".venv/bin/pip list") == {"package_tool", ".venv/bin/pip"}
   end
 
   test "module and launcher runs name the tool they run" do
@@ -475,6 +485,48 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       text = render(state)
       assert String.starts_with?(text, EnvFacts.header())
       assert text =~ "`tsc …` fails here with command not found; `npx tsc …` works."
+    end
+
+    test "a build tool missing bare and working by its path is a repair" do
+      task = fn i ->
+        [
+          edit("/r/src/m#{i}.py"),
+          bash("ruff check .", "Exit code 127\nbash: ruff: command not found", 127),
+          bash(".venv/bin/ruff check .", "All checks passed!", 0)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..5, task))
+
+      assert render(state) =~
+               "`ruff …` fails here with command not found; `.venv/bin/ruff …` works."
+
+      # A wrapper run by its path fails where the bare one works: the path is named.
+      task = fn i ->
+        [
+          edit("/r/src/m#{i}.kt"),
+          bash("gradlew build", "Exit code 127\nbash: gradlew: command not found", 127),
+          bash("./gradlew build", "BUILD SUCCESSFUL in 3s", 0)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..5, task))
+
+      assert render(state) =~
+               "`gradlew build …` fails here with command not found; `./gradlew build …` works."
+    end
+
+    test "a directory change shared by two builds does not make one repair the other" do
+      task = fn i ->
+        [
+          edit("/r/web/m#{i}.ts"),
+          bash("cd web && tsc -p .", "Exit code 127\nbash: tsc: command not found", 127),
+          bash("cd web && eslint .", "", 0)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..5, task))
+      refute Enum.any?(Map.values(state.facts), &(&1.family == "form_repair"))
     end
 
     test "a form that only worked with an assignment before it is not named" do
