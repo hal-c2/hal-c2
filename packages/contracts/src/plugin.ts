@@ -50,6 +50,11 @@ export const PluginPermissionId = Schema.Literals([
   "threads:create",
   "threads:organize",
   "agentTools",
+  "turns:observe",
+  "runs:shape",
+  "threads:steer",
+  "threads:notice",
+  "textGeneration",
 ]);
 export type PluginPermissionId = typeof PluginPermissionId.Type;
 

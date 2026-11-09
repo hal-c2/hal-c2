@@ -67,7 +67,8 @@ defmodule HalC2.Orchestration.Handoff do
   sent_tokens: integer, unconfirmed_since: run_ordinal}`, where `changes` settle the
   transfers the run consumes and `unconfirmed_since` is the run through which the
   conversation holds the thread should the handoff not reach it. A Pi or OpenCode
-  fork also names the entry to cut the copy `before` (nil keeps all of it). A
+  fork also names the entry to cut the copy `before` (nil keeps all of it), and a native
+  fork the `shape` plugins gave the conversation it continues, when they gave one. A
   carried session's fork has `carried: true` and the `fallback` context for a new
   session. The plan's own `fallback` is what `opened/2` needs to hand a run that was to
   resume `provider_thread` the whole thread when the provider starts a new conversation
@@ -656,7 +657,7 @@ defmodule HalC2.Orchestration.Handoff do
             do: Map.merge(fork, next_turn(transfer, turn_ref)),
             else: fork
 
-        {fork, nil, [settled]}
+        {Map.merge(fork, source_shape(transfer, thread_ref)), nil, [settled]}
 
       true ->
         history = transcript(state, ordinal)
@@ -681,6 +682,18 @@ defmodule HalC2.Orchestration.Handoff do
 
         {nil, history, [settled, handoff]}
     end
+  end
+
+  # The fork continues the source's conversation, so it runs with the tools plugins
+  # turned off as that conversation started (`HalC2.Orchestration.RunShape`): `shape`.
+  defp source_shape(transfer, thread_ref) do
+    transfer["sourceThreadId"]
+    |> HalC2.Streams.state()
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(%{}, fn provider_thread ->
+      if provider_thread["nativeThreadRef"] == thread_ref and provider_thread["pluginShape"],
+        do: %{shape: provider_thread["pluginShape"]}
+    end)
   end
 
   @doc """
@@ -1669,23 +1682,34 @@ defmodule HalC2.Orchestration.Handoff do
   handed took for granted the provider held the rest, so it is sent the handoffs
   already waiting, then the whole thread, before its message (`fresh`, from the plan's
   `fallback`). A runtime marks its state `fresh_start: true` when it starts one, and
-  `fresh_start/2` takes the mark off as the turn goes on.
+  `fresh_start/2` takes the mark off as the turn goes on, and puts it on the turn
+  (`fresh_start: true`), which starts a new conversation however it was planned
+  (`HalC2.Orchestration.TurnWriter.new_conversation?/1`).
   """
   def fresh_start(state, turn) do
     case Map.pop(state, :fresh_start, false) do
-      {true, state} -> {state, afresh(turn)}
+      {true, state} -> {state, turn |> afresh() |> Map.put(:fresh_start, true)}
       {false, state} -> {state, turn}
     end
   end
 
   # The turn as it opens a new provider conversation: the thread's history wrapped into
-  # its text. A turn with nothing to carry is unchanged.
+  # its text, after the plugins' context for the conversation, which goes first again as
+  # it did when the conversation started (`HalC2.Orchestration.RunShape`). A turn with
+  # nothing to carry is unchanged.
   defp afresh(%{fresh: %{} = fresh} = turn) do
     max_chars = Map.get(fresh, :max_chars, @max_chars)
     history = HalC2.Streams.read(fresh.thread, &transcript(&1, fresh.ordinal, 0, max_chars))
     context = wrap(history, fresh.merged, fresh.moved, nil, fresh.restart, :merged_first)
     :ok = started_afresh(turn, fresh, context)
-    ahead(%{turn | text: fresh.text, fresh: nil} |> Map.delete(:history), context)
+
+    ahead =
+      case Enum.reject([Map.get(turn, :shape_context), context], &is_nil/1) do
+        [] -> nil
+        parts -> Enum.join(parts, "\n\n")
+      end
+
+    ahead(%{turn | text: fresh.text, fresh: nil} |> Map.delete(:history), ahead)
   end
 
   defp afresh(turn), do: turn

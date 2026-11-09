@@ -74,18 +74,6 @@ defmodule HalC2.Codex.Goals do
   def first_prompt(objective), do: "Start working toward this goal: #{objective}"
 
   @doc """
-  The turn that opens a goal: it asks `first_prompt/1` of Codex in place of the
-  user's words, with a handed-over conversation (`HalC2.Orchestration.Handoff.ahead/2`)
-  still ahead of it. The turn starting confirms the handoff, so history left out here
-  would never be sent.
-  """
-  def first_turn(turn, objective),
-    do: %{
-      turn
-      | text: HalC2.Orchestration.Handoff.prompt(turn[:history], first_prompt(objective))
-    }
-
-  @doc """
   The goal as the provider thread keeps it (`goal`), from Codex's `ThreadGoal`: nil
   for none, or one whose objective is blank.
   """

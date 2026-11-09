@@ -2595,6 +2595,10 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
 
     ids = state.turn.ids
+    # The provider turn it came in keeps it too, with when it came: a turn the agent
+    # reports nothing in keeps none, never an earlier turn's. That says which run it
+    # counts (`HalC2.Orchestration.Handoff.room/3`).
+    reported = Map.put(usage, "updatedAt", Entities.now())
 
     commit(state, fn stream ->
       [
@@ -2604,14 +2608,13 @@ defmodule HalC2.Acp.ThreadRuntime do
           ids.provider_thread,
           &Map.put(&1, "contextUsage", usage)
         ),
-        # Its turn keeps it too, which says which run it counts
-        # (`HalC2.Orchestration.Handoff.room/3`).
-        Orchestration.upsert(
-          stream,
-          "provider-turn",
-          ids.provider_turn,
-          &(&1 && Map.put(&1, "tokenUsage", Map.put(usage, "updatedAt", Entities.now())))
-        )
+        HalC2.StreamState.get(stream, "provider-turn")[ids[:provider_turn]] &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            ids.provider_turn,
+            &Map.put(&1, "tokenUsage", reported)
+          )
       ]
     end)
 
@@ -3737,22 +3740,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         finish_item(state, id, status, & &1)
 
       %{id: item_id, node: node_id} ->
-        at = Entities.now()
-        done = %{"status" => status, "completedAt" => at}
-
-        commit(state, fn stream ->
-          [
-            Orchestration.upsert(
-              stream,
-              "turn-item",
-              item_id,
-              &Map.merge(&1, Map.put(done, "updatedAt", at))
-            ),
-            Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
-          ]
-        end)
-
-        state
+        end_item(state, item_id, node_id, status)
 
       _ ->
         state

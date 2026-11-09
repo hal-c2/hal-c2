@@ -65,12 +65,12 @@ default, 12-hour or 24-hour) and locale. Each function takes a `Date`, an ISO
 8601 string or milliseconds since the epoch, and returns `""` for a missing or
 invalid time.
 
-| Function                | Gives                                   |
-| ----------------------- | --------------------------------------- |
-| `Format.time(at)`       | `18:05`, `6:05 PM`                      |
-| `Format.date(at)`       | `9/20`, or `9/20/2025` in another year  |
-| `Format.dateTime(at)`   | `9/20 18:05`                            |
-| `Format.relative(at)`   | `just now`, `5m ago`, `in 2h`, `3d ago` |
+| Function              | Gives                                   |
+| --------------------- | --------------------------------------- |
+| `Format.time(at)`     | `18:05`, `6:05 PM`                      |
+| `Format.date(at)`     | `9/20`, or `9/20/2025` in another year  |
+| `Format.dateTime(at)` | `9/20 18:05`                            |
+| `Format.relative(at)` | `just now`, `5m ago`, `in 2h`, `3d ago` |
 
 ```qml
 import HalC2.Bricks
@@ -120,6 +120,27 @@ What a running plugin adds reaches every app connected to that machine:
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.
+
+### Plugins that watch your agents
+
+Some plugins help agents work: they cut wasted tokens, catch an agent going in
+circles, or keep notes across turns. What they ask for when you turn them on
+says how far they reach:
+
+- **See what agents do** lets a plugin follow every thread on the machine: the
+  tools agents call, what those return, and the tokens each turn uses. It can
+  also read the turns a thread ran before.
+- **Add context and turn tools off** lets it put a note ahead of the first
+  message of a new conversation and turn some of the agent's tools off. It is
+  asked once as the conversation starts, and the conversation keeps that answer
+  to its end. Claude turns off tools by name and Codex by capability; other
+  agents get the note alone.
+- **Send messages to agents** lets it steer a turn while that turn works, as if
+  you had typed into the composer.
+- **Show notices** lets it put a notice in a thread. A notice can offer
+  **Stop**, which stops the turn it is about while that turn works.
+- **Use your text model** lets it ask the **Text generation model** (**Settings
+  → General**) to write for it, on your account with that provider.
 
 ## Connect Slack for plugins
 

@@ -36,6 +36,7 @@ defmodule HalC2.ProviderHandoffProofTest do
   @provider "the provider's side; the MC sees it only through prompts, confirmations and reports"
   @handoff "what a prompt carries; the model counts it by size, not by text"
   @history "what of the thread fits a size; pure, its laws in handoff_history.maude and prop/hal_c2/handoff_history_prop_test.exs"
+  @observe "what plugins hear of a turn (HalC2.Plugins.observe/1): reads a turn and its items; changes nothing"
   @items "writes a turn's items, streamed text and requests; for a provider that never says it started the turn, the first one confirms it as confirm models"
 
   use HalC2.Proof,
@@ -75,7 +76,12 @@ defmodule HalC2.ProviderHandoffProofTest do
       "HalC2.Orchestration.TurnWriter.flush/2" => @items,
       "HalC2.Orchestration.TurnWriter.split_ready/1" => @items,
       "HalC2.Orchestration.TurnWriter.item_id/2" => @items,
-      "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
+      "HalC2.Orchestration.TurnWriter.finish_item/5" => @items,
+      "HalC2.Orchestration.TurnWriter.end_item/5" => @items,
+      "HalC2.Orchestration.TurnWriter.observe_item/3" => @observe,
+      "HalC2.Orchestration.TurnWriter.observed_item/1" => @observe,
+      "HalC2.Orchestration.TurnWriter.new_conversation?/1" => @observe,
+      "HalC2.Orchestration.TurnWriter.observe_started/1" => @observe,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,
       "HalC2.Orchestration.TurnWriter.open_request/6" => @items,
