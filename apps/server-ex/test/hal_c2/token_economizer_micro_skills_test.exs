@@ -133,9 +133,19 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
              output
     end
 
-    # A count above zero does.
-    assert outcomes.("make build || cargo build", "1 failed\nFinished dev", 0) ==
-             [{"make build", nil}, {"cargo build", "ran"}]
+    # A count above zero does, as does a failure line wherever a tool puts it.
+    for output <- [
+          "1 failed\nFinished dev",
+          "BUILD FAILED in 3s",
+          "src/a.c:3:5: error: x",
+          "  error[E0425]: cannot find value",
+          "npm ERR! code ELIFECYCLE",
+          "status: failed"
+        ] do
+      assert outcomes.("make build || cargo build", output, 0) ==
+               [{"make build", nil}, {"cargo build", "ran"}],
+             output
+    end
 
     # A test run its output shows ran, whatever came before it.
     assert outcomes.("source .venv/bin/activate && pytest -q", "1 failed, 3 passed", 1) ==
