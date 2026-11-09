@@ -654,7 +654,8 @@ defmodule HalC2.OpenShell.ClientTest do
       ["tar" | _], _io ->
         send(test, {:handler, self()})
 
-        receive do: (:never -> :ok), after: (30_000 -> :ok)
+        # Until the stream is gone, which stops this process.
+        receive do: (:never -> :ok)
 
       _command, io ->
         io.stdout.(read_all(io, []))
@@ -668,14 +669,15 @@ defmodule HalC2.OpenShell.ClientTest do
       read_all(io, [])
       send(test, {:handler, self()})
 
-      # Until the stream is gone.
-      Enum.reduce_while(1..500, :ok, fn _, :ok ->
-        Process.sleep(10)
-        if io.stdout.(".") == :ok, do: {:cont, :ok}, else: {:halt, :closed}
-      end)
-
-      io.exit.(0)
+      # Until the stream is gone, however long the upload's deadline takes to come:
+      # an exit of its own would end the upload before its deadline.
+      chatter(io)
     end
+  end
+
+  defp chatter(io) do
+    Process.sleep(10)
+    if io.stdout.(".") == :ok, do: chatter(io)
   end
 
   defp read_all(io, acc) do

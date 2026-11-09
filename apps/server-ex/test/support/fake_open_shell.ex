@@ -822,8 +822,10 @@ defmodule HalC2.Test.FakeOpenShell do
     end
 
     # Reads until at least one whole gRPC message is buffered, or the request ends.
+    # A command waits for its stdin as long as the stream lasts, however slow the
+    # client is to send it; the stream's end stops this process.
     defp read_frames(conn, buffer) do
-      case read_body(conn, length: 5, read_timeout: 30_000) do
+      case read_body(conn, length: 5, read_timeout: :infinity) do
         {:more, data, conn} ->
           case frames(buffer <> data) do
             {[], rest} -> read_frames(conn, rest)

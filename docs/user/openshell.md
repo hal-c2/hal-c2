@@ -53,6 +53,12 @@ connections without TLS, gives the MC no operator rights, and keeps a sandbox fr
 reaching the gateway or the container runtime. If an update fails those checks, the
 previous gateway, its certificates and its data are put back.
 
+On Linux, `install` turns on lingering for your user (as `hal-c2-mc install` does),
+so the gateway keeps running after you log out and starts at boot. If systemd cannot
+say whether your user may linger (`linger-unavailable`), nothing is installed. On a
+Mac, sandboxes reach the gateway through Docker Desktop's own network, so Desktop's
+host networking setting does not need to be on.
+
 An update, a rotation or an uninstall waits while this MC has sandboxes running.
 Add `--drain` to delete them first. Only the sandboxes this MC created are touched.
 If the gateway is running but cannot say which sandboxes it holds

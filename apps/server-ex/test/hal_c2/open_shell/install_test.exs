@@ -33,6 +33,8 @@ defmodule HalC2.OpenShell.InstallTest do
     bin = Path.join(dir, "bin")
     File.mkdir_p!(bin)
     log = Storage.fake_service_manager(bin)
+    # This user already lingers; the tests that it is switched on set it off.
+    File.touch!(Path.join(bin, "linger"))
 
     FakeOpenShell.put_env(
       home: Path.join(dir, "mc"),
@@ -338,6 +340,31 @@ defmodule HalC2.OpenShell.InstallTest do
         assert File.exists?(OpenShell.gateway_bin("0.1.6"))
         assert File.read!(Service.unit_path(Service.manager())) == unit
       end
+    end
+
+    # Docker Desktop's VM is not the Mac: with the supervisors on its host network
+    # no sandbox would reach the gateway, and every Mac install would fail its check.
+    test "a Mac's gateway puts Docker's supervisors on a bridge", ctx do
+      desktop = %{
+        kind: :docker,
+        socket: "/Users/me/.docker/run/docker.sock",
+        owner_uid: 1000,
+        uid: 1000,
+        reachable: true,
+        version: "28.1.0",
+        rootless: false,
+        desktop: true
+      }
+
+      FakeOpenShell.put_env(
+        openshell_facts: %{os: :darwin, arch: "aarch64", runtime: desktop},
+        service_platform: {:unix, :darwin}
+      )
+
+      assert {:ok, %{"driver" => "docker", "network" => "bridge"}} = install(ctx, "0.1.7")
+      config = File.read!(OpenShell.config_path())
+      assert config =~ ~s(\nsupervisor_network_mode = "bridge"\n)
+      assert config =~ ~s(socket_path = "/Users/me/.docker/run/docker.sock"\n)
     end
 
     test "an update whose backup fails changes nothing and starts the gateway again", ctx do

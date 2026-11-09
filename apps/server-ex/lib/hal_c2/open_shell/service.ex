@@ -234,7 +234,7 @@ defmodule HalC2.OpenShell.Service do
   def install(state) do
     with {:ok, manager} <- fetch_manager(),
          :ok <- owned(),
-         :ok <- prerequisites(manager),
+         :ok <- Service.prerequisites(manager),
          :ok <- halt(manager) do
       path = unit_path(manager)
       File.mkdir_p!(Path.dirname(path))
@@ -398,16 +398,6 @@ defmodule HalC2.OpenShell.Service do
   end
 
   defp unsupported, do: "OpenShell runs as a service on Linux (systemd) and macOS only."
-
-  defp prerequisites(:launchd), do: :ok
-
-  defp prerequisites(:systemd) do
-    if Service.probe("systemctl", ["--user", "show-environment"]) == :error,
-      do:
-        {:error,
-         "[user-manager-unavailable] #{Service.problem_message("user-manager-unavailable")}"},
-      else: :ok
-  end
 
   defp running?(manager, instance \\ OpenShell.instance())
 
@@ -588,7 +578,12 @@ defmodule HalC2.OpenShell.Service do
       List.flatten([
         "[Unit]",
         "Description=NVIDIA OpenShell gateway for HAL-C2",
-        if(podman, do: ["Wants=podman.socket", "After=podman.socket"], else: []),
+        # The runtime the gateway's driver dials: Podman's socket unit, or rootless
+        # Docker's daemon, so at boot the gateway does not spend its restarts on it.
+        if(podman,
+          do: ["Wants=podman.socket", "After=podman.socket"],
+          else: ["Wants=docker.service", "After=docker.service"]
+        ),
         "StartLimitIntervalSec=300",
         "StartLimitBurst=5",
         "",
