@@ -702,6 +702,20 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       assert render(state) == ""
     end
 
+    test "a success the environment helped is not a contradiction" do
+      {state, _} = stream(Enum.map(0..3, &broken_env/1))
+
+      helped = fn i ->
+        [
+          edit("pkg/f#{i}.py"),
+          bash("PATH=/opt/env/proj/bin:$PATH python -m pytest tests/test_a.py -q", "1 passed", 0)
+        ]
+      end
+
+      {state, _} = stream(Enum.map(20..22, helped), state)
+      assert state.facts["form_repair:run_tests:python -m pytest"].life.state == "ACTIVE"
+    end
+
     test "a bare one-liner success is not a contradiction" do
       {state, _} = stream(Enum.map(0..3, &broken_env/1))
 

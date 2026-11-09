@@ -810,13 +810,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
                 repairs?(&1.form, a_form, intent))
           )
 
-      # Contradiction: the bare form ran the test runner or build tool without
-      # an environment error. A bare interpreter one-liner succeeding is not
-      # evidence.
+      # Contradiction: the bare form, as typed, ran the test runner or build
+      # tool without an environment error. A bare interpreter one-liner
+      # succeeding is not evidence, nor is a run its assignments helped
+      # (`PATH=… pytest`).
       runner_seq =
         Map.get(by_intent, if(intent == "run_build", do: "run_build", else: "run_tests"), [])
 
-      a_runner_ok = Enum.any?(runner_seq, &(&1.form == a_form and Observe.form_worked(&1)))
+      a_runner_ok = Enum.any?(runner_seq, &(&1.form == a_form and typed_ok?(&1)))
       fired = a_failed or (MapSet.member?(injected, fact.id) and b_ran and not a_failed)
 
       verdict =
