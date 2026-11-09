@@ -39,10 +39,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @no_stdin_flag ~r/^(?:-[vVh]|--(?:version|help|test(?:-[\w-]+)?(?:=\S*)?))$/
   # Python's own flags that hand it no code, and those that take the next word.
   @python_flag ~r/^-[bBdEhiIOqsSuvVx]+$/
-  # Flags that hand an interpreter its code (`perl -le`, `node -p`, `ruby -e`); and flags
-  # whose value is attached (`ruby -Itest`, `node -r ts-node/register`), read before them.
+  # Flags that hand an interpreter its code (`perl -le`, `node -p`, `ruby -e`); flags whose
+  # value is attached (`ruby -Itest`, `perl -Mstrict`), which are none of them; and flags
+  # whose value is the next word (`node -r ./setup.js`, `php -d x=1`), not the program.
   @eval_flag ~r/^-(?:-(?:eval|print|exec|command)(?:=.*)?|[A-Za-z]*[ceEp][A-Za-z]*)$/
   @attached_value ~r/^-[IrMmWXdx]/
+  @separate_value ~w(-r --require --import --loader --experimental-loader --input-type -I -M -d -c)
   # A heredoc's delimiter, after its `<<`: `-` for `<<-`, then any word, quoted in whole
   # or part or not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`).
   @heredoc_word ~r/\A(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/u
@@ -254,37 +256,33 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp shell_script?([file | _], written), do: head([file]) in written
   defp shell_script?([], _), do: true
 
-  # Whether an interpreter's words hand it code: an eval flag before the program it runs
-  # (`-e`, `-pe`, `-c`, `--eval`, `--print`, `deno eval`), or no program and no flag that
-  # reads none, so it reads stdin.
+  # Whether an interpreter's words hand it code: an eval flag of its own anywhere before a
+  # `--` (`-e`, `-pe`, `-c`, `--eval`, `--print`, php's `-r`, `deno eval`), whatever
+  # order its flags and their values come in, or no program and no flag that reads none,
+  # so it reads stdin. A script's own argument spelt as one hides it too, at the cost of a
+  # turn not learned.
   defp inline?(name, args) do
-    case code_of(name, args) do
-      :eval -> true
-      :program -> false
-      :none -> not Enum.any?(args, &Regex.match?(@no_stdin_flag, &1))
-    end
-  end
+    words = Enum.take_while(args, &(&1 != "--"))
+    operands = operands_of(words)
 
-  defp code_of(name, ["eval" | _]) when name in ~w(deno bun), do: :eval
-
-  defp code_of(name, ["-" <> _ = flag | rest]) do
     cond do
-      Regex.match?(@attached_value, flag) -> code_of(name, rest)
-      Regex.match?(@eval_flag, flag) -> :eval
-      name == "php" and Regex.match?(~r/^-[A-Za-z]*[rBRE]/, flag) -> :eval
-      true -> code_of(name, rest)
+      name in ~w(deno bun) and List.first(operands) == "eval" -> true
+      Enum.any?(words, &eval_flag?(name, &1)) -> true
+      true -> operands == [] and not Enum.any?(words, &Regex.match?(@no_stdin_flag, &1))
     end
   end
 
-  # bun's and deno's first word is a subcommand or the program; a word naming no file
-  # elsewhere (`--input-type commonjs`) may be an option's value.
-  defp code_of(name, [word | rest]) do
-    if name in ~w(deno bun) or String.contains?(word, ["/", "."]),
-      do: :program,
-      else: code_of(name, rest)
-  end
+  defp eval_flag?("php", flag), do: Regex.match?(~r/^-[A-Za-z]*[rBRE]/, flag)
 
-  defp code_of(_, []), do: :none
+  defp eval_flag?(_, flag),
+    do: not Regex.match?(@attached_value, flag) and Regex.match?(@eval_flag, flag)
+
+  # The words that are not flags nor a flag's separate value (`-r ./setup.js`,
+  # `--input-type commonjs`): what may be the program.
+  defp operands_of([flag, _ | rest]) when flag in @separate_value, do: operands_of(rest)
+  defp operands_of(["-" <> _ | rest]), do: operands_of(rest)
+  defp operands_of([word | rest]), do: [word | operands_of(rest)]
+  defp operands_of([]), do: []
 
   # The shell text with each command substitution (`$(...)`, backticks, `<(...)`,
   # `>(...)`) and parameter expansion (`${...}`) put as one plain word; :error when a

@@ -241,6 +241,8 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp call("substituted"),
     do: {"Bash", %{"command" => "echo $(bash -c 'pytest -q')"}, "1 failed in 0.02s", 0}
 
+  defp call({"inline", cmd}), do: {"Bash", %{"command" => cmd}, "1 failed in 0.02s", 0}
+
   defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
 
   # Checks that hide nothing however they are spelt: a runner with flags, expansions, a
@@ -254,6 +256,39 @@ defmodule HalC2.TokenEconomizerPropTest do
 
   defp call("open_heredoc"),
     do: {"Bash", %{"command" => "cat <<EOF\npytest -q"}, "1 failed in 0.02s", 1}
+
+  # Inline code handed to an interpreter behind any of its flags and their values, in any
+  # order (`node -r ./setup.js -e ...`), and with a program or `--` after it.
+  defp inline do
+    let {{interpreter, eval}, before, tail} <-
+          {elements([
+             {"node", "-e"},
+             {"node", "--eval"},
+             {"node", "-p"},
+             {"bun", "-e"},
+             {"ruby", "-e"},
+             {"perl", "-le"},
+             {"php", "-r"}
+           ]),
+           list(
+             elements([
+               "-r ./setup.js",
+               "--require ts-node/register",
+               "--import tsx",
+               "--input-type commonjs",
+               "-I lib",
+               "-Itest",
+               "-Mstrict",
+               "-d memory_limit=1G",
+               "--no-warnings"
+             ])
+           ), elements(["", " a.js", " -- x"])} do
+      {"inline", Enum.join([interpreter | before] ++ [eval, "'x()'"], " ") <> tail}
+    end
+  end
+
+  defp kind({kind, _}), do: kind
+  defp kind(kind), do: kind
 
   def postcondition(state, {:call, _, :tools, _}, steps) do
     steps
@@ -351,7 +386,13 @@ defmodule HalC2.TokenEconomizerPropTest do
 
   property "a turn with a command that may hide a check after its last edit is never learned",
     numtests: HalC2.Prop.numtests(300) do
-    forall kinds <- list(elements(~w(read edit pass fail flagged expanded sourced) ++ @unread)) do
+    forall kinds <-
+             list(
+               oneof([
+                 elements(~w(read edit pass fail flagged expanded sourced) ++ @unread),
+                 inline()
+               ])
+             ) do
       g =
         Enum.reduce(kinds, Turn.new("t:r"), fn kind, g ->
           {name, args, result, code} = call(kind)
@@ -367,7 +408,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       hidden = if last_edit > 0, do: ["sourced" | @unread], else: @unread
 
       green =
-        kinds != [] and not Enum.any?(after_edit, &(&1 in hidden)) and
+        kinds != [] and not Enum.any?(after_edit, &(kind(&1) in hidden)) and
           List.last(checks) != "fail"
 
       (Turn.resolved_proxy(g) == green)

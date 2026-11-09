@@ -1456,6 +1456,10 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "perl -le 'system q(pytest)'",
             "deno eval 'Deno.exit(0)'",
             "timeout 60 node --input-type commonjs -e 'x()'",
+            ~s{node -r ./setup.js -e 'require("child_process").execSync("npm test")'},
+            "node --require ts-node/register -e 'x()'",
+            ~s{php -r 'system("vendor/bin/phpunit");'},
+            "node a.js -e 'x()'",
             "source run.sh",
             ". ./run.sh && echo ok",
             "bash run.sh || true"
