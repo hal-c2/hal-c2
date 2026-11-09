@@ -49,6 +49,18 @@ defmodule HalC2Plugins.TokenEconomizer do
   forgets what a project learned, the import's envelope samples with it, and
   runs the import again when it is on.
 
+  With the micro-skills `on`, a paid proposer (`MicroSkills.Distiller`) also
+  reads a compact digest of a project's recent turns every
+  `microSkillsProposeEvery` turns and asks the user's text generation model
+  for repository facts, each with a detector the plugin checks on later turns.
+  The call is a task of the plugin's that sends its answer back
+  (`{:proposed, project id, result}`); one that fails is not retried until the
+  next proposal is due. Its spend is counted beside the judge's in the status.
+
+  A project whose micro-skills file cannot be read is held: nothing is
+  learned, staged or proposed for it, and its listing says why, until the file
+  reads again. It is never silently started afresh.
+
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
   waiting (`"waiting"`) have been, and a partial turn does not teach the envelope. A
@@ -70,7 +82,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   alias HalC2.Plugins.Host
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Turn}
-  alias HalC2Plugins.TokenEconomizer.MicroSkills.{EnvFacts, History}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.{Distiller, EnvFacts, History}
 
   @id "token-economizer"
   @topic "loopGuard"
@@ -112,6 +124,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     thresholds = settings["loopGuardThresholds"] || %{}
     max_facts = settings["microSkillsMaxFacts"]
     max_tokens = settings["microSkillsMaxTokens"]
+    every = settings["microSkillsProposeEvery"]
 
     cond do
       not (is_number(nudges) and nudges >= 0 and nudges == trunc(nudges)) ->
@@ -130,6 +143,9 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       (bad = Enum.find(~w(historyDays historyMaxThreads), &(not whole?(settings[&1])))) != nil ->
         {:error, "#{bad}: give a whole number, 1 or more."}
+
+      every != nil and not (is_number(every) and every >= 1 and every == trunc(every)) ->
+        {:error, "microSkillsProposeEvery: give a whole number, 1 or more."}
 
       not is_map(thresholds) ->
         {:error, "loopGuardThresholds: give an object of threshold names and values."}
@@ -206,7 +222,8 @@ defmodule HalC2Plugins.TokenEconomizer do
     {:ok,
      %{
        settings: settings,
-       # The plugin's tasks, linked to it: `tasks` is pid => {thread id, :judge | :delivery}.
+       # The plugin's tasks, linked to it: `tasks` is pid => {thread id, :judge | :delivery}
+       # or {project id, :proposer}.
        sup: sup,
        tasks: %{},
        # thread id => %{run, project, instance, guard, calls, kept, partial},
@@ -238,7 +255,16 @@ defmodule HalC2Plugins.TokenEconomizer do
        # %{pid, project, fold, step, what}.
        folds: %{},
        reading: nil,
-       stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
+       stats: %{
+         "turns" => 0,
+         "nudges" => 0,
+         "aborts" => 0,
+         "judgeCalls" => 0,
+         "judgeTokens" => 0,
+         "proposerCalls" => 0,
+         "proposerReplies" => 0,
+         "proposerTokens" => 0
+       },
        # The latest redirects and stop offers, newest first.
        recent: [],
        # Whether a run is under way, as the MC says (`Host.run_active?/3`); the runs of
@@ -278,9 +304,21 @@ defmodule HalC2Plugins.TokenEconomizer do
       state
       | skills:
           Map.new(state.skills, fn {project_id, skills} ->
-            {project_id, %{skills | max_facts: caps.max_facts, max_tokens: caps.max_tokens}}
+            {project_id,
+             %{
+               skills
+               | max_facts: caps.max_facts,
+                 max_tokens: caps.max_tokens,
+                 proposing: caps.proposing
+             }}
           end)
     }
+
+    # A proposal under way is one no one would read once the proposer is off.
+    state =
+      if micro_mode(state) == "on",
+        do: state,
+        else: cancel(state, &match?({_, :proposer}, &1))
 
     # Learning switched under a turn leaves what it folds from incomplete
     # either way (its calls were not all kept, or its context predates the
@@ -562,6 +600,57 @@ defmodule HalC2Plugins.TokenEconomizer do
      |> pump()}
   end
 
+  # A proposal's answer, read against the project's window as it is now. Paid
+  # for whatever it says; admitted only while the proposer is still on and the
+  # project's file reads.
+  def handle_info({:proposed, project_id, result}, state) do
+    tokens =
+      case result do
+        {:ok, _out, usage} -> Distiller.tokens(usage)
+        _ -> 0
+      end
+
+    state =
+      state
+      |> update_in([:stats, "proposerTokens"], &(&1 + tokens))
+      |> update_in([:stats, "proposerReplies"], &(&1 + 1))
+
+    case state.skills[project_id] do
+      %EnvFacts{held: nil} = skills ->
+        # The project pays for every answer; only a payload, while still on, is read.
+        skills = Distiller.spent(skills, tokens)
+
+        skills =
+          case result do
+            {:ok, %{"payload" => raw}, _usage} when is_binary(raw) ->
+              if micro_mode(state) == "on" do
+                {skills, outcomes} = Distiller.admit(skills, raw)
+                log_proposal(project_id, outcomes)
+                skills
+              else
+                log_proposal(project_id, :off)
+                skills
+              end
+
+            other ->
+              log_proposal(project_id, other)
+              skills
+          end
+
+        state = put_in(state.skills[project_id], skills)
+        save_skills(state, project_id)
+
+        {:noreply,
+         state
+         |> publish_skills(project_id)
+         |> publish()}
+
+      _gone_or_held ->
+        log_proposal(project_id, result)
+        {:noreply, publish(state)}
+    end
+  end
+
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state),
     do: {:noreply, %{state | tasks: Map.delete(state.tasks, pid)}}
 
@@ -732,16 +821,22 @@ defmodule HalC2Plugins.TokenEconomizer do
       fold = loaded.folds[project_id]
 
       # A fold from history under way folds this turn after it, read back
-      # whole then, unless it read it already.
-      if History.running?(fold) do
-        if turn.run in skills.folded,
-          do: loaded,
-          else:
-            loaded
-            |> put_fold(project_id, History.hold(fold, [thread_id, turn.run, turn.injected]))
-            |> pump()
-      else
-        fold_live(state, project_id, thread_id, turn)
+      # whole then, unless it read it already. A held project (its file does
+      # not read) learns nothing until it does.
+      cond do
+        skills.held != nil ->
+          loaded
+
+        History.running?(fold) ->
+          if turn.run in skills.folded,
+            do: loaded,
+            else:
+              loaded
+              |> put_fold(project_id, History.hold(fold, [thread_id, turn.run, turn.injected]))
+              |> pump()
+
+        true ->
+          fold_live(state, project_id, thread_id, turn)
       end
     else
       state
@@ -755,10 +850,12 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       calls ->
         {skills, state} = skills_for(state, project_id)
+        proposing = micro_mode(state) == "on"
 
         skills =
           skills
           |> EnvFacts.seed_injected(turn.injected)
+          |> then(&if(proposing, do: Distiller.fold(&1, calls, turn.run), else: &1))
           |> EnvFacts.update_turn(calls, turn.run)
 
         state = put_in(state.skills[project_id], skills)
@@ -767,6 +864,51 @@ defmodule HalC2Plugins.TokenEconomizer do
         state
         |> know_skill(project_id)
         |> publish_skills(project_id)
+        |> maybe_propose(project_id)
+    end
+  end
+
+  defp log_proposal(project_id, outcomes) when is_list(outcomes),
+    do: Logger.info("token-economizer: proposal for project #{project_id}: #{inspect(outcomes)}")
+
+  defp log_proposal(project_id, other) do
+    Logger.info(
+      "token-economizer: proposal for project #{project_id} admitted nothing: " <>
+        inspect(other, limit: 5, printable_limit: 200)
+    )
+  end
+
+  # One proposal per project at a time, when one is due: the prompt is built
+  # here and the model asked off the plugin's process. It is counted as made
+  # when it starts, so a call that fails or never answers is not asked again
+  # until the next is due.
+  defp maybe_propose(state, project_id) do
+    skills = state.skills[project_id]
+    out? = Enum.any?(state.tasks, fn {_pid, task} -> task == {project_id, :proposer} end)
+
+    if micro_mode(state) == "on" and skills.held == nil and not out? and
+         Distiller.due?(skills, propose_every(state)) do
+      prompt = Distiller.prompt(skills, project_id)
+      state = put_in(state.skills[project_id], Distiller.proposed(skills))
+      save_skills(state, project_id)
+      server = self()
+
+      state
+      |> update_in([:stats, "proposerCalls"], &(&1 + 1))
+      |> spawn_task(project_id, :proposer, fn ->
+        result =
+          try do
+            Host.generate(@id, prompt, %{"payload" => "string"})
+          rescue
+            e -> {:error, Exception.message(e)}
+          catch
+            kind, reason -> {:error, Exception.format_banner(kind, reason)}
+          end
+
+        send(server, {:proposed, project_id, result})
+      end)
+    else
+      state
     end
   end
 
@@ -989,10 +1131,10 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # --- settings and the envelope's files ----------------------------------------------
 
-  # The micro-skills' mode: upstream's `on` gains the paid proposer in a later
-  # version; today it and `envfacts` both learn the free environment facts. The
-  # host checks a save against plugin.json's choices but not a stored value (a
-  # settings file edited by hand): anything else is off.
+  # The micro-skills' mode: `envfacts` learns the free environment facts, `on`
+  # adds the paid proposer's. The host checks a save against plugin.json's
+  # choices but not a stored value (a settings file edited by hand): anything
+  # else is off.
   defp micro_mode(state) do
     mode = state.settings["microSkills"]
     if mode in ["envfacts", "on"], do: mode, else: "off"
@@ -1008,14 +1150,48 @@ defmodule HalC2Plugins.TokenEconomizer do
       end
     end
 
-    [max_facts: cap.("microSkillsMaxFacts"), max_tokens: cap.("microSkillsMaxTokens")]
+    [
+      max_facts: cap.("microSkillsMaxFacts"),
+      max_tokens: cap.("microSkillsMaxTokens"),
+      proposing: micro_mode(state) == "on"
+    ]
   end
 
+  # Turns between proposals, upstream's `every` (3): the first after a project's
+  # second turn.
+  defp propose_every(state) do
+    case state.settings["microSkillsProposeEvery"] do
+      value when is_number(value) and value >= 1 -> trunc(value)
+      _ -> 3
+    end
+  end
+
+  # A held project's file is read again at each use, so it is learned from
+  # again once it reads.
   defp skills_for(state, project_id) do
     case state.skills[project_id] do
-      nil ->
-        saved = read_skills(project_id)
-        skills = EnvFacts.load(saved, skills_caps(state))
+      skills when skills == nil or skills.held != nil ->
+        load_skills(state, project_id)
+
+      skills ->
+        {skills, state}
+    end
+  end
+
+  defp load_skills(state, project_id) do
+    case read_skills(project_id, skills_caps(state)) do
+      {:error, reason} ->
+        if state.skills[project_id] == nil,
+          do:
+            Logger.warning(
+              "token-economizer: the micro-skills of project #{project_id} are held: " <>
+                "#{micro_skills_path(project_id)} #{reason}"
+            )
+
+        skills = %{EnvFacts.new(skills_caps(state)) | held: "Its saved file #{reason}."}
+        {skills, put_in(state.skills[project_id], skills)}
+
+      {saved, skills} ->
         state = put_in(state.skills[project_id], skills)
 
         # A fold saved running while the import is now off (turned off
@@ -1052,9 +1228,6 @@ defmodule HalC2Plugins.TokenEconomizer do
         end
 
         {skills, state}
-
-      skills ->
-        {skills, state}
     end
   end
 
@@ -1068,13 +1241,26 @@ defmodule HalC2Plugins.TokenEconomizer do
     Path.join([Host.data_dir(@id), "micro-skills", key <> ".json"])
   end
 
-  defp read_skills(project_id) do
-    with {:ok, text} <- File.read(micro_skills_path(project_id)),
-         {:ok, %{} = saved} <- JSON.decode(text) do
-      saved
-    else
-      _ -> %{}
+  # `{saved, skills}`, the file and the state it loads (none at all when there is
+  # no file), or `{:error, reason}` when there is one and it does not read: then
+  # the project is held, never started afresh over what it had learned.
+  defp read_skills(project_id, caps) do
+    case File.read(micro_skills_path(project_id)) do
+      {:error, :enoent} ->
+        {%{}, EnvFacts.new(caps)}
+
+      {:error, reason} ->
+        {:error, "could not be read (#{:file.format_error(reason)})"}
+
+      {:ok, text} ->
+        case JSON.decode(text) do
+          {:ok, %{} = saved} -> {saved, EnvFacts.load(saved, caps)}
+          {:ok, _} -> {:error, "is not a JSON object"}
+          {:error, _} -> {:error, "is not valid JSON"}
+        end
     end
+  rescue
+    e -> {:error, "could not be loaded (#{Exception.message(e)})"}
   end
 
   # As `save_tracker/2`: a failed write costs persistence, never the plugin.
@@ -1199,7 +1385,19 @@ defmodule HalC2Plugins.TokenEconomizer do
            input || %{} do
       {skills, state} = skills_for(state, project_id)
 
-      case if(action == :drop, do: EnvFacts.drop(skills, id), else: EnvFacts.restore(skills, id)) do
+      result =
+        cond do
+          skills.held != nil ->
+            {:error, "The micro-skills of this project are held: #{skills.held}"}
+
+          action == :drop ->
+            EnvFacts.drop(skills, id)
+
+          true ->
+            EnvFacts.restore(skills, id)
+        end
+
+      case result do
         {:ok, skills} ->
           kept = put_in(state.skills[project_id], skills)
 
@@ -1324,6 +1522,10 @@ defmodule HalC2Plugins.TokenEconomizer do
       {skills, state} = skills_for(state, project_id)
 
       case state.folds[project_id] do
+        # A held project's file does not read: nothing is folded until it does.
+        _fold when skills.held != nil ->
+          state
+
         nil ->
           fold =
             if skills.now > 0 or skills.folded != [] or skills.facts != %{},
@@ -1577,38 +1779,47 @@ defmodule HalC2Plugins.TokenEconomizer do
         {:reply, {:error, "Give a projectId."}, state}
 
       project_id ->
-        {skills, state} = skills_for(state, project_id)
-        fold = state.folds[project_id]
-        fresh = %{EnvFacts.new(skills_caps(state)) | dropped: skills.dropped}
+        case skills_for(state, project_id) do
+          {%EnvFacts{held: held}, state} when held != nil ->
+            {:reply, {:error, "The micro-skills of this project are held: #{held}"}, state}
 
-        again =
-          if micro_on?(state) and history_on?(state), do: History.new(fold_id(), now())
-
-        kept = %{
-          put_in(state.skills[project_id], fresh)
-          | folds:
-              if(again,
-                do: Map.put(state.folds, project_id, again),
-                else: Map.delete(state.folds, project_id)
-              )
-        }
-
-        case save_skills(kept, project_id) do
-          :ok ->
-            state =
-              kept
-              |> stop_reading(project_id)
-              |> unseed(project_id, fold)
-              |> know_skill(project_id)
-              |> publish_skills(project_id)
-              |> pump()
-
-            {view, state} = micro_skills_view(state, project_id)
-            {:reply, {:ok, view}, state}
-
-          :error ->
-            {:reply, {:error, "That could not be saved, so nothing was forgotten."}, state}
+          {skills, state} ->
+            forget(state, project_id, skills)
         end
+    end
+  end
+
+  defp forget(state, project_id, skills) do
+    fold = state.folds[project_id]
+    fresh = %{EnvFacts.new(skills_caps(state)) | dropped: skills.dropped}
+
+    again =
+      if micro_on?(state) and history_on?(state), do: History.new(fold_id(), now())
+
+    kept = %{
+      put_in(state.skills[project_id], fresh)
+      | folds:
+          if(again,
+            do: Map.put(state.folds, project_id, again),
+            else: Map.delete(state.folds, project_id)
+          )
+    }
+
+    case save_skills(kept, project_id) do
+      :ok ->
+        state =
+          kept
+          |> stop_reading(project_id)
+          |> unseed(project_id, fold)
+          |> know_skill(project_id)
+          |> publish_skills(project_id)
+          |> pump()
+
+        {view, state} = micro_skills_view(state, project_id)
+        {:reply, {:ok, view}, state}
+
+      :error ->
+        {:reply, {:error, "That could not be saved, so nothing was forgotten."}, state}
     end
   end
 
