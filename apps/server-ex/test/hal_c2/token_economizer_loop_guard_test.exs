@@ -1030,7 +1030,15 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             ~s{timeout 10 ruby -w -e 'File.write("a", "PRIVATE_SOURCE")'},
             "find . -name a -exec perl -0777 -pe 's/x/PRIVATE_SOURCE/' {} +",
             ~s{deno eval "Deno.writeTextFileSync('a', 'PRIVATE_SOURCE')"},
-            ~s|awk 'BEGIN { print "PRIVATE_SOURCE" > "a.py" }'|
+            ~s|awk 'BEGIN { print "PRIVATE_SOURCE" > "a.py" }'|,
+            # Behind a launcher, or any program that runs another after its own words.
+            ~s|mise exec -- node -e 'require("fs").writeFileSync("a.py","PRIVATE_SOURCE")'|,
+            ~s|mise x node@20 -- node -e 'require("fs").writeFileSync("a","PRIVATE_SOURCE")'|,
+            ~s|npx node -e 'require("fs").writeFileSync("a","PRIVATE_SOURCE")'|,
+            ~s|uv run python -c "open('a','w').write('PRIVATE_SOURCE')"|,
+            ~s|poetry run python3 -c "open('a','w').write('PRIVATE_SOURCE')"|,
+            ~s|pnpm exec node --eval 'require("fs").writeFileSync("a","PRIVATE_SOURCE")'|,
+            ~s|mise exec -- bash -c 'echo PRIVATE_SOURCE'|
           ] do
         text = digest(cmd)
         refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
@@ -1042,7 +1050,9 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "python -W error tests/runtests.py --verbose",
             "node --test",
             "ruby -Ilib test/a_test.rb",
-            "awk -f count.awk a.txt"
+            "awk -f count.awk a.txt",
+            "uv run pytest -q",
+            "mise exec -- npm test"
           ] do
         assert digest(cmd) =~ "$ #{cmd}"
       end
@@ -1466,7 +1476,13 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             "source run.sh",
             ". ./run.sh && echo ok",
             "bash run.sh || true",
-            "echo $(bash -c 'pytest -q') # don't"
+            "echo $(bash -c 'pytest -q') # don't",
+            "mise exec -- node -e 'x()'",
+            "mise x python@3.12 -- python -c 'x()'",
+            "uv run python -c 'x()'",
+            "poetry run bash -c 'pytest -q'",
+            "npx node -e 'x()'",
+            "env CI=1 nice -n 5 node -e 'x()'"
           ] do
         state =
           heard_turn([edited("/r/run.sh"), command(cmd, "1 failed in 0.02s", "completed")])

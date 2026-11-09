@@ -55,9 +55,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @out [">", ">>", ">|", "&>", "&>>", "<>"]
   # The shell's words that open or close a group, a branch or a loop, before a command.
   @reserved ~w({ } ! if then else elif fi do done while until)
-  # Programs that run another, given after their own words, and the programs this reads
-  # writes off, which a wrapper is unwrapped to.
-  @wrappers ~w(sudo doas command env time nohup timeout nice ionice stdbuf chronic flock xargs find)
+  # Programs that run another, given after their own words (launchers too: `mise exec --`,
+  # `npx`, `uv run`, `poetry run`), and the programs this reads writes off, which a wrapper
+  # is unwrapped to.
+  @wrappers ~w(sudo doas command env time nohup timeout nice ionice stdbuf chronic flock xargs find
+               mise npx bunx pnpx uv uvx poetry pipenv pdm)
   @writers ~w(sed perl awk gawk tee dd sponge truncate cp mv install patch git apply_patch eval) ++
              @shells
   # The operands `find -exec` and `xargs -I` put file names in place of.
@@ -152,7 +154,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   given any flag but those it is only read with, wherever in its words (`node
   --input-type commonjs -e '...'`, `python3 -X dev -c '...'`), behind a wrapper too
   (`timeout 10 ruby -e '...'`, `find -exec perl -pe '...'`). Python's are read up to the
-  script or module it runs; the words after are that program's.
+  script or module it runs; the words after are that program's. Whatever runs it, an
+  interpreter anywhere in a command's words with an eval flag of its own after it (`pnpm
+  exec node -e '...'`), or a shell with `-c`, hands it code too.
   """
   def opaque?(cmd) when is_binary(cmd) do
     {shell, _} = cmd |> script() |> split_heredocs()
@@ -163,7 +167,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
       {:ok, _} ->
         {cmds, _} = commands(shell)
-        Enum.any?(bare(cmds), &runs_code?/1)
+        Enum.any?(bare(cmds), &runs_code?/1) or Enum.any?(cmds, &evals?/1)
     end
   end
 
@@ -263,14 +267,42 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # turn not learned.
   defp inline?(name, args) do
     words = Enum.take_while(args, &(&1 != "--"))
-    operands = operands_of(words)
 
-    cond do
-      name in ~w(deno bun) and List.first(operands) == "eval" -> true
-      Enum.any?(words, &eval_flag?(name, &1)) -> true
-      true -> operands == [] and not Enum.any?(words, &Regex.match?(@no_stdin_flag, &1))
-    end
+    evals_inline?(name, words) or
+      (operands_of(words) == [] and not Enum.any?(words, &Regex.match?(@no_stdin_flag, &1)))
   end
+
+  # Whether an interpreter's words up to a `--` hand it code inline.
+  defp evals_inline?(name, words) do
+    (name in ~w(deno bun) and List.first(operands_of(words)) == "eval") or
+      Enum.any?(words, &eval_flag?(name, &1))
+  end
+
+  # Whether any word of a command is an interpreter its later words hand code (Python's up
+  # to its script or module), or a shell given `-c`: whatever program runs it, unwrapped
+  # or not (`pnpm exec node -e '...'`).
+  defp evals?([word | rest]) do
+    name = head([word])
+
+    hands =
+      cond do
+        String.starts_with?(name, "python") and Regex.match?(@interpreter, name) ->
+          rest != [] and not python_reads?(rest)
+
+        Regex.match?(@interpreter, name) ->
+          evals_inline?(name, Enum.take_while(rest, &(&1 != "--")))
+
+        name in @shells ->
+          Enum.any?(rest, &Regex.match?(~r/^-[a-zA-Z]*c[a-zA-Z]*$/, &1))
+
+        true ->
+          false
+      end
+
+    hands or evals?(rest)
+  end
+
+  defp evals?([]), do: false
 
   defp eval_flag?("php", flag), do: Regex.match?(~r/^-[A-Za-z]*[rBRE]/, flag)
 

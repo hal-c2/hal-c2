@@ -474,7 +474,9 @@ defmodule HalC2.TokenEconomizerPropTest do
              "command ",
              "timeout 10 ",
              "nice -n 5 ",
-             "X=1 "
+             "X=1 ",
+             "mise exec -- ",
+             "uv run "
            ]), elements(["a.py", "./src/a.py", "\"src/a.py\"", "'a.py'", "src/a'.py'"]),
            elements(
              ~w(alone and_before semi_after subshell braces pipe_from continued nested eval)a
@@ -563,7 +565,11 @@ defmodule HalC2.TokenEconomizerPropTest do
              "php -d x=1 -r @W",
              "deno eval @W",
              "awk @W a.txt",
-             "find . -name a -exec perl -0777 -pe @W {} +"
+             "find . -name a -exec perl -0777 -pe @W {} +",
+             "mise exec -- node -e @W",
+             "uv run python -c @W",
+             "pnpm exec node --eval @W",
+             "npx --yes bash -c @W"
            ]), elements(~w(alone and_before braces nested)a)} do
       word = Enum.join(before) <> hide(kind, inner <> secret <> inner) <> Enum.join(after_)
       {secret_carry(carrier, String.replace(use, "@W", word)), secret}
