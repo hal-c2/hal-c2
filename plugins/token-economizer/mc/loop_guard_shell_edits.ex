@@ -27,6 +27,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   alias HalC2Plugins.TokenEconomizer.LoopGuard.State
 
   @shells ~w(sh bash zsh dash ksh)
+  # Programs that read code from stdin when given no script.
+  @interpreter ~r/^(?:python\d?(?:\.\d+)?|node|bun|deno|ruby|perl|php|lua|osascript|Rscript|pwsh|fish)$/
   # A heredoc: `<<` or `<<-`, then its delimiter, any word, quoted in whole or part or
   # not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`); not a here-string (`<<<`).
   @heredoc_start ~r/(?<!<)<<(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/
@@ -122,6 +124,44 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   end
 
   def revert_targets(_), do: []
+
+  @doc """
+  Whether a shell command's words may be code this does not read: quotes that do not
+  balance, a nested shell's script or `eval`'s (`sh -c '...'`), or a program reading its
+  code from stdin (`... | python3`, `curl ... | sh`).
+  """
+  def opaque?(cmd) when is_binary(cmd) do
+    {shell, _} = cmd |> script() |> split_heredocs()
+
+    case tokens(shell) do
+      :error ->
+        true
+
+      {:ok, _} ->
+        {cmds, _} = commands(shell)
+        Enum.any?(bare(cmds), &runs_code?/1)
+    end
+  end
+
+  def opaque?(_), do: false
+
+  defp runs_code?(["eval" | _]), do: true
+
+  defp runs_code?([first | args]) do
+    name = head([first])
+    flags_only = Enum.all?(args, &String.starts_with?(&1, "-"))
+
+    cond do
+      name in @shells ->
+        flags_only or Enum.any?(args, &Regex.match?(~r/^-[a-zA-Z]*c[a-zA-Z]*$/, &1))
+
+      Regex.match?(@interpreter, name) ->
+        flags_only
+
+      true ->
+        false
+    end
+  end
 
   @doc """
   The programs a shell command runs, by name (`sed`, `printf`, `pytest`), without their

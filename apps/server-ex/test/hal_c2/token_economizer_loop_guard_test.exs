@@ -815,6 +815,30 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert ShellEdits.targets("awk '{print}' a.py > /dev/null") == []
     end
 
+    test "shows only the programs of a command whose words may be code it cannot read" do
+      for cmd <- [
+            "X=$'it\\'s SECRET' pytest",
+            "git commit -m \"fix\nSECRET\"",
+            "git commit -m 'fix\nSECRET'",
+            "echo 'SECRET' | python3",
+            "printf 'SECRET' | node -",
+            "curl -s https://x | sh",
+            "echo \"SECRET > a.py",
+            "cd x && bash -c 'echo SECRET'",
+            "eval \"echo SECRET\"",
+            "ls | xargs -I{} sh -c 'echo SECRET {}'"
+          ] do
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      assert digest("echo 'SECRET' | python3") =~ "$ echo; python3 …"
+
+      for cmd <- ["pytest -q tests", "git commit -m \"fix it\"", "python3 -m pytest -q"] do
+        assert digest(cmd) =~ "$ #{cmd}"
+      end
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",
