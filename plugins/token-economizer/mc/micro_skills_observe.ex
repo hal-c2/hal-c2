@@ -817,8 +817,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   # and dense: one run of 20 letters and digits mixed (`a1b2c3...`), or 32
   # characters mixing cases and digits around a long run (a base64 key). An
   # option's value (`--key=VALUE`, `K=VALUE`) is judged alone; an option, an
-  # identifier (`test_parse_v2_config_ok`) or a triple (`x86_64-unknown-linux-gnu`)
-  # is none.
+  # identifier (`test_parse_v2_config_ok`, `TestParseV2ConfigWithDefaults`) or
+  # a triple (`x86_64-unknown-linux-gnu`) is none.
   defp secret_word?(word) do
     case word |> String.trim_trailing("=") |> String.split("=", parts: 2) do
       [_name, value] -> secret_word?(value)
@@ -829,7 +829,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   defp opaque_dense?(word) do
     runs =
       if Regex.match?(@opaque_word_re, word) and not String.starts_with?(word, ["-", "/"]),
-        do: Regex.scan(~r/[A-Za-z0-9]+/, word) |> List.flatten(),
+        do: Regex.scan(~r/[A-Za-z0-9]+/, word) |> List.flatten() |> Enum.reject(&camel_words?/1),
         else: []
 
     Enum.any?(runs, &(String.length(&1) >= 20 and mixes?(&1, [~r/[A-Za-z]/, ~r/\d/]))) or
@@ -838,6 +838,17 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   end
 
   defp mixes?(text, classes), do: Enum.all?(classes, &Regex.match?(&1, text))
+
+  # A camelCase or PascalCase name: split where a capital follows, every piece
+  # is a word (`Parse`, `test`, `Utf8`) or a short acronym (`V2`, `HTTP`), and
+  # two of them are words. A random token always leaves a piece that is
+  # neither (`Xk9f`, `b`, `51`), so it stays a token.
+  defp camel_words?(run) do
+    pieces = Regex.split(~r/(?<=[a-z0-9])(?=[A-Z])/, run)
+
+    Enum.all?(pieces, &Regex.match?(~r/^(?:[A-Z]?[a-z]{2,}|[A-Z]{1,4})\d*$/, &1)) and
+      Enum.count(pieces, &Regex.match?(~r/[a-z]{2}/, &1)) >= 2
+  end
 
   # A segment that cannot stop the work after it: an assignment, a directory
   # change, an activation, or a command that only sets, reads or reports.

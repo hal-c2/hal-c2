@@ -142,7 +142,8 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     for value <-
           ~w(ghp_abc123def456 AKIAABCDEFGH12345678 eyJhbGciOiJIUzI1NiJ9 a1b2c3d4e5f6a7b8c9d0e1f2
              wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY tok_demo_51HabcDEF123ghi456JKL789
-             --token=a1b2c3d4e5f6a7b8c9d0e1f2 dGhpcyBpcyBhIHNlY3JldCBrZXkgMTIzNA==) do
+             --token=a1b2c3d4e5f6a7b8c9d0e1f2 dGhpcyBpcyBhIHNlY3JldCBrZXkgMTIzNA==
+             Xk9fQ2mZp7LtR4vBn8Wc ABCD1234EFGH5678IJKL abcdefghijklmnop123456) do
       assert Observe.secret_value?(value), value
 
       assert env.("MY_VAR=#{value} PYTHONPATH=src python -m pytest -q") == %{
@@ -156,14 +157,17 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     for value <-
           ~w(proj.settings_test_2024 --max-old-space-size=4096 test_handles_utf8_input
              test_parse_v2_config_ok x86_64-unknown-linux-gnu
-             app/Http/Controllers/Api/V1/UserController 550e8400-e29b-41d4-a716-446655440000) do
+             app/Http/Controllers/Api/V1/UserController 550e8400-e29b-41d4-a716-446655440000
+             TestParseV2ConfigWithDefaults -Dtest=ParseV2ConfigurationIntegrationTest
+             testHandlesUtf8InputCorrectly) do
       refute Observe.secret_value?(value), value
       refute Observe.secret_value?("node #{value} x.js"), value
     end
 
     for value <-
           ~w(proj.settings_test_2024 test_handles_utf8_input test_parse_v2_config_ok
-             x86_64-unknown-linux-gnu) do
+             x86_64-unknown-linux-gnu TestParseV2ConfigWithDefaults
+             testHandlesUtf8InputCorrectly) do
       assert env.("MY_VAR=#{value} python -m pytest -q") == %{"MY_VAR" => value}
     end
 
@@ -181,6 +185,9 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       Observe.classify_command("python -m pytest test_handles_utf8_input test_parse_v2_config_ok")
 
     assert Observe.test_labels(o) == ["test_handles_utf8_input", "test_parse_v2_config_ok"]
+
+    [o] = Observe.classify_command("python -m pytest tests/a.py testHandlesUtf8InputCorrectly")
+    assert Observe.test_labels(o) == ["tests/a.py", "testHandlesUtf8InputCorrectly"]
   end
 
   test "a saved fact that holds a credential is never read back" do
@@ -232,6 +239,11 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
             "form" => "python -m pytest",
             "bad" => "test_handles_utf8_input",
             "good" => "test_parse_v2_config_ok"
+          }),
+          fact.("arg_repair:go test:label:TestParseV2ConfigWithDefaults", "arg_repair", %{
+            "form" => "go test",
+            "bad" => "-run ParseV2ConfigurationIntegrationTest",
+            "good" => "-run TestParseV2ConfigWithDefaults"
           })
         ])
     }
