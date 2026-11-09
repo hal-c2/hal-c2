@@ -484,6 +484,19 @@ Feature: Moving a thread and its agent to another machine
       When the user asks which machines "Alpha" could move to
       Then the user is told "Alpha was started by code-review, which keeps it on this machine."
 
+    # A running turn is stopped only once the MC has said the thread may go: the desktop palette
+    # lists the cluster's machines without asking it, so choosing one asks before it offers to
+    # stop the turn (apps/desktop-qt/src/native/ThreadMenuController.cpp startMove), and the
+    # TUI's picker asks before it lists anything.
+    @shared @backlog-mobile
+    Scenario: A running thread its plugin keeps is not stopped to be moved
+      Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine
+      And the agent is working in "Alpha"
+      And the user is looking at "Alpha"
+      When the user moves the thread to "desktop" from the command palette
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And the running turn of "Alpha" is not interrupted
+
     @mc
     Scenario: A thread its plugin keeps on the machine is not exported either
       Given "Alpha" was started by the plugin "code-review", which keeps its threads on the machine

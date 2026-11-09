@@ -840,6 +840,25 @@ void ThreadMenuController::startMove(const QString& key, const Machine& machine,
     move(key, machine, QString(), false, asking);
     return;
   }
+  // The palette lists the cluster's machines without asking the MC, which may
+  // keep the thread here (a plugin's review, say): its turn is not stopped for
+  // a move that would be refused.
+  m_client->call(this, thread->environmentId, QStringLiteral("hal-c2.moveDestinations"),
+                 QJsonObject{{QStringLiteral("threadId"), thread->id}},
+                 [this, key, machine, asking](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) toasts()->error(QStringLiteral("Failed to move thread"), *error);
+                   else stopAndMove(key, machine, asking);
+                 });
+}
+
+void ThreadMenuController::stopAndMove(const QString& key, const Machine& machine, const Asking& asking) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  const sidebar::Nullable runId = thread->activeRunId ? thread->activeRunId : thread->latestRunId;
+  if (!busy(*thread) || !runId) {
+    move(key, machine, QString(), false, asking);
+    return;
+  }
   NativeShell::of(this)->controller<MenuController>()->confirm(
       QStringLiteral("Stop \"%1\" and move it to %2?").arg(thread->title, machine.label),
       QStringLiteral("The agent is working in this thread. Its turn is stopped before the thread moves."),

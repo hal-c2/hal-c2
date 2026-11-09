@@ -106,8 +106,10 @@ private:
     QString label;
   };
   void chooseDestination(const QString& key, double x, double y);
-  // The move the user chose: sent as it is, or after stopping the thread's turn.
+  // The move the user chose: sent as it is, or after stopping the thread's turn
+  // once the MC has said the thread may go.
   void startMove(const QString& key, const Machine& machine, const Asking& asking);
+  void stopAndMove(const QString& key, const Machine& machine, const Asking& asking);
   void move(const QString& key, const Machine& machine, const QString& projectId, bool confirmed,
             const Asking& asking);
   // Sends the moves that waited for their thread's turn to stop.
