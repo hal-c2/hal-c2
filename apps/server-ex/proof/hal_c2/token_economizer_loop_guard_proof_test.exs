@@ -189,8 +189,6 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
     refute_deadlock(proof, "start(#{@design}, 1, #{@two_turns})", "over", besides: @faults)
   end
 
-  # A held redirect doubles the two-turn search for a stuck state past its timeout, and
-  # it lands only in its own run, so its turn is searched alone, with every fault.
   test "in one long turn with a judge job lost, a held redirect keeps the guard safe",
        %{proof: proof} do
     refute_reachable(
@@ -201,6 +199,9 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
     )
   end
 
+  # A held redirect doubles the two-turn search for a stuck state, too close to its
+  # timeout, and it lands only in its own run, so its turn is searched alone, with every
+  # fault.
   test "a turn whose redirect its runtime holds never gets stuck, with an event missed and a judge job lost",
        %{proof: proof} do
     refute_deadlock(
