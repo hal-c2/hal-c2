@@ -359,7 +359,7 @@ defmodule HalC2.Attachments do
   @doc """
   A thread's own copies of attachments another thread's messages name (a fork copies
   its source's), under ids of its own, so they stay when that thread and its files are
-  deleted: `{:ok, copies}`, in order. Each is a hard link where the disk allows one. An
+  deleted: `{:ok, copies}`, in order. An
   attachment whose file is not on this MC, or goes while it is copied, passes through.
   A copy that cannot be made of a file that is there (a full disk) is `{:error,
   reason}`, and the copies already made go: passed through, the thread would name
@@ -393,12 +393,15 @@ defmodule HalC2.Attachments do
       id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
       target = Path.join(dir(), id <> Path.extname(source))
 
-      with {:error, _} <- File.ln(source, target),
-           {:error, reason} <- File.cp(source, target) do
-        File.rm(target)
-        if File.exists?(source), do: {:error, reason}, else: {:ok, attachment}
-      else
-        :ok -> {:ok, Map.put(attachment, "id", id)}
+      # A copy, not a link: an agent is given each file's path and may write into
+      # it, which a link would carry into the other thread's file.
+      case File.cp(source, target) do
+        :ok ->
+          {:ok, Map.put(attachment, "id", id)}
+
+        {:error, reason} ->
+          File.rm(target)
+          if File.exists?(source), do: {:error, reason}, else: {:ok, attachment}
       end
     else
       _ -> {:ok, attachment}

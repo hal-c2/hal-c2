@@ -464,6 +464,15 @@ defmodule HalC2.AttachmentsTest do
       assert File.read!(Attachments.path(copy)) == String.duplicate("x", 120_001)
     end
 
+    # The source thread's agent is given its file's path and may write into it.
+    test "a copy keeps its bytes when the source's file is written over in place" do
+      {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      {:ok, [copy]} = Attachments.copy_into("t2", [file])
+
+      File.write!(Attachments.path(file), "changed")
+      assert File.read!(Attachments.path(copy)) == String.duplicate("x", 120_001)
+    end
+
     test "an attachment whose file is not here passes through" do
       gone = %{"type" => "file", "id" => "t1-gone", "name" => "a.txt"}
 
@@ -474,7 +483,7 @@ defmodule HalC2.AttachmentsTest do
     # Passed through, the copy would name a file that goes with the other thread's.
     test "a file that is here but cannot be copied is an error, and the copies made go" do
       {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
-      # Neither linked nor copied, as a full disk refuses both.
+      # Not copied, as a full disk refuses it.
       File.mkdir_p!(Path.join(Attachments.dir(), "t1-stuck.txt"))
       stuck = %{"type" => "file", "id" => "t1-stuck", "name" => "b.txt"}
 
