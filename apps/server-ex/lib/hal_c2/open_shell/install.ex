@@ -22,10 +22,17 @@ defmodule HalC2.OpenShell.Install do
   replaced. One the dev run started is that shell's process, which the MC cannot
   stop: nothing changes under it while it listens. Reuse and uninstall never
   touch a sandbox this MC did not label.
+
+  One lifecycle command (install, update, rotate, reuse, uninstall, check) runs at
+  a time on a home: each holds `HalC2.OpenShell.lock_path/0` from staging to the
+  last rollback, and another that finds it held fails at once with `[busy]`.
+  `status/0` reads without it. The lock is `HalC2.HomeLock`'s, which the
+  operating system lets go with the process, so a crashed command leaves none.
   """
 
   require Logger
 
+  alias HalC2.HomeLock
   alias HalC2.OpenShell
   alias HalC2.OpenShell.Client
   alias HalC2.OpenShell.Config
@@ -49,10 +56,12 @@ defmodule HalC2.OpenShell.Install do
   `service: false`, which stages everything but leaves starting the gateway to
   `foreground_command/0` (the dev run, `mise run openshell`).
   """
+  def install(opts \\ []), do: exclusive(fn -> install_now(opts) end)
+
   # Every path is below this MC's own OpenShell directories, or an archive or
   # certificate the local user named on the command line.
   # sobelow_skip ["Traversal.FileModule"]
-  def install(opts \\ []) do
+  defp install_now(opts) do
     previous = OpenShell.state()
     mode = if Keyword.get(opts, :service, true), do: "managed", else: "foreground"
 
@@ -94,7 +103,9 @@ defmodule HalC2.OpenShell.Install do
   connection made with the old ones. A dev run's gateway must be stopped first,
   and uses them once started again. Options: `:drain`, `:force`.
   """
-  def rotate(opts \\ []) do
+  def rotate(opts \\ []), do: exclusive(fn -> rotate_now(opts) end)
+
+  defp rotate_now(opts) do
     case OpenShell.state() do
       %{"mode" => mode} = state when mode in ["managed", "foreground"] ->
         staging(fn staging ->
@@ -1131,10 +1142,12 @@ defmodule HalC2.OpenShell.Install do
   will not start, stop or update it. A gateway that is refused leaves what the MC
   used before as it was.
   """
+  def reuse(endpoint, credentials), do: exclusive(fn -> reuse_now(endpoint, credentials) end)
+
   # Every path is below this MC's own OpenShell directories, or an archive or
   # certificate the local user named on the command line.
   # sobelow_skip ["Traversal.FileModule"]
-  def reuse(endpoint, credentials) do
+  defp reuse_now(endpoint, credentials) do
     with :ok <- not_managed(OpenShell.state()),
          {:ok, _host, _port} <- Client.parse_endpoint(endpoint) |> endpoint_error() do
       previous = OpenShell.state()
@@ -1310,7 +1323,9 @@ defmodule HalC2.OpenShell.Install do
   and database), or forgets the one it reused. Refuses while this MC's sandboxes
   exist on it, unless `drain: true` (`force: true` when they cannot be listed).
   """
-  def uninstall(opts \\ []) do
+  def uninstall(opts \\ []), do: exclusive(fn -> uninstall_now(opts) end)
+
+  defp uninstall_now(opts) do
     case OpenShell.state() do
       nil ->
         {:error, not_installed()}
@@ -1334,6 +1349,35 @@ defmodule HalC2.OpenShell.Install do
         end
     end
   end
+
+  @doc """
+  `hal-c2-service openshell check`: runs `smoke/2` on what is installed again. It
+  makes and deletes a probe sandbox, so it holds the lifecycle lock too.
+  """
+  def check(opts \\ []) do
+    exclusive(fn ->
+      case OpenShell.state() do
+        nil -> {:error, not_installed()}
+        state -> smoke(state, opts)
+      end
+    end)
+  end
+
+  # Runs `fun` holding this home's lifecycle lock, or fails at once while another
+  # command holds it: waiting could outlast the other's whole update.
+  # The lock is beside this MC's own OpenShell directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp exclusive(fun) do
+    case HomeLock.with_lock(OpenShell.lock_path(), fun) do
+      {:error, :held} -> {:error, busy()}
+      result -> result
+    end
+  end
+
+  @doc false
+  def busy,
+    do:
+      "[busy] Another OpenShell command is running on this MC's home. Run this one again once it finishes."
 
   defp not_installed,
     do: "[not-installed] OpenShell is not installed. Run `hal-c2-service openshell install`."

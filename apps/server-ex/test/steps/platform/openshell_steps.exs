@@ -210,6 +210,47 @@ defmodule HalC2.Steps.Platform.OpenShell do
     installed(context, install(context, "0.1.7"))
   end
 
+  # The other command runs from another process while the update holds the lock,
+  # between starting the new gateway and its check; so does a status.
+  step "the user updates to OpenShell 0.1.7 and, while it switches gateways, runs {string}",
+       %{args: [command]} = context do
+    FakeOpenShell.queue_certificates(context.openshell.control)
+    {release, archive} = release(context, "0.1.7")
+    parent = self()
+
+    run =
+      case command do
+        "install" -> fn -> Install.install(release: release, archive: archive) end
+        "rotate" -> fn -> Install.rotate() end
+        "reuse" -> fn -> Install.reuse("https://127.0.0.1:1", ca: "/", cert: "/", key: "/") end
+        "uninstall" -> fn -> Install.uninstall(force: true) end
+        "check" -> fn -> Install.check() end
+      end
+
+    smoke = fn _state ->
+      send(parent, {:other, Task.async(run) |> Task.await(60_000)})
+      send(parent, {:status, Task.async(&Install.status/0) |> Task.await(60_000)})
+      :ok
+    end
+
+    result = install(context, "0.1.7", smoke: smoke)
+    assert_received {:other, other}
+    assert_received {:status, status}
+    Map.merge(context, %{result: result, other: other, status: status})
+  end
+
+  step "that command is refused because {string}", %{args: [code]} = context do
+    assert {:error, "[" <> rest} = context.other
+    assert String.starts_with?(rest, code <> "]"), "got #{inspect(context.other)}"
+    context
+  end
+
+  # The update is recorded only once its check passes.
+  step "status answered while the update ran", context do
+    assert context.status["version"] == "0.1.6"
+    context
+  end
+
   step "the install is refused because {string}", %{args: [code]} = context do
     assert {:error, "[" <> rest} = context.result
     assert String.starts_with?(rest, code <> "]"), "got #{inspect(context.result)}"

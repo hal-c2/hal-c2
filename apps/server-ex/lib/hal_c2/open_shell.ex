@@ -69,6 +69,12 @@ defmodule HalC2.OpenShell do
   # exist yet resolves as far as its parents do.
   defp canonical(path), do: HalC2.Paths.canonical(path) || Path.expand(path)
 
+  @doc """
+  The lock one lifecycle command at a time holds (`HalC2.OpenShell.Install`). It
+  sits beside `root/0`, so an uninstall that removes the root keeps it.
+  """
+  def lock_path, do: root() <> ".lock"
+
   def state_path, do: Path.join(root(), "installed.json")
   def release_dir(version), do: Path.join([root(), "releases", version])
   def gateway_bin(version), do: Path.join(release_dir(version), "openshell-gateway")

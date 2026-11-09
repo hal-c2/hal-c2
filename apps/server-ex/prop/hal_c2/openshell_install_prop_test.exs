@@ -41,7 +41,10 @@ defmodule HalC2.OpenShellInstallPropTest do
       installed state are what they were. It has a service manager stand-in of its
       own, so this home's unit keeps running whatever the other home's does;
     * this home reached by another spelling, through a link to it or to its parent,
-      is the same home: every step through it is the step through the home itself.
+      is the same home: every step through it is the step through the home itself;
+    * a second lifecycle command (install, rotate, reuse, uninstall or check) run
+      while an install switches gateways is refused as busy, and the install ends
+      as it would alone.
   """
 
   use ExUnit.Case, async: false
@@ -188,7 +191,10 @@ defmodule HalC2.OpenShellInstallPropTest do
         {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
         {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails])]}},
         {2, {:call, __MODULE__, :other_home, [oneof([:install, :update, :uninstall])]}},
-        {1, {:call, __MODULE__, :spell, [oneof([:direct, :linked_home, :linked_parent])]}}
+        {1, {:call, __MODULE__, :spell, [oneof([:direct, :linked_home, :linked_parent])]}},
+        {1,
+         {:call, __MODULE__, :contended,
+          [oneof(["0.1.6", "0.1.7"]), oneof([:install, :rotate, :reuse, :uninstall, :check])]}}
       ] ++
         if(managed?(state),
           do: [{1, {:call, __MODULE__, :rewrite_unit_stop_fails, [oneof(["0.1.6", "0.1.7"])]}}],
@@ -281,6 +287,11 @@ defmodule HalC2.OpenShellInstallPropTest do
         seen(state, :smoke)
     end
   end
+
+  # Another command run while an install switches gateways is refused as busy, and
+  # the install goes on as one alone would.
+  defp step(state, {:call, _, :contended, [version, _second]}),
+    do: step(state, {:call, __MODULE__, :install, [version, "managed", :ok]})
 
   defp step(state, {:call, _, :rotate, [outcome]}) do
     gen = state.next_gen
@@ -408,6 +419,46 @@ defmodule HalC2.OpenShellInstallPropTest do
       end)
     end)
     |> observe()
+  end
+
+  # Installs `version` as a service, and while it switches (the old gateway stopped
+  # and backed up, the new one started, its check not yet passed) runs `second` from
+  # another process. That one must be refused as busy; anything else is the result.
+  def contended(version, second) do
+    %{releases: releases} = next_certificates()
+    {release, archive} = releases[version]
+    preflight(false)
+    parent = self()
+
+    run =
+      case second do
+        :install -> fn -> Install.install(release: release, archive: archive) end
+        :rotate -> fn -> Install.rotate() end
+        :reuse -> fn -> Install.reuse("https://127.0.0.1:1", ca: "/", cert: "/", key: "/") end
+        :uninstall -> fn -> Install.uninstall(force: true) end
+        :check -> fn -> Install.check() end
+      end
+
+    smoke = fn _state ->
+      send(parent, {:second, Task.async(run) |> Task.await(60_000)})
+      :ok
+    end
+
+    result =
+      Install.install(release: release, archive: archive, service: true, smoke: smoke)
+
+    case result do
+      {:ok, _} ->
+        receive do
+          {:second, {:error, "[busy]" <> _}} -> observe(result)
+          {:second, other} -> observe({:second_ran, second, other})
+        after
+          0 -> observe({:second_not_run, second})
+        end
+
+      _ ->
+        observe(result)
+    end
   end
 
   def rotate(outcome) do

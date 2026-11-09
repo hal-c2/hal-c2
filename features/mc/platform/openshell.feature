@@ -4,6 +4,7 @@
 #   https://github.com/hal-c2/hal-c2/issues/1418 (one gateway per HAL-C2 environment)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5819948882: homes, probe cleanup, Docker)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820095093: a home by two spellings, the unit after a failed stop)
+#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820437968: one lifecycle command at a time)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
 #   apps/server-ex/lib/hal_c2/open_shell/platform.ex (the support matrix, rootless runtimes only)
@@ -120,6 +121,23 @@ Feature: The OpenShell gateway review sandboxes run in
     Then the install is refused because "backup-failed"
     And OpenShell 0.1.6 runs with its database, certificates and service as they were
     And the gateway's service is running again
+
+  @mc
+  Scenario Outline: One OpenShell command runs at a time on a home
+    Given OpenShell 0.1.6 is installed and has a database
+    When the user updates to OpenShell 0.1.7 and, while it switches gateways, runs "<command>"
+    Then that command is refused because "busy"
+    And status answered while the update ran
+    And the update succeeds
+    And the gateway's service is running again
+
+    Examples:
+      | command   |
+      | install   |
+      | rotate    |
+      | reuse     |
+      | uninstall |
+      | check     |
 
   @mc
   Scenario: An update waits while this MC's sandboxes cannot be counted, unless forced

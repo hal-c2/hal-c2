@@ -636,6 +636,89 @@ defmodule HalC2.OpenShell.InstallTest do
     end
   end
 
+  describe "one lifecycle command at a time" do
+    # Every other command, run from another process while an update holds the lock
+    # between switching to the new gateway and checking it.
+    defp contend(ctx) do
+      {release, archive} = release(ctx, "0.1.7")
+      credentials = [ca: "/nowhere", cert: "/nowhere", key: "/nowhere"]
+
+      [
+        install: fn -> Install.install(release: release, archive: archive) end,
+        rotate: fn -> Install.rotate() end,
+        reuse: fn -> Install.reuse("https://127.0.0.1:1", credentials) end,
+        uninstall: fn -> Install.uninstall(force: true) end,
+        check: fn -> Install.check() end,
+        status: fn -> Install.status() end
+      ]
+      |> Enum.map(fn {name, fun} -> {name, Task.async(fun) |> Task.await(30_000)} end)
+    end
+
+    test "a second command fails at once with busy, and the first finishes", ctx do
+      {:ok, _} = install(ctx, "0.1.6")
+      File.mkdir_p!(Path.dirname(OpenShell.db_path()))
+      File.write!(OpenShell.db_path(), "the 0.1.6 database")
+      FakeOpenShell.queue_certificates(ctx.control)
+      parent = self()
+
+      smoke = fn _state ->
+        send(parent, {:contended, contend(ctx)})
+        :ok
+      end
+
+      assert {:ok, %{"version" => "0.1.7", "previous" => "0.1.6"}} =
+               install(ctx, "0.1.7", smoke: smoke)
+
+      assert_received {:contended, results}
+      {status, results} = Keyword.pop!(results, :status)
+      # It reads without the lock: the update is recorded only once its check passes.
+      assert status["version"] == "0.1.6"
+
+      for {name, result} <- results,
+          do: assert({name, {:error, "[busy]" <> _}} = {name, result})
+
+      assert %{"version" => "0.1.7"} = OpenShell.state()
+      assert File.read!(OpenShell.db_path()) == "the 0.1.6 database"
+
+      assert File.read!(Service.unit_path(:systemd)) ==
+               Service.render(:systemd, OpenShell.state())
+
+      assert File.ls!(Path.join(OpenShell.root(), "staging")) == []
+
+      # Let go once the first finished, and kept through an uninstall.
+      assert :ok = Install.uninstall()
+      assert File.exists?(OpenShell.lock_path())
+      assert {:error, "[not-installed]" <> _} = Install.check()
+    end
+
+    test "a rotation that fails its check is rolled back before another may start", ctx do
+      {:ok, _} = install(ctx, "0.1.7")
+      old_ca = File.read!(Path.join(OpenShell.pki_dir(), "ca.crt"))
+      FakeOpenShell.queue_certificates(ctx.control)
+      calls = :counters.new(1, [])
+
+      smoke = fn _ ->
+        :counters.add(calls, 1, 1)
+
+        if :counters.get(calls, 1) == 1 do
+          send(self(), {:contended, contend(ctx)})
+          {:error, "[smoke] nope."}
+        else
+          :ok
+        end
+      end
+
+      assert {:error, message} = Install.rotate(smoke: smoke)
+      assert message =~ "back in place"
+      assert_received {:contended, results}
+
+      for {name, result} <- Keyword.delete(results, :status),
+          do: assert({name, {:error, "[busy]" <> _}} = {name, result})
+
+      assert File.read!(Path.join(OpenShell.pki_dir(), "ca.crt")) == old_ca
+    end
+  end
+
   describe "rotate/1" do
     test "issues new certificates and restarts the gateway on them", ctx do
       {:ok, _} = install(ctx, "0.1.7")
