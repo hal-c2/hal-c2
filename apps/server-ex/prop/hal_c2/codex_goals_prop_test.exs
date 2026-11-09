@@ -7,7 +7,8 @@ defmodule HalC2.CodexGoalsPropTest do
   press Stop; the app-server may exit; and once the run has ended Codex may still
   start a turn for the goal, or a grace armed before it ended may still fire. At any
   point Codex may report the usage of one of the goal's turns, the running one or one
-  that ended, a run that ended included.
+  that ended, a run that ended included, or of a turn or thread that is not the
+  conversation's.
 
   The promise: the goal's turns are one run, running until the goal stops being
   active between turns, the grace runs out, or the user stops it, and each turn
@@ -19,7 +20,8 @@ defmodule HalC2.CodexGoalsPropTest do
   the provider turn it names, whether a turn is running or not
   (`HalC2.Orchestration.Handoff.room/3` counts it there), stamped with the time it was
   reported, and fills the context meter; a provider turn Codex reports none for keeps
-  none, never an earlier turn's.
+  none, never an earlier turn's, and a report of a turn the MC never recorded or of
+  another thread changes nothing.
 
   The goal runs on the fake app-server in `test/support/fake_codex.py` with
   FAKE_CODEX_GOAL_STALL set, so Codex never goes on by itself: the test plays its
@@ -248,8 +250,8 @@ defmodule HalC2.CodexGoalsPropTest do
 
   def precondition(state, {:call, _, :late_turn, []}), do: state.phase == :ended
 
-  def precondition(state, {:call, _, :report_usage, [turn, _used]}),
-    do: state.phase in [:held, :turn, :ended] and turn < state.turns
+  def precondition(state, {:call, _, :report_usage, [whose, _used]}),
+    do: state.phase in [:held, :turn, :ended] and reported_turn(whose) < state.turns
 
   def precondition(state, {:call, _, :stale_grace, []}), do: state.phase == :exited
   def precondition(state, {:call, _, :continue_goal, []}), do: state.phase == :held
@@ -287,8 +289,11 @@ defmodule HalC2.CodexGoalsPropTest do
 
   def next_state(state, _result, {:call, _, :late_turn, []}), do: %{state | late: state.stops}
 
-  def next_state(state, _result, {:call, _, :report_usage, [turn, used]}),
+  def next_state(state, _result, {:call, _, :report_usage, [turn, used]}) when is_integer(turn),
     do: %{state | usage: Map.put(state.usage, turn, used), meter: used}
+
+  # Neither the turn nor the meter is that report's.
+  def next_state(state, _result, {:call, _, :report_usage, [_foreign, _used]}), do: state
 
   def next_state(state, _result, _call), do: state
 
@@ -312,9 +317,18 @@ defmodule HalC2.CodexGoalsPropTest do
     }
   end
 
-  # Codex reports the usage of one of the run's provider turns so far.
-  defp report_usage(state),
-    do: {:call, __MODULE__, :report_usage, [integer(0, state.turns - 1), integer(1, 150_000)]}
+  defp reported_turn({:other_thread, turn}), do: turn
+  defp reported_turn(:unknown), do: 0
+  defp reported_turn(turn), do: turn
+
+  # Codex reports the usage of one of the run's provider turns so far, or of a turn the
+  # MC never recorded (`:unknown`), or of one of the run's turns' ids on another thread
+  # (`{:other_thread, turn}`).
+  defp report_usage(state) do
+    turn = integer(0, state.turns - 1)
+    whose = frequency([{4, turn}, {1, :unknown}, {1, {:other_thread, turn}}])
+    {:call, __MODULE__, :report_usage, [whose, integer(1, 150_000)]}
+  end
 
   # --- commands ------------------------------------------------------------------
 
@@ -385,10 +399,19 @@ defmodule HalC2.CodexGoalsPropTest do
     observed()
   end
 
-  # Codex reports `used` tokens for the run's `turn`th provider turn, named by its id.
-  def report_usage(turn, used) do
+  # Codex reports `used` tokens for the run's `turn`th provider turn, named by its id,
+  # or for a turn or thread that is not the conversation's.
+  def report_usage(whose, used) do
+    {thread, turn} =
+      case whose do
+        :unknown -> {Process.get(:native_thread), "an-unrecorded-turn"}
+        {:other_thread, turn} -> {"another-thread", Enum.at(Process.get(:native_turns), turn)}
+        turn -> {Process.get(:native_thread), Enum.at(Process.get(:native_turns), turn)}
+      end
+
     notify("thread/tokenUsage/updated", %{
-      "turnId" => Enum.at(Process.get(:native_turns), turn),
+      "threadId" => thread,
+      "turnId" => turn,
       "tokenUsage" => %{
         "last" => %{"totalTokens" => used, "inputTokens" => used},
         "modelContextWindow" => 200_000
@@ -441,7 +464,7 @@ defmodule HalC2.CodexGoalsPropTest do
   # so what is read back is what its handling committed.
   defp notify(method, params) do
     {pid, runtime} = runtime()
-    params = Map.put(params, "threadId", Process.get(:native_thread))
+    params = Map.put_new(params, "threadId", Process.get(:native_thread))
     send(pid, {:json_rpc, runtime.conn, {:notification, method, params}})
   end
 

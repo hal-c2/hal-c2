@@ -2141,7 +2141,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # A usage report naming its turn lands on that turn, running or not: it can come
-  # after `turn/completed`, between a goal's turns, or before the next run starts.
+  # after `turn/completed`, between a goal's turns, or before the next run starts. One of
+  # another thread than the conversation's (subagents and memory threads routed above
+  # aside) is neither its turn's nor the meter's (`record_usage/3`).
   defp notification(
          "thread/tokenUsage/updated",
          %{"turnId" => native, "tokenUsage" => %{"last" => %{"totalTokens" => used}}} = params,
@@ -2449,9 +2451,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   # provider thread, so it outlives the run, and a model change, until Codex says more.
   # Provider turn `turn` keeps it too, which says which run it counts
   # (`HalC2.Orchestration.Handoff.room/3`); the provider thread is the one that turn ran
-  # on, or the running turn's. A report from another conversation than the runtime's, or
-  # of a turn the MC never recorded (one whose run ended as Codex started it), says
-  # nothing of the provider thread's.
+  # on, or the running turn's. A report from another conversation than the runtime's says
+  # nothing of either; one of a turn the MC never recorded (one whose run ended as Codex
+  # started it) says nothing of the provider thread's.
   defp record_usage(state, %{"tokenUsage" => %{"last" => last} = usage} = params, turn) do
     counts =
       for {key, field} <- [
@@ -2469,14 +2471,17 @@ defmodule HalC2.Codex.ThreadRuntime do
     snapshot =
       if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
 
+    if params["threadId"] in [nil, state.native_thread_id],
+      do: put_usage(state, turn, snapshot),
+      else: state
+  end
+
+  defp put_usage(state, turn, snapshot) do
     commit(state, fn stream ->
       stored = turn && HalC2.StreamState.fetch(stream, "provider-turn", turn)
 
       provider_thread =
         cond do
-          params["threadId"] not in [nil, state.native_thread_id] ->
-            nil
-
           stored ->
             stored["providerThreadId"]
 
