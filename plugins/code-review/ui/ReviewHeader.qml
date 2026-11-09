@@ -226,6 +226,8 @@ Rectangle {
         parent: Overlay.overlay
         anchors.centerIn: parent
         modal: true
+        // Takes the keyboard, so Escape closes it; focus goes back where it was.
+        focus: true
         padding: 16
         width: Math.min(560, (parent?.width ?? 592) - 32)
         height: Math.min(implicitHeight, (parent?.height ?? 600) - 64)
