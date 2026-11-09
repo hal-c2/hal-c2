@@ -413,16 +413,8 @@ defmodule HalC2.PluginsTurnHooksTest do
     listener = feed("listener")
     alias Orchestration.TurnWriter
 
-    ids = %{
-      thread: thread_id,
-      run: "run:1",
-      root_node: "node:root",
-      provider_thread: "provider-thread:opencode:#{thread_id}",
-      driver: "opencode"
-    }
-
     state =
-      %{thread_id: thread_id, turn: %{ids: ids}, items: %{}}
+      %{thread_id: thread_id, turn: %{ids: hook_ids(thread_id)}, items: %{}}
       |> TurnWriter.ensure_item("call-1", :tool, %{"toolName" => "read"})
       |> TurnWriter.finish_item("call-1", "completed", &Map.put(&1, "output", "one"))
       |> TurnWriter.finish_item("call-1", "completed", &Map.put(&1, "output", "one two"))
@@ -435,6 +427,31 @@ defmodule HalC2.PluginsTurnHooksTest do
     # The thread keeps the later report.
     item_id = state.items["call-1"].id
     assert %{"output" => "one two"} = StreamState.get(state(thread_id), "turn-item")[item_id]
+  end
+
+  test "a call ends as the provider said once, for the thread and for the plugins that hear it",
+       %{thread_id: thread_id} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    test = self()
+
+    # Applied twice, the output would grow twice.
+    grow = fn item ->
+      send(test, :applied)
+      Map.update!(item, "output", &(&1 <> "!"))
+    end
+
+    state =
+      %{thread_id: thread_id, turn: %{ids: hook_ids(thread_id)}, items: %{}}
+      |> Orchestration.TurnWriter.ensure_item("call-1", :tool, %{"output" => "done"})
+      |> Orchestration.TurnWriter.finish_item("call-1", "completed", grow)
+
+    assert_receive {:observed, %{"type" => "turn.item"} = heard}, 5_000
+    assert heard["output"] == "done!"
+    item_id = state.items["call-1"].id
+    assert %{"output" => "done!"} = StreamState.get(state(thread_id), "turn-item")[item_id]
+    assert_received :applied
+    refute_received :applied
   end
 
   # Antigravity leaves a subagent batch its completed turn did not end "idle".
@@ -630,6 +647,17 @@ defmodule HalC2.PluginsTurnHooksTest do
   end
 
   # --- helpers ------------------------------------------------------------------------
+
+  # The ids of a turn that writes items through `Orchestration.TurnWriter` directly.
+  defp hook_ids(thread_id) do
+    %{
+      thread: thread_id,
+      run: "run:1",
+      root_node: "node:root",
+      provider_thread: "provider-thread:opencode:#{thread_id}",
+      driver: "opencode"
+    }
+  end
 
   # Grants each extension its permissions, with the settings `saved` for it.
   defp grant(grants, saved \\ %{}) do

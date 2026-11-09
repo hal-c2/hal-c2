@@ -284,15 +284,12 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     {opened, current} =
       HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
+        done = %{"status" => status, "completedAt" => at, "updatedAt" => at}
+        {before, ended} = ending(stream, item_id, fun, done)
+        ended = ended && output_failure(ended, item[:kind])
+
         changes = [
-          Orchestration.upsert(
-            stream,
-            "turn-item",
-            item_id,
-            &(fun.(&1)
-              |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
-              |> output_failure(item[:kind]))
-          ),
+          ended && Orchestration.upsert(stream, "turn-item", item_id, fn _ -> ended end),
           Orchestration.upsert(
             stream,
             "node",
@@ -309,22 +306,11 @@ defmodule HalC2.Orchestration.TurnWriter do
         ]
 
         opened =
-          case item[:kind] == :command && StreamState.get(stream, "turn-item")[item_id] do
-            %{} = current -> current |> fun.() |> then(&Opened.urls(&1["input"], &1["output"]))
-            _ -> []
-          end
+          if item[:kind] == :command and ended != nil,
+            do: Opened.urls(ended["input"], ended["output"]),
+            else: []
 
-        # What plugins that hear turns get of the item, as the thread now has it: once,
-        # as it ends, never again for an item that had already ended.
-        current =
-          case observing && StreamState.get(stream, "turn-item")[item_id] do
-            %{"status" => open} = current when open in @open ->
-              current |> fun.() |> Map.merge(heard)
-
-            _ ->
-              nil
-          end
-
+        current = observing && heard_end(before, ended, heard)
         {Enum.filter(changes, &is_tuple/1), {opened, current}}
       end)
 
@@ -333,6 +319,22 @@ defmodule HalC2.Orchestration.TurnWriter do
     if current, do: observed_item_event(state, status, current)
     state
   end
+
+  # The turn item `item_id` as it was, and as it ends: `fun` applied to it once, for
+  # the thread and for plugins alike, with `done` over it. Nils for an item not there.
+  defp ending(stream, item_id, fun, done) do
+    case StreamState.fetch(stream, "turn-item", item_id) do
+      %{} = before -> {before, before |> fun.() |> Map.merge(done)}
+      _ -> {nil, nil}
+    end
+  end
+
+  # What plugins that hear turns get of an item that ends, as the thread now has it, with
+  # `heard` over it: once, as it ends, never again for an item that had already ended.
+  defp heard_end(%{"status" => open}, %{} = ended, heard) when open in @open,
+    do: Map.merge(ended, heard)
+
+  defp heard_end(_before, _ended, _heard), do: nil
 
   @doc """
   Tells plugins that hear turns (`HalC2.Plugins.observe/1`) that `item`, as the thread
