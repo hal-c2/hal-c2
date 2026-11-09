@@ -5,14 +5,16 @@
 #   named                  every directory those groups name, for `rest` to leave out
 #   proofs                 a JSON list of the Maude proofs to run
 #
-# Run with HEAD a pull request's merge commit or a push to main, so HEAD^1..HEAD is the
-# whole change, unless a push to main holds several commits (a rebase merge). Then it is
+# Run with HEAD a pull request's merge commit, a merge queue entry or a push to main, so
+# HEAD^1..HEAD is the whole change, unless a push to main holds several commits (a rebase merge). Then it is
 # the last one, and at worst that merge's build isn't saved until the next. The argument
 # says how much to test:
 #   all       every job (the nightly run)
 #   merged    only mc_check, whose build is what every pull request restores: the merge's
 #             tests already ran on its pull request, and the nightly run covers the rest
-#   pr        only what the change needs
+#   queue     what the change needs (a merge queue entry, the commit that lands)
+#   pr        what the change needs of the quick tier: mc_check, unit tests and the TUI.
+#             Properties, scenarios and proofs wait for the queue
 #
 # Each path list names what a job cannot depend on, not what it does: a path no one
 # thought of runs everything.
@@ -90,6 +92,9 @@ else
       touched=$(sed -nE 's#^apps/server-ex/proof/(hal_c2/(.*)_proof_test\.exs|models/(.*)\.maude)$#\2\3#p' <<<"$changed" | sort -u)
       # A proof deleted by this change has nothing left to run.
       selected=$(grep -Fx -f <(printf '%s\n' "$proofs") <<<"$touched" || true)
+    fi
+    if [ "$mode" = pr ]; then
+      props=false scenarios='' selected=''
     fi
   fi
 fi
