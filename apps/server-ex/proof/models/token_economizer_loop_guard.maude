@@ -142,10 +142,11 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
 
   op cfg : Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool -> Item [ctor] .
   op budget : Nat -> Item [ctor] .
-  --- Events the feed may miss, judge jobs that may never answer, and whether a job that
-  --- answers may go stale first.
+  --- Events the feed may miss, judge jobs that may never answer, redirects the provider's
+  --- runtime may hold, and whether a job that answers may go stale first.
   op faults : Nat -> Item [ctor] .
   op losses : Nat -> Item [ctor] .
+  op holds : Nat -> Item [ctor] .
   op slow : Bool -> Item [ctor] .
   --- Whether the judge may find a turn productive, and whether every call is a sign of
   --- trouble the free rules leave to the judge (a turn stuck for good).
@@ -156,7 +157,7 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
   op {_} : Conf -> Sys [ctor] .
 
-  vars R R' S S' N O J J' BU F L M EP HD : Nat .
+  vars R R' S S' N O J J' BU F H L M EP HD : Nat .
   vars KY RS ON ST AM TO WH GR WI LA CA EA B V OK T RD PT RO SP SL : Bool .
   vars JB JB' : Job .
   var P : Pend .
@@ -379,7 +380,8 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   --- HalC2.RuntimeSteer's :held says: the receipt does not say it was taken, so the task
   --- tells the plugin it was not, and posts no notice. The runtime hands it over while
   --- its run is still the one under way, or never.
-  crl [hold] : { task(R, steer then AS) C } => { held(R) taken(R, false) C } if running(R, C) .
+  crl [hold] : { task(R, steer then AS) holds(s F) C } => { held(R) taken(R, false) holds(F) C }
+    if running(R, C) .
   rl [late] : { held(R) active(R, LF) took(EP) C } => { active(R, LF) took(s EP) steered(R, R) C } .
   rl [lose-held] : held(R) => empty .
 
@@ -403,7 +405,12 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   op start : Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Nat Left Nat Nat Nat Bool Bool Bool -> Sys .
   eq start(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA, EA, BU, LF, L, F, J, SL, SP, B) =
     { next(1) runs(L) idle calls(LF) feed(noev) gap(0) took(0) heard(0) watching(free) faults(F) losses(J)
-      slow(SL) spares(SP) stuckloop(B) budget(BU) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA, EA) } .
+      holds(0) slow(SL) spares(SP) stuckloop(B) budget(BU) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA, EA) } .
+
+  --- The same, with H of its redirects the provider's runtime may hold: its own searches,
+  --- as each hold forks every later step of its run.
+  op holding : Nat Sys -> Sys .
+  eq holding(H, { holds(0) C }) = { holds(H) C } .
 
   --- A verdict read in a turn or segment it was not asked for.
   op wrongly : Sys -> Bool .
