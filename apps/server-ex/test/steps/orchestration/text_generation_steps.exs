@@ -181,6 +181,15 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     context
   end
 
+  # The fallback when Codex cannot list its MCP servers copies the account's login, so such
+  # a scenario gets its own Codex home with a fake one and never reads the developer's
+  # `~/.codex`.
+  defp seed_codex_home(context) do
+    codex_home = HalC2.Test.Mc.tmp_dir(context.mc, "codex-home")
+    File.write!(Path.join(codex_home, "auth.json"), ~s({"token":"fake"}))
+    World.put_env("CODEX_HOME", codex_home)
+  end
+
   step "the user's Codex configuration enables the MCP server {string}",
        %{args: [name]} = context do
     World.put_env("FAKE_CODEX_MCP", JSON.encode!([%{"name" => name, "enabled" => true}]))
@@ -212,12 +221,14 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
 
   step "the branch name is still written, in a Codex home with no MCP servers, when Codex cannot list them",
        context do
+    seed_codex_home(context)
     World.put_env("FAKE_CODEX_MCP_FAIL", "1")
     context = reply(context, TextGeneration.branch_name(root(context), "Add a login page"))
     assert {:ok, _} = context.reply
     call = List.last(calls(context))
     refute Enum.any?(call["argv"], &String.starts_with?(&1, "mcp_servers."))
     assert call["codexFiles"]["config.toml"] == ""
+    assert call["codexFiles"]["auth.json"] == ~s({"token":"fake"})
     context
   end
 
@@ -1409,6 +1420,7 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
   step "a commit message is generated and the writer's process fails with an error that holds an access token",
        context do
     context = install(context)
+    seed_codex_home(context)
     # A working folder that does not exist: the process cannot start, and the error
     # names the folder, which carries the token.
     cwd = Path.join(context.mc.home, "ghp_secrettoken123/missing")
