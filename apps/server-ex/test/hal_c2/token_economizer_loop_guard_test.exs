@@ -1858,6 +1858,37 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert state.skills["seam"].max_facts == EnvFacts.max_facts()
     end
 
+    test "the guard switched off under a judge job awaits its verdict no more" do
+      {:ok, state} = TokenEconomizer.init(%{"microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+      {judge, state} = sleeper(state, "a", :judge)
+      pending = %{"id" => "a:0:1", "since" => System.monotonic_time(:second), "segment" => 0}
+      state = update_in(state.turns["a"].guard, &%{&1 | judge_pending: pending, judge_calls: 1})
+
+      state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert Map.has_key?(state.turns, "a")
+      assert state.turns["a"].guard.judge_pending == nil
+
+      # What the job sent before it stopped comes late: paid for, but read by no one.
+      verdict = %{"stuck" => true, "confidence" => 0.95, "reason" => "loop", "_tokens" => 5}
+
+      {:noreply, state} =
+        TokenEconomizer.handle_info({:verdict, "a", "run-a", "a:0:1", verdict}, state)
+
+      assert state.turns["a"].guard.judge_arrived == nil
+      assert state.stats["judgeTokens"] == 5
+
+      # Switched on again, the guard asks afresh, not after the old job goes stale. A
+      # settings save reads the envelopes afresh: the project has learned its turns.
+      state = settings(state, %{"microSkills" => "envfacts"})
+      saved = %{"level" => "default", "resolved_turns" => List.duplicate(30, 5)}
+      state = put_in(state.trackers[{"p", "claudeAgent"}], Envelope.new("default", %{}, saved))
+      state = stuck_until(state, &(&1.stats["judgeCalls"] > 0))
+      assert state.stats["judgeCalls"] == 1
+      assert [{_, {"a", :judge}}] = Map.to_list(state.tasks)
+    end
+
     test "with the guard off a settings save keeps the turns learning hears" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})

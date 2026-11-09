@@ -266,9 +266,18 @@ defmodule HalC2Plugins.TokenEconomizer do
           state
 
         # The guard off leaves the turns to the micro-skills, which still
-        # learn from them; it judges nothing.
+        # learn from them; it judges nothing, and awaits no job it asked:
+        # a verdict still on its way finds none pending (`Turn.verdict/3`),
+        # and the guard switched back on asks afresh.
         micro_on?(state) ->
-          cancel(state, &match?({_, :judge}, &1))
+          state = cancel(state, &match?({_, :judge}, &1))
+
+          turns =
+            Map.new(state.turns, fn {id, turn} ->
+              {id, %{turn | guard: %{turn.guard | judge_pending: nil, judge_arrived: nil}}}
+            end)
+
+          %{state | turns: turns}
 
         # Nothing listens: the turns under way are dropped, and the next turn
         # is heard from its start again.

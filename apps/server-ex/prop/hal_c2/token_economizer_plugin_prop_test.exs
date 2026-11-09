@@ -6,9 +6,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   @moduledoc """
   A state machine model of TokenEconomizer's process (`HalC2Plugins.TokenEconomizer`):
   the turns of two threads of one project heard through the feed, which may say it
-  missed events, the mode changed between redirecting, watching and off, the process
-  restarted while its feed still holds events, and the answers of its judge jobs and
-  deliveries reaching it late, in any order, or never.
+  missed events, the mode changed between redirecting, watching and off and the
+  micro-skills' learning switched on and off, the process restarted while its feed still
+  holds events, and the answers of its judge jobs and deliveries reaching it late, in any
+  order, or never.
 
   The case drives the process's callbacks itself. Its tasks run for real and, with no
   plugin host to grant them anything, end at once: what each sent and its end are held,
@@ -16,12 +17,15 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   or productive) or the delivery's outcome (taken or refused) the command chooses.
   After every step:
 
-  - turned off, it watches no turn and has no judge job out;
+  - turned off, it has no judge job out and awaits no verdict, so a late one is dropped
+    and switched on again it judges afresh; it watches no turn unless the micro-skills
+    learn from them;
   - watching, it starts no delivery;
   - a delivery it started is out until it ends, whatever the mode: its steer may have
     been taken, and only its answer says so; a redirect is on its way only while its
     delivery is;
-  - it watches exactly the turns under way that it heard start while on, by their run;
+  - it watches exactly the turns under way that it heard start while the guard or
+    learning was on, by their run;
   - a judge job is out only for a thread with a turn under way and not offered its
     stop, at most one for each;
   - no run gets more redirects than the budget, nor more than one stop offer;
@@ -103,7 +107,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     path = TokenEconomizer.envelope_path(@project)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, JSON.encode!(%{"level" => "default", "resolved_turns" => @learned}))
-    {:ok, plugin} = TokenEconomizer.init(settings("nudge", budget))
+    {:ok, plugin} = TokenEconomizer.init(settings("nudge", "off", budget))
     Process.put(:plugin, plugin)
     Process.put(:held, [])
     Process.put(:deliveries, MapSet.new())
@@ -142,9 +146,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   end
 
   # Thresholds a person may pin, low enough for a few calls to make a loop.
-  defp settings(mode, budget),
+  defp settings(mode, micro, budget),
     do: %{
       "loopGuard" => mode,
+      "microSkills" => micro,
       "loopGuardNudges" => budget,
       "loopGuardThresholds" => %{
         "min_turns" => 4,
@@ -160,7 +165,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   # while on. `missing`: the events still to hear that the feed had waiting when it said
   # it missed some; the turns they belong to are partial.
   def initial_state(budget \\ 1),
-    do: %{budget: budget, mode: "nudge", runs: 0, open: %{}, missing: 0}
+    do: %{budget: budget, mode: "nudge", micro: "off", runs: 0, open: %{}, missing: 0}
 
   def command(state) do
     open = Map.keys(state.open)
@@ -185,8 +190,12 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       {5, {:call, __MODULE__, :answer, [integer(0, 3), frequency([{2, true}, {1, false}])]}},
       {1,
        {:call, __MODULE__, :mode,
-        [frequency([{2, "nudge"}, {2, "watch"}, {1, "off"}]), state.budget]}},
-      {1, {:call, __MODULE__, :restart, [state.mode, state.budget, integer(0, 3)]}}
+        [
+          frequency([{2, "nudge"}, {2, "watch"}, {1, "off"}]),
+          elements(~w(off envfacts)),
+          state.budget
+        ]}},
+      {1, {:call, __MODULE__, :restart, [state.mode, state.micro, state.budget, integer(0, 3)]}}
     ])
   end
 
@@ -231,22 +240,38 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     end)
   end
 
-  def next_state(state, _result, {:call, _, :mode, [mode, _]}),
-    do: %{state | mode: mode, open: if(mode == "off", do: %{}, else: state.open)}
+  # Neither the guard nor learning on, the turns are dropped; learning switched, or the
+  # guard switched on, under a turn leaves it partial.
+  def next_state(state, _result, {:call, _, :mode, [mode, micro, _]}) do
+    switched = micro != state.micro or (mode != "off" and state.mode == "off")
+    state = %{state | mode: mode, micro: micro}
+
+    open =
+      cond do
+        not listens?(state) -> %{}
+        switched -> Map.new(state.open, fn {t, turn} -> {t, %{turn | partial: true}} end)
+        true -> state.open
+      end
+
+    %{state | open: open}
+  end
 
   # The process restarted, its feed holding `held` events and maybe blocked delivering
   # one more: it watches no turn, and each of those may have been sent before ones it
   # missed.
-  def next_state(state, _result, {:call, _, :restart, [_, _, held]}),
+  def next_state(state, _result, {:call, _, :restart, [_, _, _, held]}),
     do: %{state | open: %{}, missing: held + 1}
 
   def next_state(state, _result, _call), do: state
 
+  defp listens?(state), do: state.mode != "off" or state.micro != "off"
+
   # An event of thread `t`: a report of missed events marks the turns under way partial
   # and opens a window over the reported event and those waiting behind it; `hear`
-  # applies the event, only while on; each event in the window marks its thread's turn
-  # partial. Turned off, the process watches no turn, but the window still runs over
-  # the events it hears, so a turn that starts in it once on again is partial.
+  # applies the event, only while the guard or learning is on; each event in the window
+  # marks its thread's turn partial. With both off, the process watches no turn, but the
+  # window still runs over the events it hears, so a turn that starts in it once on again
+  # is partial.
   defp heard(state, t, dropped, hear) do
     state =
       if dropped == false,
@@ -257,7 +282,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
             missing: max(state.missing, dropped + 1)
         }
 
-    state = if state.mode == "off", do: state, else: hear.(state)
+    state = if listens?(state), do: hear.(state), else: state
 
     cond do
       state.missing == 0 -> state
@@ -272,7 +297,9 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     judged = for {{t, :judge}, n} <- tasks, do: {t, n}
 
     laws = [
-      off: after_.mode != "off" or (seen.turns == %{} and judged == []),
+      off:
+        after_.mode != "off" or
+          (judged == [] and seen.awaiting == [] and (after_.micro != "off" or seen.turns == %{})),
       watch: after_.mode != "watch" or seen.started == 0,
       delivery: seen.stopped == [],
       redirect: Enum.all?(seen.redirecting, &({&1, :delivery} in seen.tasks)),
@@ -330,16 +357,20 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         dropped
       )
 
-  def mode(mode, budget) do
+  def mode(mode, micro, budget) do
     {:reply, :ok, plugin} =
-      TokenEconomizer.handle_call({:settings, settings(mode, budget)}, nil, Process.get(:plugin))
+      TokenEconomizer.handle_call(
+        {:settings, settings(mode, micro, budget)},
+        nil,
+        Process.get(:plugin)
+      )
 
     settle(plugin, false)
   end
 
   # The process goes down with its tasks and starts again in mode `mode`, while a feed
   # that kept running holds `held` events.
-  def restart(mode, budget, held) do
+  def restart(mode, micro, budget, held) do
     stop(Process.get(:plugin))
     Process.put(:held, [])
     Process.put(:deliveries, MapSet.new())
@@ -358,7 +389,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
 
     receive do: (:registered -> :ok)
     for i <- 1..held//1, do: send(feed, {:queued, i})
-    {:ok, plugin} = TokenEconomizer.init(settings(mode, budget))
+    {:ok, plugin} = TokenEconomizer.init(settings(mode, micro, budget))
     send(feed, :stop)
     settle(plugin, false)
   end
@@ -519,6 +550,13 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       turns: Map.new(plugin.turns, fn {t, turn} -> {t, turn.run} end),
       tasks: Map.values(plugin.tasks),
       redirecting: for({t, %{guard: %{redirecting: true}}} <- plugin.turns, do: t),
+      # The threads whose guard awaits a verdict, or holds one it has not read.
+      awaiting:
+        for(
+          {t, %{guard: guard}} <- plugin.turns,
+          guard.judge_pending != nil or guard.judge_arrived != nil,
+          do: t
+        ),
       offered: for({t, %{guard: %{abort_delivered: true}}} <- plugin.turns, do: t),
       acts: Enum.frequencies_by(plugin.recent, &{&1["threadId"], &1["runId"], &1["action"]}),
       taught: taught
