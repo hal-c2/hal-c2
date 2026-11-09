@@ -989,9 +989,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  # The projects with micro-skills of their own: from disk once, then as
-  # state remembers them (a save adds its project), so no turn ever re-reads
-  # every project's file to build the listing.
+  # The projects with micro-skills of their own: from disk the first time the
+  # whole listing is asked for, then as state remembers them (a save adds its
+  # project). A turn only touches its own project's file: before that first
+  # listing, `know_skill/2` leaves the set unread, since the scan will find the
+  # saved file and `state.skills` holds the project either way.
   defp known_skills(state) do
     case state.known_skills do
       nil ->
@@ -1003,10 +1005,10 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  defp know_skill(state, project_id) do
-    {known, state} = known_skills(state)
-    %{state | known_skills: MapSet.put(known, project_id)}
-  end
+  defp know_skill(%{known_skills: nil} = state, _project_id), do: state
+
+  defp know_skill(%{known_skills: known} = state, project_id),
+    do: %{state | known_skills: MapSet.put(known, project_id)}
 
   # The projects with micro-skills files of their own, beside those loaded.
   defp saved_project_ids do
