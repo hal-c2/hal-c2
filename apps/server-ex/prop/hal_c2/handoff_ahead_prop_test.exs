@@ -1,8 +1,8 @@
 defmodule HalC2.HandoffAheadPropTest do
   @moduledoc """
   The laws `HalC2.Orchestration.Handoff.ahead/2`, `HalC2.Pi.message/3` and
-  `HalC2.Codex.Goals.first_turn/2` promise (#1342). A turn can be put behind history more than once (a fork's fallback, then
-  a fresh start): its text is always what it carries ahead, then the user's words,
+  `HalC2.Codex.Goals.first_turn/2` promise (#1342). A turn can be put behind history
+  more than once (a fork's fallback, then a fresh start): its text is always what it carries ahead, then the user's words,
   and `history` is exactly what it carries ahead. Pi gets that history whole, and
   only the user's words are read for `$skill` mentions, so a skill the history names
   never runs again and the history keeps its lines. A Codex `/goal` that opens with
@@ -36,8 +36,11 @@ defmodule HalC2.HandoffAheadPropTest do
 
   property "a Codex goal's first turn keeps the history ahead of the goal's prompt",
     numtests: HalC2.Prop.numtests(300) do
-    forall {said, objective, contexts} <- {words(), words(), list(oneof([nil, history()]))} do
-      turn = Enum.reduce(contexts, %{text: said}, &Handoff.ahead(&2, &1))
+    forall {said, objective, contexts, sent?} <-
+             {words(), words(), list(oneof([nil, history()])), boolean()} do
+      # The runtime's turn names the message the user sent; a turn may also come without.
+      start = if sent?, do: %{text: said, message: said}, else: %{text: said}
+      turn = Enum.reduce(contexts, start, &Handoff.ahead(&2, &1))
       opened = HalC2.Codex.Goals.first_turn(turn, objective)
       goal = HalC2.Codex.Goals.first_prompt(objective)
 
