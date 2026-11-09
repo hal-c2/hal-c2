@@ -4,13 +4,15 @@ defmodule HalC2.ClaudeGoalPropTest do
   on the fake CLI in `test/support/fake_claude.py`: the user sets a goal Claude works
   on in the turn (one check comes back unmet first) or one Claude hands to a
   background subagent, sends an ordinary turn, has a turn stopped by a hook of their
-  own, clears the goal, or sends `/goal pause` or `/goal resume`; and a background
-  subagent finishes, which Claude answers in a turn of its own.
+  own, clears the goal, or sends `/goal pause` or `/goal resume`; a background
+  subagent finishes, which Claude answers in a turn of its own; and Claude goes down
+  before saving the prompt it was sent, so the next turn starts a new conversation.
 
   The promise: the thread shows the goal Claude has, active until a turn Claude worked
   in ends normally with no background subagent left running, then complete
   (Upstream #15592, #16598); a pause or resume is refused and never reaches Claude
-  (Upstream #25426); and every run ends.
+  (Upstream #25426); a goal lost with the conversation it lived in is shown as none;
+  and every run ends.
   """
 
   use ExUnit.Case, async: false
@@ -34,6 +36,7 @@ defmodule HalC2.ClaudeGoalPropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :claude_command)
+        System.delete_env("CLAUDE_CONFIG_DIR")
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -49,9 +52,12 @@ defmodule HalC2.ClaudeGoalPropTest do
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
     prompts = Path.join(home, "prompts.log")
     Process.put(:prompts, prompts)
+    # Where the fake keeps its transcripts, and where the MC looks for them.
+    System.put_env("CLAUDE_CONFIG_DIR", Path.join(home, "claude"))
 
     Application.put_env(:hal_c2, :claude_command, [
       "env",
+      "FAKE_SESSIONS=1",
       "FAKE_CLAUDE_PROMPT_LOG=#{prompts}",
       "python3",
       "-u",
@@ -96,10 +102,27 @@ defmodule HalC2.ClaudeGoalPropTest do
 
   # --- model ----------------------------------------------------------------------
 
-  # n: the next message number. turns: the messages the fake got (it numbers its tool
-  # calls by them). runs: the thread's run statuses. goal: nil or {objective, status,
-  # checks}. background: the background subagents still running, oldest first.
-  def initial_state, do: %{n: 1, turns: 0, runs: [], goal: nil, background: []}
+  # n: the next message number. turns: the messages the fake got. fake_turns: those the
+  # running fake got (it numbers its tool calls by them). runs: the thread's run
+  # statuses. goal: nil or {objective, status, checks}. background: the background
+  # subagents still running, oldest first. said_background: whether a message said "in
+  # the background", which a new conversation's history would repeat to the fake.
+  # lost: Claude went down before saving the prompt it was sent.
+  def initial_state,
+    do: %{
+      n: 1,
+      turns: 0,
+      fake_turns: 0,
+      runs: [],
+      goal: nil,
+      background: [],
+      said_background: false,
+      lost: false
+    }
+
+  # After a loss the next turn is an ordinary one: the fake reads a new conversation's
+  # history and message as one text, and would not see a command in it.
+  def command(%{n: n, lost: true}), do: {:call, __MODULE__, :user_turn, [n]}
 
   def command(%{n: n} = state) do
     frequency(
@@ -113,13 +136,23 @@ defmodule HalC2.ClaudeGoalPropTest do
         if(state.background == [],
           do: [],
           else: [{3, {:call, __MODULE__, :subagent_finishes, [hd(state.background)]}}]
+        ) ++
+        if(state.turns > 0 and state.background == [] and not state.said_background,
+          do: [{1, {:call, __MODULE__, :lose_session, []}}],
+          else: []
         )
     )
   end
 
   def precondition(state, {:call, _, :subagent_finishes, [agent]}),
-    do: agent in state.background
+    do: agent in state.background and not state.lost
 
+  def precondition(state, {:call, _, :lose_session, []}),
+    do:
+      state.turns > 0 and state.background == [] and not state.said_background and
+        not state.lost
+
+  def precondition(%{lost: true}, {:call, _, name, _}), do: name == :user_turn
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :set_goal, [n, how]}) do
@@ -133,7 +166,8 @@ defmodule HalC2.ClaudeGoalPropTest do
         %{
           state
           | goal: {"objective #{n} in the background", "active", 0},
-            background: state.background ++ ["agent-#{state.turns}"]
+            background: state.background ++ ["agent-#{state.fake_turns}"],
+            said_background: true
         }
     end
   end
@@ -155,8 +189,22 @@ defmodule HalC2.ClaudeGoalPropTest do
     do:
       ended(%{state | runs: state.runs ++ ["completed"], background: state.background -- [agent]})
 
-  defp message_sent(state, status),
-    do: %{state | n: state.n + 1, turns: state.turns + 1, runs: state.runs ++ [status]}
+  # The goal still shows until the next turn finds the conversation gone.
+  def next_state(state, _result, {:call, _, :lose_session, []}),
+    do: %{state | lost: true, fake_turns: 0}
+
+  # A turn after a loss starts a new conversation, which holds no goal.
+  defp message_sent(state, status) do
+    state = if state.lost, do: %{state | goal: nil, lost: false}, else: state
+
+    %{
+      state
+      | n: state.n + 1,
+        turns: state.turns + 1,
+        fake_turns: state.fake_turns + 1,
+        runs: state.runs ++ [status]
+    }
+  end
 
   # A turn Claude worked in ended normally: the goal's check passed unless background
   # work deferred it.
@@ -251,6 +299,28 @@ defmodule HalC2.ClaudeGoalPropTest do
     await(fn -> run_count() == runs + 1 end)
     claude_says(%{"type" => "result", "subtype" => "success", "is_error" => false})
     settled(runs + 1)
+  end
+
+  # The runtime lets go of Claude between turns, as when the MC restarts, and the
+  # transcript Claude kept holds none of the prompts it was sent.
+  def lose_session do
+    pid = runtime_pid()
+    ref = Process.monitor(pid)
+    :ok = GenServer.call(pid, :release)
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      @wait_ms -> raise "the runtime did not let go"
+    end
+
+    for path <-
+          Path.wildcard(Path.join(System.get_env("CLAUDE_CONFIG_DIR"), "projects/*/*.jsonl")) do
+      kept = path |> File.stream!() |> Enum.reject(&(JSON.decode!(&1)["type"] == "user"))
+      File.write!(path, kept)
+    end
+
+    settled(run_count())
   end
 
   # --- the runtime ------------------------------------------------------------------

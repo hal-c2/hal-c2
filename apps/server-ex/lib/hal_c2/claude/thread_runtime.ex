@@ -450,13 +450,19 @@ defmodule HalC2.Claude.ThreadRuntime do
         # A session Claude could not resume starts afresh with the whole thread, in a
         # conversation that holds no message of the old one: a turn stopped before
         # Claude writes leaves it to be resumed whole (`kept_head/3`).
+        fresh? = Map.get(state, :fresh_start, false)
+
         turn =
-          if Map.get(state, :fresh_start),
+          if fresh?,
             do: turn |> new_conversation() |> Map.delete(:resumed_at),
             else: turn
 
         {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
         state = %{state | turn: turn}
+
+        # Claude's goal (`goal/2`) lived in the conversation it could not resume, and the
+        # new one has none: shown as still active, any turn's end would read as meeting it.
+        state = if fresh?, do: %{put_goal(state, nil) | goal_checked: false}, else: state
 
         # A run that ended while the session opened never reaches Claude.
         case started(state) do

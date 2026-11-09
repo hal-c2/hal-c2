@@ -7910,6 +7910,40 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.put(context, :unsaved, native_session(context))
   end
 
+  step "Claude went down working on a {string} objective, before saving the prompt the MC sent it",
+       %{args: ["/goal"]} = context do
+    World.put_os_env("CLAUDE_CONFIG_DIR", Mc.tmp_dir(context.mc, "claude-unsaved"))
+    World.put_os_env("FAKE_SESSIONS", "1")
+
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "/goal make the tests pass")
+
+    await_goal(context, &match?(%{"status" => "active", "checks" => 1}, &1))
+
+    # A Stop hook of the user's ends the turn with the goal still open.
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => false,
+      "terminal_reason" => "stop_hook_prevented"
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    release_claude(context)
+    [path] = Path.wildcard(Path.join(System.get_env("CLAUDE_CONFIG_DIR"), "projects/*/*.jsonl"))
+    kept = path |> File.stream!() |> Enum.reject(&(JSON.decode!(&1)["type"] == "user"))
+    File.write!(path, kept)
+    assert %{"status" => "active"} = goal(context)
+    Map.put(context, :unsaved, native_session(context))
+  end
+
+  step "the thread shows no goal", context do
+    assert goal(context) == nil
+    context
+  end
+
   step "the user sends the next message in the thread", context do
     context = World.post_message(context, @thread, "hello from claude")
     World.await_runs(context, @thread, ["completed", "completed"])

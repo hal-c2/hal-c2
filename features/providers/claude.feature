@@ -1808,6 +1808,16 @@ Feature: Claude
       | with only its metadata  |
       | nowhere at all          |
 
+  # The goal Claude worked on lived in the conversation it could not resume. The new
+  # conversation has none, so the thread shows none, and a later turn's end does not
+  # read as meeting it.
+  @mc
+  Scenario: A Claude session that never saved a message loses its goal with it
+    Given Claude went down working on a "/goal" objective, before saving the prompt the MC sent it
+    When the user sends the next message in the thread
+    Then Claude starts a new conversation and the turn completes
+    And the thread shows no goal
+
   @mc
   Scenario: A Claude instance with its own config directory still finds its saved login on macOS
     Given the MC runs on macOS
