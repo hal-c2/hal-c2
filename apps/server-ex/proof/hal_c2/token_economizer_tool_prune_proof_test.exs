@@ -142,7 +142,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.envelope_path/1" => @guard,
       "HalC2Plugins.TokenEconomizer.toolprune_path/1" =>
         "where a project's evidence is kept; the model keeps it in tool",
-      "HalC2Plugins.TokenEconomizer.call_of/1" => @guard
+      "HalC2Plugins.TokenEconomizer.call_of/1" => @guard,
+      "HalC2Plugins.TokenEconomizer.learns?/2" => @guard
     },
     environment: %{
       "wait" => "no conversation under way and time passes, so the project has been quiet",
