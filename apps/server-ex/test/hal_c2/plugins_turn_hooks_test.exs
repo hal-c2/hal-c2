@@ -394,6 +394,21 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"input" => nil} = Orchestration.TurnWriter.observed_item(%{web | "patterns" => []})
   end
 
+  # Antigravity leaves a subagent batch its completed turn did not end "idle".
+  test "a plugin hears and reads a subagent batch its completed turn left idle as completed",
+       %{thread_id: thread_id} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    batch = %{"id" => "batch-1", "type" => "subagent", "status" => "idle"}
+    state = %{thread_id: thread_id, turn: %{ids: %{run: "run:1"}}}
+
+    :ok = Orchestration.TurnWriter.observe_item(state, "idle", batch)
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemId" => "batch-1"} = heard}, 5_000
+    assert heard["status"] == "completed"
+    assert Orchestration.TurnWriter.observed_item(batch)["status"] == "completed"
+  end
+
   test "a plugin steers the run it names while it works, and a steer to an ended run is refused and kept nowhere",
        %{thread_id: thread_id, dir: dir} do
     grant(%{"steerer" => ["threads:steer"]})

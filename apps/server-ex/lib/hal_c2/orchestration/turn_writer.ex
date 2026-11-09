@@ -347,7 +347,7 @@ defmodule HalC2.Orchestration.TurnWriter do
         "type" => "turn.item",
         "threadId" => state.thread_id,
         "runId" => state.turn.ids.run,
-        "status" => status
+        "status" => heard_status(status)
       })
     )
   end
@@ -357,8 +357,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   @doc """
   What a plugin hears or reads of a turn item (`HalC2.Plugins.Extension`'s `observe/2`,
   `HalC2.Plugins.Host.history/2`): `"itemId", "itemType", "tool"` (the provider's own
-  name for the tool, where it has one), `"title", "status", "input", "output",
-  "exitCode", "path"`, the input and output cut to their last #{@observed_chars}
+  name for the tool, where it has one), `"title", "status"` (`"completed"`, `"failed"`,
+  `"interrupted"` or `"cancelled"` once it ended), `"input", "output", "exitCode",
+  "path"`, the input and output cut to their last #{@observed_chars}
   characters, a value that is not text as its JSON. A file edit's output is its diff
   (`diffStr`), and a web call's input what it searched for or fetched (`patterns`); its
   result is heard as the call ends (`finish_item/5`), and not kept for history.
@@ -369,13 +370,18 @@ defmodule HalC2.Orchestration.TurnWriter do
       "itemType" => item["type"],
       "tool" => item["providerToolName"] || item["toolName"],
       "title" => item["title"],
-      "status" => item["status"],
+      "status" => heard_status(item["status"]),
       "input" => observed(item["input"] || nonempty(item["patterns"])),
       "output" => observed(item["output"] || nonempty(item["diffStr"])),
       "exitCode" => item["exitCode"],
       "path" => item["fileName"]
     }
   end
+
+  # An Antigravity subagent batch its completed turn left open ends "idle" on the
+  # thread; plugins hear it completed, as every other call that finished.
+  defp heard_status("idle"), do: "completed"
+  defp heard_status(status), do: status
 
   defp nonempty(value) when value in [nil, "", []], do: nil
   defp nonempty(value), do: value
