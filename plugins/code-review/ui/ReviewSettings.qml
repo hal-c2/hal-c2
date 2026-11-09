@@ -499,6 +499,8 @@ ColumnLayout {
 
                 Logins {
                     key: "ignoredAuthors"
+                    Accessible.name: qsTr("Ignored authors")
+                    Accessible.description: qsTr("Logins, separated by commas.")
                 }
             }
 
@@ -524,30 +526,35 @@ ColumnLayout {
 
             Logins {
                 key: "trustedLogins"
+                Accessible.name: qsTr("Trusted logins")
+                Accessible.description: qsTr("Logins, separated by commas, whose pull requests are reviewed and who may ask for reviews.")
             }
         }
 
-        RowLayout {
+        // Side by side where they fit, one under the other on a narrow screen.
+        Flow {
             Layout.fillWidth: true
             spacing: 24
 
             Field {
-                Layout.fillWidth: false
                 label: qsTr("Reviews per author a day")
                 hint: qsTr("Across your machines. 0 for no limit.")
 
                 Count {
                     key: "reviewsPerAuthorPerDay"
+                    Accessible.name: qsTr("Reviews per author a day")
+                    Accessible.description: qsTr("Across your machines. 0 for no limit.")
                 }
             }
 
             Field {
-                Layout.fillWidth: false
                 label: qsTr("Reviews per repository a day")
                 hint: qsTr("Reviews you start yourself are never held back.")
 
                 Count {
                     key: "reviewsPerRepositoryPerDay"
+                    Accessible.name: qsTr("Reviews per repository a day")
+                    Accessible.description: qsTr("Reviews you start yourself are never held back.")
                 }
             }
         }
