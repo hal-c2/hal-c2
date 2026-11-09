@@ -126,6 +126,56 @@ defmodule HalC2.CodexGoalRuntimeTest do
     assert is_binary(at)
   end
 
+  # Codex names the turn and thread each usage report is of. A report of another turn
+  # (one that ended before the running turn's start was answered, say) or of a thread
+  # that is not the conversation's is not the running turn's to keep, nor the meter's.
+  test "a running turn keeps only the usage Codex reports of it", %{work: work} do
+    thread_id = "thread-goal-usage-other"
+    start_goal_run(thread_id, work)
+
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    %{conn: conn, native_thread_id: native} = await_state(pid, &(&1.goal_hold != nil))
+
+    notify = fn method, params ->
+      send(
+        pid,
+        {:json_rpc, conn, {:notification, method, Map.put_new(params, "threadId", native)}}
+      )
+    end
+
+    notify.("turn/started", %{"turn" => %{"id" => "goal-turn-1", "status" => "inProgress"}})
+    GenServer.call(pid, :settle)
+    meter = provider_thread(thread_id)["contextUsage"]
+
+    notify.("thread/tokenUsage/updated", %{
+      "turnId" => "an-earlier-turn",
+      "tokenUsage" => %{"last" => %{"totalTokens" => 7}}
+    })
+
+    notify.("thread/tokenUsage/updated", %{
+      "threadId" => "another-thread",
+      "turnId" => "goal-turn-1",
+      "tokenUsage" => %{"last" => %{"totalTokens" => 9}}
+    })
+
+    GenServer.call(pid, :settle)
+    assert nil == attempt_turn(thread_id)["tokenUsage"]
+    assert meter == provider_thread(thread_id)["contextUsage"]
+
+    notify.("thread/tokenUsage/updated", %{
+      "turnId" => "goal-turn-1",
+      "tokenUsage" => %{"last" => %{"totalTokens" => 5}}
+    })
+
+    GenServer.call(pid, :settle)
+    assert %{"usedTokens" => 5} = attempt_turn(thread_id)["tokenUsage"]
+  end
+
+  defp provider_thread(thread_id) do
+    state = HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state()
+    state |> StreamState.list("provider-thread") |> List.first()
+  end
+
   # The provider turn the thread's run attempt names.
   defp attempt_turn(thread_id) do
     state = HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state()
