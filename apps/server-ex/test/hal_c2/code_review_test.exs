@@ -1115,6 +1115,15 @@ defmodule HalC2.CodeReviewTest do
       assert review()["error"] =~ "used up its token budget"
     end
 
+    @tag sandbox: [report: nil, tokens: 10, subagent_tokens: 1_000]
+    test "what subagents use counts against the budget of a Codex review", _context do
+      save_settings(%{"sandboxTokens" => 500})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      await_review(&(&1["status"] == "failed"))
+      assert review()["error"] =~ "used up its token budget"
+    end
+
     @tag sandbox: [hang: true]
     test "a report taken whose answer cannot be sent still loses its sandbox", _context do
       {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})

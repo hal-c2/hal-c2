@@ -1909,6 +1909,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
   defp notification(method, %{"threadId" => thread} = params, %{subagents: subagents} = state)
        when is_map_key(subagents, thread) do
+    # A sandboxed review's subagents spend from its budget too; the context meter is the
+    # main thread's, so their usage goes nowhere else.
+    if method == "thread/tokenUsage/updated", do: spent(state, thread, params["tokenUsage"])
+
     entry =
       subagents[thread]
       |> Map.put_new(:final, nil)
@@ -2267,14 +2271,11 @@ defmodule HalC2.Codex.ThreadRuntime do
   # provider thread, so it outlives the run, and a model change, until Codex says more.
   defp notification(
          "thread/tokenUsage/updated",
-         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage} = params,
          state
        )
        when is_integer(used) do
-    # A sandboxed review's spend counts against its budget (#1412).
-    with %{sandbox: true} <- state.turn,
-         total when is_integer(total) <- get_in(usage, ["total", "totalTokens"]),
-         do: HalC2.OpenShell.Review.spent(state.thread_id, "total", total)
+    spent(state, params["threadId"] || "main", usage)
 
     counts =
       for {key, field} <- [
@@ -3426,6 +3427,16 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp prefix_lines(lines, sign),
     do: Enum.map_join(lines, "", &(sign <> &1 <> "\n"))
+
+  # What a sandboxed review spends counts against its budget (#1412): each native
+  # thread's running total, under that thread, so the main thread's and each
+  # subagent's add up.
+  defp spent(%{turn: %{sandbox: true}} = state, thread, usage) do
+    with total when is_integer(total) <- get_in(usage, ["total", "totalTokens"]),
+         do: HalC2.OpenShell.Review.spent(state.thread_id, thread, total)
+  end
+
+  defp spent(_state, _thread, _usage), do: :ok
 
   defp spawned(state, %{"tool" => "spawnAgent", "id" => id} = item) do
     known = Map.get(state, :subagents, %{})

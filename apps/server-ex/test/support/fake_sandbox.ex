@@ -11,7 +11,7 @@ defmodule HalC2.Test.FakeSandbox do
     the review broker, with `opts[:report]` (an approval unless it is `nil`), report
     `opts[:tokens]` tokens used (0), and finish the turn. Claude also reports
     `opts[:cached]` cache reads (0), and with `subagent_tokens: n` a subagent's message
-    that used `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
+    that used `n`; Codex, with it, spawns a subagent whose thread reports `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
     to `test`, until it is interrupted.
 
   `stat -f` of the review's writable paths answers the tmpfs mounts it asked for,
@@ -163,6 +163,37 @@ defmodule HalC2.Test.FakeSandbox do
           "total" => %{"totalTokens" => tokens, "inputTokens" => tokens, "outputTokens" => 0}
         })
     })
+
+    if sub = s.opts[:subagent_tokens] do
+      child = "sandboxed-subagent"
+
+      out(io, %{
+        "method" => "item/started",
+        "params" =>
+          Map.put(ctx, "item", %{
+            "type" => "collabAgentToolCall",
+            "id" => "collab-1",
+            "tool" => "spawnAgent",
+            "prompt" => "Look closer",
+            "senderThreadId" => "sandboxed-thread",
+            "receiverThreadIds" => [child],
+            "status" => "inProgress",
+            "agentsStates" => %{child => %{"status" => "running"}}
+          })
+      })
+
+      out(io, %{
+        "method" => "thread/tokenUsage/updated",
+        "params" => %{
+          "threadId" => child,
+          "turnId" => "sandboxed-subagent-turn",
+          "tokenUsage" => %{
+            "last" => %{"totalTokens" => sub, "inputTokens" => sub, "outputTokens" => 0},
+            "total" => %{"totalTokens" => sub, "inputTokens" => sub, "outputTokens" => 0}
+          }
+        }
+      })
+    end
 
     if s.opts[:hang] do
       # The turn runs until it is interrupted.
