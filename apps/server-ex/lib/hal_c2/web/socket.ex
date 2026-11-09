@@ -1849,10 +1849,12 @@ defmodule HalC2.Web.Socket do
       {{:provider_auth, instance}, mc, HalC2.ProviderAuth, :subscribe, :unsubscribe,
        [instance, self()]}
 
+  # The installer is picked on `mc` (`HalC2.ProviderInstall.watch/3`): this MC's
+  # settings may not know an instance that exists only there.
   defp watch_spec({:provider_install, mc, instance}),
     do:
-      {{:provider_install, instance}, mc, HalC2.Acp.Antigravity.Installation, :subscribe,
-       :unsubscribe, [instance, self()]}
+      {{:provider_install, instance}, mc, HalC2.ProviderInstall, :watch, :unwatch,
+       [instance, self()]}
 
   # The addresses go by `subscribe_urls`, which an MC from before it lacks; that one is
   # watched by `subscribe` and simply never probes them. Unsubscribing is the same.

@@ -35,6 +35,17 @@ defmodule HalC2.Codex.Home do
     shadow = HalC2.Settings.instance_setting(instance, "shadowHomePath")
 
     cond do
+      # A ChatGPT account connected through HAL-C2 signs in in a shadow home of
+      # the instance's own (`HalC2.Codex.ChatGpt.home/1`), over the home Codex
+      # would use, an instance `CODEX_HOME` included: so its threads are the CLI
+      # account's threads too, and the CLI's own login is never touched.
+      managed?(instance) ->
+        shared = shared(instance) || default_home()
+
+        with {:ok, shadow} <- managed_home(instance),
+             :ok <- link(shared, shadow),
+             do: {:ok, [{"CODEX_HOME", shadow}]}
+
       shadow == nil and home == nil ->
         {:ok, []}
 
@@ -47,6 +58,30 @@ defmodule HalC2.Codex.Home do
         with :ok <- link(shared, shadow), do: {:ok, [{"CODEX_HOME", shadow}]}
     end
   end
+
+  @doc """
+  The instance's own variables for Codex (`HalC2.Settings.instance_env/1`), as a
+  list to follow `env/1`'s. A managed instance's `CODEX_HOME` is left out: it
+  names the shared home its shadow is made over, and Codex must run in the shadow.
+  """
+  @spec instance_env(String.t()) :: [{String.t(), String.t()}]
+  def instance_env(instance) do
+    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    if managed?(instance), do: Enum.reject(env, &match?({"CODEX_HOME", _}, &1)), else: env
+  end
+
+  # A connected account's login lives in the MC-owned home (`ChatGpt.home/1`), which
+  # `ChatGpt.adopt/3` and `move/1` read and write: a `shadowHomePath` set before the
+  # account was connected does not take its place.
+  # `ChatGpt.home/1` makes the folder and raises when the secrets directory is unwritable.
+  defp managed_home(instance) do
+    {:ok, HalC2.Codex.ChatGpt.home(instance)}
+  rescue
+    error in File.Error ->
+      {:error, "Codex shadow home could not be prepared: " <> Exception.message(error)}
+  end
+
+  defp managed?(instance), do: HalC2.Codex.ChatGpt.managed?(instance)
 
   @doc """
   The home shared by every account of `instance`'s Codex home, or nil for the
@@ -64,6 +99,14 @@ defmodule HalC2.Codex.Home do
           nil -> nil
           home -> expand(home)
         end
+    end
+  end
+
+  # Codex's own default: `$CODEX_HOME`, else `~/.codex`.
+  defp default_home do
+    case System.get_env("CODEX_HOME") do
+      home when is_binary(home) and home != "" -> expand(home)
+      _ -> Path.join(HalC2.Paths.user_home(), ".codex")
     end
   end
 
