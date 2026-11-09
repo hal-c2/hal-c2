@@ -296,7 +296,8 @@ defmodule HalC2.TokenEconomizerPropTest do
   # A passing check and a command that may hide one, in one `&&` chain that exited 0.
   defp call({order, cmd})
        when order in ~w(script_then_check check_then_script eval_then_check check_then_eval
-                        sourced_then_check check_then_sourced),
+                        defined_then_check check_then_defined sourced_then_check
+                        check_then_sourced),
        do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
 
   defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
@@ -320,9 +321,9 @@ defmodule HalC2.TokenEconomizerPropTest do
 
   # A passing check and a command that may hide one in one `&&` chain, in either order:
   # a check after a script run apart is the last word, one before it is not (the command
-  # may have undone it, or failed a check of its own unread). An `eval`, or a source of
-  # the `a.py` an edit writes, runs in the check's own shell and may redefine it, so a
-  # check after one is not the last word either.
+  # may have undone it, or failed a check of its own unread). An `eval`, a function
+  # definition, or a source of the `a.py` an edit writes, runs in the check's own shell
+  # and may redefine it, so a check after one is not the last word either.
   defp ordered do
     let {check_last, {how, hider}, runner, between} <-
           {boolean(),
@@ -331,6 +332,7 @@ defmodule HalC2.TokenEconomizerPropTest do
              {"script", "perl -le 'system q(pytest)'"},
              {"script", "python3 -c 'x()'"},
              {"eval", ~s{eval "$CHECK"}},
+             {"defined", "function pytest [[ 1 ]]"},
              {"sourced", "source ./a.py"},
              {"sourced", ". ./a.py"}
            ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"]),
@@ -524,7 +526,9 @@ defmodule HalC2.TokenEconomizerPropTest do
         )
 
       # A source of `a.py` hides a check only once an edit has written it.
-      hidden = ~w(unscoped check_then_script eval_then_check check_then_eval) ++ @unread
+      hidden =
+        ~w(unscoped check_then_script eval_then_check check_then_eval defined_then_check
+           check_then_defined) ++ @unread
 
       hidden =
         if last_edit > 0,

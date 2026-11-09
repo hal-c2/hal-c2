@@ -1668,8 +1668,15 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             {"source run.sh && echo ok && pytest -q", false},
             {~s{eval "$CHECK" && bash run.sh && pytest -q}, false},
             {~s{source "$SETUP" && bash run.sh && pytest -q}, false},
-            # A function the command defines is not read either.
+            # A function the command defines is not read either, whatever its body's form.
             {"pytest() { echo '1 passed'; } && bash run.sh && pytest -q", false},
+            {"pytest() ( echo '1 passed' ) && bash run.sh && pytest -q", false},
+            {"pytest () ( echo '1 passed' ) && bash run.sh && pytest -q", false},
+            {"function pytest { echo 1 passed; } && bash run.sh && pytest -q", false},
+            {"function pytest ( echo 1 passed ) && bash run.sh && pytest -q", false},
+            # A body with no brackets: `[[ 1 ]]` makes `pytest` succeed.
+            {"function pytest [[ 1 ]] && bash run.sh && pytest -q", false},
+            {"function pytest [[ 1 ]] && pytest -q", false},
             # A file the turn did not write sources nothing it changed.
             {". venv/bin/activate && bash run.sh && pytest -q", true}
           ] do

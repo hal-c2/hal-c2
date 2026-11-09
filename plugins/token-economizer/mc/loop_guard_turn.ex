@@ -371,15 +371,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   defp checked_last?(_, _, _, _), do: false
 
   # Whether one command of a chain runs code in the chain's own shell that this did not
-  # read: `eval`, or a `source`/`.` of a file the turn wrote or of a word that is not a
-  # plain path. A group or subshell bracket is read as a space, so `(. x)` counts too.
+  # read: `eval`, a function definition (`function pytest [[ 1 ]]`, `pytest () ( ... )`),
+  # or a `source`/`.` of a file the turn wrote or of a word that is not a plain path. A
+  # group or subshell bracket is read as a space, so `(. x)` counts too.
   defp same_shell?(segment, written) do
+    defines? = Regex.match?(~r/^\s*(?:function\s|[^\s()]+\s*\(\s*\))/, segment)
+
     words =
       Regex.replace(~r/[(){}]/, segment, " ")
       |> String.split()
       |> Enum.drop_while(&(&1 in ~w(builtin command) or Regex.match?(~r/^\w+=/, &1)))
 
     case words do
+      _ when defines? -> true
       ["eval" | _] -> true
       [dot, file | _] when dot in ["source", "."] -> sourced_unread?(file, written)
       [dot] when dot in ["source", "."] -> true
