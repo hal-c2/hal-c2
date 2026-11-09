@@ -75,7 +75,9 @@ defmodule HalC2.OpenShellExecPropTest do
     end
   end
 
-  defp gateway_exec(["stall"], _io), do: receive(do: (:never -> :ok), after: (30_000 -> :ok))
+  # Until the stream is gone, which stops the gateway's process for it: a stall that
+  # ended by itself would end its stream with no exit, and fail a later cancel.
+  defp gateway_exec(["stall"], _io), do: receive(do: (:never -> :ok))
   defp gateway_exec(["cat"], io), do: cat(io)
   defp gateway_exec(["spew"], io), do: spew(io, @spew)
 
@@ -272,8 +274,15 @@ defmodule HalC2.OpenShellExecPropTest do
 
         {_pid, ref} ->
           receive do
-            {:flooded, ^i, :ok} -> :wrote
-            {:flooded, ^i, _error} -> receive(do: ({:DOWN, ^ref, _, _, _} -> :failed))
+            {:flooded, ^i, :ok} ->
+              :wrote
+
+            {:flooded, ^i, _error} ->
+              receive do
+                {:DOWN, ^ref, _, _, _} -> :failed
+              after
+                @wait -> :stuck
+              end
           after
             @wait -> :stuck
           end
