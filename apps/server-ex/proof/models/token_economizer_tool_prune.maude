@@ -7,9 +7,14 @@ sload model-checker
 --- prop/hal_c2/token_economizer_tool_prune_prop_test.exs). Conversations start, use
 --- the tool or not, and end; their segments fold into the evidence; the person
 --- applies a proposal or a tool by name and restores what is off or refuses what
---- is proposed; the settings change mode; the plugin restarts; the feed misses a use. Between conversations the project may go
---- quiet. proof/hal_c2/token_economizer_tool_prune_proof_test.exs maps it to the
---- code and checks it.
+--- is proposed; the settings change mode, from any mode to any other and at any
+--- point, a conversation under way included; the plugin restarts; the feed misses a
+--- use. Between conversations the project may go quiet. Under off the plugin still
+--- hears every use and miss, folds, reads back and keeps what was applied; it only
+--- proposes, holds and denies nothing, so a conversation shaped under off has the
+--- tool loaded even when it is off, and a later switch to propose or auto acts on
+--- the evidence off gathered. proof/hal_c2/token_economizer_tool_prune_proof_test.exs
+--- maps it to the code and checks it.
 ---
 --- cfg(Safe, Kept, Frozen, Gated, Quiet, Capped, Evid, Persist, Partial, Unrecorded)
 --- switches each part
@@ -97,6 +102,8 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   op pkgs : Nat -> Item [ctor] .
   op left : Nat -> Item [ctor] .
   op acts : Nat -> Item [ctor] .
+  --- The mode switches left.
+  op switches : Nat -> Item [ctor] .
   --- That auto applied, in which mode, and whether the project had been quiet.
   op autoapp : Mode Bool -> Item [ctor] .
   --- Uses the feed may still miss, and that a fold grew the unused streak from a
@@ -141,13 +148,16 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     allowed(cand(S, RU, K, O, PP, D), PR, SF) and (not K or not KP) .
 
   --- shape/2 (shape_run/2): what auto held is applied first if it may be, then the
-  --- conversation starts with the tool off or not, for as long as it lasts.
+  --- conversation starts with the tool off or not, for as long as it lasts. Under
+  --- off nothing is denied (denied/2), so the tool is loaded though it is off, and a
+  --- held list does not outlive auto (apply_pending/4).
   op begin : Cand Bool Mode Bool Bool Bool Bool Bool Bool Bool -> Conf .
   ceq begin(CD, PD, M, PR, Q, SF, KP, FR, GT, QU) =
     tool(turnoff(CD)) conv(live(true, true)) pend(false) autoapp(M, Q)
     if PD and canAuto2(CD, M, PR, Q, SF, KP, GT, QU) .
   eq begin(CD, PD, M, PR, Q, SF, KP, FR, GT, QU) =
-    tool(CD) conv(live(isOff(CD), isOff(CD))) pend(PD) [owise] .
+    tool(CD) conv(live(isOff(CD) and M =/= off, isOff(CD) and M =/= off))
+    pend(PD and M == auto) [owise] .
 
   --- fold_segment/7: a finished segment. Its use is remembered and resets the
   --- streak; an unused loaded segment grows it (saturating at the threshold);
@@ -279,13 +289,22 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     { acts(s N) tool(cand(S, RU, K, false, PP, D)) pend(B) C }
     => { acts(N) tool(cand(S, RU, true, false, false, D)) pend(false) C } if PP or B .
 
-  --- The person changes the mode (settings_changed/3).
-  rl [settings] : acts(s N) mode(auto) => acts(N) mode(propose) .
-  rl [settings] : acts(s N) mode(propose) => acts(N) mode(off) .
-  rl [settings] : acts(s N) mode(off) => acts(N) mode(auto) .
+  --- The person changes the mode (settings_changed/3), whenever they like: what is
+  --- off, held and heard stays, and a conversation under way keeps its tools.
+  rl [settings] : switches(s N) mode(auto) => switches(N) mode(propose) .
+  rl [settings] : switches(s N) mode(auto) => switches(N) mode(off) .
+  rl [settings] : switches(s N) mode(propose) => switches(N) mode(auto) .
+  rl [settings] : switches(s N) mode(propose) => switches(N) mode(off) .
+  rl [settings] : switches(s N) mode(off) => switches(N) mode(auto) .
+  rl [settings] : switches(s N) mode(off) => switches(N) mode(propose) .
 
   --- The plugin restarts: the segment under way is lost (its turns are read back
   --- as history, which the property test covers); the evidence stands (Persist).
+  --- Restarted, the plugin takes a conversation under way to have loaded what the
+  --- mode denies now (default_loaded), not what it was shaped with: after a switch
+  --- to or from off, that differs only for a tool that is off, which nothing
+  --- proposes again (only restore or heal/2 brings it back, both for good), so the
+  --- fold here uses the conversation's own tools.
   rl [restart] :
     { acts(s N) conv(CV) hearing(SG) tool(CD) pend(B)
       cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
@@ -295,13 +314,13 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
 
   --- Switches, the mode it starts in, whether the tool is a protected one and
   --- whether history records its uses, the conversations to run, the person's
-  --- actions, and the uses the feed may miss.
+  --- actions, their mode switches, and the uses the feed may miss.
   op start : Bool Bool Bool Bool Bool Bool Bool Bool Bool Bool Mode Bool Bool Nat Nat Nat
-    -> Sys .
-  eq start(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR, M, PR, REC, N, S, F) =
+    Nat -> Sys .
+  eq start(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR, M, PR, REC, N, S, P, F) =
     { cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) mode(M) prot(PR) rec(REC) truth(false)
       tool(fresh) conv(none) hearing(noseg) pend(false) quiet(false)
-      demot(0) pkgs(3) left(N) acts(S) faults(F) } .
+      demot(0) pkgs(3) left(N) acts(S) switches(P) faults(F) } .
 
   --- A protected or ever-used tool is off.
   op unsafeSafe : Sys -> Bool .

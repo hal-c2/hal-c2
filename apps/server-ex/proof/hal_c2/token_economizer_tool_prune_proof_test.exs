@@ -24,7 +24,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   # prop/hal_c2/token_economizer_tool_prune_prop_test.exs, upstream's cases the plain
   # test's). Conversations start shaped, use the tool or not, and fold into the
   # evidence; the person applies, restores or refuses, and changes the mode; the
-  # plugin restarts; the feed misses a use; the project goes quiet.
+  # plugin restarts; the feed misses a use; the project goes quiet; the mode switches
+  # between off, propose and auto at any point.
   #
   # Each part of the design is a switch in the model, and turning one off finds the
   # flaw it closes (each search takes well under a second):
@@ -153,31 +154,40 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   # Safe, Kept, Frozen, Gated, Quiet, Capped, Evid, Persist, Partial, Unrecorded.
   @design "true, true, true, true, true, true, true, true, true, true"
 
-  test "under auto, over three conversations, two of the person's actions and a use missed, no law is broken",
+  test "under auto, over three conversations, two of the person's actions, two mode switches and a use missed, no law is broken",
        %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, auto, false, true, 3, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, auto, false, true, 3, 2, 2, 1)", "unsafe", [])
   end
 
   test "under propose the same holds", %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, propose, false, true, 3, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, propose, false, true, 3, 2, 2, 1)", "unsafe", [])
   end
 
   test "a use missed that the thread's history cannot show breaks no law either",
        %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, auto, false, false, 3, 2, 1)", "unsafe", [])
-    refute_reachable(proof, "start(#{@design}, propose, false, false, 3, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, auto, false, false, 3, 2, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, propose, false, false, 3, 2, 2, 1)", "unsafe", [])
+  end
+
+  # Under off the plugin goes on hearing, folding and reading back, and a conversation
+  # it shapes has every tool loaded, those off included: switched to propose or auto,
+  # mid-conversation or not, it acts on what off gathered.
+  test "starting under off, whatever the switches that follow, the same holds",
+       %{proof: proof} do
+    refute_reachable(proof, "start(#{@design}, off, false, true, 3, 2, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, off, false, false, 3, 2, 2, 1)", "unsafe", [])
   end
 
   test "a protected tool is never turned off", %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, auto, true, true, 2, 2, 0)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, auto, true, true, 2, 2, 2, 0)", "unsafe", [])
   end
 
   test "conversations never get stuck", %{proof: proof} do
-    refute_deadlock(proof, "start(#{@design}, auto, false, false, 2, 1, 1)", "over", [])
+    refute_deadlock(proof, "start(#{@design}, auto, false, false, 2, 1, 1, 1)", "over", [])
   end
 
   test "every conversation ends in the end", %{proof: proof} do
-    assert_ltl(proof, "start(#{@design}, auto, false, false, 2, 1, 1)", "<> finished",
+    assert_ltl(proof, "start(#{@design}, auto, false, false, 2, 1, 1, 1)", "<> finished",
       fair: ~w(shape-start finish)
     )
   end
