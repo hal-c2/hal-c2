@@ -777,7 +777,7 @@ Feature: In-app preview browser
       Then the page renders at that device's size
 
     # Upstream #23338: with the aspect ratio locked, typing a width rewrote its digits as they came.
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A width typed with the aspect ratio locked is kept as typed
       Given the preview is set to a device size of 1920 by 1080 with the aspect ratio locked
       When the user types the width 2560
@@ -1840,28 +1840,28 @@ Feature: In-app preview browser
       When the tab is closed
       Then the separate window closes
 
-    @backlog @desktop
+    @desktop
     Scenario: The user shows a device toolbar above a tab's page
       Given a browser tab that fills its space
       When the user shows the device toolbar from the tab's menu
       Then the toolbar offers "Responsive" and the named device sizes
-      And the page keeps its current size until the user picks another
+      And the page keeps the room it has, less the toolbar's
       When the user hides the device toolbar
       Then the page fills the tab again
 
-    @backlog @desktop
+    @desktop
     Scenario: Each tab keeps its own device size
       Given the thread has two browser tabs
       When the user picks the "iPhone SE" size in the first tab
       Then the second tab still fills its space
 
-    @backlog @desktop
+    @desktop
     Scenario: The user previews the page at a size of their own
       Given a browser tab with the device toolbar shown
       When the user types a width of 500 and a height of 800
       Then the page renders at 500 by 800
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A custom size outside what the preview can render is not applied
       Given a browser tab with the device toolbar shown
       When the user types a width of <width> and a height of <height>
@@ -1874,46 +1874,52 @@ Feature: In-app preview browser
         | 3841  | 800    |
         | 3840  | 2161   |
 
-    @backlog @desktop
+    @desktop
     Scenario: The aspect ratio can be locked while resizing
       Given a browser tab at 400 by 800 with the device toolbar shown
-      When the user locks the aspect ratio and changes the width to 200
-      Then the height becomes 400
+      When the user locks the aspect ratio and changes the width to 300
+      Then the height becomes 600
       When the user unlocks the aspect ratio
       Then changing the width leaves the height alone
 
-    @backlog @desktop
+    @desktop
     Scenario: The aspect ratio cannot be locked on a size that cannot be used
       Given a browser tab with the device toolbar shown
       And the user has typed a width of 100
       Then locking the aspect ratio is unavailable
 
-    @backlog @desktop
+    @desktop
     Scenario: The user rotates the previewed device
       Given a browser tab at 390 by 844 with the device toolbar shown
       When the user rotates the viewport
       Then the page renders at 844 by 390
 
-    @backlog @desktop
+    @desktop
     Scenario: The toolbar waits while a new size is being applied
       Given the user has just picked a device size for a tab
       When the MC has not confirmed the size yet
       Then the toolbar's size controls cannot be used until it does
 
-    @backlog @desktop
+    @desktop
+    Scenario: A second size picked while one waits is turned away
+      Given the user has just picked a device size for a tab
+      When the user picks another size from the tab's Device size menu
+      Then the desktop asks the MC for no other size and the tab keeps the first
+
+    @desktop
     Scenario: A size the desktop cannot apply says so and is undone
       Given a browser tab with the device toolbar shown
       When the desktop cannot resize the page to the size the user picked
       Then the user sees "Unable to resize browser viewport"
       And the tab returns to its previous size
 
-    @backlog @desktop
+    @desktop
     Scenario: The user drags the edge of a device-sized page to resize it
       Given a browser tab at 400 by 800 with the device toolbar shown
       When the user drags the page's right edge 100 pixels wider
       Then the page renders at 500 by 800 and the toolbar shows the new size
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario Outline: The arrow keys resize a device-sized page from one of its edges
       Given a browser tab at 400 by 800 with the device toolbar shown
       And the keyboard focus is on the page's right edge
@@ -1926,26 +1932,26 @@ Feature: In-app preview browser
         | Shift and Right arrow | 450 by 800 |
         | Left arrow            | 390 by 800 |
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A device-sized page that is bigger than the tab is shown scaled down
       Given a browser tab 600 pixels wide and 500 pixels tall with the device toolbar shown
       When the user previews the page at 1200 by 900
       Then the page is shown smaller, centred and in proportion, so all of it fits in the tab
       And the page still renders at 1200 by 900
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: A page that fills its space cannot be resized from its edges
       Given a browser tab that fills its space
       Then the page has no edges to drag or to move with the keyboard
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: Changing the size another way ends a drag in progress
       Given the user is dragging the edge of a device-sized page
       When the page's size is changed from the device toolbar
       Then the drag is dropped
       And the page keeps the size that was chosen
 
-    @backlog @desktop @priority-low
+    @desktop @priority-low
     Scenario: The device toolbar is closed from its own control
       Given a browser tab with the device toolbar shown
       When the user closes the device toolbar

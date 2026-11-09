@@ -2,7 +2,9 @@ defmodule HalC2.ThreadArchiveTest do
   # An import that fails takes back what it placed, and only that.
   use ExUnit.Case, async: false
 
-  alias HalC2.ThreadArchive
+  import Plug.Test, only: [conn: 2]
+
+  alias HalC2.{Attachments, Orchestration, ThreadArchive}
   alias HalC2.Test.{Machines, Mc}
   alias HalC2.Test.Mc.World
 
@@ -374,6 +376,65 @@ defmodule HalC2.ThreadArchiveTest do
 
     assert World.git!(root, ~w(worktree list --porcelain)) =~
              ~r/\Aworktree [^\n]+\n(?!.*worktree )/s
+  end
+
+  # An export or a move used to carry the attachments of messages only, so the MCP app
+  # document and the tool image a turn item names were missing where the thread arrived.
+  test "an archive carries the app document and tool images its turn items name",
+       %{context: context} do
+    context = World.create_thread(context, "Forecast")
+    id = World.thread_id(context, "Forecast")
+    File.mkdir_p!(Attachments.dir())
+    segment = Attachments.thread_segment(id)
+    app = segment <> "-mcp-app-abc123"
+    shot = segment <> "-shot-1"
+    extra = segment <> "-shot-2"
+    File.write!(Path.join(Attachments.dir(), app <> ".html"), "<p>forecast</p>")
+    File.write!(Path.join(Attachments.dir(), shot <> ".png"), "png-1")
+    File.write!(Path.join(Attachments.dir(), extra <> ".png"), "png-2")
+
+    :ok =
+      HalC2.Streams.transact(id, :thread, fn state ->
+        items = [
+          {"app",
+           %{"mcpApp" => %{"attachmentId" => app, "server" => "weather", "tool" => "forecast"}}},
+          {"output", %{"output" => [%{"type" => "image", "id" => shot}, %{"type" => "text"}]}},
+          {"images", %{"images" => [%{"type" => "image", "id" => extra}]}}
+        ]
+
+        {for(
+           {item, fields} <- items,
+           do:
+             Orchestration.upsert(state, "turn-item", item, fn _ ->
+               Map.put(fields, "id", item)
+             end)
+         ), :ok}
+      end)
+
+    file = Path.join(context.mc.home, "forecast.hal-c2-thread")
+    assert {:ok, %{attachments: 3}} = ThreadArchive.export_file(id, file, session: false)
+    names = [app <> ".html", shot <> ".png", extra <> ".png"]
+
+    # The destination has none of the files: the import places them where the
+    # attachments are found, and serves the app inline in its sandbox.
+    for name <- names, do: File.rm!(Path.join(Attachments.dir(), name))
+
+    assert {:ok, _} = ThreadArchive.import_file(file, replace: true)
+    assert File.read!(Attachments.path(%{"id" => app})) == "<p>forecast</p>"
+    assert File.read!(Attachments.path(%{"id" => shot})) == "png-1"
+    assert File.read!(Attachments.path(%{"id" => extra})) == "png-2"
+
+    {:ok, %{"relativeUrl" => url}} =
+      Attachments.create_url(%{
+        "resource" => %{"_tag" => "attachment", "attachmentId" => app, "disposition" => "inline"}
+      })
+
+    served = conn(:get, url) |> HalC2.Web.Router.call([])
+    assert served.status == 200
+    assert served.resp_body =~ "<p>forecast</p>"
+
+    assert ["sandbox allow-scripts" <> _] =
+             Plug.Conn.get_resp_header(served, "content-security-policy")
   end
 
   test "a failed import puts back a worktree branch this checkout already had",

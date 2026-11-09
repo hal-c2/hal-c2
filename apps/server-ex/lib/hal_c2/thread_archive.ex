@@ -627,13 +627,17 @@ defmodule HalC2.ThreadArchive do
 
   defp attachment_ids(archive) do
     ids =
-      for [kind, _, entity] when kind == "message" <- List.wrap(archive["entities"]),
-          %{"id" => id} <- List.wrap(entity["attachments"]),
+      for [kind, _, entity] <- List.wrap(archive["entities"]),
+          %{"id" => id} <- entity_attachments(kind, entity),
           into: MapSet.new(),
           do: id
 
     &(Attachments.valid_id?(&1) and MapSet.member?(ids, &1))
   end
+
+  defp entity_attachments("message", entity), do: List.wrap(entity["attachments"])
+  defp entity_attachments("turn-item", entity), do: item_attachment_refs(entity)
+  defp entity_attachments(_kind, _entity), do: []
 
   defp verify(nil, _what), do: {:ok, []}
 
@@ -1105,12 +1109,44 @@ defmodule HalC2.ThreadArchive do
   end
 
   defp attachments(state) do
-    for message <- StreamState.all(state, "message"),
-        %{"id" => _} = attachment <- List.wrap(message["attachments"]),
+    # What the messages carry, and what the turn items reference: an MCP app's
+    # document and the images a tool call returned.
+    for attachment <- message_attachments(state) ++ item_attachments(state),
         path = Attachments.path(attachment),
         path != nil,
         uniq: true,
         do: carried(Path.basename(path), path)
+  end
+
+  defp message_attachments(state) do
+    for message <- StreamState.all(state, "message"),
+        %{"id" => _} = attachment <- List.wrap(message["attachments"]),
+        do: attachment
+  end
+
+  defp item_attachments(state) do
+    for item <- StreamState.all(state, "turn-item"),
+        attachment <- item_attachment_refs(item),
+        do: attachment
+  end
+
+  @doc false
+  # The attachments a turn item references: its MCP app document (`mcpApp`) and the
+  # saved images of a tool call's `output` and `images`.
+  def item_attachment_refs(item) do
+    app =
+      case item["mcpApp"] do
+        %{"attachmentId" => id} when is_binary(id) -> [%{"id" => id}]
+        _ -> []
+      end
+
+    images =
+      for key <- ["output", "images"],
+          %{"type" => "image", "id" => id} <- List.wrap(item[key]),
+          is_binary(id),
+          do: %{"id" => id}
+
+    app ++ images
   end
 
   # The thread's checkpoint refs (and the workspace before its first run) as one

@@ -231,6 +231,10 @@ defmodule HalC2.Rpc do
   def handle("attachments.createUploadUrl", input), do: HalC2.Attachments.create_upload_url(input)
   def handle("attachments.delete", input), do: HalC2.Attachments.delete(input)
   def handle("assets.createUrl", input), do: HalC2.Attachments.create_url(input)
+  def handle("mcpApps.callTool", input), do: HalC2.McpApps.call_tool(input)
+  def handle("mcpApps.toolInfo", input), do: HalC2.McpApps.tool_info(input)
+  def handle("mcpApps.readResource", input), do: HalC2.McpApps.read_resource(input)
+  def handle("mcpApps.updateModelContext", input), do: HalC2.McpApps.update_model_context(input)
   def handle("worktreeSetup.cancel", input), do: HalC2.WorktreeSetup.cancel(input)
   def handle("worktreeSetup.retry", input), do: HalC2.WorktreeSetup.retry(input)
   def handle("assets.persistChatAttachments", input), do: HalC2.Attachments.persist(input)
@@ -259,13 +263,10 @@ defmodule HalC2.Rpc do
   def handle("provider.auth.cancel", input), do: HalC2.ProviderAuth.cancel(input)
   def handle("provider.auth.logout", input), do: HalC2.ProviderAuth.logout(input)
   def handle("provider.auth.complete", input), do: HalC2.ProviderAuth.complete(input)
-  def handle("provider.install.start", input), do: HalC2.Acp.Antigravity.Installation.start(input)
-
-  def handle("provider.install.cancel", input),
-    do: HalC2.Acp.Antigravity.Installation.cancel(input)
-
-  def handle("provider.install.remove", input),
-    do: HalC2.Acp.Antigravity.Installation.remove(input)
+  def handle("provider.chatgpt.move", input), do: HalC2.Codex.ChatGpt.move(input)
+  def handle("provider.install.start", input), do: installer(input).start(input)
+  def handle("provider.install.cancel", input), do: installer(input).cancel(input)
+  def handle("provider.install.remove", input), do: installer(input).remove(input)
 
   def handle("agentSessions.scan", input), do: HalC2.AgentSessions.scan(input)
   def handle("agentSessions.import", input), do: HalC2.AgentSessions.import_project(input)
@@ -392,6 +393,15 @@ defmodule HalC2.Rpc do
     end
   end
 
+  # The managed installer of the instance's driver.
+  defp installer(%{"instanceId" => instance}) do
+    if HalC2.Codex.Installation.instance?(instance),
+      do: HalC2.Codex.Installation,
+      else: HalC2.Acp.Antigravity.Installation
+  end
+
+  defp installer(_input), do: HalC2.Acp.Antigravity.Installation
+
   defp cluster({:ok, _} = ok), do: ok
 
   defp cluster({:error, reason}),
@@ -439,7 +449,7 @@ defmodule HalC2.Rpc do
     sourceControl.lookupRepository projects.listEntries projects.readFile
     projects.searchContents projects.searchEntries filesystem.browse files.localPath
     agentSessions.scan
-    assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
+    assets.createUrl mcpApps.toolInfo mcpApps.readResource vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
     slack.status slack.manifest space.list space.files.list space.page.exportMarkdown space.page.history
     space.page.version space.image.providers mermaid.render
   )

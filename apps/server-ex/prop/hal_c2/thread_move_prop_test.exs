@@ -607,7 +607,7 @@ defmodule HalC2.ThreadMovePropTest do
         false -> nil
       end
 
-    {:live, thread.title, messages, attachment, mark}
+    {:live, thread.title, messages, {attachment, "<p>app of #{id}</p>"}, mark}
   end
 
   # --- system under test -------------------------------------------------------------
