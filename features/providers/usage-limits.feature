@@ -42,6 +42,14 @@ Feature: Subscription limits
     Then Codex's limits are reported as not supported for this account
 
   @node
+  Scenario: A disabled provider shows no limits until it is enabled again
+    Given Codex and Claude reported their limits
+    When the user turns Claude off
+    Then Claude reports no limits and is not checked
+    When the user turns Claude back on
+    Then Claude's limits are read again at once
+
+  @node
   Scenario: Refreshing checks every provider and hub again
     Given a hub is connected
     When the user refreshes the providers
@@ -121,9 +129,15 @@ Feature: Subscription limits
     Then the hub is reported with no accounts and the error "<error>"
 
     Examples:
-      | problem                          | error                                 |
-      | without a management key         | No management key configured.         |
-      | whose management request crashes | The hub management request failed.    |
+      | problem                       | error                            |
+      | without a management key      | No management key configured.    |
+      | that cannot list its accounts | The hub could not list accounts. |
+
+  @node
+  Scenario: An account the hub cannot read keeps its row with the reason
+    Given a hub whose Codex account reports usage the node cannot read
+    When the node reads the hub
+    Then the Codex account is reported as not read, beside the hub's other accounts
 
   @node
   Scenario: A hub's Codex account reset credit is redeemed through the hub
