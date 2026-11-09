@@ -604,7 +604,8 @@ defmodule HalC2Plugins.TokenEconomizer do
       prune
       |> Prune.fold_segment(conv.loaded, conv.used, prompts, prune_cfg(state), now_s(),
         imported: imported,
-        thread: conv.thread
+        thread: conv.thread,
+        unrecorded: Map.get(conv, :unrecorded, [])
       )
       |> Prune.note_thread(conv.thread, if(read? and not partial?, do: Map.get(conv, :last_run)))
 
@@ -626,7 +627,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # A segment heard only in part, as its thread's history has it: its provider's runs
   # that ended since the watermark, with what their items used, the uses the feed
-  # dropped among them. Still partial when the history cannot be read.
+  # dropped among them, and the tools whose uses their items need not show
+  # (`Prune.unrecorded/2`). Still partial when the history cannot be read.
   defp heard(conv, prune, unit) do
     {_, provider} = conv.project
 
@@ -646,6 +648,7 @@ defmodule HalC2Plugins.TokenEconomizer do
             partial: false,
             last_run: watermark
         }
+        |> Map.put(:unrecorded, unrecorded(runs, unit))
 
       :error ->
         conv
@@ -653,6 +656,9 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   defp uses(run, unit), do: Enum.flat_map(run["items"] || [], &Prune.used_in_item(&1, unit))
+
+  defp unrecorded(runs, unit),
+    do: runs |> Enum.flat_map(&Prune.unrecorded(&1, unit)) |> Enum.uniq()
 
   # Once the project has been quiet long enough, its open conversations fold as
   # finished sessions (a later resume starts a new segment with the same loaded
@@ -776,7 +782,8 @@ defmodule HalC2Plugins.TokenEconomizer do
           project: project,
           loaded: Prune.candidate_tools(unit),
           used: used,
-          prompts: length(runs)
+          prompts: length(runs),
+          unrecorded: unrecorded(runs, unit)
         },
         true
       )

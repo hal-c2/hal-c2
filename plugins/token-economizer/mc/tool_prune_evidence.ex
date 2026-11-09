@@ -216,11 +216,13 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   later resume — into the evidence: what it had `loaded`, what it `used`, and the
   `prompts` (turns) it ran. A segment that ran no prompt is no evidence, and one
   folded from a thread's earlier turns (`imported: true`) does not grow the live
-  streaks `auto` needs. A segment of `thread: id`'s conversation counts as a session
-  only if none of that conversation's did before (`new_conversation/2` starts the
-  next one), however many it folds in: its prompts count either way. A live session
-  is counted apart, so a conversation read back first still counts once live when it
-  resumes. `now` is unix seconds. Returns the new state.
+  streaks `auto` needs. A segment read back from a history that need not show some
+  tools' uses (`unrecorded: tools`, `unrecorded/2`) is no evidence those went unused:
+  one not heard used counts as not loaded in it. A segment of `thread: id`'s
+  conversation counts as a session only if none of that conversation's did before
+  (`new_conversation/2` starts the next one), however many it folds in: its prompts
+  count either way. A live session is counted apart, so a conversation read back
+  first still counts once live when it resumes. `now` is unix seconds. Returns the new state.
   """
   def fold_segment(state, loaded, used, prompts, cfg, now, opts \\ []) do
     imported = Keyword.get(opts, :imported, false)
@@ -228,6 +230,8 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     session = prompts > 0 and thread not in state["countedThreads"]
     live = prompts > 0 and not imported and thread not in state["liveThreads"]
     used = MapSet.new(used)
+    unrecorded = Keyword.get(opts, :unrecorded, [])
+    loaded = Enum.reject(loaded, &(&1 in unrecorded and not MapSet.member?(used, &1)))
 
     state =
       state
@@ -506,6 +510,17 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     |> heal(cfg)
     |> drop_pending(used)
   end
+
+  # What a run's history never shows a Codex conversation using: its goal and image
+  # packages, whose uses plugins only hear (no thread shows them as calls).
+  @unrecorded %{"capability" => ~w(goals image_media)}
+
+  @doc """
+  The tools of `unit` a run read back from its thread's history (`HalC2.Plugins.Host.history/3`)
+  may have used without its items saying so, which a fold of it must not count as
+  unused (`fold_segment/7`): Codex's goal and image packages.
+  """
+  def unrecorded(_run, unit), do: @unrecorded[unit] || []
 
   @doc "Starts `thread_id`'s next conversation, whose first segment counts as a session."
   def new_conversation(state, thread_id) do

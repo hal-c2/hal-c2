@@ -45,6 +45,9 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   #     and it can be turned off after all.
   #   - Without Partial, a conversation whose use of the tool the feed missed folds
   #     as one that left it unused, and grows the streak that proposes it.
+  #   - Without Unrecorded, the same conversation read back from a history that
+  #     cannot show the use (a Codex goal or image call) folds as one
+  #     that left the tool unused.
   @counts "the exact prompt and session counters and thresholds: prop/hal_c2/token_economizer_tool_prune_prop_test.exs and test/hal_c2/token_economizer_tool_prune_test.exs"
   @guard "the loop guard's, modelled in proof/hal_c2/token_economizer_loop_guard_proof_test.exs"
 
@@ -76,6 +79,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.note_used/3" => "use",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.activity/2" => "quiet",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.used_in_item/2" => "use",
+      "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.unrecorded/2" => ~w(reread rec),
       "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" => "settings",
       "HalC2Plugins.TokenEconomizer handle_call {:shape, _}" => "shape-start",
       "HalC2Plugins.TokenEconomizer handle_call {:toolprune, _, _}" =>
@@ -142,28 +146,34 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       ]
     }
 
-  # Safe, Kept, Frozen, Gated, Quiet, Capped, Evid, Persist, Partial.
-  @design "true, true, true, true, true, true, true, true, true"
+  # Safe, Kept, Frozen, Gated, Quiet, Capped, Evid, Persist, Partial, Unrecorded.
+  @design "true, true, true, true, true, true, true, true, true, true"
 
   test "under auto, over three conversations, two of the person's actions and a use missed, no law is broken",
        %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, auto, false, 3, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, auto, false, true, 3, 2, 1)", "unsafe", [])
   end
 
   test "under propose the same holds", %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, propose, false, 3, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, propose, false, true, 3, 2, 1)", "unsafe", [])
+  end
+
+  test "a use missed that the thread's history cannot show breaks no law either",
+       %{proof: proof} do
+    refute_reachable(proof, "start(#{@design}, auto, false, false, 3, 2, 1)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, propose, false, false, 3, 2, 1)", "unsafe", [])
   end
 
   test "a protected tool is never turned off", %{proof: proof} do
-    refute_reachable(proof, "start(#{@design}, auto, true, 2, 2, 0)", "unsafe", [])
+    refute_reachable(proof, "start(#{@design}, auto, true, true, 2, 2, 0)", "unsafe", [])
   end
 
   test "conversations never get stuck", %{proof: proof} do
-    refute_deadlock(proof, "start(#{@design}, auto, false, 2, 1, 1)", "over", [])
+    refute_deadlock(proof, "start(#{@design}, auto, false, false, 2, 1, 1)", "over", [])
   end
 
   test "every conversation ends in the end", %{proof: proof} do
-    assert_ltl(proof, "start(#{@design}, auto, false, 2, 1, 1)", "<> finished",
+    assert_ltl(proof, "start(#{@design}, auto, false, false, 2, 1, 1)", "<> finished",
       fair: ~w(shape-start finish)
     )
   end

@@ -148,6 +148,33 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert "CronCreate" in state.prunes[project]["used"]
   end
 
+  test "Codex turns the plugin missed are no evidence its goal and image packages went unused",
+       %{project: p} do
+    project = {p, "codex"}
+    thread = "codex-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"thread", thread, %{"s" => %{}}},
+        {"provider-thread", "pt", %{"s" => %{"driver" => "codex"}}}
+      ])
+
+    # Codex viewed an image in r1 while the plugin was not running: no item shows it.
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r2", p, %{"provider" => "codex"}))
+
+    prune = state.prunes[project]
+    assert prune["prompts"] == 1
+    assert %{"prompts" => 1} = prune["streaks"]["collaboration"]
+    assert prune["loadedSessions"]["collaboration"] == 1
+
+    for package <- ~w(goals image_media) do
+      assert prune["streaks"][package] in [nil, %{"sessions" => 0, "prompts" => 0}]
+      assert prune["loadedSessions"][package] in [nil, 0]
+    end
+  end
+
   defp grant(granted) do
     {settings, version} = HalC2.Settings.get()
 
