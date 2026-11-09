@@ -93,6 +93,47 @@ defmodule HalC2.CodexGoalRuntimeTest do
     end
   end
 
+  # Codex's report of the context's usage reaches the turn it runs in as it comes: a
+  # goal's later turn, which the run's attempt names from its start, shows it while it
+  # is still running (the goals property's counterexample, a continue then a report).
+  test "a goal's later turn keeps the usage Codex reports in it while it runs",
+       %{work: work} do
+    thread_id = "thread-goal-usage"
+    start_goal_run(thread_id, work)
+
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    %{conn: conn, native_thread_id: native} = await_state(pid, &(&1.goal_hold != nil))
+
+    notify = fn method, params ->
+      send(pid, {:json_rpc, conn, {:notification, method, Map.put(params, "threadId", native)}})
+    end
+
+    notify.("turn/started", %{"turn" => %{"id" => "goal-turn-1", "status" => "inProgress"}})
+    GenServer.call(pid, :settle)
+    assert nil == attempt_turn(thread_id)["tokenUsage"]
+
+    notify.("thread/tokenUsage/updated", %{
+      "turnId" => "goal-turn-1",
+      "tokenUsage" => %{"last" => %{"totalTokens" => 5}}
+    })
+
+    GenServer.call(pid, :settle)
+    assert ["running"] = statuses(thread_id)
+
+    assert %{"id" => "provider-turn:codex:goal-turn-1", "tokenUsage" => usage} =
+             attempt_turn(thread_id)
+
+    assert %{"usedTokens" => 5, "updatedAt" => at} = usage
+    assert is_binary(at)
+  end
+
+  # The provider turn the thread's run attempt names.
+  defp attempt_turn(thread_id) do
+    state = HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state()
+    [attempt] = StreamState.list(state, "run-attempt")
+    StreamState.get(state, "provider-turn")[attempt["providerTurnId"]]
+  end
+
   defp start_goal_run(thread_id, work, text \\ "/goal ship the fix") do
     :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
     selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
@@ -165,6 +206,50 @@ defmodule HalC2.CodexGoalRuntimeTest do
 
   defp list(thread_id, kind),
     do: HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state() |> StreamState.list(kind)
+
+  # Codex's answer to the activation came behind its reports of the goal turns it ran
+  # and of the goal it completed in the last; dropping those as stale left the run
+  # waiting for a turn Codex would never start.
+  test "a goal Codex completes before its answer to the activation is read ends the run",
+       %{work: work} do
+    System.delete_env("FAKE_CODEX_GOAL_STALL")
+    System.put_env("FAKE_CODEX_GOAL_ANSWER_LAST", "1")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_GOAL_ANSWER_LAST") end)
+
+    thread_id = "thread-goal-answer-last"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+    selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.create",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Goal",
+        "modelSelection" => selection,
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "worktreePath" => work
+      })
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "m1",
+        "text" => "/goal ship the fix",
+        "attachments" => [],
+        "modelSelection" => selection,
+        "dispatchMode" => %{"type" => "start_immediately"}
+      })
+
+    await(fn -> if statuses(thread_id) == ["completed"], do: :done, else: [] end)
+    state = HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state()
+    assert [%{"goal" => %{"status" => "complete"}}] = StreamState.list(state, "provider-thread")
+
+    assert ["completed", "completed", "completed"] =
+             state |> StreamState.list("provider-turn") |> Enum.map(& &1["status"])
+  end
 
   defp statuses(thread_id) do
     HalC2.Streams.ensure(thread_id)

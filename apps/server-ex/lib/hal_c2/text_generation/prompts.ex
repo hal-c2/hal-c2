@@ -9,7 +9,6 @@ defmodule HalC2.TextGeneration.Prompts do
 
   @omitted "[Earlier content truncated]\n\n"
   @truncated "\n[Content truncated]\n"
-
   @initial_title """
   Generate a title that will help the user recognize this HAL-C2 thread weeks later.
   Return JSON with keys title and needsRefinement.
@@ -107,7 +106,7 @@ defmodule HalC2.TextGeneration.Prompts do
   end
 
   @doc "The change request prompt, following the repository's template when there is one."
-  def pr(base, head, commits, diff_stat, diff_patch, template, policy) do
+  def pr(base, head, commits, diff_stat, diff_patch, template, policy, thread \\ nil) do
     template = String.trim(template || "")
 
     body_rules =
@@ -152,10 +151,22 @@ defmodule HalC2.TextGeneration.Prompts do
           "",
           "Diff patch:",
           limit_section(diff_patch, 40_000)
-        ],
+        ] ++ thread_history(thread),
       "\n"
     )
   end
+
+  # What the thread did (`Handoff.transcript/2`), already fitted to its budget by the caller, so
+  # the writer can say which checks ran and how they ended instead of "not run".
+  defp thread_history(history) when is_binary(history) and history != "" do
+    [
+      "",
+      "Thread history (the work this thread did, in order; its checks and their results are real):",
+      history
+    ]
+  end
+
+  defp thread_history(_history), do: []
 
   @doc "The branch name prompt for the work a message asks for."
   def branch(message, attachments) do

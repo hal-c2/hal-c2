@@ -7,8 +7,8 @@ import "js/changedFilesTree.js" as ChangedFilesTree
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution, meta, attachments, and optionally summary, summaryFailed
-// and sentFiles).
+// intent, attribution, meta, attachments, and optionally summary, summaryFailed,
+// sentFiles and stopRun).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -804,7 +804,7 @@ Item {
             required property var intent
             required property var attribution
             required property var meta
-            // Roles a model may leave out (summary, summaryFailed).
+            // Roles a model may leave out (summary, summaryFailed, stopRun).
             required property var model
             required property var messageId
             required property var attachments
@@ -1576,6 +1576,8 @@ Item {
                             exited: entry.exitCode !== undefined && entry.exitCode !== null,
                             exitCode: entry.exitCode ?? 0,
                             preview: entry.preview ?? "",
+                            // The run a plugin's notice offers to stop while it works; empty when none.
+                            interrupt: entry.interrupt ?? "",
                             // Work a fork carried over: "Inherited", and the thread it came from.
                             visibility: entry.visibility ?? "",
                             source: entry.source ?? "",
@@ -1593,6 +1595,9 @@ Item {
                             })
                         };
                     }
+                    // A plugin's notice in the group, shown or folded, offers to
+                    // stop its own run while that works; the live row carries its Stop too.
+                    readonly property string stopRun: row.model.stopRun ?? ""
                     function syncCalls() {
                         const next = root.list(row.entries);
                         let at = 0;
@@ -1657,7 +1662,24 @@ Item {
                         preview: workGroup.latest?.preview ?? ""
                         interactive: true
                         Accessible.name: workGroup.merged ? qsTr("%1, +%2 previous tool calls").arg(label).arg(row.hiddenCount) : label
-                        onClicked: root.toggle(row.rowId)
+                        onClicked: position => {
+                            // Stop takes its own tap.
+                            if (groupStop.visible && groupStop.contains(groupStop.mapFromItem(groupToggle, position)))
+                                return;
+                            root.toggle(row.rowId);
+                        }
+                        ActionLink {
+                            id: groupStop
+                            objectName: "noticeInterrupt"
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: workGroup.merged && workGroup.stopRun.length > 0
+                            text: qsTr("Stop")
+                            Accessible.name: qsTr("Stop the agent")
+                            // The notice's run, never whichever run is current by now.
+                            onClicked: Shell.dispatch("composer.interrupt", {
+                                runId: workGroup.stopRun
+                            })
+                        }
                         RowText {
                             objectName: "workGroupStatus"
                             anchors.verticalCenter: parent.verticalCenter
@@ -1820,6 +1842,8 @@ Item {
                                             // Open takes its own tap.
                                             if (openLink.visible && openLink.contains(openLink.mapFromItem(callLine, position)))
                                                 return;
+                                            if (stopLink.visible && stopLink.contains(stopLink.mapFromItem(callLine, position)))
+                                                return;
                                             const next = Object.assign({}, row.openCalls);
                                             next[call.modelData.id] = !call.open;
                                             row.openCalls = next;
@@ -1831,6 +1855,17 @@ Item {
                                             visible: (call.modelData.path ?? "").length > 0
                                             text: qsTr("Open")
                                             onClicked: root.fileActivated(call.modelData.path, "files", row.rowId)
+                                        }
+                                        ActionLink {
+                                            id: stopLink
+                                            objectName: "noticeInterrupt"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            visible: call.modelData.interrupt.length > 0
+                                            text: qsTr("Stop")
+                                            Accessible.name: qsTr("Stop the agent")
+                                            onClicked: Shell.dispatch("composer.interrupt", {
+                                                runId: call.modelData.interrupt
+                                            })
                                         }
                                         RowText {
                                             objectName: "workCallVisibility"

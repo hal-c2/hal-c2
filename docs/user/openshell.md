@@ -1,0 +1,132 @@
+# Sandboxes for code reviews (OpenShell)
+
+HAL-C2 is preparing to run the agents of a code review inside sandboxes, so that a
+review of untrusted code cannot reach your files, your credentials or the rest of
+your machine. The sandboxes will come from
+[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell). This page sets up its
+gateway: the MC installs it at a version HAL-C2 has checked, runs it as a service of
+your own user, and talks to it only over mutual TLS.
+
+> **Code reviews do not run in the gateway yet.** Installing it gets the machine
+> ready, but a review's agents still run directly on your machine, with your files
+> and credentials in reach. Review untrusted code with that in mind.
+
+## What your machine needs
+
+| Machine                                                                    | Container runtime                             |
+| -------------------------------------------------------------------------- | --------------------------------------------- |
+| Linux on x86_64 or aarch64, glibc 2.28+, Linux 6.2+, with Landlock enabled | Podman 5 or later, rootless, as your own user |
+| macOS on Apple Silicon                                                     | Docker Desktop 28 or later                    |
+
+Intel Macs are not supported, and neither is an MC running under Rosetta. On Linux,
+start Podman's socket with `systemctl --user enable --now podman.socket`. To use a
+Podman socket somewhere else, name it in `HAL_C2_OPENSHELL_DOCKER_SOCKET`;
+`DOCKER_HOST` is not read.
+
+The runtime must be able to hold each sandbox to its CPU, memory and process limits:
+cgroup v2, with the `cpu`, `memory` and `pids` controllers delegated to your user. Most
+current distributions do this already. Where they don't, `install` says what's missing
+instead of running sandboxes with no limits.
+
+Docker on Linux is refused. A Docker daemon that runs as root controls the machine
+through its socket. The sandboxes of a rootless Docker daemon can't reach the gateway,
+which listens on your machine's loopback only. Docker Desktop for Linux runs its daemon
+as root in its VM.
+
+## Set it up
+
+On the machine that runs the MC:
+
+| Task                                  | Command                              |
+| ------------------------------------- | ------------------------------------ |
+| Install, update or repair the gateway | `hal-c2-service openshell install`   |
+| See what is installed and what to fix | `hal-c2-service openshell status`    |
+| Run the gateway's checks again        | `hal-c2-service openshell check`     |
+| Replace the gateway's certificates    | `hal-c2-service openshell rotate`    |
+| Remove it                             | `hal-c2-service openshell uninstall` |
+
+From a checkout, `mise exec -- mix hal_c2.openshell <command>` in `apps/server-ex`
+does the same, and `mise run openshell` runs the gateway in the foreground instead
+of as a service.
+
+`install` checks the machine before it downloads anything, and after it starts the
+gateway it checks that the gateway is the version HAL-C2 pinned, refuses
+connections without TLS, gives the MC no operator rights, and keeps a sandbox from
+reaching the gateway or the container runtime. If an update fails those checks, the
+previous gateway, its certificates and its data are put back.
+
+On Linux, `install` turns on lingering for your user (as `hal-c2-mc install` does),
+so the gateway keeps running after you log out and starts at boot. If systemd cannot
+say whether your user may linger (`linger-unavailable`), nothing is installed. On a
+Mac, sandboxes reach the gateway through Docker Desktop's own network, so Desktop's
+host networking setting does not need to be on.
+
+An update, a rotation or an uninstall waits while this MC has sandboxes running.
+Add `--drain` to delete them first. Only the sandboxes this MC created are touched.
+If the gateway is running but cannot say which sandboxes it holds
+(`sandboxes-unknown`), they wait too; `--force` goes ahead anyway and ends any that
+run. If the gateway's service does not stop (`gateway-stop-failed`), or its files
+cannot be backed up first (`backup-failed`), nothing is changed and the service
+keeps running.
+
+One OpenShell command runs at a time on an MC. Another `install`, `rotate`,
+`reuse`, `uninstall` or `check` started meanwhile stops at once (`busy`) and
+changes nothing; run it again once the first finishes. `status` always answers.
+
+A gateway started with `mise run openshell` must be stopped before you update,
+rotate or uninstall it (`gateway-running`). After a rotation, start it again to use
+the new certificates.
+
+### A machine without internet access
+
+`install` downloads the gateway from OpenShell's GitHub release. Without access to
+GitHub, download the archive for your machine elsewhere and pass it with
+`--archive FILE`; it must match the checksum HAL-C2 pinned. The gateway also pulls
+OpenShell's container images from `ghcr.io` and `nvcr.io` the first time a sandbox
+starts.
+
+### Use a gateway you already run
+
+`hal-c2-service openshell reuse https://HOST:PORT --ca FILE --cert FILE --key FILE`
+points the MC at an OpenShell gateway you run yourself, with that gateway's CA and
+a client certificate it trusts. The address must use `https`, and the gateway must
+pass the same checks as an installed one. `uninstall` then only makes the MC forget
+it; the gateway and its sandboxes are left alone.
+
+### One gateway for each HAL-C2 environment
+
+OpenShell 0.1.7 does not keep one client's sandboxes from another's, so two HAL-C2
+environments must not share a gateway. `reuse` refuses a gateway that holds sandboxes
+of another HAL-C2 environment (`shared-gateway`). If a gateway you reuse comes to hold
+them later, `status` and `check` report `gateway-shared` and this MC makes no new
+sandboxes there. The other environment's sandboxes are never touched. Give each
+environment a gateway of its own with `install`, or run a second gateway for it.
+
+## What to know
+
+- Telemetry is off: the gateway sends no usage data and exports no traces or logs.
+- Once reviews run in sandboxes, a review sandbox will reach only the model's API
+  and this MC. It cannot download packages, so a review will use the tools its image
+  already has.
+- Claude in a sandbox will need an Anthropic API key. A Claude subscription sign-in
+  does not work there.
+
+## When status reports a problem
+
+`status` prints a code with each problem and what to do about it:
+
+| Code                                                                                                                                          | What to do                                                                                                 |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `not-installed`                                                                                                                               | Run `install`.                                                                                             |
+| `update-available`, `version-mismatch`                                                                                                        | Run `install` to move to the version this MC pins.                                                         |
+| `service-missing`, `service-outdated`                                                                                                         | Run `install` to rewrite the gateway's service.                                                            |
+| `service-not-ours`                                                                                                                            | The service under this home's name runs another HAL-C2 home's gateway. Uninstall OpenShell there first.    |
+| `home-moved`                                                                                                                                  | Installed when this home was at another path, whose service is still there. Remove it, run `install`.      |
+| `service-stopped`, `gateway-unreachable`                                                                                                      | Read the gateway's log (`status` prints where), then run `install`.                                        |
+| `gateway-shared`                                                                                                                              | Another HAL-C2 environment uses this gateway. Give each one its own.                                       |
+| `intel-mac`, `unsupported-os`, `unsupported-arch`                                                                                             | This machine cannot run OpenShell.                                                                         |
+| `glibc-too-old`, `kernel-too-old`, `landlock-missing`                                                                                         | Update the system, or enable Landlock in the kernel's `lsm=` boot parameter.                               |
+| `podman-missing`, `podman-too-old`, `runtime-not-rootless`, `root-docker`, `rootless-docker`, `docker-desktop-linux`, `docker-socket-missing` | Set up rootless Podman 5.                                                                                  |
+| `cgroup-v1`, `cgroup-controllers-missing`, `cgroup-unknown`                                                                                   | Run on cgroup v2 and delegate the `cpu`, `memory` and `pids` controllers to your user; `install` says how. |
+| `docker-desktop-missing`, `docker-too-old`, `podman-on-mac`                                                                                   | Install and start Docker Desktop 28 or later.                                                              |
+| `runtime-unreachable`                                                                                                                         | Start the container runtime.                                                                               |

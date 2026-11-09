@@ -17,7 +17,7 @@
 # GET /session/:id/message[?limit=n], PATCH /session/:id ({title}) and POST /session/:id/fork ({messageID}: the
 # messages before it, with new ids, less any marked "lostOnFork") are served; each request is traced as
 # {"http": {method, path, body}}.
-import base64, json, os, re, signal, sys, tempfile, threading, time
+import base64, errno, json, os, re, signal, sys, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
@@ -259,6 +259,7 @@ def answer_title():
     with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
         f.write(json.dumps({"acp": INSTANCE, "argv": sys.argv[1:], "cwd": cwd, "listing": os.listdir(cwd),
                             "prompt": text, "model": model, "refused": answers,
+                            "account": os.environ.get("FAKE_CURSOR_ACCOUNT"),
                             "images": titling_images}) + "\n")
     out = {"title": "%s title" % INSTANCE, "needsRefinement": False}
     out.update(json.loads(os.environ.get("FAKE_TEXT_ANSWER") or "{}"))
@@ -406,6 +407,25 @@ for line in sys.stdin:
             continue
         update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-1", "content": {"type": "text", "text": "Let me look."}})
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending", "rawInput": {}})
+        if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG") and os.environ.get("FAKE_TEXT_HANG"):
+            # A title writer that never answers: its pid and folder go to the log.
+            with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
+                f.write(json.dumps({"acp": INSTANCE, "pid": os.getpid(), "cwd": cwds.get(sid, os.getcwd()), "hung": True}) + "\n")
+            # $FAKE_TEXT_STARTED names a fifo that gets a byte once the log is written.
+            if os.environ.get("FAKE_TEXT_STARTED"):
+                # Non-blocking, retried briefly: with no reader attached the test fails on
+                # its own assertion instead of hanging this process in open().
+                for _ in range(50):
+                    try:
+                        fd = os.open(os.environ["FAKE_TEXT_STARTED"], os.O_WRONLY | os.O_NONBLOCK)
+                        os.write(fd, b"started")
+                        os.close(fd)
+                        break
+                    except OSError as e:
+                        if e.errno != errno.ENXIO:
+                            break
+                        time.sleep(0.1)
+            continue
         if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG"):
             # A title writer that tries a command and a file read first.
             titling = {"pid": mid, "sid": sid, "text": text, "answers": {}, "images": prompt_images}

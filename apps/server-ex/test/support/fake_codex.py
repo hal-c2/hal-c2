@@ -460,6 +460,10 @@ for line in sys.stdin:
             name = text.split()[1]
             os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
             open(name, "w").write(text + "\n")
+        # "... report usage N" reports N tokens in the context, as Codex does on the thread.
+        reported = re.search(r"report usage (\d+)", text)
+        if reported:
+            send({"method": "thread/tokenUsage/updated", "params": {**ctx, "tokenUsage": {"last": {"totalTokens": int(reported.group(1)), "inputTokens": int(reported.group(1))}, "modelContextWindow": 200000}}})
         # "edit NAME" reports a change to NAME (a fileChange item) before the usual answer.
         if text.startswith("edit "):
             name = text.split()[1]

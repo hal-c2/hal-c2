@@ -84,8 +84,6 @@ Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/attachments
 Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/attachments.ex | source
 Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/import/previous_install.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/import/previous_install.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/plugins/package.ex | file
-Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/plugins/package.ex | target
 Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/portable_sessions.ex | path
 Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/portable_sessions.ex | source
 Traversal.FileModule: Directory Traversal in `File.cp!` | lib/hal_c2/review.ex | index
@@ -112,6 +110,8 @@ Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/d
 Traversal.FileModule: Directory Traversal in `File.cp_r!` | lib/hal_c2/upgrade/dev.ex | target
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/checkpoint.ex | index
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/checkpoint.ex | path
+Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/plugins/package.ex | file
+Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/plugins/package.ex | target
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/space/image_generation.ex | file
 Traversal.FileModule: Directory Traversal in `File.cp` | lib/hal_c2/space/image_generation.ex | target
 Traversal.FileModule: Directory Traversal in `File.ln_s!` | lib/hal_c2/upgrade/dev.ex | Elixir.Path
@@ -141,7 +141,6 @@ Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/import
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/keybindings.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/plugins.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/plugins/host.ex | dir
-Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/plugins/package.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/portable_sessions.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/portable_sessions.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p!` | lib/hal_c2/projects.ex | root
@@ -192,6 +191,7 @@ Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/environ
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/git.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/mcp/preview.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/model_manifest.ex | Elixir.Path
+Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/plugins/package.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/thread_move.ex | dir
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/usage.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.mkdir_p` | lib/hal_c2/usage/pricing.ex | Elixir.Path
@@ -218,7 +218,6 @@ Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/import/pr
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/mcp/instructions.ex | Elixir.Application
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/mcp/tools.ex | Elixir.Application
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/plugins.ex | file
-Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/plugins/package.ex | file
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/review.ex | path
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/subprocess.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read!` | lib/hal_c2/terminal.ex | path
@@ -271,6 +270,8 @@ Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/model_mani
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/pair.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/plugins.ex | secret_path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/plugins/package.ex | Elixir.Path
+Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/plugins/package.ex | Elixir.Path
+Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/plugins/package.ex | file
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/plugins/package.ex | file
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/portable_sessions.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.read` | lib/hal_c2/portable_sessions.ex | path
@@ -343,6 +344,7 @@ Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/devices.e
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/devices.ex | staging
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/migration.ex | staging
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/plugins.ex | Elixir.Path
+Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/plugins.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/plugins.ex | copy
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/scratch.ex | Elixir.Path
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/scratch.ex | Elixir.Path
@@ -352,7 +354,6 @@ Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subproces
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subprocess/durable.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/subprocess/durable.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/text_generation.ex | Elixir.Path
-Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/text_generation.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_archive.ex | dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_archive.ex | scratch_dir
 Traversal.FileModule: Directory Traversal in `File.rm_rf` | lib/hal_c2/thread_move.ex | incoming

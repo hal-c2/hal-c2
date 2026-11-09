@@ -635,6 +635,10 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     #!/usr/bin/env python3
     import json, os, sys
     args = sys.argv[1:]
+    # Asked which MCP servers to switch off; not a generation attempt.
+    if args[:2] == ["mcp", "list"]:
+        print("[]")
+        sys.exit(0)
     prompt = sys.stdin.read()
     with open(#{inspect(text_log(context))}, "a") as f:
         f.write(json.dumps({"argv": args, "prompt": prompt}) + "\\n")

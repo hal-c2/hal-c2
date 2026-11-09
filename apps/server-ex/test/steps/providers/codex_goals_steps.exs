@@ -30,6 +30,10 @@ defmodule HalC2.Steps.Providers.CodexGoals do
     if status = @seeded[input],
       do: World.put_env("FAKE_CODEX_GOAL", JSON.encode!(%{objective: @objective, status: status}))
 
+    # Codex goes on with the goal in these scenarios, so the grace never decides one: at
+    # its 5 s a slow runner paused the goal between the fake's turns.
+    World.put_app_env(:codex_goal_grace_ms, 3_600_000)
+
     context
     |> World.launch_on(@thread, "codex", input)
     |> Map.put(:goal_input, input)

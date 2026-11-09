@@ -86,6 +86,24 @@ defmodule HalC2.Orchestration.HandoffTest do
     |> Enum.filter(& &1)
   end
 
+  test "a running run counts only when asked, with the commands it has finished" do
+    command = %{"input" => "mix test", "exitCode" => 0, "status" => "completed"}
+
+    state =
+      1
+      |> turn("run the checks", "", command)
+      |> Enum.map(fn
+        {"run", run} -> {"run", %{run | "status" => "running"}}
+        row -> row
+      end)
+      |> state()
+
+    assert Handoff.transcript(state, 1_000_000) == nil
+
+    assert Handoff.transcript(state, 1_000_000, 0, 8_000, running: true) =~
+             "Command: mix test\nExit code: 0"
+  end
+
   test "a command is handed over between its request and the answer, with how it ended" do
     command = %{
       "input" => "mix test",
@@ -211,6 +229,22 @@ defmodule HalC2.Orchestration.HandoffTest do
              )
   end
 
+  test "the newest history wins over the first request when both cannot fit" do
+    long = String.duplicate("x", 20_000)
+
+    state =
+      state(
+        turn(1, "old-marker " <> long, "old-marker " <> long) ++
+          turn(2, "new-marker " <> long, "new-marker " <> long)
+      )
+
+    text = Handoff.transcript(state, 3)
+
+    assert String.length(text) <= 60_000
+    assert text =~ "new-marker"
+    refute text =~ "old-marker"
+  end
+
   # The source of a fork at run 1, with run 2 after it on one provider thread.
   # `first` is run 1's native turn id (nil: none was recorded; :gone: its
   # provider turn is not recorded at all).
@@ -294,6 +328,115 @@ defmodule HalC2.Orchestration.HandoffTest do
 
     assert "[earlier messages omitted: " <> _ = transcript = Handoff.transcript(state, 3)
     assert String.length(transcript) <= 60_000
+  end
+
+  test "a smaller budget keeps the first request and the note, and cuts only between entries" do
+    state =
+      state(
+        turn(1, "first request", String.duplicate("a", 3_000)) ++
+          turn(2, "second request", String.duplicate("b", 3_000)) ++
+          turn(3, "third request", String.duplicate("c", 3_000))
+      )
+
+    transcript = Handoff.transcript(state, 4, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert "[earlier messages omitted: " <> _ = transcript
+    assert transcript =~ "User: first request"
+    assert transcript =~ "User: third request"
+    assert transcript =~ String.duplicate("c", 3_000)
+    refute transcript =~ String.duplicate("a", 3_000)
+  end
+
+  test "a newest message longer than the budget keeps its end instead of being dropped" do
+    answer = String.duplicate("a", 8_000) <> String.duplicate("z", 2_000)
+
+    state = state(turn(1, "first request", "ok") ++ turn(2, "second request", answer))
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ "User: first request"
+    assert transcript =~ "Assistant: ... "
+    assert transcript =~ String.duplicate("z", 2_000)
+    refute transcript =~ String.duplicate("a", 8_000)
+  end
+
+  test "a newest message just over the budget keeps all the end that fits, and the note says it was cut" do
+    answer = String.duplicate("a", 1_000) <> String.duplicate("z", 8_000)
+
+    state = state(turn(1, "first request", "ok") ++ turn(2, "second request", answer))
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ String.duplicate("z", 7_000)
+    refute transcript =~ String.duplicate("a", 1_000)
+
+    assert transcript =~
+             ~r/^\[earlier messages omitted: \d+ items kept, 1 of them cut to their end, \d+ left out\]/
+
+    refute transcript =~ "kept whole"
+  end
+
+  test "a first request that can never fit does not cost the newest message its end" do
+    answer = String.duplicate("a", 1_000) <> String.duplicate("z", 8_000)
+
+    state =
+      state(turn(1, String.duplicate("s", 9_000), "ok") ++ turn(2, "second request", answer))
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ "Assistant: ... "
+    assert transcript =~ String.duplicate("z", 6_000)
+    assert transcript =~ "User: second request"
+  end
+
+  test "a short newest answer does not take the room held for the first request" do
+    state =
+      state(
+        turn(1, String.duplicate("f", 4_000), "ok") ++
+          turn(2, String.duplicate("q", 10_000), String.duplicate("a", 1_000))
+      )
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ String.duplicate("f", 4_000)
+    assert transcript =~ "User: ... "
+  end
+
+  test "a long newest request leaves the newest answer its share" do
+    state =
+      state(
+        turn(1, String.duplicate("f", 4_000), "ok") ++
+          turn(2, String.duplicate("q", 10_000), String.duplicate("a", 1_000))
+      )
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ "User: " <> String.duplicate("f", 4_000)
+    assert transcript =~ "User: ... qqq"
+    assert transcript =~ "Assistant: " <> String.duplicate("a", 1_000)
+    assert transcript =~ "1 of them cut to their end"
+  end
+
+  test "a newest request and answer both too long share the room in half" do
+    state =
+      state(
+        turn(1, "first request", "ok") ++
+          turn(2, String.duplicate("q", 10_000), String.duplicate("a", 10_000))
+      )
+
+    transcript = Handoff.transcript(state, 3, 0, 8_000)
+
+    assert String.length(transcript) <= 8_000
+    assert transcript =~ "User: first request"
+    assert transcript =~ "User: ... " <> String.duplicate("q", 3_800)
+    assert transcript =~ "Assistant: ... " <> String.duplicate("a", 3_800)
+    assert transcript =~ "2 of them cut to their end"
   end
 
   # A thread a restart left a note on, about the background work its last turn left.

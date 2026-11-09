@@ -544,6 +544,26 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context |> Fixtures.rescan() |> Map.put(:plugin, id)
   end
 
+  step "a new version of {string} whose MC file the MC cannot read is placed in the plugins directory",
+       %{args: [id]} = context do
+    dir = Packages.dir(context, id)
+    context = new_page(context, dir)
+    [source] = Path.wildcard(Path.join(dir, "mc/*.ex"))
+
+    File.write!(
+      source,
+      String.replace(File.read!(source), ~s("number" => 12), ~s("number" => 13))
+    )
+
+    File.chmod!(source, 0o000)
+
+    try do
+      context |> Fixtures.rescan() |> Map.put(:plugin, id)
+    after
+      File.chmod!(source, 0o644)
+    end
+  end
+
   step "clients still get the UI parts of its old version", context do
     revision = Fixtures.entry(context.plugin)["revision"]
 
@@ -1090,6 +1110,75 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, false)
   end
 
+  step "{string} declares that its threads stay on their machine",
+       %{args: [id]} = context do
+    Packages.install(context, id, manifest: %{"threadsStay" => true})
+  end
+
+  step "{string} starts a {string} thread", %{args: [id, kind]} = context do
+    context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, true)
+  end
+
+  step "{string} runs on after a new version whose manifest is not valid JSON fails to load",
+       %{args: [id]} = context do
+    context = context |> enable(id) |> Map.put(:plugin, id)
+    File.write!(Path.join(Packages.dir(context, id), "plugin.json"), "{ \"id\": ")
+    context = Fixtures.rescan(context)
+    assert %{"status" => "running", "reloadError" => error} = Fixtures.entry(id)
+    assert error =~ "plugin.json"
+    context
+  end
+
+  step "{string} is disabled", %{args: [id]} = context do
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
+    refute HalC2.Plugins.running?(id)
+    context
+  end
+
+  step "the thread can be neither moved nor exported", context do
+    {reply, context} = move(context)
+    kept = "Review #12 was started by code-review, which keeps it on this machine."
+    assert {:error, ^kept, _} = reply
+    file = Path.join(Mc.tmp_dir(context.mc, "export"), "review.hal-c2-thread")
+    assert HalC2.ThreadArchive.export_file(context.plugin_thread, file) == {:error, kept}
+    refute File.exists?(file)
+    context
+  end
+
+  # The host as a release from before the table of `threadsStay` declarations left it,
+  # updated in place as the release handler does (`HalC2.Upgrade.Appup`).
+  step "the MC is updated in place from a release that did not know plugins keep their threads",
+       context do
+    host = Process.whereis(HalC2.Plugins)
+
+    :sys.replace_state(HalC2.Plugins, fn state ->
+      :ets.delete(HalC2.Plugins.Stays)
+      state
+    end)
+
+    :ok = :sys.suspend(HalC2.Plugins)
+    :ok = :sys.change_code(HalC2.Plugins, HalC2.Plugins, "before", [])
+    :ok = :sys.resume(HalC2.Plugins)
+    Map.put(context, :plugin_host, host)
+  end
+
+  step "the plugin host has run on through the update and the rescan", context do
+    assert Process.whereis(HalC2.Plugins) == context.plugin_host
+    assert %{"status" => "running"} = Fixtures.entry("code-review")
+    context
+  end
+
+  step "the thread is marked as staying on its machine", context do
+    assert %{"plugin" => %{"stays" => true}} = thread(context.plugin_thread)
+    context
+  end
+
+  step "the user is told the thread stays on this machine", context do
+    assert {:error, message, _} = context.reply
+    assert message == "Review #12 was started by code-review, which keeps it on this machine."
+    context
+  end
+
   step "{string} started a {string} thread", %{args: [id, kind]} = context do
     context |> Packages.ensure(id) |> enable(id) |> start_thread(id, kind, true)
   end
@@ -1157,6 +1246,15 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     assert message ==
              "Review #12 was started by #{id} and stays on this machine while #{id} runs."
 
+    context
+  end
+
+  step "once {string} is removed, the move is still refused", %{args: [id]} = context do
+    File.rm_rf!(Packages.dir(context, id))
+    context = Fixtures.rescan(context)
+    {reply, context} = move(context)
+    assert {:error, message, _} = reply
+    assert message =~ "keeps it on this machine"
     context
   end
 
@@ -1279,7 +1377,11 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
     context =
       if context[:projects] in [nil, %{}], do: World.create_project(context, "api"), else: context
 
-    input = thread_input(context) |> Map.put("kind", kind) |> Map.put("listed", listed)
+    input =
+      thread_input(context)
+      |> Map.put("kind", kind)
+      |> Map.put("listed", listed)
+
     {{:ok, %{"threadId" => thread_id}}, context} = call(context, id, "threads.start", input)
     World.await_row(thread_id, & &1)
     Map.put(context, :plugin_thread, thread_id)

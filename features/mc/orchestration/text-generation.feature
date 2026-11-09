@@ -168,7 +168,7 @@ Feature: Generated titles, branch names and source control text
     When a title is generated
     Then "claudeAgent" writes it with "claude-haiku-4-5"
 
-  @backlog @mc
+  @mc
   Scenario: The fallback uses the thread's custom model where the built-in default could be refused
     Given no usable text generation model is chosen
     And the default thread model is "router/claude-guarded", a custom model of the Claude instance text falls back to
@@ -206,12 +206,12 @@ Feature: Generated titles, branch names and source control text
     Then it runs in a new temporary folder that is removed afterwards
     And the user's hooks, slash commands and MCP servers are not loaded
 
-  @backlog @mc
+  @mc
   Scenario: Codex writes without the user's MCP servers, plugins or apps
     Given the user's Codex configuration enables the MCP server "augmenter"
     When "codex" writes a branch name for a prompt that asks to call "augmenter"
     Then "augmenter" is not started and nothing reaches it
-    And the branch name is still written when Codex cannot list its MCP servers
+    And the branch name is still written, in a Codex home with no MCP servers, when Codex cannot list them
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("runs Claude text generation with the configured CLAUDE_CONFIG_DIR")
   @mc @priority-high
@@ -229,8 +229,7 @@ Feature: Generated titles, branch names and source control text
     And no script or skill runs
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("forwards Claude thinking settings without passing unsupported effort")
-  # Uncertain: the legacy test names a model whose effort is unsupported; the exact capability rule was not reread.
-  @backlog @mc
+  @mc
   Scenario: A model's thinking choice is passed as a setting and unsupported effort is left out
     Given the text model has a thinking switch turned off and an effort chosen
     And the model does not take an effort option
@@ -405,17 +404,17 @@ Feature: Generated titles, branch names and source control text
     And Cursor is not called
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.test.ts ("resolves the browser credential for every request after an account change")
-  @backlog @mc
+  @mc
   Scenario: Cursor writes with the account that is signed in now
     Given Cursor wrote a title while one account was signed in
     When the user signs in with another account and a title is generated
     Then Cursor is called with the other account's credential
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (timeouts of 5 seconds on cancel and dispose)
-  @backlog @mc
+  @mc
   Scenario: A Cursor run that times out is cancelled and its resources released
     Given a Cursor title run does not finish within 3 minutes
-    Then the run is cancelled
+    Then the Cursor run is cancelled
     And the SDK's resources are released even if they only become available late
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (image parts only), OpenCodeTextGeneration.test.ts
@@ -427,6 +426,7 @@ Feature: Generated titles, branch names and source control text
     And the PDF is not sent
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (warm server, idle TTL), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: OpenCode's server is kept warm between requests and closed when idle
     Given OpenCode writes text on a server the MC started
@@ -437,6 +437,7 @@ Feature: Generated titles, branch names and source control text
     And the next request starts a new one
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (configured server URL, auth), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: A configured OpenCode server is used as is and never closed by the MC
     Given OpenCode is set up with the URL of a server the user runs
@@ -447,6 +448,7 @@ Feature: Generated titles, branch names and source control text
     And the password saved in the OpenCode settings is
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (connection check before the session), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: An OpenCode server that is too old is refused before a session is created
     Given a configured OpenCode server older than the supported version
@@ -498,6 +500,7 @@ Feature: Generated titles, branch names and source control text
 
   # Upstream #29819: OpenCode 2 text generation attached every image, so on an external server, or
   # with a missing or SVG image, the title failed while the turn worked.
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @plugin-opencode @priority-low
   Scenario Outline: OpenCode writes a title sending only the images it can open
     Given OpenCode 2 runs on <server>
@@ -662,6 +665,7 @@ Feature: Generated titles, branch names and source control text
       | link                                                       | outcome                                                    |
       | a github.com repository page                               | nothing is looked up                                       |
       | a gitlab.com merge request or issue in a nested group      | its title and description are looked up                    |
+      | a gitlab.com merge request in the older link form          | its title and description are looked up                    |
       | a github.com pull request over plain http                  | nothing is looked up                                       |
       | a github.com pull request whose link carries a user name   | nothing is looked up                                       |
       | a github.com pull request number that is zero              | nothing is looked up                                       |
@@ -813,15 +817,22 @@ Feature: Generated titles, branch names and source control text
     And no other template in ".gitlab/merge_request_templates" is used in its place
 
   # Upstream #18291: generated pull requests said tests were not run because the writer saw only the diff.
-  @mc @backlog
+  @mc
   Scenario: Pull request text generated from a thread knows what the thread checked
     Given a thread ran "mix test" and it passed
     When pull request text is generated for that thread's branch
     Then the writer is given a short account of the thread's visible history with the check and its result
     And turns that were rolled back are left out of it
 
+  # Upstream #18291: the agent usually runs the checks and creates the PR in the same turn.
+  @mc
+  Scenario: Pull request text knows the checks the running turn has already finished
+    Given a thread's only turn is still running and has run "mix test" and it passed
+    When pull request text is generated for that thread's branch
+    Then the writer is given a short account of the thread's visible history with the check and its result
+
   # Upstream #18291: generated pull requests include the thread's context, such as the checks it ran.
-  @mc @backlog
+  @mc
   Scenario: Pull request text from a thread needs permission to read the thread
     Given a client that may write to source control but may not read threads
     When it asks for pull request text for a thread
