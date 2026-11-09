@@ -68,6 +68,8 @@ defmodule HalC2.ThreadFilesProofTest do
       "HalC2.Orchestration.Fork.merge_back/1" =>
         "queues a fork's work for its parent; it copies no message and no file",
       "HalC2.ThreadArchive.checkpoints_note/3" => @archive,
+      "HalC2.ThreadArchive.stays/1" =>
+        "refuses to take a thread its plugin keeps on this machine before any archive is built; the model's threads are all free to move",
       "HalC2.ThreadArchive.clear_scratch/0" => @archive,
       "HalC2.ThreadArchive.decode/1" => @archive,
       "HalC2.ThreadArchive.describe/1" => @archive,
