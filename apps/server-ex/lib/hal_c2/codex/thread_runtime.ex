@@ -1238,18 +1238,7 @@ defmodule HalC2.Codex.ThreadRuntime do
              # One that closes its output and runs on fails its calls now (upstream #24600).
              eof_grace: 250
            ),
-         {:ok, _} <-
-           Connection.call(conn, "initialize", %{
-             "clientInfo" => %{
-               "name" => "hal_c2_desktop",
-               "title" => "HAL-C2 Desktop",
-               "version" => "0.1.0"
-             },
-             "capabilities" => %{
-               "experimentalApi" => true,
-               "optOutNotificationMethods" => ["turn/diff/updated"]
-             }
-           }) do
+         {:ok, _} <- initialize(conn) do
       Connection.notify(conn, "initialized", nil)
       # A new app-server's turns are its own: an id an earlier connection used
       # is not an earlier run's turn here.
@@ -1281,6 +1270,24 @@ defmodule HalC2.Codex.ThreadRuntime do
       stop_conn(state.conn)
       connect(%{state | conn: nil, native_thread_id: nil}, turn)
     end
+  end
+
+  # An app-server that dies at once can stop its connection before this call reaches
+  # it; the call then fails with its exit and what it printed (`Connection.gone/2`).
+  defp initialize(conn) do
+    Connection.call(conn, "initialize", %{
+      "clientInfo" => %{
+        "name" => "hal_c2_desktop",
+        "title" => "HAL-C2 Desktop",
+        "version" => "0.1.0"
+      },
+      "capabilities" => %{
+        "experimentalApi" => true,
+        "optOutNotificationMethods" => ["turn/diff/updated"]
+      }
+    })
+  catch
+    :exit, reason -> Connection.gone(conn, reason)
   end
 
   # An app-server that has just exited (its `:EXIT` not handled yet) is already stopped.
