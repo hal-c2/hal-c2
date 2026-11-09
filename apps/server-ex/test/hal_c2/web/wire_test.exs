@@ -184,7 +184,7 @@ defmodule HalC2.Web.WireTest do
     defp app_item(result),
       do: %{
         "id" => "i",
-        "type" => "mcp_tool_call",
+        "type" => "dynamic_tool",
         "mcpApp" => %{"attachmentId" => "a", "toolResult" => result}
       }
 
@@ -192,7 +192,14 @@ defmodule HalC2.Web.WireTest do
       assert %{"mcpApp" => %{"toolResult" => %{"truncated" => true}, "attachmentId" => "a"}} =
                Wire.entity("turn-item", app_item(%{"content" => @big}))
 
-      patch = Wire.patch("turn-item", %{"s" => %{"mcpApp" => app_item(@big)["mcpApp"]}}, nil, nil)
+      patch =
+        Wire.patch(
+          "turn-item",
+          %{"s" => %{"mcpApp" => app_item(@big)["mcpApp"]}},
+          "dynamic_tool",
+          nil
+        )
+
       assert %{"truncated" => true} = patch["s"]["mcpApp"]["toolResult"]
     end
 

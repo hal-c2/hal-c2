@@ -297,9 +297,25 @@ defmodule HalC2.Orchestration.Fork do
             entity
         end
 
-      create(kind, id, Map.put(entity, "threadId", target_id))
+      entity
+      |> Map.put("threadId", target_id)
+      |> own_app(target_id)
+      |> then(&create(kind, id, &1))
     end
   end
+
+  # An MCP app's document is an attachment of the source thread, which deleting the
+  # source removes: the fork gets a copy of its own. An app whose document is gone
+  # keeps its result and loses the reference. A copy left by a fork the target
+  # refuses (it exists) belongs to that thread and goes with it.
+  defp own_app(%{"mcpApp" => %{"attachmentId" => id} = app} = item, target_id) do
+    case HalC2.Attachments.copy(target_id, id) do
+      {:ok, copy} -> %{item | "mcpApp" => %{app | "attachmentId" => copy}}
+      :error -> %{item | "mcpApp" => Map.delete(app, "attachmentId")}
+    end
+  end
+
+  defp own_app(entity, _target_id), do: entity
 
   defp create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}
 end

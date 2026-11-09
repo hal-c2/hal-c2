@@ -198,8 +198,12 @@ defmodule HalC2.Web.Wire do
     |> map_set(@cut_keys, &if(is_binary(&1), do: cut(&1), else: &1))
   end
 
-  defp turn_item_patch("dynamic_tool", patch, _was),
-    do: map_set(patch, ~w(input output), &summarize/1)
+  # A Codex MCP app item is a `dynamic_tool` that also carries the app's `mcpApp`.
+  defp turn_item_patch("dynamic_tool", patch, _was) do
+    patch
+    |> map_set(~w(input output), &summarize/1)
+    |> map_set(["mcpApp"], &app_result_field/1)
+  end
 
   defp turn_item_patch(_type, patch, _was), do: map_set(patch, ["mcpApp"], &app_result_field/1)
 

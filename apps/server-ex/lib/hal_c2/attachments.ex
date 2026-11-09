@@ -185,6 +185,23 @@ defmodule HalC2.Attachments do
 
   defp claim_one(_thread_id, attachment), do: {:ok, attachment}
 
+  @doc """
+  Copies the stored attachment `id` into `thread_id` under an id of its own, so a thread
+  forked from another keeps the document when the source is deleted
+  (`delete_thread/1`). `{:ok, new_id}`, or `:error` when the attachment is not stored.
+  """
+  # The source comes from `path/1` and the copy is named by a checked thread segment.
+  # sobelow_skip ["Traversal.FileModule"]
+  def copy(thread_id, id) do
+    with source when is_binary(source) <- path(%{"id" => id}),
+         new_id = "#{thread_segment(thread_id)}-#{copy_tag()}",
+         :ok <- File.cp(source, Path.join(dir(), new_id <> Path.extname(source))) do
+      {:ok, new_id}
+    else
+      _ -> :error
+    end
+  end
+
   defp copy_tag, do: 4 |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
 
   @doc """
@@ -202,8 +219,18 @@ defmodule HalC2.Attachments do
     end)
     |> case do
       {:ok, decoded} ->
-        {:ok,
-         %{"attachments" => decoded |> Enum.reverse() |> Enum.map(&store_pasted(thread_id, &1))}}
+        decoded
+        |> Enum.reverse()
+        |> Enum.reduce_while({:ok, []}, fn image, {:ok, saved} ->
+          case store_pasted(thread_id, image) do
+            {:ok, attachment} -> {:cont, {:ok, [attachment | saved]}}
+            {:error, _} = error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:ok, saved} -> {:ok, %{"attachments" => Enum.reverse(saved)}}
+          error -> error
+        end
 
       error ->
         error
@@ -235,11 +262,21 @@ defmodule HalC2.Attachments do
     end
   end
 
+  # The file is named by a checked thread segment and a fresh uuid in the attachments folder.
+  # sobelow_skip ["Traversal.FileModule"]
   defp store_pasted(thread_id, {attachment, {mime, bytes}}) do
     id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
-    File.mkdir_p!(dir())
-    File.write!(Path.join(dir(), id <> extension("image", mime, attachment["name"])), bytes)
+    file = Path.join(dir(), id <> extension("image", mime, attachment["name"]))
 
+    with :ok <- File.mkdir_p(dir()),
+         :ok <- File.write(file, bytes) do
+      {:ok, stored(id, attachment, mime, bytes)}
+    else
+      {:error, _reason} -> {:error, persist_error(attachment)}
+    end
+  end
+
+  defp stored(id, attachment, mime, bytes) do
     %{
       "type" => "image",
       "id" => id,

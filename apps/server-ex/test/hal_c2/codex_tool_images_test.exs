@@ -48,4 +48,20 @@ defmodule HalC2.CodexToolImagesTest do
     assert [%{"type" => "image", "id" => _}] = stored["output"]
     refute Map.has_key?(stored, "images")
   end
+
+  # Regression: an attachments directory that cannot be written raised inside the
+  # Codex notification handler and took the thread's runtime down.
+  test "an image that cannot be written is an error block, not a crash" do
+    # A file where the attachments directory belongs: it can be neither made nor written.
+    File.mkdir_p!(Path.dirname(HalC2.Attachments.dir()))
+    File.write!(HalC2.Attachments.dir(), "in the way")
+
+    fields = %{"toolName" => "shop.chart", "input" => %{}, "output" => [image()]}
+
+    assert %{"output" => [%{"type" => "image", "error" => message} = block]} =
+             ToolImages.store(fields, "th-1")
+
+    assert is_binary(message)
+    refute Map.has_key?(block, "data")
+  end
 end
