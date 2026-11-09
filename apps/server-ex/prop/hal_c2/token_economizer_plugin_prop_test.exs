@@ -6,28 +6,32 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   @moduledoc """
   A state machine model of TokenEconomizer's process (`HalC2Plugins.TokenEconomizer`):
   the turns of two threads of one project heard through the feed, which may say it
-  missed events, the mode changed between redirecting, watching and off, the process
-  restarted while its feed still holds events, and the answers of its judge jobs and
-  deliveries reaching it late, in any order, or never.
+  missed events or lose a turn's end for good, the mode changed between redirecting,
+  watching and off, the process restarted while its feed still holds events, the
+  process's sweeps asking the MC which runs are under way, and the answers of its judge
+  jobs and deliveries reaching it late, in any order, or never.
 
   The case drives the process's callbacks itself. Its tasks run for real and, with no
   plugin host to grant them anything, end at once: what each sent and its end are held,
   and reach the process when a command delivers them, with the judge's verdict (stuck
-  or productive) or the delivery's outcome (taken or refused) the command chooses.
+  or productive) or the delivery's outcome (taken, held by a runtime that did not answer
+  in time, or refused) the command chooses.
   After every step:
 
   - turned off, it watches no turn and has no judge job out;
   - watching, it starts no delivery;
   - a delivery it started is out until it ends, whatever the mode: its steer may have
     been taken, and only its answer says so; a redirect is on its way only while its
-    delivery is;
-  - it watches exactly the turns under way that it heard start while on, by their run;
+    delivery is, and one whose steer was held but not heard taken is not delivered;
+  - it watches exactly the turns under way that it heard start while on, by their run,
+    and of those whose end it never heard, only the ones fewer than two sweeps found
+    ended: so it keeps no more turns than threads with a run it may still hear;
   - a judge job is out only for a thread with a turn under way and not offered its
     stop, at most one for each;
   - no run gets more redirects than the budget, nor more than one stop offer;
   - a turn teaches the project's envelope only when it ended completed, made calls and
-    was heard whole, never when the next turn's start closes it, and a subagent's calls
-    are not its own; one heard whole that
+    was heard whole, never when the next turn's start or a sweep closes it, and a subagent's
+    calls are not its own; one heard whole that
     completed with nothing but passing checks does. A turn is heard whole unless it was
     under way when the feed said it missed events, or one of its events came in the
     window that report opens: the reported event and those the feed had waiting, heard
@@ -105,7 +109,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, JSON.encode!(%{"level" => "default", "resolved_turns" => @learned}))
     {:ok, plugin} = TokenEconomizer.init(settings("nudge", budget))
-    Process.put(:plugin, plugin)
+    Process.put(:plugin, asking_the_model(plugin))
+    Process.put(:lost, MapSet.new())
     Process.put(:held, [])
     Process.put(:deliveries, MapSet.new())
   end
@@ -113,6 +118,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   # What the case reached, for `PROPCHECK_VERBOSE=1`.
   defp close_case do
     plugin = Process.delete(:plugin)
+    Process.delete(:lost)
     Process.delete(:held)
     Process.delete(:deliveries)
     stop(plugin)
@@ -127,6 +133,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   end
 
   defp stop(plugin) do
+    Process.cancel_timer(plugin.sweep)
     ref = Process.monitor(plugin.sup)
     Process.unlink(plugin.sup)
     Process.exit(plugin.sup, :shutdown)
@@ -137,6 +144,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   defp flush do
     receive do
       {kind, _, _, _, _} when kind in [:verdict, :delivered, :DOWN] -> flush()
+      :sweep -> flush()
     after
       0 -> :ok
     end
@@ -158,10 +166,11 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   # --- the model --------------------------------------------------------------------------
 
   # `open`: thread => %{run, partial, kinds}, the turns under way the plugin heard start
-  # while on. `missing`: the events still to hear that the feed had waiting when it said
-  # it missed some; the turns they belong to are partial.
+  # while on, `swept` counting the sweeps that found its run ended. `missing`: the events
+  # still to hear that the feed had waiting when it said it missed some; the turns they
+  # belong to are partial. `lost`: the runs that ended with their end lost.
   def initial_state(budget \\ 1),
-    do: %{budget: budget, mode: "nudge", runs: 0, open: %{}, missing: 0}
+    do: %{budget: budget, mode: "nudge", runs: 0, open: %{}, missing: 0, lost: MapSet.new()}
 
   def command(state) do
     open = Map.keys(state.open)
@@ -170,6 +179,14 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       if open == [],
         do: elements(@threads),
         else: frequency([{6, elements(open)}, {1, elements(@threads)}])
+
+    # A run whose end the feed loses for good, only of a turn under way.
+    lose =
+      if open == [],
+        do: [],
+        else: [
+          {1, let(t <- elements(open), do: {:call, __MODULE__, :lose, [t, run_of(state, t)]})}
+        ]
 
     frequency([
       {if(open == [], do: 6, else: 1),
@@ -183,11 +200,15 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
          {:call, __MODULE__, :finish,
           [t, run_of(state, t), elements(~w(completed interrupted)), dropped()]}
        end},
-      {5, {:call, __MODULE__, :answer, [integer(0, 3), frequency([{2, true}, {1, false}])]}},
+      {1, {:call, __MODULE__, :sweep, []}},
+      {5,
+       {:call, __MODULE__, :answer,
+        [integer(0, 3), frequency([{2, true}, {1, false}, {1, :held}])]}},
       {1,
        {:call, __MODULE__, :mode,
         [frequency([{2, "nudge"}, {2, "watch"}, {1, "off"}]), state.budget]}},
       {1, {:call, __MODULE__, :restart, [state.mode, state.budget, integer(0, 3)]}}
+      | lose
     ])
   end
 
@@ -208,11 +229,20 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   def precondition(state, {:call, _, name, [t, run | _]}) when name in [:item, :finish],
     do: run == "r0" or match?(%{run: ^run}, state.open[t])
 
+  def precondition(state, {:call, _, :lose, [t, run]}),
+    do: match?(%{run: ^run}, state.open[t])
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :start, [t, run, dropped]}) do
     state = %{state | runs: state.runs + 1}
-    heard(state, t, dropped, &put_in(&1.open[t], %{run: run, partial: false, kinds: []}))
+
+    heard(
+      state,
+      t,
+      dropped,
+      &put_in(&1.open[t], %{run: run, partial: false, kinds: [], swept: 0})
+    )
   end
 
   def next_state(state, _result, {:call, _, :item, [t, run, kind, dropped]}) do
@@ -231,6 +261,22 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         _ -> state
       end
     end)
+  end
+
+  # The run ended, and the feed lost its `turn.finished` for good.
+  def next_state(state, _result, {:call, _, :lose, [t, run]}),
+    do: %{state | lost: MapSet.put(state.lost, {t, run})}
+
+  # A sweep drops each turn whose run it is the second to find ended, and counts the rest.
+  def next_state(state, _result, {:call, _, :sweep, []}) do
+    open =
+      state.open
+      |> Map.new(fn {t, turn} ->
+        {t, %{turn | swept: if({t, turn.run} in state.lost, do: turn.swept + 1, else: 0)}}
+      end)
+      |> Map.reject(fn {_, turn} -> turn.swept == 2 end)
+
+    %{state | open: open}
   end
 
   def next_state(state, _result, {:call, _, :mode, [mode, _]}),
@@ -287,7 +333,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         Enum.all?(seen.acts, fn {{_, _, action}, n} ->
           if action == "nudge", do: n <= state.budget, else: n <= 1
         end),
-      teaches: teaches?(state, name, args, seen.taught)
+      teaches: teaches?(state, name, args, seen.taught),
+      held: not Map.get(seen, :held_delivered, false)
     ]
 
     case for {law, false} <- laws, do: law do
@@ -332,6 +379,23 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         dropped
       )
 
+  def lose(t, run) do
+    Process.put(:lost, MapSet.put(Process.get(:lost), {t, run}))
+    settle(Process.get(:plugin), false)
+  end
+
+  def sweep do
+    plugin = Process.get(:plugin)
+    before = learned(plugin)
+    {:noreply, plugin} = TokenEconomizer.handle_info(:sweep, plugin)
+    settle(plugin, learned(plugin, before) > before)
+  end
+
+  # The MC's answer to a sweep: a run is under way until it ended unheard. One heard to
+  # end is no longer watched, so its answer is never asked.
+  defp asking_the_model(plugin),
+    do: %{plugin | active?: &({&1, &2} not in Process.get(:lost))}
+
   def mode(mode, budget) do
     {:reply, :ok, plugin} =
       TokenEconomizer.handle_call({:settings, settings(mode, budget)}, nil, Process.get(:plugin))
@@ -362,11 +426,12 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     for i <- 1..held//1, do: send(feed, {:queued, i})
     {:ok, plugin} = TokenEconomizer.init(settings(mode, budget))
     send(feed, :stop)
-    settle(plugin, false)
+    settle(asking_the_model(plugin), false)
   end
 
   # Delivers the next message of the `n`th newest task held, with the verdict or the outcome
-  # `yes` chooses: stuck, or a redirect taken.
+  # `yes` chooses: stuck (`true` or `:held`), or a redirect taken (`true`) or held by its
+  # runtime unanswered (`:held`).
   def answer(n, yes) do
     plugin = Process.get(:plugin)
 
@@ -388,13 +453,17 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         with {:DOWN, _, :process, pid, _} <- message,
              do: Process.put(:deliveries, MapSet.delete(Process.get(:deliveries), pid))
 
-        settle(plugin, false)
+        held_delivered =
+          yes == :held and elem(message, 0) == :delivered and
+            match?([%{"delivered" => true} | _], plugin.recent)
+
+        plugin |> settle(false) |> Map.put(:held_delivered, held_delivered)
     end
   end
 
   defp outcome({:verdict, t, run, job, _}, yes) do
     verdict =
-      if yes,
+      if yes != false,
         do: %{"stuck" => true, "confidence" => 0.95, "reason" => "loop", "_nudge" => "Step back."},
         else: %{"stuck" => false, "confidence" => 0.9, "reason" => "progress"}
 
@@ -402,7 +471,13 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   end
 
   defp outcome({:delivered, t, run, entry, _}, yes),
-    do: {:delivered, t, run, entry, if(yes, do: {:ok, %{}}, else: {:error, "refused"})}
+    do:
+      {:delivered, t, run, entry,
+       case yes do
+         true -> {:ok, %{"confirmed" => true}}
+         :held -> {:ok, %{"confirmed" => false}}
+         false -> {:error, "refused"}
+       end}
 
   defp outcome(down, _), do: down
 

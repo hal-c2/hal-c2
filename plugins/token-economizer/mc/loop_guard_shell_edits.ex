@@ -183,7 +183,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   lines may be any commands; or when it runs a script this does not read: a nested
   shell's (`bash -lc '...' || true`, `eval`), one a shell or interpreter reads from stdin
   (`python3 <<EOF`, `... | sh`), inline code (`node -e`, `perl -le`, `deno eval`), a file
-  `written` this turn (basenames) it sources or runs with a shell (`source run.sh`), or
+  `written` this turn (basenames) it sources or runs with a shell (`source run.sh`), a
+  function it defines with `function` (one defined as `name()` is not plain), or
   a command substitution whose own command does (`$(...)`, backticks, `<(...)`, in a
   heredoc the shell expands too). A command run whole as `bash -lc '<script>'` is its
   script.
@@ -244,6 +245,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   end
 
   defp runs_script?("eval", _, _), do: true
+  # A function it defines may stand in for the check after it (`function pytest [[ 1 ]]`).
+  defp runs_script?("function", _, _), do: true
 
   defp runs_script?(dot, [file | _], written) when dot in ["source", "."],
     do: head([file]) in written

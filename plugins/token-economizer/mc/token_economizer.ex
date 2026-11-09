@@ -28,7 +28,10 @@ defmodule HalC2Plugins.TokenEconomizer do
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
   waiting (`"waiting"`) have been, and a partial turn does not teach the envelope. A
-  restarted process takes everything its feed still holds as such events.
+  restarted process takes everything its feed still holds as such events. A turn whose
+  end the feed lost for good is found by a sweep each minute, which asks the MC whether
+  each turn's run is under way: one found ended on two sweeps running is dropped, as the
+  next turn's start would drop it, and teaches nothing.
 
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
@@ -68,6 +71,8 @@ defmodule HalC2Plugins.TokenEconomizer do
     "toolPruneQuietMinutes" => 0
   }
   @recent 20
+  # How often the plugin asks the MC which of its turns' runs are still under way.
+  @sweep_ms 60_000
   # The thresholds a person may pin, after upstream's `LOOPGUARD_KEYS`: `{kind, least,
   # most}`. A count takes a whole number, so 12.5 calls is refused rather than truncated.
   @pinnable %{
@@ -223,7 +228,12 @@ defmodule HalC2Plugins.TokenEconomizer do
        prune_timers: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
        # The latest redirects and stop offers, newest first.
-       recent: []
+       recent: [],
+       # Whether a run is under way, as the MC says (`Host.run_active?/3`); the runs of
+       # turns the last sweep found ended, as {thread id, run id}; the next sweep's timer.
+       active?: &Host.run_active?(@id, &1, &2),
+       ended: MapSet.new(),
+       sweep: arm(nil)
      }}
   end
 
@@ -303,9 +313,12 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # A delivery's outcome. A redirect that reached its turn starts the turn's next segment,
   # whose judge job is not the old one's; one that did not leaves the guard to offer a
-  # stop. The status says which, even when the turn has ended since.
+  # stop. The status says which, even when the turn has ended since. A redirect the
+  # provider's runtime still held when it stopped waiting (`"confirmed" => false`) may
+  # reach the agent, but nothing says when, so no later call can be read as after it:
+  # it has not landed.
   def handle_info({:delivered, thread_id, run_id, entry, result}, state) do
-    landed = match?({:ok, _}, result)
+    landed = confirmed?(result)
 
     unless landed,
       do:
@@ -326,6 +339,25 @@ defmodule HalC2Plugins.TokenEconomizer do
       end
 
     {:noreply, state |> remember(Map.put(entry, "delivered", landed)) |> publish()}
+  end
+
+  # The turns whose run the MC says is not under way: their `turn.finished` was lost, or
+  # is still on its way through the feed. One found so on two sweeps running is dropped,
+  # as the next turn's start would drop it: it teaches nothing, and its judge job stops.
+  # A run the MC cannot answer for counts as ended, so no turn is kept for good.
+  def handle_info(:sweep, state) do
+    ended =
+      for {thread_id, %{run: run_id}} <- state.turns,
+          not active?(state, thread_id, run_id),
+          into: MapSet.new(),
+          do: {thread_id, run_id}
+
+    gone = MapSet.intersection(ended, state.ended)
+
+    state =
+      Enum.reduce(gone, state, fn {thread_id, _}, state -> close(state, thread_id, false) end)
+
+    {:noreply, %{state | ended: MapSet.difference(ended, gone), sweep: arm(state.sweep)}}
   end
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state),
@@ -1134,6 +1166,23 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
+  defp active?(state, thread_id, run_id) do
+    state.active?.(thread_id, run_id) == true
+  catch
+    kind, reason ->
+      Logger.warning(
+        "token-economizer: no answer for run #{run_id}: #{Exception.format_banner(kind, reason)}"
+      )
+
+      false
+  end
+
+  # The next sweep, which replaces any still to come.
+  defp arm(timer) do
+    if timer, do: Process.cancel_timer(timer)
+    Process.send_after(self(), :sweep, @sweep_ms)
+  end
+
   # --- turns ------------------------------------------------------------------------------
 
   # The feed says what it missed on the next event it delivers, and how many events were
@@ -1308,20 +1357,23 @@ defmodule HalC2Plugins.TokenEconomizer do
       {Turn.after_nudge(guard), state |> remember(entry) |> publish()}
     else
       # The thread says the agent was redirected only once the provider took it, which
-      # it refuses once the run is over, or while it works if it cannot take a message.
+      # it refuses once the run is over, or while it works if it cannot take a message,
+      # and does not say so of one its runtime still held unanswered.
       state =
         deliver(state, thread_id, run_id, entry, fn ->
-          with {:ok, _} = steered <- Host.steer(@id, thread_id, run_id, body) do
-            Host.notice(
-              @id,
-              thread_id,
-              run_id,
-              "TokenEconomizer nudged this turn (#{short}): the same failure kept recurring.",
-              title: "Loop guard"
-            )
+          steered = Host.steer(@id, thread_id, run_id, body)
 
-            steered
-          end
+          if confirmed?(steered),
+            do:
+              Host.notice(
+                @id,
+                thread_id,
+                run_id,
+                "TokenEconomizer nudged this turn (#{short}): the same failure kept recurring.",
+                title: "Loop guard"
+              )
+
+          steered
         end)
 
       {Turn.redirect(guard), state}
@@ -1373,6 +1425,12 @@ defmodule HalC2Plugins.TokenEconomizer do
       "at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
   end
+
+  # Whether a delivery reached its turn: a steer whose runtime still held it unanswered
+  # (`Host.steer/4`'s `"confirmed"`) has not, as far as anyone knows.
+  defp confirmed?({:ok, %{"confirmed" => false}}), do: false
+  defp confirmed?({:ok, _}), do: true
+  defp confirmed?(_), do: false
 
   defp remember(state, entry), do: %{state | recent: Enum.take([entry | state.recent], @recent)}
 

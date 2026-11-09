@@ -654,6 +654,34 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       {g, nil, _} = Turn.fold(g, "Edit", %{"file_path" => "/r/a.py"}, "ok", nil, started: 10)
       assert {_, {:nudge, _}, _} = failing.(g, opts ++ [started: 11])
     end
+
+    test "a passing check after a script the turn wrote, in one && chain, says the turn is not stuck" do
+      # Thresholds pinned so low that any call not verified is stuck.
+      thr =
+        Map.merge(Rules.defaults(), %{
+          "min_turns" => 1,
+          "edit_churn" => 1,
+          "error_outputs" => 1,
+          "stagnation" => 0.0,
+          "backstop_turns" => 1
+        })
+
+      opts = [envelope: 1.0, thr: thr, nudge_budget: 2]
+
+      # An edit and a failing run, heard before the project had an envelope.
+      {edited, nil, nil} =
+        Turn.new("t") |> Turn.fold("Edit", %{"file_path" => "/r/scripts/check.sh"}, "ok", nil)
+
+      {edited, nil, nil} =
+        Turn.fold(edited, "Bash", %{"command" => "pytest -q"}, "FAILED t\n1 failed", 1)
+
+      run = &Turn.fold(edited, "Bash", %{"command" => &1}, "1 passed in 0.02s", 0, opts)
+
+      assert {_, nil, nil} = run.("bash scripts/check.sh && pytest -q")
+      # The script ran after the tests: it may have changed the tree, or run a check of its
+      # own that failed unread. Not reading it costs a redirect here.
+      assert {_, {:nudge, _}, _} = run.("pytest -q && bash scripts/check.sh")
+    end
   end
 
   describe "the ended-green proxy" do
@@ -667,6 +695,70 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
         |> fold("Bash", %{"command" => "mise exec -- mix test"}, "1 test, 1 failure", 2)
 
       refute Turn.resolved_proxy(g)
+    end
+
+    test "a package manager's check filtered to a package is a verification" do
+      for cmd <- [
+            "pnpm --filter web test",
+            "pnpm -F web run test",
+            "pnpm --filter=web test",
+            "pnpm -r test",
+            "pnpm -C web test",
+            "npm --prefix web test",
+            "npm -w web run test",
+            "npm --workspace=web test",
+            "npm --workspaces --if-present test",
+            "yarn workspace web test",
+            "yarn --cwd web test",
+            "bun --cwd web test",
+            # Whether an option takes a value is the manager's: pnpm's `-w` is
+            # `--workspace-root` and yarn's `-W` takes none, npm's `-w` names a workspace.
+            "pnpm -w test",
+            "pnpm -w run test",
+            "yarn -W test",
+            "npm -w web test"
+          ] do
+        assert Turn.status_of_tests(cmd) == "own", cmd
+
+        failing =
+          Turn.new()
+          |> fold("Edit", %{"file_path" => "/r/a.ts"}, "ok")
+          |> fold("Bash", %{"command" => cmd}, "Tests  1 failed (1)", 1)
+
+        refute Turn.resolved_proxy(failing), cmd
+
+        passing =
+          Turn.new()
+          |> fold("Edit", %{"file_path" => "/r/a.ts"}, "ok")
+          |> fold("Bash", %{"command" => cmd}, "Tests  1 passed (1)", 0)
+
+        assert Turn.resolved_proxy(passing), cmd
+      end
+
+      # An option this does not know may change what runs, or whether anything does: the
+      # check is there, but not read.
+      # An option another manager knows is one this manager does not: bun's `-r` preloads
+      # a module, and `pnpm -w web` runs the root's `web` script.
+      for cmd <- [
+            "pnpm --frobnicate web test",
+            "npm --dry-run test",
+            "yarn -X run test",
+            "pnpm -w web test",
+            "npm -W test",
+            "bun -r test",
+            "yarn -r test"
+          ] do
+        assert Turn.status_of_tests(cmd) == "unknown", cmd
+
+        passing =
+          Turn.new()
+          |> fold("Edit", %{"file_path" => "/r/a.ts"}, "ok")
+          |> fold("Bash", %{"command" => cmd}, "Tests  1 passed (1)", 0)
+
+        refute Turn.resolved_proxy(passing), cmd
+      end
+
+      assert Turn.status_of_tests("npm install test-utils") == nil
     end
 
     test "mix features, prop and proof are test runs, and a failing one is not green" do
@@ -1413,6 +1505,39 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute state.turns["c"].partial
     end
 
+    test "drop a turn whose run ended unheard once two sweeps found it so, learning nothing from it" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      # The MC says run-a ended: its `turn.finished` was lost, or is still on its way.
+      state = %{state | active?: fn _thread, run -> run != "run-a" end}
+      state = state |> observe(started("a")) |> observe(started("b"))
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["a", "b"]
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["b"]
+      assert state.stats["turns"] == 1
+      assert state.trackers == %{}
+
+      # A turn that started on the thread since is the MC's to answer for afresh.
+      state = observe(state, started("a", %{"runId" => "run-a2"}))
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert Map.keys(state.turns) == ["a", "b"]
+      Process.cancel_timer(state.sweep)
+    end
+
+    test "count a turn whose run the MC could not answer for as ended, so a failing MC keeps none for good" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = %{state | active?: fn _thread, _run -> raise "no stream" end}
+      state = observe(state, started("a"))
+
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      assert state.turns == %{}
+      Process.cancel_timer(state.sweep)
+    end
+
     test "count what was waiting, which a full queue does not bound" do
       {:ok, state} = TokenEconomizer.init(%{})
       # Senders that found room together put more than the limit in the queue.
@@ -1583,6 +1708,20 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       guard = state.turns["a"].guard
       refute guard.redirecting
       assert guard.segment == 0 and guard.redirects == 0
+      assert [%{"action" => "nudge", "delivered" => false}] = state.recent
+    end
+
+    # A steer its runtime still held when its budget ran out may reach the agent later, or
+    # never: the agent is not known to have the redirect, so it starts no segment and
+    # names no place, and the turn's judge job runs on.
+    test "a redirect the MC sent but did not hear taken has not landed" do
+      {judge, state} = sleeper(redirecting("a"), "a", :judge)
+      state = delivered(state, "a", {:ok, %{"ordinal" => 7, "confirmed" => false}})
+
+      guard = state.turns["a"].guard
+      refute guard.redirecting
+      assert guard.segment == 0 and guard.redirects == 0 and guard.since == nil
+      assert Process.alive?(judge)
       assert [%{"action" => "nudge", "delivered" => false}] = state.recent
     end
 
@@ -1770,6 +1909,91 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       # A script written before this turn is the project's, run as any program is.
       state = heard_turn([edited("/r/a.py"), command("bash run.sh", "1 passed in 0.02s")])
       assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a check after every script in its passing && chain is its last word; one before a script is not" do
+      for {cmd, learns} <- [
+            {"bash run.sh && pytest -q", true},
+            {"bash run.sh && echo ok && pytest -q && echo done", true},
+            # The script ran after the check, and may have undone it or failed a check of
+            # its own unread.
+            {"pytest -q && bash run.sh", false},
+            {"bash run.sh && pytest -q && bash run.sh", false},
+            # Not one && chain: a script's failure need not stop the check.
+            {"bash run.sh; pytest -q", false},
+            {"bash run.sh || pytest -q", false},
+            # A comment could hide where the chain ends.
+            {"bash run.sh # && pytest -q", false}
+          ] do
+        state =
+          heard_turn([edited("/r/run.sh"), command(cmd, "1 passed in 0.02s", "completed")])
+
+        assert TokenEconomizer.learns?(state.turns["a"], true) == learns, cmd
+      end
+
+      # A chain that did not exit 0 says nothing of what the script did.
+      state =
+        heard_turn([
+          edited("/r/run.sh"),
+          command("bash run.sh && pytest -q", "1 passed in 0.02s", "failed", %{"exitCode" => 1})
+        ])
+
+      refute TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a check after an eval or a sourced script the turn wrote, in the same shell, is not its last word" do
+      # `run.sh` may define `pytest() { echo '1 passed'; }`: sourced or eval'd, it runs in
+      # the shell the check then runs in, so the check that follows may be its own.
+      for {cmd, learns} <- [
+            {". ./run.sh && pytest -q", false},
+            {"source run.sh && pytest -q", false},
+            {"source run.sh && echo ok && pytest -q", false},
+            {~s{eval "$CHECK" && bash run.sh && pytest -q}, false},
+            {~s{source "$SETUP" && bash run.sh && pytest -q}, false},
+            # A function the command defines is not read either, whatever its body's form.
+            {"pytest() { echo '1 passed'; } && bash run.sh && pytest -q", false},
+            {"pytest() ( echo '1 passed' ) && bash run.sh && pytest -q", false},
+            {"pytest () ( echo '1 passed' ) && bash run.sh && pytest -q", false},
+            {"function pytest { echo 1 passed; } && bash run.sh && pytest -q", false},
+            {"function pytest ( echo 1 passed ) && bash run.sh && pytest -q", false},
+            # A body with no brackets: `[[ 1 ]]` makes `pytest` succeed.
+            {"function pytest [[ 1 ]] && bash run.sh && pytest -q", false},
+            {"function pytest [[ 1 ]] && pytest -q", false},
+            # A group's `;` already cuts the `&&` chain; pinned so the group stays unread.
+            {"{ function pytest [[ 1 ]]; } && bash run.sh && pytest -q", false},
+            {"{ pytest() [[ 1 ]]; } && bash run.sh && pytest -q", false},
+            # Only a simple command runs apart from the check: a builtin that may change what
+            # `pytest` runs is not one, nor is a bare assignment.
+            {"hash -p /bin/true pytest && bash run.sh && pytest -q", false},
+            {"export PATH=./bin:$PATH && bash run.sh && pytest -q", false},
+            {"printf -v PATH %s ./bin && bash run.sh && pytest -q", false},
+            # An expansion assigns in the chain's own shell, quoted or not.
+            {~s|: "${PATH:=./bin}" && bash run.sh && pytest -q|, false},
+            {~s|echo "$((PATH=1))" && bash run.sh && pytest -q|, false},
+            # A `cd` changes which file any path names, and which config a runner reads,
+            # whatever the check's words: one after it is not read.
+            {"cd web && bash run.sh && ./bin/test", false},
+            {"cd web && bash run.sh && pytest ./tests", false},
+            {"cd web && bash run.sh && pytest tests", false},
+            {"cd web && bash run.sh && pytest tests/test_a.py", false},
+            {"cd web && bash run.sh && pytest -q", false},
+            {"cd web && FOO=1 bash run.sh && pytest -q", false},
+            {"pushd web && bash run.sh && bin/pytest -q", false},
+            {"popd && bash run.sh && pytest tests", false},
+            {"PATH=./bin && bash run.sh && pytest -q", false},
+            {"set -f && bash run.sh && pytest -q", false},
+            {~s{"$RUN" && bash run.sh && pytest -q}, false},
+            # A file the turn did not write sources nothing it changed, and a program or an
+            # assignment to a program's environment runs apart.
+            {". venv/bin/activate && bash run.sh && pytest -q", true},
+            {"FOO=1 bash run.sh && pytest tests", true},
+            {"./run.sh && echo ok && pytest -q", true}
+          ] do
+        state =
+          heard_turn([edited("/r/run.sh"), command(cmd, "1 passed in 0.02s", "completed")])
+
+        assert TokenEconomizer.learns?(state.turns["a"], true) == learns, cmd
+      end
     end
 
     test "a command heard only in part after an edit is not read, so the turn is not learned" do

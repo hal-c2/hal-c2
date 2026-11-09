@@ -2419,7 +2419,7 @@ defmodule HalC2.OrchestrationTest do
       assert {:error, %{"code" => "message_still_sending", "message" => still}} = steer.()
       assert still =~ "still being sent"
       File.touch!(Path.join(gates, "steer"))
-      assert {:ok, _} = Task.await(first)
+      assert {:ok, %{"confirmed" => true}} = Task.await(first)
       assert {:ok, _} = steer.()
 
       state = await_statuses(thread_id, ["completed"])
@@ -2434,6 +2434,26 @@ defmodule HalC2.OrchestrationTest do
 
       assert [%{"id" => "m2"}] =
                Enum.filter(StreamState.list(state, "message"), &(&1["id"] == "m2"))
+    end
+
+    # Codex still holds a steer it did not answer in time and may take it later, or not:
+    # the message stays in the turn, and the receipt says nobody heard Codex take it.
+    test "a steer whose runtime answers too late is sent but not confirmed", %{tmp_dir: dir} do
+      gates = held_steers(dir)
+      Application.put_env(:hal_c2, :codex_steer_timeout_ms, 100)
+      on_exit(fn -> Application.delete_env(:hal_c2, :codex_steer_timeout_ms) end)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      assert {:ok, %{"confirmed" => false}} =
+               send_message(thread_id, "m2", "hold this", %{
+                 "dispatchMode" => %{"type" => "start_immediately"},
+                 "deliveryIntent" => "steer"
+               })
+
+      File.touch!(Path.join(gates, "steer"))
+      state = await_statuses(thread_id, ["completed"])
+      assert StreamState.get(state, "turn-item")["turn-item:user:m2"]
     end
 
     # #384: the repeat of a steer Codex goes on to refuse never heard it was sent, its
@@ -2758,7 +2778,7 @@ defmodule HalC2.OrchestrationTest do
       {:ok, _} = send_message(thread_id, "m2", "hold this")
       [active, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
 
-      assert {:ok, _} =
+      assert {:ok, %{"confirmed" => false}} =
                Orchestration.dispatch(%{
                  "type" => "queued-message.promote-to-steer",
                  "threadId" => thread_id,

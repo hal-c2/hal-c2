@@ -71,7 +71,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   @call_ms 60_000
   @stats_ms 2_000
   # Pi does not bound its answer to a steer, so the runtime gives it this long and
-  # then takes it as taken (`steer_timeout/2`): a little over the 30s Codex gives a
+  # then answers it held (`steer_timeout/2`): a little over the 30s Codex gives a
   # steer, so one Pi is merely slow to answer is not cut off sooner than another
   # provider's would be.
   @steer_answer_ms 33_000
@@ -117,20 +117,20 @@ defmodule HalC2.Pi.ThreadRuntime do
   `agent_settled` after Pi's answer to the steer, so new work it started is the turn's.
   Returns once Pi answered: its refusal is the error. A refusal that ends the turn
   returns once the turn is recorded (`settle/1`), so the wait covers Pi's answer and that.
-  A steer Pi has not answered in its answer budget is taken as taken: Pi still holds it,
-  and may act on it, so the message is the turn's.
+  A steer Pi has not answered in its answer budget is answered `:held`: Pi still holds it,
+  and may act on it, so the message is the turn's, but nobody heard it taken.
 
   The wait has no budget of its own. A refusal can be held behind steers sent
   after this one (`steered/3`), each with its own answer budget, and then
   behind the turn's settling, so no fixed caller timeout can outlast every
   staggered pair — one that expired would report a refused steer as taken.
-  Every steer is eventually replied (answered, taken on its answer timer,
+  Every steer is eventually replied (answered, held on its answer timer,
   released with the held refusals, or answered as the turn ends), and a
   runtime that stops surfaces as this call's exit, which the caller must treat
   as a refusal. That is why Pi alone does not steer through `HalC2.RuntimeSteer`:
   its answer timer, not a call timeout, says when Pi is taken to hold a steer.
   """
-  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  @spec steer(String.t(), String.t(), map) :: :ok | :held | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Pi turn in this thread"}
@@ -2369,10 +2369,10 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  # A steer Pi has not answered in its budget is taken as taken, as a Codex steer whose
-  # answer is late is (`HalC2.Orchestration`): Pi still holds it and may act on it, so
-  # its message is the turn's. A settle that waited on it alone ends the turn now, and
-  # Pi's late answer is dropped. Unlike an answered steer (`steered/3`), a timed-out
+  # A steer Pi has not answered in its budget is answered `:held`, as a Codex steer
+  # whose answer is late is (`HalC2.RuntimeSteer`): Pi still holds it and may act on
+  # it, so its message is the turn's, though nobody heard it taken. A settle that
+  # waited on it alone ends the turn now, and Pi's late answer is dropped. Unlike an answered steer (`steered/3`), a timed-out
   # one does not clear `settled` or release the held refusals while other steers are
   # still out. Dropping it here also abandons its entry in the connection's pending
   # map (and the `send_request` monitor on it) until Pi answers or its process
@@ -2393,7 +2393,7 @@ defmodule HalC2.Pi.ThreadRuntime do
     if late == [] do
       state
     else
-      GenServer.reply(from, :ok)
+      GenServer.reply(from, :held)
 
       steers =
         for {request, label} <- others,
