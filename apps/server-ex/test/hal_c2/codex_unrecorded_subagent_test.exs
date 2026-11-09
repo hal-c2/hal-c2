@@ -167,6 +167,41 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
              Enum.find(list(@tid, "provider-turn"), &(&1["id"] == provider_turn))
   end
 
+  # The app-server that exits before the store recovers holds every subagent the
+  # runtime kept running, an earlier run's too: the held run's end ends them all, in
+  # the parent thread and in their own.
+  test "a completed run the store failed ends an earlier run's subagent its app-server took",
+       %{work: work} do
+    {pid, runtime, first} = running_turn(work)
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    child_command(pid, runtime, native)
+    completed = Map.put(native, "turn", %{"id" => native["turnId"], "status" => "completed"})
+    notify(pid, runtime, "turn/completed", completed)
+    await(fn -> match?([%{"status" => "completed"}], list(@tid, "run")) end)
+
+    runtime = dispatch("m2", native["turnId"])
+    second = runtime.turn.ids.run
+    [%{"childThreadId" => child, "runId" => ^first}] = list(@tid, "subagent")
+
+    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_every, []})
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    completed = Map.put(native, "turn", %{"id" => native["turnId"], "status" => "completed"})
+    notify(pid, runtime, "turn/completed", completed)
+    assert {:unrecorded, _} = TurnWatch.attempted(second)
+
+    ref = Process.monitor(pid)
+    os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+    {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+
+    HalC2.Test.Machines.refuse_changes(nil)
+    await(fn -> match?([%{"status" => "completed"}, %{"status" => "failed"}], runs(@tid)) end)
+
+    assert [%{"status" => "failed"}] = list(@tid, "subagent")
+    assert %{"status" => "failed"} = item(@tid, "subagent")
+    assert %{"status" => "failed"} = command(child)
+  end
+
   # Found by unrecorded_turns.maude: TurnWatch's try at the end can start before the
   # runtime's `:DOWN` reaches it, and a try that took the runtime for alive kept what
   # went with it running.

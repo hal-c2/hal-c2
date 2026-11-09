@@ -32,6 +32,11 @@ defmodule HalC2.CodexTurnEndPropTest do
   ended: when Codex acknowledges that stop and goes on, the message's run fails and the
   provider turn stays left over (#1398).
 
+  After a turn Codex reported ended, the next message's turn runs on the same
+  app-server, which keeps the subagents the earlier turn left running: an app-server
+  that dies while the store refuses the later run's end takes those too, and the
+  earlier run stays as it ended (review of #1398).
+
   The turn runs on the fake app-server in `test/support/fake_codex.py`, which
   leaves a turn saying "wait" open; the test then plays Codex's side itself.
   """
@@ -78,6 +83,7 @@ defmodule HalC2.CodexTurnEndPropTest do
 
   defp start do
     Process.delete(:lost)
+    Process.put(:earlier, [])
     home = HalC2.Prop.scratch_home("codex-turn-end")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
@@ -143,6 +149,12 @@ defmodule HalC2.CodexTurnEndPropTest do
         "dispatchMode" => %{"type" => "start_immediately"}
       })
 
+    await_turn(nil)
+  end
+
+  # Waits for the thread's next Codex turn after run `previous`, and takes it as the
+  # turn the commands play.
+  defp await_turn(previous) do
     await_until(
       fn ->
         case runtime() do
@@ -151,7 +163,7 @@ defmodule HalC2.CodexTurnEndPropTest do
              turn: %{native_turn_id: turn, ids: %{run: run} = ids},
              native_thread_id: thread
            }}
-          when is_binary(turn) and is_binary(thread) ->
+          when is_binary(turn) and is_binary(thread) and run != previous ->
             Process.put(:native_thread, thread)
             Process.put(:native_turn, turn)
             Process.put(:run, run)
@@ -176,7 +188,8 @@ defmodule HalC2.CodexTurnEndPropTest do
   # status, in spawn order. held: how the provider turn of an unrecorded run ended;
   # pt: its provider turn's status, once the run is recorded (nil: not compared).
   # follows: how each later message's run ended, in order. lost: the app-server died
-  # while the store refused the run's end.
+  # while the store refused the run's end. earlier: how each earlier turn's run ended,
+  # in order; subs holds their subagents too.
   def initial_state,
     do: %{
       phase: :running,
@@ -185,7 +198,8 @@ defmodule HalC2.CodexTurnEndPropTest do
       held: nil,
       pt: nil,
       follows: [],
-      lost: false
+      lost: false,
+      earlier: []
     }
 
   def command(state) do
@@ -233,8 +247,11 @@ defmodule HalC2.CodexTurnEndPropTest do
 
       :reported ->
         frequency(
-          [{1, {:call, __MODULE__, :observe, []}}, {2, {:call, __MODULE__, :end_stream, []}}] ++
-            reports
+          [
+            {1, {:call, __MODULE__, :observe, []}},
+            {2, {:call, __MODULE__, :end_stream, []}},
+            {3, {:call, __MODULE__, :next_turn, [length(state.earlier) + 1]}}
+          ] ++ reports
         )
 
       :ended ->
@@ -250,7 +267,7 @@ defmodule HalC2.CodexTurnEndPropTest do
     do: state.phase == :running and n == length(state.subs) + 1
 
   def precondition(state, {:call, _, :report, [n, reported]}),
-    do: state.phase != :ended and n in 1..length(state.subs) and Map.has_key?(@shown, reported)
+    do: state.phase != :ended and n in 1..length(state.subs)//1 and Map.has_key?(@shown, reported)
 
   def precondition(state, {:call, _, :end_turn, [_kind]}),
     do: state.phase in [:running, :leftover]
@@ -260,6 +277,9 @@ defmodule HalC2.CodexTurnEndPropTest do
   def precondition(state, {:call, _, :follow_up, [_how]}), do: state.phase == :leftover
   def precondition(state, {:call, _, :recover, []}), do: state.phase == :unrecorded
   def precondition(state, {:call, _, :end_stream, []}), do: state.phase == :reported
+
+  def precondition(state, {:call, _, :next_turn, [n]}),
+    do: state.phase == :reported and n == length(state.earlier) + 1
 
   def precondition(state, {:call, _, :end_held_stream, []}),
     do: state.phase == :unrecorded and not state.lost
@@ -332,6 +352,17 @@ defmodule HalC2.CodexTurnEndPropTest do
 
   def next_state(state, _result, {:call, _, :end_held_stream, []}), do: %{state | lost: true}
 
+  # The next turn runs; the subagents the earlier ones left running carry on.
+  def next_state(state, _result, {:call, _, :next_turn, [_n]}),
+    do: %{
+      state
+      | phase: :running,
+        run: "running",
+        held: nil,
+        pt: nil,
+        earlier: state.earlier ++ [state.run]
+    }
+
   # The run fails. A turn Codex reported completed or failed leaves its subagents
   # carrying on, reports of them still to come; an app-server gone took them with it.
   def next_state(state, _result, {:call, _, :recover, []}) do
@@ -366,7 +397,8 @@ defmodule HalC2.CodexTurnEndPropTest do
     expected = next_state(state, nil, call)
 
     seen.run == expected.run and seen.subs == expected.subs and
-      seen.follows == expected.follows and seen.strays == 0 and seen.open_children == 0 and
+      seen.earlier == expected.earlier and seen.follows == expected.follows and seen.strays == 0 and
+      seen.open_children == 0 and
       (expected.pt == nil or seen.pt == expected.pt) and
       (name != :recover or seen.on_time)
   end
@@ -504,7 +536,7 @@ defmodule HalC2.CodexTurnEndPropTest do
     )
 
     settle_runtime()
-    run = current(@tid) |> StreamState.list("run") |> List.first()
+    run = current(@tid) |> StreamState.list("run") |> Enum.find(&(&1["id"] == Process.get(:run)))
     Map.put(observed(), :on_time, run["completedAt"] == Process.get(:failed_at))
   end
 
@@ -539,6 +571,29 @@ defmodule HalC2.CodexTurnEndPropTest do
       "the next message's run never ended"
     )
 
+    settle_runtime()
+    observed()
+  end
+
+  # The next message to the thread after Codex reported its turn ended: a turn of its
+  # own on the same app-server, left open. Its message is not a follow-up (`m<n>`).
+  def next_turn(n) do
+    previous = Process.get(:run)
+    Process.put(:earlier, Process.get(:earlier) ++ [previous])
+    selection = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => @tid,
+        "messageId" => "next-#{n}",
+        "text" => "wait for it",
+        "attachments" => [],
+        "modelSelection" => selection,
+        "dispatchMode" => %{"type" => "start_immediately"}
+      })
+
+    await_turn(previous)
     settle_runtime()
     observed()
   end
@@ -661,8 +716,10 @@ defmodule HalC2.CodexTurnEndPropTest do
 
   defp observed do
     state = current(@tid)
-    first = Process.get(:run)
-    {[run], later} = state |> StreamState.list("run") |> Enum.split_with(&(&1["id"] == first))
+    runs = state |> StreamState.list("run") |> Map.new(&{&1["id"], &1})
+    run = runs[Process.get(:run)]
+    earlier = Enum.map(Process.get(:earlier), &runs[&1]["status"])
+    later = Enum.filter(Map.values(runs), &(&1["ordinal"] > run["ordinal"]))
     # A subagent finishing after a completed turn wakes the thread in a task of its own
     # (`HalC2.Orchestration.Wake`); only the messages sent here are follow-ups.
     follows = Enum.filter(later, &(&1["userMessageId"] =~ ~r/^m\d+$/))
@@ -672,6 +729,7 @@ defmodule HalC2.CodexTurnEndPropTest do
 
     %{
       run: run["status"],
+      earlier: earlier,
       subs: Enum.map(subagents, & &1["status"]),
       # Subagents shown as ended whose own thread still has work running.
       open_children:
