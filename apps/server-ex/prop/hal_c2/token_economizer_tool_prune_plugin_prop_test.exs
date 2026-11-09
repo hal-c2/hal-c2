@@ -684,7 +684,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   defp item_row(run, n, {tool, via}) do
     use =
       if via == :subagent,
-        do: %{"type" => "subagent", "subagentId" => "#{run}-s#{n}"},
+        do: %{"type" => "subagent", "origin" => "provider_native", "subagentId" => "#{run}-s#{n}"},
         else: %{"type" => "dynamic_tool_call", "providerToolName" => tool}
 
     {"turn-item", "#{run}-i#{n}",

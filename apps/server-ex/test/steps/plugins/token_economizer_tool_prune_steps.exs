@@ -102,7 +102,11 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
   # The subagent's own calls are in its child thread: the parent's history shows only
   # that it worked in the turn.
   step "the plugin missed a turn of that thread in which a Claude subagent worked", context do
-    miss_turn(context, %{"type" => "subagent", "subagentId" => "subagent-missed"})
+    miss_turn(context, %{
+      "type" => "subagent",
+      "origin" => "provider_native",
+      "subagentId" => "subagent-missed"
+    })
   end
 
   step "that thread runs another turn", context do
