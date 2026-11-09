@@ -69,6 +69,13 @@ one tool to report with. The first report it sends is the review, and its sandbo
 is deleted then. The Reviews page, the review's thread and its row in the thread
 list say a review runs in a sandbox.
 
+The sandbox brings its own copy of the agent, so the agent doesn't have to be
+installed or signed in on the MC, and the MC's version of it doesn't matter. None
+of the MC's agent settings, skills or task lists reach the sandbox, and what the
+review uses counts against its API key, not your account's usage limits. The
+settings list an agent's models only when it is installed on the MC, so install
+it there to pick a model.
+
 A sandboxed review is stopped, and its sandbox deleted, when it runs past
 **Sandboxed review time limit** or uses up **Sandboxed review token budget**, and
 when you stop, discard or review it again. **Stop** on the Reviews page or in the

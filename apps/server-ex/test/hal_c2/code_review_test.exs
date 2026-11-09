@@ -1117,6 +1117,149 @@ defmodule HalC2.CodeReviewTest do
       refute Enum.any?(Map.keys(items), &String.starts_with?(&1, "turn-item:project-environment"))
     end
 
+    # The sandbox runs the review image's Claude, not the one installed here.
+    test "runs Claude in a sandbox on a model the Claude installed here is too old for",
+         %{tmp_dir: dir} do
+      claude = Path.join(dir, "old-claude")
+      File.write!(claude, "#!/bin/sh\necho '2.1.0 (Claude Code)'\n")
+      File.chmod!(claude, 0o755)
+      put_instance("claudeAgent", %{"binaryPath" => claude})
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-opus-5-5"})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+
+      assert_receive {:sandbox_exec, ["claude" | _], _}, 15_000
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+    end
+
+    # The sandbox runs the review image's Codex, not the one installed here.
+    test "runs Codex in a sandbox while this release marks the Codex installed here broken" do
+      FakeOpenShell.put_env(
+        provider_compatibility: [
+          %{
+            "driver" => "codex",
+            "halC2Range" => ">=0",
+            "ranges" => [%{"range" => ">=0", "status" => "broken"}]
+          }
+        ]
+      )
+
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_exec, ["codex", "app-server"], _}, 15_000
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+    end
+
+    # This machine's skills, and where they are, are not the sandbox's.
+    test "sends Claude in a sandbox its message as written, with none of the skills of this machine",
+         %{tmp_dir: dir} do
+      home = Path.join(dir, "claude-home")
+
+      for {name, frontmatter} <- [
+            {"host-skill", "disable-model-invocation: true\n"},
+            {"other-skill", ""}
+          ] do
+        skill = Path.join([home, "skills", name])
+        File.mkdir_p!(skill)
+
+        File.write!(
+          Path.join(skill, "SKILL.md"),
+          "---\ndescription: Here only.\n#{frontmatter}---\nDo it.\n"
+        )
+      end
+
+      put_instance("claudeAgent", %{"homePath" => home})
+      prompt = "Review with $host-skill and then $other-skill as asked"
+
+      save_settings(%{
+        "provider" => "claudeAgent",
+        "model" => "claude-haiku-4-5",
+        "prompt" => prompt
+      })
+
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_prompt, content}, 15_000
+
+      text =
+        content
+        |> List.wrap()
+        |> Enum.map_join("\n", &if(is_map(&1), do: &1["text"], else: &1))
+
+      assert text =~ prompt
+      refute text =~ home
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+    end
+
+    # Claude keeps its task list in its own config folder, which in a sandbox is the
+    # sandbox's: this machine's lists, whatever they are called, are not read.
+    @tag sandbox: [task_update: %{"taskId" => "1", "status" => "in_progress"}]
+    test "keeps the task list of Claude in a sandbox apart from the lists on this machine",
+         %{tmp_dir: dir} do
+      home = Path.join(dir, "claude-home")
+
+      for list <- ["sandboxed-session", "host-list"] do
+        tasks = Path.join([home, "tasks", list])
+        File.mkdir_p!(tasks)
+
+        File.write!(
+          Path.join(tasks, "1.json"),
+          JSON.encode!(%{"id" => "1", "subject" => "A task here", "status" => "pending"})
+        )
+      end
+
+      put_instance("claudeAgent", %{
+        "homePath" => home,
+        "env" => %{"CLAUDE_CODE_TASK_LIST_ID" => "host-list"}
+      })
+
+      save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+      thread_id = review()["threadId"]
+      await_idle(thread_id)
+
+      plans = HalC2.StreamState.list(HalC2.Streams.state(thread_id), "plan")
+      refute inspect(plans) =~ "A task here"
+    end
+
+    # An agent of the sandbox's needs no CLI here: its driver comes from the settings,
+    # and its model and options from the review's settings.
+    test "reviews on an agent that is not installed on this machine, with the model and options picked" do
+      FakeOpenShell.put_env(claude_command: ["hal-c2-test-no-claude"])
+
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), "claude-review"], %{
+          "driver" => "claudeAgent"
+        })
+      )
+
+      {:ok, providers} = HalC2.Plugins.Host.providers(@id)
+      refute Enum.any?(providers, &(&1["instanceId"] == "claude-review"))
+
+      save_settings(%{
+        "provider" => "claude-review",
+        "model" => "claude-haiku-4-5",
+        "modelOptions" => %{"effort" => "high"}
+      })
+
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_exec, ["claude" | args], _}, 15_000
+      assert ["--model", "claude-haiku-4-5"] in Enum.chunk_every(args, 2, 1)
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      await_review(&(&1["verdict"] == "approve"))
+    end
+
+    test "asks for a model to be named when the agent that reviews is not installed on this machine" do
+      FakeOpenShell.put_env(claude_command: ["hal-c2-test-no-claude"])
+      save_settings(%{"provider" => "claudeAgent", "model" => ""})
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      await_review(&(&1["status"] == "failed"))
+
+      assert review()["error"] =~
+               "Install it here, or name the model to review with in the settings"
+    end
+
     @tag sandbox: [reports: 2]
     test "takes one report of the two its agent sends at once", _context do
       {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
@@ -1600,11 +1743,14 @@ defmodule HalC2.CodeReviewTest do
 
   # Reviews with Claude, whose instance has `config` in HAL-C2's settings.
   defp put_claude(config) do
-    HalC2.Settings.update(&put_in(&1, [Access.key("providers", %{}), "claudeAgent"], config))
+    put_instance("claudeAgent", config)
 
     save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
     {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
   end
+
+  defp put_instance(instance, config),
+    do: HalC2.Settings.update(&put_in(&1, [Access.key("providers", %{}), instance], config))
 
   defp await_review(done?) do
     HalC2.Plugins.subscribe_topic(self(), @id, "reviews")

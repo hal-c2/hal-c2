@@ -949,7 +949,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # --- turn lifecycle -------------------------------------------------------------
 
   # A Codex this release marks broken fails the turn saying so (and what to
-  # update to), instead of failing inside a protocol it no longer speaks.
+  # update to), instead of failing inside a protocol it no longer speaks. A sandboxed
+  # review's Codex is the review image's (#1412), not the one installed here.
+  defp version_gate(state, %{sandbox: true}), do: {:ok, state}
+
   defp version_gate(state, turn) do
     case HalC2.Codex.Provider.broken_version(resolved_instance(Entities.instance(turn.ids))) do
       nil ->
@@ -1230,7 +1233,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:ok,
        state
        |> Map.put(:last_turn, nil)
-       |> Map.merge(%{conn: conn, conn_instance: Entities.instance(ids)})}
+       |> Map.merge(%{conn: conn, conn_instance: Entities.instance(ids), sandboxed: true})}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -1782,10 +1785,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("account/rateLimits/updated", %{"rateLimits" => snapshot}, state) do
     state = with_instance(state)
 
-    HalC2.ProviderUsageLimits.update(
-      state.instance,
-      HalC2.ProviderUsageLimits.Codex.windows(snapshot)
-    )
+    # A sandboxed review's quota is its sandbox key's (#1412), not this machine's account.
+    if not (Map.get(state, :sandboxed) || match?(%{sandbox: true}, state.turn)),
+      do:
+        HalC2.ProviderUsageLimits.update(
+          state.instance,
+          HalC2.ProviderUsageLimits.Codex.windows(snapshot)
+        )
 
     state =
       if snapshot["limitId"] in [nil, "codex"],

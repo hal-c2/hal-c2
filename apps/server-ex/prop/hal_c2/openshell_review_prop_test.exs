@@ -546,7 +546,6 @@ defmodule HalC2.OpenShellReviewPropTest do
 
     %{
       thread_id: t,
-      driver: "codex",
       instance: "codex",
       clone: repo.dir,
       head_ref: "refs/hal-c2/code-review/1/head",

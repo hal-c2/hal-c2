@@ -10,8 +10,9 @@ defmodule HalC2.Test.FakeSandbox do
     and play one turn per message: they report through the MCP server they were given,
     the review broker, with `opts[:report]` (an approval unless it is `nil`), report
     `opts[:tokens]` tokens used (0), and finish the turn. Claude also reports
-    `opts[:cached]` cache reads (0), and with `subagent_tokens: n` a subagent's message
-    that used `n`; Codex, with it, spawns a subagent whose thread reports `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
+    `opts[:cached]` cache reads (0), with `rate_limit: info` a rate limit event, with
+    `task_update: input` a TaskUpdate call that succeeds, and with `subagent_tokens: n` a subagent's message that used `n`; Codex,
+    with it, spawns a subagent whose thread reports `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
     to `test`, until it is interrupted.
 
   `stat -f` of the review's writable paths answers the tmpfs mounts it asked for,
@@ -19,7 +20,8 @@ defmodule HalC2.Test.FakeSandbox do
 
   `opts` may be a function giving them, asked again for each command. `test` hears
   `{:sandbox_exec, argv, %{workdir, environment}}` for every command, and
-  `{:sandbox_reported, status, body}` for each answer the broker gave the agent. With
+  `{:sandbox_reported, status, body}` for each answer the broker gave the agent, and
+  Claude's `{:sandbox_prompt, content}` for each message it is sent. With
   `hold: program`, a command of `program` waits to start for `:release`, sent to the
   pid of `{:sandbox_held, pid}`.
   """
@@ -252,7 +254,8 @@ defmodule HalC2.Test.FakeSandbox do
     s
   end
 
-  defp claude(%{"type" => "user"}, io, s) do
+  defp claude(%{"type" => "user", "message" => message}, io, s) do
+    send(s.test, {:sandbox_prompt, message["content"]})
     session = "sandboxed-session"
     tokens = Map.get(s.opts, :tokens, 0)
 
@@ -290,6 +293,40 @@ defmodule HalC2.Test.FakeSandbox do
           "content" => [%{"type" => "text", "text" => "Looking"}],
           "usage" => %{"input_tokens" => sub, "output_tokens" => 0}
         }
+      })
+    end
+
+    if info = s.opts[:rate_limit] do
+      out(io, %{"type" => "rate_limit_event", "session_id" => session, "rate_limit_info" => info})
+    end
+
+    if task = s.opts[:task_update] do
+      out(io, %{
+        "type" => "assistant",
+        "session_id" => session,
+        "message" => %{
+          "id" => "m-#{System.unique_integer([:positive])}",
+          "role" => "assistant",
+          "content" => [
+            %{"type" => "tool_use", "id" => "toolu-task", "name" => "TaskUpdate", "input" => task}
+          ]
+        }
+      })
+
+      out(io, %{
+        "type" => "user",
+        "session_id" => session,
+        "message" => %{
+          "role" => "user",
+          "content" => [
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => "toolu-task",
+              "content" => "Updated task ##{task["taskId"]} status"
+            }
+          ]
+        },
+        "tool_use_result" => %{"success" => true, "taskId" => task["taskId"]}
       })
     end
 

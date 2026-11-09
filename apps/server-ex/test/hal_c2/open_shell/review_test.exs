@@ -512,7 +512,6 @@ defmodule HalC2.OpenShell.ReviewTest do
   defp spec(repo) do
     %{
       thread_id: @thread,
-      driver: "codex",
       instance: "codex",
       clone: repo.dir,
       head_ref: "refs/hal-c2/code-review/1/head",

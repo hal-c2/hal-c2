@@ -177,7 +177,7 @@ defmodule HalC2.OpenShell.Review do
   def ended_text(_), do: "This review's sandbox is gone."
 
   @doc """
-  Opens the sandbox of review thread `thread_id`. `spec`: `%{thread_id, driver,
+  Opens the sandbox of review thread `thread_id`. `spec`: `%{thread_id,
   instance, clone, head_ref, base_ref, head, merge_base, review, tool, minutes,
   tokens}`: the checkout is made from refs `head_ref` (at `head`) and `base_ref` of
   the git repository at `clone`, and the broker takes one call of plugin tool `tool`
@@ -185,7 +185,11 @@ defmodule HalC2.OpenShell.Review do
   `{:ok, %{sandbox, deadline}}` once the agent can start, or `{:error, message}`
   with nothing left behind.
   """
-  def open(%{thread_id: thread_id, driver: driver} = spec) do
+  def open(%{thread_id: thread_id} = spec) do
+    # The driver its turns run on, from this MC's settings, so a provider with no CLI
+    # installed on this machine reviews as one with it does.
+    driver = HalC2.Orchestration.driver_for(spec.instance)
+
     with true <-
            Process.whereis(__MODULE__) != nil ||
              {:error, "Review sandboxes are not running on this MC."},

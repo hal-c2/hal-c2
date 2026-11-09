@@ -1,6 +1,7 @@
 # Sources:
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
 #   apps/server-ex/lib/hal_c2/open_shell/review.ex, broker.ex (review sandboxes, their lease and the report broker)
+#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex, codex/thread_runtime.ex (a sandboxed turn skips this machine's checks, skills, tasks and quota)
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
@@ -8,6 +9,7 @@
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 #   https://github.com/pingdotgg/t3code/pull/15427
+#   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
 
 @plugin-code-review
 Feature: Agent code review
@@ -325,6 +327,59 @@ Feature: Agent code review
       When #12 is reviewed
       Then its agent runs Claude in a sandbox with none of this machine's launch arguments, home or project environment
       And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: A sandboxed review runs whatever version of its agent this machine has
+      Given pull requests are not trusted and OpenShell is installed
+      And this release marks the Codex on this machine broken
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed Claude review runs on a model the Claude on this machine is too old for
+      Given pull requests are not trusted and OpenShell is installed
+      And the Claude on this machine is too old for "claude-opus-5-5"
+      And "code-review" reviews with Claude on "claude-opus-5-5"
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox on "claude-opus-5-5"
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed review runs on an agent this machine has not installed, on the model it names
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      And "code-review" reviews with Claude on "claude-haiku-4-5" at high effort
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox on "claude-haiku-4-5"
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed review on an agent this machine has not installed asks for its model to be named
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      And "code-review" reviews with Claude on no model named
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Install it here, or name the model to review with in the settings."
+
+    @desktop @mobile @tui @backlog
+    Scenario: The settings name a model for an agent that only runs in a sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      When the user picks Claude in the review settings
+      Then the settings let them type the model to review with
+
+    @mc
+    Scenario: A sandboxed Claude review keeps to itself, away from this machine's skills, tasks and usage
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude on this machine has skills and task lists of its own
+      And "code-review" asks Claude to review "with $host-skill and then $other-skill"
+      And the sandboxed agent updates a task and reports its usage
+      When #12 is reviewed
+      Then the sandboxed Claude is sent "with $host-skill and then $other-skill" as written
+      And the review of #12 is finished with the agent's verdict
+      And the review's thread shows none of this machine's Claude tasks
+      And this machine's Claude usage is not the sandbox's
 
     @mc
     Scenario: An untrusted pull request on an MC without OpenShell is not reviewed, saying how to set it up

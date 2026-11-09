@@ -436,7 +436,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         message = turn.launch[:launch_error] ->
           {:error, {:refused, message}}
 
-        message = Provider.too_old(turn.model, Entities.instance(ids)) ->
+        message = too_old(turn, Entities.instance(ids)) ->
           {:error, {:refused, message}}
 
         message = background_change(state, turn) ->
@@ -1177,12 +1177,17 @@ defmodule HalC2.Claude.ThreadRuntime do
     # A `$skill` mention runs as Claude's own `/skill` command: the command is
     # the last block (where Claude expands it), after any leading text and the
     # message's images. Skills are re-read at each send, as they change
-    # mid-session; one that may not run for the user stays plain text.
+    # mid-session; one that may not run for the user stays plain text. A sandboxed
+    # review's message (#1412) is sent as it is: this machine's skills, and their
+    # paths, are not the sandbox's.
     skills =
-      HalC2.Claude.Skills.user_invocable(
-        turn.launch[:instance] || Entities.instance(turn[:ids] || %{}),
-        Map.get(turn, :cwd)
-      )
+      if Map.get(turn, :sandbox),
+        do: %{},
+        else:
+          HalC2.Claude.Skills.user_invocable(
+            turn.launch[:instance] || Entities.instance(turn[:ids] || %{}),
+            Map.get(turn, :cwd)
+          )
 
     case HalC2.Claude.Skills.dispatch(turn.text, skills) do
       nil ->
@@ -1223,7 +1228,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # they are this machine's, and may carry settings, keys, headers, MCP servers or
   # paths that must not reach the sandbox or the agent's argv.
   defp with_launch_args(launch, %{sandbox: true}, _instance),
-    do: apply_launch_args(launch, {:ok, []}, nil)
+    do: launch |> apply_launch_args({:ok, []}, nil) |> Map.put(:sandbox, true)
 
   defp with_launch_args(launch, turn, instance),
     do: apply_launch_args(launch, Provider.launch_args(instance), Map.get(turn, :cwd))
@@ -1410,6 +1415,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   # that cannot be read limit only this turn to the default mode: each turn reads
   # them again.
   #
+  # Why the installed CLI cannot run `turn`'s model, or nil. A sandboxed review's CLI
+  # is the review image's (#1412), not the one installed here, which it never needs.
+  defp too_old(%{sandbox: true}, _instance), do: nil
+  defp too_old(turn, instance), do: Provider.too_old(turn.model, instance)
+
   # A sandboxed review's CLI has a home of its own in the sandbox, so this machine's
   # Claude settings say nothing about it.
   defp bypass_policy(%{sandbox: true} = turn), do: turn
@@ -1597,6 +1607,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   # conversation found", and so would every later message. A new process for such a
   # session starts a new conversation that carries the thread's history instead. A
   # transcript that is missing, holds a message, or cannot be read resumes as before.
+  # A sandboxed review's transcripts are in its sandbox, so nothing here is read for it.
+  defp unsaved_session(%{sandbox: true} = turn, _state), do: turn
+
   defp unsaved_session(turn, state) do
     id = Map.get(turn, :native_thread_id)
 
@@ -2031,7 +2044,11 @@ defmodule HalC2.Claude.ThreadRuntime do
     # `with_ids/1` recovers the latest turn's ids when this runtime has not
     # run one, so between-turns quota joins that turn's instance too.
     state = state |> with_ids() |> with_usage_instance()
-    HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
+
+    # A sandboxed review's quota is its sandbox key's (#1412), not this machine's account.
+    if not sandboxed?(state),
+      do: HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
+
     rate_limit(info, state)
   end
 
@@ -2460,7 +2477,10 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  # Claude names the list after the session, or CLAUDE_CODE_TASK_LIST_ID when set.
+  # Claude names the list after the session, or CLAUDE_CODE_TASK_LIST_ID when set. A
+  # sandboxed review's Claude has none of this machine's variables (#1412).
+  defp task_list_id(%{turn: %{sandbox: true}} = state), do: state.session_id
+
   defp task_list_id(state) do
     instance = Entities.instance(state.turn.ids)
 
@@ -2478,6 +2498,8 @@ defmodule HalC2.Claude.ThreadRuntime do
   # when they cannot be read. The format is Claude's own and undocumented, so this is
   # best effort, and Claude's internal tasks are not the user's.
   defp stored_tasks(_state, nil), do: nil
+  # A sandboxed review's are in its sandbox.
+  defp stored_tasks(%{turn: %{sandbox: true}}, _list_id), do: nil
 
   # Reads only `<n>.json` files in Claude's own tasks folder; the list id is reduced to
   # `[a-zA-Z0-9_-]` first, so it cannot leave that folder.
@@ -3056,6 +3078,10 @@ defmodule HalC2.Claude.ThreadRuntime do
       )
 
   defp usage_instance(state), do: Map.get(state, :usage_instance) || "claudeAgent"
+
+  # Whether this runtime's Claude runs in a review sandbox (#1412), in a turn or after.
+  defp sandboxed?(state),
+    do: match?(%{sandbox: true}, state.turn) or match?(%{sandbox: true}, Map.get(state, :launch))
 
   # A state from before quota attribution was pinned at capture (upgraded
   # mid-turn) resolves it here, once, from the turn it is on: the running

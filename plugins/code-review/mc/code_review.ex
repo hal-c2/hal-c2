@@ -1599,8 +1599,9 @@ defmodule HalC2Plugins.CodeReview do
            %{} = project <-
              Enum.find(projects, &(&1["id"] == review["projectId"])) ||
                {:error, "The project of #{review["repository"]} is no longer on this MC."},
+           sandboxed = sandboxed?(settings, review),
            # Before the checkout, which nothing would remove if this failed after it.
-           {:ok, model} <- model(settings),
+           {:ok, model} <- model(settings, sandboxed),
            path =
              Path.join([
                Host.data_dir(@id),
@@ -1624,7 +1625,6 @@ defmodule HalC2Plugins.CodeReview do
                review["number"],
                review["baseBranch"]
              ),
-           sandboxed = sandboxed?(settings, review),
            :ok <-
              claim(key, thread_id, %{
                "checkout" => checkout["path"],
@@ -1704,7 +1704,6 @@ defmodule HalC2Plugins.CodeReview do
 
     with {:ok, _} <-
            Host.open_sandbox(@id, review["threadId"], %{
-             driver: driver(model["instanceId"]),
              instance: model["instanceId"],
              clone: clone,
              head_ref: "refs/hal-c2/code-review/#{number}/head",
@@ -1717,11 +1716,6 @@ defmodule HalC2Plugins.CodeReview do
              tokens: if(tokens > 0, do: tokens)
            }),
          do: :ok
-  end
-
-  defp driver(instance) do
-    {:ok, providers} = Host.providers(@id)
-    Enum.find_value(providers, &(&1["instanceId"] == instance && &1["driverKind"])) || instance
   end
 
   # Off the server: deleting a sandbox waits on OpenShell.
@@ -1778,7 +1772,11 @@ defmodule HalC2Plugins.CodeReview do
     )
   end
 
-  defp model(settings) do
+  # The review's model selection. The listing is of the agents installed on this
+  # machine; a sandboxed review's agent is the sandbox's (#1412), so one not
+  # installed here reviews with the model named in the settings, its options as
+  # picked, and needs one named only to have a model at all.
+  defp model(settings, sandboxed) do
     instance = settings["provider"]
     wanted = String.trim(settings["model"] || "")
     chosen = settings["modelOptions"] || %{}
@@ -1788,9 +1786,9 @@ defmodule HalC2Plugins.CodeReview do
     else
       {:ok, providers} = Host.providers(@id)
 
-      with %{"models" => models} <-
-             Enum.find(providers, &(&1["instanceId"] == instance)) ||
-               {:error, "There is no agent #{instance} on this MC."} do
+      listed = Enum.find(providers, &(&1["instanceId"] == instance))
+
+      with %{"models" => models} <- listing(listed, instance, sandboxed, wanted) do
         found = wanted != "" && Enum.find(models, &(&1["slug"] == wanted))
 
         cond do
@@ -1814,6 +1812,22 @@ defmodule HalC2Plugins.CodeReview do
             {:error, "#{instance} has no models; pick one in the settings."}
         end
       end
+    end
+  end
+
+  # The agent's listing on this MC, which a sandboxed review needs only for a model it
+  # does not name: a sandbox's agent runs its own CLI, not the one installed here.
+  defp listing(listed, instance, sandboxed, wanted) do
+    cond do
+      not sandboxed or match?(%{"models" => [_ | _]}, listed) ->
+        listed || {:error, "There is no agent #{instance} on this MC."}
+
+      wanted != "" ->
+        %{"models" => []}
+
+      true ->
+        {:error,
+         "#{instance} is not installed on this MC, so it cannot list its models. Install it here, or name the model to review with in the settings."}
     end
   end
 

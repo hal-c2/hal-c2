@@ -618,6 +618,145 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     save(context, %{"provider" => World.instance("Claude"), "model" => "claude-haiku-4-5"})
   end
 
+  step "{string} reviews with Claude on {string}", %{args: [@id, model]} = context do
+    claude(context, %{"model" => model})
+  end
+
+  step "{string} reviews with Claude on {string} at {word} effort",
+       %{args: [@id, model, effort]} = context do
+    claude(context, %{
+      "model" => model,
+      "modelOptions" => %{"effort" => effort}
+    })
+  end
+
+  step "{string} reviews with Claude on no model named", %{args: [@id]} = context do
+    claude(context, %{"model" => ""})
+  end
+
+  step "{string} asks Claude to review {string}", %{args: [@id, prompt]} = context do
+    claude(context, %{
+      "model" => "claude-haiku-4-5",
+      "prompt" => prompt
+    })
+  end
+
+  # Claude in a sandbox reviews on the MC's API key for Anthropic, which only its
+  # sandbox's provider gets.
+  defp claude(context, settings) do
+    World.put_env("ANTHROPIC_API_KEY", "sk-test-anthropic")
+    save(context, Map.put(settings, "provider", World.instance("Claude")))
+  end
+
+  # Each of these is this machine's alone, and none decides whether a sandbox's agent
+  # runs: a release that marks its Codex broken, a Claude too old for a model, or none.
+  step "this release marks the Codex on this machine broken", context do
+    World.put_app_env(:provider_compatibility, [
+      %{
+        "driver" => "codex",
+        "halC2Range" => ">=0",
+        "ranges" => [%{"range" => ">=0", "status" => "broken"}]
+      }
+    ])
+
+    context
+  end
+
+  step "the Claude on this machine is too old for {string}", context do
+    claude = Path.join(Mc.tmp_dir(context.mc, "old-claude"), "claude")
+    File.write!(claude, "#!/bin/sh\necho '2.1.0 (Claude Code)'\n")
+    File.chmod!(claude, 0o755)
+
+    World.update_settings(context, %{"providers" => %{"claudeAgent" => %{"binaryPath" => claude}}})
+  end
+
+  step "Claude is not installed on this machine", context do
+    World.put_app_env(:claude_command, ["hal-c2-test-no-claude"])
+    {:ok, providers} = HalC2.Plugins.Host.providers(@id)
+    refute Enum.any?(providers, &(&1["instanceId"] == "claudeAgent" and &1["installed"]))
+    context
+  end
+
+  # This machine's Claude skills, and task lists under its own list name and under the
+  # sandbox's session's, in the home this machine's Claude uses.
+  step "Claude on this machine has skills and task lists of its own", context do
+    home = Mc.tmp_dir(context.mc, "host-claude-home")
+
+    for {name, frontmatter} <- [
+          {"host-skill", "disable-model-invocation: true\n"},
+          {"other-skill", ""}
+        ] do
+      skill = Path.join([home, "skills", name])
+      File.mkdir_p!(skill)
+
+      File.write!(
+        Path.join(skill, "SKILL.md"),
+        "---\ndescription: Here only.\n#{frontmatter}---\nDo it.\n"
+      )
+    end
+
+    for list <- ["sandboxed-session", "host-list"] do
+      tasks = Path.join([home, "tasks", list])
+      File.mkdir_p!(tasks)
+      task = %{"id" => "1", "subject" => "A task here", "status" => "pending"}
+      File.write!(Path.join(tasks, "1.json"), JSON.encode!(task))
+    end
+
+    context
+    |> World.update_settings(%{
+      "providers" => %{
+        "claudeAgent" => %{
+          "homePath" => home,
+          "env" => %{"CLAUDE_CODE_TASK_LIST_ID" => "host-list"}
+        }
+      }
+    })
+    |> Map.put(:host_claude, home)
+  end
+
+  step "the sandboxed agent updates a task and reports its usage", context do
+    sandbox(context,
+      task_update: %{"taskId" => "1", "status" => "in_progress"},
+      rate_limit: %{
+        "rateLimitType" => "five_hour",
+        "utilization" => 0.66,
+        "resetsAt" => 1_790_000_000
+      }
+    )
+  end
+
+  step "its agent runs Claude in a sandbox on {string}", %{args: [model]} = context do
+    assert_receive {:sandbox_exec, ["claude" | args], %{workdir: "/sandbox/review"}}, 15_000
+    # The model as named, its context window (`[1m]`) aside.
+    models = for ["--model", named] <- Enum.chunk_every(args, 2, 1), do: named
+    assert Enum.map(models, &String.replace(&1, ~r/\[\w+\]$/, "")) == [model]
+    context
+  end
+
+  step "the sandboxed Claude is sent {string} as written", %{args: [prompt]} = context do
+    assert_receive {:sandbox_prompt, content}, 15_000
+
+    text =
+      content |> List.wrap() |> Enum.map_join("\n", &if(is_map(&1), do: &1["text"], else: &1))
+
+    assert text =~ prompt
+    refute text =~ context.host_claude
+    context
+  end
+
+  step "the review's thread shows none of this machine's Claude tasks", context do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.thread))
+    refute inspect(HalC2.StreamState.list(state, "plan")) =~ "A task here"
+    context
+  end
+
+  step "this machine's Claude usage is not the sandbox's", context do
+    if Process.whereis(HalC2.ProviderUsageLimits), do: :sys.get_state(HalC2.ProviderUsageLimits)
+    windows = (HalC2.ProviderUsageLimits.get("claudeAgent") || %{})["windows"] || []
+    refute 66.0 in Enum.map(windows, & &1["usedPercent"])
+    context
+  end
+
   step "its agent runs Claude in a sandbox with none of this machine's launch arguments, home or project environment",
        context do
     assert_receive {:sandbox_exec, ["claude" | args], %{environment: env}}, 15_000
