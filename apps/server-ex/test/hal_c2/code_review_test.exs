@@ -280,6 +280,41 @@ defmodule HalC2.CodeReviewTest do
              )
   end
 
+  test "a label added by someone trusted and someone untrusted at the same time does not start a review",
+       context do
+    save_settings(%{"label" => "ship-it"})
+
+    labeled = fn login ->
+      %{
+        "__typename" => "LabeledEvent",
+        "createdAt" => "2026-09-01T00:00:00Z",
+        "actor" => %{"__typename" => "User", "login" => login},
+        "label" => %{"name" => "ship-it"}
+      }
+    end
+
+    label = fn timeline, updated ->
+      rules!(context, head: 1, labels: ["ship-it"], updated: updated, timeline: timeline)
+      refresh()
+      review()
+    end
+
+    # Within one second GitHub's order says nothing of which came last, in either order.
+    for {timeline, at} <- [
+          {[labeled.("monalisa"), labeled.("stranger")], "2026-09-02T00:00:00Z"},
+          {[labeled.("stranger"), labeled.("monalisa")], "2026-09-03T00:00:00Z"}
+        ] do
+      assert %{"status" => "ready"} = review = label.(timeline, at)
+      refute review["trigger"]
+      %{"login" => last, "tied" => [%{"login" => tied}]} = review["trust"]["labeled"]
+      assert Enum.sort([last, tied]) == ["monalisa", "stranger"]
+    end
+
+    # The same trusted login twice is still trusted.
+    assert %{"trigger" => "label"} =
+             label.([labeled.("monalisa"), labeled.("monalisa")], "2026-09-04T00:00:00Z")
+  end
+
   test "a head pushed back to the commit reviewed is no longer changed since the review",
        context do
     review = start_review()

@@ -2335,7 +2335,8 @@ defmodule HalC2.PullRequests.GitHub do
   read for whoever last added `label` and last asked the viewer for a review, and nil
   where GitHub would not say. `comments` are the last hundred, each an actor with its
   `body` and `createdAt`; `labeled` and `requested` are that event's actor with its
-  `createdAt`, or nil.
+  `createdAt`, or nil, and when other events matched at the same time, `tied` lists
+  their actors who are someone else (an unreadable one with a nil `login`).
   """
   def trust(ctx, label \\ nil) do
     with {:ok, data} <- graphql(ctx, @trust_query, vars(ctx)),
@@ -2353,7 +2354,8 @@ defmodule HalC2.PullRequests.GitHub do
               "LabeledEvent",
               &(String.downcase(trimmed(get_in(&1, ["label", "name"])) || "") ==
                   String.downcase(label))
-            )
+            ),
+          else: {nil, []}
 
       requested =
         if viewer,
@@ -2362,7 +2364,8 @@ defmodule HalC2.PullRequests.GitHub do
               events,
               "ReviewRequestedEvent",
               &same_login?(get_in(&1, ["requestedReviewer", "login"]), viewer)
-            )
+            ),
+          else: {nil, []}
 
       {:ok,
        %{
@@ -2372,8 +2375,8 @@ defmodule HalC2.PullRequests.GitHub do
          "headOwner" => trimmed(get_in(pr, ["headRepositoryOwner", "login"])),
          "headSha" => trimmed(pr["headRefOid"]),
          "comments" => trust_comments(get_in(pr, ["comments", "nodes"]) || []),
-         "labeled" => event_actor(ctx, labeled, author),
-         "requested" => event_actor(ctx, requested, author)
+         "labeled" => event_actors(ctx, labeled, author),
+         "requested" => event_actors(ctx, requested, author)
        }}
     else
       {:error, _} = error -> error
@@ -2398,16 +2401,44 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  # The latest of the matching events, last in timeline order, and the others GitHub
+  # gives the same time: within one second its order cannot be relied on, so whoever
+  # made any of them may be the one who made the latest. `{nil, []}` when none match.
   defp last_event(events, type, match?) do
-    events
-    |> Enum.filter(&(is_map(&1) and &1["__typename"] == type and match?.(&1)))
-    |> Enum.max_by(&(HalC2.Projection.JS.epoch_ms(&1["createdAt"]) || 0), fn -> nil end)
+    matching =
+      Enum.filter(events, &(is_map(&1) and &1["__typename"] == type and match?.(&1)))
+
+    at = &(HalC2.Projection.JS.epoch_ms(&1["createdAt"]) || 0)
+
+    case matching do
+      [] ->
+        {nil, []}
+
+      _ ->
+        latest = matching |> Enum.map(at) |> Enum.max()
+        [last | tied] = matching |> Enum.filter(&(at.(&1) == latest)) |> Enum.reverse()
+        {last, tied}
+    end
+  end
+
+  # The latest event's actor, with `tied` holding the actors of the others at its time
+  # who are someone else; the trigger counts only if all of them are trusted.
+  defp event_actors(_ctx, {nil, _tied}, _author), do: nil
+
+  defp event_actors(ctx, {event, tied}, author) do
+    with %{"login" => login} = actor <- event_actor(ctx, event, author) do
+      others =
+        tied
+        |> Enum.reject(&same_login?(get_in(&1, ["actor", "login"]), login))
+        |> Enum.uniq_by(&String.downcase(get_in(&1, ["actor", "login"]) || ""))
+        |> Enum.map(&(event_actor(ctx, &1, author) || %{"login" => nil}))
+
+      if others == [], do: actor, else: Map.put(actor, "tied", others)
+    end
   end
 
   # The event's actor with their permission on the repository: GitHub gives events no
   # association. The author's own is their association already. Unreadable, nil.
-  defp event_actor(_ctx, nil, _author), do: nil
-
   defp event_actor(ctx, event, author) do
     case trust_actor(event["actor"], nil) do
       nil ->

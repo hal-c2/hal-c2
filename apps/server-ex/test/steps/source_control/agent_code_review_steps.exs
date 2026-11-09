@@ -217,6 +217,26 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> refresh()
   end
 
+  # GitHub gives both additions the same time, the author's first.
+  step "its author and someone who is not a member or collaborator add the label {string} to \#{int} in the same second",
+       %{args: [label, number]} = context do
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["collaborators/stranger/permission"],
+        "stdout" => %{"permission" => "read", "role_name" => "read"}
+      }
+    ])
+    |> open(number, %{
+      "labels" => [%{"name" => label, "color" => "0e8a16"}],
+      "labelEvents" => [
+        %{"label" => label, "by" => "octocat"},
+        %{"label" => label, "by" => "stranger"}
+      ]
+    })
+    |> refresh()
+  end
+
   step "\#{int} has the label {string} from someone who is not a member or collaborator, and once had {string} from its author",
        %{args: [number, label, earlier]} = context do
     context

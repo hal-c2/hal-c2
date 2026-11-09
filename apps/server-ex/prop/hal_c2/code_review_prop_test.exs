@@ -195,6 +195,12 @@ defmodule HalC2.CodeReviewPropTest do
     replay([{:label, ["acme/api#1"]}, {:save_mid_read, [{"label", "ship-it"}]}])
   end
 
+  # Also from hal-c2/hal-c2#1423: ship-it, added by monalisa and the untrusted hubot in
+  # the same second, starts no review on monalisa's say-so.
+  test "a trigger label added by someone trusted and someone untrusted at once starts no review" do
+    replay([{:save, [{"label", "ship-it"}]}, {:label, ["acme/api#1"]}, {:refresh, []}])
+  end
+
   # Also from hal-c2/hal-c2#1423: the user's asks took the author past the limit, so the
   # review the watch holds back, once a run is done and makes room, has room once the
   # newer start is a day old.
@@ -375,7 +381,7 @@ defmodule HalC2.CodeReviewPropTest do
         label: "agent-review"
       },
       # `labeled`: whether it carries both labels, agent-review added by monalisa and
-      # ship-it by hubot; `comment`: when hubot last commented the review command, as
+      # ship-it by hubot (and monalisa at the same time); `comment`: when hubot last commented the review command, as
       # `tick` counts the comments; `edits`: how often it changed, as `updatedAt` shows.
       prs:
         Map.new(
@@ -2445,6 +2451,9 @@ defmodule HalC2.CodeReviewPropTest do
                 "timelineItems" => %{
                   "nodes" => [
                     labeled("agent-review", "User", "monalisa"),
+                    # ship-it added by monalisa and hubot in the same second: which
+                    # came last cannot be told, so it stands on hubot too.
+                    labeled("ship-it", "User", "monalisa"),
                     labeled("ship-it", "Bot", "hubot")
                   ]
                 }

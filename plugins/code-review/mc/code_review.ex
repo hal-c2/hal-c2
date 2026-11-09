@@ -570,11 +570,11 @@ defmodule HalC2Plugins.CodeReview do
 
         if review["status"] in ~w(queued running publishing) or
              (review["reviewedSha"] == sha and review["verdict"] != nil),
-          do: {:reply, {:ok, nil}, state |> put(review) |> changed()} |> reply_snapshot(),
-          else:
-            {:reply, {:ok, nil},
-             state |> unpause() |> queue(review, "user") |> pump() |> changed()}
-            |> reply_snapshot()
+           do: {:reply, {:ok, nil}, state |> put(review) |> changed()} |> reply_snapshot(),
+           else:
+             {:reply, {:ok, nil},
+              state |> unpause() |> queue(review, "user") |> pump() |> changed()}
+             |> reply_snapshot()
 
       _ ->
         {:reply,
@@ -1616,12 +1616,12 @@ defmodule HalC2Plugins.CodeReview do
       _ ->
         cond do
           settings["reviewRequested"] && pr["reviewRequested"] &&
-              trusted?(settings, trust["requested"], trust["viewer"]) ->
+              trusted_event?(settings, trust["requested"], trust["viewer"]) ->
             "review requested"
 
           label != "" and
             Enum.any?(pr["labels"], &(String.downcase(&1) == String.downcase(label))) and
-              trusted?(settings, trust["labeled"], trust["viewer"]) ->
+              trusted_event?(settings, trust["labeled"], trust["viewer"]) ->
             "label"
 
           true ->
@@ -3137,6 +3137,14 @@ defmodule HalC2Plugins.CodeReview do
 
     same?(login, viewer) or Enum.any?(names, fn name -> Enum.any?(listed, &same?(&1, name)) end) or
       actor["association"] in @trusted_associations or actor["role"] in @trusted_roles
+  end
+
+  # Whether whoever made a label or review request event did so trusted: its actor, and
+  # everyone else GitHub gives an event at the same time, since which came last within
+  # a second cannot be told.
+  defp trusted_event?(settings, actor, viewer) do
+    trusted?(settings, actor, viewer) and
+      Enum.all?(List.wrap(actor["tied"]), &trusted?(settings, &1, viewer))
   end
 
   # Why the watch does not trust `review`'s pull request, or nil: someone untrusted

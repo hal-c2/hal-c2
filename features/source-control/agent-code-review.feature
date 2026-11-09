@@ -239,6 +239,12 @@ Feature: Agent code review
         | label           | someone who is not a member or collaborator adds the label "agent-review" to #12 |
 
     @mc
+    Scenario: A trigger label added by someone trusted and someone untrusted in the same second starts no review
+      Given "code-review" watches "acme/api" selectively with the trigger "label"
+      When its author and someone who is not a member or collaborator add the label "agent-review" to #12 in the same second
+      Then no review starts
+
+    @mc
     Scenario: Who added one label does not count for another
       Given "code-review" watches "acme/api" selectively with the trigger "label"
       And #12 has the label "ship-it" from someone who is not a member or collaborator, and once had "agent-review" from its author
