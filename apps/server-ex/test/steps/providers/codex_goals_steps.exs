@@ -23,6 +23,9 @@ defmodule HalC2.Steps.Providers.CodexGoals do
 
   step "the user sends {string} in a Codex thread", %{args: [input]} = context do
     context = World.fake_providers(context)
+    # The fake goes on with the goal at once, so no grace may run out between its turns:
+    # a slow runner took longer than the default five seconds and the goal was paused.
+    World.put_app_env(:codex_goal_grace_ms, 3_600_000)
 
     if status = @seeded[input],
       do: World.put_env("FAKE_CODEX_GOAL", JSON.encode!(%{objective: @objective, status: status}))

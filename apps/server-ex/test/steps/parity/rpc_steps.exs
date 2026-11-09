@@ -274,6 +274,10 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "provider.auth." <> _ ->
         {%{"instanceId" => "opencode", "flowId" => "hal-c2-none"}, context}
 
+      # Codex here is on the CLI's own login, so there is no account to move.
+      "provider.chatgpt.move" ->
+        {%{"instanceId" => "codex", "environmentId" => "hal-c2-none"}, context}
+
       # Started against a download that fails at once: the reply is the new state.
       "provider.install.start" ->
         {%{"instanceId" => "antigravity"}, managed_install(context)}
@@ -466,6 +470,24 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
       "provider.uploadFeedback" ->
         {%{"threadId" => f.thread, "reason" => "parity"}, context}
+
+      # A tool call with no app: the contract's not-an-app error.
+      "mcpApps." <> request ->
+        target = %{"threadId" => f.thread, "itemId" => "turn-item:parity"}
+
+        {case request do
+           "callTool" ->
+             Map.merge(target, %{"name" => "get", "arguments" => %{}})
+
+           "toolInfo" ->
+             Map.put(target, "name", "get")
+
+           "readResource" ->
+             Map.put(target, "uri", "ui://parity/app.html")
+
+           "updateModelContext" ->
+             Map.put(target, "content", [%{"type" => "text", "text" => "hi"}])
+         end, context}
 
       "vcs.init" ->
         {%{"cwd" => Mc.tmp_dir(context.mc, "fresh")}, context}
@@ -683,6 +705,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
           [HalC2.UsageLimitSources]
 
         "provider.auth." <> _ ->
+          provider_auth()
+
+        "provider.chatgpt.move" ->
           provider_auth()
 
         "provider.install." <> _ ->

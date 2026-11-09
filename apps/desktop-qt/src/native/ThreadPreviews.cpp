@@ -492,6 +492,7 @@ void ThreadPreviews::reload() {
                    }
                    m_epoch = list.value(QLatin1String("serverEpoch")).toString();
                    m_revision = list.value(QLatin1String("revision")).toInteger(-1);
+                   m_lastEvent.clear();
                    // What changed while the list was on its way, if the list is older: a tab already gone does not come back.
                    bool restarted = false;
                    for (const QJsonObject& event : std::exchange(m_early, {})) {
@@ -501,7 +502,17 @@ void ThreadPreviews::reload() {
                        continue;
                      }
                      const QString tabId = event.value(QLatin1String("tabId")).toString();
-                     if (revision <= m_revision || m_closing.contains(tabId)) continue;
+                     const bool closed = event.value(QLatin1String("type")).toString() == QLatin1String("closed");
+                     // The list covering the event leaves the rows right, but a close
+                     // the user is waiting on was still confirmed by it.
+                     if (revision <= m_revision) {
+                       if (closed) m_closing.remove(tabId);
+                       continue;
+                     }
+                     if (m_closing.contains(tabId)) {
+                       if (closed) m_closing.remove(tabId);
+                       continue;
+                     }
                      m_revision = revision;
                      const auto at = std::find_if(rows.begin(), rows.end(), [&](const QJsonObject& row) {
                        return row.value(QLatin1String("tabId")).toString() == tabId;
@@ -536,12 +547,15 @@ void ThreadPreviews::reload() {
                    }
                    setStatus(QStringLiteral("ready"));
                    remember(m_rows, false);
+                   emit listed();
                    if (restarted) reload();
                  });
 }
 
 void ThreadPreviews::onEvent(const QJsonObject& event) {
   if (event.value(QLatin1String("threadId")).toString() != m_thread) return;
+  // Heard from an environment that was out of reach: what was missed is listed.
+  if (std::exchange(m_unreached, false)) reload();
   if (m_listing) m_early.append(event);
   if (m_status != QLatin1String("ready")) return;
   const QString epoch = event.value(QLatin1String("serverEpoch")).toString();
@@ -554,7 +568,11 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
   if (revision <= m_revision) return;
   m_revision = revision;
   const QString tabId = event.value(QLatin1String("tabId")).toString();
-  if (m_closing.contains(tabId)) return;
+  if (m_closing.contains(tabId)) {
+    // Closed on the MC: a refusal of the user's close does not bring it back.
+    if (event.value(QLatin1String("type")).toString() == QLatin1String("closed")) m_closing.remove(tabId);
+    return;
+  }
   const int row = rowOf(tabId);
   const auto before = row < 0 ? std::nullopt : std::optional(m_rows.at(row));
   const auto next = after(event, before);
@@ -562,9 +580,11 @@ void ThreadPreviews::onEvent(const QJsonObject& event) {
     // A visit when the tab loads a page, not when the tab showing it is
     // resized or its back and forward change (the MC restamps those too).
     const bool loaded = !before || loadedUrl(*before) != loadedUrl(*next);
+    m_lastEvent.insert(tabId, event.value(QLatin1String("type")).toString());
     upsert(*next);
     remember({*next}, loaded);
   } else {
+    m_lastEvent.remove(tabId);
     remove(tabId);
   }
   // A tab someone opened just now (an agent, another window), not one listed.
@@ -591,30 +611,48 @@ QJsonObject ThreadPreviews::tab(const QString& tabId) const {
   return row < 0 ? QJsonObject() : m_rows.at(row);
 }
 
-void ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward) {
-  if (rowOf(tabId) < 0 || m_thread.isEmpty() || m_closing.contains(tabId)) return;
-  // The MC's event says it back; nothing to do with the answer.
+bool ThreadPreviews::report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward, std::function<void(Unheard)> unheard) {
+  if (rowOf(tabId) < 0 || m_thread.isEmpty() || m_closing.contains(tabId)) return false;
+  // The MC's event says it back.
   m_client->call(this, m_environment, QStringLiteral("preview.reportStatus"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread},
                              {QStringLiteral("tabId"), tabId},
                              {QStringLiteral("navStatus"), navStatus},
                              {QStringLiteral("canGoBack"), canGoBack},
                              {QStringLiteral("canGoForward"), canGoForward}},
-                 [](const QJsonValue&, const std::optional<QString>&) {});
+                 [this, unheard](const QJsonValue&, const std::optional<QString>& error) {
+                   if (!unheard) return;
+                   if (!error) return unheard(Unheard::Heard);
+                   // Only "not connected" (McClient had no socket) proves the MC
+                   // never had it. A connection that went with it written, a
+                   // cluster member that could not be reached, a failed erpc and a
+                   // timeout can all come after the MC took it (web/socket.ex): the
+                   // report and its echo stay, and the next word from the
+                   // environment lists the tabs again.
+                   if (*error == QLatin1String("not connected")) return unheard(Unheard::Unsent);
+                   const QString method = QStringLiteral("preview.reportStatus");
+                   if (*error == QLatin1String("disconnected") || McClient::unreachable(*error) || error->startsWith(QLatin1String("MC unavailable:")) ||
+                       *error == method + QStringLiteral(" timed out")) {
+                     m_unreached = true;
+                     return unheard(Unheard::Dropped);
+                   }
+                   unheard(Unheard::Refused);
+                 });
+  return true;
 }
 
-void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const QString&)> failed) {
-  if (rowOf(tabId) < 0 || m_thread.isEmpty()) return;
-  const int generation = m_generation;
+void ThreadPreviews::resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done) {
+  if (rowOf(tabId) < 0 || m_thread.isEmpty()) {
+    if (done) done(QStringLiteral("no such tab"));
+    return;
+  }
+  // The tab's new size comes in the MC's `resized` event, in order with the
+  // rest; the answer's snapshot may be older than an event read before it.
   m_client->call(this, m_environment, QStringLiteral("preview.resize"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}, {QStringLiteral("viewport"), viewport}},
-                 [this, generation, failed](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (error) {
-                     m_notify(QStringLiteral("error"), QStringLiteral("Could not resize the page"), *error);
-                     if (failed) failed(*error);
-                     return;
-                   }
-                   if (generation == m_generation && result.isObject() && m_status == QLatin1String("ready")) upsert(result.toObject());
+                 [this, done](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) m_notify(QStringLiteral("error"), QStringLiteral("Unable to resize browser viewport"), *error);
+                   if (done) done(error);
                  });
 }
 

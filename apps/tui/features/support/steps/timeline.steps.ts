@@ -864,15 +864,18 @@ step(
   },
 );
 
-// The fixtures are timed on the real clock, so a message's stamp reads `<time>`, day
-// included: a run just past midnight stamps a message `yesterday at 11:46 PM`.
-const TIME = String.raw`(?:yesterday at |\d{1,2}/\d{1,2}(?:/\d{2,4})? )?\d{1,2}:\d{2}(?: [AP]M)?`;
-const STAMP = new RegExp(`${TIME}$`);
+// The fixtures are timed on the real clock, so a message's stamp reads `<time>`.
+// Past midnight the stamp carries its day (src/timestampFormat.ts): `yesterday at `,
+// `m/d `, `m/d/yyyy `.
+const DAY = String.raw`(?:yesterday at |\d{1,2}/\d{1,2}(?:/\d{2,4})? )?`;
+const TIME = String.raw`\d{1,2}:\d{2}(?: [AP]M)?`;
+const STAMP = new RegExp(`${DAY}${TIME}$`);
+const USER_STAMP = new RegExp(`^ *${DAY}${TIME}$`);
 const unstamped = (rows: ReadonlyArray<string>) =>
   rows.map((row) => {
     const text = row.trimEnd();
     // A user message's stamp keeps its right edge, under the bubble.
-    if (new RegExp(`^ *${TIME}$`).test(text)) return "<time>".padStart(text.length);
+    if (USER_STAMP.test(text)) return "<time>".padStart(text.length);
     return /⧉ Copy · /.test(text) ? text.replace(STAMP, "<time>") : row;
   });
 

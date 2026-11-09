@@ -43,6 +43,9 @@ public:
   virtual QSize viewport() const = 0;
   // A fixed size in CSS pixels, or the space it is given (an empty size).
   virtual void setViewport(const QSize& size) = 0;
+  // Whether a size change is still outstanding, where setViewport would be
+  // ignored: the host refuses a resize then, rather than leave it unanswered.
+  virtual bool resizing() const { return false; }
   // Real input at a point of the page in CSS pixels, as the user's mouse would
   // give it; false when the page cannot take any (off screen).
   virtual bool click(const QPointF& point) = 0;
