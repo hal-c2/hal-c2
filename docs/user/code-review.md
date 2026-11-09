@@ -82,10 +82,13 @@ the queue instead of failing one by one, and the Reviews page says so.
 ## Reviews in a sandbox
 
 A review of a pull request HAL-C2 does not trust runs in a sandbox, and so does
-every review with **Sandbox every review** on. For now no pull request is trusted,
-so every review runs in one. A sandbox needs [OpenShell on the MC](openshell.md),
-and its agent must be Claude or Codex with an API key; any other agent, or an MC
-without OpenShell, fails the review and says what to set up.
+every review with **Sandbox every review** on. HAL-C2 trusts a pull request opened
+by a member or collaborator of the repository, or by one of your **Trusted logins**,
+unless its commits come from someone else's fork. With the switch off, reviews of the
+pull requests it trusts run on your machine. A sandbox needs
+[OpenShell on the MC](openshell.md), and its agent must be Claude or Codex with an API
+key; any other agent, or an MC without OpenShell, fails the review and says what to
+set up.
 
 The agent reviews a copy of the pull request's commits and has no access to your
 machine, your GitHub login or HAL-C2's tools. It reaches only its model's API and

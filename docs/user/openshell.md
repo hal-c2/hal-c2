@@ -2,8 +2,8 @@
 
 HAL-C2 runs the agent of a code review of an untrusted pull request inside a
 sandbox, so that the code under review cannot reach your files, your credentials or
-the rest of your machine. For now no pull request is trusted, so every review runs
-in one. The sandboxes come from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
+the rest of your machine, and with **Sandbox every review** on runs every review in
+one. The sandboxes come from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
 This page sets up its gateway: the MC installs it at a version HAL-C2 has checked,
 runs it as a service of your own user, and talks to it only over mutual TLS.
 
