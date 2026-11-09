@@ -13,7 +13,8 @@ defmodule HalC2.Claude.Budget do
   counted beyond every count reported in this process. A count that rises after a
   result, a subagent's progress coming late, was already in that result's, so the
   remainder reported then shrinks by as much, never below nothing. A resumed session's
-  CLI counts on from what it restored, so its first result only says where it began.
+  CLI counts on from what it restored, so its first result, less what this process's
+  counts reported by then, only says where it began.
   """
 
   # `result` is the last result's own count beyond `base` and the keys counted by then.
@@ -76,8 +77,10 @@ defmodule HalC2.Claude.Budget do
     total = Enum.sum(for {_model, %{} = usage} <- models, do: sum(usage, @model_usage))
 
     case budget.base do
+      # What this process's counts already reported stays theirs; the rest is where
+      # the resumed count began, with what it spent unreported until now.
       nil ->
-        {%{budget | base: total, counted: %{}}, []}
+        {%{budget | base: max(total - Enum.sum(Map.values(budget.counted)), 0)}, []}
 
       base ->
         budget = %{budget | result: {total - base, MapSet.new(Map.keys(budget.counted))}}
