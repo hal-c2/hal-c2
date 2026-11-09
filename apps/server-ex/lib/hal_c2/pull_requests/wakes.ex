@@ -230,8 +230,8 @@ defmodule HalC2.PullRequests.Wakes do
   @doc """
   What a thread has heard once it heard `snapshot`, told of `changes`. A snapshot that
   does not say (no checks, mergeability unknown) keeps what was heard; the review and
-  comment marker is kept only once snapshots carry it, so links synced before they did
-  are not woken for their whole history.
+  comment marker and the merge-queue removal marker are kept only once snapshots carry
+  them, so links synced before they did are not woken for their whole history.
   """
   def advance(heard, snapshot, changes) do
     checks = snapshot["checksState"] || heard["checksState"]
@@ -248,13 +248,17 @@ defmodule HalC2.PullRequests.Wakes do
         true -> heard["checksFailed"] == true
       end
 
-    next = %{
+    %{
       "state" => snapshot["state"] || heard["state"],
       "checksState" => checks,
       "mergeability" => mergeability,
       "checksFailed" => failed
     }
+    |> advance_activity(heard, snapshot)
+    |> advance_removal(heard, snapshot)
+  end
 
+  defp advance_activity(next, heard, snapshot) do
     cond do
       Map.has_key?(snapshot, "activity") ->
         Map.put(
@@ -273,19 +277,39 @@ defmodule HalC2.PullRequests.Wakes do
     end
   end
 
+  defp advance_removal(next, heard, snapshot) do
+    cond do
+      Map.has_key?(snapshot, "mergeQueueRemoval") ->
+        Map.put(
+          next,
+          "mergeQueueRemovalAt",
+          latest(heard["mergeQueueRemovalAt"], get_in(snapshot, ["mergeQueueRemoval", "at"]))
+        )
+
+      Map.has_key?(heard, "mergeQueueRemovalAt") ->
+        Map.put(next, "mergeQueueRemovalAt", heard["mergeQueueRemovalAt"])
+
+      true ->
+        next
+    end
+  end
+
   @doc """
   The news in `snapshot` for a thread that heard `heard`, oldest kind first: a merge
   or a close; while open, checks that went to failing, checks that pass again after
-  the thread heard they failed, and a conflict with the base branch; and a review or
-  comment newer than any it heard (`{:activity, activity}`). One by the signed-in
-  account counts only when none of the thread's `runs` was going as it was posted:
-  that one is the agent's own.
+  the thread heard they failed, a conflict with the base branch, and leaving the
+  merge queue (`{:left_merge_queue, reason}`) later than any removal it heard; and a
+  review or comment newer than any it heard (`{:activity, activity}`). One by the
+  signed-in account counts only when none of the thread's `runs` was going as it was
+  posted: that one is the agent's own. A removal is open-only news, so one whose pull
+  request then merged or closed is told as that, not as a queue failure.
   """
   def changes(heard, snapshot, runs \\ []) do
     state = snapshot["state"]
     open? = state == "open"
     new? = &(is_map(&1) and later?(&1["at"], heard["activityAt"]))
     own = snapshot["ownActivity"]
+    removal = snapshot["mergeQueueRemoval"]
 
     [
       state == "merged" and heard["state"] != "merged" and :merged,
@@ -296,6 +320,9 @@ defmodule HalC2.PullRequests.Wakes do
         :checks_passing,
       open? and snapshot["mergeability"] == "conflicting" and
         heard["mergeability"] != "conflicting" and :conflicting,
+      open? and Map.has_key?(heard, "mergeQueueRemovalAt") and is_map(removal) and
+        later?(removal["at"], heard["mergeQueueRemovalAt"]) and
+        {:left_merge_queue, removal["reason"]},
       Map.has_key?(heard, "activityAt") and new?.(snapshot["activity"]) and
         {:activity, snapshot["activity"]},
       Map.has_key?(heard, "activityAt") and new?.(own) and not during_run?(own["at"], runs) and
@@ -368,6 +395,7 @@ defmodule HalC2.PullRequests.Wakes do
         :conflicting -> "- It conflicts with its base branch."
         :merged -> "- It was merged."
         :closed -> "- It was closed without merging."
+        {:left_merge_queue, reason} -> "- " <> left_merge_queue(link, repository, number, reason)
         {:activity, activity} -> "- " <> said(activity)
       end)
 
@@ -380,6 +408,24 @@ defmodule HalC2.PullRequests.Wakes do
     `gh pr checks #{url}`.\
     """
   end
+
+  # The queue's checks run on its own commit, so the head stays green: name the queue
+  # run the agent should read, found by the queue branch's prefix.
+  defp left_merge_queue(link, repository, number, "failed_checks") do
+    base = get_in(link, ["snapshot", "baseBranch"]) || "main"
+
+    "It left the merge queue: its checks failed there. See the queue's run with " <>
+      "`gh run list --repo #{repository} --event merge_group " <>
+      "--json databaseId,headBranch,status,conclusion,url " <>
+      "--jq '.[] | select(.headBranch | startswith(\"gh-readonly-queue/#{base}/pr-#{number}-\"))'`, " <>
+      "then `gh run view <databaseId> --repo #{repository} --log-failed`."
+  end
+
+  defp left_merge_queue(_link, _repository, _number, reason) when is_binary(reason) do
+    "It left the merge queue (#{String.replace(reason, "_", " ")})."
+  end
+
+  defp left_merge_queue(_link, _repository, _number, _reason), do: "It left the merge queue."
 
   defp said(%{"kind" => "review"} = activity) do
     state = activity["state"] && String.replace(activity["state"], "_", " ")
@@ -395,12 +441,15 @@ defmodule HalC2.PullRequests.Wakes do
   defp label(:conflicting), do: "merge conflict"
   defp label(:merged), do: "merged"
   defp label(:closed), do: "closed"
+  defp label({:left_merge_queue, _}), do: "left merge queue"
   defp label({:activity, %{"kind" => "review"}}), do: "new review"
   defp label({:activity, _}), do: "new comment"
 
   defp outcome(changes) do
+    failed_queue? = {:left_merge_queue, "failed_checks"} in changes
+
     cond do
-      Enum.any?(changes, &(&1 in [:checks_failing, :conflicting])) -> "failed"
+      failed_queue? or Enum.any?(changes, &(&1 in [:checks_failing, :conflicting])) -> "failed"
       :closed in changes -> "cancelled"
       Enum.any?(changes, &(&1 in [:merged, :checks_passing])) -> "completed"
       true -> "updated"

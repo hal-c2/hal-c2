@@ -937,7 +937,7 @@ defmodule HalC2.PullRequests.GitHub do
 
   # `comments` and `reviews` are the marker `HalC2.PullRequests.Wakes` reads news from:
   # the last few of each, enough to find the newest from a trusted author (`activity/2`).
-  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
+  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } } mergeQueueEntry { state position } mergeQueueRemoval: timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { createdAt reason } } }"
 
   # Review bots whose reviews and comments count as a member's (logins without `[bot]`).
   @trusted_bots ~w(copilot-pull-request-reviewer copilot chatgpt-codex-connector)
@@ -990,7 +990,9 @@ defmodule HalC2.PullRequests.GitHub do
             "changedFiles" => pr["changedFiles"] || 0,
             "reviewDecision" => review_decision(pr["reviewDecision"], pr["latestReviews"]),
             "checksState" => rollup(head_rollup),
-            "mergeability" => mergeability(pr["mergeable"])
+            "mergeability" => mergeability(pr["mergeable"]),
+            "mergeQueue" => merge_queue(pr["mergeQueueEntry"]),
+            "mergeQueueRemoval" => merge_queue_removal(pr["mergeQueueRemoval"])
           }
           |> Map.merge(activity(pr, viewer))}
        end}
@@ -2741,6 +2743,22 @@ defmodule HalC2.PullRequests.GitHub do
       _ -> "unknown"
     end
   end
+
+  # Whether the pull request is in the merge queue now, and where; nil when it is not.
+  defp merge_queue(%{"state" => state, "position" => position})
+       when is_binary(state) and is_integer(position),
+       do: %{
+         "state" => state |> String.downcase() |> String.replace("_", "-"),
+         "position" => position
+       }
+
+  defp merge_queue(_), do: nil
+
+  # The latest time the pull request left the merge queue, and why; nil when it never has.
+  defp merge_queue_removal(%{"nodes" => [%{"createdAt" => at} = node | _]}) when is_binary(at),
+    do: %{"at" => at, "reason" => trimmed(node["reason"])}
+
+  defp merge_queue_removal(_), do: nil
 
   defp merge_method(value) do
     case up(value) do
