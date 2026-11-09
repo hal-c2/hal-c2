@@ -140,6 +140,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
       form: form,
       head: head,
       segment: segment,
+      # Its segment's place in the command, as `segments/1` gives them.
+      index: 0,
       hosts: Keyword.get(opts, :hosts, []),
       probe: Keyword.get(opts, :probe),
       outcome: nil,
@@ -316,7 +318,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
       cmd
       |> unwrap()
       |> segments()
-      |> Enum.reduce({[], "", "", ""}, fn seg, {obs, carried, here, cd} ->
+      |> Enum.with_index()
+      |> Enum.reduce({[], "", "", ""}, fn {seg, i}, {obs, carried, here, cd} ->
         # Transparent wrappers first: `K=V rtk pytest`, `rtk K=V pytest` and
         # `rtk proxy pytest` are all a pytest run.
         typed = String.trim(seg)
@@ -363,7 +366,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
                 case classify(head, base, rest, body, prefix, seg, call_index) do
                   nil -> {obs, carried, here, cd}
-                  o -> {obs ++ [%{o | env: assigned}], carried, here, cd}
+                  o -> {obs ++ [%{o | env: assigned, index: i}], carried, here, cd}
                 end
             end
         end
@@ -788,6 +791,16 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
   defp secret_var?(var), do: Regex.match?(@secret_var_re, var)
 
+  # A segment that cannot stop the work after it: an assignment, a directory
+  # change, an activation, or a command that only sets, reads or reports.
+  defp setup?(seg) do
+    seg = seg |> strip_env_assigns() |> String.trim()
+    head = seg |> String.split() |> List.first("") |> basename()
+
+    seg == "" or head in @passthrough or head in @inert_heads or Regex.match?(@cd_re, seg) or
+      Regex.match?(@activate_re, seg) or Regex.match?(@conda_activate_re, seg)
+  end
+
   # The assignments a command makes: each segment's leading `K=V`s, after an
   # `export` or `env` and around an `rtk`. Text that only looks like one, as
   # in `echo K=V` or a string in the code a command runs, sets nothing.
@@ -964,13 +977,28 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     homogeneous = n_seg == length(obs) and length(Enum.uniq(Enum.map(obs, & &1.intent))) == 1
     err = error_class(out)
 
+    # Which segments the call's status speaks for. Exit 0 proves a segment ran
+    # only when each operator after it is `&&`: `a || b`, `a; b` and `a | b`
+    # exit with what came last. A failed call ran its first work only when
+    # nothing before it could have stopped it (`test -f x && make`). A test run
+    # its output shows, the call's only one, ran whatever the status says.
+    {texts, seps} = cmd |> unwrap() |> split() |> Enum.unzip()
+    runners = Enum.count(obs, &(&1.intent == "run_tests"))
+    shown = fn o -> o.intent == "run_tests" and o.tests_ran and runners == 1 end
+
+    proven = fn o ->
+      shown.(o) or seps |> Enum.slice(o.index..-2//1) |> Enum.all?(&(&1 == "&&"))
+    end
+
+    reached = fn o -> shown.(o) or texts |> Enum.take(o.index) |> Enum.all?(&setup?/1) end
+
     obs =
       cond do
         err in @form_errors or err in @network_errors ->
-          attribute_error(obs, err, out, success)
+          attribute_error(obs, err, out, success, proven)
 
         success ->
-          Enum.map(obs, &%{&1 | outcome: "ran"})
+          Enum.map(obs, &%{&1 | outcome: if(proven.(&1), do: "ran")})
 
         # Neither its status nor its output shows anything (`... | head -n 0`):
         # what ran, if anything did, is unknown.
@@ -987,7 +1015,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
                    "package_tool",
                    "fetch_remote"
                  ] do
-                {%{o | outcome: if(first, do: "ran")}, false}
+                {%{o | outcome: if(first and reached.(o), do: "ran")}, false}
               else
                 {%{o | outcome: if(o.intent != "probe_vcs_refs", do: "ran")}, first}
               end
@@ -1027,7 +1055,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     end)
   end
 
-  defp attribute_error(obs, err, out, success) do
+  defp attribute_error(obs, err, out, success, proven) do
     targets =
       Enum.filter(
         obs,
@@ -1078,7 +1106,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         o in chosen or (chosen != [] and o.segment in chosen_calls and o in targets) ->
           %{o | outcome: err, not_found: missing != "" and basename(o.head) == missing}
 
-        success and o.outcome == nil ->
+        success and o.outcome == nil and proven.(o) ->
           %{o | outcome: "ran"}
 
         true ->

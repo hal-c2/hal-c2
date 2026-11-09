@@ -90,6 +90,34 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
              Observe.classify_command(~S(printf 'a\' ; pytest -q ; printf '; make build'))
   end
 
+  test "a call's status speaks only for the segments it covers" do
+    outcomes = fn command, output, code ->
+      Observe.observe_turn([bash(command, output, code)]).obs
+      |> Enum.map(&{&1.form, &1.outcome})
+    end
+
+    # A guard that failed stopped the build before it ran.
+    assert outcomes.("test -f Makefile && make build", "", 1) == [{"make build", nil}]
+
+    # Exit 0 after `||` or `;` is the last command's.
+    assert outcomes.("make build || cargo build", "make: *** No rule to make target", 0) ==
+             [{"make build", nil}, {"cargo build", "ran"}]
+
+    assert outcomes.("python -m pytest -q; true", "No module named 'pytest'", 0) ==
+             [{"python -m pytest", nil}]
+
+    # What a call's status does cover still ran.
+    assert outcomes.("cd src && make build && cargo build", "", 0) ==
+             [{"cd src && make build", "ran"}, {"cd src && cargo build", "ran"}]
+
+    assert outcomes.("pytest -q || python -m pytest -q", "pytest: command not found\n4 passed", 0) ==
+             [{"pytest", "command_missing"}, {"python -m pytest", "ran"}]
+
+    # A test run its output shows ran, whatever came before it.
+    assert outcomes.("source .venv/bin/activate && pytest -q", "1 failed, 3 passed", 1) ==
+             [{"pytest", "ran"}]
+  end
+
   test "classify forms and intents" do
     assert form(
              ~s(/bin/bash -lc "source /opt/env/bin/activate proj && python -m pytest tests -q")
