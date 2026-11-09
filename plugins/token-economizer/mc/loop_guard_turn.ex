@@ -330,7 +330,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # -q && bash scripts/check.sh`) may have changed the tree, or run a check of its own that
   # failed unread, so its pass is not taken, deliberately: a redirect there is the cost of
   # not reading the script. A comment or an escape could hide where the chain ends, so
-  # neither is read as one.
+  # neither is read as one. The commands before the check must also have run apart from
+  # it: an `eval`, or a `source`/`.` of anything but a file the turn did not write (a
+  # plain `venv/bin/activate`), runs in the check's own shell and may redefine the check.
   defp checked_last?(cmd, "own", 0, written) do
     {script, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
     script = String.trim_trailing(script)
@@ -351,7 +353,15 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
     case last_run do
       {from, _} when chain? ->
-        not ShellEdits.hides_check?(binary_part(script, from, byte_size(script) - from), written)
+        before = Enum.take_while(Enum.zip(starts, ends), fn {at, _} -> at < from end)
+
+        not Enum.any?(before, fn {at, to} ->
+          same_shell?(binary_part(script, at, to - at), written)
+        end) and
+          not ShellEdits.hides_check?(
+            binary_part(script, from, byte_size(script) - from),
+            written
+          )
 
       _ ->
         false
@@ -359,6 +369,26 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   end
 
   defp checked_last?(_, _, _, _), do: false
+
+  # Whether one command of a chain runs code in the chain's own shell that this did not
+  # read: `eval`, or a `source`/`.` of a file the turn wrote or of a word that is not a
+  # plain path. A group or subshell bracket is read as a space, so `(. x)` counts too.
+  defp same_shell?(segment, written) do
+    words =
+      Regex.replace(~r/[(){}]/, segment, " ")
+      |> String.split()
+      |> Enum.drop_while(&(&1 in ~w(builtin command) or Regex.match?(~r/^\w+=/, &1)))
+
+    case words do
+      ["eval" | _] -> true
+      [dot, file | _] when dot in ["source", "."] -> sourced_unread?(file, written)
+      [dot] when dot in ["source", "."] -> true
+      _ -> false
+    end
+  end
+
+  defp sourced_unread?(file, written),
+    do: not Regex.match?(~r{^[\w./-]+$}, file) or Path.basename(file) in written
 
   defp after_run(rest) do
     Enum.reduce_while(rest, "own", fn

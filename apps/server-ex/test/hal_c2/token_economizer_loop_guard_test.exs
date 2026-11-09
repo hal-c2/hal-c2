@@ -1659,6 +1659,27 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute TokenEconomizer.learns?(state.turns["a"], true)
     end
 
+    test "a check after an eval or a sourced script the turn wrote, in the same shell, is not its last word" do
+      # `run.sh` may define `pytest() { echo '1 passed'; }`: sourced or eval'd, it runs in
+      # the shell the check then runs in, so the check that follows may be its own.
+      for {cmd, learns} <- [
+            {". ./run.sh && pytest -q", false},
+            {"source run.sh && pytest -q", false},
+            {"source run.sh && echo ok && pytest -q", false},
+            {~s{eval "$CHECK" && bash run.sh && pytest -q}, false},
+            {~s{source "$SETUP" && bash run.sh && pytest -q}, false},
+            # A function the command defines is not read either.
+            {"pytest() { echo '1 passed'; } && bash run.sh && pytest -q", false},
+            # A file the turn did not write sources nothing it changed.
+            {". venv/bin/activate && bash run.sh && pytest -q", true}
+          ] do
+        state =
+          heard_turn([edited("/r/run.sh"), command(cmd, "1 passed in 0.02s", "completed")])
+
+        assert TokenEconomizer.learns?(state.turns["a"], true) == learns, cmd
+      end
+    end
+
     test "a command heard only in part after an edit is not read, so the turn is not learned" do
       capped = "cat > a.py <<'EOF'\n" <> String.duplicate("x = 1\n", 700) <> "EOF\npytest -q"
       failing = command(capped, "1 failed in 0.02s", "failed", %{"exitCode" => 1})
