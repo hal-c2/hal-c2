@@ -189,11 +189,7 @@ defmodule HalC2.Streams.Server do
     end
   end
 
-  defp raise_commit(error) do
-    if is_exception(error),
-      do: raise(error),
-      else: raise("the store could not record the changes: #{inspect(error)}")
-  end
+  defp raise_commit(error), do: raise(HalC2.Streams.Unrecorded.of(error))
 
   @doc "The stream's sequence: answering a command reads no history to get it."
   @spec sequence(GenServer.server()) :: non_neg_integer
@@ -347,7 +343,8 @@ defmodule HalC2.Streams.Server do
             {:reply, {:transacted, reply}, state, timeout(state)}
 
           {:reply, {:error, error}, state, _} ->
-            {:reply, {:raised, :error, error, []}, state, timeout(state)}
+            {:reply, {:raised, :error, HalC2.Streams.Unrecorded.of(error), []}, state,
+             timeout(state)}
         end
 
       {:raised, _kind, _reason, _stack} = raised ->

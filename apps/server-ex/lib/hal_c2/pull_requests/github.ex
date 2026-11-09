@@ -266,6 +266,36 @@ defmodule HalC2.PullRequests.GitHub do
   }
   """
 
+  # Who opened a pull request and who asked for its review, with the standing GitHub
+  # gives each in the repository (`trust/2`). Named, so a fake GitHub can tell it apart.
+  @trust_query """
+  query PullRequestTrust($owner: String!, $name: String!, $number: Int!) {
+    viewer { login }
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        author { __typename login }
+        authorAssociation
+        isCrossRepository
+        headRefOid
+        headRepositoryOwner { login }
+        comments(last: 100) { nodes { author { __typename login } authorAssociation body createdAt } }
+        timelineItems(last: 100, itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT]) {
+          pageInfo { hasPreviousPage }
+          nodes {
+            __typename
+            ... on LabeledEvent { createdAt actor { __typename login } label { name } }
+            ... on ReviewRequestedEvent {
+              createdAt
+              actor { __typename login }
+              requestedReviewer { ... on User { login } }
+            }
+          }
+        }
+      }
+    }
+  }
+  """
+
   @files_viewed_query """
   query($owner: String!, $name: String!, $number: Int!, $after: String) {
     repository(owner: $owner, name: $name) {
@@ -2295,6 +2325,190 @@ defmodule HalC2.PullRequests.GitHub do
              })
            )
   end
+
+  @doc """
+  Who stands behind a pull request, for deciding whether to act on it: `%{"viewer",
+  "author", "isCrossRepository", "headOwner", "headSha", "comments", "labeled",
+  "requested"}`. An actor is `%{"login", "isBot", "association", "role"}`:
+  `association` is GitHub's `authorAssociation` (`OWNER`, `MEMBER`, `COLLABORATOR`,
+  `CONTRIBUTOR`, `NONE`, ...), known for the author and each commenter; `role` is the
+  actor's permission on the repository (`admin`, `maintain`, `write`, `triage`, `read`),
+  read for whoever last added `label` and last asked the viewer for a review, and nil
+  where GitHub would not say. `comments` are the last hundred, each an actor with its
+  `body` and `createdAt`; `labeled` and `requested` are that event's actor with its
+  `createdAt`, or nil, and when other events matched at the same time, `tied` lists
+  their actors who are someone else (an unreadable one, or one the last hundred events
+  may have left out at that time, with a nil `login`). `isUser`
+  says the account is a user's: a bot or a mannequin of an import may have a user's
+  login, so only a user's login can name the viewer or a user, and only a user has a
+  `role` read.
+  """
+  def trust(ctx, label \\ nil) do
+    with {:ok, data} <- graphql(ctx, @trust_query, vars(ctx)),
+         %{} = pr <- get_in(data, ["repository", "pullRequest"]) do
+      viewer = trimmed(get_in(data, ["viewer", "login"]))
+      author = trust_actor(pr["author"], pr["authorAssociation"])
+      events = get_in(pr, ["timelineItems", "nodes"]) || []
+      label = trimmed(label)
+      # A full page GitHub does not say is all there is may have left older events out:
+      # those at its earliest time are not all seen.
+      cut =
+        if length(events) >= 100 and
+             get_in(pr, ["timelineItems", "pageInfo", "hasPreviousPage"]) != false,
+           do: events |> Enum.filter(&is_map/1) |> Enum.map(&event_at/1) |> Enum.min(fn -> 0 end)
+
+      labeled =
+        if label,
+          do:
+            last_event(
+              events,
+              cut,
+              "LabeledEvent",
+              &(String.downcase(trimmed(get_in(&1, ["label", "name"])) || "") ==
+                  String.downcase(label))
+            ),
+          else: {nil, []}
+
+      requested =
+        if viewer,
+          do:
+            last_event(
+              events,
+              cut,
+              "ReviewRequestedEvent",
+              &same_login?(get_in(&1, ["requestedReviewer", "login"]), viewer)
+            ),
+          else: {nil, []}
+
+      {:ok,
+       %{
+         "viewer" => viewer,
+         "author" => author,
+         "isCrossRepository" => pr["isCrossRepository"] == true,
+         "headOwner" => trimmed(get_in(pr, ["headRepositoryOwner", "login"])),
+         "headSha" => trimmed(pr["headRefOid"]),
+         "comments" => trust_comments(get_in(pr, ["comments", "nodes"]) || []),
+         "labeled" => event_actors(ctx, labeled, author),
+         "requested" => event_actors(ctx, requested, author)
+       }}
+    else
+      {:error, _} = error -> error
+      _ -> not_found(ctx)
+    end
+  end
+
+  defp trust_comments(nodes) do
+    for c <- nodes, is_map(c), actor = trust_actor(c["author"], c["authorAssociation"]) do
+      Map.merge(actor, %{"body" => c["body"] || "", "createdAt" => c["createdAt"]})
+    end
+  end
+
+  defp trust_actor(raw, association) do
+    with %{"login" => login} = actor <- actor(raw) do
+      %{
+        "login" => login,
+        "isBot" => actor["isBot"] == true,
+        "isUser" => raw["__typename"] == "User",
+        "association" => up(association),
+        "role" => nil
+      }
+    end
+  end
+
+  # The latest of the matching events, last in timeline order, and the others GitHub
+  # gives the same time: within one second its order cannot be relied on, so whoever
+  # made any of them may be the one who made the latest. `{nil, []}` when none match.
+  # At `cut`, the earliest time of a page with older events left out, some of those
+  # may be at the same time too: one unseen, with no actor, is among the tied.
+  defp last_event(events, cut, type, match?) do
+    matching =
+      Enum.filter(events, &(is_map(&1) and &1["__typename"] == type and match?.(&1)))
+
+    case matching do
+      [] ->
+        {nil, []}
+
+      _ ->
+        latest = matching |> Enum.map(&event_at/1) |> Enum.max()
+        [last | tied] = matching |> Enum.filter(&(event_at(&1) == latest)) |> Enum.reverse()
+        unseen = if cut != nil and latest <= cut, do: [%{"actor" => nil}], else: []
+        {last, tied ++ unseen}
+    end
+  end
+
+  defp event_at(event), do: HalC2.Projection.JS.epoch_ms(event["createdAt"]) || 0
+
+  # The latest event's actor, with `tied` holding the actors of the others at its time
+  # who are someone else; the trigger counts only if all of them are trusted.
+  defp event_actors(_ctx, {nil, _tied}, _author), do: nil
+
+  defp event_actors(ctx, {event, tied}, author) do
+    with %{} = actor <- event_actor(ctx, event, author) do
+      # Someone else is another account: a login and its kind, as a bot or a mannequin
+      # may have a user's login.
+      account =
+        &{get_in(&1, ["actor", "__typename"]),
+         String.downcase(get_in(&1, ["actor", "login"]) || "")}
+
+      others =
+        tied
+        |> Enum.reject(&(account.(&1) == account.(event)))
+        |> Enum.uniq_by(account)
+        |> Enum.map(&(event_actor(ctx, &1, author) || %{"login" => nil}))
+
+      if others == [], do: actor, else: Map.put(actor, "tied", others)
+    end
+  end
+
+  # The event's actor with their permission on the repository: GitHub gives events no
+  # association. A user who is the author has their association already. Only a user's
+  # is read, and a user goes by no other account's: the permission is read by login,
+  # and a bot, a mannequin of an import or any other kind of account may share its
+  # login with a user it is not. Unreadable, nil.
+  defp event_actor(ctx, event, author) do
+    case trust_actor(event["actor"], nil) do
+      nil ->
+        nil
+
+      %{"login" => login} = actor ->
+        user? = get_in(event, ["actor", "__typename"]) == "User"
+
+        actor =
+          cond do
+            user? and match?(%{"isUser" => true}, author) and
+                same_login?(login, author["login"]) ->
+              %{actor | "association" => author["association"]}
+
+            not user? ->
+              actor
+
+            true ->
+              case rest(ctx, "collaborators/#{encode(login)}/permission") do
+                {:ok, %{} = answer} ->
+                  %{actor | "role" => collaborator_role(answer)}
+
+                _ ->
+                  actor
+              end
+          end
+
+        Map.put(actor, "createdAt", event["createdAt"])
+    end
+  end
+
+  # A collaborator's role on the repository: one of GitHub's own, or for a custom
+  # role the base permission it extends, which is all a reader of it can go by.
+  # Neither known, nil.
+  @standard_roles ~w(admin maintain write triage read none)
+  defp collaborator_role(answer) do
+    role = trimmed(answer["role_name"])
+    if role in @standard_roles, do: role, else: trimmed(answer["permission"])
+  end
+
+  defp same_login?(a, b) when is_binary(a) and is_binary(b),
+    do: String.downcase(a) == String.downcase(b)
+
+  defp same_login?(_a, _b), do: false
 
   @doc "Who a review may be asked of, whoever is already asked first; never the author."
   def reviewer_candidates(ctx) do

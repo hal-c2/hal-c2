@@ -16,6 +16,7 @@ defmodule HalC2.CodexGoalRuntimeTest do
     # The test fires the grace itself.
     HalC2.Test.Env.put_app(:codex_goal_grace_ms, 3_600_000)
     HalC2.Test.Env.put_system("FAKE_CODEX_GOAL_STALL", "1")
+    on_exit(fn -> HalC2.Test.Machines.refuse_changes(nil) end)
 
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)
@@ -126,6 +127,56 @@ defmodule HalC2.CodexGoalRuntimeTest do
     assert is_binary(at)
   end
 
+  # Codex names the turn and thread each usage report is of. A report of another turn
+  # (one that ended before the running turn's start was answered, say) or of a thread
+  # that is not the conversation's is not the running turn's to keep, nor the meter's.
+  test "a running turn keeps only the usage Codex reports of it", %{work: work} do
+    thread_id = "thread-goal-usage-other"
+    start_goal_run(thread_id, work)
+
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    %{conn: conn, native_thread_id: native} = await_state(pid, &(&1.goal_hold != nil))
+
+    notify = fn method, params ->
+      send(
+        pid,
+        {:json_rpc, conn, {:notification, method, Map.put_new(params, "threadId", native)}}
+      )
+    end
+
+    notify.("turn/started", %{"turn" => %{"id" => "goal-turn-1", "status" => "inProgress"}})
+    GenServer.call(pid, :settle)
+    meter = provider_thread(thread_id)["contextUsage"]
+
+    notify.("thread/tokenUsage/updated", %{
+      "turnId" => "an-earlier-turn",
+      "tokenUsage" => %{"last" => %{"totalTokens" => 7}}
+    })
+
+    notify.("thread/tokenUsage/updated", %{
+      "threadId" => "another-thread",
+      "turnId" => "goal-turn-1",
+      "tokenUsage" => %{"last" => %{"totalTokens" => 9}}
+    })
+
+    GenServer.call(pid, :settle)
+    assert nil == attempt_turn(thread_id)["tokenUsage"]
+    assert meter == provider_thread(thread_id)["contextUsage"]
+
+    notify.("thread/tokenUsage/updated", %{
+      "turnId" => "goal-turn-1",
+      "tokenUsage" => %{"last" => %{"totalTokens" => 5}}
+    })
+
+    GenServer.call(pid, :settle)
+    assert %{"usedTokens" => 5} = attempt_turn(thread_id)["tokenUsage"]
+  end
+
+  defp provider_thread(thread_id) do
+    state = HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state()
+    state |> StreamState.list("provider-thread") |> List.first()
+  end
+
   # The provider turn the thread's run attempt names.
   defp attempt_turn(thread_id) do
     state = HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state()
@@ -160,6 +211,51 @@ defmodule HalC2.CodexGoalRuntimeTest do
         "dispatchMode" => %{"type" => "start_immediately"}
       })
   end
+
+  # The stop of a goal's run the store failed between its turns wrote the turn Codex had
+  # completed as interrupted.
+  test "a goal's run the store fails between turns fails, its completed turn kept",
+       %{work: work} do
+    thread_id = "thread-goal-unrecorded"
+    HalC2.Test.Env.put_app(:unrecorded_retry_ms, 20)
+    start_goal_run(thread_id, work)
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    %{conn: conn, native_thread_id: native} = await_state(pid, &(&1.goal_hold != nil))
+    assert ["completed"] = provider_turns(thread_id)
+
+    # Codex reports what the goal used so far, which the store refuses.
+    HalC2.Test.Machines.refuse_changes(thread_id)
+    goal = %{"objective" => "ship the fix", "status" => "active", "tokensUsed" => 10}
+    params = %{"threadId" => native, "goal" => goal}
+    send(pid, {:json_rpc, conn, {:notification, "thread/goal/updated", params}})
+    assert %{turn: nil, goal_hold: nil} = :sys.get_state(pid)
+    HalC2.Test.Machines.refuse_changes(nil)
+
+    assert %{"status" => "failed", "failure" => "The turn could not be saved" <> _} =
+             await_run(thread_id)
+
+    assert ["completed"] = provider_turns(thread_id)
+  end
+
+  # Wakes on the thread stream's commits until its one run ended.
+  defp await_run(thread_id) do
+    case runs(thread_id) do
+      [%{"status" => status} = run] when status in ~w(completed failed interrupted) ->
+        run
+
+      _ ->
+        assert_receive {:hal_c2_stream, _, _}, 5_000
+        await_run(thread_id)
+    end
+  end
+
+  defp provider_turns(thread_id),
+    do: Enum.map(list(thread_id, "provider-turn"), & &1["status"])
+
+  defp runs(thread_id), do: list(thread_id, "run")
+
+  defp list(thread_id, kind),
+    do: HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state() |> StreamState.list(kind)
 
   # Codex's answer to the activation came behind its reports of the goal turns it ran
   # and of the goal it completed in the last; dropping those as stale left the run

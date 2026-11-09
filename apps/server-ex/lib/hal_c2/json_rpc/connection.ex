@@ -9,7 +9,8 @@ defmodule HalC2.JsonRpc.Connection do
   closed its stdin fails so too, and `stop/1` of a stopped one is a no-op); with `:program` (the subprocess's
   name, as its user knows it) they fail with the exit instead, in the words that
   program's own client used (`"Codex App Server process exited with code 1"`, its code as
-  `"exitCode"`). With `:log` (a thread id), every
+  `"exitCode"`), and the connection stops with that error as its reason,
+  `{:shutdown, {:ended, error}}`, for a call that comes too late (`gone/2`). With `:log` (a thread id), every
   line the subprocess sends also goes to `HalC2.ProviderLog`. With `:stderr_prefix`,
   stderr lines starting with it reach the handler as `{:invalid, line}`, like a
   non-JSON stdout line, and are not logged; the rest of stderr is discarded. With
@@ -63,6 +64,44 @@ defmodule HalC2.JsonRpc.Connection do
   # connection already stopped exits (`:noproc`); `HalC2.Acp` treats that as closed.
   def call(conn, method, params, timeout \\ 30_000),
     do: GenServer.call(conn, {:call, method, params}, timeout)
+
+  @doc """
+  What a `call/4` that exited because the connection was gone failed with, for the
+  owner that started it linked and traps exits: the error its open calls failed with
+  as it stopped, `{:error, :closed}` when it stopped with none. A program that dies as
+  it starts stops its connection before the first call reaches it, and that call
+  exits (`:noproc`), with the exit and what the program printed only in the
+  connection's exit reason (`{:shutdown, {:ended, error}}`). The `{:EXIT, conn, _}`
+  is read for it and goes back to the mailbox. Any other exit (a timeout) exits again.
+  """
+  @spec gone(pid, term) :: {:error, term}
+  def gone(conn, {reason, {GenServer, :call, _}} = exit) do
+    case reason do
+      # It stopped while the call waited in its mailbox: the call exits with its reason.
+      {:shutdown, {kind, error}} when kind in [:ended, :write_failed] ->
+        {:error, error}
+
+      reason when reason in [:noproc, :normal] ->
+        receive do
+          {:EXIT, ^conn, why} = message ->
+            send(self(), message)
+
+            case why do
+              {:shutdown, {kind, error}} when kind in [:ended, :write_failed] -> {:error, error}
+              _ -> {:error, :closed}
+            end
+        after
+          # The link's exit is on its way, if not already here: this bounds an owner
+          # that broke the contract (not linked, or not trapping), never a wait for it.
+          1_000 -> {:error, :closed}
+        end
+
+      _ ->
+        exit(exit)
+    end
+  end
+
+  def gone(_conn, exit), do: exit(exit)
 
   @doc """
   Sends a call without waiting for its reply, adding it to `reqids` under `label`.
@@ -266,10 +305,16 @@ defmodule HalC2.JsonRpc.Connection do
   def handle_info({:subprocess_eof, _reader}, state) do
     # The exit status is read here, while the subprocess can still be asked, so a
     # call left open fails with the exit rather than a bare close.
-    state =
-      if state.program, do: ended(state, grace(state)), else: state
+    if state.program do
+      state = ended(state, grace(state))
 
-    {:stop, :normal, state}
+      case end_error(state) do
+        :closed -> {:stop, :normal, state}
+        error -> {:stop, {:shutdown, {:ended, error}}, state}
+      end
+    else
+      {:stop, :normal, state}
+    end
   catch
     :exit, _ -> {:stop, :normal, state}
   end
@@ -323,32 +368,34 @@ defmodule HalC2.JsonRpc.Connection do
   # names, marked `"ended" => true`: an error reply of the program's own never is.
   @impl true
   def terminate(_reason, state) do
-    error =
-      case {state.program, state.exit_status} do
-        {program, _} when is_binary(program) and state.input_ended ->
-          %{"message" => "#{program} input stream ended.", "ended" => true}
-
-        {program, status} when is_binary(program) and is_integer(status) ->
-          %{
-            "message" => "#{program} process exited with code #{status}",
-            "exitCode" => status,
-            "ended" => true
-          }
-          |> then(&if state.stderr != "", do: Map.put(&1, "stderr", state.stderr), else: &1)
-
-        _ when state.broken != nil ->
-          state.broken
-
-        _ ->
-          :closed
-      end
-
+    error = end_error(state)
     for {_id, from} <- state.pending, do: reply(state, from, {:error, error})
     # The subprocess may already be gone (its exit is why this connection stops).
     try do
       Subprocess.stop(state.sub)
     catch
       :exit, _ -> :ok
+    end
+  end
+
+  defp end_error(state) do
+    case {state.program, state.exit_status} do
+      {program, _} when is_binary(program) and state.input_ended ->
+        %{"message" => "#{program} input stream ended.", "ended" => true}
+
+      {program, status} when is_binary(program) and is_integer(status) ->
+        %{
+          "message" => "#{program} process exited with code #{status}",
+          "exitCode" => status,
+          "ended" => true
+        }
+        |> then(&if state.stderr != "", do: Map.put(&1, "stderr", state.stderr), else: &1)
+
+      _ when state.broken != nil ->
+        state.broken
+
+      _ ->
+        :closed
     end
   end
 

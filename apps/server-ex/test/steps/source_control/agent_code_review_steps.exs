@@ -195,27 +195,357 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   step "someone comments {string} on \#{int}", %{args: [body, number]} = context do
-    activity = %{
-      "author" => %{"login" => "octocat"},
-      "comments" => [
-        %{
-          "id" => "IC_1",
-          "author" => %{"login" => "hubot"},
-          "body" => body,
-          "createdAt" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "url" => "https://github.com/acme/api/pull/#{number}#issuecomment-1"
-        }
-      ],
-      "reviews" => [],
-      "commits" => []
-    }
+    comment(context, number, body, "MEMBER")
+  end
 
+  step "someone who is not a member or collaborator comments {string} on \#{int}",
+       %{args: [body, number]} = context do
+    comment(context, number, body, "NONE")
+  end
+
+  step "someone who is not a member or collaborator adds the label {string} to \#{int}",
+       %{args: [label, number]} = context do
     context
     |> World.cli_rules([
-      %{"args" => ["pr view #{number}", "author,comments"], "stdout" => activity}
+      %{
+        "args" => ["collaborators/stranger/permission"],
+        "stdout" => %{"permission" => "read", "role_name" => "read"}
+      }
     ])
-    |> open(number, %{"updatedAt" => "2026-09-03T00:00:00Z"})
+    |> open(number, %{
+      "labels" => [%{"name" => label, "color" => "0e8a16"}],
+      "labeledBy" => "stranger"
+    })
     |> refresh()
+  end
+
+  # GitHub gives both additions the same time, the author's first.
+  step "its author and someone who is not a member or collaborator add the label {string} to \#{int} in the same second",
+       %{args: [label, number]} = context do
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["collaborators/stranger/permission"],
+        "stdout" => %{"permission" => "read", "role_name" => "read"}
+      }
+    ])
+    |> open(number, %{
+      "labels" => [%{"name" => label, "color" => "0e8a16"}],
+      "labelEvents" => [
+        %{"label" => label, "by" => "octocat"},
+        %{"label" => label, "by" => "stranger"}
+      ]
+    })
+    |> refresh()
+  end
+
+  # GitHub gives the last hundred events, all in one second, and has older ones: one
+  # of those may be in that second too, by anyone.
+  step "its author adds the label {string} to \#{int} in the earliest second of the last hundred events GitHub gives of it, with older ones left out",
+       %{args: [label, number]} = context do
+    others = for n <- 1..99, do: %{"label" => "area-#{n}", "by" => "octocat"}
+
+    context
+    |> open(number, %{
+      "labels" => [%{"name" => label, "color" => "0e8a16"}],
+      "labelEvents" => [%{"label" => label, "by" => "octocat"} | others],
+      "timelineCut" => true
+    })
+    |> refresh()
+  end
+
+  step "\#{int} has the label {string} from someone who is not a member or collaborator, and once had {string} from its author",
+       %{args: [number, label, earlier]} = context do
+    context
+    |> World.cli_rules([
+      %{
+        "args" => ["collaborators/stranger/permission"],
+        "stdout" => %{"permission" => "read", "role_name" => "read"}
+      }
+    ])
+    |> open(number, %{
+      "labels" => [%{"name" => label, "color" => "0e8a16"}],
+      "labelEvents" => [
+        %{"label" => earlier, "by" => "octocat"},
+        %{"label" => label, "by" => "stranger"}
+      ]
+    })
+    |> refresh()
+  end
+
+  step "the user makes {string} the label that starts a review", %{args: [label]} = context do
+    context |> save(%{"label" => label}) |> refresh()
+  end
+
+  step "who stands behind \#{int} cannot be read", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["PullRequestTrust", ~s("number":#{number},)],
+        "stderr" => "HTTP 502: Bad Gateway\n",
+        "exit" => 1
+      }
+    ])
+  end
+
+  # --- who is trusted ----------------------------------------------------------------------
+
+  step "{string} watches {string} automatically and trusts {string}",
+       %{args: [@id, repo, login]} = context do
+    save(context, %{
+      "repositories" => [repo],
+      "activation" => "automatic",
+      "trustedLogins" => [login]
+    })
+  end
+
+  step "{string} watches {string} selectively with at most {int} review of each author a day",
+       %{args: [@id, repo, count]} = context do
+    save(context, %{
+      "repositories" => [repo],
+      "activation" => "selective",
+      "reviewsPerAuthorPerDay" => count
+    })
+  end
+
+  step "{string} watches {string} automatically with at most {int} review(s) of each author a day",
+       %{args: [@id, repo, count]} = context do
+    save(context, %{
+      "repositories" => [repo],
+      "activation" => "automatic",
+      "reviewsPerAuthorPerDay" => count
+    })
+  end
+
+  step "\#{int} by {string}, who is not a member or collaborator, is opened on {string}",
+       %{args: [number, author, _repo]} = context do
+    context |> untrusted(number, author) |> refresh()
+  end
+
+  step "\#{int} by {string}, who is not a member or collaborator, is listed",
+       %{args: [number, author]} = context do
+    context |> untrusted(number, author) |> refresh()
+  end
+
+  step "\#{int}, whose commits come from the fork of {string}, is opened on {string}",
+       %{args: [number, owner, _repo]} = context do
+    context
+    |> open(number, %{"isCrossRepository" => true, "headOwner" => owner})
+    |> refresh()
+  end
+
+  step "\#{int} is listed as not reviewed, saying {string}", %{args: [number, why]} = context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    review = review(snapshot, number)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    assert review["untrusted"] =~ why
+    context
+  end
+
+  step "the review of \#{int} says {string}", %{args: [number, why]} = context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    review = review(snapshot, number)
+    assert review["status"] not in ~w(queued running), inspect(review)
+    assert review["untrusted"] =~ why
+    context
+  end
+
+  step "the user asks for a review of \#{int} they have not approved",
+       %{args: [number]} = context do
+    {reply, context} =
+      plugin(context, "start", %{"repository" => context.repository, "number" => number})
+
+    context |> refresh() |> Map.put(:reply, reply)
+  end
+
+  step "the user approves \#{int} at its head commit", %{args: [number]} = context do
+    approve!(context, number)
+  end
+
+  step "the user approves \#{int} at an older commit", %{args: [number]} = context do
+    {reply, context} =
+      plugin(context, "approve", %{
+        "key" => key(context, number),
+        "headSha" => String.duplicate("0", 40)
+      })
+
+    context |> refresh() |> Map.put(:reply, reply)
+  end
+
+  step "the user approved \#{int} by {string}, who is not a member or collaborator, and it was reviewed",
+       %{args: [number, author]} = context do
+    context
+    |> save(%{"repositories" => [context.repository], "activation" => "automatic"})
+    |> untrusted(number, author)
+    |> refresh()
+    |> approve!(number)
+    |> started(number)
+    |> report(findings("approve", 1))
+    |> await_review!(number, &(&1["status"] == "waiting"))
+  end
+
+  step "the user approved \#{int} by {string}, who is not a member or collaborator, and its review is running",
+       %{args: [number, author]} = context do
+    context
+    |> save(%{"repositories" => [context.repository]})
+    |> untrusted(number, author)
+    |> refresh()
+    |> approve!(number)
+    |> started(number)
+  end
+
+  step "the agent of \#{int} reports two comments", context do
+    report(context, findings("comment", 2))
+  end
+
+  # Back at the commit it was reviewed, and approved, at.
+  step "\#{int} is pushed back to the commit the user approved", %{args: [number]} = context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    head = review(snapshot, number)["reviewedSha"]
+    assert is_binary(head)
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-05T00:00:00Z"})
+  end
+
+  step "the user asks to review \#{int} again", %{args: [number]} = context do
+    {reply, context} = plugin(context, "retry", %{"key" => key(context, number)})
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user withdraws the approval of \#{int}", %{args: [number]} = context do
+    {reply, context} = plugin(context, "unapprove", %{"key" => key(context, number)})
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "\#{int} is no longer waiting its turn", %{args: [number]} = context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    assert %{"status" => "ready"} = review = review(snapshot, number)
+    assert review["approved"] == nil
+    context
+  end
+
+  step "\#{int} is held back by the review limit, saying {string}",
+       %{args: [number, why]} = context do
+    {review, context} = await_review(context, number, &(&1["limited"] != nil))
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    assert review["limited"]["reason"] =~ why
+    assert {:ok, until, _} = DateTime.from_iso8601(review["limited"]["until"])
+    assert DateTime.compare(until, DateTime.utc_now()) == :gt
+    context
+  end
+
+  # --- what the user publishes --------------------------------------------------------------
+
+  step "the user looked at the review of \#{int}", %{args: [number]} = context do
+    Map.put(context, :seen, seen(context, number))
+  end
+
+  step "one comment is dismissed from another of the user's clients", context do
+    {reply, context} =
+      plugin(context, "dismiss", %{"key" => key(context, 12), "commentId" => "c1"})
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the user publishes the review of \#{int} as they saw it", context do
+    {reply, context} = plugin(context, "publish", context.seen)
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user publishes the review of \#{int} without the verdict it was shown to be posted with",
+       context do
+    {reply, context} = plugin(context, "publish", Map.delete(context.seen, "verdict"))
+    Map.put(context, :reply, reply)
+  end
+
+  step "nothing is posted to \#{int}", %{args: [number]} = context do
+    assert World.cli_calls(context, "pulls/#{number}/reviews") == []
+    context
+  end
+
+  step "the user dismisses one comment and reads what publishing the review of \#{int} would post",
+       %{args: [number]} = context do
+    {reply, context} =
+      plugin(context, "dismiss", %{"key" => key(context, number), "commentId" => "c1"})
+
+    assert {:ok, _} = reply
+    preview(context, number)
+  end
+
+  step "the user read what publishing the review of \#{int} would post",
+       %{args: [number]} = context do
+    preview(context, number)
+  end
+
+  # As reviews.json held a draft before findings were made safe where they are
+  # reported: no report version, and its text as an agent may have written it.
+  step "the review of \#{int} was saved before code review made findings safe, as its agent wrote them",
+       %{args: [number]} = context do
+    file = Path.join(HalC2.Plugins.Host.data_dir(@id), "reviews.json")
+    saved = file |> File.read!() |> JSON.decode!()
+    key = key(context, number)
+    raw = "@octocat ![x](https://example.com/x.png) <img src=x>\n```"
+
+    old =
+      saved["reviews"][key]
+      |> Map.delete("report")
+      |> Map.update!("summary", &(raw <> &1))
+      |> Map.update!("comments", fn cs -> Enum.map(cs, &%{&1 | "body" => raw <> &1["body"]}) end)
+
+    File.write!(file, JSON.encode!(put_in(saved, ["reviews", key], old)))
+    context
+  end
+
+  step "code review starts again", context do
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => @id})
+    context
+  end
+
+  step "the review of \#{int} shows no mention, image or markup as its agent wrote them",
+       %{args: [number]} = context do
+    {review, context} =
+      await_review(context, number, &(&1["status"] == "waiting" and &1["summary"] =~ "octocat"))
+
+    for text <- [review["summary"] | Enum.map(review["comments"], & &1["body"])] do
+      refute text =~ ~r/(?<![\w@])@(?=[\w-])/u
+      refute text =~ "!["
+      refute text =~ ~r/<[A-Za-z]/
+    end
+
+    context
+  end
+
+  step "what publishing the review of \#{int} would post is refused with {string}",
+       %{args: [number, message]} = context do
+    {reply, context} = plugin(context, "preview", %{"key" => key(context, number)})
+    assert {:error, _, _} = reply
+    assert inspect(reply) =~ message
+    context
+  end
+
+  step "the user publishes the review of \#{int} as previewed", %{args: [number]} = context do
+    input = Map.put(Map.take(context.preview, ~w(version verdict)), "key", key(context, number))
+    {reply, context} = plugin(context, "publish", input)
+    Map.put(context, :reply, reply)
+  end
+
+  step "\#{int} gets the review the preview showed", %{args: [number]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    posted = JSON.decode!(call["stdin"])
+    assert posted["body"] == context.preview["body"]
+
+    assert posted["event"] == "REQUEST_CHANGES" and
+             context.preview["verdict"] == "request-changes"
+
+    assert Enum.map(posted["comments"], &Map.take(&1, ~w(path line body))) ==
+             context.preview["comments"]
+
+    context
   end
 
   step "the user asks for a review of \#{int}", %{args: [number]} = context do
@@ -539,6 +869,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "pull requests are trusted and OpenShell is installed", context do
     context |> trust(true) |> gateway()
+  end
+
+  # For pull requests the scenario opens as untrusted itself, whose agents report as
+  # the scenario says.
+  step "review sandboxes can run on this MC", context do
+    context |> trust(true) |> gateway() |> sandbox(hang: true)
   end
 
   step "pull requests are not trusted", context do
@@ -922,6 +1258,60 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     Map.put(context, :report_result, result)
   end
 
+  step "the agent reports {int} comments", %{args: [count]} = context do
+    Map.put(context, :report_result, call_report(context, findings("comment", count)))
+  end
+
+  step "the agent reports a summary of {int} bytes", %{args: [bytes]} = context do
+    findings = %{"verdict" => "comment", "summary" => String.duplicate("a", bytes)}
+    Map.put(context, :report_result, call_report(context, findings))
+  end
+
+  step "the agent reports a comment of {int} bytes", %{args: [bytes]} = context do
+    findings =
+      put_in(
+        findings("comment", 1),
+        ["comments", Access.at(0), "body"],
+        String.duplicate("a", bytes)
+      )
+
+    Map.put(context, :report_result, call_report(context, findings))
+  end
+
+  step "the agent reports a comment on a path with a newline", context do
+    findings =
+      put_in(findings("comment", 1), ["comments", Access.at(0), "path"], "src/limits.ts\n# Ok")
+
+    Map.put(context, :report_result, call_report(context, findings))
+  end
+
+  step "the agent reports a summary that mentions {string} and {string}, shows an image and hides an HTML comment",
+       %{args: [team, user]} = context do
+    report(context, %{
+      "verdict" => "comment",
+      "summary" =>
+        "Ask #{team} and #{user}. ![build](https://example.com/pixel.png) " <>
+          ~s(<img src="https://example.com/a.png"> <!-- hidden -->),
+      "comments" => [%{"path" => "src/limits.ts", "line" => 1, "body" => "cc #{user}"}]
+    })
+  end
+
+  step "the review posted to \#{int} mentions nobody and has no image or HTML",
+       %{args: [number]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    review = JSON.decode!(call["stdin"])
+    # The marker code review finds its own reviews by is the one HTML it writes.
+    body = String.replace(review["body"], ~r/<!-- hal-c2-code-review:[^>]* -->/, "")
+    text = Enum.join([body | Enum.map(review["comments"], & &1["body"])], "\n")
+    refute text =~ ~r/(^|[^\w])@[\w-]/u
+    refute text =~ "!["
+    refute text =~ ~r/<[A-Za-z!\/?]/
+    # What the agent said is still there to read.
+    assert text =~ "acme/security" and text =~ "octocat"
+    context
+  end
+
   step "the agent is told its report needs a summary or a comment on the change", context do
     assert %{"isError" => true, "content" => [%{"text" => text}]} = context.report_result
     assert text =~ "summary must say what the review found"
@@ -1010,7 +1400,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert [%{"body" => first} | _] = review["comments"]
-    assert first =~ "🔴 **High:** Make the limit configurable."
+    assert first =~ "🔴 **High:**\n\nMake the limit configurable."
     assert review["body"] =~ "### Findings (2)"
     assert review["body"] =~ "🔴 **High:** `src/limits.ts:1`"
     assert first =~ "```suggestion\nexport const limit = configured();\n```"
@@ -1090,7 +1480,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert [%{"body" => body}] = review["comments"]
-    assert body == "🔵 **Low:** **Order:** This always allows."
+    assert body == "🔵 **Low:**\n\n**Order:** This always allows."
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
@@ -1258,7 +1648,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "the comment is kept in the review's summary instead of on the line", context do
     {review, context} = await_review(context, 12, &(&1["status"] == "waiting"))
     assert review["comments"] == []
-    assert review["summary"] == "Mostly fine.\n\n`src/other.ts:40`: Check the caller."
+    assert review["summary"] == "Mostly fine.\n\n`src/other.ts:40`:\n\nCheck the caller."
     context
   end
 
@@ -1622,6 +2012,28 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the user dismisses a comment of the review of \#{int} while it is being posted",
+       %{args: [number]} = context do
+    context = await_review!(context, number, &(&1["status"] == "publishing"))
+
+    {reply, context} =
+      plugin(context, "dismiss", %{"key" => key(context, number), "commentId" => "c1"})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user is told the comments stay as posted", context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "its comments stay as posted"
+    context
+  end
+
+  step "the review of \#{int} keeps both comments", %{args: [number]} = context do
+    review = review(GenServer.call(HalC2Plugins.CodeReview, :snapshot), number)
+    assert [%{"dismissed" => false}, %{"dismissed" => false}] = review["comments"]
+    context
+  end
+
   step "once GitHub has it, \#{int} has one review and it is marked as published",
        %{args: [number]} = context do
     context = context |> take_reviews() |> await_review!(number, &(&1["status"] == "published"))
@@ -1658,7 +2070,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   # The user's post waits for GitHub's answer, so it is sent from a process of its own.
   step "the user starts publishing the review of \#{int}", %{args: [number]} = context do
-    input = %{"id" => @id, "method" => "publish", "input" => %{"key" => key(context, number)}}
+    input = %{"id" => @id, "method" => "publish", "input" => seen(context, number)}
     spawn(fn -> HalC2.Plugins.handle("call", input) end)
     context
   end
@@ -1799,6 +2211,17 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   # plugin installed and a checkout of the same repository as a project of its own.
   # It shares this VM's fake GitHub and fake Codex gate. Its `reviews` topic is
   # watched from this process (`await_peer/3`).
+
+  # A member this MC admitted that has not connected since: no peer runs for it.
+  step "the user's machine {string} is in the cluster but has never been in reach",
+       %{args: [label]} = context do
+    World.put_app_env(:cluster_transport, HalC2.Test.ClusterTable)
+    Mc.ensure(HalC2.Cluster)
+    fingerprint = :crypto.hash(:sha256, label) |> Base.encode16(case: :lower)
+    entry = %{"id" => label, "fingerprint" => fingerprint, "label" => label, "addresses" => []}
+    {:ok, _} = HalC2.Cluster.admit(entry)
+    context
+  end
 
   step "the user's machine {string} in the cluster watches {string} automatically too",
        %{args: [label, repo]} = context do
@@ -2175,20 +2598,21 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     end
   end
 
-  # Whether this MC trusts pull requests; the scenarios' MC does unless one says not.
-  # No model's API key is in its environment, whatever the runner's holds, until
-  # `gateway/1` puts one there.
+  # Whether the pull requests the scenario opens are trusted; they are unless it says
+  # not, and then each is opened by someone who is not a member or collaborator and
+  # its review starts on the user's approval of its head (`start/2`). No model's API
+  # key is in the MC's environment, whatever the runner's holds, until `gateway/1`
+  # puts one there.
   defp trust(context, trusted) do
     World.put_os_env("OPENAI_API_KEY", nil)
     World.put_os_env("ANTHROPIC_API_KEY", nil)
 
     FakeOpenShell.put_env(
-      code_review_trust_all: trusted,
       openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
     )
 
     Mc.ensure(OpenShell.Review)
-    context
+    Map.put(context, :untrusted, not trusted)
   end
 
   # OpenShell installed: the fake gateway, its sandbox's agent playing `sandbox/2`'s
@@ -2303,6 +2727,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         "additions" => 5,
         "deletions" => 0
       })
+      |> Map.merge(if context[:untrusted], do: %{"authorAssociation" => "NONE"}, else: %{})
       |> Map.merge(context.prs[number] || %{})
       |> Map.merge(fields)
       |> Map.put("headRefOid", fields["headRefOid"] || context.heads[number])
@@ -2324,8 +2749,74 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         }
 
     context
-    |> World.cli_rules([listed, detail_rule(pr)])
+    |> World.cli_rules([
+      listed,
+      detail_rule(pr),
+      trust_rule(pr, context[:comments][number] || [])
+    ])
     |> Map.put(:prs, prs)
+  end
+
+  # GitHub's answer when code review reads who stands behind pull request `pr`: its
+  # author, a member unless `pr` says otherwise (`authorAssociation`), added each of
+  # its labels (or `labeledBy` did, or `labelEvents` say who added which) and asked for
+  # each of its reviews; its commits come from `headOwner`'s fork when it
+  # `isCrossRepository`; `comments` are its comments. A `timelineCut` timeline has
+  # older events than it gives.
+  defp trust_rule(pr, comments) do
+    author = %{"__typename" => "User", "login" => pr["author"]["login"]}
+    labeler = if by = pr["labeledBy"], do: %{"__typename" => "User", "login" => by}, else: author
+    at = pr["updatedAt"]
+
+    labeled =
+      if events = pr["labelEvents"],
+        do:
+          Enum.map(
+            events,
+            &{%{"name" => &1["label"]}, %{"__typename" => "User", "login" => &1["by"]}}
+          ),
+        else: Enum.map(pr["labels"], &{&1, labeler})
+
+    events =
+      Enum.map(
+        labeled,
+        fn {label, actor} ->
+          %{"__typename" => "LabeledEvent", "createdAt" => at, "actor" => actor, "label" => label}
+        end
+      ) ++
+        Enum.map(
+          pr["reviewRequests"],
+          &%{
+            "__typename" => "ReviewRequestedEvent",
+            "createdAt" => at,
+            "actor" => author,
+            "requestedReviewer" => &1
+          }
+        )
+
+    %{
+      "args" => ["api graphql"],
+      "stdin" => ["PullRequestTrust", ~s("number":#{pr["number"]},)],
+      "stdout" => %{
+        "data" => %{
+          "viewer" => %{"login" => "monalisa"},
+          "repository" => %{
+            "pullRequest" => %{
+              "author" => author,
+              "authorAssociation" => pr["authorAssociation"] || "MEMBER",
+              "isCrossRepository" => pr["isCrossRepository"] == true,
+              "headRefOid" => pr["headRefOid"],
+              "headRepositoryOwner" => %{"login" => pr["headOwner"] || "acme"},
+              "comments" => %{"nodes" => comments},
+              "timelineItems" => %{
+                "pageInfo" => %{"hasPreviousPage" => pr["timelineCut"] == true},
+                "nodes" => events
+              }
+            }
+          }
+        }
+      }
+    }
   end
 
   # GitHub's answer when pull request `pr` (as `gh pr list --json` gives it) is read on its own.
@@ -2362,10 +2853,57 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     head
   end
 
+  # Lists `number` as opened by `author`, whom GitHub calls neither a member nor a
+  # collaborator of the repository.
+  defp untrusted(context, number, author),
+    do: open(context, number, %{"author" => %{"login" => author}, "authorAssociation" => "NONE"})
+
+  # The user approves `number` at the head commit the Reviews page shows.
+  defp approve!(context, number) do
+    {reply, context} =
+      plugin(context, "approve", %{
+        "key" => key(context, number),
+        "headSha" => context.heads[number]
+      })
+
+    assert {:ok, snapshot} = reply
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  # Hubot, with the `association` GitHub gives them, comments `body` on `number`.
+  defp comment(context, number, body, association) do
+    comment = %{
+      "author" => %{"__typename" => "User", "login" => "hubot"},
+      "authorAssociation" => association,
+      "body" => body,
+      "createdAt" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    context
+    |> Map.update(
+      :comments,
+      %{number => [comment]},
+      &Map.update(&1, number, [comment], fn cs -> cs ++ [comment] end)
+    )
+    |> open(number, %{"updatedAt" => DateTime.utc_now() |> DateTime.to_iso8601()})
+    |> refresh()
+  end
+
   defp refresh(context) do
     {reply, context} = plugin(context, "refresh", %{})
     assert {:ok, snapshot} = reply
     Map.put(context, :snapshot, snapshot)
+  end
+
+  # A pull request nobody trusted starts on the user's approval of its head, once
+  # asking for its review read it.
+  defp start(%{untrusted: true} = context, number) do
+    {reply, context} =
+      plugin(context, "start", %{"repository" => context.repository, "number" => number})
+
+    assert {:error, message, _} = reply
+    assert message =~ "Approve it on the Reviews page"
+    approve!(context, number)
   end
 
   defp start(context, number) do
@@ -2471,8 +3009,31 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   defp publish(context, number) do
-    {reply, context} = plugin(context, "publish", %{"key" => key(context, number)})
+    {reply, context} = plugin(context, "publish", seen(context, number))
     Map.put(context, :reply, reply)
+  end
+
+  # What publishing the review of `number` would post, as the user is shown it.
+  defp preview(context, number) do
+    {reply, context} = plugin(context, "preview", %{"key" => key(context, number)})
+    assert {:ok, preview} = reply
+    assert [_ | _] = preview["comments"]
+    Map.put(context, :preview, preview)
+  end
+
+  # The review of `number` as the user sees it, to publish: its key and its version.
+  # The review as the user saw it before publishing: its findings' version and, read
+  # when it waits to be published, the verdict its post goes with.
+  defp seen(context, number) do
+    review = review(GenServer.call(HalC2Plugins.CodeReview, :snapshot), number)
+    shown = %{"key" => key(context, number), "version" => review["version"]}
+
+    preview = %{"id" => @id, "method" => "preview", "input" => %{"key" => shown["key"]}}
+
+    case HalC2.Plugins.handle("call", preview) do
+      {:ok, %{"verdict" => verdict}} -> Map.put(shown, "verdict", verdict)
+      _ -> shown
+    end
   end
 
   defp take_reviews(context) do

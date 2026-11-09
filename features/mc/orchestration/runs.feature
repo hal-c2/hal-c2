@@ -23,6 +23,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch_message, new_run, begin_turn, release_session)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (begin_turn, interrupt)
+#   https://github.com/hal-c2/hal-c2/issues/1285 (a stop that ends an unrecorded turn, #1398)
 #   apps/server-ex/proof/models/turns.maude
 #   apps/server/src/orchestration-v2/ (run lifecycle)
 #   apps/server/src/orchestration-v2/RunExecutionService.ts (interrupt outcome, open subagents, bare
@@ -254,7 +255,7 @@ Feature: Runs and turns
 
   # Upstream #23169: a full disk or a database error failed the run while the provider kept
   # working, and every follow-up failed because the old provider turn was still running.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A run whose events cannot be recorded stops its provider turn
     Given "t1" has a running turn
     When the MC fails to record the turn's events
@@ -262,7 +263,7 @@ Feature: Runs and turns
     And "t1" can take its next message in the same provider conversation
 
   # Upstream #19646: a run whose failure could not be written stayed running after storage recovered.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A run failure that could not be recorded is recorded once storage recovers
     Given "t1" has a running turn
     When the MC fails to record the turn's events and then fails to record the run's failure
@@ -270,28 +271,131 @@ Feature: Runs and turns
     Then the run is recorded as failed at the time it failed
     And "t1" no longer shows a running turn
 
+  # hal-c2#1398: a command that started and ended after the store failed was never recorded,
+  # and its end, decided against what the store held, crashed the runtime and its session.
+  @mc
+  Scenario: A run whose events cannot be recorded goes on from what it could not record
+    Given "t1" has a running turn
+    When the MC fails to record a command the turn starts and ends
+    Then the run is failed and the provider turn is interrupted together
+    And "t1" can take its next message in the same provider conversation
+
   # Upstream #23169: a follow-up first stops the provider turn an earlier failed run left running.
-  @backlog @mc
+  @mc
   Scenario: A follow-up first stops a provider turn an earlier failed run left running
     Given an earlier run of "t1" failed while its provider turn kept running
     When the user sends "t1" another message
     Then the left-over provider turn is interrupted first
     And the new turn runs in the same provider conversation
 
+  # hal-c2#1398: Codex answering the stop was taken for the left-over turn's end, so the
+  # follow-up started while Codex kept the old turn running.
+  @mc
+  Scenario: A follow-up whose stop of a left-over provider turn Codex ignores fails
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When the user sends "t1" another message and Codex keeps the left-over turn running
+    Then the new run fails because the previous turn is still running
+    And the left-over provider turn still reads as running
+
+  # hal-c2#1398: Codex ending a turn it kept running past the stop while the store refused
+  # the thread's writes left that provider turn reading as running, its run long failed.
+  @mc
+  Scenario: A left-over provider turn that ends while the MC cannot record it reads as ended once storage recovers
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When Codex ends the left-over turn while the MC cannot record it
+    And the database recovers
+    Then the left-over provider turn reads as interrupted
+
+  # hal-c2#1398: the follow-up held for that turn's end could not start either, and its
+  # runtime stopped with the left-over turn's end still unrecorded.
+  @mc
+  Scenario: A follow-up held for a left-over turn that ends while the MC cannot record it fails, the turn ended
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When the user sends "t1" another message and the left-over turn ends while the MC cannot record it
+    And the database recovers
+    Then the new run fails because it could not be saved
+    And the left-over provider turn reads as interrupted
+
+  # hal-c2#1398: while the follow-up waited for the left-over turn to end, what Codex
+  # reported of that turn was recorded as the follow-up's, and its approvals asked for it.
+  @mc
+  Scenario: A follow-up waiting on a left-over provider turn does not take that turn's reports
+    Given an earlier run of "t1" failed while its provider turn kept running
+    When the user sends "t1" another message and the left-over turn reports before it ends
+    Then the left-over provider turn is interrupted first
+    And the new run records nothing the left-over turn reported
+
   # Upstream #22846: the failure path wrote a turn that had already completed or failed as
-  # interrupted, and wrote it even when the interrupt itself failed.
-  @backlog @mc @priority-high
+  # interrupted, and wrote it even when the interrupt itself failed. hal-c2#1398: a Codex
+  # goal's turn that completed, its run waiting for Codex's next, read as interrupted.
+  @mc @priority-high
   Scenario Outline: A run whose events cannot be recorded keeps how its provider turn ended
     Given the provider turn of "t1" <state>
     When the MC fails to record the turn's events and interrupts the provider turn
     Then the provider turn reads as <outcome>
 
     Examples:
-      | state                    | outcome                                         |
-      | had already completed    | completed                                       |
-      | had already failed       | failed                                          |
-      | was still running        | interrupted                                     |
-      | could not be interrupted | running, so the next message stops it first     |
+      | state                                     | outcome                                     |
+      | had already completed                     | completed                                   |
+      | had already completed toward a Codex goal | completed                                   |
+      | had already failed                        | failed                                      |
+      | was still running                         | interrupted                                 |
+      | could not be interrupted                  | running, so the next message stops it first |
+
+  # hal-c2#1285: a turn that ended inside the user's stop (Muse refusing it, so the MC
+  # closed its host) left the failure on the runtime for the thread's next run, which
+  # then lost its first event or failed with the old failure.
+  @mc
+  Scenario: A run whose events cannot be recorded leaves the next run to record as usual
+    Given a Muse Code turn is running on a Muse that keeps its turn when the MC stops it
+    When the MC fails to record the Muse Code turn's events
+    And the user stops the Muse Code turn and Muse refuses
+    Then the Muse Code run is failed because it could not be saved
+    When the next message to Muse Code fails to open its session
+    Then that run fails with Muse Code's own reason
+    And the message after it runs and its reply is recorded
+
+  # hal-c2#1398: Muse answering the MC's stop of a turn the store could not record, and
+  # then never ending it, left the run running for good.
+  @mc
+  Scenario: A run whose events cannot be recorded ends when Muse Code does not end its stopped turn
+    Given a Muse Code turn is running on a Muse that keeps its turn when the MC stops it
+    And Muse Code has half a second to end a turn the MC stopped
+    When the MC fails to record the Muse Code turn's events
+    And Muse Code does not end the turn the MC stopped
+    Then the Muse Code run is failed because it could not be saved
+    And the next message to Muse Code runs and its reply is recorded
+
+  # hal-c2#1398: an ACP agent other than Antigravity that never answered the MC's stop of a
+  # turn the store could not record had no deadline, and left the run running for good.
+  @mc
+  Scenario: A run whose events cannot be recorded ends when an ACP agent never answers its stop
+    Given a Grok turn is running on a Grok that never answers the MC's stop
+    And Grok has half a second to answer a stop
+    When the MC fails to record the Grok turn's events
+    Then the Grok run is failed because it could not be saved
+    And the next message to Grok runs and its reply is recorded
+
+  # Review of hal-c2#1398: the MC stops a Grok that never answers its stop, which ends the
+  # background work it kept from earlier turns, but the run's end recorded later left that
+  # work running.
+  @mc
+  Scenario: A run whose events cannot be recorded ends the background work its stopped ACP agent took with it
+    Given a Grok turn is running on a Grok that never answers the MC's stop, after a turn that left a command running in the background
+    And Grok has half a second to answer a stop
+    When the MC fails to record the Grok turn's events
+    Then the Grok run is failed because it could not be saved
+    And the earlier Grok turn's background command is failed
+
+  # hal-c2#1398: a Pi turn that had shown output and went on after the MC's abort of it,
+  # when the store could not record it, had no deadline and left the run running.
+  @mc
+  Scenario: A run whose events cannot be recorded ends when Pi goes on after its abort
+    Given a Pi turn that has shown output is running on a Pi that ignores the MC's abort
+    And Pi has half a second to end a turn the MC aborted
+    When the MC fails to record the Pi turn's events
+    Then the Pi run is failed because it could not be saved
+    And the next message to Pi runs and its reply is recorded
 
   @mc
   Scenario: A provider session that cannot be opened fails the run
@@ -588,6 +692,9 @@ Feature: Runs and turns
   # A failure the provider itself reports is not this case: there the subagents carry on in their
   # own threads (providers/codex.feature, "A failed Codex turn does not hold the thread for its
   # subagents"). Here the provider process is gone, so nothing can report the subagent again.
+  # A store that refused the runtime's own end of the subagent leaves it to the run's end recorded
+  # once storage recovers (hal-c2#1398), as does a provider process that exits before then, even
+  # after the turn completed.
   @mc
   Scenario Outline: A turn that does not complete ends the provider subagents it left open
     Given "t1" has a running turn with a provider subagent still at work
@@ -596,10 +703,20 @@ Feature: Runs and turns
     And nothing of the subagent is left streaming
 
     Examples:
-      | cause                        | status      |
-      | the user interrupts it       | interrupted |
-      | its provider process exits   | failed      |
-      | its thread is deleted        | cancelled   |
+      | cause                                                                                             | status      |
+      | the user interrupts it                                                                            | interrupted |
+      | its provider process exits                                                                        | failed      |
+      | its thread is deleted                                                                             | cancelled   |
+      | the MC cannot record it or its subagent's thread until storage recovers                           | failed      |
+      | it completes while the MC cannot record it and its provider process exits before storage recovers | failed      |
+
+  # hal-c2#1398: a completed Codex turn leaves its subagents at work in their own threads, and
+  # the run's end recorded once storage recovered ended them anyway.
+  @mc
+  Scenario: A completed turn the MC cannot record leaves its provider subagents at work
+    Given "t1" has a running turn with a provider subagent still at work
+    When the turn completes while the MC cannot record it, until storage recovers
+    Then the run is failed while the subagent, its item on the turn and the work in its own thread run on
 
   @backlog @mc
   Scenario Outline: Only a bare compact command compacts the conversation

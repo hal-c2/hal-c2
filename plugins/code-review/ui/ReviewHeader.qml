@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
@@ -25,6 +26,11 @@ Rectangle {
     property bool stopping: false
     // Why the last publish from here failed, until the review changes.
     property string refusal: ""
+    // What publishing would post (the MC's `preview`), shown for the user to confirm;
+    // null while it is being read.
+    property var preview: null
+    property int previewAsk: 0
+    readonly property string version: review?.version ?? ""
 
     // Follows `threads` on the MC of the thread, which a header keeps while the
     // user moves between review threads.
@@ -38,14 +44,46 @@ Rectangle {
         header.watching = header.plugin.watch("threads", value => header.threads = value ?? {}, environment || undefined);
     }
 
-    function publish() {
-        header.publishing = true;
+    // Reads what publishing would post, for the confirmation; an older answer, from
+    // before the review changed, is dropped.
+    function readPreview() {
+        const ask = ++header.previewAsk;
+        header.preview = null;
+        header.plugin.call("preview", {
+            key: header.review.key
+        }, (result, error) => {
+            if (ask !== header.previewAsk)
+                return;
+            if (error) {
+                header.refusal = error;
+                confirmation.close();
+            } else {
+                header.preview = result;
+            }
+        }, header.followed || undefined);
+    }
+
+    function askToPublish() {
         header.refusal = "";
-        header.plugin.call("publish", { key: header.review.key }, (result, error) => {
+        header.readPreview();
+        confirmation.open();
+    }
+
+    // Publishes what the confirmation showed: its version and verdict, which the MC
+    // refuses to post anything else under.
+    function publish() {
+        const shown = header.preview;
+        confirmation.close();
+        header.publishing = true;
+        header.plugin.call("publish", {
+            key: header.review.key,
+            version: shown.version,
+            verdict: shown.verdict
+        }, (result, error) => {
             header.publishing = false;
             if (error)
                 header.refusal = error;
-        });
+        }, header.followed || undefined);
     }
 
     function stop() {
@@ -79,12 +117,12 @@ Rectangle {
         }
     }
 
-    function verdictText() {
-        if (header.verdict === "approve")
+    function verdictText(verdict) {
+        if (verdict === "approve")
             return qsTr("Approve");
-        if (header.verdict === "request-changes")
+        if (verdict === "request-changes")
             return qsTr("Request changes");
-        if (header.verdict === "comment")
+        if (verdict === "comment")
             return qsTr("Comment");
         return "";
     }
@@ -93,7 +131,17 @@ Rectangle {
     visible: review !== null
     implicitHeight: review !== null ? column.implicitHeight + 16 : 0
     color: Theme.palette.color("surface", "#18181b")
-    onStatusChanged: refusal = ""
+    onStatusChanged: {
+        refusal = "";
+        if (status !== "waiting")
+            confirmation.close();
+    }
+    // A review that changes while its confirmation is open is read again, so what is
+    // confirmed is what is posted.
+    onVersionChanged: {
+        if (confirmation.opened)
+            readPreview();
+    }
     onThreadChanged: follow()
     Component.onCompleted: follow()
 
@@ -122,6 +170,7 @@ Rectangle {
             Text {
                 objectName: "codeReviewPullRequest"
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: header.review ? qsTr("Review of #%1 %2").arg(header.review.number).arg(header.review.title ?? "") : ""
                 color: header.foreground
                 elide: Text.ElideRight
@@ -132,7 +181,7 @@ Rectangle {
             Text {
                 objectName: "codeReviewVerdict"
                 visible: text.length > 0
-                text: header.verdictText()
+                text: header.verdictText(header.verdict)
                 color: header.tone
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
@@ -144,7 +193,7 @@ Rectangle {
                 primary: true
                 enabled: header.status === "waiting" && !header.publishing
                 text: enabled ? qsTr("Publish") : qsTr("Publishing…")
-                onClicked: header.publish()
+                onClicked: header.askToPublish()
             }
 
             ShellButton {
@@ -165,6 +214,7 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
+            textFormat: Text.PlainText
             text: {
                 const review = header.review;
                 if (review === null)
@@ -181,11 +231,132 @@ Rectangle {
         Text {
             objectName: "codeReviewProblem"
             Layout.fillWidth: true
+            textFormat: Text.PlainText
             visible: text.length > 0
             text: header.refusal || header.review?.publishError || (header.status === "failed" ? header.review?.error ?? "" : "")
             color: header.errorColor
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+    }
+    Popup {
+        id: confirmation
+
+        objectName: "codeReviewConfirmPublish"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        // Takes the keyboard, so Escape closes it; focus goes back where it was.
+        focus: true
+        padding: 16
+        width: Math.min(560, (parent?.width ?? 592) - 32)
+        height: Math.min(implicitHeight, (parent?.height ?? 600) - 64)
+        background: Rectangle {
+            radius: Math.min(Theme.radius, 10)
+            color: Theme.palette.color("surface", "#18181b")
+            border.color: Theme.palette.color("border", "#27272a")
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Text {
+                Layout.fillWidth: true
+                textFormat: Text.PlainText
+                text: header.review ? qsTr("Publish the review of #%1 on GitHub?").arg(header.review.number) : ""
+                color: header.foreground
+                wrapMode: Text.Wrap
+                font.pixelSize: Math.round(14 * Theme.fontScale)
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                objectName: "codeReviewConfirmVerdict"
+                Layout.fillWidth: true
+                textFormat: Text.PlainText
+                text: header.preview ? qsTr("Posted as: %1").arg(header.verdictText(header.preview.verdict)) : qsTr("Reading what will be posted…")
+                color: header.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: Math.min(posted.implicitHeight, 420)
+                contentWidth: availableWidth
+                visible: header.preview !== null
+
+                ColumnLayout {
+                    id: posted
+
+                    width: parent.width
+                    spacing: 8
+
+                    Text {
+                        objectName: "codeReviewConfirmBody"
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                        text: header.preview?.body ?? ""
+                        color: header.foreground
+                        wrapMode: Text.Wrap
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    Repeater {
+                        model: header.preview?.comments ?? []
+
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            required property int index
+
+                            objectName: "codeReviewConfirmComment:" + index
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Text {
+                                Layout.fillWidth: true
+                                textFormat: Text.PlainText
+                                text: modelData.line ? "%1:%2".arg(modelData.path).arg(modelData.line) : modelData.path
+                                color: header.muted
+                                elide: Text.ElideMiddle
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                textFormat: Text.PlainText
+                                text: modelData.body
+                                color: header.foreground
+                                wrapMode: Text.Wrap
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                            }
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                ShellButton {
+                    subtle: true
+                    text: qsTr("Cancel")
+                    onClicked: confirmation.close()
+                }
+
+                ShellButton {
+                    objectName: "codeReviewConfirmPublishButton"
+                    primary: true
+                    enabled: header.preview !== null && header.status === "waiting"
+                    text: qsTr("Publish")
+                    onClicked: header.publish()
+                }
+            }
         }
     }
 }

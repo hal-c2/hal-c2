@@ -168,6 +168,38 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     context
   end
 
+  step "a Codex thread working on a turn", context do
+    context = context |> World.fake_providers() |> World.launch_on(@thread, "codex", "wait")
+    # The run turns running as the runtime hears which turn Codex started.
+    World.await_running(context, @thread)
+    context
+  end
+
+  step "Codex reports the turn used {int} tokens", %{args: [used]} = context do
+    {_pid, %{native_thread_id: native, turn: %{native_turn_id: turn}}} =
+      World.codex_runtime(context, @thread)
+
+    usage(context, native, turn, used)
+  end
+
+  step "then reports the usage of an earlier turn and of another thread, and the turn ends",
+       context do
+    {_pid, %{native_thread_id: native, turn: %{native_turn_id: turn}}} =
+      World.codex_runtime(context, @thread)
+
+    context
+    |> usage(native, "an-earlier-turn", 7)
+    |> usage("another-thread", turn, 9)
+    |> World.complete_codex_turn(@thread)
+  end
+
+  step "the plugin hears the turn end with {int} tokens used", %{args: [used]} = context do
+    assert %{"type" => "turn.finished", "tokenUsage" => %{"usedTokens" => ^used}} =
+             List.last(heard([]))
+
+    context
+  end
+
   # --- what the plugin hears ----------------------------------------------------------
 
   step "the plugin hears the turn start as a new conversation", context do
@@ -557,6 +589,14 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     |> World.fake_providers()
     |> World.run_turns(@thread, Map.fetch!(@instances, provider), texts)
     |> Map.put(:texts, texts)
+  end
+
+  defp usage(context, thread, turn, used) do
+    World.codex_notify(context, @thread, "thread/tokenUsage/updated", %{
+      "threadId" => thread,
+      "turnId" => turn,
+      "tokenUsage" => %{"last" => %{"totalTokens" => used}, "modelContextWindow" => 200_000}
+    })
   end
 
   # The scenario's thread and its last run.

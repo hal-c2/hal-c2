@@ -116,6 +116,14 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  Who opened a pull request and who asked for its review, with the standing GitHub
+  gives each (`HalC2.PullRequests.trust/1`). Needs `pullRequests:read`.
+  """
+  def pull_request_trust(id, ref) do
+    with :ok <- permit(id, "pullRequests:read"), do: HalC2.PullRequests.trust(ref)
+  end
+
+  @doc """
   Opens a pull request of `cwd`'s checkout with `gh pr create` from `fields`:
   `repository`, `base`, `head`, `title` and `body`. Needs `pullRequests:write`. It is
   something asked for, so it goes through a rate limit pause (`HalC2.GitHub.asked/1`). `{:ok, stdout}`, which names the new pull request,
@@ -265,19 +273,46 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   Calls `function` of the plugin's MC part with `args` on every other machine of
-  the cluster connected now that runs the plugin, all at once:
-  `[%{"machine" => label, "node" => node, "result" => result}]`. A machine that
-  does not answer within `timeout`, does not run the plugin, or runs a version
-  without `function` (or without this call) is left out, as one out of reach is,
-  so a plugin that defers to its peers keeps working alone.
+  the cluster connected now, all at once:
+  `[%{"machine" => label, "node" => node, "result" => result}]`. One that does not
+  run the plugin, or runs a version without `function`, answers `:none`. One out of
+  reach, or that runs a version without this call, is left out, so a plugin that
+  defers to its peers keeps working alone. One still connected that does not answer
+  within `timeout`, or fails to, answers `:unanswered`: it may hold anything, so a
+  plugin that defers to it waits for it as for one that cannot say.
   """
   def peers(id, function, args, timeout \\ 5_000) do
     nodes = Node.list()
     results = :erpc.multicall(nodes, __MODULE__, :peer, [id, function, args], timeout)
 
-    for {node, {:ok, {:ok, answer}}} <- Enum.zip(nodes, results),
-        do: Map.put(answer, "node", to_string(node))
+    answers =
+      for {node, result} <- Enum.zip(nodes, results),
+          answer = answer(result),
+          do: Map.put(answer, "node", to_string(node))
+
+    if Enum.any?(answers, &(&1["result"] == :unanswered)) do
+      labels = cluster_machines(id)
+
+      Enum.map(answers, fn
+        %{"result" => :unanswered, "node" => node} = answer ->
+          Map.put(answer, "machine", labels[node] || node)
+
+        answer ->
+          answer
+      end)
+    else
+      answers
+    end
   end
+
+  defp answer({:ok, {:ok, %{} = answer}}), do: answer
+  # An MC from before `peer/3` named its machine says only `:none` for a plugin it
+  # does not run, or a function that plugin lacks.
+  defp answer({:ok, :none}), do: %{"result" => :none}
+  defp answer({:ok, _other}), do: nil
+  defp answer({:error, {:erpc, :noconnection}}), do: nil
+  defp answer({:error, {:exception, :undef, [{__MODULE__, :peer, _, _} | _]}}), do: nil
+  defp answer(_silent), do: %{"result" => :unanswered}
 
   @doc false
   def peer(id, function, args) do
@@ -285,8 +320,52 @@ defmodule HalC2.Plugins.Host do
          true <- function_exported?(module, function, length(args)) do
       {:ok, %{"machine" => HalC2.Environment.label(), "result" => apply(module, function, args)}}
     else
-      _ -> :none
+      _ -> {:ok, %{"machine" => HalC2.Environment.label(), "result" => :none}}
     end
+  end
+
+  @doc """
+  Whether the machine `node` (as `peers/4` names it) is no longer one this machine
+  is clustered with: removed, switched off, or this MC's cluster is off. False when
+  the cluster does not run here, or the node is not an MC's.
+  """
+  def left_cluster?(_id, node) do
+    with ["hal_c2", host] <- node |> to_string() |> String.split("@", parts: 2),
+         pid when pid != nil <- Process.whereis(HalC2.Cluster) do
+      member = String.replace_suffix(host, ".hal-c2", "")
+
+      case HalC2.Cluster.status() do
+        %{"clustered" => true, "members" => members} ->
+          not Enum.any?(members, &(&1["id"] == member and not &1["off"]))
+
+        _ ->
+          true
+      end
+    else
+      _ -> false
+    end
+  catch
+    :exit, _ -> false
+  end
+
+  @doc """
+  The other machines of this machine's cluster, by node as `peers/4` names it, with
+  their labels: every member not switched off, whether it is in reach now or has
+  never been. Empty when the cluster does not run here or is off.
+  """
+  def cluster_machines(_id) do
+    case Process.whereis(HalC2.Cluster) && HalC2.Cluster.status() do
+      %{"clustered" => true, "members" => members} ->
+        for %{"id" => member} = entry <- members,
+            not entry["off"],
+            into: %{},
+            do: {to_string(HalC2.Cluster.mc_name(member)), entry["label"] || member}
+
+      _ ->
+        %{}
+    end
+  catch
+    :exit, _ -> %{}
   end
 
   @doc """

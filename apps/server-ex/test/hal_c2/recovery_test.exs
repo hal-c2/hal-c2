@@ -239,6 +239,51 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert {"thread", %{"runningBackgroundTasks" => []}} = HalC2.Shell.row(node(), "t2")
   end
 
+  # Review of #1398: a subagent the last turn resumed is that turn's background work,
+  # though an earlier run started it (`NativeSubagent.run/1`).
+  test "the note at boot names a subagent the last turn resumed" do
+    :ok = HalC2.Shell.subscribe(self())
+    at = "2026-09-23T10:00:00.000Z"
+    run = &%{"s" => %{"id" => &1, "ordinal" => &2, "status" => "completed", "completedAt" => at}}
+    open = %{"runId" => "r1", "status" => "running"}
+
+    {:ok, _} =
+      HalC2.Streams.commit("t2", :thread, [
+        {"thread", "t2",
+         %{"s" => %{"id" => "t2", "title" => "Quiet", "createdAt" => at, "updatedAt" => at}}},
+        {"run", "r1", run.("r1", 1)},
+        {"run", "r2", run.("r2", 2)},
+        {"subagent", "s1",
+         %{
+           "s" =>
+             Map.merge(open, %{
+               "id" => "s1",
+               "origin" => "provider_native",
+               "resumedRunId" => "r2"
+             })
+         }},
+        {"turn-item", "turn-item:subagent:s1",
+         %{
+           "s" =>
+             Map.merge(open, %{
+               "id" => "turn-item:subagent:s1",
+               "type" => "subagent",
+               "nodeId" => "s1",
+               "title" => "Review the diff",
+               "ordinal" => 0
+             })
+         }}
+      ])
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"t2", {"thread", %{"runningBackgroundTasks" => [_]}}}]}},
+                   1_000
+
+    assert Recovery.run() == ["t2"]
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t2"))
+    assert StreamState.get(state, "thread")["t2"]["restartNote"] =~ "Review the diff"
+  end
+
   test "a delegated task is left running at boot, as it settles with its own thread" do
     :ok = HalC2.Shell.subscribe(self())
     at = "2026-09-23T10:00:00.000Z"

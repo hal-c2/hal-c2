@@ -6,7 +6,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   # once when a machine leaves or :peer_claims says no other machine has a review left
   # to it. Machines crash, partition and have their plugin restart; checkouts fail, the
   # agent hits its usage limit, which pauses its machine and keeps its queue from the
-  # others, and the pull request gets a push.
+  # others, and the pull request gets a push. Apart, two or three machines count their
+  # starts against the review limits under a lock of their own, with what the others
+  # started, and run them once those in reach heard.
   # prop/hal_c2/code_review_claims_prop_test.exs runs the code one step at a time; this
   # explores every interleaving between machines up to the bounds.
   @reads "answers from the plugin's state; changes no claim"
@@ -16,6 +18,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   @look "the parts of a look the model leaves out: which pull requests, their sizes and comments; it has one pull request, automatically reviewed"
   @agent "the review thread and its agent; the model's runs end when they claim or step back"
   @host "a host function no claim or post goes through"
+  @trust "who stands behind a pull request and the user's approval of one; the model's pull request is trusted"
 
   use HalC2.Proof,
     model: "code_review_claims.maude",
@@ -35,7 +38,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.claims/1" => ~w(peers started defer post peer-claims restartingBy),
       "HalC2Plugins.CodeReview.claims_changed/0" => ~w(note peer-claims),
       "HalC2Plugins.CodeReview handle_call {:looked, _}" => ~w(polled pump),
-      "HalC2Plugins.CodeReview handle_call {:publish, _}" =>
+      "HalC2Plugins.CodeReview handle_call {:publish, _, _, _}" =>
         ~w(publish post-lock post refused covered),
       "HalC2Plugins.CodeReview handle_call {:published, _, _, _}" => "published",
       "HalC2Plugins.CodeReview handle_call {:report, _, _}" => "report",
@@ -56,12 +59,21 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview state :polling" => "poll",
       "HalC2Plugins.CodeReview state :paused_until" => ~w(paused shareOf pump resume),
       "HalC2Plugins.CodeReview state :claimed_at" => ~w(started older polled),
+      "HalC2Plugins.CodeReview handle_call {:budget, _, _, _}" =>
+        ~w(count count-lock bblocked admit over toldOf restartingOf membersOf ledgers join plus without part),
+      "HalC2Plugins.CodeReview handle_call {:told, _, _, _, _}" => ~w(counted untold),
+      "HalC2Plugins.CodeReview handle_call {:count_start, _}" => ~w(tell join),
+      "HalC2Plugins.CodeReview.starts/0" => ~w(admit over ledgers),
+      "HalC2Plugins.CodeReview.count_start/1" => ~w(tell heard counted),
+      "HalC2Plugins.CodeReview state :starts" => ~w(bm join count),
+      "HalC2Plugins.CodeReview state :machines" => ~w(bm plus membersOf without part),
       "HalC2Plugins.CodeReview.Checkout.prepare/5" => ~w(checkout claim lock),
       "HalC2Plugins.CodeReview.Checkout.remove/2" => "defer",
       "HalC2.Plugins.Host.peers/4" =>
-        ~w(peers started defer post peer-claims note heldBy restart),
+        ~w(peers started defer post peer-claims note heldBy restart admit tell toldOf restartingOf muted),
       "HalC2.Plugins.Host.peer/3" => ~w(hardBy softBy publishedBy),
-      "HalC2.Plugins.Host.pull_requests/3" => ~w(peers post)
+      "HalC2.Plugins.Host.pull_requests/3" => ~w(peers post),
+      "HalC2.Plugins.Host.cluster_machines/1" => ~w(members membersOf admit over)
     },
     abstracts: %{
       "HalC2Plugins.CodeReview.prompt/3" => @agent,
@@ -71,13 +83,22 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_call {:review_thread?, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:start, _, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:dismiss, _, _, _}" => @user,
+      "HalC2Plugins.CodeReview handle_call {:approve, _, _}" => @trust,
+      "HalC2Plugins.CodeReview handle_call {:unapprove, _}" => @trust,
+      "HalC2Plugins.CodeReview.neutral/1" => @agent,
+      "HalC2Plugins.CodeReview.closed/1" =>
+        "closes the code fences the agent's prose leaves open; text, no claim or run state",
+      "HalC2Plugins.CodeReview.comment_body/2" =>
+        "the text of an inline comment as posted; no claim or run state",
+      "HalC2Plugins.CodeReview handle_call {:preview, _}" => @reads,
       "HalC2Plugins.CodeReview handle_call {:discard, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:settings, _}" =>
         "a save applies from the next step: the model looks at any time, starts a queued review in the step that queues it and has no display",
       "HalC2Plugins.CodeReview handle_cast {:launched, _}" => @shown,
       "HalC2Plugins.CodeReview handle_info {:EXIT, _, _}" => @shown,
       "HalC2Plugins.CodeReview handle_info {:nodeup, _}" =>
-        "a machine back in reach no longer shows out of reach; " <> @shown,
+        "a machine back in reach no longer shows out of reach, nor a review held while it was apart as held; " <>
+          @shown,
       "HalC2Plugins.CodeReview handle_info _" =>
         "nodeup and the rest change nothing; connect stands for a nodeup",
       "HalC2Plugins.CodeReview state :settings" => @look,
@@ -112,6 +133,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.sandbox_ended/2" => @agent,
       "HalC2Plugins.CodeReview.sandboxed?/2" => @host,
       "HalC2Plugins.CodeReview handle_call {:stop, _}" => @user,
+      "HalC2.Plugins.Host.pull_request_trust/2" => @trust,
+      "HalC2.Plugins.Host.left_cluster?/2" =>
+        "a machine the user switched off or removed from the cluster stops counting with the others; the model's machines stay in it",
       "HalC2.Plugins.Host.steer/4" => @host,
       "HalC2.Plugins.Host.notice/5" => @shown,
       "HalC2.Plugins.Host.generate/3" => @host,
@@ -123,6 +147,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "bounce" => "the plugin's server alone goes down, its node connected throughout",
       "restart" => "the plugin, and its machine if down, come back: init/1 and load/0",
       "partition" => "a connection drops",
+      "mute" =>
+        "a connected machine does not answer the others' Host.peers/4 in time, too busy, say",
+      "unmute" => "it answers again, telling no one",
       "connect" => "Discovery connects two machines that are up"
     },
     scenarios: %{
@@ -132,7 +159,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "The review moves to another machine when its machine leaves before starting it",
         "The review moves to another machine when its machine's agent reaches its usage limit",
         "A commit two machines reviewed while apart is posted once",
-        "A commit a machine posted just before it restarted is published without posting it again"
+        "A commit a machine posted just before it restarted is published without posting it again",
+        "Machines out of each other's reach each have only their share of the limits"
       ]
     }
 
@@ -172,6 +200,43 @@ defmodule HalC2.CodeReviewClaimsProofTest do
          %{proof: proof} do
       refute_reachable(proof, unquote(init), "unsafe", [])
     end
+  end
+
+  # The limit of two between two machines, apart, restarting or down at any step; of
+  # three between three.
+  @limited ~w[limited(2,2,0,0) limited(2,1,1,0) limited(2,1,0,1) limited(3,2,0,0) limited3(1,0)]
+
+  test "machines out of each other's reach run no more reviews than the limits allow",
+       %{proof: proof} do
+    for init <- @limited, do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  # Members of the cluster that have never answered each other, which may meet at any
+  # step: with the machines the limits count with learned only from those that answered,
+  # each spends the whole limit (strangers(2,0,0) runs three reviews against two).
+  @strangers ~w[strangers(2,0,0) strangers(2,1,0) strangers(2,0,1) strangers(3,1,0) stranger3(0)]
+
+  test "members of a cluster that never met run no more reviews than the limits allow",
+       %{proof: proof} do
+    for init <- @strangers, do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  # A machine that does not answer in time may stop doing so at any step and answer
+  # again at any later one: once for one of the two, twice for both.
+  test "no machine claims, starts or posts a commit over a connected machine that does not answer",
+       %{proof: proof} do
+    for init <- ~w[quiet(1) quiet(2) quietApart(2)],
+        do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  test "machines that do not answer each other in time run no more reviews than the limits allow",
+       %{proof: proof} do
+    for init <- ~w[hushed(2,2) hushed(3,1)], do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  test "a machine that stepped back for one that did not answer leaves it the review",
+       %{proof: proof} do
+    assert_ltl(proof, "quiet(1)", "<> [] reviewed", fair: ["unmute" | @fair])
   end
 
   test "a push does not start or post a commit twice", %{proof: proof} do

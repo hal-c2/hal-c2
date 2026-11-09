@@ -41,6 +41,21 @@ defmodule HalC2.ClusterTest do
 
   defp code_path_args, do: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
 
+  # A plugin that defers to its peers learns that an MC from before `Host.peer/3`
+  # named its machine does not run it, rather than counting it as out of reach.
+  test "an older MC that does not run a plugin says so to its peers", %{b: b} do
+    old = """
+    defmodule HalC2.Plugins.Host do
+      def peer(_id, _function, _args), do: :none
+    end
+    """
+
+    :erpc.call(b, Code, :compile_string, [old])
+
+    answers = HalC2.Plugins.Host.peers("code-review", :version, [])
+    assert %{"result" => :none, "node" => to_string(b)} in answers
+  end
+
   test "a subscriber on another MC is fed through a relay, which the stream never waits for",
        %{b: b} do
     alias HalC2.Streams
