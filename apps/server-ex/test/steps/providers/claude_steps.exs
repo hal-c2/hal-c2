@@ -1347,16 +1347,30 @@ defmodule HalC2.Steps.Providers.Claude do
     Map.put(context, :thread, @thread)
   end
 
+  # Clients list a tool still running after its own run ended as background work, while
+  # another run is active too (the desktop's AgentsModel, the TUI's background list). The
+  # thread's row lists background work only while no run is active (`BackgroundWork`),
+  # and is put after a debounce, so during a run it is not read.
   step "the thread lists the monitor as background work", context do
-    id = World.thread_id(context, @thread)
+    runs = Map.new(World.entities(context, @thread, "run"), &{&1["id"], &1["status"]})
 
-    World.await_row(
-      id,
-      &match?(
-        [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
-        &1["runningBackgroundTasks"]
+    assert [%{"type" => "dynamic_tool", "toolName" => "Monitor", "status" => "running"} = item] =
+             context
+             |> World.entities(@thread, "turn-item")
+             |> Enum.filter(&(get_in(&1, ["nativeItemRef", "nativeId"]) == "mon-1"))
+
+    active = ~w(preparing starting running)
+    refute runs[item["runId"]] in active
+
+    unless Enum.any?(Map.values(runs), &(&1 in active)) do
+      World.await_row(
+        World.thread_id(context, @thread),
+        &match?(
+          [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
+          &1["runningBackgroundTasks"]
+        )
       )
-    )
+    end
 
     context
   end
@@ -1371,7 +1385,9 @@ defmodule HalC2.Steps.Providers.Claude do
       )
     )
 
-    context = World.send_turn(context, @thread, "wait for me")
+    # On the fakes the first turn started (`send_turn/3` would start the MC's MCP server
+    # too, a new launch that ends the monitor with the CLI that runs it).
+    context = World.post_message(context, @thread, "wait for me")
     World.await_running(context, @thread)
     context
   end
