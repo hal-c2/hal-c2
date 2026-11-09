@@ -46,6 +46,16 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
     "create" => "create"
   }
   @recent 40
+  # A shell word's value: quoted (`'...'`, `$'...'`, `"..."`) or bare, in parts.
+  @value ~S{(?:\$?'[^']*'|"(?:\\.|[^"\\])*"|[^\s;&|()'"])}
+  # `NAME=value`, set before a command, by `export` or `env`, or passed to one (`make
+  # TOKEN=...`): any of them may be a secret. A flag's (`--maxfail=1`) is not one.
+  @assignment Regex.compile!("(^|[\\s;&|(`])([A-Za-z_]\\w*)=#{@value}*")
+  # A here-string's text, `<<< '...'`.
+  @here_string Regex.compile!("<<<\\s*#{@value}+")
+  # Code run from the command line, which may write files no edit counter sees, or hold
+  # anything: `python -c`, `node -e`, `ruby -e`, `perl -ne`, `php -r`, `deno eval`.
+  @inline_code ~r/(?:^|[\s;&|(\/])(?:python\d?(?:\.\d+)?\s+(?:-\S+\s+)*-c|(?:node|bun)\s+(?:-\S+\s+)*(?:-e|-p|--eval|--print)|(?:ruby|osascript|Rscript)\s+(?:-\S+\s+)*-e|perl\s+(?:-\S+\s+)*-[a-zA-Z]*[eE]|php\s+(?:-\S+\s+)*-r|deno\s+eval)(?=[\s'"]|$)/
 
   def test_run_re, do: @test_run
   def error_re, do: @error
@@ -255,16 +265,22 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
     %{state | edit_counts: counts, recent: recent}
   end
 
-  # What the action log keeps of a command: never a heredoc's body, and of a command that
-  # writes a file, source or not, only the programs it runs, for any of its words may be
-  # what it writes (`printf '...' > a.py`, `echo SECRET=1 > Main.qml`, `sed -i 's/x/y/'
-  # a.py`). `fold_shell_edits/2` names the source files it wrote.
+  # What the action log keeps of a command: never a heredoc's body, a here-string's text
+  # or the value a variable is set to (`API_TOKEN=... pytest`), and of a command that
+  # writes a file, source or not, or runs code given inline (`node -e '...'`), only the
+  # programs it runs, for any of its words may be what it writes (`printf '...' > a.py`,
+  # `echo SECRET=1 > Main.qml`, `sed -i 's/x/y/' a.py`). `fold_shell_edits/2` names the
+  # source files it wrote.
   defp shown(cmd) do
     script = ShellEdits.script(cmd)
 
-    if not ShellEdits.writes?(script),
-      do: script |> ShellEdits.split_heredocs() |> elem(0),
-      else: Enum.join(ShellEdits.programs(script), "; ") <> " …"
+    if ShellEdits.writes?(script) or Regex.match?(@inline_code, script) do
+      Enum.join(ShellEdits.programs(script), "; ") <> " …"
+    else
+      {shell, _} = ShellEdits.split_heredocs(script)
+      shell = Regex.replace(@here_string, shell, "<<< …")
+      Regex.replace(@assignment, shell, "\\1\\2=…")
+    end
   end
 
   defp text(nil), do: ""

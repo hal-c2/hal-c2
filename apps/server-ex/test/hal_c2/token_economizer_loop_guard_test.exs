@@ -699,6 +699,30 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       # Output thrown away writes nothing.
       assert shell_edit("pytest -q tests/test_a.py > /dev/null 2>&1") =~ "tests/test_a.py"
     end
+
+    test "never shows a value a command sets, text it feeds in, or code it runs inline" do
+      for cmd <- [
+            "API_TOKEN=s3cr3t-xyz pytest -q",
+            "export API_TOKEN=s3cr3t-xyz",
+            "env API_TOKEN=s3cr3t-xyz npm test",
+            "cd src && API_TOKEN='s3cr3t xyz' ./run.sh",
+            ~s(API_TOKEN="s3cr3t \\"xyz\\"" ./run.sh),
+            "grep x <<< s3cr3t-xyz",
+            ~s(grep x <<<"s3cr3t xyz"),
+            ~s{python3 -c "print('s3cr3t-xyz')"},
+            ~s{node -e "require('fs').writeFileSync('a', 's3cr3t-xyz')"},
+            ~s{ruby -e 'File.write("a", "s3cr3t-xyz")'},
+            "bash -lc 'export API_TOKEN=s3cr3t-xyz && pytest -q'"
+          ] do
+        text = digest(cmd)
+        refute text =~ "s3cr3t", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # What the command is stays: the names it sets, and the programs it runs.
+      assert digest("API_TOKEN=s3cr3t-xyz pytest -q") =~ "$ API_TOKEN=… pytest -q"
+      assert digest(~s{node -e "require('fs')"}) =~ "$ node …"
+      assert digest("pytest --maxfail=1 -k a=b") =~ "pytest --maxfail=1 -k a=…"
+    end
   end
 
   describe "missed events" do
