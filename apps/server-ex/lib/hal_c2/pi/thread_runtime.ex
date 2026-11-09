@@ -1216,6 +1216,12 @@ defmodule HalC2.Pi.ThreadRuntime do
 
         Connection.notify(state.conn, "prompt", payload)
 
+        # A follow-up is Pi's once it delivers this message (`taken/2`).
+        state =
+          if Map.get(turn, :follow_up) && state.turn,
+            do: put_in(state.turn[:follow_up_message], payload["message"]),
+            else: state
+
         if watchdog?,
           do: Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, 0}, turn_watchdog_ms())
 
@@ -1595,13 +1601,29 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  # Pi took a message that follows the work it was at.
+  # Pi queued a message that follows the work it was at. It delivers the message only
+  # once that work stops, and until it does what Pi does is still that work.
   defp event(
          "response",
          %{"command" => "prompt", "success" => true},
          %{turn: %{follow_up: :sent}} = state
        ),
-       do: put_in(state.turn.follow_up, :taken)
+       do: put_in(state.turn.follow_up, :queued)
+
+  # Pi delivered the follow-up: its user message is the prompt's, so the work after it is
+  # the turn's own (`HalC2.Orchestration.TurnWriter.ensure_item/5`). A message Pi
+  # expanded (a `/skill:` command, a template) is not recognised, and the run is
+  # confirmed as it completes instead.
+  defp event(
+         "message_start",
+         %{"message" => %{"role" => "user"} = message},
+         %{turn: %{follow_up: waiting}} = state
+       )
+       when waiting in [:sent, :queued] do
+    if user_text(message["content"]) == state.turn[:follow_up_message],
+      do: put_in(state.turn.follow_up, :taken),
+      else: state
+  end
 
   defp event("message_start", %{"message" => %{"role" => "assistant"}}, state),
     do: %{state | message: state.message + 1}
@@ -1781,6 +1803,14 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   defp event(_type, _event, state), do: state
+
+  # The text of a Pi message's content: a string, or its text blocks.
+  defp user_text(content) when is_binary(content), do: content
+
+  defp user_text(content) when is_list(content),
+    do: for(%{"type" => "text", "text" => text} <- content, into: "", do: text)
+
+  defp user_text(_content), do: nil
 
   defp tool_end(state, id, event) do
     native = tool_native(state, id)

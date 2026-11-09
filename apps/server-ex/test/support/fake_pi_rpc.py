@@ -41,7 +41,7 @@
 # or n steer prompts, which reach Pi only once this run has settled, in the order of their
 # text, and each start a run of its own), {"exit": code}, {"waitFollowUp": true} (until a
 # followUp prompt is queued), {"answerFollowUps": name} (once the file FAKE_DIR/<name>
-# exists, answers the followUps `lateFollowUps` held back), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
+# exists, answers the followUps `lateFollowUps` held back; without it, only waits), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
 # While Pi runs, a prompt without a streamingBehavior is turned back as Pi does ("Agent is
 # already processing"), and a followUp one is answered after the run's own work, before
 # it settles. While a turn waits, a steer saying "refuse" is rejected, and
@@ -643,10 +643,14 @@ def run_turn(text, wake=None):
     send({"type": "message_end", "message": final})
     session.append("assistant", "".join(said))
     answer_follow_ups()
-    # Messages queued as followUps run before Pi settles, each answered in turn.
+    # Messages queued as followUps run before Pi settles, each answered in turn, once Pi
+    # delivers it as its user message (logged as `delivered`).
     while follow_ups and not aborted[0]:
         asked = follow_ups.pop(0)
         session.append("user", asked)
+        log({"delivered": asked, "followUp": True})
+        send({"type": "message_start", "message": {"role": "user", "content": asked}})
+        send({"type": "message_end", "message": {"role": "user", "content": asked}})
         texts = [s["text"] for s in matching_turn(config(), asked).get("steps") or [] if "text" in s]
         reply = "".join(texts) if texts else reply_to(session, asked)
         send({"type": "message_start", "message": {"role": "assistant"}})

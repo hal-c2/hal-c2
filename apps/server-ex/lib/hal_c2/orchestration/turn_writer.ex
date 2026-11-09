@@ -46,7 +46,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   (`confirmed/2`) unless the runtime still holds its prompt (`prompt_held`, as Pi's does
   while it compacts), replays work the provider did before the turn (`replaying`, as
   Pi's does taking over a wake), has sent the prompt to follow work the provider is
-  still at and not heard it taken (`follow_up: :sent` on the turn), or the item is one
+  still at and not seen the provider deliver it (`follow_up: :sent`, or `:queued` once
+  Pi answered that it queued it, on the turn), or the item is one
   the runtime kept from before the turn (`confirms: false`): none is the provider
   answering the prompt.
   """
@@ -67,7 +68,7 @@ defmodule HalC2.Orchestration.TurnWriter do
         driver not in @acknowledging and Keyword.get(opts, :confirms, true) and
           Map.get(state, :prompt_held, false) == false and
           Map.get(state, :replaying, false) == false and
-          Map.get(state.turn, :follow_up) != :sent
+          Map.get(state.turn, :follow_up) not in [:sent, :queued]
 
       {node_kind, type, item_fields} = shape(kind, message_id, fields)
       item_fields = if plan_id, do: Map.put(item_fields, "planId", plan_id), else: item_fields

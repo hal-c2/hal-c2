@@ -35,7 +35,8 @@ defmodule HalC2.PiSteerPropTest do
   of the two deliveries is refused, the later once the earlier's run took the cut part,
   or the earlier before the later's run takes it); or one after which Pi
   resumes an extension's work without a word, so the next message Pi turns back as
-  busy and HAL-C2 queues it behind that work, in the same turn. Send two messages,
+  busy and HAL-C2 queues it behind that work, in the same turn (and, with history to
+  hand over, the work Pi does before it delivers the message confirms none of it). Send two messages,
   then an extension command that moves Pi's session back to before the second
   (`navigateTree`): only the second's run is rolled back, and the turns after find
   their place in Pi's session past the branch it abandoned.
@@ -251,6 +252,23 @@ defmodule HalC2.PiSteerPropTest do
     },
     # A turn after which Pi resumes an extension's work, saying nothing until a
     # prompt reaches it.
+    # A turn after which Pi resumes an extension's work without a word, and runs a
+    # command once a message follows it, but only once the file "follow-go" exists;
+    # it delivers the message once "follow-deliver" does.
+    %{
+      "match" => "follows",
+      "steps" => [%{"text" => "Done."}],
+      "wake" => %{
+        "text" => "Continue.",
+        "quiet" => true,
+        "steps" => [
+          %{"waitFollowUp" => true},
+          %{"answerFollowUps" => "follow-go"},
+          %{"tool" => "bash", "args" => %{"command" => "make lint"}, "output" => "ok"},
+          %{"answerFollowUps" => "follow-deliver"}
+        ]
+      }
+    },
     %{
       "match" => "quietly",
       "steps" => [%{"text" => "Done."}],
@@ -400,6 +418,7 @@ defmodule HalC2.PiSteerPropTest do
       {1, {:call, __MODULE__, :send_slow, [id(next), oneof(["", "/review "])]}},
       {1, {:call, __MODULE__, :send_woken, [id(next)]}},
       {1, {:call, __MODULE__, :send_into_wake, [id(next), id(next + 1)]}},
+      {1, {:call, __MODULE__, :send_handed_into_wake, [id(next), id(next + 1)]}},
       {1, {:call, __MODULE__, :send_rewound, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_taken, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_settled, [id(next), id(next + 1), id(next + 2)]}},
@@ -486,6 +505,7 @@ defmodule HalC2.PiSteerPropTest do
       when call in [
              :send_woken,
              :send_into_wake,
+             :send_handed_into_wake,
              :send_rewound,
              :send_wake_taken,
              :send_wake_settled,
@@ -562,7 +582,8 @@ defmodule HalC2.PiSteerPropTest do
 
   # The second message, turned back while Pi works unannounced, waits behind that work
   # and shows it in its own turn: no turn of the wake's own.
-  def next_state(state, _result, {:call, _, :send_into_wake, [a, b]}) do
+  def next_state(state, _result, {:call, _, call, [a, b]})
+      when call in [:send_into_wake, :send_handed_into_wake] do
     %{state | next: state.next + 2, runs: state.runs ++ [{a, "completed"}, {b, "completed"}]}
   end
 
@@ -911,6 +932,86 @@ defmodule HalC2.PiSteerPropTest do
       end
 
     {reply, projection}
+  end
+
+  # Sends `a`, after which Pi resumes an extension's work unannounced, then `b`, which
+  # Pi turns back as busy and HAL-C2 sends again as a follow-up, with history `b` hands
+  # over (its mark, `unconfirmedRunId`). Pi answers that it queued `b` and runs a command
+  # of the wake's before it delivers `b`: that command is in `b`'s turn but confirms
+  # nothing, so the mark stands until Pi delivers `b`, and goes once `b` completes.
+  def send_handed_into_wake(a, b) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    dir = Application.get_env(:hal_c2, :pi_prop_fake_dir)
+    first = Orchestration.dispatch(message(a, "follows #{a}", "queue_after_active", "auto"))
+    done = settled(unfinished_runs(), deadline.())
+    second = Orchestration.dispatch(message(b, "plain #{b}", "queue_after_active", "auto"))
+    run = await(&Enum.find(runs(&1), fn run -> run["userMessageId"] == b end), deadline.())
+    queued = await_log(&match?(%{"accepted" => "plain " <> ^b, "followUp" => true}, &1))
+
+    # The history `b` hands over, as a handoff into Pi marks it.
+    mark = fn state ->
+      with {:ok, %{"providerThreadId" => id}} <- run,
+           do: StreamState.get(state, "provider-thread")[id]["unconfirmedRunId"]
+    end
+
+    with {:ok, %{"id" => id, "providerThreadId" => thread}} <- run do
+      {:ok, _} =
+        HalC2.Streams.commit(@tid, :thread, [
+          {"provider-thread", thread,
+           %{"s" => %{"unconfirmedRunId" => id, "unconfirmedSince" => 0}}}
+        ])
+    end
+
+    File.touch!(Path.join(dir, "follow-go"))
+
+    command =
+      with {:ok, %{"id" => id}} <- run,
+           do:
+             await(
+               fn state ->
+                 Enum.find(
+                   StreamState.list(state, "turn-item"),
+                   &(&1["runId"] == id and &1["type"] == "command_execution")
+                 )
+               end,
+               deadline.()
+             )
+
+    held = mark.(current())
+    File.touch!(Path.join(dir, "follow-deliver"))
+    projection = settled(unfinished_runs(), deadline.())
+    after_b = mark.(current())
+    File.rm(Path.join(dir, "follow-go"))
+    File.rm(Path.join(dir, "follow-deliver"))
+
+    reply =
+      cond do
+        match?({:timeout, _}, done) -> {:error, "#{a} never ended"}
+        run == :timeout or queued == :timeout -> {:error, "Pi never queued #{b}"}
+        command == :timeout -> {:error, "#{b}'s turn does not show the wake's command"}
+        held != elem(run, 1)["id"] -> {:error, "the wake's command confirmed #{b}'s handoff"}
+        after_b != nil -> {:error, "#{b} completed with its handoff unconfirmed"}
+        true -> answer(first) |> both(answer(second))
+      end
+
+    {reply, projection}
+  end
+
+  # Until the fake has logged an entry `pred` holds of.
+  defp await_log(pred, deadline \\ System.monotonic_time(:millisecond) + @wait_ms) do
+    cond do
+      Enum.any?(fake_log(), fn {entry, _} -> pred.(entry) end) ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        :timeout
+
+      true ->
+        receive do
+        after
+          10 -> await_log(pred, deadline)
+        end
+    end
   end
 
   # Sends `a` and `b`, plain turns, then `c`, an extension command that moves Pi's session

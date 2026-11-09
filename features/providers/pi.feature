@@ -699,14 +699,20 @@ Feature: Pi
     Then the run shows the wake's work while its prompt waits
     And the history it hands over is still unconfirmed
 
-  # A prompt that takes over a wake Pi is still at goes to Pi as a follow-up. Until Pi
-  # answers it, what Pi does is still the wake's work, so it confirms no handoff;
-  # Pi taking the prompt does.
-  Scenario: A prompt that follows a running Pi wake confirms its handoff once Pi takes it
-    Given a Pi extension has woken Pi, which runs a command once a message follows it
+  # A prompt that takes over a wake Pi is still at goes to Pi as a follow-up. Pi answers
+  # that it queued it, at once or late, and delivers it only once the wake's work stops:
+  # until then what Pi does is still the wake's work, so it confirms no handoff; Pi
+  # delivering the prompt does.
+  Scenario Outline: A prompt that follows a running Pi wake confirms its handoff once Pi delivers it
+    Given a Pi extension has woken Pi, which runs a command once a message follows it, answering it "<answered>"
     When the thread comes back to Pi from Codex while the wake runs
     Then the run shows the wake's command before Pi takes its prompt
     And the history it hands over stays unconfirmed until Pi takes the prompt
+
+    Examples:
+      | answered |
+      | at once  |
+      | late     |
 
   Scenario Outline: A Pi compaction shows how it ended
     When Pi's compaction of the conversation <ends>

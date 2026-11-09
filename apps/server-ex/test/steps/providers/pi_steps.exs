@@ -3100,9 +3100,11 @@ defmodule HalC2.Steps.Providers.Pi do
   end
 
   # Pi's wake says something, then waits for a message to follow it and runs a command
-  # before Pi answers that message (`lateFollowUps`), until the scenario lets it.
-  step "a Pi extension has woken Pi, which runs a command once a message follows it",
-       context do
+  # before Pi delivers that message, until the scenario lets it. Pi answers that it
+  # queued the message at once, as Pi does, or only once the wake's work stops
+  # (`lateFollowUps`), as when its answer reaches the MC late.
+  step "a Pi extension has woken Pi, which runs a command once a message follows it, answering it {string}",
+       %{args: [answered]} = context do
     wake = %{
       "text" => "Carry on with the extension's work.",
       "steps" => [
@@ -3120,7 +3122,7 @@ defmodule HalC2.Steps.Providers.Pi do
         %{"match" => "second", "steps" => [%{"text" => "Second done."}], "wake" => wake}
         | FakeAcp.pi_turns()
       ],
-      "lateFollowUps" => true
+      "lateFollowUps" => answered == "late"
     })
     |> FakeAcp.thread()
     |> turn("first")
@@ -3150,7 +3152,7 @@ defmodule HalC2.Steps.Providers.Pi do
     context = context |> switch.(pi) |> FakeAcp.send_message("back on Pi")
     FakeAcp.await_run(context, "running")
     [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
-    assert :sys.get_state(pid).turn.follow_up == :sent
+    assert :sys.get_state(pid).turn.follow_up in [:sent, :queued]
     context
   end
 
@@ -3163,12 +3165,14 @@ defmodule HalC2.Steps.Providers.Pi do
       |> Enum.find(&(&1["runId"] == run["id"] and &1["type"] == "command_execution"))
     end)
 
-    # Pi logs a follow-up as queued when it gets it and accepted only when it answers.
-    # The prompt is the handed-over history with the message in it.
+    # Pi logs a follow-up as accepted when it answers that it queued it (`queued` while
+    # it holds that answer back), and as delivered when it runs it. The prompt is the
+    # handed-over history with the message in it.
     log = FakeAcp.log(context)
     prompt? = &(is_binary(&1) and String.contains?(&1, "back on Pi"))
-    assert Enum.any?(log, &(&1["followUp"] == true and prompt?.(&1["queued"])))
-    refute Enum.any?(log, &prompt?.(&1["accepted"]))
+    got? = &(&1["followUp"] == true and (prompt?.(&1["queued"]) or prompt?.(&1["accepted"])))
+    assert Enum.any?(log, got?)
+    refute Enum.any?(log, &prompt?.(&1["delivered"]))
     context
   end
 
