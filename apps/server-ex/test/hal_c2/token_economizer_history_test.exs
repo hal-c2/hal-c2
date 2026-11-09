@@ -916,6 +916,58 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert {nil, _state} = shape(state, "other", "o4", p)
   end
 
+  test "a saved use that does not parse holds its provider's pruning off, or every provider's",
+       %{thread: thread, project: p} do
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    _state = apply_tools(state, p, ["CronCreate"])
+
+    path =
+      Path.join([HalC2.Plugins.Host.data_dir("token-economizer"), "toolprune", "strays.json"])
+
+    write = fn saved ->
+      File.write!(path, if(is_binary(saved), do: saved, else: JSON.encode!(saved)))
+      {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+      state
+    end
+
+    # Its tools unreadable, it holds its provider's; a whole entry still counts.
+    state =
+      write.([
+        %{"threadId" => thread, "provider" => "claudeAgent", "tools" => ["CronCreate", 3]},
+        %{"threadId" => "else", "provider" => "codex", "tools" => ["image_media"]}
+      ])
+
+    assert state.strays == %{{nil, "claudeAgent"} => [], {"else", "codex"} => ["image_media"]}
+    assert {nil, state} = shape(state, "other", "o1", p)
+
+    # Its turn names its project, but not which tools it kept: it still holds, across
+    # a restart too.
+    state = observe(state, started(thread, "r2", p, %{}))
+    assert {nil, _state} = shape(state, "other", "o2", p)
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    assert {nil, _state} = shape(state, "other", "o3", p)
+
+    # No provider to read, or no file to read at all: every provider's.
+    held = %{{nil, "claudeAgent"} => [], {nil, "codex"} => []}
+
+    for saved <- [
+          [%{"threadId" => thread, "provider" => "mystery", "tools" => ["CronCreate"]}],
+          [%{"threadId" => thread, "tools" => ["CronCreate"]}],
+          [7],
+          %{"threadId" => thread},
+          "[{"
+        ] do
+      state = write.(saved)
+      assert state.strays == held
+      state = observe(state, started(thread, "r3", p, %{}))
+      assert {nil, _state} = shape(state, "other", "o4", p)
+    end
+  end
+
   defp stray_item(thread, tool),
     do: %{
       "type" => "turn.item",

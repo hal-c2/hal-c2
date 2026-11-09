@@ -59,6 +59,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
 
   @id "token-economizer"
+  # The providers tool pruning has a unit for (`ToolPrune.Evidence.unit_for_provider/1`).
+  @prune_providers ~w(claudeAgent codex)
   # How far back a read of a thread's history pages to find a segment's runs.
   @history_pages 20
   @topic "loopGuard"
@@ -499,7 +501,8 @@ defmodule HalC2Plugins.TokenEconomizer do
       for({{thread_id, ^project} = key, _} <- state.unresolved, do: {key, thread_id})
       |> Enum.split_with(fn {key, _} -> MapSet.member?(state.away, key) end)
 
-    unresolved = unresolved ++ for({{t, ^provider}, _} <- state.strays, do: {nil, t})
+    unresolved =
+      unresolved ++ for({{t, ^provider}, _} <- state.strays, is_binary(t), do: {nil, t})
 
     Prune.summary(prune, cfg)
     |> Map.merge(%{
@@ -749,6 +752,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   # The project `thread_id` is in, kept once it is deleted or moved. Naming none,
   # `:gone` when it was deleted or never here, `:away` while on another machine, and
   # `:error` when it could not be read or names none.
+  defp thread_project(nil), do: :error
+
   defp thread_project(thread_id) do
     case Host.thread_project(@id, thread_id) do
       {:ok, project_id} when is_binary(project_id) -> {:ok, project_id}
@@ -764,16 +769,38 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp strays_path, do: Path.join([Host.data_dir(@id), "toolprune", "strays.json"])
 
+  # The saved strays. One that does not parse holds its provider's pruning off as a
+  # use of an unreadable thread (`{nil, provider}`), or every provider's when not even
+  # that can be read: what it kept may be any tool.
   defp read_strays do
-    with {:ok, text} <- File.read(strays_path()),
-         {:ok, saved} when is_list(saved) <- JSON.decode(text) do
-      for %{"threadId" => t, "provider" => p, "tools" => tools} <- saved,
-          is_binary(t) and is_binary(p) and is_list(tools),
-          into: %{},
-          do: {{t, p}, tools}
-    else
-      _ -> %{}
+    case File.read(strays_path()) do
+      {:error, :enoent} ->
+        %{}
+
+      {:ok, text} ->
+        case JSON.decode(text) do
+          {:ok, saved} when is_list(saved) -> Enum.reduce(saved, %{}, &read_stray/2)
+          _ -> hold_stray(%{}, nil)
+        end
+
+      {:error, _} ->
+        hold_stray(%{}, nil)
     end
+  end
+
+  defp read_stray(%{"threadId" => t, "provider" => p, "tools" => tools}, strays)
+       when is_binary(t) and is_binary(p) and is_list(tools) do
+    if Prune.unit_for_provider(p) != nil and Enum.all?(tools, &is_binary/1),
+      do: Map.update(strays, {t, p}, tools, &Enum.uniq(&1 ++ tools)),
+      else: hold_stray(strays, p)
+  end
+
+  defp read_stray(%{"provider" => p}, strays), do: hold_stray(strays, p)
+  defp read_stray(_entry, strays), do: hold_stray(strays, nil)
+
+  defp hold_stray(strays, provider) do
+    providers = if provider in @prune_providers, do: [provider], else: @prune_providers
+    Enum.reduce(providers, strays, &Map.put_new(&2, {nil, &1}, []))
   end
 
   defp save_strays(state) do
