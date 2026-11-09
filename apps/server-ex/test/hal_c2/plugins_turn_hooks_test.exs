@@ -512,9 +512,11 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert Enum.any?(prompts(dir), &(&1 =~ "use the cache"))
 
     assert {:error, _} = Host.steer("steerer", thread_id, ended["id"], "too late")
+    missing = "Thread #{thread_id} has no run run:missing."
+    assert {:error, ^missing} = Host.steer("steerer", thread_id, "run:missing", "nowhere")
     # Neither queued for a later turn nor kept as a message.
     assert ["completed"] = statuses(thread_id)
-    refute Enum.any?(messages(thread_id), &(&1["text"] == "too late"))
+    refute Enum.any?(messages(thread_id), &(&1["text"] in ["too late", "nowhere"]))
   end
 
   test "a steer that names no run is refused, steering nothing and starting no turn",
