@@ -406,6 +406,35 @@ defmodule HalC2.TextGenerationTest do
       assert files == %{"auth.json" => sha256(~s({"token":"shadow"})), "config.toml" => ""}
     end
 
+    test "a Codex that cannot list its MCP servers and whose shadow home cannot be made does not use the shared login",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      shared = Path.join(dir, "shared-codex")
+      File.mkdir_p!(shared)
+      File.write!(Path.join(shared, "auth.json"), ~s({"token":"another-account"}))
+
+      # A shadow home that is the shared home is refused by `Codex.Home.env/1`.
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"homePath" => shared, "shadowHomePath" => shared}
+          }
+        }
+      })
+
+      System.put_env("FAKE_CODEX_MCP_FAIL", "1")
+      on_exit(fn -> System.delete_env("FAKE_CODEX_MCP_FAIL") end)
+
+      assert {:error, message} = TextGeneration.thread_title(repo, "Fix it")
+      assert message =~ "Failed to materialize the Codex shadow home."
+      assert message =~ "must be different"
+      # Codex never ran, so no login was copied anywhere.
+      assert calls(log) == []
+      refute File.exists?(Path.join(dir, "codex-home"))
+    end
+
     test "a Codex that cannot list its MCP servers keeps the login of the CODEX_HOME its instance sets",
          %{repo: repo, log: log, tmp_dir: dir} do
       install([:codex])

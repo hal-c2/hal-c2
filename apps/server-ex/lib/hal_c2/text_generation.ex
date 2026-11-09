@@ -697,18 +697,19 @@ defmodule HalC2.TextGeneration do
   # The home whose login a run of `instance` uses, by the precedence a normal run has: a
   # `CODEX_HOME` in the instance's environment (`Home.shared/1` returns exactly that
   # variable, `~` expanded, when it is set), else its shadow home (or home setting), else
-  # the MC's own `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made leaves
-  # the shared home, the account's configured home.
+  # the MC's own `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made is an
+  # error, as for a normal run (`Codex.ThreadRuntime`): the shared home's `auth.json` is
+  # another account's login, and text generation must not sign in as that account.
   defp account_home(instance) do
     default = System.get_env("CODEX_HOME") || Path.join(HalC2.Paths.user_home(), ".codex")
 
     if env_home?(instance) do
-      HalC2.Codex.Home.shared(instance)
+      {:ok, HalC2.Codex.Home.shared(instance)}
     else
       case HalC2.Codex.Home.env(instance) do
-        {:ok, [{"CODEX_HOME", home}]} -> home
-        {:ok, []} -> default
-        {:error, _} -> HalC2.Codex.Home.shared(instance) || default
+        {:ok, [{"CODEX_HOME", home}]} -> {:ok, home}
+        {:ok, []} -> {:ok, default}
+        {:error, reason} -> {:error, reason}
       end
     end
   end
@@ -726,7 +727,16 @@ defmodule HalC2.TextGeneration do
   # and the error says how to get one (docs/user/providers-codex.md).
   # sobelow_skip ["Traversal.FileModule"]
   defp bare_codex_home(instance, dir) do
-    source = Path.join(account_home(instance), "auth.json")
+    case account_home(instance) do
+      {:ok, account} ->
+        copy_codex_login(Path.join(account, "auth.json"), dir)
+
+      {:error, reason} ->
+        {:error, "Failed to materialize the Codex shadow home. #{reason}"}
+    end
+  end
+
+  defp copy_codex_login(source, dir) do
     home = Path.join(dir, "codex-home")
     target = Path.join(home, "auth.json")
     File.mkdir_p!(home)
