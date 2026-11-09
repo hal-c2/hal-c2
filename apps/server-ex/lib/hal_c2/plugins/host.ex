@@ -360,6 +360,20 @@ defmodule HalC2.Plugins.Host do
     end
   end
 
+  @doc """
+  How many turn events plugin `id`'s feed holds, still to deliver: 0 when it has no
+  feed. A plugin process restarted while its feed ran has lost what it knew of the
+  events before: any of these may have been sent before events it missed, and a report
+  of missed events may have reached the process that went down.
+  """
+  def feed_backlog(id) do
+    Enum.sum(
+      for {pid, %{id: ^id}} <- Plugins.Feed.lookup(:observe),
+          {:message_queue_len, n} <- [Process.info(pid, :message_queue_len)],
+          do: n
+    )
+  end
+
   @ended ~w(completed interrupted failed cancelled)
 
   defp turns(stream, limit, before) do

@@ -25,7 +25,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
-  waiting (`"waiting"`) have been, and a partial turn does not teach the envelope.
+  waiting (`"waiting"`) have been, and a partial turn does not teach the envelope. A
+  restarted process takes everything its feed still holds as such events.
 
   The topic `loopGuard` carries `status/1`: counts since the MC started and the latest
   redirects and stop offers. It is published when a turn ends and when the guard acts,
@@ -129,8 +130,10 @@ defmodule HalC2Plugins.TokenEconomizer do
        tasks: %{},
        # thread id => %{run, project, guard, partial}, the turn under way
        turns: %{},
-       # Events still to hear that the feed may have queued before ones it missed.
-       missing: 0,
+       # Events still to hear that the feed may have queued before ones it missed. A
+       # process restarted while its feed ran cannot tell which those are, so it is all
+       # the feed holds.
+       missing: Host.feed_backlog(@id),
        # {project id, provider} => tracker
        trackers: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
