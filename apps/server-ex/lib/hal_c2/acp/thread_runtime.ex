@@ -1684,8 +1684,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       turn = %{turn | fork: nil}
       {%{state | turn: turn}, turn}
     else
-      text = HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
-      turn = %{turn | fork: nil, text: text}
+      turn = HalC2.Orchestration.Handoff.ahead(%{turn | fork: nil}, fork[:fallback])
       {%{state | turn: turn}, turn}
     end
   end
@@ -2626,7 +2625,8 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     ids = state.turn.ids
     # The provider turn it came in keeps it too, with when it came: a turn the agent
-    # reports nothing in keeps none, never an earlier turn's.
+    # reports nothing in keeps none, never an earlier turn's. That says which run it
+    # counts (`HalC2.Orchestration.Handoff.room/3`).
     reported = Map.put(usage, "updatedAt", Entities.now())
 
     commit(state, fn stream ->

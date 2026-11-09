@@ -1243,7 +1243,13 @@ defmodule HalC2.Pi.ThreadRuntime do
         %{state | prompt_held: :unsent}
 
       :error ->
-        {state, payload} = prompt_payload(state, turn.text, Map.get(turn, :attachments, []))
+        {state, payload} =
+          prompt_payload(
+            state,
+            turn.text,
+            Map.get(turn, :attachments, []),
+            Map.get(turn, :history)
+          )
 
         payload =
           if Map.get(turn, :follow_up),
@@ -1251,6 +1257,12 @@ defmodule HalC2.Pi.ThreadRuntime do
             else: payload
 
         Connection.notify(state.conn, "prompt", payload)
+
+        # A follow-up is Pi's once it delivers this message (`taken/2`).
+        state =
+          if Map.get(turn, :follow_up) && state.turn,
+            do: put_in(state.turn[:follow_up_message], payload["message"]),
+            else: state
 
         if watchdog?,
           do: Process.send_after(self(), {:turn_watchdog, turn.ids.run, 0, 0}, turn_watchdog_ms())
@@ -1338,9 +1350,12 @@ defmodule HalC2.Pi.ThreadRuntime do
   # read, copy or edit the file), every other file as the path it is saved at,
   # and a file whose saved copy cannot be found named as unavailable. An attachment's
   # `path` is the MC's own saved copy (`HalC2.Attachments`), never a client's path.
-  defp prompt_payload(state, text, attachments) do
-    {state, skills} = state |> prompt_commands(text) |> prompt_skills(text)
-    expanded = HalC2.Pi.expand_skills(text || "", skills)
+  # A turn's handoff (`history`) goes after its `/skill:` commands (`HalC2.Pi.message/3`).
+  # Only the user's words are read for commands and `$skill` mentions, not the handoff.
+  defp prompt_payload(state, text, attachments, history \\ nil) do
+    said = HalC2.Pi.said(text, history)
+    {state, skills} = state |> prompt_commands(said) |> prompt_skills(said)
+    expanded = HalC2.Pi.message(text || "", history, skills)
     attachments = attachments || []
 
     images =
@@ -1583,12 +1598,14 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp take_wake(%{wake: %{open: true} = wake} = state) do
     {taken, cut} = Enum.split_while(wake.buffer || [], &(&1 != :exited))
 
+    # What Pi did by itself is not Pi taking the prompt: it confirms no handoff.
+    replaying = Map.merge(state, %{turn_active: true, replaying: true})
+
     state =
       taken
       |> Enum.reverse()
-      |> Enum.reduce(%{state | turn_active: true}, fn {type, event}, state ->
-        event(type, event, state)
-      end)
+      |> Enum.reduce(replaying, fn {type, event}, state -> event(type, event, state) end)
+      |> Map.delete(:replaying)
 
     {%{state | wake: if(cut != [], do: %{wake | open: false, buffer: cut})}, true}
   end
@@ -1626,13 +1643,29 @@ defmodule HalC2.Pi.ThreadRuntime do
     end
   end
 
-  # Pi took a message that follows the work it was at.
+  # Pi queued a message that follows the work it was at. It delivers the message only
+  # once that work stops, and until it does what Pi does is still that work.
   defp event(
          "response",
          %{"command" => "prompt", "success" => true},
          %{turn: %{follow_up: :sent}} = state
        ),
-       do: put_in(state.turn.follow_up, :taken)
+       do: put_in(state.turn.follow_up, :queued)
+
+  # Pi delivered the follow-up: its user message is the prompt's, so the work after it is
+  # the turn's own (`HalC2.Orchestration.TurnWriter.ensure_item/5`). A message Pi
+  # expanded (a `/skill:` command, a template) is not recognised, and the run is
+  # confirmed as it completes instead.
+  defp event(
+         "message_start",
+         %{"message" => %{"role" => "user"} = message},
+         %{turn: %{follow_up: waiting}} = state
+       )
+       when waiting in [:sent, :queued] do
+    if user_text(message["content"]) == state.turn[:follow_up_message],
+      do: put_in(state.turn.follow_up, :taken),
+      else: state
+  end
 
   defp event("message_start", %{"message" => %{"role" => "assistant"}}, state),
     do: %{state | message: state.message + 1}
@@ -1700,7 +1733,12 @@ defmodule HalC2.Pi.ThreadRuntime do
     |> flush()
     |> Map.put(:compactions, n)
     |> Map.put(:compacting, true)
-    |> ensure_item(native, :compaction, %{"driver" => "pi", "title" => "Compacting context..."})
+    # A compaction is Pi's own work, and may have begun before the prompt went
+    # out (its start can arrive after the turn's): Pi may yet turn the prompt
+    # back, so it is no proof Pi took it.
+    |> ensure_item(native, :compaction, %{"driver" => "pi", "title" => "Compacting context..."},
+      confirms: false
+    )
   end
 
   defp event("compaction_end", event, state) do
@@ -1813,6 +1851,14 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp event(_type, _event, state), do: state
 
+  # The text of a Pi message's content: a string, or its text blocks.
+  defp user_text(content) when is_binary(content), do: content
+
+  defp user_text(content) when is_list(content),
+    do: for(%{"type" => "text", "text" => text} <- content, into: "", do: text)
+
+  defp user_text(_content), do: nil
+
   defp tool_end(state, id, event) do
     native = tool_native(state, id)
 
@@ -1860,12 +1906,17 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # Extension failures queued between turns, shown at the head of this turn.
   defp show_extension_errors(state) do
-    Enum.reduce(state.extension_errors, %{state | extension_errors: []}, &extension_error(&2, &1))
+    Enum.reduce(
+      state.extension_errors,
+      %{state | extension_errors: []},
+      &extension_error(&2, &1, confirms: false)
+    )
   end
 
   # A failing extension is named in the work log: a failed entry titled after
-  # the extension, saying during which step it failed and why.
-  defp extension_error(state, event) do
+  # the extension, saying during which step it failed and why. One kept from between
+  # turns is the MC's to show, not Pi taking the prompt.
+  defp extension_error(state, event, opts \\ []) do
     n = state.ext_errors + 1
     native = "extension-error:#{state.turn.ids.run}:#{n}"
     name = extension_name(event["extensionPath"])
@@ -1885,7 +1936,7 @@ defmodule HalC2.Pi.ThreadRuntime do
     state
     |> flush()
     |> Map.put(:ext_errors, n)
-    |> ensure_item(native, :error, fields)
+    |> ensure_item(native, :error, fields, opts)
     |> finish_item(native, "failed", &Map.merge(&1, fields))
   end
 

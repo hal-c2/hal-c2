@@ -401,6 +401,126 @@ defmodule HalC2.OrchestrationTest do
     _ = await_run(thread_id, "interrupted")
   end
 
+  # #1233: a run that starts a new conversation lets go of the runtime holding the old
+  # one, which would otherwise go on in it, also when that runtime is a bundled plugin's.
+  test "a bundled Codex plugin's run in a new conversation starts a new native thread",
+       %{tmp_dir: dir} do
+    log = Path.join(dir, "sessions.jsonl")
+    codex = ["env", "FAKE_CODEX_SESSION_LOG=" <> log, "python3", "-u", @fake_codex]
+    Application.put_env(:hal_c2, :codex_command, codex)
+    Application.put_env(:hal_c2, :bundled_plugins, [HalC2.Plugins.Bundled.Codex])
+    on_exit(fn -> Application.delete_env(:hal_c2, :bundled_plugins) end)
+    start_supervised!(HalC2.Settings)
+    start_supervised!(HalC2.Plugins)
+    _ = :sys.get_state(HalC2.Plugins)
+
+    thread_id = launch("hello")
+    [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+    [{first, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+
+    # As if the history the run handed over had never been answered.
+    :ok =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        [%{"id" => id}] = StreamState.list(state, "provider-thread")
+        mark = &Map.put(&1, "unconfirmedRunId", run_id)
+        {[Orchestration.upsert(state, "provider-thread", id, mark)], :ok}
+      end)
+
+    assert {:ok, _} = send_message(thread_id, "m2", "again")
+    _ = await_runs(thread_id, 2)
+    refute Process.alive?(first)
+
+    methods =
+      for line <- log |> File.read!() |> String.split("\n", trim: true),
+          do: Jason.decode!(line)["method"]
+
+    assert methods == ["thread/start", "thread/start"]
+  end
+
+  # #1233: Codex answering `turn/start` took the prompt and the history it carried, so
+  # a turn stopped before it said anything leaves its conversation to resume.
+  test "a Codex turn stopped before its first output resumes its conversation next",
+       %{tmp_dir: dir} do
+    log = Path.join(dir, "sessions.jsonl")
+    codex = ["env", "FAKE_CODEX_SESSION_LOG=" <> log, "python3", "-u", @fake_codex]
+    Application.put_env(:hal_c2, :codex_command, codex)
+    start_supervised!(HalC2.Settings)
+    {_, version} = HalC2.Settings.get()
+    work = %{"codex-work" => %{"driver" => "codex", "enabled" => true}}
+    {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+    elsewhere = %{"modelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-5.4"}}
+    {:ok, _} = send_message(thread_id, "m2", "hi", elsewhere)
+    _ = await_statuses(thread_id, ["completed", "completed"])
+    back = %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}}
+    {:ok, _} = send_message(thread_id, "m3", "wait for me", back)
+    state = await_statuses(thread_id, ["completed", "completed", "running"])
+
+    %{"id" => run_id, "providerThreadId" => own} = List.last(runs(state))
+    refute Map.has_key?(StreamState.get(state, "provider-thread")[own], "unconfirmedRunId")
+
+    # The run handed codex-work's turn over, and marked it until Codex took it.
+    marks =
+      HalC2.Store.reduce_stream(HalC2.Store.path(), thread_id, 0, [], fn e, acc ->
+        if e.entity == own, do: [get_in(e.patch, ["s", "unconfirmedRunId"]) | acc], else: acc
+      end)
+
+    assert run_id in marks
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_statuses(thread_id, ["completed", "completed", "interrupted"])
+    {:ok, _} = send_message(thread_id, "m4", "again", back)
+    _ = await_statuses(thread_id, ["completed", "completed", "interrupted", "completed"])
+
+    starts =
+      for line <- log |> File.read!() |> String.split("\n", trim: true),
+          Jason.decode!(line)["method"] == "thread/start",
+          do: line
+
+    # One for each instance's conversation, none for a new one.
+    assert length(starts) == 2
+  end
+
+  # A command finding its conversation gone runs on a new one, which then holds the
+  # thread: a later run resumes it with only what came since.
+  test "a /compact whose Codex conversation is gone is handed the thread", %{tmp_dir: dir} do
+    inputs = Path.join(dir, "inputs.jsonl")
+
+    codex = [
+      "env",
+      "FAKE_CODEX_INPUT_LOG=" <> inputs,
+      "FAKE_CODEX_RESUME_ERROR=no rollout found for thread id",
+      "python3",
+      "-u",
+      @fake_codex
+    ]
+
+    Application.put_env(:hal_c2, :codex_command, codex)
+    start_supervised!(HalC2.Settings)
+    {_, version} = HalC2.Settings.get()
+    work = %{"codex-work" => %{"driver" => "codex", "enabled" => true}}
+    {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+    elsewhere = %{"modelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-5.4"}}
+    {:ok, _} = send_message(thread_id, "m2", "work was here", elsewhere)
+    _ = await_statuses(thread_id, ["completed", "completed"])
+    back = %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}}
+    {:ok, _} = send_message(thread_id, "m3", "/compact", back)
+    _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+
+    [_hello, _work, [%{"text" => compact} | _]] =
+      inputs |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+    assert compact =~ "work was here"
+    assert String.ends_with?(compact, "/compact")
+  end
+
   # A turn on another instance stops the app-server the runtime had; what it had sent
   # by then is still in the runtime's mailbox.
   test "what a Codex app-server the runtime no longer runs sent belongs to no turn" do
@@ -1636,6 +1756,37 @@ defmodule HalC2.OrchestrationTest do
     assert {401, _} = HalC2.Mcp.handle("Bearer nope", "{}")
   end
 
+  test "reading a thread says where a message too long to send whole was saved" do
+    start_supervised!(HalC2.Mcp)
+    long = String.duplicate("word ", 30_000)
+    thread_id = launch(long)
+    await_statuses(thread_id, ["completed"])
+    :ok = HalC2.Shell.subscribe(self())
+
+    unless HalC2.Shell.row(node(), thread_id) do
+      assert_receive {:hal_c2_shell, _}, 2_000
+    end
+
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+
+    {200, %{"result" => %{"structuredContent" => read}}} =
+      HalC2.Mcp.handle(
+        auth,
+        JSON.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "method" => "tools/call",
+          "params" => %{"name" => "hal_c2_thread_read", "arguments" => %{"threadId" => thread_id}}
+        })
+      )
+
+    [message, answer] = read["items"]
+    assert message["text"] =~ "the whole message is in the attached message.txt"
+    assert [%{"name" => "message.txt", "path" => path}] = message["files"]
+    assert File.read!(path) == long
+    refute Map.has_key?(answer, "files")
+  end
+
   test "a running thread delegates a task, and hears the result when the child finishes" do
     start_supervised!(HalC2.Mcp)
     parent_id = launch("wait here")
@@ -1971,6 +2122,228 @@ defmodule HalC2.OrchestrationTest do
       assert %{"text" => "hello"} = StreamState.get(current(thread_id), "message")[message_id]
     end
 
+    test "a queued message edited past 120,000 characters is folded, its file joining the others" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", "second")
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      long = String.duplicate("y", 130_000)
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => long})
+
+      message = StreamState.get(current(thread_id), "message")["m2"]
+      assert String.length(message["text"]) < 10_100
+
+      assert message["text"] =~
+               "[... 120000 characters cut here; the whole message is in the attached message.txt ...]"
+
+      assert [%{"name" => "message.txt", "source" => %{"_tag" => "pasted-text"}} = file] =
+               message["attachments"]
+
+      assert File.read!(HalC2.Attachments.path(file)) == long
+    end
+
+    # The file a long text was folded into holds that text: an edit never leaves it
+    # beside text it no longer matches (#1363 review).
+    test "an edit of a folded queued message drops the file the old text was folded into" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      [old] = StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+      longer = String.duplicate("z", 140_000)
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => longer})
+
+      assert [%{"name" => "message.txt"} = file] =
+               StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+
+      assert File.read!(HalC2.Attachments.path(file)) == longer
+      refute HalC2.Attachments.path(old)
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+
+      assert %{"text" => "short", "attachments" => []} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      refute HalC2.Attachments.path(file)
+    end
+
+    # A message may name a file the thread already has, as one sent again with another's
+    # attachments does: an edit of the message it was folded for leaves it to that one.
+    test "an edit of a folded queued message keeps its old file while another message names it" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      [old] = StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+      {:ok, _} = send_message(thread_id, "m3", "see the file", %{"attachments" => [old]})
+      _ = await_statuses(thread_id, ["running", "queued", "queued"])
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+
+      assert %{"text" => "short", "attachments" => []} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert [%{"id" => id}] = StreamState.get(current(thread_id), "message")["m3"]["attachments"]
+      assert id == old["id"]
+      assert File.read!(HalC2.Attachments.path(old)) == String.duplicate("y", 130_000)
+    end
+
+    # The desktop edits a queued message from its stored text, which for a long one is
+    # the folded text with its cut mark.
+    test "an edit of a folded message's stored text keeps the file its cut mark names" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      whole = String.duplicate("y", 130_000)
+      {:ok, _} = send_message(thread_id, "m2", whole)
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      %{"text" => folded, "attachments" => [file]} =
+        current(thread_id) |> StreamState.get("message") |> Map.fetch!("m2")
+
+      edited = "Typo fixed. " <> folded
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => edited})
+
+      assert %{"text" => ^edited, "attachments" => [^file]} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert File.read!(HalC2.Attachments.path(file)) == whole
+    end
+
+    # A long text quoting another message's cut mark, beside a pasted text of the name it
+    # quotes, is folded into a file of its own; an edit drops only that (#1363 review).
+    test "an edit of a long message quoting a cut mark drops only the file the MC folded" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      pasted = pending_text_upload("message.txt", "pasted by hand")
+
+      quoted =
+        "[... 5 characters cut here; the whole message is in the attached message.txt ...]\n" <>
+          String.duplicate("y", 130_000)
+
+      {:ok, _} = send_message(thread_id, "m2", quoted, %{"attachments" => [pasted]})
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      assert [%{"name" => "message.txt"} = own, %{"name" => "message-2.txt"} = folded] =
+               StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+
+      assert %{"text" => "short", "attachments" => [^own]} =
+               StreamState.get(current(thread_id), "message")["m2"]
+
+      assert File.read!(HalC2.Attachments.path(own)) == "pasted by hand"
+      refute HalC2.Attachments.path(folded)
+    end
+
+    # A client that sends the folded file back without the MC's mark keeps it the fold.
+    test "an edit listing a folded file without its mark keeps it the message's fold" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      %{"text" => text, "attachments" => [file]} =
+        StreamState.get(current(thread_id), "message")["m2"]
+
+      sent_back = put_in(file, ["source"], %{"_tag" => "pasted-text"})
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, second["id"], %{
+          "text" => "Typo fixed. " <> text,
+          "attachments" => [sent_back]
+        })
+
+      assert %{"attachments" => [^file]} = StreamState.get(current(thread_id), "message")["m2"]
+
+      {:ok, _} = queue_command("queued-run.edit", thread_id, second["id"], %{"text" => "short"})
+      refute HalC2.Attachments.path(file)
+    end
+
+    test "an edit naming a folded message's attachments leaves out the file its old text was in" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      [old] = StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+      upload = pending_upload()
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, second["id"], %{
+          "text" => "short",
+          "attachments" => [old, upload]
+        })
+
+      assert [%{"name" => "a.png"} = claimed] =
+               StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+
+      assert HalC2.Attachments.path(claimed)
+      refute HalC2.Attachments.path(old)
+    end
+
+    # The desktop's edit of a queued long message loads the folded text with its file
+    # listed; taking the file off and keeping the text drops the file.
+    test "an edit that keeps a folded message's text but not its file drops the file" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      {:ok, _} = send_message(thread_id, "m2", String.duplicate("y", 130_000))
+      [_, second] = runs(await_statuses(thread_id, ["running", "queued"]))
+      message = StreamState.get(current(thread_id), "message")["m2"]
+      [old] = message["attachments"]
+
+      {:ok, _} =
+        queue_command("queued-run.edit", thread_id, second["id"], %{
+          "text" => message["text"],
+          "attachments" => []
+        })
+
+      assert StreamState.get(current(thread_id), "message")["m2"]["attachments"] in [nil, []]
+      refute HalC2.Attachments.path(old)
+    end
+
+    test "a long message sent without an id keeps the file it was folded into" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      long = String.duplicate("y", 130_000)
+
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "threadId" => thread_id,
+          "text" => long,
+          "attachments" => [],
+          "dispatchMode" => %{"type" => "queue_after_active"}
+        })
+
+      [_, queued] = runs(await_statuses(thread_id, ["running", "queued"]))
+
+      assert [file] =
+               StreamState.get(current(thread_id), "message")[queued["userMessageId"]][
+                 "attachments"
+               ]
+
+      assert File.read!(HalC2.Attachments.path(file)) == long
+    end
+
+    # A resend (the client did not hear the first was taken) folds the text again; the
+    # thread keeps the first, and the second file goes with the send.
+    test "a long message sent twice leaves only the file its message names" do
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      long = String.duplicate("y", 130_000)
+
+      {:ok, _} = send_message(thread_id, "m2", long)
+      {:ok, _} = send_message(thread_id, "m2", long)
+
+      assert [file] = StreamState.get(current(thread_id), "message")["m2"]["attachments"]
+      prefix = HalC2.Attachments.thread_segment(thread_id) <> "-"
+
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), prefix <> "*")) ==
+               [HalC2.Attachments.path(file)]
+    end
+
     test "an agent that cannot be steered is interrupted, and the steered message goes next" do
       thread_id = launch("wait for it", "grok")
       _ = await_run(thread_id, "running")
@@ -2232,6 +2605,24 @@ defmodule HalC2.OrchestrationTest do
       state = current(thread_id)
       refute StreamState.get(state, "message")["m2"]
       refute StreamState.get(state, "turn-item")["turn-item:user:m2"]
+    end
+
+    # The file a long text was folded into is the message's, so a refused send takes
+    # it away again.
+    @tag :capture_log
+    test "a long message the thread refuses leaves no file behind" do
+      {thread_id, _run_id} = recorded_run("running")
+      odd_runtime(thread_id)
+
+      assert {:error, _} =
+               send_message(thread_id, "m2", String.duplicate("y", 130_000), %{
+                 "dispatchMode" => %{"type" => "start_immediately"},
+                 "deliveryIntent" => "steer"
+               })
+
+      refute StreamState.get(current(thread_id), "message")["m2"]
+      prefix = HalC2.Attachments.thread_segment(thread_id) <> "-"
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), prefix <> "*")) == []
     end
 
     @tag :capture_log
@@ -3175,6 +3566,132 @@ defmodule HalC2.OrchestrationTest do
       claude_says(thread_id, notification("task-agent-wake", "agent-wake", "completed", "Fine"))
       claude_says(thread_id, notification("task-bash-wake", "bash-wake", "completed", "ok"))
       await_shell_row(thread_id, &(&1["runningBackgroundTasks"] == []))
+    end
+
+    # #1233: a wake sends Claude nothing, so what another provider did before it is
+    # still Claude's to hear, from the next run that sends it something.
+    test "a wake leaves the runs Claude missed to the next run that sends it a message",
+         %{tmp_dir: dir} do
+      log = Path.join(dir, "prompts.jsonl")
+      claude = ["env", "FAKE_CLAUDE_PROMPT_LOG=" <> log, "python3", "-u", @fake_claude]
+      Application.put_env(:hal_c2, :claude_command, claude)
+      selection = &%{"modelSelection" => %{"instanceId" => &1, "model" => "gpt-5.4"}}
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      assert {:ok, _} = send_message(thread_id, "m2", "codex was here", selection.("codex"))
+      _ = await_statuses(thread_id, ~w(completed completed))
+
+      # Claude takes a turn by itself, as a background task's end wakes it.
+      claude_says(thread_id, %{
+        "type" => "assistant",
+        "message" => %{"id" => "m-wake", "content" => [%{"type" => "text", "text" => "Woke"}]}
+      })
+
+      claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
+      _ = await_statuses(thread_id, ~w(completed completed completed))
+
+      assert {:ok, _} = send_message(thread_id, "m4", "back to claude", selection.("claudeAgent"))
+      _ = await_statuses(thread_id, ~w(completed completed completed completed))
+
+      assert [_hello, back] =
+               log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      assert back =~ "codex was here"
+      assert back =~ "back to claude"
+    end
+
+    # A `/compact` is Claude's to run on its conversation: history before it would make
+    # it a message. What Claude missed waits for the next message.
+    test "a /compact reaches Claude as it was sent, and the next message brings what it missed",
+         %{tmp_dir: dir} do
+      log = Path.join(dir, "prompts.jsonl")
+      claude = ["env", "FAKE_CLAUDE_PROMPT_LOG=" <> log, "python3", "-u", @fake_claude]
+      Application.put_env(:hal_c2, :claude_command, claude)
+      selection = &%{"modelSelection" => %{"instanceId" => &1, "model" => "gpt-5.4"}}
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      assert {:ok, _} = send_message(thread_id, "m2", "codex was here", selection.("codex"))
+      _ = await_statuses(thread_id, ~w(completed completed))
+      assert {:ok, _} = send_message(thread_id, "m3", "/compact", selection.("claudeAgent"))
+      _ = await_statuses(thread_id, ~w(completed completed completed))
+      assert {:ok, _} = send_message(thread_id, "m4", "back to claude", selection.("claudeAgent"))
+      _ = await_statuses(thread_id, ~w(completed completed completed completed))
+
+      assert [_hello, "/compact", back] =
+               log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      assert back =~ "codex was here"
+    end
+
+    # provider-handoff.feature: a handoff waits when the first message after a switch
+    # asks to compact.
+    # Nothing is handed over with it, so Claude would have nothing to compact.
+    test "a /compact that is Claude's first run in the thread waits for the next message",
+         %{tmp_dir: dir} do
+      log = Path.join(dir, "prompts.jsonl")
+      claude = ["env", "FAKE_CLAUDE_PROMPT_LOG=" <> log, "python3", "-u", @fake_claude]
+      Application.put_env(:hal_c2, :claude_command, claude)
+      selection = &%{"modelSelection" => %{"instanceId" => &1, "model" => "gpt-5.4"}}
+
+      thread_id = launch("codex was here")
+      _ = await_run(thread_id, "completed")
+      assert {:ok, _} = send_message(thread_id, "m2", "/compact", selection.("claudeAgent"))
+      state = await_statuses(thread_id, ~w(completed failed))
+
+      assert Enum.any?(
+               StreamState.list(state, "turn-item"),
+               &(&1["type"] == "error" and &1["title"] == "Nothing to compact yet")
+             )
+
+      refute File.exists?(log)
+      assert {:ok, _} = send_message(thread_id, "m3", "and now", selection.("claudeAgent"))
+      _ = await_statuses(thread_id, ~w(completed failed completed))
+
+      assert [next] =
+               log |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+
+      assert next =~ "codex was here"
+      assert String.ends_with?(next, "and now")
+    end
+
+    # #1233: Claude starting the prompt took it, and the history it carried, so a turn
+    # stopped before Claude said anything leaves its conversation to go on in.
+    test "a Claude turn stopped before its first output goes on in its conversation next" do
+      selection = &%{"modelSelection" => %{"instanceId" => &1, "model" => "gpt-5.4"}}
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      assert {:ok, _} = send_message(thread_id, "m2", "codex was here", selection.("codex"))
+      _ = await_statuses(thread_id, ~w(completed completed))
+
+      assert {:ok, _} =
+               send_message(thread_id, "m3", "start and wait", selection.("claudeAgent"))
+
+      state = await_statuses(thread_id, ~w(completed completed running))
+      %{"id" => run_id, "providerThreadId" => own} = List.last(runs(state))
+      # The run handed codex's turn over, and marked it until Claude took it.
+      marked = StreamState.get(state, "provider-thread")[own]
+      assert marked["unconfirmedRunId"] == run_id
+
+      state =
+        await_state(
+          thread_id,
+          &(not Map.has_key?(StreamState.get(&1, "provider-thread")[own], "unconfirmedRunId"))
+        )
+
+      native = StreamState.get(state, "provider-thread")[own]["nativeThreadRef"]
+      assert native != nil
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+      _ = await_statuses(thread_id, ~w(completed completed interrupted))
+      assert {:ok, _} = send_message(thread_id, "m4", "again", selection.("claudeAgent"))
+      state = await_statuses(thread_id, ~w(completed completed interrupted completed))
+
+      assert StreamState.get(state, "provider-thread")[own]["nativeThreadRef"] == native
     end
 
     test "a subagent resumed through SendMessage keeps its process until its task ends" do
@@ -4490,6 +5007,133 @@ defmodule HalC2.OrchestrationTest do
       refute "held ask" in texts
     end
 
+    # Called by `HalC2.Orchestration.Fork` at its stages (`hook/2` there).
+    def fork_hook(fun, stage, id), do: fun.(stage, id)
+
+    # The source of a fork is deleted, its files with it, at `at` in the fork: before
+    # its history is read (the copies find the files gone), or after the copies were
+    # made. Either way the fork is refused and leaves no file of its own behind
+    # (thread_files.maude finds the first without the fork's second look).
+    for at <- [:reading, :copied] do
+      test "a fork whose source is deleted while it is #{at} is refused (#{at})" do
+        source_id = launch("hello")
+        [run] = runs(await_statuses(source_id, ["completed"]))
+
+        [user] =
+          for m <- StreamState.list(current(source_id), "message"), m["role"] == "user", do: m
+
+        file = "#{HalC2.Attachments.thread_segment(source_id)}-#{HalC2.Environment.uuid4()}"
+        File.mkdir_p!(HalC2.Attachments.dir())
+        File.write!(Path.join(HalC2.Attachments.dir(), file <> ".txt"), "the notes")
+
+        {:ok, _} =
+          HalC2.Streams.commit(source_id, :thread, [
+            {"message", user["id"],
+             %{
+               "s" => %{
+                 "attachments" => [%{"type" => "file", "id" => file, "name" => "notes.txt"}]
+               }
+             }}
+          ])
+
+        at = unquote(at)
+
+        Application.put_env(
+          :hal_c2,
+          :fork_hook,
+          {__MODULE__, :fork_hook,
+           [
+             fn
+               ^at, id ->
+                 {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => id})
+                 HalC2.Attachments.delete_thread(id)
+
+               _stage, _id ->
+                 :ok
+             end
+           ]}
+        )
+
+        on_exit(fn -> Application.delete_env(:hal_c2, :fork_hook) end)
+        fork_id = "thread-#{System.unique_integer([:positive])}"
+
+        assert {:error, message} =
+                 Orchestration.dispatch(%{
+                   "type" => "thread.fork",
+                   "commandId" => "cmd-fork-#{fork_id}",
+                   "createdBy" => "user",
+                   "creationSource" => "web",
+                   "sourceThreadId" => source_id,
+                   "targetThreadId" => fork_id,
+                   "sourcePoint" => %{"type" => "run", "runId" => run["id"]}
+                 })
+
+        assert message =~ "was deleted"
+        refute StreamState.get(current(fork_id), "thread")[fork_id]
+
+        assert Path.wildcard(
+                 Path.join(
+                   HalC2.Attachments.dir(),
+                   HalC2.Attachments.thread_segment(fork_id) <> "-*"
+                 )
+               ) == []
+      end
+    end
+
+    # Called by `HalC2.Store` inside its append (`hook/2` there): stream `id` cannot be
+    # written, as on a full disk.
+    def refuse_append(id, :append_change, id), do: raise("the disk is full")
+    def refuse_append(_id, _stage, _stream_id), do: :ok
+
+    test "a fork whose thread cannot be written leaves no file of its own behind" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      [user] =
+        for m <- StreamState.list(current(source_id), "message"), m["role"] == "user", do: m
+
+      file = "#{HalC2.Attachments.thread_segment(source_id)}-#{HalC2.Environment.uuid4()}"
+      File.mkdir_p!(HalC2.Attachments.dir())
+      File.write!(Path.join(HalC2.Attachments.dir(), file <> ".txt"), "the notes")
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"message", user["id"],
+           %{
+             "s" => %{
+               "attachments" => [%{"type" => "file", "id" => file, "name" => "notes.txt"}]
+             }
+           }}
+        ])
+
+      fork_id = "thread-#{System.unique_integer([:positive])}"
+      Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_append, [fork_id]})
+      on_exit(fn -> Application.delete_env(:hal_c2, :store_hook) end)
+
+      # The store's refusal reaches the caller as Unrecorded, with what it raised as its message.
+      assert_raise HalC2.Streams.Unrecorded, "the disk is full", fn ->
+        Orchestration.dispatch(%{
+          "type" => "thread.fork",
+          "commandId" => "cmd-fork-#{fork_id}",
+          "createdBy" => "user",
+          "creationSource" => "web",
+          "sourceThreadId" => source_id,
+          "targetThreadId" => fork_id,
+          "sourcePoint" => %{"type" => "run", "runId" => run["id"]}
+        })
+      end
+
+      Application.delete_env(:hal_c2, :store_hook)
+      refute StreamState.get(current(fork_id), "thread")[fork_id]
+
+      assert Path.wildcard(
+               Path.join(
+                 HalC2.Attachments.dir(),
+                 HalC2.Attachments.thread_segment(fork_id) <> "-*"
+               )
+             ) == []
+    end
+
     test "a fork on another provider gets the history as a transcript" do
       source_id = launch("hello")
       [run] = runs(await_statuses(source_id, ["completed"]))
@@ -4730,6 +5374,20 @@ defmodule HalC2.OrchestrationTest do
     end
   end
 
+  defp await_state(thread_id, done?) do
+    state = current(thread_id)
+
+    if done?.(state) do
+      state
+    else
+      receive do
+        {:hal_c2_stream, ^thread_id, _} -> await_state(thread_id, done?)
+      after
+        5_000 -> flunk("the thread's stream never got there")
+      end
+    end
+  end
+
   defp await_thread(thread_id, done?) do
     if done?.(StreamState.get(current(thread_id), "thread")[thread_id]) do
       :ok
@@ -4920,6 +5578,27 @@ defmodule HalC2.OrchestrationTest do
       "name" => "a.png",
       "mimeType" => "image/png",
       "sizeBytes" => byte_size(png)
+    }
+  end
+
+  # A pasted text a client folded and uploaded, as the desktop does with a long paste.
+  defp pending_text_upload(name, text) do
+    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+      HalC2.Attachments.create_upload_url(%{
+        "name" => name,
+        "mimeType" => "text/plain",
+        "sizeBytes" => byte_size(text)
+      })
+
+    :ok = HalC2.Attachments.store(token, text)
+
+    %{
+      "type" => "file",
+      "id" => id,
+      "name" => name,
+      "mimeType" => "text/plain",
+      "sizeBytes" => byte_size(text),
+      "source" => %{"_tag" => "pasted-text"}
     }
   end
 

@@ -36,7 +36,8 @@ sload model-checker
 ---           queued with it have been heard are partial too (suspect/2).
 ---   Landed - a redirect starts its segment once its task says the MC took it, and the
 ---           guard decides nothing while it is on its way (Turn.redirect/1); one refused
----           leaves the segment as it was.
+---           leaves the segment as it was and spends the budget, so the next stuck call
+---           is offered the stop.
 ---   Cancel - a judge job of a segment or turn that has ended, or of a turn offered its
 ---           stop, is stopped (cancel_judge/2), and so is one gone stale that a new job
 ---           replaces (start_judge/5).
@@ -354,13 +355,14 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
 
   --- handle_info of a delivery's result: a redirect taken starts the next segment of the
   --- turn it was sent in, and stops the old segment's jobs (Cancel); one refused leaves
-  --- the segment as it was. Else the word is only logged.
+  --- the segment as it was and the budget spent (the agent cannot take one now), so the
+  --- next stuck call is offered the stop. Else the word is only logged.
   rl [steered] : { taken(R, B) watching(turn(R, g(S, N, O, P, A, RD, PT, J, true)))
-                   cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
+                   budget(BU) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C }
     => { watching(turn(R, if B then seg(g(S, N, O, P, A, RD, PT, J, true), RS)
-                          else g(S, N, O, P, A, RD, PT, J, false) fi))
+                          else g(S, BU, O, P, A, RD, PT, J, false) fi))
          (if B and CA then drop(R) else empty fi)
-         cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C } .
+         budget(BU) cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA) C } .
   crl [steered] : taken(R, B) watching(W) => watching(W) if not redirecting(W, R) .
 
   --- Switches, the budget, the calls each run makes, the runs, the events the feed may

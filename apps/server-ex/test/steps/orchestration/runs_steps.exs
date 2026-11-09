@@ -1135,8 +1135,8 @@ defmodule HalC2.Steps.Orchestration.Runs do
     :erlang.trace(runtime, true, [:receive])
     failure = HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
     HalC2.Orchestration.TurnWriter.abandon(id, first["id"], "failed", failure)
+    # The second run waits behind the first's start in the same session.
     assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
-    :erlang.trace(runtime, false, [:receive])
     Map.merge(context, %{thread: thread, runtime: runtime, watch: watch})
   end
 
@@ -1148,9 +1148,46 @@ defmodule HalC2.Steps.Orchestration.Runs do
   step "the first run of {string} stays failed and the second runs alone",
        %{args: [thread]} = context do
     World.await_runs(context, thread, ["failed", "running"])
-    # The first turn's end, which Codex sends as the runtime lets go of it, is not the second's.
-    :ok = GenServer.call(context.runtime, :settle)
-    World.await_runs(context, thread, ["failed", "running"])
+    # The first turn ends as the session stops it; that end is not the second's.
+    runtime = context.runtime
+
+    assert_receive {:trace, ^runtime, :receive,
+                    {:json_rpc, _, {:notification, "turn/completed", %{"turn" => turn} = ended}}},
+                   5_000
+
+    assert turn["status"] == "interrupted"
+    _ = :sys.get_state(runtime)
+    :erlang.trace(runtime, false, [:receive])
+
+    statuses =
+      World.entities(context, thread, "run")
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.map(& &1["status"])
+
+    assert statuses == ["failed", "running"]
+    Map.put(context, :first_turn, %{thread: ended["threadId"], turn: turn["id"]})
+  end
+
+  step "the second run starts a new Codex conversation", context do
+    assert [_, _] = World.codex_requests(context, "thread/start")
+    context
+  end
+
+  # Codex reports the stopped turn's usage after the second turn began.
+  step "the first turn's usage leaves the context meter of {string} alone",
+       %{args: [thread]} = context do
+    World.codex_notify(context, thread, "thread/tokenUsage/updated", %{
+      "threadId" => context.first_turn.thread,
+      "turnId" => context.first_turn.turn,
+      "tokenUsage" => %{"last" => %{"totalTokens" => 150_000}, "modelContextWindow" => 200_000}
+    })
+
+    # Handled in order: the report is through once the runtime answers.
+    _ = :sys.get_state(context.runtime)
+
+    assert [nil] =
+             for(t <- World.entities(context, thread, "provider-thread"), do: t["contextUsage"])
+
     context
   end
 

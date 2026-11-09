@@ -173,8 +173,6 @@ QString newestUserMessage(const QHash<QString, QJsonObject>& messages, const QSe
 
 // How many prompts the stash keeps.
 constexpr qsizetype kMaxStashEntries = 20;
-// packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
-constexpr qsizetype kMaxPromptChars = 120000;
 // What one message can carry (packages/contracts: a provider turn's
 // attachments, and COMPOSER_CONTEXT_MAX_RECORDS / its serialized size).
 constexpr qsizetype kMaxAttachments = 100;
@@ -685,7 +683,7 @@ void ComposerController::stepHistory(const QString& target, bool backward) {
   setText(target, entries.at(next).second, int(entries.at(next).second.size()));
 }
 
-// Why a prompt cannot be sent for its length, else empty.
+// Why a draft cannot be sent for what it carries, else empty.
 QString ComposerController::carryProblem(const QList<Attachment>& attachments, const QList<Excerpt>& contexts) {
   if (attachments.size() > kMaxAttachments) {
     return QStringLiteral("Remove attachments until there are at most %1.").arg(kMaxAttachments);
@@ -712,14 +710,6 @@ QString ComposerController::carryProblem(const QList<Attachment>& attachments, c
     return QStringLiteral("This draft has too much context to send. Remove some context items and try again.");
   }
   return {};
-}
-
-QString ComposerController::promptProblem(const QString& text) {
-  const qsizetype excess = text.trimmed().size() - kMaxPromptChars;
-  if (excess <= 0) return {};
-  const QLocale english(QLocale::English, QLocale::UnitedStates);
-  return QStringLiteral("Prompt is %1 %2 over the %3-character limit. Shorten or split it before sending.")
-      .arg(english.toString(excess), excess == 1 ? QStringLiteral("character") : QStringLiteral("characters"), english.toString(kMaxPromptChars));
 }
 
 // The draft goes to the stash and the composer
@@ -879,10 +869,6 @@ bool ComposerController::submit(const QVariantMap& payload) {
   // The submit is the brick's newest edit, so it takes the cleared (or
   // restored) text as the answer to it.
   setText(target, text, int(text.size()), payload.value(QStringLiteral("edit")));
-  if (const QString problem = promptProblem(text); !problem.isEmpty()) {
-    toast(QStringLiteral("Message not sent"), problem);
-    return true;
-  }
   if (onPage()) return submitPage(target, text);
   if (onImages()) return submitImages(target, text);
   if (queuedEdit(target)) return saveQueuedEdit(target, text);

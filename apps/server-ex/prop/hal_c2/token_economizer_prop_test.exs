@@ -37,6 +37,8 @@ defmodule HalC2.TokenEconomizerPropTest do
 
   # --- one turn, as a state machine ------------------------------------------------------
 
+  @unread ~w(capped nested piped_shell inline substituted open_heredoc)
+
   property "a turn's guard keeps its laws in any order of calls, verdicts and time",
     numtests: HalC2.Prop.numtests(200) do
     forall {samples, budget} <- {learned(), integer(0, 2)} do
@@ -221,6 +223,26 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp call("read"), do: {"Bash", %{"command" => "cat a.py"}, "x = 1", 0}
   defp call("bad_edit"), do: {"Edit", %{"path" => "a.py"}, "String to replace not found", 1}
 
+  # Commands the guard does not read whole, each hiding a failing check: capped (the
+  # plugin hears no text), in a nested shell, as inline code, in a substitution, or in a
+  # heredoc that never ends.
+  defp call("capped"), do: {"Bash", %{"command" => ""}, "1 failed in 0.02s", 1}
+
+  defp call("nested"),
+    do: {"Bash", %{"command" => "bash -lc 'pytest -q' || true"}, "1 failed in 0.02s", 0}
+
+  defp call("piped_shell"),
+    do: {"Bash", %{"command" => "sh -c 'pytest -q' | tail -3"}, "1 failed in 0.02s", nil}
+
+  defp call("inline"),
+    do: {"Bash", %{"command" => "node --input-type commonjs -e \"x()\""}, "1 failed in 0.02s", 0}
+
+  defp call("substituted"),
+    do: {"Bash", %{"command" => "echo $(pytest -q)"}, "1 failed in 0.02s", 0}
+
+  defp call("open_heredoc"),
+    do: {"Bash", %{"command" => "cat <<EOF\npytest -q"}, "1 failed in 0.02s", 1}
+
   def postcondition(state, {:call, _, :tools, _}, steps) do
     steps
     |> Enum.with_index(1)
@@ -249,9 +271,9 @@ defmodule HalC2.TokenEconomizerPropTest do
           run.guard.redirects == g.redirects + 1 and run.guard.st.turns == 0 and
           run.guard.judge_pending == nil and run.guard.nudges_done == g.nudges_done
 
-      # Refused: the segment goes on as it was.
+      # Refused: the segment goes on as it was, and no redirect is sent again.
       true ->
-        run.guard == %{g | redirecting: false}
+        run.guard == %{g | redirecting: false, refused: true}
     end
   end
 
@@ -261,7 +283,8 @@ defmodule HalC2.TokenEconomizerPropTest do
     acted = r.decision != nil
 
     # Never acted on, or judged, before the project has an envelope.
-    # The budget, then one stop offer, then nothing.
+    # The budget, then one stop offer, then nothing; a refused redirect is followed by the
+    # stop offer whatever is left of the budget.
     # A redirect has words in it.
     # One judge job out at a time, unless the one out went stale.
     # A job asks for a redirect to be written only while one can still be sent.
@@ -270,11 +293,15 @@ defmodule HalC2.TokenEconomizerPropTest do
       (not before.guard.redirecting or (not acted and r.job == nil)) and
       run.nudges <= state.budget and
       run.stops <= 1 and
-      (not match?({:abort, _}, r.decision) or before.nudges == state.budget) and
+      (not match?({:abort, _}, r.decision) or before.nudges == state.budget or
+         before.guard.refused) and
+      (not match?({:nudge, _}, r.decision) or not before.guard.refused) and
       (before.stops == 0 or not acted) and
       (r.text == nil or String.trim(r.text) != "") and
       (r.job == nil or before.out == nil or before.now - elem(before.out, 1) >= @stale) and
-      (r.job == nil or r.job["redirect"] == before.guard.nudges_done < state.budget) and
+      (r.job == nil or
+         r.job["redirect"] ==
+           (before.guard.nudges_done < state.budget and not before.guard.refused)) and
       run.guard.cum_turns == calls
   end
 
@@ -306,6 +333,35 @@ defmodule HalC2.TokenEconomizerPropTest do
          ))
       |> when_fail(
         IO.puts("Turns: #{inspect(turns)}\nLearned: #{inspect(tracker.resolved_turns)}")
+      )
+    end
+  end
+
+  property "a turn with a command it did not read after its last edit is never learned",
+    numtests: HalC2.Prop.numtests(300) do
+    forall kinds <- list(elements(~w(read edit pass fail) ++ @unread)) do
+      g =
+        Enum.reduce(kinds, Turn.new("t:r"), fn kind, g ->
+          {name, args, result, code} = call(kind)
+          {g, _, _} = Turn.fold(g, name, args, result, code)
+          g
+        end)
+
+      # Positions from 1, as the guard counts calls; 0 when nothing was edited.
+      at = Enum.with_index(kinds, 1)
+      last_edit = Enum.max([0 | for({"edit", i} <- at, do: i)])
+      after_edit = for {kind, i} <- at, i > last_edit, do: kind
+      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail)))
+
+      green =
+        kinds != [] and not Enum.any?(after_edit, &(&1 in @unread)) and
+          List.last(checks) != "fail"
+
+      (Turn.resolved_proxy(g) == green)
+      |> when_fail(
+        IO.puts(
+          "Calls: #{inspect(kinds)}\nGuard: #{inspect(Map.take(g, [:last_edit, :last_verify, :last_verify_failed]))}"
+        )
       )
     end
   end
@@ -426,7 +482,8 @@ defmodule HalC2.TokenEconomizerPropTest do
   # does: quoted, escaped, or inside a quoting context nested in double quotes.
   @hiding ~w(single double ansi escaped subst param backtick)a
 
-  # A command that writes a word holding a random secret, or sets a variable to it: the
+  # A command that writes a word holding a random secret (by any redirect that may
+  # write), sets a variable to it, or runs it as code (behind any interpreter flag): the
   # secret inside a quoted or escaped part, among other parts, the word run alone, after
   # a command, in a group or in a nested shell.
   defp secret_command do
@@ -440,7 +497,19 @@ defmodule HalC2.TokenEconomizerPropTest do
              "printf %s @W | tee a.py",
              "cat > a.py <<< @W",
              "sudo tee a.py <<< @W",
-             "X=@W pytest -q"
+             "X=@W pytest -q",
+             "printf %s @W 1<>a.py",
+             "printf %s @W <>notes.txt",
+             "printf %s @W >&out.txt",
+             "printf %s @W >&$fd",
+             "node --input-type commonjs -e @W",
+             "node --import=@W app.js",
+             "python3 -X dev -W error -c @W",
+             "timeout 10 ruby -w -e @W",
+             "php -d x=1 -r @W",
+             "deno eval @W",
+             "awk @W a.txt",
+             "find . -name a -exec perl -0777 -pe @W {} +"
            ]), elements(~w(alone and_before braces nested)a)} do
       word = Enum.join(before) <> hide(kind, inner <> secret <> inner) <> Enum.join(after_)
       {secret_carry(carrier, String.replace(use, "@W", word)), secret}

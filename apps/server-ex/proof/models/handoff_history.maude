@@ -1,0 +1,421 @@
+sload model-checker
+
+--- What of a thread's history a provider is handed in a budget, as
+--- HalC2.Orchestration.Handoff.select/2 picks it, over every thread of a few runs whose parts
+--- take a few units each, at every budget. The rules only build the thread; select is
+--- the equations, and each law is checked at every budget from the note's up to past
+--- the whole history. proof/hal_c2/handoff_history_proof_test.exs maps it to the code.
+---
+--- A run's request (what was said) takes 2 whole: a heading of 1, and 1 that cutting
+--- every text to nothing saves. GA is what cutting what other agents sent to its floor
+--- saves, GU what cutting the user's words to theirs saves. Condensing a run adds O to
+--- its request, showing it in full F more. The newest run's steps are rungs: each is
+--- what showing that many of its newest steps adds, the least its last step cut short.
+---
+--- Each part of the design is a switch, cfg(Hold, Shrink, Order, Step):
+---   Hold    with the requests squeezed, room for the newest's last step is held back;
+---   Shrink  what is held shrinks to nothing as the budget nears the leanest squeeze;
+---   Order   runs with none of the user's words give way before those with them;
+---   Step    the requests go whole only when they leave room for the newest's last step.
+
+mod HANDOFF-HISTORY is
+  protecting INT .
+
+  sorts Cfg Shape Shapes Tail Tails Run Runs Ints Level Levels Stage Path Sel Sys .
+  sorts Step Raised Squeezed .
+  subsort Shape < Shapes .
+  subsort Tail < Tails .
+  subsort Run < Runs .
+  subsort Int < Ints .
+
+  op cfg : Bool Bool Bool Bool -> Cfg [ctor] .
+
+  --- Run I: whether it holds the user's words, GA, GU, O, F.
+  op run : Int Bool Int Int Int Int -> Run [ctor] .
+  op nil : -> Runs [ctor] .
+  op __ : Runs Runs -> Runs [ctor assoc id: nil] .
+
+  op no : -> Ints [ctor] .
+  op _;_ : Ints Ints -> Ints [ctor assoc comm id: no] .
+
+  --- A run's level; tl(X) the newest's steps that add X.
+  ops req out full gone : -> Level [ctor] .
+  op tl : Int -> Level [ctor] .
+  op lv : Int Level -> Levels [ctor] .
+  op nolv : -> Levels [ctor] .
+  op _,_ : Levels Levels -> Levels [ctor assoc comm id: nolv] .
+
+  --- How far the requests are cut: not at all; what other agents sent, to its floor;
+  --- the user's words too; everything below the floors; nothing fits.
+  ops whole agents users all dropall : -> Stage [ctor] .
+  --- Whole, upgraded from the requests, squeezed, or no history at all.
+  ops wp up sq nothing : -> Path [ctor] .
+  --- What select gives: its path, each shown run's level, the runs left out, how far the
+  --- requests are cut and what the shown runs take.
+  op sel : Path Levels Ints Stage Int -> Sel [ctor] .
+
+  vars I J K M X Y B Bu Left Left1 Left2 Left3 Left4 Sh Cost Lo Hi : Int .
+  vars U P1 P2 P3 P4 : Bool .
+  vars H H' Kept : Runs .
+  vars R R' : Run .
+  vars GA GU O F : Int .
+  vars Rs Ds Es : Ints .
+  vars Ls Ls1 Ls2 Ls3 : Levels .
+  vars L L1 L2 : Level .
+  var C : Cfg .
+  var St : Stage .
+  var P : Path .
+  var S1 : Sel .
+
+  --- The note ahead of a history that is not whole; the blank line the last run has not.
+  ops note slack : -> Int .
+  eq note = 2 .
+  eq slack = 1 .
+
+  op ord : Run -> Int .
+  eq ord(run(I, U, GA, GU, O, F)) = I .
+  op users? : Run -> Bool .
+  eq users?(run(I, U, GA, GU, O, F)) = U .
+  op len : Runs -> Int .
+  eq len(nil) = 0 .
+  eq len(R H) = 1 + len(H) .
+  op ords : Runs -> Ints .
+  eq ords(nil) = no .
+  eq ords(R H) = ord(R) ; ords(H) .
+  op first : Runs -> Run .
+  eq first(R H) = R .
+  op middle : Runs -> Runs .
+  eq middle(R H R') = H .
+  eq middle(H) = nil [owise] .
+
+  --- What a run's request takes at a stage.
+  op cost : Stage Run -> Int .
+  eq cost(whole, run(I, U, GA, GU, O, F)) = 2 + GU + GA .
+  eq cost(agents, run(I, U, GA, GU, O, F)) = 2 + GU .
+  eq cost(users, run(I, U, GA, GU, O, F)) = 2 .
+  eq cost(all, run(I, U, GA, GU, O, F)) = 1 .
+  op sum : Stage Runs -> Int .
+  eq sum(St, nil) = 0 .
+  eq sum(St, R H) = cost(St, R) + sum(St, H) .
+
+  --- What a level adds to its run's request.
+  op extra : Run Level -> Int .
+  eq extra(R, req) = 0 .
+  eq extra(run(I, U, GA, GU, O, F), out) = O .
+  eq extra(run(I, U, GA, GU, O, F), full) = O + F .
+  eq extra(R, tl(X)) = X .
+  op wholecost : Runs -> Int .
+  eq wholecost(nil) = 0 .
+  eq wholecost(R H) = cost(whole, R) + extra(R, full) + wholecost(H) .
+
+  op at : Int Levels -> Level .
+  eq at(I, (lv(I, L), Ls)) = L .
+  eq at(I, Ls) = gone [owise] .
+  op put : Int Level Levels -> Levels .
+  eq put(I, L, (lv(I, L1), Ls)) = lv(I, L), Ls .
+  op every : Runs Level -> Levels .
+  eq every(nil, L) = nolv .
+  eq every(R H, L) = lv(ord(R), L), every(H, L) .
+  --- What the shown runs take, their requests whole.
+  op shown : Runs Levels -> Int .
+  eq shown(nil, Ls) = 0 .
+  eq shown(R H, Ls) = cost(whole, R) + extra(R, at(ord(R), Ls)) + shown(H, Ls) .
+
+  op in : Int Ints -> Bool .
+  eq in(X, (X ; Rs)) = true .
+  eq in(X, Rs) = false [owise] .
+  op sub : Ints Ints -> Bool .
+  eq sub(no, Ds) = true .
+  eq sub((X ; Rs), Ds) = in(X, Ds) and sub(Rs, Ds) .
+
+  --- The newest's least rung, its last step cut short: 0 with no steps.
+  op least : Ints -> Int .
+  op low : Ints -> Int .
+  eq least(no) = 0 .
+  eq least(Rs) = low(Rs) [owise] .
+  eq low(X) = X .
+  ceq low(X ; Rs) = min(X, low(Rs)) if Rs =/= no .
+  --- The biggest rung from Cur that adds at most Sh to it, -1 for none.
+  op best : Ints Int Int -> Int .
+  eq best(no, Lo, Sh) = -1 .
+  eq best((X ; Rs), Lo, Sh) = max((if X >= Lo and X - Lo <= Sh then X else -1 fi), best(Rs, Lo, Sh)) .
+
+  --- newest_steps/4: the newest in full when that fits in Sh, else as many of its
+  --- newest steps; the level and what is left of Left.
+  op st : Level Int -> Step [ctor] .
+  op steps : Run Ints Level Int Int -> Step .
+  eq steps(R, Rs, full, Left, Sh) = st(full, Left) .
+  ceq steps(R, Rs, L, Left, Sh) = st(full, Left - (extra(R, full) - extra(R, L)))
+    if L =/= full /\ extra(R, full) - extra(R, L) <= Sh .
+  ceq steps(R, Rs, L, Left, Sh)
+    = (if X == -1 then st(L, Left) else st(tl(X), Left - (X - extra(R, L))) fi)
+    if L =/= full /\ extra(R, full) - extra(R, L) > Sh /\ X := best(Rs, extra(R, L), Sh) .
+
+  --- raise_each/4: each run brought up to L where that fits, newest first.
+  op rs : Levels Int -> Raised [ctor] .
+  op raise : Runs Levels Int Level -> Raised .
+  eq raise(nil, Ls, Left, L) = rs(Ls, Left) .
+  ceq raise(H R, Ls, Left, L)
+    = raise(H, (if X <= Left then put(ord(R), L, Ls) else Ls fi),
+            (if X <= Left then Left - X else Left fi), L)
+    if X := extra(R, L) - extra(R, at(ord(R), Ls)) .
+
+  --- upgrade/3: the requests fit, with Left over.
+  op share : Runs Ints Int -> Int .
+  eq share(nil, Rs, Left) = Left .
+  eq share(H, Rs, Left) = min(Left, max(Left quo 2, least(Rs))) [owise] .
+  op upgrade : Runs Ints Int -> Sel .
+  ceq upgrade(H R, Rs, Left) = sel(up, Ls3, no, whole, shown(H R, Ls3))
+    if st(L1, Left1) := steps(R, Rs, req, Left, share(H, Rs, Left))
+    /\ rs(Ls1, Left2) := raise(H, every(H, req), Left1, out)
+    /\ rs(Ls2, Left3) := raise(H, Ls1, Left2, full)
+    /\ st(L2, Left4) := steps(R, Rs, L1, Left3, Left3)
+    /\ Ls3 := (Ls2, lv(ord(R), L2)) .
+
+  --- squeeze/2: the runs kept, those left out, the stage and what the kept take.
+  op sqz : Runs Ints Stage Int -> Squeezed [ctor] .
+  op agentsOnly : Runs -> Runs .
+  eq agentsOnly(nil) = nil .
+  eq agentsOnly(R H) = (if users?(R) then nil else R fi) agentsOnly(H) .
+  op usersOnly : Runs -> Runs .
+  eq usersOnly(nil) = nil .
+  eq usersOnly(R H) = (if users?(R) then R else nil fi) usersOnly(H) .
+  --- The runs between the first and the newest, in the order they give way, and how
+  --- many give way before the user's words are cut.
+  op order : Cfg Runs -> Runs .
+  eq order(cfg(P1, P2, true, P4), H) = agentsOnly(H) usersOnly(H) .
+  eq order(cfg(P1, P2, false, P4), H) = H .
+  op lead : Cfg Runs -> Int .
+  eq lead(cfg(P1, P2, true, P4), H) = len(agentsOnly(H)) .
+  eq lead(cfg(P1, P2, false, P4), H) = len(H) .
+  op take : Int Runs -> Runs .
+  eq take(K, nil) = nil .
+  eq take(K, R H) = if K > 0 then R take(K - 1, H) else nil fi .
+  op without : Runs Ints -> Runs .
+  eq without(nil, Ds) = nil .
+  eq without(R H, Ds) = (if in(ord(R), Ds) then nil else R fi) without(H, Ds) .
+  op fits : Runs Stage Int -> Bool .
+  eq fits(H, St, B) = sum(St, H) <= B .
+  --- fewest/3: the fewest of Lo..Hi left out for the rest to fit at St, Hi if none.
+  op fewest : Int Int Runs Runs Stage Int -> Int .
+  ceq fewest(Lo, Hi, H, H', St, B) = Hi if Lo >= Hi .
+  ceq fewest(Lo, Hi, H, H', St, B)
+    = (if fits(without(H, ords(take(M, H'))), St, B)
+       then fewest(Lo, M, H, H', St, B) else fewest(M + 1, Hi, H, H', St, B) fi)
+    if Lo < Hi /\ M := (Lo + Hi) quo 2 .
+  --- How far the kept requests are cut, and what they take: a cut fills the budget, as
+  --- the largest share that fits does, to within what one more character takes.
+  op stage : Runs Int -> Stage .
+  eq stage(H, B)
+    = if fits(H, whole, B) then whole
+      else if fits(H, agents, B) then agents
+      else if fits(H, users, B) then users
+      else if fits(H, all, B) then all else dropall fi fi fi fi .
+  op taken : Stage Runs Int -> Int .
+  eq taken(whole, H, B) = sum(whole, H) .
+  eq taken(dropall, H, B) = 0 .
+  eq taken(St, H, B) = B [owise] .
+  op squeeze : Cfg Runs Int -> Squeezed .
+  ceq squeeze(C, H, B) = sqz(Kept, ords(take(K, H')), stage(Kept, B), taken(stage(Kept, B), Kept, B))
+    if H' := order(C, middle(H)) /\ J := lead(C, middle(H))
+    /\ K := (if fits(H, agents, B) then 0
+             else (if fits(without(H, ords(take(J, H'))), agents, B)
+                   then fewest(1, J, H, H', agents, B)
+                   else fewest(J, len(H'), H, H', users, B) fi) fi)
+    /\ Kept := without(H, ords(take(K, H'))) .
+
+  --- squeezed/2: the requests do not fit whole in Bu.
+  op newest : Runs -> Run .
+  eq newest(H R) = R .
+  --- What the first and newest runs take at their floors: the leanest squeeze.
+  op floor : Runs -> Int .
+  eq floor(R) = cost(users, R) .
+  eq floor(R' H R) = cost(users, R') + cost(users, R) .
+  op held : Cfg Int Int -> Int .
+  eq held(cfg(false, P2, P3, P4), X, Y) = 0 .
+  eq held(cfg(true, false, P3, P4), X, Y) = X .
+  eq held(cfg(true, true, P3, P4), X, Y) = max(0, min(X, Y)) .
+  op squeezed : Cfg Runs Ints Int -> Sel .
+  ceq squeezed(C, H R, Rs, Bu)
+    = (if St == dropall then sel(sq, nolv, ords(H R), dropall, 0)
+       else sel(sq, put(ord(R), L, every(Kept, req)), Ds, St, Cost + extra(R, L)) fi)
+    if X := held(C, least(Rs), Bu - floor(H R))
+    /\ sqz(Kept, Ds, St, Cost) := squeeze(C, H R, Bu - X)
+    /\ st(L, Left) := steps(R, Rs, req, Bu - Cost, Bu - Cost) .
+
+  op gate : Cfg Ints -> Int .
+  eq gate(cfg(P1, P2, P3, true), Rs) = least(Rs) .
+  eq gate(cfg(P1, P2, P3, false), Rs) = 0 .
+  --- select/2 of runs H, the newest's rungs Rs, in budget B.
+  op select : Cfg Runs Ints Int -> Sel .
+  ceq select(C, H, Rs, B) = sel(wp, every(H, full), no, whole, wholecost(H))
+    if wholecost(H) - slack <= B .
+  ceq select(C, H, Rs, B) = upgrade(H, Rs, B - note - sum(whole, H))
+    if wholecost(H) - slack > B /\ sum(whole, H) + gate(C, Rs) <= B - note .
+  ceq select(C, H, Rs, B) = squeezed(C, H, Rs, B - note)
+    if wholecost(H) - slack > B /\ sum(whole, H) + gate(C, Rs) > B - note .
+
+  --- What the history takes.
+  op length : Sel -> Int .
+  eq length(sel(wp, Ls, Ds, St, Cost)) = Cost - slack .
+  eq length(sel(nothing, Ls, Ds, St, Cost)) = 0 .
+  eq length(sel(P, Ls, Ds, St, Cost)) = (note + Cost) - slack [owise] .
+  --- history/2: none when even the note saying every run is left out does not fit.
+  op history : Cfg Runs Ints Int -> Sel .
+  ceq history(C, H, Rs, B)
+    = (if length(S1) > B then sel(nothing, nolv, ords(H), dropall, 0) else S1 fi)
+    if S1 := select(C, H, Rs, B) .
+
+  --- --- The threads -----------------------------------------------------------------
+
+  --- What a run can be: holds the user's words, GA, GU, O, F.
+  op sh : Bool Int Int Int Int -> Shape [ctor] .
+  op nosh : -> Shapes [ctor] .
+  op _;;_ : Shapes Shapes -> Shapes [ctor assoc id: nosh] .
+  --- What the newest can be: itself and its rungs.
+  op t : Run Ints -> Tail [ctor] .
+  op notl : -> Tails [ctor] .
+  op _++_ : Tails Tails -> Tails [ctor assoc id: notl] .
+
+  --- Which threads: every part of every run sized (wide), or the runs' requests
+  --- sized and only the newest's steps (narrow).
+  sort Dom .
+  ops wide narrow : -> Dom [ctor] .
+  op shapes : Dom -> Shapes .
+  op cuts : -> Shapes .
+  eq cuts = sh(false, 0, 0, 0, 0) ;; sh(false, 1, 0, 0, 0) ;; sh(true, 0, 0, 0, 0)
+    ;; sh(true, 1, 0, 0, 0) ;; sh(true, 0, 1, 0, 0) ;; sh(true, 1, 1, 0, 0) .
+  op sized : Shapes Int Int -> Shapes .
+  eq sized(nosh, O, F) = nosh .
+  eq sized(sh(U, GA, GU, X, Y) ;; Ss:Shapes, O, F) = sh(U, GA, GU, O, F) ;; sized(Ss:Shapes, O, F) .
+  eq shapes(narrow) = cuts .
+  --- Each cut of the four that differ in what each saves.
+  op cuts4 : -> Shapes .
+  eq cuts4 = sh(false, 0, 0, 0, 0) ;; sh(false, 1, 0, 0, 0) ;; sh(true, 0, 1, 0, 0)
+    ;; sh(true, 1, 1, 0, 0) .
+  eq shapes(wide) = sized(cuts4, 0, 0) ;; sized(cuts4, 1, 0) ;; sized(cuts4, 2, 0)
+    ;; sized(cuts4, 0, 1) ;; sized(cuts4, 1, 1) ;; sized(cuts4, 2, 1) .
+
+  --- The rungs below E that bits of X pick, from V.
+  op bits : Int Int Int -> Ints .
+  eq bits(X, I, J) = if I >= J then no
+    else (if X rem 2 == 1 then I else no fi) ; bits(X quo 2, I + 1, J) fi .
+  op rungs : Run Int -> Tails .
+  eq rungs(R, X) = if X < 0 then notl
+    else t(R, bits(X, 1, extra(R, full))) ++ rungs(R, X - 1) fi .
+  op tails : Dom Run -> Tails .
+  eq tails(wide, R) = rungs(R, (2 ^ max(0, extra(R, full) - 1)) - 1) .
+  eq tails(narrow, run(I, U, GA, GU, O, F))
+    = rungs(run(I, U, GA, GU, 0, 0), 0) ++ rungs(run(I, U, GA, GU, 1, 0), 0)
+      ++ rungs(run(I, U, GA, GU, 2, 0), 1) ++ rungs(run(I, U, GA, GU, 3, 0), 3) .
+
+  --- Building a thread of up to K more runs, and the thread built.
+  op gen : Cfg Dom Int Runs -> Sys [ctor] .
+  op chk : Cfg Runs Ints -> Sys [ctor] .
+  vars Ss1 Ss2 : Shapes .
+  vars T1 T2 : Tails .
+  var D : Dom .
+  vars GA2 GU2 O2 F2 : Int .
+  var U2 : Bool .
+
+  crl [run] : gen(C, D, K, H) => gen(C, D, K - 1, H run(len(H) + 1, U2, GA2, GU2, O2, F2))
+    if K > 0 /\ Ss1 ;; sh(U2, GA2, GU2, O2, F2) ;; Ss2 := shapes(D) .
+  crl [newest] : gen(C, D, K, H R) => chk(C, H R', Rs)
+    if T1 ++ t(R', Rs) ++ T2 := tails(D, R) .
+endm
+
+mod HANDOFF-HISTORY-PROPS is
+  including HANDOFF-HISTORY .
+
+  sort Law .
+  ops fitting ordered growing every : -> Law [ctor] .
+  vars I X B Lo Hi Cost Bu : Int .
+  vars H : Runs .
+  vars R R' : Run .
+  vars Rs Ds : Ints .
+  vars Ls : Levels .
+  var L : Level .
+  var C : Cfg .
+  var St : Stage .
+  vars P : Path .
+  vars S1 S2 : Sel .
+  var S : Sys .
+  var W : Law .
+
+  op levels : Sel -> Levels .
+  eq levels(sel(P, Ls, Ds, St, Cost)) = Ls .
+  op dropped : Sel -> Ints .
+  eq dropped(sel(P, Ls, Ds, St, Cost)) = Ds .
+  op path : Sel -> Path .
+  eq path(sel(P, Ls, Ds, St, Cost)) = P .
+  op cut : Sel -> Stage .
+  eq cut(sel(P, Ls, Ds, St, Cost)) = St .
+  op stepped : Level -> Bool .
+  eq stepped(full) = true .
+  eq stepped(tl(X)) = true .
+  eq stepped(L) = false [owise] .
+  op count : Levels -> Int .
+  eq count(nolv) = 0 .
+  eq count((lv(I, L), Ls)) = 1 + count(Ls) .
+  op size : Ints -> Int .
+  eq size(no) = 0 .
+  eq size((X ; Ds)) = 1 + size(Ds) .
+  op anyUsers : Runs Ints -> Bool .
+  eq anyUsers(nil, Ds) = false .
+  eq anyUsers(R H, Ds) = (users?(R) and in(ord(R), Ds)) or anyUsers(H, Ds) .
+  op agentKept : Runs Levels -> Bool .
+  eq agentKept(nil, Ls) = false .
+  eq agentKept(R H, Ls) = (not users?(R) and at(ord(R), Ls) =/= gone) or agentKept(H, Ls) .
+
+  --- The laws history keeps at budget B, S1 what it gives there and S2 at B + 1.
+  op broken : Law Runs Ints Int Sel Sel -> Bool .
+  --- It fits; it is whole whenever that fits; every run is shown or left out; the first
+  --- and newest are shown whenever any is, and whenever they fit cut to nothing.
+  eq broken(fitting, H, Rs, B, S1, S2)
+    = length(S1) > B
+      or (wholecost(H) - slack <= B and path(S1) =/= wp)
+      or count(levels(S1)) + size(dropped(S1)) =/= len(H)
+      or (levels(S1) =/= nolv
+          and (at(ord(first(H)), levels(S1)) == gone or at(ord(newest(H)), levels(S1)) == gone))
+      or (levels(S1) == nolv and cost(all, first(H)) + cost(all, newest(H)) <= B - note
+          and len(H) > 1)
+      or (levels(S1) == nolv and cost(all, first(H)) <= B - note and len(H) == 1) .
+  --- The user's words are cut, and a run with them left out, only once every run between
+  --- the first and the newest with none of them is left out; everything is cut below
+  --- the floors only when the first and newest at their floors do not fit; the newest's
+  --- last step is shown whenever the requests whole leave room for it, and when they are
+  --- squeezed, whenever the first and newest at their floors do.
+  eq broken(ordered, H, Rs, B, S1, S2)
+    = ((cut(S1) == users or cut(S1) == all or anyUsers(middle(H), dropped(S1)))
+       and agentKept(middle(H), levels(S1)))
+      or ((cut(S1) == all or cut(S1) == dropall) and floor(H) <= B - note)
+      or (Rs =/= no and not stepped(at(ord(newest(H)), levels(S1)))
+          and (sum(whole, H) + least(Rs) <= B - note
+               or (path(S1) == sq and floor(H) + least(Rs) <= B - note))) .
+  --- A bigger budget never leaves out a run a smaller one kept, nor hides the newest's
+  --- steps a smaller one showed.
+  eq broken(growing, H, Rs, B, S1, S2)
+    = not sub(dropped(S2), dropped(S1))
+      or (Rs =/= no and stepped(at(ord(newest(H)), levels(S1)))
+          and not stepped(at(ord(newest(H)), levels(S2)))) .
+  eq broken(every, H, Rs, B, S1, S2)
+    = broken(fitting, H, Rs, B, S1, S2) or broken(ordered, H, Rs, B, S1, S2)
+      or broken(growing, H, Rs, B, S1, S2) .
+
+  --- Some budget from B to Hi breaks law W, S1 what history gives at B.
+  op breaks : Law Cfg Runs Ints Int Int Sel -> Bool .
+  ceq breaks(W, C, H, Rs, B, Hi, S1)
+    = if B > Hi then false
+      else (if broken(W, H, Rs, B, S1, S2) then true else breaks(W, C, H, Rs, B + 1, Hi, S2) fi) fi
+    if S2 := history(C, H, Rs, B + 1) .
+
+  --- A thread some budget breaks a law for, from none to past the whole history.
+  op scan : Law Sys -> Bool .
+  eq scan(W, chk(C, H, Rs)) = breaks(W, C, H, Rs, 0, wholecost(H) + 1, history(C, H, Rs, 0)) .
+  eq scan(W, S) = false [owise] .
+  ops unfit disordered shrinks lawless : Sys -> Bool .
+  eq unfit(S) = scan(fitting, S) .
+  eq disordered(S) = scan(ordered, S) .
+  eq shrinks(S) = scan(growing, S) .
+  eq lawless(S) = scan(every, S) .
+endm

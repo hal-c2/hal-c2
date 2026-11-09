@@ -43,9 +43,11 @@ defmodule HalC2.Orchestration.RunShape do
       shape = ask(thread_id, turn)
       if shape != stored, do: keep(thread_id, id, shape)
 
+      # Ahead of the history a handoff carries too, so a provider still finds what
+      # the user wrote after all that comes before it.
       turn
       |> with_shape(shape)
-      |> Map.update!(:text, &Handoff.prompt(shape && shape["context"], &1))
+      |> Handoff.ahead(shape && shape["context"])
     else
       # A native fork's first run continues the source's conversation and its shape.
       inherited = (Map.get(turn, :fork) || %{})[:shape]

@@ -10,7 +10,7 @@ defmodule HalC2.RestartNotePropTest do
   - it asks to wake the thread about that work only when its session was not released
     before the stop (a released session's work was gone already, only its records left);
   - the next turn the thread starts hears what the restart ended, once, naming each
-    piece of that work (the `<server_restart>` section `Handoff.plan/5` builds from the
+    piece of that work (the `<server_restart>` section `Handoff.plan/6` builds from the
     thread's `restartNote`), and the turn after it does not; a turn the restart's own
     continuation starts, whose message says so, consumes the note without repeating it;
   - a session-long monitor or a delegated task, which runs on in its own thread, is
@@ -190,7 +190,9 @@ defmodule HalC2.RestartNotePropTest do
           provider_thread: @provider_thread
         }
 
-        plan = Handoff.plan(state, provider_thread, ids, n, at(n, 0))
+        plan =
+          Handoff.plan(state, provider_thread, ids, n, at(n, 0), %{text: "", attachments: []})
+
         {plan.changes, plan.context}
       end)
 

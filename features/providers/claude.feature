@@ -1668,13 +1668,13 @@ Feature: Claude
     When the user sends a new message
     Then Claude continues from the turn the thread was reverted to
 
-  # A run that failed leaves the resume point cleared: Claude may have failed on it, and
-  # resuming the whole conversation is how the thread recovers.
+  # Claude cannot open the conversation at that message, so the message goes on in a new
+  # one, handed the thread up to where it was reverted (`Handoff.fresh_start/2`).
   @mc @plugin-claude
   Scenario: A revert Claude cannot resume at does not stop the thread
     Given the user reverted a Claude thread to a message Claude cannot resume at
-    When the next message fails because Claude cannot resume there
-    Then Claude answers the message after it from the whole conversation
+    When the user sends a new message
+    Then Claude answers it in a new conversation handed the thread
 
   # Upstream #25660: an MCP registration timeout before the prompt was sent dropped the native session.
   @mc @plugin-claude @priority-high
@@ -1788,14 +1788,35 @@ Feature: Claude
     When the user sends the next message to Claude
     Then Claude starts a new conversation and the turn completes
 
-  # Upstream #19637: before resuming a Claude session that is not live, its transcript is
-  # checked for a saved message; one with none is replaced by a new conversation.
+  # Upstream #19637: Claude cannot resume a session it never saved a message to, as when
+  # it went down after the MC sent it a prompt and before writing it. Before resuming a
+  # Claude session that is not live, its transcript is checked for a saved message; one
+  # with none is replaced by a new conversation handed the whole thread. A transcript not
+  # found where the instance keeps them is Claude's to judge: when Claude ends before
+  # answering, the session is replaced the same way.
   @mc
-  Scenario: A Claude session that never saved a message is replaced, not resumed
-    Given the MC restarted after sending Claude a prompt and before Claude saved it
+  Scenario Outline: A Claude session that never saved a message is replaced, not resumed
+    Given Claude went down before saving the prompt the MC sent it, leaving its transcript <transcript>
     When the user sends the next message in the thread
     Then Claude starts a new conversation and the turn completes
+    And Claude is handed the whole thread
     And later messages in the thread do not fail with "No conversation found"
+
+    Examples:
+      | transcript              |
+      | without it              |
+      | with only its metadata  |
+      | nowhere at all          |
+
+  # The goal Claude worked on lived in the conversation it could not resume. The new
+  # conversation has none, so the thread shows none, and a later turn's end does not
+  # read as meeting it.
+  @mc
+  Scenario: A Claude session that never saved a message loses its goal with it
+    Given Claude went down working on a "/goal" objective, before saving the prompt the MC sent it
+    When the user sends the next message in the thread
+    Then Claude starts a new conversation and the turn completes
+    And the thread shows no goal
 
   @mc
   Scenario: A Claude instance with its own config directory still finds its saved login on macOS
@@ -2345,6 +2366,17 @@ Feature: Claude
     When the user sends another message
     Then Claude resumes the same session
     And it reads the messages it missed before the new one
+
+  # A turn refused for background work hands over nothing, and leaves owed what a prompt
+  # Claude never started was handed before it.
+  @mc @plugin-claude
+  Scenario: Messages a Claude busy with background work never took all reach it later
+    Given a Claude thread whose background subagent is still working
+    And Claude refuses the user's next turn because of that work
+    And Claude never starts a turn for the message after it
+    And Claude refuses the message after that because of that work too
+    When the user sends another message
+    Then it reads all three messages it missed, in order, before the new one
 
   # Upstream #16897: Claude reported a prompt done that it never started a turn for.
   @mc @plugin-claude @priority-high

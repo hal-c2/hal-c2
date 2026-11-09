@@ -22,7 +22,9 @@ defmodule HalC2.PiSteerPropTest do
   extensions take a few seconds to start on, plainly or through a prompt template,
   reading idle all the while (it must not be settled as idle either); send a message
   while Pi compacts after the turn before it, which Pi 1.4 rejects, so it waits for the
-  compaction to end and is then delivered once; steer a turn while it compacts, which
+  compaction to end and is then delivered once (also when Pi says it compacts only as
+  that message reaches it: with history to hand over, the compaction it then shows
+  confirms none of it); steer a turn while it compacts, which
   holds the steer until the compaction ends, or stop that turn with the steer still
   held, which Pi must then never take; interrupt it. Send a message after whose turn
   a Pi extension wakes Pi, which runs as a turn of its own (or which settles before
@@ -35,7 +37,8 @@ defmodule HalC2.PiSteerPropTest do
   of the two deliveries is refused, the later once the earlier's run took the cut part,
   or the earlier before the later's run takes it); or one after which Pi
   resumes an extension's work without a word, so the next message Pi turns back as
-  busy and HAL-C2 queues it behind that work, in the same turn. Send two messages,
+  busy and HAL-C2 queues it behind that work, in the same turn (and, with history to
+  hand over, the work Pi does before it delivers the message confirms none of it). Send two messages,
   then an extension command that moves Pi's session back to before the second
   (`navigateTree`): only the second's run is rolled back, and the turns after find
   their place in Pi's session past the branch it abandoned. Send a message whose turn
@@ -208,6 +211,15 @@ defmodule HalC2.PiSteerPropTest do
       "compactAfter" => 3,
       "steps" => [%{"text" => "Done."}]
     },
+    # As "aftercompact", but Pi says it compacts only as the next prompt reaches it
+    # (held until the test lets it), just before turning that prompt back.
+    %{
+      "match" => "unheard",
+      "compactAfter" => 3,
+      "compactUnheard" => true,
+      "compactUnheardUntil" => "unheard-go",
+      "steps" => [%{"text" => "Done."}]
+    },
     # A turn after which a Pi extension wakes Pi: the work is a turn of its own.
     %{
       "match" => "wakes",
@@ -256,6 +268,23 @@ defmodule HalC2.PiSteerPropTest do
     },
     # A turn after which Pi resumes an extension's work, saying nothing until a
     # prompt reaches it.
+    # A turn after which Pi resumes an extension's work without a word, and runs a
+    # command once a message follows it, but only once the file "follow-go" exists;
+    # it delivers the message once "follow-deliver" does.
+    %{
+      "match" => "follows",
+      "steps" => [%{"text" => "Done."}],
+      "wake" => %{
+        "text" => "Continue.",
+        "quiet" => true,
+        "steps" => [
+          %{"waitFollowUp" => true},
+          %{"answerFollowUps" => "follow-go"},
+          %{"tool" => "bash", "args" => %{"command" => "make lint"}, "output" => "ok"},
+          %{"answerFollowUps" => "follow-deliver"}
+        ]
+      }
+    },
     %{
       "match" => "quietly",
       "steps" => [%{"text" => "Done."}],
@@ -403,12 +432,14 @@ defmodule HalC2.PiSteerPropTest do
         [id(next), oneof([:joins, :ends, :pair, :aborts, :shows, :delegates])]}},
       {2, {:call, __MODULE__, :send, [id(next), oneof([:compacts, :holds])]}},
       {1, {:call, __MODULE__, :send, [id(next), :persists]}},
-      {2, {:call, __MODULE__, :send_compacted, [id(next), id(next + 1)]}},
+      {2,
+       {:call, __MODULE__, :send_compacted, [id(next), id(next + 1), oneof([:heard, :unheard])]}},
       {1, {:call, __MODULE__, :send_handled, [id(next)]}},
       {1, {:call, __MODULE__, :send_silent, [id(next)]}},
       {1, {:call, __MODULE__, :send_slow, [id(next), oneof(["", "/review "])]}},
       {1, {:call, __MODULE__, :send_woken, [id(next)]}},
       {1, {:call, __MODULE__, :send_into_wake, [id(next), id(next + 1)]}},
+      {1, {:call, __MODULE__, :send_handed_into_wake, [id(next), id(next + 1)]}},
       {1, {:call, __MODULE__, :send_rewound, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_taken, [id(next), id(next + 1), id(next + 2)]}},
       {1, {:call, __MODULE__, :send_wake_settled, [id(next), id(next + 1), id(next + 2)]}},
@@ -501,6 +532,7 @@ defmodule HalC2.PiSteerPropTest do
       when call in [
              :send_woken,
              :send_into_wake,
+             :send_handed_into_wake,
              :send_rewound,
              :send_wake_taken,
              :send_wake_settled,
@@ -580,7 +612,8 @@ defmodule HalC2.PiSteerPropTest do
 
   # The second message, turned back while Pi works unannounced, waits behind that work
   # and shows it in its own turn: no turn of the wake's own.
-  def next_state(state, _result, {:call, _, :send_into_wake, [a, b]}) do
+  def next_state(state, _result, {:call, _, call, [a, b]})
+      when call in [:send_into_wake, :send_handed_into_wake] do
     %{state | next: state.next + 2, runs: state.runs ++ [{a, "completed"}, {b, "completed"}]}
   end
 
@@ -774,7 +807,7 @@ defmodule HalC2.PiSteerPropTest do
 
   # The first completes; the second, sent while Pi compacts after it, waits
   # for the compaction, which then ends in the second's turn and shows there.
-  def next_state(state, _result, {:call, _, :send_compacted, [a, b]}) do
+  def next_state(state, _result, {:call, _, :send_compacted, [a, b, _heard]}) do
     %{
       state
       | next: state.next + 2,
@@ -933,6 +966,86 @@ defmodule HalC2.PiSteerPropTest do
       end
 
     {reply, projection}
+  end
+
+  # Sends `a`, after which Pi resumes an extension's work unannounced, then `b`, which
+  # Pi turns back as busy and HAL-C2 sends again as a follow-up, with history `b` hands
+  # over (its mark, `unconfirmedRunId`). Pi answers that it queued `b` and runs a command
+  # of the wake's before it delivers `b`: that command is in `b`'s turn but confirms
+  # nothing, so the mark stands until Pi delivers `b`, and goes once `b` completes.
+  def send_handed_into_wake(a, b) do
+    deadline = fn -> System.monotonic_time(:millisecond) + @wait_ms end
+    dir = Application.get_env(:hal_c2, :pi_prop_fake_dir)
+    first = Orchestration.dispatch(message(a, "follows #{a}", "queue_after_active", "auto"))
+    done = settled(unfinished_runs(), deadline.())
+    second = Orchestration.dispatch(message(b, "plain #{b}", "queue_after_active", "auto"))
+    run = await(&Enum.find(runs(&1), fn run -> run["userMessageId"] == b end), deadline.())
+    queued = await_log(&match?(%{"accepted" => "plain " <> ^b, "followUp" => true}, &1))
+
+    # The history `b` hands over, as a handoff into Pi marks it.
+    mark = fn state ->
+      with {:ok, %{"providerThreadId" => id}} <- run,
+           do: StreamState.get(state, "provider-thread")[id]["unconfirmedRunId"]
+    end
+
+    with {:ok, %{"id" => id, "providerThreadId" => thread}} <- run do
+      {:ok, _} =
+        HalC2.Streams.commit(@tid, :thread, [
+          {"provider-thread", thread,
+           %{"s" => %{"unconfirmedRunId" => id, "unconfirmedSince" => 0}}}
+        ])
+    end
+
+    File.touch!(Path.join(dir, "follow-go"))
+
+    command =
+      with {:ok, %{"id" => id}} <- run,
+           do:
+             await(
+               fn state ->
+                 Enum.find(
+                   StreamState.list(state, "turn-item"),
+                   &(&1["runId"] == id and &1["type"] == "command_execution")
+                 )
+               end,
+               deadline.()
+             )
+
+    held = mark.(current())
+    File.touch!(Path.join(dir, "follow-deliver"))
+    projection = settled(unfinished_runs(), deadline.())
+    after_b = mark.(current())
+    File.rm(Path.join(dir, "follow-go"))
+    File.rm(Path.join(dir, "follow-deliver"))
+
+    reply =
+      cond do
+        match?({:timeout, _}, done) -> {:error, "#{a} never ended"}
+        run == :timeout or queued == :timeout -> {:error, "Pi never queued #{b}"}
+        command == :timeout -> {:error, "#{b}'s turn does not show the wake's command"}
+        held != elem(run, 1)["id"] -> {:error, "the wake's command confirmed #{b}'s handoff"}
+        after_b != nil -> {:error, "#{b} completed with its handoff unconfirmed"}
+        true -> answer(first) |> both(answer(second))
+      end
+
+    {reply, projection}
+  end
+
+  # Until the fake has logged an entry `pred` holds of.
+  defp await_log(pred, deadline \\ System.monotonic_time(:millisecond) + @wait_ms) do
+    cond do
+      Enum.any?(fake_log(), fn {entry, _} -> pred.(entry) end) ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        :timeout
+
+      true ->
+        receive do
+        after
+          10 -> await_log(pred, deadline)
+        end
+    end
   end
 
   # Sends `a` and `b`, plain turns, then `c`, an extension command that moves Pi's session
@@ -1812,13 +1925,19 @@ defmodule HalC2.PiSteerPropTest do
 
   # Sends `a`, after which Pi compacts for a while rejecting prompts (as Pi
   # 1.4 does), then `b` at once. `b` must reach Pi once, after the compaction.
-  def send_compacted(a, b) do
+  # `:unheard`: Pi says it compacts only as `b`'s prompt reaches it, with history `b`
+  # hands over (its mark, `unconfirmedRunId`). The compaction then shows in `b`'s turn
+  # before Pi turns `b` back, and confirms nothing: the mark stands until Pi takes `b`.
+  def send_compacted(a, b, heard) do
     fake_config(&Map.put(&1, "rejectWhileCompacting", true))
     deadline = System.monotonic_time(:millisecond) + @wait_ms
-    first = Orchestration.dispatch(message(a, "aftercompact #{a}", "queue_after_active", "auto"))
+    text = if heard == :heard, do: "aftercompact #{a}", else: "unheard #{a}"
+    first = Orchestration.dispatch(message(a, text, "queue_after_active", "auto"))
     done = settled(unfinished_runs(), deadline)
     second = Orchestration.dispatch(message(b, "joins #{b}", "queue_after_active", "auto"))
+    held = if heard == :unheard, do: unheard_mark(b), else: :ok
     projection = settled([], System.monotonic_time(:millisecond) + @wait_ms)
+    taken = if heard == :unheard, do: handoff_mark(b), else: nil
     fake_config(&Map.delete(&1, "rejectWhileCompacting"))
     log = fake_log()
     accepted = for {%{"accepted" => "joins " <> ^b}, i} <- log, do: i
@@ -1831,10 +1950,81 @@ defmodule HalC2.PiSteerPropTest do
         match?({:timeout, _}, done) -> {:error, "#{a} never ended"}
         length(accepted) != 1 -> {:error, "Pi took #{b} #{length(accepted)} times"}
         List.last(compaction) != "end" -> {:error, "Pi took #{b} while it compacted"}
+        held != :ok -> held
+        taken != nil -> {:error, "#{b} works with its handoff unconfirmed"}
         true -> answer(first) |> both(answer(second))
       end
 
     {reply, projection}
+  end
+
+  # Marks the history `b`'s run hands over before Pi hears of `b`, lets Pi turn `b`
+  # back, and checks the compaction Pi announced first left the mark standing.
+  defp unheard_mark(b) do
+    deadline = System.monotonic_time(:millisecond) + @wait_ms
+    dir = Application.get_env(:hal_c2, :pi_prop_fake_dir)
+    run = await(&Enum.find(runs(&1), fn run -> run["userMessageId"] == b end), deadline)
+
+    with {:ok, %{"id" => id, "providerThreadId" => thread}} <- run do
+      {:ok, _} =
+        HalC2.Streams.commit(@tid, :thread, [
+          {"provider-thread", thread,
+           %{"s" => %{"unconfirmedRunId" => id, "unconfirmedSince" => 0}}}
+        ])
+    end
+
+    File.touch!(Path.join(dir, "unheard-go"))
+    rejected = await_log(&match?(%{"rejected" => "joins " <> ^b}, &1))
+
+    shown =
+      with {:ok, %{"id" => id}} <- run,
+           do:
+             await(
+               fn state ->
+                 Enum.find(
+                   StreamState.list(state, "turn-item"),
+                   &(&1["runId"] == id and &1["type"] == "compaction")
+                 )
+               end,
+               deadline
+             )
+
+    # The rejection has reached the runtime once it holds the prompt again.
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, @tid)
+    turned_back = await_until(fn -> :sys.get_state(pid).prompt_held == :rejected end, deadline)
+    mark = handoff_mark(b)
+    File.rm(Path.join(dir, "unheard-go"))
+
+    cond do
+      run == :timeout or rejected == :timeout -> {:error, "Pi never turned #{b} back"}
+      shown == :timeout -> {:error, "#{b}'s turn does not show the compaction"}
+      turned_back == :timeout -> {:error, "the runtime never held #{b} again"}
+      mark != elem(run, 1)["id"] -> {:error, "the compaction confirmed #{b}'s handoff"}
+      true -> :ok
+    end
+  end
+
+  defp handoff_mark(b) do
+    state = current()
+
+    with %{"providerThreadId" => id} <- Enum.find(runs(state), &(&1["userMessageId"] == b)),
+         do: StreamState.get(state, "provider-thread")[id]["unconfirmedRunId"]
+  end
+
+  defp await_until(done?, deadline) do
+    cond do
+      done?.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        :timeout
+
+      true ->
+        receive do
+        after
+          20 -> await_until(done?, deadline)
+        end
+    end
   end
 
   defp both(:ok, second), do: second
@@ -2029,6 +2219,9 @@ defmodule HalC2.PiSteerPropTest do
       Path.join(dir, "config.json"),
       JSON.encode!(%{
         "turns" => @turns,
+        # Pi reports how full its conversation is after every turn, so a later one
+        # resumes it rather than a new one taking the whole thread.
+        "usage" => %{"totalTokens" => 1_050, "input" => 1_000, "output" => 50},
         "compactDelaySec" => 30,
         "handledCommands" => ["/stats"],
         # `send_rewound/3` names where each rewind goes.

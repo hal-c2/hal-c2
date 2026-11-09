@@ -176,7 +176,11 @@ export const ChatImageAttachment = Schema.Struct({
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
-export const PastedTextAttachmentSource = Schema.TaggedStruct("pasted-text", {});
+export const PastedTextAttachmentSource = Schema.TaggedStruct("pasted-text", {
+  /** Set by the MC on the file it folded a message too long to send whole into, which
+      goes when an edit drops the message's cut mark. The MC drops it from uploads. */
+  folded: Schema.optional(Schema.Literal(true)),
+});
 export type PastedTextAttachmentSource = typeof PastedTextAttachmentSource.Type;
 
 export const ChatFileAttachment = Schema.Struct({

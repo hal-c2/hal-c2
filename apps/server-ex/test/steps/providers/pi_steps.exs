@@ -2978,6 +2978,275 @@ defmodule HalC2.Steps.Providers.Pi do
     context
   end
 
+  # Pi compacts for longer than the scenario runs, once the first turn settled.
+  step "Pi is compacting a thread's conversation after an extension failed between turns",
+       context do
+    event = %{
+      "type" => "extension_error",
+      "extensionPath" => "/home/user/.pi/agent/extensions/nightly/index.ts",
+      "event" => "session_start",
+      "error" => "woke up wrong"
+    }
+
+    turns = [
+      %{"match" => "compact after", "compactAfter" => 600, "steps" => [%{"text" => "Done."}]}
+    ]
+
+    context
+    |> install(%{
+      "turns" => turns ++ FakeAcp.pi_turns(),
+      "rejectWhileCompacting" => true,
+      "settledEvents" => [event]
+    })
+    |> FakeAcp.thread()
+    |> turn("compact after this")
+  end
+
+  step "the thread comes back to Pi from Codex while Pi still compacts", context do
+    thread_id = World.thread_id(context, context.thread)
+    context = World.providers(context)
+    codex = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+    pi = %{"instanceId" => context.provider, "model" => "fake/one"}
+
+    switch = fn context, selection ->
+      context =
+        World.command(context, %{
+          "type" => "provider.switch",
+          "threadId" => thread_id,
+          "modelSelection" => selection
+        })
+
+      assert {:ok, _} = context.reply
+      context
+    end
+
+    context = context |> switch.(codex) |> turn("work on Codex")
+    context = context |> switch.(pi) |> FakeAcp.send_message("back on Pi")
+    FakeAcp.await_run(context, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+    assert :sys.get_state(pid).prompt_held == :unsent
+    Map.put(context, :pi_runtime, pid)
+  end
+
+  step "the run shows the extension's failure while its prompt waits", context do
+    run = World.latest_run(context, context.thread)
+
+    assert [%{"runId" => run_id}] =
+             Enum.filter(items(context, "error"), &(&1["title"] == "nightly"))
+
+    assert run_id == run["id"]
+
+    refute Enum.any?(FakeAcp.log(context), &match?(%{"accepted" => "back on Pi"}, &1))
+    context
+  end
+
+  step "the history it hands over is still unconfirmed", context do
+    run = World.latest_run(context, context.thread)
+    instance = context.provider
+
+    unconfirmed = fn ->
+      for t <- StreamState.list(state(context), "provider-thread"),
+          t["providerInstanceId"] == instance,
+          do: t["unconfirmedRunId"]
+    end
+
+    assert unconfirmed.() == [run["id"]]
+    # A turn still waiting on the compaction stops at once, and Pi never had its prompt.
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    FakeAcp.await_run(context, "interrupted")
+    assert unconfirmed.() == [run["id"]]
+    context
+  end
+
+  # Pi compacts for longer than the scenario runs once the first turn settled, and says
+  # so only as the next prompt reaches it, just before turning that prompt back.
+  step "Pi is compacting a thread's conversation it has not said it compacts", context do
+    turns = [
+      %{
+        "match" => "compact after",
+        "compactAfter" => 600,
+        "compactUnheard" => true,
+        "steps" => [%{"text" => "Done."}]
+      }
+    ]
+
+    context
+    |> install(%{"turns" => turns ++ FakeAcp.pi_turns(), "rejectWhileCompacting" => true})
+    |> FakeAcp.thread()
+    |> turn("compact after this")
+  end
+
+  step "the thread comes back to Pi from Codex and Pi turns its prompt back for the compaction",
+       context do
+    thread_id = World.thread_id(context, context.thread)
+    context = World.providers(context)
+    codex = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+    pi = %{"instanceId" => context.provider, "model" => "fake/one"}
+
+    switch = fn context, selection ->
+      context =
+        World.command(context, %{
+          "type" => "provider.switch",
+          "threadId" => thread_id,
+          "modelSelection" => selection
+        })
+
+      assert {:ok, _} = context.reply
+      context
+    end
+
+    context = context |> switch.(codex) |> turn("work on Codex")
+    context = context |> switch.(pi) |> FakeAcp.send_message("back on Pi")
+    FakeAcp.await_run(context, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+    await_runtime(pid, &(&1.prompt_held == :rejected), "Pi never turned the prompt back")
+    context
+  end
+
+  step "the run shows the compaction while its prompt waits", context do
+    run = World.latest_run(context, context.thread)
+    assert [%{"runId" => run_id}] = items(context, "compaction")
+    assert run_id == run["id"]
+    log = FakeAcp.log(context)
+    assert Enum.any?(log, &match?(%{"rejected" => _}, &1))
+    refute Enum.any?(log, &match?(%{"accepted" => "back on Pi"}, &1))
+    context
+  end
+
+  # Pi's wake says something, then compacts for longer than the scenario runs; its run
+  # waits (`hold_wakes/1`), so the output stays buffered for the turn that takes it.
+  step "a Pi extension has woken Pi, which compacts after its first words", context do
+    wake = %{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [%{"text" => "Working on the extension's task."}, %{"compactFor" => 600}]
+    }
+
+    context
+    |> hold_wakes()
+    |> install(%{
+      "turns" => [
+        %{"match" => "second", "steps" => [%{"text" => "Second done."}], "wake" => wake}
+        | FakeAcp.pi_turns()
+      ],
+      "rejectWhileCompacting" => true
+    })
+    |> FakeAcp.thread()
+    |> turn("first")
+    |> turn("second")
+    |> held_wake()
+  end
+
+  step "the run shows the wake's work while its prompt waits", context do
+    run = World.latest_run(context, context.thread)
+
+    # The wake's words, replayed into the run (its text still buffered).
+    assert Enum.any?(
+             StreamState.list(state(context), "message"),
+             &(&1["runId"] == run["id"] and &1["role"] == "assistant")
+           )
+
+    refute Enum.any?(FakeAcp.log(context), &match?(%{"accepted" => "back on Pi"}, &1))
+    context
+  end
+
+  # Pi's wake says something, then waits for a message to follow it and runs a command
+  # before Pi delivers that message, until the scenario lets it. Pi answers that it
+  # queued the message at once, as Pi does, or only once the wake's work stops
+  # (`lateFollowUps`), as when its answer reaches the MC late.
+  step "a Pi extension has woken Pi, which runs a command once a message follows it, answering it {string}",
+       %{args: [answered]} = context do
+    wake = %{
+      "text" => "Carry on with the extension's work.",
+      "steps" => [
+        %{"text" => "Working on the extension's task."},
+        %{"waitFollowUp" => true},
+        %{"tool" => "bash", "args" => %{"command" => "make lint"}, "output" => "ok"},
+        %{"answerFollowUps" => "take"}
+      ]
+    }
+
+    context
+    |> hold_wakes()
+    |> install(%{
+      "turns" => [
+        %{"match" => "second", "steps" => [%{"text" => "Second done."}], "wake" => wake}
+        | FakeAcp.pi_turns()
+      ],
+      "lateFollowUps" => answered == "late"
+    })
+    |> FakeAcp.thread()
+    |> turn("first")
+    |> turn("second")
+    |> held_wake()
+  end
+
+  step "the thread comes back to Pi from Codex while the wake runs", context do
+    thread_id = World.thread_id(context, context.thread)
+    context = World.providers(context)
+    codex = %{"instanceId" => "codex", "model" => "gpt-5.4"}
+    pi = %{"instanceId" => context.provider, "model" => "fake/one"}
+
+    switch = fn context, selection ->
+      context =
+        World.command(context, %{
+          "type" => "provider.switch",
+          "threadId" => thread_id,
+          "modelSelection" => selection
+        })
+
+      assert {:ok, _} = context.reply
+      context
+    end
+
+    context = context |> switch.(codex) |> turn("work on Codex")
+    context = context |> switch.(pi) |> FakeAcp.send_message("back on Pi")
+    FakeAcp.await_run(context, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, thread_id)
+    assert :sys.get_state(pid).turn.follow_up in [:sent, :queued]
+    context
+  end
+
+  step "the run shows the wake's command before Pi takes its prompt", context do
+    run = World.latest_run(context, context.thread)
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      state
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["runId"] == run["id"] and &1["type"] == "command_execution"))
+    end)
+
+    # Pi logs a follow-up as accepted when it answers that it queued it (`queued` while
+    # it holds that answer back), and as delivered when it runs it. The prompt is the
+    # handed-over history with the message in it.
+    log = FakeAcp.log(context)
+    prompt? = &(is_binary(&1) and String.contains?(&1, "back on Pi"))
+    got? = &(&1["followUp"] == true and (prompt?.(&1["queued"]) or prompt?.(&1["accepted"])))
+    assert Enum.any?(log, got?)
+    refute Enum.any?(log, &prompt?.(&1["delivered"]))
+    context
+  end
+
+  step "the history it hands over stays unconfirmed until Pi takes the prompt", context do
+    run = World.latest_run(context, context.thread)
+
+    unconfirmed = fn ->
+      for t <- StreamState.list(state(context), "provider-thread"),
+          t["providerInstanceId"] == context.provider,
+          do: t["unconfirmedRunId"]
+    end
+
+    assert unconfirmed.() == [run["id"]]
+    File.touch!(Path.join(FakeAcp.fake(context, "pi").dir, "take"))
+    FakeAcp.await_run(context, "completed")
+    assert unconfirmed.() == [nil]
+    context
+  end
+
   step "a Pi extension shows the warning {string}", %{args: [warning]} = context do
     event_thread(
       context,
@@ -4037,6 +4306,25 @@ defmodule HalC2.Steps.Providers.Pi do
            ) == []
 
     context
+  end
+
+  # Until the Pi runtime's state shows `done?`, which nothing outside it says yet.
+  defp await_runtime(pid, done?, failure, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 10_000
+
+    cond do
+      done?.(:sys.get_state(pid)) ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk(failure)
+
+      true ->
+        receive do
+        after
+          20 -> await_runtime(pid, done?, failure, deadline)
+        end
+    end
   end
 
   # The runtime holds the steer while Pi compacts; nothing outside it says so yet.
