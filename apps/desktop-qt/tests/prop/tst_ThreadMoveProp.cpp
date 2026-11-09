@@ -3,8 +3,9 @@
 // machine or letting it go, the move chosen from the thread's menu or the
 // command palette, and the "Stop and move" question answered either way.
 // A running turn is stopped only when the user accepted a question that was
-// asked after the MC listed where the thread can go, so a thread the MC keeps
-// is never stopped for a move it refuses; each refusal is one toast with the
+// asked after the MC listed where the thread can go, and the MC still lets it
+// go once the answer is in, so a thread the MC keeps is never stopped for a
+// move it refuses; each refusal is one toast with the
 // MC's message, and a stopped turn is followed by its move.
 
 #include "Prop.h"
@@ -240,17 +241,22 @@ struct Move : Command {
   void show(std::ostream& os) const override { os << "Move(" << (palette ? "palette" : "menu") << ")"; }
 };
 
-// The user answers "Stop and move": a stop is followed by the move.
+// The user answers "Stop and move": a stop is followed by the move, unless
+// the MC started keeping the thread while the question was open.
 struct Answer : Command {
   bool accepted = *rc::gen::arbitrary<bool>();
   void checkPreconditions(const Model& model) const override { RC_PRE(model.asking); }
   void apply(Model& model) const override {
     model.asking = false;
     if (!accepted) return;
+    if (model.kept) {
+      model.told.append(kKept);
+      return;
+    }
     ++model.interrupts;
     model.running = false;
     ++model.moves;
-    model.told.append(model.kept ? kKept : kNotMoved);
+    model.told.append(kNotMoved);
   }
   void run(const Model& model, Shell& shell) const override {
     Model expected = model;

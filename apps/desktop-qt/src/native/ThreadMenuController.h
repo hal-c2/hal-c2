@@ -110,6 +110,8 @@ private:
   // once the MC has said the thread may go.
   void startMove(const QString& key, const Machine& machine, const Asking& asking);
   void stopAndMove(const QString& key, const Machine& machine, const Asking& asking);
+  void stop(const QString& key, const Machine& machine, const Asking& asking, const QString& runId);
+  void whenMovable(const QString& key, std::function<void()> then);
   void move(const QString& key, const Machine& machine, const QString& projectId, bool confirmed,
             const Asking& asking);
   // Sends the moves that waited for their thread's turn to stop.
