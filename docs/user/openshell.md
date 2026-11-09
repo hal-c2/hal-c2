@@ -61,6 +61,10 @@ run. If the gateway's service does not stop (`gateway-stop-failed`), or its file
 cannot be backed up first (`backup-failed`), nothing is changed and the service
 keeps running.
 
+One OpenShell command runs at a time on an MC. Another `install`, `rotate`,
+`reuse`, `uninstall` or `check` started meanwhile stops at once (`busy`) and
+changes nothing; run it again once the first finishes. `status` always answers.
+
 A gateway started with `mise run openshell` must be stopped before you update,
 rotate or uninstall it (`gateway-running`). After a rotation, start it again to use
 the new certificates.

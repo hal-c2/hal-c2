@@ -87,10 +87,7 @@ defmodule HalC2.OpenShell.Command do
         {:ok, format_status(Install.status())}
 
       {_opts, ["check"], []} ->
-        case OpenShell.state() do
-          nil -> {:error, "[not-installed] OpenShell is not installed."}
-          state -> with :ok <- Install.smoke(state), do: {:ok, "OpenShell passed its checks."}
-        end
+        with :ok <- Install.check(), do: {:ok, "OpenShell passed its checks."}
 
       {opts, ["rotate"], []} ->
         with {:ok, state} <- Install.rotate(Keyword.take(opts, [:drain, :force])) do
