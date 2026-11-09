@@ -11,3 +11,6 @@ HalC2.Test.GitEnv.scrub()
 # Before anything starts distribution: reaches the MCs a test names as members do
 # (`HalC2.Prop.Epmd`), and every other node as `:erl_epmd` does.
 Application.put_env(:kernel, :epmd_module, HalC2.Prop.Epmd)
+
+# Scratch homes sit in `tmp` inside the checkout; git must not find the checkout from them.
+System.put_env("GIT_CEILING_DIRECTORIES", Path.expand("../tmp", __DIR__))
