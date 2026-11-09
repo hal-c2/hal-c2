@@ -74,7 +74,11 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @assign_token_re ~r/^[A-Za-z_][A-Za-z0-9_]*=/
   @wrap_re ~r|^/bin/(?:ba)?sh\s+-l?c\s+(.*)$|s
   @heredoc_re ~r|<<-?\s*['"]?(\w+)['"]?[^\n]*\n.*?\n\s*\1\b|s
-  @url_host_re ~r|https?://([^/\s'"`]+)|
+  # The host and port a URL names. Its userinfo (`alice:secret@`) is left out:
+  # a learned host is shown and staged, and a credential must not be.
+  @url_host_re ~r|https?://(?:[^/\s'"`@]*@)?([^/\s'"`@]+)|
+  # Variables whose values are credentials: never learned, so never staged.
+  @secret_var_re ~r/TOKEN|SECRET|PASSW|PASSPHRASE|CREDENTIAL|AUTH|API_?KEY|PRIVATE|COOKIE|SESSION/
   @rtk_prefix_re ~r/^rtk\s+(?:proxy\s+)?(?=\S)/
 
   # Error classes an environment produces, in upstream's order: first match wins.
@@ -708,12 +712,15 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         @env_need_re
         |> Regex.scan(out || "")
         |> Enum.map(&Enum.at(&1, 1))
+        |> Enum.reject(&secret_var?/1)
         |> Enum.uniq()
         |> Enum.sort(),
-      sets: sets,
+      sets: Map.reject(sets, fn {var, _} -> secret_var?(var) end),
       ok: success == true and not Regex.match?(@failed_re, out || "")
     }
   end
+
+  defp secret_var?(var), do: Regex.match?(@secret_var_re, var)
 
   # The assignments a command makes: each segment's leading `K=V`s, after an
   # `export` or `env` and around an `rtk`. Text that only looks like one, as

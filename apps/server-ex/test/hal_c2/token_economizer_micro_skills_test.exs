@@ -107,6 +107,12 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     [fetch] = Observe.classify_command("curl -sS https://api.example.org/x | head -3")
     assert fetch.intent == "fetch_remote" and fetch.hosts == ["api.example.org"]
 
+    # A credential in the URL is never kept; the port is.
+    [fetch] = Observe.classify_command("curl https://alice:s3cret@api.example.org:8443/x")
+    assert fetch.hosts == ["api.example.org:8443"]
+    [fetch] = Observe.classify_command("git clone https://ghp_abc@github.com/o/r.git")
+    assert fetch.hosts == ["github.com"]
+
     # A plain `git tag` lists all tags, past ones included: not a beyond-HEAD probe.
     assert Observe.classify_command("git tag | tail -5") == []
     # Heredoc bodies never become commands.
@@ -1097,6 +1103,23 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
 
       {state, _} = stream(tasks)
       assert state.facts["env_value:APP_SETTINGS"].params["good"] == %{"conf.dev" => 6}
+    end
+
+    test "a variable that holds a credential is never learned" do
+      need = String.replace(@need, "APP_SETTINGS", "API_TOKEN")
+
+      tasks =
+        Enum.map(0..5, fn i ->
+          [
+            edit("/r/pkg/mod#{i}.py"),
+            bash("python -c 'import app'", need, 1),
+            bash("export API_TOKEN=tok_s3cret && python -c 'import app'", "ran", 0)
+          ]
+        end)
+
+      {state, rendered} = stream(tasks)
+      refute Map.has_key?(state.facts, "env_value:API_TOKEN")
+      refute Enum.any?(rendered, &(&1 =~ "s3cret"))
     end
 
     test "no value that worked means no fact" do
