@@ -155,23 +155,22 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
         do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
 
-    # (A failed end: an interrupted one first reads the run to capture its checkpoint.)
     # Held, the stream takes the run's end, then the unarchive, then what the end
-    # starts once it has returned.
+    # starts once it has returned. What the end reads before it is answered first.
     stream = HalC2.Streams.ensure(thread_id)
     :ok = :sys.suspend(stream)
-    :erlang.trace(stream, true, [:receive])
+    :erlang.trace(stream, true, [:receive, :send])
 
     ender = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
     :erlang.trace(ender, true, [:procs])
-    await_call(stream, ender)
+    await_transact(stream, ender)
 
     test = self()
     unarchive = %{"type" => "thread.unarchive", "threadId" => thread_id}
     unarchiver = spawn(fn -> send(test, {:unarchived, Orchestration.dispatch(unarchive)}) end)
     await_call(stream, unarchiver)
 
-    :erlang.trace(stream, false, [:receive])
+    :erlang.trace(stream, false, [:receive, :send])
     :ok = :sys.resume(stream)
     assert {:ok, _} = receive(do: ({:unarchived, result} -> result))
 
@@ -427,6 +426,23 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
   # the test's timeout.
   defp await_call(stream, from),
     do: receive(do: ({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}} -> :ok))
+
+  # Waits for `from`'s transaction on the suspended, traced (`:receive` and `:send`)
+  # `stream`, answering each call it makes before it and holding it again after.
+  defp await_transact(stream, from) do
+    receive do
+      {:trace, ^stream, :receive, {:"$gen_call", {^from, _}, {:transact, _, _}}} ->
+        :ok
+
+      {:trace, ^stream, :receive, {:"$gen_call", {^from, tag}, _}} ->
+        true = :erlang.suspend_process(from)
+        :ok = :sys.resume(stream)
+        receive(do: ({:trace, ^stream, :send, {^tag, _}, _} -> :ok))
+        :ok = :sys.suspend(stream)
+        true = :erlang.resume_process(from)
+        await_transact(stream, from)
+    end
+  end
 
   # Waits for monitor `ref`'s process to exit; returns why.
   defp await_down(ref), do: receive(do: ({:DOWN, ^ref, :process, _, reason} -> reason))
