@@ -90,6 +90,15 @@ defmodule HalC2.OpenShell.ConfigTest do
     assert_raise FunctionClauseError, fn -> docker.("host") end
   end
 
+  # As sqlx-sqlite 0.9 parses it: the filename ends at the first `?`, then is
+  # percent-decoded.
+  test "the database URL names the home's database, whatever its path", %{tmp_dir: dir} do
+    FakeOpenShell.put_env(home: Path.join(dir, "mc%20home?x=1#y"))
+    ["--db-url", "sqlite:" <> url] = Enum.take(Config.args(), -2)
+    [file, "mode=rwc"] = String.split(url, "?", parts: 2)
+    assert URI.decode(file) == OpenShell.db_path()
+  end
+
   test "a path with quotes or control characters stays one TOML string" do
     toml = Config.render(%{port: 1, driver: "podman", socket: ~s(/run/a"b\\c\nd)})
     assert toml =~ ~S(socket_path = "/run/a\"b\\c\u000Ad") <> "\n"

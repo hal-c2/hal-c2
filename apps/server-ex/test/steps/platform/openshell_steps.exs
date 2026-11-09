@@ -185,8 +185,18 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
-  step ~s(the MC's home is at a path with "%", "$" and quotes in it), context do
-    FakeOpenShell.put_env(home: Path.join(context.openshell.dir, ~s(mc %i $HOME "q")))
+  step ~s(the MC's home is at a path with "%", "%20", "?", "$" and quotes in it), context do
+    FakeOpenShell.put_env(home: Path.join(context.openshell.dir, ~s(mc %i%20 a?b $HOME "q")))
+    context
+  end
+
+  # As sqlx-sqlite 0.9 reads `--db-url`: the filename ends at the first `?`, then is
+  # percent-decoded.
+  step "the gateway opens the database in that home", context do
+    exec = File.read!(Service.unit_path(:systemd)) |> SystemdUnit.values("ExecStart")
+    [_, "sqlite:" <> url] = exec |> hd() |> SystemdUnit.exec() |> Enum.take(-2)
+    [file, "mode=rwc"] = String.split(url, "?", parts: 2)
+    assert URI.decode(file) == OpenShell.db_path()
     context
   end
 

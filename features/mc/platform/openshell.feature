@@ -6,7 +6,7 @@
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820095093: a home by two spellings, the unit after a failed stop)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820437968: one lifecycle command at a time)
 #   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot review 5820535766: Docker Desktop's bridge, lingering)
-#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot reviews of 2026-11-09: rootless Docker, cgroup limits, unit escaping, limits only)
+#   https://github.com/hal-c2/hal-c2/pull/1421 (Copilot reviews of 2026-11-09: rootless Docker, cgroup limits, unit escaping, limits only, the database URL)
 #   https://github.com/hal-c2/hal-c2/issues/1449 (rootless Docker's network namespace)
 #   apps/server-ex/lib/hal_c2/open_shell.ex (where the gateway's files live, the owner label)
 #   apps/server-ex/lib/hal_c2/open_shell/install.ex (install, update, rollback, drain, rotate, reuse, smoke, status, uninstall)
@@ -84,10 +84,11 @@ Feature: The OpenShell gateway review sandboxes run in
     And the gateway still listens on loopback only
 
   @mc
-  Scenario: A home whose path has systemd's special characters runs its own gateway
-    Given the MC's home is at a path with "%", "$" and quotes in it
+  Scenario: A home whose path has special characters runs its own gateway
+    Given the MC's home is at a path with "%", "%20", "?", "$" and quotes in it
     When the user installs OpenShell
     Then the gateway's service runs the gateway from that path, as written
+    And the gateway opens the database in that home
     And the gateway's service is this home's own
 
   @mc

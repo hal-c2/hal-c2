@@ -62,8 +62,12 @@ defmodule HalC2.OpenShell.Config do
   end
 
   @doc "The gateway's arguments, after the binary."
-  def args do
-    ["--config", OpenShell.config_path(), "--db-url", "sqlite:#{OpenShell.db_path()}?mode=rwc"]
+  def args, do: ["--config", OpenShell.config_path(), "--db-url", db_url()]
+
+  # sqlx (OpenShell 0.1.7) ends the filename at the first `?` and percent-decodes it,
+  # so a `%` or `?` in the home is escaped to reach the same file.
+  defp db_url do
+    "sqlite:" <> URI.encode(OpenShell.db_path(), &(&1 not in ~c"%?#")) <> "?mode=rwc"
   end
 
   @doc """
