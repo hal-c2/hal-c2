@@ -16,8 +16,11 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   or productive) or the delivery's outcome (taken or refused) the command chooses.
   After every step:
 
-  - turned off, it watches no turn and has no task out;
-  - watching, it has no delivery out and no redirect on its way;
+  - turned off, it watches no turn and has no judge job out;
+  - watching, it starts no delivery;
+  - a delivery it started is out until it ends, whatever the mode: its steer may have
+    been taken, and only its answer says so; a redirect is on its way only while its
+    delivery is;
   - it watches exactly the turns under way that it heard start while on, by their run;
   - a judge job is out only for a thread with a turn under way and not offered its
     stop, at most one for each;
@@ -103,12 +106,14 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     {:ok, plugin} = TokenEconomizer.init(settings("nudge", budget))
     Process.put(:plugin, plugin)
     Process.put(:held, [])
+    Process.put(:deliveries, MapSet.new())
   end
 
   # What the case reached, for `PROPCHECK_VERBOSE=1`.
   defp close_case do
     plugin = Process.delete(:plugin)
     Process.delete(:held)
+    Process.delete(:deliveries)
     stop(plugin)
 
     cond do
@@ -267,10 +272,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     judged = for {{t, :judge}, n} <- tasks, do: {t, n}
 
     laws = [
-      off: after_.mode != "off" or (seen.turns == %{} and seen.tasks == []),
-      watch:
-        after_.mode != "watch" or
-          (not Enum.any?(seen.tasks, &match?({_, :delivery}, &1)) and seen.redirecting == []),
+      off: after_.mode != "off" or (seen.turns == %{} and judged == []),
+      watch: after_.mode != "watch" or seen.started == 0,
+      delivery: seen.stopped == [],
+      redirect: Enum.all?(seen.redirecting, &({&1, :delivery} in seen.tasks)),
       turns: seen.turns == Map.new(after_.open, fn {t, turn} -> {t, turn.run} end),
       judge:
         Enum.all?(judged, fn {t, n} ->
@@ -337,6 +342,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   def restart(mode, budget, held) do
     stop(Process.get(:plugin))
     Process.put(:held, [])
+    Process.put(:deliveries, MapSet.new())
     case_ = self()
 
     feed =
@@ -376,6 +382,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         )
 
         {:noreply, plugin} = TokenEconomizer.handle_info(outcome(message, yes), plugin)
+
+        with {:DOWN, _, :process, pid, _} <- message,
+             do: Process.put(:deliveries, MapSet.delete(Process.get(:deliveries), pid))
+
         settle(plugin, false)
     end
   end
@@ -484,7 +494,15 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
 
     Process.put(:held, held ++ fresh ++ strays())
     Process.put(:plugin, plugin)
-    shown(plugin, taught)
+
+    # The deliveries started in this step, and those started before that the process no
+    # longer has out though it has not heard them end.
+    started = for {pid, {_, :delivery}} <- plugin.tasks, pid not in known, do: pid
+    deliveries = MapSet.union(Process.get(:deliveries), MapSet.new(started))
+    Process.put(:deliveries, deliveries)
+    stopped = Enum.reject(deliveries, &Map.has_key?(plugin.tasks, &1))
+
+    plugin |> shown(taught) |> Map.merge(%{started: length(started), stopped: stopped})
   end
 
   defp strays do

@@ -1307,7 +1307,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute Turn.resolved_proxy(guard)
     end
 
-    test "a turn's end stops its judge job, watching stops deliveries, and off stops every task" do
+    test "a turn's end stops its judge job, and off stops every judge job; a delivery under way finishes" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = state |> observe(started("a")) |> observe(started("b"))
       {judge, state} = sleeper(state, "a", :judge)
@@ -1327,16 +1327,32 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       {:reply, :ok, state} =
         TokenEconomizer.handle_call({:settings, %{"loopGuard" => "watch"}}, nil, state)
 
-      assert_receive {:DOWN, _, :process, ^delivery, _}
-      assert state.tasks == %{}
-
       {judge, state} = sleeper(state, "b", :judge)
 
       {:reply, :ok, state} =
         TokenEconomizer.handle_call({:settings, %{"loopGuard" => "off"}}, nil, state)
 
       assert_receive {:DOWN, _, :process, ^judge, _}
-      assert state.tasks == %{} and state.turns == %{}
+      assert Process.alive?(delivery)
+      assert Map.values(state.tasks) == [{"b", :delivery}] and state.turns == %{}
+    end
+
+    # The steer may already have been taken when the mode changes: what the delivery
+    # answers is what happened.
+    test "a redirect on its way when watching starts lands as its delivery says" do
+      {delivery, state} = sleeper(redirecting("a"), "a", :delivery)
+
+      {:reply, :ok, state} =
+        TokenEconomizer.handle_call({:settings, %{"loopGuard" => "watch"}}, nil, state)
+
+      assert Process.alive?(delivery)
+      assert state.turns["a"].guard.redirecting
+
+      state = delivered(state, "a", {:ok, %{}})
+      guard = state.turns["a"].guard
+      refute guard.redirecting
+      assert guard.segment == 1 and guard.redirects == 1
+      assert [%{"action" => "nudge", "delivered" => true}] = state.recent
     end
   end
 end
