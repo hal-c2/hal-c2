@@ -65,6 +65,8 @@ defmodule HalC2.TextGenerationTest do
     )
   end
 
+  defp sha256(text), do: Base.encode16(:crypto.hash(:sha256, text), case: :lower)
+
   defp calls(log) do
     case File.read(log) do
       {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
@@ -251,7 +253,9 @@ defmodule HalC2.TextGenerationTest do
 
       assert [%{"codexHome" => scratch, "codexFiles" => files}] = calls(log)
       assert scratch != home
-      assert files == %{"auth.json" => ~s({"token":"t"}), "config.toml" => ""}
+      assert files == %{"auth.json" => sha256(~s({"token":"t"})), "config.toml" => ""}
+      # The call log carries a hash of the login, never the login.
+      refute File.read!(log) =~ ~s("token")
       refute File.exists?(scratch)
     end
 
@@ -378,8 +382,8 @@ defmodule HalC2.TextGenerationTest do
 
       assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
 
-      assert [%{"codexFiles" => %{"auth.json" => ~s({"token":"shadow"}), "config.toml" => ""}}] =
-               calls(log)
+      assert [%{"codexFiles" => files}] = calls(log)
+      assert files == %{"auth.json" => sha256(~s({"token":"shadow"})), "config.toml" => ""}
     end
 
     test "a writer whose check only warned keeps generating", %{repo: repo} do

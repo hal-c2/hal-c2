@@ -228,7 +228,10 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
     call = List.last(calls(context))
     refute Enum.any?(call["argv"], &String.starts_with?(&1, "mcp_servers."))
     assert call["codexFiles"]["config.toml"] == ""
-    assert call["codexFiles"]["auth.json"] == ~s({"token":"fake"})
+
+    assert call["codexFiles"]["auth.json"] ==
+             Base.encode16(:crypto.hash(:sha256, ~s({"token":"fake"})), case: :lower)
+
     context
   end
 
@@ -2297,6 +2300,24 @@ defmodule HalC2.Steps.Orchestration.TextGeneration do
       |> World.add_item("Login work", "cmd-2", "command_execution", "run-2", %{
         "input" => "mix undone",
         "exitCode" => 0
+      })
+
+    context
+    |> Map.put(:forge, "https://github.com/acme/shop.git")
+    |> Map.put(:git_extra, %{"threadId" => World.thread_id(context, "Login work")})
+    |> Map.put(:thread_command, command)
+  end
+
+  step "a thread's only turn is still running and has run {string} and it passed",
+       %{args: [command]} = context do
+    context =
+      context
+      |> World.create_thread("Login work")
+      |> World.numbered_run("Login work", 1, "running")
+      |> World.add_item("Login work", "cmd-1", "command_execution", "run-1", %{
+        "input" => command,
+        "exitCode" => 0,
+        "output" => "0 failures"
       })
 
     context

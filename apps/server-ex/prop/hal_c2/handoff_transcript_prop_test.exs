@@ -46,6 +46,52 @@ defmodule HalC2.HandoffTranscriptPropTest do
     end
   end
 
+  # A thread whose last run is still running: the running-turn reader sees every command
+  # it finished and the plain transcript sees none of that run.
+  property "a running turn reaches the transcript only when asked",
+    numtests: HalC2.Prop.numtests(100) do
+    forall [turns, max_chars] <- [turns(), budget()] do
+      ordinal = length(turns) + 1
+      base = state(turns)
+
+      entities = [
+        {"run", %{"id" => "run-#{ordinal}", "ordinal" => ordinal, "status" => "running"}},
+        {"turn-item",
+         %{
+           "id" => "item-running",
+           "runId" => "run-#{ordinal}",
+           "type" => "command_execution",
+           "input" => "check-running",
+           "status" => "completed",
+           "exitCode" => 0,
+           "startedAt" => "2026-10-02T10:00:00Z"
+         }}
+      ]
+
+      state =
+        entities
+        |> Enum.with_index(1000)
+        |> Enum.reduce(base, fn {{kind, entity}, seq}, state ->
+          StreamState.apply_event(state, %{
+            seq: seq,
+            kind: kind,
+            entity: entity["id"],
+            patch: %{"s" => entity}
+          })
+        end)
+
+      plain = Handoff.transcript(state, 1_000_000, 0, max_chars)
+      with_running = Handoff.transcript(state, 1_000_000, 0, max_chars, running: true)
+
+      # The running command is the newest entry, so a fitted transcript keeps it or
+      # says it left it out; a plain one never mentions it.
+      (plain == nil or not String.contains?(plain, "check-running")) and
+        String.length(with_running) <= max_chars and
+        (String.contains?(with_running, "check-running") or
+           with_running =~ ~r/left out|omitted|kept/i)
+    end
+  end
+
   # One to eight runs, each a request, sometimes a command, and usually an answer.
   defp turns do
     resize(8, non_empty(list({message_length(), oneof([nil, message_length()]), boolean()})))

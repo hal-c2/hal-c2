@@ -10,7 +10,7 @@
 # With $FAKE_TEXT_ANSWERS set, a title comes from that file instead, one line per
 # call, used up in order: "fail" fails the call, and an empty or missing file titles
 # the thread with the first words of the message its prompt carries.
-import json, os, re, sys, time
+import hashlib, json, os, re, sys, time
 
 args = sys.argv[1:]
 
@@ -29,15 +29,28 @@ if "mcp" in args and "list" in args:
 prompt = sys.stdin.read()
 codex = args[:1] == ["exec"]
 
+
+
+def codex_files():
+    # config.toml is logged as is; auth.json only as its sha256, so a call that reaches the
+    # login fallback without a seeded home never writes a real token into a log.
+    home = os.environ.get("CODEX_HOME")
+    files = {}
+    if home:
+        path = os.path.join(home, "config.toml")
+        if os.path.exists(path):
+            files["config.toml"] = open(path).read()
+        path = os.path.join(home, "auth.json")
+        if os.path.exists(path):
+            files["auth.json"] = hashlib.sha256(open(path, "rb").read()).hexdigest()
+    return files
+
 log = os.environ.get("FAKE_TEXT_LOG")
 if log:
     with open(log, "a") as f:
         f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid(),
                             "codexHome": os.environ.get("CODEX_HOME"),
-                            "codexFiles": {n: open(os.path.join(os.environ["CODEX_HOME"], n)).read()
-                                           for n in ("config.toml", "auth.json")
-                                           if os.environ.get("CODEX_HOME")
-                                           and os.path.exists(os.path.join(os.environ["CODEX_HOME"], n))},
+                            "codexFiles": codex_files(),
                             "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR"),
                             "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
                             "claudecode": os.environ.get("CLAUDECODE")}) + "\n")

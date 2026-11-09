@@ -648,12 +648,14 @@ defmodule HalC2.GitActions do
   end
 
   # What the thread the action ran beside did, so the description can say which checks it
-  # ran. The thread's runs that were rolled back are not part of it. A thread this MC does
+  # ran, including in the turn that is running it. The thread's runs that were rolled back are not part of it. A thread this MC does
   # not hold gives nothing.
   defp thread_history(thread_id) when is_binary(thread_id) do
     HalC2.Streams.read(
       thread_id,
-      &HalC2.Orchestration.Handoff.transcript(&1, 1_000_000, 0, @thread_history_chars)
+      &HalC2.Orchestration.Handoff.transcript(&1, 1_000_000, 0, @thread_history_chars,
+        running: true
+      )
     )
   end
 

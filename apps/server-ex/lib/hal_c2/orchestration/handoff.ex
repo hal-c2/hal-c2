@@ -517,13 +517,18 @@ defmodule HalC2.Orchestration.Handoff do
   The conversation of the runs before `ordinal` that finished, as `User:`,
   `Assistant:` and `Command:` entries in the order they happened, selected to fit
   (see the module doc) to `max_chars`; nil when there is none.
+
+  With `running: true` a run still running counts too, with what it has finished so
+  far, for a reader (the PR description writer) that works inside the turn it describes.
   """
-  def transcript(state, ordinal, after_ordinal \\ 0, max_chars \\ @max_chars) do
+  def transcript(state, ordinal, after_ordinal \\ 0, max_chars \\ @max_chars, opts \\ []) do
+    statuses = if opts[:running], do: ["running" | @finished], else: @finished
+
     runs =
       state
       |> StreamState.list("run")
       |> Enum.filter(
-        &(&1["ordinal"] < ordinal and &1["ordinal"] > after_ordinal and &1["status"] in @finished)
+        &(&1["ordinal"] < ordinal and &1["ordinal"] > after_ordinal and &1["status"] in statuses)
       )
       |> Enum.sort_by(& &1["ordinal"])
 

@@ -824,6 +824,13 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given a short account of the thread's visible history with the check and its result
     And turns that were rolled back are left out of it
 
+  # Upstream #18291: the agent usually runs the checks and creates the PR in the same turn.
+  @mc
+  Scenario: Pull request text knows the checks the running turn has already finished
+    Given a thread's only turn is still running and has run "mix test" and it passed
+    When pull request text is generated for that thread's branch
+    Then the writer is given a short account of the thread's visible history with the check and its result
+
   # Upstream #18291: generated pull requests include the thread's context, such as the checks it ran.
   @mc
   Scenario: Pull request text from a thread needs permission to read the thread

@@ -86,6 +86,24 @@ defmodule HalC2.Orchestration.HandoffTest do
     |> Enum.filter(& &1)
   end
 
+  test "a running run counts only when asked, with the commands it has finished" do
+    command = %{"input" => "mix test", "exitCode" => 0, "status" => "completed"}
+
+    state =
+      1
+      |> turn("run the checks", "", command)
+      |> Enum.map(fn
+        {"run", run} -> {"run", %{run | "status" => "running"}}
+        row -> row
+      end)
+      |> state()
+
+    assert Handoff.transcript(state, 1_000_000) == nil
+
+    assert Handoff.transcript(state, 1_000_000, 0, 8_000, running: true) =~
+             "Command: mix test\nExit code: 0"
+  end
+
   test "a command is handed over between its request and the answer, with how it ended" do
     command = %{
       "input" => "mix test",
