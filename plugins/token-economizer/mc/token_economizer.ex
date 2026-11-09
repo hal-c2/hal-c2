@@ -446,18 +446,21 @@ defmodule HalC2Plugins.TokenEconomizer do
     |> Map.merge(extra)
   end
 
-  # The projects a `toolPrune` call names, loading a named one's file if need be.
-  # Without a project the state call lists all held; apply and restore need one
-  # (`prune_call/3`).
+  # The projects a `toolPrune` call names, loading a named one's file if need be: one
+  # with no evidence held or kept is none, so a call naming a project that never ran
+  # (or a mistyped one) neither holds an empty entry nor saves a file for it. Without a
+  # project the state call lists all held; apply and restore need one (`prune_call/3`).
   defp prune_targets(state, %{"projectId" => project_id, "provider" => provider})
        when is_binary(project_id) and is_binary(provider) do
-    case Prune.unit_for_provider(provider) do
-      nil ->
-        {:ok, [], state}
+    project = {project_id, provider}
+    unit = Prune.unit_for_provider(provider)
 
-      unit ->
-        {_prune, state} = prune(state, {project_id, provider}, unit)
-        {:ok, [{project_id, provider}], state}
+    if unit != nil and
+         (Map.has_key?(state.prunes, project) or File.exists?(toolprune_path(project))) do
+      {_prune, state} = prune(state, project, unit)
+      {:ok, [project], state}
+    else
+      {:ok, [], state}
     end
   end
 

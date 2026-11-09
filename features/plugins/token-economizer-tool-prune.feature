@@ -70,6 +70,12 @@ Feature: TokenEconomizer's tool pruning
     When a Claude thread in the project runs a turn in which a subagent uses "CronCreate"
     Then tool pruning lists "CronCreate" as used for the project
 
+  @mc
+  Scenario: Applying a tool for a project that never ran is refused and keeps nothing for it
+    When the person applies "CronCreate" by name for a project that never ran
+    Then tool pruning answers that it has no evidence for that project
+    And tool pruning keeps nothing for that project
+
   @backlog
   Scenario: The plugin's page shows what is off, proposed and kept, and lets the person apply and restore
     Given a project where "CronCreate" is turned off for Claude

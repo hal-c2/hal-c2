@@ -836,6 +836,27 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert saved["kept"] == ["Workflow"]
     end
 
+    test "a call naming a project with no evidence holds nothing for it and saves no file" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      never = {project(), "claudeAgent"}
+      input = %{"projectId" => elem(never, 0), "provider" => "claudeAgent"}
+
+      assert {:reply, {:ok, %{"projects" => []}}, state} =
+               TokenEconomizer.handle_call({:toolprune, :state, input}, nil, state)
+
+      refute Map.has_key?(state.prunes, never)
+
+      assert {:reply, {:error, _}, state} =
+               TokenEconomizer.handle_call(
+                 {:toolprune, :apply, Map.put(input, "tools", ["Workflow"])},
+                 nil,
+                 state
+               )
+
+      refute Map.has_key?(state.prunes, never)
+      refute File.exists?(TokenEconomizer.toolprune_path(never))
+    end
+
     test "a call whose input is not an object, or names its project or provider with no string, answers an error" do
       p = project()
       {:ok, state} = TokenEconomizer.init(%{})

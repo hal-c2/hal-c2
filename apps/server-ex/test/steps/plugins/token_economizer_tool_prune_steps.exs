@@ -181,6 +181,41 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
     call(context, "toolPruneRestore", %{})
   end
 
+  step "the person applies {string} by name for a project that never ran",
+       %{args: [tool]} = context do
+    never = "never-#{System.unique_integer([:positive])}"
+    input = %{"projectId" => never, "provider" => @instance, "tools" => [tool]}
+
+    {reply, context} =
+      World.call(context, "plugins.call", %{
+        "id" => @id,
+        "method" => "toolPruneApply",
+        "input" => input
+      })
+
+    Map.merge(context, %{prune_reply: reply, never_project: never})
+  end
+
+  step "tool pruning answers that it has no evidence for that project", context do
+    assert {:error, _, _} = context.prune_reply
+    context
+  end
+
+  step "tool pruning keeps nothing for that project", context do
+    input = %{"projectId" => context.never_project, "provider" => @instance}
+
+    {{:ok, %{"projects" => []}}, context} =
+      World.call(context, "plugins.call", %{
+        "id" => @id,
+        "method" => "toolPrune",
+        "input" => input
+      })
+
+    plugin = Module.concat(HalC2Plugins, TokenEconomizer)
+    refute File.exists?(plugin.toolprune_path({context.never_project, @instance}))
+    context
+  end
+
   step "{string} is refused", %{args: [tool]} = context do
     assert [%{"refused" => [^tool]}] = context.prune_reply["projects"]
     context
