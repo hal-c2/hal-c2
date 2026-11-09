@@ -728,14 +728,22 @@ defmodule HalC2.TextGeneration do
   defp bare_codex_home(instance, dir) do
     source = Path.join(account_home(instance), "auth.json")
     home = Path.join(dir, "codex-home")
+    target = Path.join(home, "auth.json")
     File.mkdir_p!(home)
+    # The login is a secret: the home is the owner's alone and the copy is made 0600 before
+    # it is filled, whatever mode the source has (`File.cp` keeps the source's mode).
+    File.chmod!(home, 0o700)
     File.write!(Path.join(home, "config.toml"), "")
 
-    case File.cp(source, Path.join(home, "auth.json")) do
-      :ok ->
-        {:ok, home}
-
+    with :ok <- File.write(target, ""),
+         :ok <- File.chmod(target, 0o600),
+         :ok <- File.cp(source, target),
+         :ok <- File.chmod(target, 0o600) do
+      {:ok, home}
+    else
       {:error, reason} ->
+        File.rm(target)
+
         {:error,
          "Codex text generation could not copy the login from #{source} " <>
            "(#{:file.format_error(reason)}). Its MCP servers could not be listed, so it needs " <>

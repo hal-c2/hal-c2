@@ -10,13 +10,13 @@
 # With $FAKE_TEXT_ANSWERS set, a title comes from that file instead, one line per
 # call, used up in order: "fail" fails the call, and an empty or missing file titles
 # the thread with the first words of the message its prompt carries.
-import hashlib, json, os, re, sys, time
+import errno, hashlib, json, os, re, sys, time
 
 args = sys.argv[1:]
 
 # `codex ... mcp list --json`: the servers $FAKE_CODEX_MCP lists (a JSON array), or a
 # failure with $FAKE_CODEX_MCP_FAIL. Logged apart from the writing calls.
-if "mcp" in args and "list" in args:
+if args[-3:] == ["mcp", "list", "--json"]:
     if os.environ.get("FAKE_TEXT_LOG"):
         with open(os.environ["FAKE_TEXT_LOG"] + ".mcp", "a") as f:
             f.write(json.dumps(args) + "\n")
@@ -36,6 +36,7 @@ def codex_files():
     # login fallback without a seeded home never writes a real token into a log.
     home = os.environ.get("CODEX_HOME")
     files = {}
+    modes = {}
     if home:
         path = os.path.join(home, "config.toml")
         if os.path.exists(path):
@@ -45,14 +46,16 @@ def codex_files():
         if os.path.exists(path):
             with open(path, "rb") as f:
                 files["auth.json"] = hashlib.sha256(f.read()).hexdigest()
-    return files
+            modes["auth.json"] = oct(os.stat(path).st_mode & 0o777)
+        modes["."] = oct(os.stat(home).st_mode & 0o777)
+    return files, modes
 
 log = os.environ.get("FAKE_TEXT_LOG")
 if log:
     with open(log, "a") as f:
         f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid(),
                             "codexHome": os.environ.get("CODEX_HOME"),
-                            "codexFiles": codex_files(),
+                            "codexFiles": codex_files()[0], "codexModes": codex_files()[1],
                             "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR"),
                             "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
                             "claudecode": os.environ.get("CLAUDECODE")}) + "\n")
@@ -60,8 +63,18 @@ if log:
 # $FAKE_TEXT_STARTED names a fifo the call writes to once logged: a receipt for a test
 # that stops the caller while this call runs.
 if os.environ.get("FAKE_TEXT_STARTED"):
-    with open(os.environ["FAKE_TEXT_STARTED"], "w") as f:
-        f.write("started")
+    # Non-blocking, retried briefly: a test that attached no reader fails on its own
+    # assertion instead of hanging this process in open().
+    for _ in range(50):
+        try:
+            fd = os.open(os.environ["FAKE_TEXT_STARTED"], os.O_WRONLY | os.O_NONBLOCK)
+            os.write(fd, b"started")
+            os.close(fd)
+            break
+        except OSError as e:
+            if e.errno != errno.ENXIO:
+                break
+            time.sleep(0.1)
 
 if codex:
     schema = json.load(open(args[args.index("--output-schema") + 1]))

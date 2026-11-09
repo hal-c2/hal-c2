@@ -259,6 +259,26 @@ defmodule HalC2.TextGenerationTest do
       refute File.exists?(scratch)
     end
 
+    test "the scratch Codex home is 0700 and its copied login 0600, whatever the source's mode",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex", "model" => "gpt-text"}
+      })
+
+      home = Path.join(dir, "user-codex")
+      File.mkdir_p!(home)
+      File.write!(Path.join(home, "auth.json"), ~s({"token":"t"}))
+      File.chmod!(Path.join(home, "auth.json"), 0o644)
+      put_codex_home(home)
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexModes" => modes}] = calls(log)
+      assert modes == %{"." => "0o700", "auth.json" => "0o600"}
+    end
+
     test "a Codex run whose caller is killed leaves no scratch home with a copied login behind",
          %{repo: repo, log: log, tmp_dir: dir} do
       install([:codex])
