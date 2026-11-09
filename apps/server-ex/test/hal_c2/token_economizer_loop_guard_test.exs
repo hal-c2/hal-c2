@@ -677,6 +677,20 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       assert ShellEdits.split_heredocs("grep x <<< \"$v\"\nls") == {"grep x <<< \"$v\"\nls", []}
 
+      # Every heredoc a line opens is read, in order, whatever its form.
+      assert ShellEdits.split_heredocs("cat <<'FIRST' <<'SECOND'\nx\nFIRST\ny\nSECOND\nls") ==
+               {"cat <<'FIRST' <<'SECOND'\nls", ["x", "y"]}
+
+      for cmd <- [
+            "cat <<'FIRST' <<'SECOND'\nignored\nFIRST\nSECRET = 1\nSECOND",
+            "cat <<A <<-B\nignored\nA\n\tSECRET = 1\n\tB\nls",
+            "diff - /dev/fd/3 <<A 3<<\"B\"\nignored\nA\nSECRET = 1\nB",
+            "grep x <<< y <<EOF\nSECRET = 1\nEOF"
+          ] do
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
       # What only runs or searches keeps its words.
       assert digest(~s(grep -rn "def handle" src)) =~ ~s(grep -rn "def handle" src)
     end

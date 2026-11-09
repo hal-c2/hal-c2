@@ -174,28 +174,29 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
        else: t
   end
 
-  @doc "The command's shell text without heredoc bodies, and the bodies."
+  @doc """
+  The command's shell text without heredoc bodies, and the bodies: every heredoc a line
+  opens (`cat <<A <<B`), read in order.
+  """
   def split_heredocs(cmd) do
-    {shell, bodies, tag, body} =
+    {shell, bodies, tags, body} =
       cmd
       |> String.split("\n")
-      |> Enum.reduce({[], [], nil, []}, fn
-        line, {shell, bodies, nil, []} ->
-          tag =
-            case Regex.run(@heredoc_start, line) do
-              [_ | tags] -> Enum.find(tags, &(&1 != ""))
-              nil -> nil
-            end
+      |> Enum.reduce({[], [], [], []}, fn
+        line, {shell, bodies, [], []} ->
+          tags =
+            for [_ | tags] <- Regex.scan(@heredoc_start, line),
+                do: Enum.find(tags, &(&1 != ""))
 
-          {[line | shell], bodies, tag, []}
+          {[line | shell], bodies, tags, []}
 
-        line, {shell, bodies, tag, body} ->
+        line, {shell, bodies, [tag | rest] = tags, body} ->
           if String.trim(line) == tag,
-            do: {shell, [Enum.join(Enum.reverse(body), "\n") | bodies], nil, []},
-            else: {shell, bodies, tag, [line | body]}
+            do: {shell, [Enum.join(Enum.reverse(body), "\n") | bodies], rest, []},
+            else: {shell, bodies, tags, [line | body]}
       end)
 
-    bodies = if tag, do: [Enum.join(Enum.reverse(body), "\n") | bodies], else: bodies
+    bodies = if tags != [], do: [Enum.join(Enum.reverse(body), "\n") | bodies], else: bodies
     {shell |> Enum.reverse() |> Enum.join("\n"), Enum.reverse(bodies)}
   end
 
