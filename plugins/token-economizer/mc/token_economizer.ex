@@ -674,6 +674,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       conv ->
         run = event["runId"]
+        # turn.finished's `"ordinal"` is the run's place in the thread, the one a
+        # watermark keeps; a turn.item's is the item's place in its run, never read here.
         state = ended_unresolved(state, thread_id, run, event["ordinal"])
 
         state =
@@ -960,7 +962,9 @@ defmodule HalC2Plugins.TokenEconomizer do
   # dropped among them, and the tools whose uses their items need not show
   # (`Prune.unrecorded/2`). Still partial when the history cannot be read, or does not
   # have one of the segment's runs yet (one still running as a quiet project folds it):
-  # the uses dropped from it are read back at the thread's next turn.
+  # the uses dropped from it are read back at the thread's next turn. A run that ended
+  # and was rolled back is never in the history, so its segment stays partial here too,
+  # and folds unresolved: `recover_uses/5` settles it at the next shape. Slower, and safe.
   defp heard(conv, prune, unit, before) do
     with {:ok, history} <- history_back(conv.thread, before, conv.runs),
          read = MapSet.new(history, & &1["runId"]),

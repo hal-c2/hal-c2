@@ -831,7 +831,9 @@ defmodule HalC2.Vcs do
   # Callers go in the order they asked (`HalC2.WorkspaceLease`): `:global`'s lock tries
   # again after random sleeps of up to 8 s, so a dozen threads launched in one
   # repository left a turn of a few ms waiting many seconds. Without the lease server
-  # (a test that starts only part of an MC) `:global` still takes the turns.
+  # (a test that starts only part of an MC) `:global` still takes the turns. A turn is
+  # not re-entrant: `fun` calling `in_turn` for the same repository waits on itself for
+  # good, where `:global.trans` let it through. No caller does today.
   defp in_turn(cwd, fun) do
     repo =
       case Git.ok(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)) do
