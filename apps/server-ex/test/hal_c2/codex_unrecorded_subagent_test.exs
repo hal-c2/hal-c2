@@ -62,6 +62,12 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
 
   def hold_once(_test, _gate, _stage, _stream_id), do: :ok
 
+  # The store's first write waits for the test's go; writes to `refused`'s thread fail.
+  def hold_then_refuse(test, gate, refused, stage, stream_id) do
+    hold_once(test, gate, stage, stream_id)
+    HalC2.Test.Machines.refuse_change(refused, stage, stream_id)
+  end
+
   test "a run the store failed ends the work in its subagents' threads once it recovers",
        %{work: work} do
     {pid, runtime, run} = running_turn(work)
@@ -319,6 +325,59 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
 
     assert %{"status" => "failed"} = command(child)
     assert %{"status" => "failed"} = item(@tid, "subagent")
+  end
+
+  # Review of #1398: the run's first end starts the thread's next run, on a runtime of
+  # its own, before the try after it ends what the lost runtime took. That try ends
+  # the earlier runtime's subagent and leaves the next run's running.
+  test "a lost runtime's last try leaves the next run's subagent running", %{work: work} do
+    {pid, runtime, first} = running_turn(work)
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    child_command(pid, runtime, native)
+    [%{"childThreadId" => child}] = list(@tid, "subagent")
+
+    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_every, []})
+    completed = Map.put(native, "turn", %{"id" => native["turnId"], "status" => "completed"})
+    notify(pid, runtime, "turn/completed", completed)
+    assert {:unrecorded, _} = TurnWatch.attempted(first)
+
+    # The next try records the run with its runtime gone meanwhile; the try after, at
+    # what went with it, waits on the subagent's own thread.
+    gate = make_ref()
+    hook = {__MODULE__, :hold_then_refuse, [self(), gate, child]}
+    Application.put_env(:hal_c2, :store_hook, hook)
+    assert_receive {:held, ^gate, store}, 5_000
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+    send(store, {:go, gate})
+    await(fn -> match?([%{"status" => "failed"}], list(@tid, "run")) end)
+
+    # The next run starts, and its subagent with it, before that try records.
+    # A new runtime's app-server numbers its turns afresh.
+    runtime = dispatch("m2", nil, pid)
+    [{next, _}] = Registry.lookup(HalC2.Codex.Registry, @tid)
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    child_command(next, runtime, native, "2")
+
+    %{"childThreadId" => next_child} =
+      Enum.find(list(@tid, "subagent"), &(&1["runId"] == runtime.turn.ids.run))
+
+    HalC2.Test.Machines.refuse_changes(nil)
+    send(TurnWatch, {:retry, first})
+
+    await(fn ->
+      match?(%{"status" => "failed"}, Enum.find(list(@tid, "subagent"), &(&1["runId"] == first)))
+    end)
+
+    assert %{"status" => "failed"} = command(child)
+    assert %{"status" => "running"} = command(next_child, "2")
+
+    assert %{"status" => "running"} =
+             Enum.find(list(@tid, "subagent"), &(&1["runId"] == runtime.turn.ids.run))
+
+    assert %{"status" => "running"} =
+             Enum.find(list(@tid, "run"), &(&1["id"] == runtime.turn.ids.run))
   end
 
   # The subagent an earlier run left running is ended by the run's end however long

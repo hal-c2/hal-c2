@@ -1046,16 +1046,19 @@ defmodule HalC2.Orchestration.TurnWriter do
   defp leftover_ended(_stream, _leftover, _at), do: []
 
   # The work a runtime keeps running across its runs, kept by any run of `run_id`'s
-  # provider instance (one runtime drives them): open provider subagents, each with
-  # its node and item (`NativeSubagent.start/3`'s ids; an earlier run's may be cold),
-  # and background items in memory with their nodes, as `{kind, id}`s.
+  # provider instance up to it (one runtime drives them): open provider subagents, each
+  # with its node and item (`NativeSubagent.start/3`'s ids; an earlier run's may be
+  # cold), and background items in memory with their nodes, as `{kind, id}`s. A later
+  # run's is a later runtime's: the run's first end can start the next before a try
+  # after it ends what its own runtime took.
   defp held(stream, run_id) do
     runs = StreamState.get(stream, "run")
-    instance = (runs[run_id] || %{})["providerInstanceId"]
+    own = runs[run_id] || %{}
+    instance = own["providerInstanceId"]
 
     of_instance =
-      for {id, %{"providerInstanceId" => ^instance}} <- runs,
-          instance != nil,
+      for {id, %{"providerInstanceId" => ^instance} = other} <- runs,
+          instance != nil and not later?(other["ordinal"], own["ordinal"]),
           into: MapSet.new(),
           do: id
 
@@ -1082,6 +1085,9 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     MapSet.new(subagents ++ items)
   end
+
+  defp later?(ordinal, than) when is_integer(ordinal) and is_integer(than), do: ordinal > than
+  defp later?(_ordinal, _than), do: false
 
   @doc """
   Records how provider turn `id` of `thread_id` ended after its run did: one the
