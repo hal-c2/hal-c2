@@ -266,6 +266,10 @@ defmodule HalC2.TokenEconomizerPropTest do
       {"Bash", %{"command" => "pytest -q test_a.py"},
        "FAILED test_a.py::test_a\n1 failed in 0.02s", 1}
 
+  defp call({"pass", cmd}), do: {"Bash", %{"command" => cmd}, "Tests  1 passed (1)", 0}
+  defp call({"fail", cmd}), do: {"Bash", %{"command" => cmd}, "Tests  1 failed (1)", 1}
+  defp call({"opaque", cmd}), do: {"Bash", %{"command" => cmd}, "Tests  1 failed (1)", 0}
+
   defp call("pass"), do: {"Bash", %{"command" => "pytest -q test_a.py"}, "1 passed in 0.02s", 0}
   defp call("read"), do: {"Bash", %{"command" => "cat a.py"}, "x = 1", 0}
   defp call("bad_edit"), do: {"Edit", %{"path" => "a.py"}, "String to replace not found", 1}
@@ -340,6 +344,29 @@ defmodule HalC2.TokenEconomizerPropTest do
       if check_last,
         do: {how <> "_then_check", hider <> between <> runner},
         else: {"check_then_" <> how, runner <> between <> hider}
+    end
+  end
+
+  # A package manager's check run in one package: a check like any other ("pass",
+  # "fail") behind the options this knows, a check not read ("opaque") behind one it
+  # does not.
+  defp filtered do
+    let {verdict, pm, option} <-
+          {elements(["pass", "fail", "opaque"]), elements(["npm", "pnpm", "yarn", "bun"]),
+           elements([
+             "--filter web",
+             "-F web",
+             "--filter=web",
+             "-r",
+             "-C web",
+             "--prefix web",
+             "-w web",
+             "--workspace=web",
+             "workspace web",
+             "--cwd web"
+           ])} do
+      option = if verdict == "opaque", do: "--frobnicate web", else: option
+      {verdict, Enum.join([pm, option, "test"], " ")}
     end
   end
 
@@ -503,7 +530,8 @@ defmodule HalC2.TokenEconomizerPropTest do
                  elements(~w(read edit pass fail flagged expanded sourced pipefail) ++ @unread),
                  inline(),
                  unscoped(),
-                 ordered()
+                 ordered(),
+                 filtered()
                ])
              ) do
       g =
@@ -527,7 +555,7 @@ defmodule HalC2.TokenEconomizerPropTest do
 
       # A source of `a.py` hides a check only once an edit has written it.
       hidden =
-        ~w(unscoped check_then_script eval_then_check check_then_eval defined_then_check
+        ~w(unscoped opaque check_then_script eval_then_check check_then_eval defined_then_check
            check_then_defined) ++ @unread
 
       hidden =
@@ -537,7 +565,7 @@ defmodule HalC2.TokenEconomizerPropTest do
 
       green =
         kinds != [] and not Enum.any?(after_edit, &(kind(&1) in hidden)) and
-          List.last(checks) != "fail"
+          kind(List.last(checks)) != "fail"
 
       (Turn.resolved_proxy(g) == green)
       |> when_fail(

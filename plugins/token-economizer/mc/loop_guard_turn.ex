@@ -41,7 +41,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # `State.test_run_re/0` (the Python vocabulary the thresholds were tuned on); used only
   # for the ended-green proxy, never to change what `State` counts. A runner is often
   # named by path (`python tests/runtests.py`, `.venv/bin/pytest`).
-  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun|vp)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
+  # A package manager's own options before its check say which package's it runs (`pnpm
+  # --filter web test`, `npm --prefix web test`, `yarn workspace web test`).
+  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun|vp)(?:\s+(?:(?:--(?:filter|prefix|dir|workspace|cwd)|-[FCw])(?:=\S+|\s+(?!-)\S+)|-r|--recursive|--workspaces|-ws|--if-present|-s|--silent|workspace\s+\S+))*\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
 
   # A command line's exit status is its last command's, so it may not be the test run's:
   # `npm test 2>&1 | tail -n 8` exits with `tail`'s status, `npm test || true` with 0.
@@ -51,6 +53,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # reported, since their output is in the result too.
   @quoted ~r/'[^']*'|"(?:\\.|[^"\\])*"/
   @sep ~r/(&&|\|\||\|&|(?<!>)\||;|\n)/
+  # A package manager's check behind an option `@verify` does not know (`npm --dry-run
+  # test`), which may change what runs or whether anything does: a check, not read.
+  @opaque_run ~r/\A(?:^|[\s;&|(])(?:~?\/)?(?:[\w.\-]+\/)*(?:npm|pnpm|yarn|bun|vp)\s+(?:\S+\s+)*(?:run\s+)?test(?![\w.\-\/])/i
   # A runner asked for its help, version or test list, not to run the tests.
   @not_a_run ~r/\s(?:-h|--help|--version|--collect-only|--co|--list\S*)(?!\S)/
   # What may precede the command itself: `FOO=1 timeout 60 npm test`, and a launcher that
@@ -274,7 +279,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   `pipefail`); "hidden" when a pipe, `||` or a mere report of the status replaced it;
   "mixed" when other commands ran after, their output in the result too; "unknown" when
   the command is not plain (`ShellEdits.plain?/1`: `! pytest`, `(pytest)`, `(set -o
-  pipefail); pytest | tail`), whose status this does not scope.
+  pipefail); pytest | tail`), whose status this does not scope, or runs a package
+  manager's check behind an option this does not know (`npm --dry-run test`).
   """
   def status_of_tests(cmd) when is_binary(cmd) do
     {pieces, pipefail} = pieces(cmd)
@@ -291,10 +297,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         end
       end)
 
-    if status != nil and not ShellEdits.plain?(cmd), do: "unknown", else: status
+    cond do
+      Enum.any?(stages, fn {stage, _} -> opaque_run?(stage) end) -> "unknown"
+      status != nil and not ShellEdits.plain?(cmd) -> "unknown"
+      true -> status
+    end
   end
 
   def status_of_tests(_), do: nil
+
+  defp opaque_run?(stage) do
+    stage = Regex.replace(@prefix, stage, "")
+    Regex.match?(@opaque_run, stage) and not Regex.match?(@verify, stage)
+  end
 
   defp run?(stage),
     do:

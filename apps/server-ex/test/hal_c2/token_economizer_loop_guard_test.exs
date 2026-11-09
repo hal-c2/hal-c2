@@ -696,6 +696,54 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute Turn.resolved_proxy(g)
     end
 
+    test "a package manager's check filtered to a package is a verification" do
+      for cmd <- [
+            "pnpm --filter web test",
+            "pnpm -F web run test",
+            "pnpm --filter=web test",
+            "pnpm -r test",
+            "pnpm -C web test",
+            "npm --prefix web test",
+            "npm -w web run test",
+            "npm --workspace=web test",
+            "npm --workspaces --if-present test",
+            "yarn workspace web test",
+            "yarn --cwd web test",
+            "bun --cwd web test"
+          ] do
+        assert Turn.status_of_tests(cmd) == "own", cmd
+
+        failing =
+          Turn.new()
+          |> fold("Edit", %{"file_path" => "/r/a.ts"}, "ok")
+          |> fold("Bash", %{"command" => cmd}, "Tests  1 failed (1)", 1)
+
+        refute Turn.resolved_proxy(failing), cmd
+
+        passing =
+          Turn.new()
+          |> fold("Edit", %{"file_path" => "/r/a.ts"}, "ok")
+          |> fold("Bash", %{"command" => cmd}, "Tests  1 passed (1)", 0)
+
+        assert Turn.resolved_proxy(passing), cmd
+      end
+
+      # An option this does not know may change what runs, or whether anything does: the
+      # check is there, but not read.
+      for cmd <- ["pnpm --frobnicate web test", "npm --dry-run test", "yarn -X run test"] do
+        assert Turn.status_of_tests(cmd) == "unknown", cmd
+
+        passing =
+          Turn.new()
+          |> fold("Edit", %{"file_path" => "/r/a.ts"}, "ok")
+          |> fold("Bash", %{"command" => cmd}, "Tests  1 passed (1)", 0)
+
+        refute Turn.resolved_proxy(passing), cmd
+      end
+
+      assert Turn.status_of_tests("npm install test-utils") == nil
+    end
+
     test "mix features, prop and proof are test runs, and a failing one is not green" do
       for task <- ~w(features prop proof),
           do: assert(Turn.status_of_tests("mise exec -- mix #{task} a.feature") == "own")
