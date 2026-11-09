@@ -93,6 +93,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call {:upload_feedback, _}" =>
         "sends feedback; no run changes",
       "HalC2.Codex.ThreadRuntime handle_call :settle" => "a barrier for tests; changes nothing",
+      "HalC2.Codex.ThreadRuntime handle_call :mcp_session" =>
+        "reads the connection an MCP app's requests use; records nothing",
       "HalC2.Codex.ThreadRuntime handle_call :release" =>
         "stops an idle session; turns.maude holds it, and a dry runtime is never idle",
       "HalC2.Codex.ThreadRuntime handle_call {:adopt, %{dir: _, snapshot: _}}" =>
