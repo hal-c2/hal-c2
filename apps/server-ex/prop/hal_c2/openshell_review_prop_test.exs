@@ -50,6 +50,9 @@ defmodule HalC2.OpenShellReviewPropTest do
           ips: ["127.0.0.1"]
         )
 
+        Application.put_env(:hal_c2, :service_user_home, Path.join(home, "user"))
+        Application.put_env(:hal_c2, :service_platform, {:unix, :linux})
+
         roots = Path.join(home, "sandboxes")
         sink = spawn(fn -> discard() end)
 
@@ -63,10 +66,7 @@ defmodule HalC2.OpenShellReviewPropTest do
             end
           )
 
-        File.write!(
-          OpenShell.state_path(),
-          JSON.encode!(%{"endpoint" => gateway.endpoint, "driver" => "podman"})
-        )
+        FakeOpenShell.install!(gateway)
 
         Process.put(:review_prop, %{
           gateway: gateway,
@@ -93,6 +93,8 @@ defmodule HalC2.OpenShellReviewPropTest do
             Supervisor.stop(gateway.server)
             Process.exit(sink, :kill)
             Application.delete_env(:hal_c2, :openshell_broker)
+            Application.delete_env(:hal_c2, :service_user_home)
+            Application.delete_env(:hal_c2, :service_platform)
 
             if key,
               do: System.put_env("OPENAI_API_KEY", key),

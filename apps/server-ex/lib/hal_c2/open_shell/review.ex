@@ -25,7 +25,7 @@ defmodule HalC2.OpenShell.Review do
   import Kernel, except: [binding: 1]
 
   alias HalC2.OpenShell
-  alias HalC2.OpenShell.{Broker, Client, Policy}
+  alias HalC2.OpenShell.{Broker, Client, Policy, Service}
 
   require Logger
 
@@ -187,6 +187,8 @@ defmodule HalC2.OpenShell.Review do
            Process.whereis(__MODULE__) != nil ||
              {:error, "Review sandboxes are not running on this MC."},
          {:ok, model} <- model(driver, spec.instance),
+         :ok <- Service.reaped(),
+         {:ok, disk} <- disk(),
          :ok <- GenServer.call(__MODULE__, {:opening, thread_id}),
          {:ok, conn} <- GenServer.call(__MODULE__, :conn, 30_000),
          {:ok, broker} <- GenServer.call(__MODULE__, :broker, 30_000) do
@@ -217,12 +219,14 @@ defmodule HalC2.OpenShell.Review do
                  image: OpenShell.Manifest.images().review_workload,
                  policy: policy,
                  limits: @limits,
+                 driver_config: disk,
                  providers: [name],
                  environment: %{"HOME" => Policy.home()},
                  timeout: 60_000
                ),
              :ok <- ready(conn, name, System.monotonic_time(:millisecond) + @ready_ms),
              :ok <- composed(conn, name, policy),
+             :ok <- bounded(conn, name),
              :ok <- checkout(conn, name, spec, deadline) do
           binding = %{
             thread_id: thread_id,
@@ -537,6 +541,60 @@ defmodule HalC2.OpenShell.Review do
 
       error ->
         error
+    end
+  end
+
+  # The review's disk (`Policy.writable/0`): a tmpfs of its size on each path it
+  # writes, asked of the gateway's driver. Only OpenShell's Podman and Docker drivers
+  # mount them; a gateway on another driver gets no review.
+  defp disk do
+    case OpenShell.state() do
+      %{"driver" => driver} when driver in ~w(podman docker) ->
+        mounts =
+          for {path, bytes} <- Policy.writable(),
+              do: %{"type" => "tmpfs", "target" => path, "size_bytes" => bytes, "mode" => 0o1777}
+
+        {:ok, %{driver => %{"mounts" => mounts}}}
+
+      _ ->
+        {:error,
+         "Review sandboxes need OpenShell's Podman or Docker driver, the ones that bound a review's disk."}
+    end
+  end
+
+  # Each path the review writes is the tmpfs asked for, no larger, before anything is
+  # put there: a driver that left one out would give the review this machine's disk.
+  defp bounded(conn, name) do
+    writable = Policy.writable()
+
+    with {:ok, out} <-
+           run(conn, name, [
+             "stat",
+             "-f",
+             "-c",
+             "%T %b %S",
+             "--" | Enum.map(writable, &elem(&1, 0))
+           ]) do
+      seen = String.split(out, "\n", trim: true)
+
+      if length(seen) == length(writable) and
+           Enum.all?(Enum.zip(writable, seen), fn {{_path, bytes}, line} ->
+             tmpfs?(line, bytes)
+           end),
+         do: :ok,
+         else:
+           {:error,
+            "The review sandbox's disk is not bounded: its driver did not mount the tmpfs asked for."}
+    end
+  end
+
+  defp tmpfs?(line, bytes) do
+    with ["tmpfs", blocks, size] <- String.split(line),
+         {blocks, ""} <- Integer.parse(blocks),
+         {size, ""} <- Integer.parse(size) do
+      blocks * size <= bytes
+    else
+      _ -> false
     end
   end
 

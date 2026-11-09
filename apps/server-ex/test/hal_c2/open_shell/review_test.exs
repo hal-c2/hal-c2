@@ -13,6 +13,8 @@ defmodule HalC2.OpenShell.ReviewTest do
   setup %{tmp_dir: dir} = context do
     FakeOpenShell.put_env(
       home: Path.join(dir, "mc"),
+      service_user_home: Path.join(dir, "user"),
+      service_platform: {:unix, :linux},
       openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
     )
 
@@ -32,10 +34,7 @@ defmodule HalC2.OpenShell.ReviewTest do
           Map.get(context, :gateway, [])
       )
 
-    File.write!(
-      OpenShell.state_path(),
-      JSON.encode!(%{"endpoint" => gateway.endpoint, "driver" => "podman"})
-    )
+    FakeOpenShell.install!(gateway)
 
     for child <- Map.get(context, :before, []), do: child.(gateway)
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
@@ -89,6 +88,50 @@ defmodule HalC2.OpenShell.ReviewTest do
   test "a gateway that widens the review's policy gets no review", %{gateway: g, repo: repo} do
     assert {:error, message} = Review.open(spec(repo))
     assert message =~ "wider than asked: the gateway adds network rules"
+    assert_gone(g)
+  end
+
+  test "a review's disk is a tmpfs of its size on each path it writes", %{repo: repo} do
+    assert {:ok, _} = Review.open(spec(repo))
+    assert_received {:openshell_request, "CreateSandbox", %{spec: spec}}
+
+    assert %{"podman" => %{"mounts" => mounts}} =
+             Google.Protobuf.to_map(spec.template.driver_config)
+
+    assert Enum.map(mounts, &{&1["type"], &1["target"], &1["size_bytes"]}) ==
+             for({path, bytes} <- HalC2.OpenShell.Policy.writable(), do: {"tmpfs", path, bytes})
+
+    assert spec.policy.filesystem.read_write ==
+             Enum.map(HalC2.OpenShell.Policy.writable(), &elem(&1, 0))
+  end
+
+  @tag sandbox: [disk: :unbounded]
+  test "a sandbox whose driver left its disk unbounded gets no review", %{gateway: g, repo: repo} do
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "disk is not bounded"
+    assert_gone(g)
+  end
+
+  test "a gateway on a driver that cannot bound a review's disk opens no sandbox", %{
+    gateway: g,
+    repo: repo
+  } do
+    for state <- [%{"endpoint" => g.endpoint}, %{"endpoint" => g.endpoint, "driver" => "vm"}] do
+      File.write!(OpenShell.state_path(), JSON.encode!(state))
+      assert {:error, message} = Review.open(spec(repo))
+      assert message =~ "Podman or Docker driver"
+    end
+
+    refute_received {:openshell_request, "CreateSandbox", _}
+    assert_gone(g)
+  end
+
+  test "a home without its reaper opens no review sandbox", %{gateway: g, repo: repo} do
+    for path <- OpenShell.Service.reaper_paths(:systemd), do: File.rm!(path)
+
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "need this HAL-C2 home's reaper"
+    refute_received {:openshell_request, "CreateSandbox", _}
     assert_gone(g)
   end
 

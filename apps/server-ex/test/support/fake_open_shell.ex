@@ -109,6 +109,27 @@ defmodule HalC2.Test.FakeOpenShell do
   end
 
   @doc """
+  Installs `gateway` for review sandboxes: this home's state naming it, on Podman,
+  and its reaper's units (`HalC2.OpenShell.Service.reaper/1`) under the app env's
+  `:service_user_home`, which must be set: they are never written to the real one.
+  """
+  def install!(gateway) do
+    home = Application.fetch_env!(:hal_c2, :service_user_home)
+    manager = HalC2.OpenShell.Service.manager()
+
+    for {path, unit} <- HalC2.OpenShell.Service.reaper(manager) do
+      true = String.starts_with?(path, home <> "/")
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, unit)
+    end
+
+    File.write!(
+      HalC2.OpenShell.state_path(),
+      JSON.encode!(%{"endpoint" => gateway.endpoint, "driver" => "podman"})
+    )
+  end
+
+  @doc """
   A gateway release `{release, archive}` for `HalC2.OpenShell.Install.install/1`'s
   `:release` and `:archive`, whose binary is a shell script. Each `generate-certs`
   copies the next certificate set queued in `control/sets` (`queue_certificates/1`;

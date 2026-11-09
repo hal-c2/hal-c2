@@ -1961,7 +1961,11 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
         exec: FakeSandbox.exec(root, self(), fn -> Agent.get(options, & &1) end)
       )
 
-    File.write!(OpenShell.state_path(), JSON.encode!(%{"endpoint" => gateway.endpoint}))
+    # This home's reaper, its units under a user home of the scenario's own.
+    Mc.put_app_env(:service_user_home, Mc.tmp_dir(context.mc, "user"))
+    Mc.put_app_env(:service_platform, {:unix, :linux})
+    FakeOpenShell.install!(gateway)
+
     Map.merge(context, %{gateway: gateway, sandbox_root: root, sandbox_options: options})
   end
 

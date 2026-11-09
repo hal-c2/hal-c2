@@ -1111,6 +1111,60 @@ defmodule HalC2.CodeReviewTest do
       assert %{"status" => "failed", "error" => "Stopped."} = review()
     end
 
+    @tag sandbox: [hang: true]
+    test "a stopped review takes no report from its sandbox", _context do
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+      assert {:ok, _} = call("stop", %{"key" => @key})
+
+      arguments = %{"verdict" => "approve", "summary" => "Fine.", "comments" => []}
+
+      assert {:error, _, message} =
+               HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+
+      assert message =~ "no longer running"
+      settle()
+      assert %{"status" => "failed", "error" => "Stopped.", "verdict" => nil} = review()
+    end
+
+    test "a review stopped before its sandbox is made gets none", %{dir: dir, gateway: g} do
+      File.write!(Path.join(dir, "fetch.hold"), "")
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      await_file(Path.join(dir, "fetch.held"))
+      assert {:ok, _} = call("stop", %{"key" => @key})
+      File.rm!(Path.join(dir, "fetch.hold"))
+
+      settle()
+      refute_received {:openshell_request, "CreateSandbox", _}
+      refute_received {:sandbox_exec, _, _}
+      assert FakeOpenShell.sandboxes(g) == %{}
+      assert %{"status" => "failed", "error" => "Stopped."} = review()
+    end
+
+    @tag sandbox: [hang: true]
+    test "a review paused until its agent can work again loses its sandbox", %{gateway: g} do
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id} = review()
+
+      event = %{
+        "type" => "turn.finished",
+        "threadId" => thread_id,
+        "status" => "failed",
+        "errorClass" => "usage_limit",
+        "error" => "Subscription quota exhausted.",
+        "resetAt" => "2999-01-01T00:00:00Z"
+      }
+
+      apply(@server, :handle_event, [event, %{}])
+      assert_receive {:openshell_request, "DeleteSandbox", _}, 15_000
+      settle()
+      assert %{"status" => "queued"} = review()
+      assert HalC2.OpenShell.Review.binding(thread_id) == nil
+      assert FakeOpenShell.sandboxes(g) == %{}
+    end
+
     test "a review whose agent cannot run in a sandbox fails before anything starts", %{
       gateway: g
     } do
@@ -1407,6 +1461,8 @@ defmodule HalC2.CodeReviewTest do
   defp sandboxed!(context) do
     FakeOpenShell.put_env(
       code_review_trust_all: false,
+      service_user_home: Path.join(context.tmp_dir, "user"),
+      service_platform: {:unix, :linux},
       openshell_broker: [host: "127.0.0.1", bind: "127.0.0.1", ips: ["127.0.0.1"]]
     )
 
@@ -1424,7 +1480,8 @@ defmodule HalC2.CodeReviewTest do
         exec: FakeSandbox.exec(FakeSandbox.root(), self(), Map.get(context, :sandbox, []))
       )
 
-    File.write!(HalC2.OpenShell.state_path(), JSON.encode!(%{"endpoint" => gateway.endpoint}))
+    FakeOpenShell.install!(gateway)
+
     start_supervised!(HalC2.OpenShell.Review)
     :sys.get_state(HalC2.OpenShell.Review)
     %{gateway: gateway}

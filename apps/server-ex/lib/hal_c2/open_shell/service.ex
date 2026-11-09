@@ -92,6 +92,23 @@ defmodule HalC2.OpenShell.Service do
   def reaper(manager),
     do: Enum.zip_with(reaper_paths(manager), reaper_units(manager), fn p, u -> {p, u} end)
 
+  @doc """
+  `:ok` if this home's reaper is installed: each of its units is there, and this
+  home's (`owned/0`). Only it ends a review sandbox's lease while the MC is down, so
+  `HalC2.OpenShell.Review` opens none without it. A gateway the user runs
+  (`HalC2.OpenShell.Install.reuse/2`) or a dev run's has none.
+  """
+  def reaped do
+    with {:ok, manager} <- fetch_manager(),
+         :ok <- owned() do
+      if Enum.all?(reaper_paths(manager), &File.exists?/1),
+        do: :ok,
+        else:
+          {:error,
+           "Review sandboxes need this HAL-C2 home's reaper, which deletes a review's sandbox on time even while the MC is down, and it is not installed. Run `hal-c2-service openshell install` to run OpenShell as a service with its reaper."}
+    end
+  end
+
   @doc "The paths of `reaper/1`'s units."
   def reaper_paths(manager, instance \\ OpenShell.instance())
 

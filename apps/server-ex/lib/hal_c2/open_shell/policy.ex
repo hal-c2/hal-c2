@@ -20,9 +20,15 @@ defmodule HalC2.OpenShell.Policy do
   # The largest JSON-RPC body the broker takes: a report with many comments fits.
   @broker_body 262_144
   @home "/sandbox/home"
+  # The only paths a review writes, each a tmpfs of this many bytes, so a review
+  # cannot fill this machine's disk. A tmpfs is charged to the sandbox's memory.
+  @writable [{"/sandbox", 2_147_483_648}, {"/tmp", 536_870_912}]
 
   @doc "Where a review's agent keeps its files, a fresh directory of the sandbox."
   def home, do: @home
+
+  @doc "The paths a review writes, `{path, bytes}`: its whole disk."
+  def writable, do: @writable
 
   @doc "The MCP revision the broker speaks, the one the policy lets through."
   def mcp_version, do: @mcp_version
@@ -44,7 +50,7 @@ defmodule HalC2.OpenShell.Policy do
       filesystem: %Sb.FilesystemPolicy{
         include_workdir: true,
         read_only: ~w(/usr /lib /lib64 /bin /sbin /etc /opt),
-        read_write: ["/sandbox", "/tmp"]
+        read_write: Enum.map(@writable, &elem(&1, 0))
       },
       landlock: %Sb.LandlockPolicy{compatibility: "hard_requirement"},
       process: %Sb.ProcessPolicy{run_as_user: "sandbox", run_as_group: "sandbox"},

@@ -265,7 +265,8 @@ defmodule HalC2.OpenShell.Client do
          :ok <- alone(conn, opts) do
       template = %Pb.SandboxTemplate{
         image: Keyword.get(opts, :image, ""),
-        resources: resources(Keyword.get(opts, :limits))
+        resources: resources(Keyword.get(opts, :limits)),
+        driver_config: driver_config(Keyword.get(opts, :driver_config))
       }
 
       spec = %Pb.SandboxSpec{
@@ -291,6 +292,11 @@ defmodule HalC2.OpenShell.Client do
       end
     end
   end
+
+  # `%{driver => config}`: the gateway hands its driver's block to the driver and
+  # ignores the rest.
+  defp driver_config(nil), do: nil
+  defp driver_config(config), do: Google.Protobuf.from_map(config)
 
   defp resources(nil), do: nil
 

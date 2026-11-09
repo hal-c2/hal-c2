@@ -12,6 +12,9 @@ defmodule HalC2.Test.FakeSandbox do
     `opts[:tokens]` tokens used (0), and finish the turn. With `hang: true` Codex's
     turn runs on, after `{:sandbox_turn, pid}` to `test`, until it is interrupted.
 
+  `stat -f` of the review's writable paths answers the tmpfs mounts it asked for,
+  or an overlay with `disk: :unbounded`.
+
   `opts` may be a function giving them, asked again for each command. `test` hears
   `{:sandbox_exec, argv, %{workdir, environment}}` for every command, and
   `{:sandbox_reported, status, body}` for each answer the broker gave the agent. With
@@ -67,6 +70,22 @@ defmodule HalC2.Test.FakeSandbox do
     {out, code} = System.cmd("sh", ["-c", String.replace(script, "/sandbox", s.root)])
     if out != "", do: io.stdout.(String.replace(out, s.root, "/sandbox"))
     io.exit.(code)
+  end
+
+  # The tmpfs mounts the review asked for, of their size, unless `disk: :unbounded`.
+  defp run(["stat", "-f", "-c", "%T %b %S", "--" | paths], io, s) do
+    sizes = Map.new(HalC2.OpenShell.Policy.writable())
+
+    for path <- paths do
+      line =
+        if s.opts[:disk] == :unbounded,
+          do: "overlayfs 26214400 4096",
+          else: "tmpfs #{div(sizes[path], 4096)} 4096"
+
+      io.stdout.(line <> "\n")
+    end
+
+    io.exit.(0)
   end
 
   defp run(["codex", "app-server"], io, s), do: agent(io, s, "", &codex/3)
