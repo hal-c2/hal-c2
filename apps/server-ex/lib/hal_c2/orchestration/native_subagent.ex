@@ -474,7 +474,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
     at = Entities.now()
     done = &Map.merge(&1, %{"status" => status, "completedAt" => at})
-    settle_child(sub, status, at)
+
+    # The calls it left running end with it, heard as they end, before its parent's
+    # turn can: a call cut short is still a use.
+    for item <- settle_child(sub, status, at),
+        item["type"] not in @unheard,
+        do: observe(sub, item)
 
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
@@ -520,19 +525,23 @@ defmodule HalC2.Orchestration.NativeSubagent do
   end
 
   # Work still open in the child thread (a tool call, the progress) ends with it.
+  # Returns the items it ended, as they are now.
   defp settle_child(sub, status, at) do
     HalC2.Streams.transact(sub.child, :thread, fn state ->
-      {for item <- StreamState.list(state, "turn-item"),
-           item["status"] == "running" do
-         Orchestration.upsert(state, "turn-item", item["id"], fn item ->
-           item
-           |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
-           |> then(
-             &if(Map.has_key?(&1, "streaming"), do: Map.put(&1, "streaming", false), else: &1)
-           )
-         end)
-       end
-       |> Enum.filter(&is_tuple/1), :ok}
+      ended =
+        for item <- StreamState.list(state, "turn-item"), item["status"] == "running" do
+          item
+          |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
+          |> then(
+            &if(Map.has_key?(&1, "streaming"), do: Map.put(&1, "streaming", false), else: &1)
+          )
+        end
+
+      {ended
+       |> Enum.map(fn item ->
+         Orchestration.upsert(state, "turn-item", item["id"], fn _ -> item end)
+       end)
+       |> Enum.filter(&is_tuple/1), ended}
     end)
   end
 
