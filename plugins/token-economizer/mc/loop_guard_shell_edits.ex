@@ -29,8 +29,16 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   alias HalC2Plugins.TokenEconomizer.LoopGuard.State
 
   @shells ~w(sh bash zsh dash ksh)
-  # Programs that read code from stdin when given no script.
+  # Programs that run code: from stdin when given no script, or handed on the command line.
   @interpreter ~r/^(?:python\d?(?:\.\d+)?|node|bun|deno|ruby|perl|php|lua|osascript|Rscript|pwsh|fish)$/
+  @awk ~w(awk gawk mawk nawk)
+  # The flags an interpreter is read with: none hands it code. Any other may (`-e`, `-c`,
+  # `-pe`, `--eval`, `--import=data:...`, `-M'X;...'`), wherever it is in the words.
+  @reading_flag ~r/^(?:-[wvVhI]|-I\S+|--(?:version|help|check|no-warnings|enable-source-maps|trace-warnings|trace-uncaught|test(?:-[\w-]+)?(?:=\S*)?))$/
+  # The flags an interpreter given no script runs without reading stdin (`node --test`).
+  @no_stdin_flag ~r/^(?:-[vVh]|--(?:version|help|test(?:-[\w-]+)?(?:=\S*)?))$/
+  # Python's own flags that hand it no code, and those that take the next word.
+  @python_flag ~r/^-[bBdEhiIOqsSuvVx]+$/
   # A heredoc: `<<` or `<<-`, then its delimiter, any word, quoted in whole or part or
   # not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`); not a here-string (`<<<`).
   @heredoc_start ~r/(?<!<)<<(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/
@@ -131,8 +139,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   @doc """
   Whether a shell command's words may be code this does not read: quotes that do not
-  balance, a nested shell's script or `eval`'s (`sh -c '...'`), or a program reading its
-  code from stdin (`... | python3`, `curl ... | sh`).
+  balance, a nested shell's script or `eval`'s (`sh -c '...'`), a program reading its
+  code from stdin (`... | python3`, `curl ... | sh`), awk's program, or an interpreter
+  given any flag but those it is only read with, wherever in its words (`node
+  --input-type commonjs -e '...'`, `python3 -X dev -c '...'`), behind a wrapper too
+  (`timeout 10 ruby -e '...'`, `find -exec perl -pe '...'`). Python's are read up to the
+  script or module it runs; the words after are that program's.
   """
   def opaque?(cmd) when is_binary(cmd) do
     {shell, _} = cmd |> script() |> split_heredocs()
@@ -159,13 +171,45 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
       name in @shells ->
         flags_only or Enum.any?(args, &Regex.match?(~r/^-[a-zA-Z]*c[a-zA-Z]*$/, &1))
 
+      String.starts_with?(name, "python") and Regex.match?(@interpreter, name) ->
+        not python_reads?(args)
+
       Regex.match?(@interpreter, name) ->
-        flags_only
+        (flags_only and not Enum.any?(args, &Regex.match?(@no_stdin_flag, &1))) or
+          List.first(Enum.reject(args, &String.starts_with?(&1, "-"))) == "eval" or
+          Enum.any?(args, &(String.starts_with?(&1, "-") and not Regex.match?(@reading_flag, &1)))
+
+      name in @awk ->
+        not Enum.any?(args, &(&1 in ~w(-f --file) or String.starts_with?(&1, "--file=")))
+
+      # `timeout 10 node -e ...`, `find . -exec perl -pe ... {} +`.
+      name in @wrappers ->
+        case Enum.drop_while(args, &(not runner?(head([&1])))) do
+          [] -> false
+          run -> runs_code?(run)
+        end
 
       true ->
         false
     end
   end
+
+  defp runner?(name),
+    do: name in @shells or name in @awk or name == "eval" or Regex.match?(@interpreter, name)
+
+  # Whether Python runs a script or a module with these words, its own flags handing it
+  # no code; the words after the script or module are that program's.
+  defp python_reads?([flag, _ | rest]) when flag in ["-W", "-X"], do: python_reads?(rest)
+  defp python_reads?(["-m" <> _ | _]), do: true
+  defp python_reads?(["-W" <> _ | rest]), do: python_reads?(rest)
+  defp python_reads?(["-X" <> _ | rest]), do: python_reads?(rest)
+  defp python_reads?([flag | rest]) when flag in ["--version", "--help"], do: python_reads?(rest)
+
+  defp python_reads?(["-" <> _ = flag | rest]),
+    do: Regex.match?(@python_flag, flag) and python_reads?(rest)
+
+  defp python_reads?([_script | _]), do: true
+  defp python_reads?([]), do: false
 
   @doc """
   Whether this reads every character of a shell command as the shell does, so what it

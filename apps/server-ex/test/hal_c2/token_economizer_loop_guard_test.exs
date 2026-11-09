@@ -967,6 +967,32 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert digest(~s{node -e "require('fs')"}) =~ "$ node …"
       assert digest("pytest --maxfail=1 -k a=b") =~ "pytest --maxfail=1 -k a=…"
     end
+
+    test "shows only the programs of an interpreter handed code anywhere in its words" do
+      for cmd <- [
+            ~s{node --input-type commonjs -e "require('fs').writeFileSync('a','PRIVATE_SOURCE')"},
+            "node --import=data:text/javascript,PRIVATE_SOURCE app.js",
+            ~s{python3 -X dev -W error -c "open('a','w').write('PRIVATE_SOURCE')"},
+            ~s{timeout 10 ruby -w -e 'File.write("a", "PRIVATE_SOURCE")'},
+            "find . -name a -exec perl -0777 -pe 's/x/PRIVATE_SOURCE/' {} +",
+            ~s{deno eval "Deno.writeTextFileSync('a', 'PRIVATE_SOURCE')"},
+            ~s|awk 'BEGIN { print "PRIVATE_SOURCE" > "a.py" }'|
+          ] do
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # A module or a script run, and the words that are its own, are shown.
+      for cmd <- [
+            "python3 -m pytest -rA -p no:cacheprovider",
+            "python -W error tests/runtests.py --verbose",
+            "node --test",
+            "ruby -Ilib test/a_test.rb",
+            "awk -f count.awk a.txt"
+          ] do
+        assert digest(cmd) =~ "$ #{cmd}"
+      end
+    end
   end
 
   describe "missed events" do
