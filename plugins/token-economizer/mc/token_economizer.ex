@@ -59,6 +59,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   @id "token-economizer"
   @topic "loopGuard"
   @skills_topic "microSkills"
+  # How long a conversation's start waits for the facts, at most.
+  @shape_run_ms 250
   @recent 20
   # The thresholds a person may pin, after upstream's `LOOPGUARD_KEYS`: `{kind, least,
   # most}`. A count takes a whole number, so 12.5 calls is refused rather than truncated.
@@ -158,8 +160,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   def shape_run(run, _context) do
     # The deadline travels with the ask: handled after it, the answer would
     # never reach the conversation, so nothing may be staged on its behalf.
-    deadline = System.monotonic_time(:millisecond) + 250
-    GenServer.call(__MODULE__, {:shape_run, run, deadline}, 250)
+    deadline = System.monotonic_time(:millisecond) + @shape_run_ms
+    GenServer.call(__MODULE__, {:shape_run, run, deadline}, @shape_run_ms)
   catch
     :exit, _ -> nil
   end
