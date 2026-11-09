@@ -846,6 +846,26 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       assert EnvFacts.working_form(fact) == "python -m pytest"
     end
 
+    test "a fallback in the same call teaches the repair" do
+      fallback = fn i ->
+        [
+          edit("pkg/f#{i}.py"),
+          bash(
+            "pytest -q || python -m pytest -q",
+            "bash: pytest: command not found\n4 passed in 0.01s",
+            0
+          )
+        ]
+      end
+
+      {state, _} = stream(Enum.map(0..3, fallback))
+
+      assert state.facts["form_repair:run_tests:pytest"].params["b_counts"]["python -m pytest"] >
+               0
+
+      assert render(state) |> String.trim() |> String.ends_with?("`python -m pytest …` works.")
+    end
+
     test "a named form that stops working is named no more" do
       {state, _} = stream(Enum.map(0..3, &clean_pytest/1))
       assert render(state) =~ "`python -m pytest …` works"

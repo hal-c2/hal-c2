@@ -663,11 +663,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
               else: Enum.filter(fails, &Observe.bare?(&1.form))
           end)
 
+        # A repair comes after the failure: a later call, or a later segment
+        # of the same one (`pytest -q || python -m pytest -q`).
         state =
           Enum.reduce(fails, state, fn a, state ->
             if Enum.any?(
                  seq,
-                 &(typed_ok?(&1) and &1.call > a.call and repairs?(&1.form, a.form, intent))
+                 &(typed_ok?(&1) and {&1.call, &1.index} > {a.call, a.index} and
+                     repairs?(&1.form, a.form, intent))
                ) do
               id = "form_repair:#{intent}:#{a.form}"
 
