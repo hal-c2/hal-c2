@@ -257,9 +257,9 @@ defmodule HalC2Plugins.TokenEconomizer do
         state
       end
 
-    # Off, the guard hears no turn and no judge job is read. A delivery under way runs on:
-    # its steer may already have been taken, and its answer says what happened. Watching
-    # only starts none (`act/5`).
+    # Off, the guard reads no judge job; it hears the turns only while the micro-skills
+    # learn from them. A delivery under way runs on: its steer may already have been
+    # taken, and its answer says what happened. Watching only starts none (`act/5`).
     state =
       cond do
         on?(state) ->
