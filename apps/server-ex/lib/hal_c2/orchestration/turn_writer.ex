@@ -320,6 +320,33 @@ defmodule HalC2.Orchestration.TurnWriter do
     state
   end
 
+  @doc """
+  Ends an item its turn no longer holds, such as a command left running in the
+  background after its turn: turn item `item_id` and its node `node_id` take `status`,
+  with `fun` applied to the item. Plugins that hear turns hear it, in the run it ran in,
+  unless it had ended already.
+  """
+  def end_item(state, item_id, node_id, status, fun \\ & &1) do
+    at = Entities.now()
+    done = %{"status" => status, "completedAt" => at}
+    observing = HalC2.Plugins.observing?()
+
+    current =
+      HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
+        {before, ended} = ending(stream, item_id, fun, Map.put(done, "updatedAt", at))
+
+        changes = [
+          ended && Orchestration.upsert(stream, "turn-item", item_id, fn _ -> ended end),
+          Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
+        ]
+
+        {Enum.filter(changes, &is_tuple/1), observing && heard_end(before, ended, %{})}
+      end)
+
+    if current, do: observed_item_event(state, status, current)
+    state
+  end
+
   # The turn item `item_id` as it was, and as it ends: `fun` applied to it once, for
   # the thread and for plugins alike, with `done` over it. Nils for an item not there.
   defp ending(stream, item_id, fun, done) do
@@ -353,7 +380,8 @@ defmodule HalC2.Orchestration.TurnWriter do
       |> Map.merge(%{
         "type" => "turn.item",
         "threadId" => state.thread_id,
-        "runId" => state.turn.ids.run,
+        # The run it ran in: a background command can end after its turn did.
+        "runId" => current["runId"] || state.turn.ids.run,
         "status" => heard_status(status)
       })
     )

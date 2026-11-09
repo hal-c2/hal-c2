@@ -4009,18 +4009,8 @@ defmodule HalC2.Claude.ThreadRuntime do
         NativeSubagent.finish(sub, status, result, opts)
 
       %{item: %{id: item_id, node: node_id}} ->
-        at = Entities.now()
-        done = %{"status" => status, "completedAt" => at}
-
-        commit(state, fn stream ->
-          [
-            Orchestration.upsert(stream, "turn-item", item_id, fn item ->
-              item
-              |> Map.merge(Map.put(done, "updatedAt", at))
-              |> then(&if(result, do: Map.put(&1, "output", result), else: &1))
-            end),
-            Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
-          ]
+        end_item(state, item_id, node_id, status, fn item ->
+          if result, do: Map.put(item, "output", result), else: item
         end)
 
       _ ->

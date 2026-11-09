@@ -397,6 +397,36 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"usedTokens" => 1500} = turn["tokenUsage"]
   end
 
+  # A background command can end after its turn did, stopped between turns here.
+  test "a plugin hears a background command its turn left running end, in the run it ran in",
+       %{thread_id: claude, work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+
+    codex = create_thread(work, "codex", "gpt-5.4")
+    {:ok, _} = send_message(codex, "m1", "start the dev server in the background")
+    [%{"id" => codex_run}] = await_statuses(codex, ["completed"])
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => codex})
+
+    assert_receive {:observed,
+                    %{"type" => "turn.item", "itemType" => "command_execution"} = stopped},
+                   5_000
+
+    assert %{"status" => "interrupted", "input" => "npm run dev", "runId" => ^codex_run} =
+             stopped
+
+    {:ok, _} = send_message(claude, "m1", "background commands: build")
+    [%{"id" => claude_run}] = await_statuses(claude, ["completed"])
+    {:ok, _} = HalC2.Claude.ThreadRuntime.await_background(claude, ["task-build-1"], true)
+    :ok = HalC2.Claude.ThreadRuntime.interrupt(claude, nil)
+
+    assert_receive {:observed,
+                    %{"type" => "turn.item", "threadId" => ^claude, "tool" => "Bash"} = ended},
+                   5_000
+
+    assert %{"status" => "interrupted", "runId" => ^claude_run} = ended
+  end
+
   test "a plugin hears what a Claude edit changed and what a web call searched for" do
     edit = %{"type" => "file_change", "fileName" => "a.ex", "diffStr" => "+new", "input" => nil}
     web = %{"type" => "web_search", "patterns" => ["elixir tasks"], "output" => nil}
