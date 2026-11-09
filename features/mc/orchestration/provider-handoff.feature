@@ -397,6 +397,15 @@ Feature: Changing model and provider mid-thread
     And the command is the last block of the message
     And the conversation's block starts with "Keep answers short."
 
+  # An image sent with a command went after it, so Claude took the command as words.
+  @mc
+  Scenario: A slash command sent with an image after a switch to Claude still comes last
+    Given the user switched "t1" to "claudeAgent"
+    When the user sends the command "/goal make the tests pass" with an image to "t1"
+    Then Claude gets the conversation and the image ahead of "/goal make the tests pass"
+    And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
+
   # Codex's `/goal <objective>` sends its own prompt for the goal's first turn, and the
   # conversation goes ahead of it: the turn starting confirms the handoff, so history
   # left out then would never be sent.

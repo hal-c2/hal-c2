@@ -1057,6 +1057,49 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     Map.put(context, :blocks, blocks)
   end
 
+  step "the user sends the command {string} with an image to {string}",
+       %{args: [text, thread]} = context do
+    png = <<137, 80, 78, 71, 13, 10, 26, 10>>
+
+    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+      HalC2.Attachments.create_upload_url(%{
+        "name" => "a.png",
+        "mimeType" => "image/png",
+        "sizeBytes" => byte_size(png)
+      })
+
+    :ok = HalC2.Attachments.store(token, png)
+
+    image = %{
+      "type" => "image",
+      "id" => id,
+      "name" => "a.png",
+      "mimeType" => "image/png",
+      "sizeBytes" => byte_size(png)
+    }
+
+    context = World.dispatch_message(context, thread, text, %{"attachments" => [image]})
+    assert {:ok, _} = context.reply
+    context |> Map.delete(:reply) |> Map.put(:thread, thread)
+  end
+
+  step "Claude gets the conversation and the image ahead of {string}",
+       %{args: [command]} = context do
+    await_goal(context, String.replace_prefix(command, "/goal ", ""))
+    blocks = List.last(claude_messages(context))
+
+    # Where the image is saved goes ahead of the command too, not into its words.
+    assert [
+             %{"type" => "text", "text" => history},
+             %{"type" => "text", "text" => "[Attached image \"a.png\" is saved at: " <> _},
+             %{"type" => "image"},
+             %{"type" => "text", "text" => ^command}
+           ] = blocks
+
+    assert String.ends_with?(history, @history_end <> "\n\n")
+    Map.put(context, :blocks, blocks)
+  end
+
   step "the command is the last block of the message", context do
     assert "/goal" <> _ = List.last(context.blocks)["text"]
     context

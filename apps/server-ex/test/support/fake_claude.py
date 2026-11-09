@@ -401,6 +401,10 @@ for line in sys.stdin:
     record("user", text)
     # What the fake does is the user's message, not the history handed over before it.
     full, text = text, text.rsplit("</conversation_history>\n\n", 1)[-1]
+    # Claude runs a command from the last block of a message in blocks.
+    last = content[-1] if isinstance(content, list) and content else None
+    if isinstance(last, dict) and last.get("type") == "text" and last.get("text", "").lstrip().startswith("/"):
+        text = last["text"]
     # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
     # automatic resume with a 429 naming no reset.
     if os.path.exists(os.environ.get("FAKE_CLAUDE_REJECT_RESUME_FILE", "")) and text == "Continue where you left off.":
