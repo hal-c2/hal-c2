@@ -557,7 +557,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     @url_host_re |> Regex.scan(body) |> Enum.map(fn [_, host] -> host end)
   end
 
-  defp probe_kind("remote", _args), do: "remote"
+  # `git remote` and its listings read the remotes; `set-url`, `add` and the
+  # rest change them and print nothing either way.
+  defp probe_kind("remote", args)
+       when args in [[], ["-v"], ["--verbose"], ["show"]],
+       do: "remote"
+
+  defp probe_kind("remote", _args), do: nil
 
   defp probe_kind("branch", args) do
     if Enum.any?(args, &(&1 in ["-a", "-r", "--all", "--remotes", "-ar", "-ra"])),

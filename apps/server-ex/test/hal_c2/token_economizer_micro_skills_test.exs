@@ -727,6 +727,20 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     {state, _} = stream(Enum.map(0..3, leaky))
     assert render(state) == ""
     assert state.facts["empty_probe:vcs_refs"].life.state == "RETIRED"
+
+    # A remote changed, added or removed prints nothing too: it probes nothing.
+    for cmd <- [
+          "git remote set-url origin https://example.org/repo.git",
+          "git remote add upstream https://example.org/up.git",
+          "git remote remove upstream",
+          "git remote show origin"
+        ] do
+      assert Observe.classify_command(cmd) == [], cmd
+    end
+
+    for cmd <- ["git remote", "git remote -v", "git remote --verbose", "git remote show"] do
+      assert [%{probe: "remote"}] = Observe.classify_command(cmd), cmd
+    end
   end
 
   test "refused hosts form a boundary fact, and a reachable host retires it" do
