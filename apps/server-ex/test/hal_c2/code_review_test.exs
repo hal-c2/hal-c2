@@ -1063,6 +1063,60 @@ defmodule HalC2.CodeReviewTest do
       assert FakeOpenShell.sandboxes(g) == %{}
     end
 
+    # Claude's launch arguments and home are this machine's: none of them reach the
+    # sandbox or the agent's argv.
+    test "gives Claude in a sandbox none of the launch arguments of this machine",
+         %{tmp_dir: dir} do
+      prompt = Path.join(dir, "host-prompt.txt")
+      File.write!(prompt, "host-only instructions")
+
+      launch_args =
+        Enum.join(
+          [
+            ~s(--settings '{"env":{"HOST_TOKEN":"sk-host-token"},"apiKeyHelper":"host-helper"}'),
+            "--mcp-config #{Path.join(dir, "host-mcp.json")}",
+            "--add-dir #{dir}",
+            "--append-system-prompt-file #{prompt}",
+            "--dangerously-skip-permissions"
+          ],
+          " "
+        )
+
+      put_claude(%{"launchArgs" => launch_args, "homePath" => Path.join(dir, "claude-home")})
+      assert_receive {:sandbox_exec, ["claude" | args], %{environment: env}}, 15_000
+      argv = Enum.join(args, " ")
+
+      for host <- [dir, "sk-host-token", "host-helper", "host-only", "--mcp-config"],
+          do: refute(argv =~ host, "#{host} reached the sandbox's argv")
+
+      refute "--dangerously-skip-permissions" in args
+      refute Map.has_key?(env, "CLAUDE_CONFIG_DIR")
+      refute Map.has_key?(env, "HOST_TOKEN")
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+    end
+
+    # Loading it runs or reads the checkout's own configuration on this machine.
+    test "loads no project environment for Claude in a sandbox", %{tmp_dir: dir} do
+      HalC2.Settings.update(
+        &Map.merge(&1, %{
+          "projectEnvironment" => "dotenv",
+          "projectEnvironmentFile" => Path.join(dir, "host.env")
+        })
+      )
+
+      put_claude(%{})
+      assert_receive {:sandbox_exec, ["claude" | _], _}, 15_000
+      assert_receive {:sandbox_reported, 200, _}, 15_000
+      assert_receive {:openshell_request, "DeleteProvider", _}, 15_000
+      settle()
+
+      # A file that is not there would have said so on the thread.
+      %{"threadId" => thread_id} = review()
+      items = HalC2.StreamState.get(HalC2.Streams.state(thread_id), "turn-item") || %{}
+      refute Enum.any?(Map.keys(items), &String.starts_with?(&1, "turn-item:project-environment"))
+    end
+
     @tag sandbox: [reports: 2]
     test "takes one report of the two its agent sends at once", _context do
       {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
@@ -1542,6 +1596,14 @@ defmodule HalC2.CodeReviewTest do
     start_supervised!(HalC2.OpenShell.Review)
     :sys.get_state(HalC2.OpenShell.Review)
     %{gateway: gateway}
+  end
+
+  # Reviews with Claude, whose instance has `config` in HAL-C2's settings.
+  defp put_claude(config) do
+    HalC2.Settings.update(&put_in(&1, [Access.key("providers", %{}), "claudeAgent"], config))
+
+    save_settings(%{"provider" => "claudeAgent", "model" => "claude-haiku-4-5"})
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
   end
 
   defp await_review(done?) do

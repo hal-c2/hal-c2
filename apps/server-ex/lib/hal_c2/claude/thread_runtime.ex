@@ -394,7 +394,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       turn.model
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
-      |> with_launch_args(Entities.instance(ids), Map.get(turn, :cwd))
+      |> with_launch_args(turn, Entities.instance(ids))
       |> Map.put(:mcp, mcp(state, turn))
       |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
@@ -1218,8 +1218,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   # read fails the turn before Claude starts, naming no value from it. Claude
   # is asked for summaries of its thinking unless thinking is off or the
   # launch arguments already say how thinking is shown.
-  defp with_launch_args(launch, instance, cwd) do
-    case Provider.launch_args(instance) do
+  #
+  # A sandboxed review's CLI (#1412) takes none of the instance's launch arguments:
+  # they are this machine's, and may carry settings, keys, headers, MCP servers or
+  # paths that must not reach the sandbox or the agent's argv.
+  defp with_launch_args(launch, %{sandbox: true}, _instance),
+    do: apply_launch_args(launch, {:ok, []}, nil)
+
+  defp with_launch_args(launch, turn, instance),
+    do: apply_launch_args(launch, Provider.launch_args(instance), Map.get(turn, :cwd))
+
+  defp apply_launch_args(launch, args, cwd) do
+    case args do
       {:ok, args} ->
         {override, rest} = take_permission_flag(args)
 
@@ -1399,6 +1409,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   # (`:disabled`), asking the user before the tools those settings guard. Settings
   # that cannot be read limit only this turn to the default mode: each turn reads
   # them again.
+  #
+  # A sandboxed review's CLI has a home of its own in the sandbox, so this machine's
+  # Claude settings say nothing about it.
+  defp bypass_policy(%{sandbox: true} = turn), do: turn
+
   defp bypass_policy(turn) do
     if permission_mode(turn) == "bypassPermissions" and turn.launch[:permission_override] == nil do
       instance = Entities.instance(turn.ids)
@@ -1665,7 +1680,6 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     opts = [
       handler: self(),
-      cd: turn.cwd,
       model: turn.launch.model,
       effort: turn.launch.effort,
       settings: turn.launch.settings,
@@ -1676,8 +1690,6 @@ defmodule HalC2.Claude.ThreadRuntime do
       partial_messages: true,
       thinking_display: Map.get(turn.launch, :thinking_summaries, false),
       tools: if(Map.get(turn, :read_only), do: ["Read", "Glob", "Grep"]),
-      # Claude can open a message's attached files where the MC saved them.
-      add_dirs: [HalC2.Attachments.dir()],
       mcp: turn.launch.mcp,
       mcp_allowed:
         if(Map.get(turn, :read_only) and turn.launch.mcp,
@@ -1686,14 +1698,10 @@ defmodule HalC2.Claude.ThreadRuntime do
       disallowed_tools: Map.get(turn.launch, :disallowed_tools, []),
       appended: Map.get(turn.launch, :appended, []),
       extra_args: Map.get(turn.launch, :extra_args, []),
-      # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude,
-      # over the project's environment when the project loads it.
-      env: HalC2.ProjectEnvironment.for_turn(turn, session_env(turn), command(turn)),
-      log: state.thread_id,
-      durable: state.thread_id
+      log: state.thread_id
     ]
 
-    with {:ok, opts} <- in_sandbox(opts, turn),
+    with {:ok, opts} <- in_sandbox(opts, turn, state),
          {:ok, session} <- Session.start_link(opts) do
       {:ok,
        %{state | session: session, permission_mode: permission_mode(turn), launch: turn.launch}}
@@ -1701,16 +1709,15 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # A sandboxed review's CLI runs in its sandbox (#1412) with the sandbox's environment
-  # only: no instance command, variables or home of this machine's, no attachments
-  # directory, and nothing durable, since an exec stream ends with the MC.
-  defp in_sandbox(opts, %{sandbox: true} = turn) do
+  # only: no instance command, variables or home of this machine's, no project
+  # environment (none is even loaded), no attachments directory, and nothing durable,
+  # since an exec stream ends with the MC.
+  defp in_sandbox(opts, %{sandbox: true} = turn, _state) do
     env = %{"MCP_TOOL_TIMEOUT" => to_string(HalC2.Mcp.tool_timeout_ms())}
 
     with {:ok, sandbox} <- HalC2.OpenShell.Review.for_turn(turn, env) do
       {:ok,
-       opts
-       |> Keyword.drop([:env, :durable, :cd])
-       |> Keyword.merge(
+       Keyword.merge(opts,
          add_dirs: [],
          sandbox: sandbox,
          command: HalC2.OpenShell.Review.command("claudeAgent")
@@ -1718,7 +1725,19 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  defp in_sandbox(opts, turn), do: {:ok, Keyword.put(opts, :command, command(turn))}
+  defp in_sandbox(opts, turn, state) do
+    {:ok,
+     Keyword.merge(opts,
+       cd: turn.cwd,
+       # Claude can open a message's attached files where the MC saved them.
+       add_dirs: [HalC2.Attachments.dir()],
+       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude,
+       # over the project's environment when the project loads it.
+       env: HalC2.ProjectEnvironment.for_turn(turn, session_env(turn), command(turn)),
+       durable: state.thread_id,
+       command: command(turn)
+     )}
+  end
 
   # The environment of the turn's `claude`. Its MCP client gives up on a tool after 60 s
   # unless told otherwise, which cuts HAL-C2's waiting tools short.
