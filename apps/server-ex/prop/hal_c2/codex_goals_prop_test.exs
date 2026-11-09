@@ -16,7 +16,8 @@ defmodule HalC2.CodexGoalsPropTest do
   are its later turns. A run whose app-server exits fails, and a grace that fires
   after leaves the thread's runtime and its run as they were. However the run ends,
   between turns too, the last provider turn it names keeps the usage Codex reported
-  last as that turn settled, with the time it settled.
+  last during that turn, with the time it was reported, and none if Codex reported
+  none in it: never an earlier turn's.
 
   The goal runs on the fake app-server in `test/support/fake_codex.py` with
   FAKE_CODEX_GOAL_STALL set, so Codex never goes on by itself: the test plays its
@@ -179,8 +180,8 @@ defmodule HalC2.CodexGoalsPropTest do
   # Codex started for the goal is running), :ended (the run ended) or :exited (the
   # app-server exited, so nothing more comes from Codex). turns: the
   # run's provider turns. stops: whether a turn Codex starts after the run is stopped.
-  # reported: the usage Codex reported last; kept: the usage the run's last provider
-  # turn keeps (none while it runs).
+  # reported: the usage Codex reported last during the running turn; kept: the usage
+  # the run's last provider turn keeps (none while it runs).
   def initial_state, do: initial(false)
 
   defp initial(false),
@@ -239,11 +240,11 @@ defmodule HalC2.CodexGoalsPropTest do
   def precondition(state, {:call, _, _, _}), do: state.phase in [:held, :turn]
 
   def next_state(state, _result, {:call, _, :continue_goal, []}),
-    do: %{state | phase: :turn, turns: state.turns + 1, late: nil, kept: nil}
+    do: %{state | phase: :turn, turns: state.turns + 1, late: nil, reported: nil, kept: nil}
 
   def next_state(state, _result, {:call, _, :report_usage, [n]}), do: %{state | reported: n}
 
-  # A running turn settles with the usage Codex reported last, however it ends.
+  # A running turn settles with the usage Codex reported last in it, however it ends.
   def next_state(%{phase: :turn} = state, result, {:call, _, fun, _} = call)
       when fun in [:finish_turn, :stop, :exit_app_server],
       do: step(%{state | kept: state.reported}, result, call)

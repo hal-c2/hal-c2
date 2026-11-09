@@ -17,6 +17,11 @@ defmodule HalC2.CodexTurnEndPropTest do
   dies after such a reported end, with no turn active, fails the subagents that
   turn left running and leaves the run as the turn ended it.
 
+  Along the way Codex may finish MCP tool calls that name an app: one whose
+  server answers the read of its document, which then lands on the tool item,
+  and one whose server never answers, which leaves a plain tool row and holds
+  nothing else of the turn (every command's `:settle` call is answered).
+
   The turn runs on the fake app-server in `test/support/fake_codex.py`, which
   leaves a turn saying "wait" open; the test then plays Codex's side itself.
   """
@@ -50,7 +55,7 @@ defmodule HalC2.CodexTurnEndPropTest do
         start()
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
-        Application.delete_env(:hal_c2, :codex_command)
+        HalC2.Prop.restore_env()
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -64,7 +69,7 @@ defmodule HalC2.CodexTurnEndPropTest do
     work = Path.join(home, "work")
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
-    Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
+    HalC2.Prop.put_env(:codex_command, ["python3", "-u", @fake_codex])
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -134,7 +139,8 @@ defmodule HalC2.CodexTurnEndPropTest do
   # phase: :running, :reported (Codex reported the turn's end; its subagents'
   # reports can still arrive) or :ended (the stream died; nothing more can
   # arrive). subs: each spawned subagent's shown status, in spawn order.
-  def initial_state, do: %{phase: :running, run: "running", subs: []}
+  # apps: whether each MCP app tool item, in completion order, shows its app.
+  def initial_state, do: %{phase: :running, run: "running", subs: [], apps: []}
 
   def command(state) do
     reports =
@@ -151,6 +157,7 @@ defmodule HalC2.CodexTurnEndPropTest do
         frequency(
           [
             {3, {:call, __MODULE__, :spawn, [length(state.subs) + 1]}},
+            {2, {:call, __MODULE__, :app, [length(state.apps) + 1, boolean()]}},
             {2, {:call, __MODULE__, :end_turn, [:completed]}},
             {2, {:call, __MODULE__, :end_turn, [:failed]}},
             {2, {:call, __MODULE__, :end_turn, [:interrupted]}},
@@ -177,12 +184,18 @@ defmodule HalC2.CodexTurnEndPropTest do
   def precondition(state, {:call, _, :report, [n, reported]}),
     do: state.phase != :ended and n in 1..length(state.subs) and Map.has_key?(@shown, reported)
 
+  def precondition(state, {:call, _, :app, [n, _answered]}),
+    do: state.phase == :running and n == length(state.apps) + 1
+
   def precondition(state, {:call, _, :end_turn, [_kind]}), do: state.phase == :running
   def precondition(state, {:call, _, :end_stream, []}), do: state.phase == :reported
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :spawn, _}),
     do: %{state | subs: state.subs ++ ["running"]}
+
+  def next_state(state, _result, {:call, _, :app, [_n, answered]}),
+    do: %{state | apps: state.apps ++ [answered]}
 
   def next_state(state, _result, {:call, _, :report, [n, reported]}) do
     subs =
@@ -228,7 +241,7 @@ defmodule HalC2.CodexTurnEndPropTest do
 
   def postcondition(state, {:call, _, _, _} = call, seen) do
     expected = next_state(state, nil, call)
-    seen == %{run: expected.run, subs: expected.subs}
+    seen == %{run: expected.run, subs: expected.subs, apps: expected.apps}
   end
 
   # --- commands ------------------------------------------------------------------
@@ -238,6 +251,33 @@ defmodule HalC2.CodexTurnEndPropTest do
     notify("item/started", collab(n, "inProgress", %{"status" => "running"}))
     await_until(fn -> length(observed().subs) >= n end, "subagent #{n} never showed")
     settle_runtime()
+    observed()
+  end
+
+  # Codex finishes MCP tool call `n`, naming an app whose server answers the read
+  # of its document or never does. An answered app lands on the item; the
+  # `:settle` call is answered either way, the read being off the runtime.
+  def app(n, answered) do
+    uri = if answered, do: "ui://weather/forecast.html", else: "ui://weather/slow.html"
+
+    notify("item/completed", %{
+      "threadId" => Process.get(:native_thread),
+      "turnId" => Process.get(:native_turn),
+      "item" => %{
+        "type" => "mcpToolCall",
+        "id" => "mcp-app-#{n}",
+        "server" => "weather",
+        "tool" => "get_forecast",
+        "arguments" => %{},
+        "status" => "completed",
+        "result" => %{"content" => [%{"type" => "text", "text" => "Sunny"}]},
+        "error" => nil,
+        "mcpAppResourceUri" => uri
+      }
+    })
+
+    settle_runtime()
+    if answered, do: await_until(fn -> Enum.at(observed().apps, n - 1) == true end, "no app")
     observed()
   end
 
@@ -366,7 +406,13 @@ defmodule HalC2.CodexTurnEndPropTest do
 
     %{
       run: run && run["status"],
-      subs: state |> StreamState.list("subagent") |> Enum.map(& &1["status"])
+      subs: state |> StreamState.list("subagent") |> Enum.map(& &1["status"]),
+      apps:
+        state
+        |> StreamState.list("turn-item")
+        |> Enum.filter(&match?(%{"nativeItemRef" => %{"nativeId" => "mcp-app-" <> _}}, &1))
+        |> Enum.sort_by(& &1["ordinal"])
+        |> Enum.map(&Map.has_key?(&1, "mcpApp"))
     }
   end
 

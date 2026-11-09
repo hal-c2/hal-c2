@@ -35,6 +35,7 @@ const auto Evaluation = QStringLiteral("PreviewAutomationEvaluationError");
 const auto ConditionTimeout = QStringLiteral("PreviewAutomationConditionTimeoutError");
 const auto NavigationTimeout = QStringLiteral("PreviewAutomationNavigationTimeoutError");
 const auto RegistrationTimeout = QStringLiteral("PreviewAutomationWebviewRegistrationTimeoutError");
+const auto ViewportBusy = QStringLiteral("PreviewAutomationViewportBusyError");
 const auto ViewportNotRendered = QStringLiteral("PreviewAutomationViewportNotRenderedError");
 const auto CaptureFailed = QStringLiteral("PreviewAutomationCaptureError");
 const auto TabUnavailable = QStringLiteral("PreviewAutomationTabUnavailableError");
@@ -1083,6 +1084,13 @@ void PreviewAutomationHost::resize(const RequestPtr& request) {
   }
   if (setting.isEmpty() || (mode != QLatin1String("fill") && size.isEmpty())) {
     fail(request, tag::InvalidInput, QStringLiteral("Viewport mode must be fill, freeform or preset."));
+    return;
+  }
+  // One size at a time: the page ignores a request while one is outstanding
+  // (a person's pick, say), so say so now instead of timing out unanswered.
+  if (request->page->resizing()) {
+    fail(request, tag::ViewportBusy,
+         QStringLiteral("A size change is already in progress in tab %1; try again.").arg(request->tabId));
     return;
   }
   m_settings.insert(request->tabId, setting);

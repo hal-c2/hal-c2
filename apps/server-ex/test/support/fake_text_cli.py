@@ -21,6 +21,7 @@ if log:
     with open(log, "a") as f:
         f.write(json.dumps({"argv": args, "cwd": os.getcwd(), "prompt": prompt, "pid": os.getpid(),
                             "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR"),
+                            "codexHome": os.environ.get("CODEX_HOME"),
                             "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
                             "claudecode": os.environ.get("CLAUDECODE")}) + "\n")
 

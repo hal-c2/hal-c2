@@ -375,9 +375,30 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"usedTokens" => 1000} = one["tokenUsage"]
     assert %{"usedTokens" => 2000} = two["tokenUsage"]
     # A turn's usage carries its time, as the contract has it; Codex's report has none.
-    assert two["tokenUsage"]["updatedAt"] == two["completedAt"]
+    assert is_binary(two["tokenUsage"]["updatedAt"])
     assert is_binary(finished["tokenUsage"]["updatedAt"])
     assert Enum.any?(one["items"], &(&1["itemType"] == "file_change"))
+  end
+
+  test "a Codex turn that reports no usage ends with none, not the turn before's",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "report usage 1000")
+    assert_receive {:observed, %{"type" => "turn.finished"} = first}, 5_000
+    assert %{"usedTokens" => 1000} = first["tokenUsage"]
+    await_statuses(thread_id, ["completed"])
+
+    {:ok, _} = send_message(thread_id, "m2", "say hello")
+    assert_receive {:observed, %{"type" => "turn.finished"} = second}, 5_000
+    assert second["tokenUsage"] == nil
+    await_statuses(thread_id, ["completed", "completed"])
+
+    assert {:ok, [one, two]} = Host.history("listener", thread_id)
+    assert %{"usedTokens" => 1000} = one["tokenUsage"]
+    assert two["tokenUsage"] == nil
   end
 
   test "a plugin hears Codex use the tools no thread shows, its subagents' too, and the thread shows them no more than before",

@@ -185,5 +185,7 @@ PairingSettings 1.0 PairingSettings.qml
 MaintenanceSettings 1.0 MaintenanceSettings.qml
 BrowserPanel 1.0 BrowserPanel.qml
 BrowserDevicesView 1.0 BrowserDevicesView.qml
+BrowserDeviceToolbar 1.0 BrowserDeviceToolbar.qml
+BrowserResizeHandles 1.0 BrowserResizeHandles.qml
 DevicesPicker 1.0 DevicesPicker.qml
 AgentCue 1.0 AgentCue.qml
