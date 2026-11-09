@@ -735,7 +735,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       # Claude resumes its conversation: its segment, not Codex's.
       state = observe(state, started("a", %{"projectId" => p}))
-      assert %{project: ^claude, loaded: ["Workflow"], prompts: 1} = state.convs["a"]
+      assert %{project: ^claude, loaded: ["Workflow"], runs: [_]} = state.convs["a"]
       assert state.prunes[claude]["sessions"] == 1
     end
 

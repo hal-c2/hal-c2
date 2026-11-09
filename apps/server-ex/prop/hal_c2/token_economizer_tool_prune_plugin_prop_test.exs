@@ -178,6 +178,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     [
       idle != [] and s.runs < @max_runs and {6, start_call(s, idle)},
+      idle != [] and s.runs < @max_runs and {2, late_call(s, idle)},
       open != [] and {8, use_call(s, open)},
       open != [] and {5, finish_call(s, open)},
       {2, {:call, __MODULE__, :tick, []}},
@@ -199,6 +200,14 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       first? = not Map.has_key?(s.threads, thread)
       run = "r#{s.runs + 1}"
       {:call, __MODULE__, :start, [thread, run, next_ordinal(s, thread), new? or first?, first?]}
+    end
+  end
+
+  # A turn that ends before the feed tells of it starting, the quiet timer perhaps
+  # firing between.
+  defp late_call(s, idle) do
+    let [{:call, m, :start, args} <- start_call(s, idle), tick? <- boolean()] do
+      {:call, m, :late, args ++ [tick?]}
     end
   end
 
@@ -242,6 +251,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   def precondition(s, {:call, _, :start, [thread | _]}),
     do: not Map.has_key?(s.open, thread) and s.runs < @max_runs
+
+  def precondition(s, {:call, m, :late, [thread, run, ordinal, new?, first?, _]}),
+    do: precondition(s, {:call, m, :start, [thread, run, ordinal, new?, first?]})
 
   def precondition(s, {:call, _, :use, [thread, run | _]}), do: s.open[thread] == run
   def precondition(s, {:call, _, :finish, [thread, run, _]}), do: s.open[thread] == run
@@ -293,6 +305,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       true ->
         %{s | heard: Enum.uniq([thread | s.heard])}
     end
+  end
+
+  def next_state(s, res, {:call, m, :late, [thread, run, ordinal, new?, first?, _]}) do
+    s
+    |> next_state(res, {:call, m, :start, [thread, run, ordinal, new?, first?]})
+    |> next_state(res, {:call, m, :finish, [thread, run, ordinal]})
   end
 
   def next_state(s, _res, {:call, _, :use, [thread, _run, _n, tool, drop, via]}) do
@@ -349,12 +367,22 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     subset?(next.owed, res.used) and subset?(res.used, next.used) and
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
-      res.prompts <= next.runs and
+      res.prompts <= ended_runs(next) and
       Enum.all?(@tools, &(streak(res, &1) <= unused_runs(next, &1)))
   end
 
   defp streak(res, tool),
     do: max(res.streaks[tool]["prompts"] || 0, res.live_streaks[tool]["prompts"] || 0)
+
+  # The turns that ended (or were rolled back after): each folds once, heard live or
+  # read back, however late the feed tells of it.
+  defp ended_runs(s) do
+    for {_t, %{runs: runs}} <- s.threads,
+        run <- runs,
+        run.status != "running",
+        reduce: 0,
+        do: (n -> n + 1)
+  end
 
   # The thread's turns that ended (or were rolled back after) without using `tool`.
   defp unused_runs(s, tool) do
@@ -385,6 +413,20 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # A turn starts: the MC writes its run, asks the plugins to shape a new
   # conversation, and tells them it started.
   def start(thread, run, ordinal, new?, first?) do
+    begin(thread, run, ordinal, first?)
+    started(thread, run, new?)
+  end
+
+  def late(thread, run, ordinal, new?, first?, tick?) do
+    begin(thread, run, ordinal, first?)
+    commit(thread, [run_row(thread, run, ordinal, "completed")])
+    if tick?, do: tick()
+    res = started(thread, run, new?)
+    finish(thread, run, ordinal)
+    res
+  end
+
+  defp begin(thread, run, ordinal, first?) do
     if first?,
       do:
         commit(thread, [
@@ -393,7 +435,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         ])
 
     commit(thread, [run_row(thread, run, ordinal, "running")])
+  end
 
+  defp started(thread, run, new?) do
     if Process.get(:plugin) do
       event = %{
         "threadId" => thread,
@@ -574,7 +618,11 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   defp kept(nil), do: nil
 
   defp kept(prune),
-    do: Map.drop(prune, ~w(lastActivity seededThreads countedThreads liveThreads pending))
+    do:
+      Map.drop(
+        prune,
+        ~w(lastActivity seededThreads foldedRuns countedThreads liveThreads pending)
+      )
 
   defp saved do
     with {:ok, text} <- File.read(TokenEconomizer.toolprune_path(@project)),

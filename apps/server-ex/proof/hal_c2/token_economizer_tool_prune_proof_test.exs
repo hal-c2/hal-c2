@@ -103,6 +103,10 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
         "which of a thread's earlier runs a restart folds, after the watermark's run or, when a rollback took it, its place; a restart stands for the missed turns here, and the plain test covers the watermark",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.new_conversation/2" =>
         "a conversation's segments count as one session, which is among " <> @counts,
+      "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.folded?/3" =>
+        "whether a run already folded, by the watermark or past it, so each run counts once; the model's segments are booleans, not counted runs, and the plain test and the plugin's property count them",
+      "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.note_folded/3" =>
+        "remembering the runs folded while a thread's earlier turns were unread, so a restart does not count them again; a restart stands for the missed turns here, and the plain test covers it",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.seeded_run/2" =>
         "reading that watermark, which decides nothing here",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.dump/1" =>

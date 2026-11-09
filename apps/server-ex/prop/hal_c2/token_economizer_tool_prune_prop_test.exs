@@ -67,7 +67,7 @@ defmodule HalC2.TokenEconomizerToolPrunePropTest do
   end
 
   # What a hand-edited or older file may hold under the keys the evidence reads.
-  @fields ~w(used kept off demoted streaks liveStreaks loadedSessions seededThreads
+  @fields ~w(used kept off demoted streaks liveStreaks loadedSessions seededThreads foldedRuns
              countedThreads liveThreads sessions prompts importedSessions pending
              lastActivity items since run ordinal)
 

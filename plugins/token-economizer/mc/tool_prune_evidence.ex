@@ -78,6 +78,8 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
 
   # A pending `auto` list is applied after a day however busy the project stayed.
   @pending_max_s 24 * 3600
+  # Runs folded past a thread's watermark that are kept (`note_folded/3`): one read's worth.
+  @folded_kept 50
 
   # The capability a Codex item exercises, by its tool name (upstream's
   # `_ITEM_TYPES_BY_CAPABILITY`, for the live packages), or by its kind: the MC
@@ -172,6 +174,7 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
       "liveStreaks" => streaks(saved["liveStreaks"]),
       "loadedSessions" => counts(saved["loadedSessions"]),
       "seededThreads" => seeded_threads(saved["seededThreads"]),
+      "foldedRuns" => folded_runs(saved["foldedRuns"]),
       "countedThreads" => strings(saved["countedThreads"]),
       "liveThreads" => strings(saved["liveThreads"]),
       "sessions" => count(saved["sessions"]),
@@ -548,6 +551,16 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
 
   defp mark(_), do: nil
 
+  defp folded_runs(map) when is_map(map) do
+    for {thread, marks} <- map,
+        marks = marks |> List.wrap() |> Enum.map(&mark/1) |> Enum.reject(&is_nil/1),
+        marks != [],
+        into: %{},
+        do: {thread, Enum.take(marks, -@folded_kept)}
+  end
+
+  defp folded_runs(_), do: %{}
+
   @doc """
   What a thread's history, oldest first, still has to fold as `run_id` starts:
   `{watermark, runs}`, the runs after the thread's watermark (`seeded_run/2`) and
@@ -600,10 +613,64 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
   Nil, or a watermark without a run, leaves it as it was.
   """
   def note_thread(state, thread_id, watermark) do
-    case mark(watermark) do
-      nil -> state
-      mark -> put_in(state["seededThreads"][thread_id], mark)
+    case {mark(watermark), seeded_run(state, thread_id)} do
+      {nil, _} ->
+        state
+
+      {%{"ordinal" => n}, %{"ordinal" => last}}
+      when is_integer(n) and is_integer(last) and n < last ->
+        state
+
+      {mark, _} ->
+        state
+        |> put_in(["seededThreads", thread_id], mark)
+        |> update_in(["foldedRuns"], fn folded ->
+          case Enum.reject(folded[thread_id] || [], &by_mark?(&1, mark)) do
+            [] -> Map.delete(folded, thread_id)
+            marks -> Map.put(folded, thread_id, marks)
+          end
+        end)
     end
+  end
+
+  @doc """
+  Whether `thread_id`'s run (`%{"run" => id, "ordinal" => n}`, the ordinal nil where
+  it is not known yet) already folded: the watermark's run or one before it, or one
+  folded past it (`note_folded/3`). Each run folds once, heard live or read back.
+  """
+  def folded?(state, thread_id, run) do
+    case mark(run) do
+      nil ->
+        false
+
+      %{"run" => id} = run ->
+        by_mark?(run, seeded_run(state, thread_id)) or
+          Enum.any?(state["foldedRuns"][thread_id] || [], &(&1["run"] == id))
+    end
+  end
+
+  # Whether `run` is `watermark`'s run or one before it.
+  defp by_mark?(%{"run" => id}, %{"run" => id}), do: true
+
+  defp by_mark?(%{"ordinal" => n}, %{"ordinal" => last}) when is_integer(n) and is_integer(last),
+    do: n <= last
+
+  defp by_mark?(_run, _watermark), do: false
+
+  @doc """
+  Remembers `runs` of `thread_id` as folded though the watermark cannot move past
+  them (its earlier runs are still unread, `seed_history/5`), so a restart that reads
+  them back does not fold them again. The newest #{@folded_kept} a thread folded so
+  are kept, which is as many as one read gets.
+  """
+  def note_folded(state, thread_id, runs) do
+    runs =
+      runs |> Enum.map(&mark/1) |> Enum.reject(&(is_nil(&1) or folded?(state, thread_id, &1)))
+
+    if runs == [],
+      do: state,
+      else:
+        update_in(state["foldedRuns"][thread_id], &Enum.take((&1 || []) ++ runs, -@folded_kept))
   end
 
   @doc "Marks when the project last did anything (a turn starting, running, or ending)."

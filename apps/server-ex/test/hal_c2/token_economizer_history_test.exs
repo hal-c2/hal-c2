@@ -148,6 +148,79 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert "CronCreate" in state.prunes[project]["used"]
   end
 
+  test "a run the feed tells of after it ended, as a segment heard in part folds, counts once",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    # r1's end tells of r2, which the feed dropped all of.
+    ended(thread, "r2", 2, [])
+
+    state =
+      observe(state, Map.merge(finished(thread, "r1", 1), %{"dropped" => 1, "waiting" => 0}))
+
+    # r3 has ended by the time the feed tells of its start.
+    ended(thread, "r3", 3, [])
+    state = observe(state, started(thread, "r3", p, %{"newConversation" => true}))
+    assert Prune.seeded_run(state.prunes[project], thread) == %{"run" => "r2", "ordinal" => 2}
+    state = observe(state, finished(thread, "r3", 3))
+    state = observe(state, started(thread, "r4", p, %{"newConversation" => true}))
+
+    prune = state.prunes[project]
+    assert prune["prompts"] == 3 and prune["sessions"] == 2
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r3", "ordinal" => 3}
+  end
+
+  test "a run a quiet project read back before the feed told of it counts once",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+
+    state =
+      observe(state, Map.merge(finished(thread, "r1", 1), %{"dropped" => 1, "waiting" => 0}))
+
+    # r2 ran and ended; the feed has yet to tell of it as the project goes quiet.
+    ended(thread, "r2", 2, [])
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    assert state.prunes[project]["prompts"] == 2
+
+    state = observe(state, started(thread, "r2", p, %{}))
+    state = observe(state, finished(thread, "r2", 2))
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+
+    prune = state.prunes[project]
+    assert prune["prompts"] == 2
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r2", "ordinal" => 2}
+  end
+
+  test "runs folded while the thread's history could not be read count once after a restart",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    grant([])
+    {:ok, state} = TokenEconomizer.init(%{})
+    ended(thread, "r1", 1, [])
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = observe(state, started(thread, "r2", p, %{"newConversation" => true}))
+    assert state.prunes[project]["prompts"] == 1
+    ended(thread, "r2", 2, [])
+    _ = observe(state, finished(thread, "r2", 2))
+
+    # The plugin starts again before r2's segment folds, and can read the history now.
+    grant(["turns:observe"])
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r3", p, %{"newConversation" => true}))
+
+    prune = state.prunes[project]
+    # r1 heard, r2 read back: each once.
+    assert prune["prompts"] == 2
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r2", "ordinal" => 2}
+    assert prune["foldedRuns"] == %{}
+  end
+
   test "a segment the feed dropped some of, in which a subagent worked, is no evidence any tool went unused",
        %{thread: thread, project: p} do
     project = {p, "claudeAgent"}
