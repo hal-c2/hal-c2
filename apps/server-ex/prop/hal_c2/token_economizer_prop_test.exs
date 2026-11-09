@@ -301,7 +301,7 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp call({order, cmd})
        when order in ~w(script_then_check check_then_script eval_then_check check_then_eval
                         defined_then_check check_then_defined sourced_then_check
-                        check_then_sourced),
+                        check_then_sourced moved_then_check check_then_moved),
        do: {"Bash", %{"command" => cmd}, "1 passed in 0.02s", 0}
 
   defp call("sourced"), do: {"Bash", %{"command" => ". ./a.py && echo ok"}, "1 failed", 0}
@@ -328,7 +328,8 @@ defmodule HalC2.TokenEconomizerPropTest do
   # may have undone it, or failed a check of its own unread). An `eval`, a function
   # definition, a builtin or an expansion that assigns, or a source of the `a.py` an edit
   # writes, runs in the check's own shell and may redefine it, so a check after one is
-  # not the last word either.
+  # not the last word either, nor is one after a `cd`, `pushd` or `popd`, whatever it
+  # names: the directory it runs in is not the one the turn's paths were read from.
   defp ordered do
     let {check_last, {how, hider}, runner, between} <-
           {boolean(),
@@ -344,7 +345,10 @@ defmodule HalC2.TokenEconomizerPropTest do
              {"defined", "printf -v PATH %s ./bin && bash -c 'x'"},
              {"defined", ~s|: "${PATH:=./bin}" && bash -c 'x'|},
              {"sourced", "source ./a.py"},
-             {"sourced", ". ./a.py"}
+             {"sourced", ". ./a.py"},
+             {"moved", "cd web && bash -c 'x'"},
+             {"moved", "pushd web && node -e 'x()'"},
+             {"moved", "popd && python3 -c 'x()'"}
            ]), elements(["pytest -q", "npm test", "uv run pytest", "mise exec -- mix test"]),
            elements([" && ", " && echo ok && "])} do
       if check_last,
@@ -561,7 +565,7 @@ defmodule HalC2.TokenEconomizerPropTest do
       # A source of `a.py` hides a check only once an edit has written it.
       hidden =
         ~w(unscoped opaque check_then_script eval_then_check check_then_eval defined_then_check
-           check_then_defined) ++ @unread
+           check_then_defined moved_then_check check_then_moved) ++ @unread
 
       hidden =
         if last_edit > 0,

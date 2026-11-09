@@ -342,7 +342,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     end
   end
 
-  # The builtins that change the directory a relative path is read from.
+  # The builtins that change the directory the commands after them run in.
   @moves ~w(cd pushd popd)
 
   # Whether `cmd`, one `&&` chain that exited 0, ran its last check after every command in
@@ -352,8 +352,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # failed unread, so its pass is not taken, deliberately: a redirect there is the cost of
   # not reading the script. A comment or an escape could hide where the chain ends, so
   # neither is read as one. Every command before the check must also have run apart from
-  # it (`apart?/3`), or it may have changed the check in the chain's own shell, and a `cd`
-  # before a check that names a relative path changed which file that path is.
+  # it (`apart?/3`), or it may have changed the check in the chain's own shell. A `cd`,
+  # `pushd` or `popd` before the check changed which files its paths name and which
+  # config its runner reads, whatever its words, so a check after one is not read.
   defp checked_last?(cmd, "own", 0, written) do
     {script, _} = cmd |> ShellEdits.script() |> ShellEdits.split_heredocs()
     script = String.trim_trailing(script)
@@ -373,7 +374,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         Enum.all?(cuts, fn {from, to} -> binary_part(masked, from, to - from) == "&&" end)
 
     case last_run do
-      {from, last} when chain? ->
+      {from, _} when chain? ->
         before = Enum.take_while(Enum.zip(starts, ends), fn {at, _} -> at < from end)
 
         moved? =
@@ -382,7 +383,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
           end)
 
         ShellEdits.plain?(cmd) and
-          not (moved? and relative?(words(binary_part(script, from, last - from)))) and
+          not moved? and
           Enum.all?(before, fn {at, to} ->
             apart?(binary_part(unquoted, at, to - at), binary_part(script, at, to - at), written)
           end) and
@@ -438,15 +439,6 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # A command's words, from its name: the assignments to its environment left out.
   defp words(segment),
     do: segment |> String.split() |> Enum.drop_while(&Regex.match?(~r/^\w+=\S*$/, &1))
-
-  # Whether a command runs or reads a path relative to the directory it runs in: its
-  # name is one (`bin/pytest`), or a word is `./`- or `../`-relative (`pytest ./tests`).
-  defp relative?([]), do: false
-
-  defp relative?([name | args]) do
-    (String.contains?(name, "/") and not String.starts_with?(name, ["/", "~"])) or
-      Enum.any?(args, &String.starts_with?(&1, ["./", "../"]))
-  end
 
   defp after_run(rest) do
     Enum.reduce_while(rest, "own", fn

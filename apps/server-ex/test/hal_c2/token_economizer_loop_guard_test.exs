@@ -1766,17 +1766,23 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
             # An expansion assigns in the chain's own shell, quoted or not.
             {~s|: "${PATH:=./bin}" && bash run.sh && pytest -q|, false},
             {~s|echo "$((PATH=1))" && bash run.sh && pytest -q|, false},
-            # A `cd` changes which file a relative path names.
+            # A `cd` changes which file any path names, and which config a runner reads,
+            # whatever the check's words: one after it is not read.
             {"cd web && bash run.sh && ./bin/test", false},
             {"cd web && bash run.sh && pytest ./tests", false},
+            {"cd web && bash run.sh && pytest tests", false},
+            {"cd web && bash run.sh && pytest tests/test_a.py", false},
+            {"cd web && bash run.sh && pytest -q", false},
+            {"cd web && FOO=1 bash run.sh && pytest -q", false},
             {"pushd web && bash run.sh && bin/pytest -q", false},
+            {"popd && bash run.sh && pytest tests", false},
             {"PATH=./bin && bash run.sh && pytest -q", false},
             {"set -f && bash run.sh && pytest -q", false},
             {~s{"$RUN" && bash run.sh && pytest -q}, false},
-            # A file the turn did not write sources nothing it changed, and a program, a
-            # `cd` or an assignment to a program's environment runs apart.
+            # A file the turn did not write sources nothing it changed, and a program or an
+            # assignment to a program's environment runs apart.
             {". venv/bin/activate && bash run.sh && pytest -q", true},
-            {"cd web && FOO=1 bash run.sh && pytest -q", true},
+            {"FOO=1 bash run.sh && pytest tests", true},
             {"./run.sh && echo ok && pytest -q", true}
           ] do
         state =
