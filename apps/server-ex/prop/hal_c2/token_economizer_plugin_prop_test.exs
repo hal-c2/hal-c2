@@ -13,14 +13,15 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   The case drives the process's callbacks itself. Its tasks run for real and, with no
   plugin host to grant them anything, end at once: what each sent and its end are held,
   and reach the process when a command delivers them, with the judge's verdict (stuck
-  or productive) or the delivery's outcome (taken or refused) the command chooses.
+  or productive) or the delivery's outcome (taken, held by a runtime that did not answer
+  in time, or refused) the command chooses.
   After every step:
 
   - turned off, it watches no turn and has no judge job out;
   - watching, it starts no delivery;
   - a delivery it started is out until it ends, whatever the mode: its steer may have
     been taken, and only its answer says so; a redirect is on its way only while its
-    delivery is;
+    delivery is, and one whose steer was held but not heard taken is not delivered;
   - it watches exactly the turns under way that it heard start while on, by their run;
   - a judge job is out only for a thread with a turn under way and not offered its
     stop, at most one for each;
@@ -182,7 +183,9 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
          {:call, __MODULE__, :finish,
           [t, run_of(state, t), elements(~w(completed interrupted)), dropped()]}
        end},
-      {5, {:call, __MODULE__, :answer, [integer(0, 3), frequency([{2, true}, {1, false}])]}},
+      {5,
+       {:call, __MODULE__, :answer,
+        [integer(0, 3), frequency([{2, true}, {1, false}, {1, :held}])]}},
       {1,
        {:call, __MODULE__, :mode,
         [frequency([{2, "nudge"}, {2, "watch"}, {1, "off"}]), state.budget]}},
@@ -285,7 +288,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         Enum.all?(seen.acts, fn {{_, _, action}, n} ->
           if action == "nudge", do: n <= state.budget, else: n <= 1
         end),
-      teaches: teaches?(state, name, args, seen.taught)
+      teaches: teaches?(state, name, args, seen.taught),
+      held: not Map.get(seen, :held_delivered, false)
     ]
 
     case for {law, false} <- laws, do: law do
@@ -364,7 +368,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   end
 
   # Delivers the next message of the `n`th newest task held, with the verdict or the outcome
-  # `yes` chooses: stuck, or a redirect taken.
+  # `yes` chooses: stuck (`true` or `:held`), or a redirect taken (`true`) or held by its
+  # runtime unanswered (`:held`).
   def answer(n, yes) do
     plugin = Process.get(:plugin)
 
@@ -386,13 +391,17 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         with {:DOWN, _, :process, pid, _} <- message,
              do: Process.put(:deliveries, MapSet.delete(Process.get(:deliveries), pid))
 
-        settle(plugin, false)
+        held_delivered =
+          yes == :held and elem(message, 0) == :delivered and
+            match?([%{"delivered" => true} | _], plugin.recent)
+
+        plugin |> settle(false) |> Map.put(:held_delivered, held_delivered)
     end
   end
 
   defp outcome({:verdict, t, run, job, _}, yes) do
     verdict =
-      if yes,
+      if yes != false,
         do: %{"stuck" => true, "confidence" => 0.95, "reason" => "loop", "_nudge" => "Step back."},
         else: %{"stuck" => false, "confidence" => 0.9, "reason" => "progress"}
 
@@ -400,7 +409,13 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   end
 
   defp outcome({:delivered, t, run, entry, _}, yes),
-    do: {:delivered, t, run, entry, if(yes, do: {:ok, %{}}, else: {:error, "refused"})}
+    do:
+      {:delivered, t, run, entry,
+       case yes do
+         true -> {:ok, %{"confirmed" => true}}
+         :held -> {:ok, %{"confirmed" => false}}
+         false -> {:error, "refused"}
+       end}
 
   defp outcome(down, _), do: down
 

@@ -70,9 +70,10 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   @doc """
   A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's.
-  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  `:held` when the runtime did not answer in time and may still take it. Non-timeout
+  exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
   """
-  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  @spec steer(String.t(), String.t(), map) :: :ok | :held | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Muse turn in this thread"}

@@ -201,9 +201,12 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # A delivery's outcome. A redirect that reached its turn starts the turn's next segment,
   # whose judge job is not the old one's; one that did not leaves the guard to offer a
-  # stop. The status says which, even when the turn has ended since.
+  # stop. The status says which, even when the turn has ended since. A redirect the
+  # provider's runtime still held when it stopped waiting (`"confirmed" => false`) may
+  # reach the agent, but nothing says when, so no later call can be read as after it:
+  # it has not landed.
   def handle_info({:delivered, thread_id, run_id, entry, result}, state) do
-    landed = match?({:ok, _}, result)
+    landed = confirmed?(result)
 
     unless landed,
       do:
@@ -384,20 +387,23 @@ defmodule HalC2Plugins.TokenEconomizer do
       {Turn.after_nudge(guard), state |> remember(entry) |> publish()}
     else
       # The thread says the agent was redirected only once the provider took it, which
-      # it refuses once the run is over, or while it works if it cannot take a message.
+      # it refuses once the run is over, or while it works if it cannot take a message,
+      # and does not say so of one its runtime still held unanswered.
       state =
         deliver(state, thread_id, run_id, entry, fn ->
-          with {:ok, _} = steered <- Host.steer(@id, thread_id, run_id, body) do
-            Host.notice(
-              @id,
-              thread_id,
-              run_id,
-              "TokenEconomizer nudged this turn (#{short}): the same failure kept recurring.",
-              title: "Loop guard"
-            )
+          steered = Host.steer(@id, thread_id, run_id, body)
 
-            steered
-          end
+          if confirmed?(steered),
+            do:
+              Host.notice(
+                @id,
+                thread_id,
+                run_id,
+                "TokenEconomizer nudged this turn (#{short}): the same failure kept recurring.",
+                title: "Loop guard"
+              )
+
+          steered
         end)
 
       {Turn.redirect(guard), state}
@@ -449,6 +455,12 @@ defmodule HalC2Plugins.TokenEconomizer do
       "at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
   end
+
+  # Whether a delivery reached its turn: a steer whose runtime still held it unanswered
+  # (`Host.steer/4`'s `"confirmed"`) has not, as far as anyone knows.
+  defp confirmed?({:ok, %{"confirmed" => false}}), do: false
+  defp confirmed?({:ok, _}), do: true
+  defp confirmed?(_), do: false
 
   defp remember(state, entry), do: %{state | recent: Enum.take([entry | state.recent], @recent)}
 

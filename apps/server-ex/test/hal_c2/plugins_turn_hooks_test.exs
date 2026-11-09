@@ -587,7 +587,7 @@ defmodule HalC2.PluginsTurnHooksTest do
     {:ok, _} = send_message(thread_id, "m1", "wait m1")
     [running] = await_statuses(thread_id, ["running"])
 
-    assert {:ok, %{"ordinal" => last}} =
+    assert {:ok, %{"ordinal" => last, "confirmed" => true}} =
              Host.steer("steerer", thread_id, running["id"], "use the cache")
 
     # The receipt's ordinal is the thread's last place once the provider took it: the

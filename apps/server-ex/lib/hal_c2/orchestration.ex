@@ -1012,8 +1012,8 @@ defmodule HalC2.Orchestration do
         instance = target["providerInstanceId"] || "codex"
 
         case ask_steer(instance, thread_id, target["id"], steer_input(message)) do
-          :ok ->
-            {:ok, %{"sequence" => sequence(thread_id)}}
+          answer when answer in [:ok, :held] ->
+            {:ok, %{"sequence" => sequence(thread_id), "confirmed" => answer == :ok}}
 
           {:error, reason} ->
             refused =
@@ -3615,6 +3615,10 @@ defmodule HalC2.Orchestration do
   # - Other ACP agents (Cursor, Grok, Antigravity) cannot be steered: they refuse.
   # - Plugin providers answer for their own `steer/3`.
   #
+  # A runtime that did not answer in time but still holds the message answers
+  # `:held` (`HalC2.RuntimeSteer`): the message stays in the turn, and the receipt's
+  # `"confirmed"` says nobody heard the provider take it.
+  #
   # A refusal takes the reserved message back out of the run. While the turn still
   # runs that is an error for the sender: the message was not delivered, so it is
   # neither shown in the turn nor queued. A turn that ended meanwhile is why it was
@@ -3624,9 +3628,9 @@ defmodule HalC2.Orchestration do
     instance = run["providerInstanceId"] || "codex"
 
     case ask_steer(instance, thread_id, run["id"], steer_input(command)) do
-      :ok ->
+      answer when answer in [:ok, :held] ->
         :ok = HalC2.Streams.transact(thread_id, :thread, &steer_taken(&1, message_id))
-        {:ok, %{"sequence" => sequence(thread_id)}}
+        {:ok, %{"sequence" => sequence(thread_id), "confirmed" => answer == :ok}}
 
       {:error, reason} ->
         resend =
@@ -3664,8 +3668,8 @@ defmodule HalC2.Orchestration do
   # `promote/5`), and only a refusal takes it back out: a runtime that stops, raises,
   # throws, or answers something else counts as one. A runtime that does not answer
   # in time but still holds the request and hands it to the provider when it gets to
-  # it answers `:ok` itself, where that is known (the bundled runtimes' `steer/3`
-  # do): taking the message back out then would show the answer without it, and a
+  # it answers `:held` itself, where that is known (the bundled runtimes' `steer/3`
+  # do), and the message stays, unconfirmed: taking the message back out then would show the answer without it, and a
   # promoted message would also run again as its own turn. If that late ask is
   # refused after all, the turn shows a message the provider never read. A timeout
   # that reaches here instead came from a call nested inside a runtime this cannot
@@ -3679,6 +3683,7 @@ defmodule HalC2.Orchestration do
            {instance, thread_id, run_id, input}
          ) do
       {:ok, :ok} -> :ok
+      {:ok, :held} -> :held
       other -> other
     end
   end
@@ -3686,6 +3691,7 @@ defmodule HalC2.Orchestration do
   defp ask_steer_now(instance, thread_id, run_id, input) do
     case runtime(instance).steer(thread_id, run_id, input) do
       :ok -> :ok
+      :held -> {:ok, :held}
       {:error, reason} when is_binary(reason) -> {:error, String.slice(reason, 0, 200)}
       other -> {:error, "its runtime answered #{inspect(other, limit: 3, printable_limit: 80)}"}
     end

@@ -8,8 +8,8 @@ sload model-checker
 --- up to the budget, each redirect that reaches the agent starting a fresh segment, and
 --- is then offered a stop, which only the person takes. Redirects and notices are
 --- delivered by a task of their own, so they may land after the turn they are about has
---- ended or the next has begun, and the MC may refuse a redirect; the task tells the
---- plugin whether it was taken.
+--- ended or the next has begun, and the MC may refuse a redirect, or send it on without
+--- hearing it taken; the task tells the plugin whether it was taken.
 --- When a turn closes, one that ended green and was heard whole teaches the project's
 --- envelope. proof/hal_c2/token_economizer_loop_guard_proof_test.exs maps it to the code
 --- and checks it.
@@ -36,9 +36,9 @@ sload model-checker
 ---           which it queued before the missed one; so the turns heard until those
 ---           queued with it have been heard are partial too (suspect/2).
 ---   Landed - a redirect starts its segment once its task says the MC took it, and the
----           guard decides nothing while it is on its way (Turn.redirect/1); one refused
----           leaves the segment as it was and spends the budget, so the next stuck call
----           is offered the stop.
+---           guard decides nothing while it is on its way (Turn.redirect/1); one refused,
+---           or one the provider's runtime still held unanswered, leaves the segment as
+---           it was and spends the budget, so the next stuck call is offered the stop.
 ---   Cancel - a judge job of a segment or turn that has ended, or of a turn offered its
 ---           stop, is stopped (cancel_judge/2), and so is one gone stale that a new job
 ---           replaces (start_judge/5).
@@ -128,8 +128,10 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
   op retire : Pend -> Item [ctor] .
   --- Deliveries under way, and what landed in the thread: a redirect's notice, a
   --- redirect for one run in another, a redirect that ran as a turn of its own, a stop
-  --- offer; and the task's word to the plugin of whether a redirect was taken.
+  --- offer; and the task's word to the plugin of whether a redirect was taken. A redirect
+  --- the provider's runtime holds, sent but not heard taken, may still land.
   op task : Nat Acts -> Item .
+  op held : Nat -> Item [ctor] .
   op noticed : Nat -> Item [ctor] .
   op steered : Nat Nat -> Item [ctor] .
   op followup : Nat -> Item [ctor] .
@@ -373,6 +375,13 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
          took(if running(R, C) then s EP else EP fi)
          cfg(KY, RS, ON, ST, AM, TO, WH, GR, WI, LA, CA, EA) C land(R, AM, C) } .
   rl [refuse] : task(R, steer then AS) => taken(R, false) .
+  --- The provider's runtime did not answer the redirect in time but still holds it, as
+  --- HalC2.RuntimeSteer's :held says: the receipt does not say it was taken, so the task
+  --- tells the plugin it was not, and posts no notice. The runtime hands it over while
+  --- its run is still the one under way, or never.
+  crl [hold] : { task(R, steer then AS) C } => { held(R) taken(R, false) C } if running(R, C) .
+  rl [late] : { held(R) active(R, LF) took(EP) C } => { active(R, LF) took(s EP) steered(R, R) C } .
+  rl [lose-held] : held(R) => empty .
 
   --- handle_info of a delivery's result: a redirect taken starts the next segment of the
   --- turn it was sent in, and stops the old segment's jobs (Cancel); one refused leaves
@@ -413,12 +422,14 @@ mod TOKEN-ECONOMIZER-LOOP-GUARD is
     if N > BU or O > 1 .
   eq overrun({ C }) = false [owise] .
 
-  --- The thread says a run was redirected when no redirect reached it, nor is on its way.
+  --- The thread says a run was redirected when no redirect reached it, nor is on its way;
+  --- one its runtime holds may still reach it.
   op unfounded : Sys -> Bool .
   op sent? : Nat Conf -> Bool .
   eq sent?(R, steered(R, R') C) = true .
   eq sent?(R, followup(R) C) = true .
   eq sent?(R, task(R, AS then steer then AS') C) = true .
+  eq sent?(R, held(R) C) = true .
   eq sent?(R, C) = false [owise] .
   ceq unfounded({ noticed(R) C }) = true if not sent?(R, C) .
   eq unfounded({ C }) = false [owise] .

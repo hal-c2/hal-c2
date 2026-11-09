@@ -98,11 +98,12 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   When Codex refuses, whatever it said before refusing (a `turn/completed`, say) is
   applied before this returns, so the caller sees whether the turn is still running.
+  `:held` when the runtime did not answer in time and may still take it.
   Non-timeout exits (the runtime stopping mid-call, its nested provider call
   timing out) propagate: the caller must treat them as a refusal. See
   `HalC2.RuntimeSteer`.
   """
-  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  @spec steer(String.t(), String.t(), map) :: :ok | :held | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
       [{pid, _}] -> steer_call(pid, run_id, message)

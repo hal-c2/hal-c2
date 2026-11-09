@@ -1507,6 +1507,20 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert [%{"action" => "nudge", "delivered" => false}] = state.recent
     end
 
+    # A steer its runtime still held when its budget ran out may reach the agent later, or
+    # never: the agent is not known to have the redirect, so it starts no segment and
+    # names no place, and the turn's judge job runs on.
+    test "a redirect the MC sent but did not hear taken has not landed" do
+      {judge, state} = sleeper(redirecting("a"), "a", :judge)
+      state = delivered(state, "a", {:ok, %{"ordinal" => 7, "confirmed" => false}})
+
+      guard = state.turns["a"].guard
+      refute guard.redirecting
+      assert guard.segment == 0 and guard.redirects == 0 and guard.since == nil
+      assert Process.alive?(judge)
+      assert [%{"action" => "nudge", "delivered" => false}] = state.recent
+    end
+
     test "a redirect that landed starts the next segment and stops the old segment's judge job" do
       {judge, state} = sleeper(redirecting("a"), "a", :judge)
       {other, state} = sleeper(state, "b", :judge)

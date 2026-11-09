@@ -9,7 +9,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   # TokenEconomizer's loop guard: one thread's turns, heard by the plugin through a feed
   # that may miss an event, with judge verdicts that come back late or never, judge jobs
   # going stale, and redirects and notices delivered by a task of their own, so they may
-  # land after their turn ended or the next began, and the MC may refuse a redirect.
+  # land after their turn ended or the next began, and the MC may refuse a redirect or
+  # send it on without hearing it taken.
   # prop/hal_c2/token_economizer_prop_test.exs runs one turn's guard itself.
   #
   # Each part of the design is a switch in the model, and turning one off finds the
@@ -48,6 +49,10 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   #   - Leaving a judge job asked when its turn ends, when a redirect starts the next
   #     segment, or when it went stale and a new job replaces it: the judge is paid for
   #     a verdict nobody reads. Its jobs are stopped.
+  #   - Counting a redirect the provider's runtime still held unanswered as landed: if it
+  #     never hands it over, every later call reads as started before it and decides
+  #     nothing, so a turn stuck for good is never offered its stop. One not heard
+  #     taken is refused as far as the guard is concerned, and gets no notice.
   #   - Weighing every call heard after the redirect landed in the new segment: a call
   #     already under way when the agent was sent the redirect, whose end the plugin
   #     hears after the task's word, is judged or found stuck in the segment the agent
@@ -128,6 +133,11 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "lose" => "a judge job that never answers",
       "refuse" =>
         "the MC refuses a redirect, as Host.steer/4 does for a provider that cannot take a message while it works",
+      "hold" =>
+        "the provider's runtime does not answer a steer in time and still holds it (HalC2.RuntimeSteer), so Host.steer/4's receipt says it is not confirmed",
+      "late" => "the provider's runtime hands a steer it held to its run, still under way",
+      "lose-held" =>
+        "the provider's runtime never hands on a steer it held, its turn no longer the current one",
       "deliver" =>
         "the plugin's delivery task, Host.notice/5 and Host.steer/4 through the MC; a notice lands in a run that ended, a plugin's steer only in its run while it is under way"
     },

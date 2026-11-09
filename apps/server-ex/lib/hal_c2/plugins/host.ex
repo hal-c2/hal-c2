@@ -315,8 +315,10 @@ defmodule HalC2.Plugins.Host do
   Steers run `run_id` of `thread_id` with `text`, as a user's steer does, and only it:
   a run that has ended, is being stopped, or whose provider cannot take a message while
   it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
-  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
-  also when `run_id` names no run of the thread. The receipt's `"ordinal"` is the
+  `threads:steer`. `{:ok, receipt}` once the message was handed to the provider, or
+  `{:error, message}`, also when `run_id` names no run of the thread. The receipt's
+  `"confirmed"` is false when the provider's runtime did not answer in time: it still
+  holds the message and may hand it on, but nobody heard it taken. Its `"ordinal"` is the
   thread's last place then: an item heard with a higher one (`observe/2`'s
   `"ordinal"`) started after the provider took the message, and any other may have
   been under way before the agent was sent it.
