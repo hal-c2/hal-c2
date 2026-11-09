@@ -732,8 +732,39 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         |> Enum.uniq()
         |> Enum.sort(),
       sets: Map.reject(sets, fn {var, _} -> secret_var?(var) end),
-      ok: success == true and not Regex.match?(@failed_re, out || "")
+      # nil when the call only made assignments: `export K=V` succeeds
+      # whatever the value, and proves nothing about it.
+      ok:
+        if(workload?(cmd),
+          do: success == true and not Regex.match?(@failed_re, out || "")
+        )
     }
+  end
+
+  # Builtins that set or show variables and run nothing that reads them.
+  @inert_heads ~w(export env set unset echo printf true : readonly declare)
+
+  # Does the command run something past its assignments?
+  defp workload?(cmd) do
+    cmd
+    |> unwrap()
+    |> segments()
+    |> Enum.any?(fn seg ->
+      seg = String.trim(seg) <> " "
+      rest = Regex.replace(~r/^(?:export|env)\s+/, seg, "")
+
+      rest =
+        binary_part(
+          rest,
+          byte_size(leading_assigns(rest)),
+          byte_size(rest) - byte_size(leading_assigns(rest))
+        )
+
+      case rest |> strip_rtk_prefix() |> String.split() do
+        [head | _] -> head not in @inert_heads
+        [] -> false
+      end
+    end)
   end
 
   defp secret_var?(var), do: Regex.match?(@secret_var_re, var)

@@ -925,7 +925,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
 
           good =
             later
-            |> Enum.filter(&(&1.ok and var not in &1.need))
+            |> Enum.filter(&(&1.ok == true and var not in &1.need))
             |> Enum.map(& &1.sets[var])
 
           case good do
@@ -953,7 +953,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
                     Enum.reduce(later, fact.params["bad"] || %{}, fn later_call, acc ->
                       value = later_call.sets[var]
 
-                      if not later_call.ok and value != first,
+                      # A call that only set it ran nothing, failing or not.
+                      if later_call.ok == false and value != first,
                         do: Map.update(acc, value, 1, &(&1 + 1)),
                         else: acc
                     end)

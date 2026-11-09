@@ -1133,6 +1133,36 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       refute Enum.any?(rendered, &(&1 =~ "s3cret"))
     end
 
+    test "a value only exported proves nothing until the code runs with it" do
+      tasks =
+        Enum.map(0..5, fn i ->
+          [
+            edit("/r/pkg/mod#{i}.py"),
+            bash("python -c 'import app'", @need, 1),
+            bash("export APP_SETTINGS=conf.missing", "", 0)
+          ]
+        end)
+
+      {state, _} = stream(tasks)
+      refute Map.has_key?(state.facts, "env_value:APP_SETTINGS")
+
+      tasks =
+        Enum.map(0..5, fn i ->
+          [
+            edit("/r/pkg/mod#{i}.py"),
+            bash("python -c 'import app'", @need, 1),
+            bash("export APP_SETTINGS=conf.missing; echo set", "set", 0),
+            bash("export APP_SETTINGS=conf.dev && python -c 'import app'", "ran", 0)
+          ]
+        end)
+
+      {state, _} = stream(tasks)
+      fact = state.facts["env_value:APP_SETTINGS"]
+      assert fact.params["good"] == %{"conf.dev" => 6}
+      # Only exported, it did not fail either.
+      assert fact.params["bad"] == %{}
+    end
+
     test "no value that worked means no fact" do
       tasks =
         Enum.map(0..5, fn i ->
