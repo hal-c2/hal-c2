@@ -356,12 +356,16 @@ defmodule HalC2.OpenShell.InstallTest do
       assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, old)
       refute File.exists?(OpenShell.backup_dir("0.1.6"))
 
-      # Stopped for the backup, then started again on the unit it had.
+      # Stopped for the backup, its reaper first, then both started again on the units
+      # they had.
       assert Storage.service_calls(ctx.log) == [
+               "systemctl --user stop #{Service.reap_name(:timer)}",
+               "systemctl --user stop #{Service.reap_name(:systemd)}",
                "systemctl --user stop #{Service.name(:systemd)}",
                "systemctl --user daemon-reload",
                "systemctl --user enable #{Service.name(:systemd)}",
-               "systemctl --user restart #{Service.name(:systemd)}"
+               "systemctl --user restart #{Service.name(:systemd)}",
+               "systemctl --user enable --now #{Service.reap_name(:timer)}"
              ]
     end
 
