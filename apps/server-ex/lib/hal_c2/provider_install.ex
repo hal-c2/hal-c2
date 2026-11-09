@@ -39,6 +39,14 @@ defmodule HalC2.ProviderInstall do
   # `dest` is the installer's own staging path.
   # sobelow_skip ["Traversal.FileModule"]
   def fetch(url, dest, total, progress, opts \\ []) do
+    case File.open(dest, [:write, :binary]) do
+      {:ok, file} -> stream(url, file, total, progress, opts)
+      {:error, reason} -> {:error, {:disk, reason}}
+    end
+  end
+
+  # The deadline timer starts only once `dest` is open, so a failed open leaves no timer.
+  defp stream(url, file, total, progress, opts) do
     stall = Keyword.get(opts, :stall_ms, 120_000)
     deadline = make_ref()
 
@@ -48,7 +56,6 @@ defmodule HalC2.ProviderInstall do
         ms -> Process.send_after(self(), deadline, ms)
       end
 
-    {:ok, file} = File.open(dest, [:write, :binary])
     report = throttled(total, progress)
 
     try do

@@ -304,18 +304,44 @@ defmodule HalC2.Orchestration.Fork do
     end
   end
 
-  # An MCP app's document is an attachment of the source thread, which deleting the
-  # source removes: the fork gets a copy of its own. An app whose document is gone
-  # keeps its result and loses the reference. A copy left by a fork the target
-  # refuses (it exists) belongs to that thread and goes with it.
-  defp own_app(%{"mcpApp" => %{"attachmentId" => id} = app} = item, target_id) do
+  # An MCP app's document and the images of a tool's output are attachments of the
+  # source thread, which deleting the source removes: the fork gets copies of its own.
+  # An app whose document is gone keeps its result and loses the reference, and an
+  # image whose file is gone loses its block.
+  defp own_app(item, target_id) do
+    item
+    |> own_document(target_id)
+    |> own_images("output", target_id)
+    |> own_images("images", target_id)
+  end
+
+  defp own_document(%{"mcpApp" => %{"attachmentId" => id} = app} = item, target_id) do
     case HalC2.Attachments.copy(target_id, id) do
       {:ok, copy} -> %{item | "mcpApp" => %{app | "attachmentId" => copy}}
       :error -> Map.delete(item, "mcpApp")
     end
   end
 
-  defp own_app(entity, _target_id), do: entity
+  defp own_document(item, _target_id), do: item
+
+  defp own_images(item, field, target_id) do
+    case item do
+      %{^field => blocks} when is_list(blocks) ->
+        Map.put(item, field, Enum.flat_map(blocks, &own_image(&1, target_id)))
+
+      _ ->
+        item
+    end
+  end
+
+  defp own_image(%{"type" => "image", "id" => id} = block, target_id) when is_binary(id) do
+    case HalC2.Attachments.copy(target_id, id) do
+      {:ok, copy} -> [%{block | "id" => copy}]
+      :error -> []
+    end
+  end
+
+  defp own_image(block, _target_id), do: [block]
 
   defp create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}
 end

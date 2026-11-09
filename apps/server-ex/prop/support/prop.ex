@@ -87,7 +87,10 @@ defmodule HalC2.Prop do
     sup
   end
 
-  @doc "Stops what `start_services/1` started, waiting for every child to exit."
+  @doc """
+  Stops what `start_services/1` started, waiting for every child to exit, then
+  `restore_env/0`: the case is over, and a `scratch_home/1` it set must not outlive it.
+  """
   def stop_services do
     case Process.delete({__MODULE__, :services}) do
       nil ->
@@ -98,6 +101,8 @@ defmodule HalC2.Prop do
         Supervisor.stop(sup)
         if plugins, do: await_down(plugins)
     end
+
+    restore_env()
   end
 
   # What runs the plugins hangs off `HalC2.Plugins` and ends after it, so stopping the

@@ -4292,6 +4292,68 @@ defmodule HalC2.OrchestrationTest do
       assert File.read!(HalC2.Attachments.path(%{"id" => copy})) == "<p>app</p>"
     end
 
+    # Tool images (the `output` blocks, and an MCP tool's `images`) are attachments of
+    # the source thread too, with or without an MCP app on the item.
+    test "a fork keeps tool images when its source is deleted" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      File.mkdir_p!(HalC2.Attachments.dir())
+      segment = HalC2.Attachments.thread_segment(source_id)
+
+      for name <- ~w(out-img img-a img-b) do
+        File.write!(Path.join(HalC2.Attachments.dir(), "#{segment}-#{name}.png"), name)
+      end
+
+      doc = "#{segment}-mcp-app-doc"
+      File.write!(Path.join(HalC2.Attachments.dir(), doc <> ".html"), "<p>app</p>")
+
+      block = fn name ->
+        %{"type" => "image", "id" => "#{segment}-#{name}", "mimeType" => "image/png"}
+      end
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"turn-item", "plain-item",
+           %{
+             "s" => %{
+               "id" => "plain-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "output" => [%{"type" => "text", "text" => "hi"}, block.("out-img")],
+               "images" => [block.("img-a"), %{"type" => "image", "id" => "#{segment}-gone"}]
+             }
+           }},
+          {"turn-item", "app-item",
+           %{
+             "s" => %{
+               "id" => "app-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "images" => [block.("img-b")],
+               "mcpApp" => %{"attachmentId" => doc, "toolResult" => %{"ok" => true}}
+             }
+           }}
+        ])
+
+      fork_id = fork(source_id, run["id"])
+      items = StreamState.get(current(fork_id), "turn-item")
+      HalC2.Attachments.delete_thread(source_id)
+
+      resolves = fn %{"id" => id} ->
+        assert String.starts_with?(id, HalC2.Attachments.thread_segment(fork_id) <> "-")
+        assert is_binary(HalC2.Attachments.path(%{"id" => id}))
+      end
+
+      assert %{"output" => [%{"text" => "hi"}, out], "images" => [img]} = items["plain-item"]
+      resolves.(out)
+      resolves.(img)
+      assert %{"images" => [img_b], "mcpApp" => %{"attachmentId" => _}} = items["app-item"]
+      resolves.(img_b)
+    end
+
     # The item keeps its output; `mcpApp` needs its `attachmentId` to decode, so it goes.
     test "a fork drops mcpApp when the source document is missing" do
       source_id = launch("hello")

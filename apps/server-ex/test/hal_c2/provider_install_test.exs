@@ -36,4 +36,15 @@ defmodule HalC2.ProviderInstallTest do
     Task.await(server)
     :gen_tcp.close(listener)
   end
+
+  test "a destination that cannot be opened is a disk error and starts no deadline timer" do
+    dest = Path.join(System.tmp_dir!(), "no-such-dir-#{System.unique_integer([:positive])}/pkg")
+
+    assert {:error, {:disk, :enoent}} =
+             ProviderInstall.fetch("http://127.0.0.1:1/pkg", dest, 1, fn _ -> :ok end,
+               deadline_ms: 1
+             )
+
+    refute_receive _, 20
+  end
 end
