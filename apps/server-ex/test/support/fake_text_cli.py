@@ -39,10 +39,12 @@ def codex_files():
     if home:
         path = os.path.join(home, "config.toml")
         if os.path.exists(path):
-            files["config.toml"] = open(path).read()
+            with open(path, encoding="utf-8") as f:
+                files["config.toml"] = f.read()
         path = os.path.join(home, "auth.json")
         if os.path.exists(path):
-            files["auth.json"] = hashlib.sha256(open(path, "rb").read()).hexdigest()
+            with open(path, "rb") as f:
+                files["auth.json"] = hashlib.sha256(f.read()).hexdigest()
     return files
 
 log = os.environ.get("FAKE_TEXT_LOG")

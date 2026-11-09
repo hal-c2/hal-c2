@@ -695,14 +695,14 @@ defmodule HalC2.TextGeneration do
   defp mcp_override?(value), do: String.trim_leading(value) =~ ~r/\Amcp_servers\b/
 
   # The home whose login a run of `instance` uses, by the precedence a normal run has: a
-  # `CODEX_HOME` in the instance's environment, else its shadow home (or home setting),
-  # else the MC's own `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made
-  # leaves the shared home, the account's configured home.
+  # `CODEX_HOME` in the instance's environment (`Home.shared/1` returns exactly that
+  # variable, `~` expanded, when it is set), else its shadow home (or home setting), else
+  # the MC's own `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made leaves
+  # the shared home, the account's configured home.
   defp account_home(instance) do
     default = System.get_env("CODEX_HOME") || Path.join(HalC2.Paths.user_home(), ".codex")
-    env_home = HalC2.Settings.instance_env(instance)["CODEX_HOME"]
 
-    if is_binary(env_home) and env_home != "" do
+    if env_home?(instance) do
       HalC2.Codex.Home.shared(instance)
     else
       case HalC2.Codex.Home.env(instance) do
@@ -710,6 +710,13 @@ defmodule HalC2.TextGeneration do
         {:ok, []} -> default
         {:error, _} -> HalC2.Codex.Home.shared(instance) || default
       end
+    end
+  end
+
+  defp env_home?(instance) do
+    case HalC2.Settings.instance_env(instance)["CODEX_HOME"] do
+      home when is_binary(home) -> home != ""
+      _ -> false
     end
   end
 

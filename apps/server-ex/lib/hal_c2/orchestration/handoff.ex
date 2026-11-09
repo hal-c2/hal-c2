@@ -627,7 +627,12 @@ defmodule HalC2.Orchestration.Handoff do
   #
   # What is kept stays in the order it happened, under a note counting what was
   # kept, cut to its end and left out.
-  defp fit(entries, max_chars) do
+  defp fit(entries, max_chars), do: fit(entries, max_chars, @omitted_note)
+
+  # `reserve` is the room held back for the note. The note's real length is known only
+  # once the entries are chosen, so when it outgrew `reserve` the choice is made again
+  # with its real length; a `max_chars` the note cannot fit in cuts the note itself.
+  defp fit(entries, max_chars, reserve) do
     whole = Enum.map_join(entries, "\n\n", &elem(&1, 1))
 
     if String.length(whole) <= max_chars do
@@ -637,7 +642,7 @@ defmodule HalC2.Orchestration.Handoff do
       find = fn list, role -> Enum.find(list, &match?({{^role, _}, _}, &1)) end
       newest = Enum.reverse(indexed)
       pair = Enum.reject([find.(newest, :user), find.(newest, :assistant)], &is_nil/1)
-      room = max_chars - @omitted_note
+      room = max(max_chars - reserve, 0)
 
       # The first request does not push out a newest pair that would fit whole
       # without it: then the newest history wins and it is an older entry.
@@ -685,7 +690,13 @@ defmodule HalC2.Orchestration.Handoff do
 
       note = "[earlier messages omitted: #{kept_note}, #{left_out} left out]"
 
-      Enum.join([note | selected], "\n\n")
+      result = Enum.join([note | selected], "\n\n")
+
+      cond do
+        String.length(result) <= max_chars -> result
+        String.length(note) > reserve -> fit(entries, max_chars, String.length(note))
+        true -> String.slice(result, 0, max_chars)
+      end
     end
   end
 

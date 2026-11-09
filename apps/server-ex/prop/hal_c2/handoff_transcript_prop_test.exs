@@ -46,6 +46,15 @@ defmodule HalC2.HandoffTranscriptPropTest do
     end
   end
 
+  # A budget smaller than the note itself: the transcript still stays inside it.
+  property "a budget smaller than the note is still never exceeded",
+    numtests: HalC2.Prop.numtests(200) do
+    forall [turns, max_chars] <- [turns(), integer(1, 149)] do
+      transcript = Handoff.transcript(state(turns), length(turns) + 1, 0, max_chars)
+      transcript == nil or String.length(transcript) <= max_chars
+    end
+  end
+
   # A thread whose last run is still running: the running-turn reader sees every command
   # it finished and the plain transcript sees none of that run.
   property "a running turn reaches the transcript only when asked",

@@ -386,6 +386,37 @@ defmodule HalC2.TextGenerationTest do
       assert files == %{"auth.json" => sha256(~s({"token":"shadow"})), "config.toml" => ""}
     end
 
+    test "a Codex that cannot list its MCP servers keeps the login of the CODEX_HOME its instance sets",
+         %{repo: repo, log: log, tmp_dir: dir} do
+      install([:codex])
+      own = Path.join(dir, "own-codex")
+      other = Path.join(dir, "other-codex")
+
+      for {home, token} <- [{own, "own"}, {other, "other"}] do
+        File.mkdir_p!(home)
+        File.write!(Path.join(home, "auth.json"), ~s({"token":"#{token}"}))
+      end
+
+      # The MC's own CODEX_HOME and the instance's home setting both name another login.
+      put_codex_home(other)
+
+      settings!(%{
+        "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-text"},
+        "providerInstances" => %{
+          "codex-work" => %{
+            "driver" => "codex",
+            "config" => %{"homePath" => other},
+            "environment" => [%{"name" => "CODEX_HOME", "value" => own}]
+          }
+        }
+      })
+
+      assert {:ok, %{"title" => "codex title"}} = TextGeneration.thread_title(repo, "Fix it")
+
+      assert [%{"codexFiles" => files}] = calls(log)
+      assert files == %{"auth.json" => sha256(~s({"token":"own"})), "config.toml" => ""}
+    end
+
     test "a writer whose check only warned keeps generating", %{repo: repo} do
       install([:claude, :codex])
 
