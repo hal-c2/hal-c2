@@ -115,12 +115,14 @@ defmodule HalC2.MachineFilesPropTest do
     :ok = Shell.sync()
   end
 
+  # `stop_services/0` puts the home back, so it is read first.
   defp teardown do
+    home = Application.fetch_env!(:hal_c2, :home)
     HalC2.Prop.stop_services()
     Agent.stop(Process.delete(:cluster))
     Application.delete_env(:hal_c2, :machine_files_prop)
     Application.delete_env(:hal_c2, :shell_transport)
-    File.rm_rf!(Application.fetch_env!(:hal_c2, :home))
+    File.rm_rf!(home)
   end
 
   defp server do

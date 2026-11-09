@@ -72,10 +72,14 @@ defmodule HalC2.CodexTurnEndPropTest do
     max_size: 12 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
-        start()
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        HalC2.Prop.stop_services()
-        HalC2.Prop.restore_env()
+        # A case's own teardown, even when its start raised.
+        {history, state, result} =
+          try do
+            start()
+            run_commands(__MODULE__, cmds)
+          after
+            HalC2.Prop.stop_services()
+          end
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
