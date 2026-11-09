@@ -1,6 +1,6 @@
 # Used by "mix format"
 [
-  import_deps: [:plug],
+  import_deps: [:plug, :protobuf],
   inputs: ["{mix,.formatter}.exs", "{config,lib,test,prop,proof}/**/*.{ex,exs}"],
   # PropCheck's macros (prop/ only, so not an `import_deps`: it is absent outside MIX_ENV=prop).
   locals_without_parens: [
@@ -26,6 +26,8 @@
     measure: 3,
     classify: 3,
     equals: 2,
-    defcommand: 1
+    defcommand: 1,
+    # The services generated from OpenShell's proto/ (GRPC.Service).
+    rpc: 3
   ]
 ]

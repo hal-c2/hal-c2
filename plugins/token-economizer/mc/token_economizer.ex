@@ -38,7 +38,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
-  waiting (`"waiting"`) have been, and a partial turn does not teach the envelope. The
+  waiting (`"waiting"`) have been, and a partial turn does not teach the envelope. A
+  restarted process takes everything its feed still holds as such events. The
   micro-skills read a partial turn back from the thread (`Host.history/3`) so a missed
   event in the middle of it teaches nothing half-seen; a turn never folded twice.
 
@@ -179,8 +180,10 @@ defmodule HalC2Plugins.TokenEconomizer do
        # thread id => %{run, project, instance, guard, calls, kept, partial},
        # the turn under way
        turns: %{},
-       # Events still to hear that the feed may have queued before ones it missed.
-       missing: 0,
+       # Events still to hear that the feed may have queued before ones it missed. A
+       # process restarted while its feed ran cannot tell which those are, so it is all
+       # the feed holds.
+       missing: Host.feed_backlog(@id),
        # {project id, provider} => tracker
        trackers: %{},
        # project id => micro-skills state, loaded on first use

@@ -2,7 +2,9 @@
 # SPDX-FileCopyrightText: The TokenEconomizer authors (microsoft/TokenEconomizer); HAL-C2 contributors
 # Ported from tokeneconomizer/loopguard/rules.py (microsoft/TokenEconomizer@cb42207e3e09),
 # into Elixir for HAL-C2's MC. Changed: thresholds are a map with string keys (the names
-# a person pins in the plugin's settings), and a judge is its verdict, not a function.
+# a person pins in the plugin's settings), and `read_verdict/2` reads a verdict on its own,
+# for the plugin's judge, which answers in the background a call later. `assess_abort/4`
+# keeps upstream's judge as a function of the digest.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Rules do
   @moduledoc """

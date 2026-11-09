@@ -124,11 +124,17 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert_receive {:observed, %{"type" => "turn.item", "tool" => "Bash"} = item}, 5_000
     assert %{"runId" => ^run_id, "itemType" => "command_execution"} = item
 
+    assert_receive {:observed,
+                    %{"type" => "turn.item", "itemType" => "assistant_message"} = said},
+                   5_000
+
+    assert %{"runId" => ^run_id, "text" => "Hello from claude"} = said
+
     assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id} = finished}, 5_000
     assert finished["status"] == "completed"
   end
 
-  test "a plugin hears which file a file change wrote, and a long output's end" do
+  test "a plugin hears which file a file change wrote, and a long output's or answer's end" do
     item = %{
       "id" => "i1",
       "type" => "file_change",
@@ -142,6 +148,12 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"tool" => "Edit", "path" => "/r/lib/a.ex", "itemType" => "file_change"} = observed
     assert String.length(observed["output"]) == 4_000
     assert String.ends_with?(observed["output"], "tail")
+    assert observed["text"] == nil
+
+    said = %{"type" => "assistant_message", "text" => String.duplicate("y", 5_000) <> "end"}
+    text = Orchestration.TurnWriter.observed_item(said)["text"]
+    assert String.length(text) == 4_000
+    assert String.ends_with?(text, "end")
   end
 
   test "a plugin not granted turns:observe hears nothing of a turn", %{thread_id: thread_id} do
@@ -211,6 +223,41 @@ defmodule HalC2.PluginsTurnHooksTest do
              "features" => %{"multi_agent" => false, "multi_agent_v2" => false},
              "include_collaboration_mode_instructions" => false
            } = start["config"]
+  end
+
+  # The shape is asked for as the turn starts, before Codex finds the conversation gone.
+  test "a conversation Codex starts afresh, because the one to resume was gone, runs with the kept shape without asking",
+       %{work: work, dir: dir} do
+    grant(%{"shaper" => ["runs:shape"]})
+    shape = %{"context" => "Keep answers short.", "deniedTools" => ["collaboration"]}
+    feed("shaper", nil, shape)
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "first")
+    assert_receive {:shaping, _}, 5_000
+    await_statuses(thread_id, ["completed"])
+
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    :ok = GenServer.stop(runtime, :shutdown)
+    System.put_env("FAKE_CODEX_RESUME_ERROR", "no rollout found for thread id gone")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_RESUME_ERROR") end)
+
+    {:ok, _} = send_message(thread_id, "m2", "second")
+    await_statuses(thread_id, ["completed", "completed"])
+    refute_received {:shaping, _}
+
+    log =
+      for line <- File.read!(Path.join(dir, "codex.log")) |> String.split("\n", trim: true),
+          do: JSON.decode!(line)
+
+    starts = for %{"in" => %{"method" => "thread/start", "params" => p}} <- log, do: p
+    texts = for %{"in" => %{"method" => "turn/start", "params" => p}} <- log, do: JSON.encode!(p)
+
+    assert [_, _] = starts
+    assert Enum.all?(starts, &(&1["config"]["features"]["multi_agent"] == false))
+    assert [first, second] = texts
+    assert first =~ "Keep answers short."
+    assert second =~ ~r/Keep answers short\..*second/s
   end
 
   test "a plugin that fails while shaping leaves the conversation as it was",
@@ -409,6 +456,36 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"usedTokens" => 1500} = turn["tokenUsage"]
   end
 
+  # A background command can end after its turn did, stopped between turns here.
+  test "a plugin hears a background command its turn left running end, in the run it ran in",
+       %{thread_id: claude, work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+
+    codex = create_thread(work, "codex", "gpt-5.4")
+    {:ok, _} = send_message(codex, "m1", "start the dev server in the background")
+    [%{"id" => codex_run}] = await_statuses(codex, ["completed"])
+    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => codex})
+
+    assert_receive {:observed,
+                    %{"type" => "turn.item", "itemType" => "command_execution"} = stopped},
+                   5_000
+
+    assert %{"status" => "interrupted", "input" => "npm run dev", "runId" => ^codex_run} =
+             stopped
+
+    {:ok, _} = send_message(claude, "m1", "background commands: build")
+    [%{"id" => claude_run}] = await_statuses(claude, ["completed"])
+    {:ok, _} = HalC2.Claude.ThreadRuntime.await_background(claude, ["task-build-1"], true)
+    :ok = HalC2.Claude.ThreadRuntime.interrupt(claude, nil)
+
+    assert_receive {:observed,
+                    %{"type" => "turn.item", "threadId" => ^claude, "tool" => "Bash"} = ended},
+                   5_000
+
+    assert %{"status" => "interrupted", "runId" => ^claude_run} = ended
+  end
+
   test "a plugin hears what a Claude edit changed and what a web call searched for" do
     edit = %{"type" => "file_change", "fileName" => "a.ex", "diffStr" => "+new", "input" => nil}
     web = %{"type" => "web_search", "patterns" => ["elixir tasks"], "output" => nil}
@@ -416,6 +493,69 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert %{"output" => "+new", "path" => "a.ex"} = Orchestration.TurnWriter.observed_item(edit)
     assert %{"input" => ~s(["elixir tasks"])} = Orchestration.TurnWriter.observed_item(web)
     assert %{"input" => nil} = Orchestration.TurnWriter.observed_item(%{web | "patterns" => []})
+  end
+
+  # ACP agents report a tool call's end again with more of its output.
+  test "a plugin hears a call end once, though the provider reports its end twice",
+       %{thread_id: thread_id} do
+    grant(%{"listener" => ["turns:observe"]})
+    listener = feed("listener")
+    alias Orchestration.TurnWriter
+
+    state =
+      %{thread_id: thread_id, turn: %{ids: hook_ids(thread_id)}, items: %{}}
+      |> TurnWriter.ensure_item("call-1", :tool, %{"toolName" => "read"})
+      |> TurnWriter.finish_item("call-1", "completed", &Map.put(&1, "output", "one"))
+      |> TurnWriter.finish_item("call-1", "completed", &Map.put(&1, "output", "one two"))
+
+    assert_receive {:observed, %{"type" => "turn.item", "tool" => "read"} = heard}, 5_000
+    assert heard["output"] == "one"
+    :sys.get_state(listener)
+    refute_received {:observed, %{"type" => "turn.item"}}
+
+    # The thread keeps the later report.
+    item_id = state.items["call-1"].id
+    assert %{"output" => "one two"} = StreamState.get(state(thread_id), "turn-item")[item_id]
+  end
+
+  test "a call ends as the provider said once, for the thread and for the plugins that hear it",
+       %{thread_id: thread_id} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    test = self()
+
+    # Applied twice, the output would grow twice.
+    grow = fn item ->
+      send(test, :applied)
+      Map.update!(item, "output", &(&1 <> "!"))
+    end
+
+    state =
+      %{thread_id: thread_id, turn: %{ids: hook_ids(thread_id)}, items: %{}}
+      |> Orchestration.TurnWriter.ensure_item("call-1", :tool, %{"output" => "done"})
+      |> Orchestration.TurnWriter.finish_item("call-1", "completed", grow)
+
+    assert_receive {:observed, %{"type" => "turn.item"} = heard}, 5_000
+    assert heard["output"] == "done!"
+    item_id = state.items["call-1"].id
+    assert %{"output" => "done!"} = StreamState.get(state(thread_id), "turn-item")[item_id]
+    assert_received :applied
+    refute_received :applied
+  end
+
+  # Antigravity leaves a subagent batch its completed turn did not end "idle".
+  test "a plugin hears and reads a subagent batch its completed turn left idle as completed",
+       %{thread_id: thread_id} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    batch = %{"id" => "batch-1", "type" => "subagent", "status" => "idle"}
+    state = %{thread_id: thread_id, turn: %{ids: %{run: "run:1"}}}
+
+    :ok = Orchestration.TurnWriter.observe_item(state, "idle", batch)
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemId" => "batch-1"} = heard}, 5_000
+    assert heard["status"] == "completed"
+    assert Orchestration.TurnWriter.observed_item(batch)["status"] == "completed"
   end
 
   test "a plugin steers the run it names while it works, and a steer to an ended run is refused and kept nowhere",
@@ -431,9 +571,11 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert Enum.any?(prompts(dir), &(&1 =~ "use the cache"))
 
     assert {:error, _} = Host.steer("steerer", thread_id, ended["id"], "too late")
+    missing = "Thread #{thread_id} has no run run:missing."
+    assert {:error, ^missing} = Host.steer("steerer", thread_id, "run:missing", "nowhere")
     # Neither queued for a later turn nor kept as a message.
     assert ["completed"] = statuses(thread_id)
-    refute Enum.any?(messages(thread_id), &(&1["text"] == "too late"))
+    refute Enum.any?(messages(thread_id), &(&1["text"] in ["too late", "nowhere"]))
   end
 
   test "a steer that names no run is refused, steering nothing and starting no turn",
@@ -441,7 +583,13 @@ defmodule HalC2.PluginsTurnHooksTest do
     grant(%{"steerer" => ["threads:steer"]})
 
     # Nothing runs: neither a turn started nor a message kept.
-    assert {:error, _} = Host.steer("steerer", thread_id, nil, "unnamed")
+    # Refused as the orchestration refuses a steer only for its run that names none.
+    for unnamed <- [nil, ""],
+        do:
+          assert(
+            {:error, "A steer meant only for its run must name the run."} =
+              Host.steer("steerer", thread_id, unnamed, "unnamed")
+          )
 
     unnamed = %{
       "type" => "message.dispatch",
@@ -462,6 +610,11 @@ defmodule HalC2.PluginsTurnHooksTest do
     {:ok, _} = send_message(thread_id, "m1", "wait m1")
     [_running] = await_statuses(thread_id, ["running"])
     assert {:error, _} = Orchestration.dispatch(Map.put(unnamed, "commandId", "c2"))
+    empty = put_in(unnamed, ["dispatchMode", "targetRunId"], "")
+
+    assert {:error, "A steer meant only for its run must name the run."} =
+             Orchestration.dispatch(Map.put(empty, "commandId", "c3"))
+
     assert ["running"] = statuses(thread_id)
     refute Enum.any?(messages(thread_id), &(&1["text"] == "unnamed"))
   end
@@ -596,6 +749,17 @@ defmodule HalC2.PluginsTurnHooksTest do
   end
 
   # --- helpers ------------------------------------------------------------------------
+
+  # The ids of a turn that writes items through `Orchestration.TurnWriter` directly.
+  defp hook_ids(thread_id) do
+    %{
+      thread: thread_id,
+      run: "run:1",
+      root_node: "node:root",
+      provider_thread: "provider-thread:opencode:#{thread_id}",
+      driver: "opencode"
+    }
+  end
 
   # Grants each extension its permissions, with the settings `saved` for it.
   defp grant(grants, saved \\ %{}) do

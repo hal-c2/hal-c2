@@ -3740,22 +3740,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         finish_item(state, id, status, & &1)
 
       %{id: item_id, node: node_id} ->
-        at = Entities.now()
-        done = %{"status" => status, "completedAt" => at}
-
-        commit(state, fn stream ->
-          [
-            Orchestration.upsert(
-              stream,
-              "turn-item",
-              item_id,
-              &Map.merge(&1, Map.put(done, "updatedAt", at))
-            ),
-            Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
-          ]
-        end)
-
-        state
+        end_item(state, item_id, node_id, status)
 
       _ ->
         state

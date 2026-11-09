@@ -24,6 +24,15 @@ defmodule HalC2.VcsTest do
     %{repo: repo, other: other}
   end
 
+  # `tmp` sits inside the checkout: without `GIT_CEILING_DIRECTORIES` (test_helper.exs) git
+  # would find the checkout from a scratch folder, and a git action there would commit
+  # and push the developer's work.
+  test "a scratch folder under tmp is not the checkout around it", %{tmp_dir: dir} do
+    plain = Path.join(dir, "plain")
+    File.mkdir_p!(plain)
+    refute Vcs.local_status(plain)["isRepo"]
+  end
+
   # An untracked text file counts its lines as inserted, as a staged one does.
   test "local status lists every change with its line counts", %{repo: repo} do
     File.write!(Path.join(repo, "a.txt"), "one\ntwo\n")

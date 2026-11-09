@@ -232,11 +232,11 @@ defmodule HalC2.Plugins.Host do
   a run that has ended, is being stopped, or whose provider cannot take a message while
   it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
   `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
-  also when `run_id` names no run.
+  also when `run_id` names no run of the thread.
   """
   def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
     with :ok <- permit(id, "threads:steer"),
-         :ok <- if(is_binary(run_id), do: :ok, else: {:error, "A steer must name its run."}) do
+         :ok <- run_of(thread_id, run_id) do
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "commandId" => "plugin:#{id}:#{HalC2.Environment.uuid4()}",
@@ -251,6 +251,16 @@ defmodule HalC2.Plugins.Host do
       })
     end
   end
+
+  # A steer naming no run is refused as the orchestration refuses any steer meant only
+  # for its run that names none.
+  defp run_of(thread_id, run_id) when is_binary(run_id) and run_id != "" do
+    if HalC2.Streams.get(thread_id, "run", run_id),
+      do: :ok,
+      else: {:error, "Thread #{thread_id} has no run #{run_id}."}
+  end
+
+  defp run_of(_thread_id, _run_id), do: :ok
 
   @doc """
   Shows `message` in `thread_id`'s timeline, in run `run_id`, as a notice from the
@@ -358,6 +368,20 @@ defmodule HalC2.Plugins.Host do
           else: {:error, "There is no thread #{thread_id}."}
       end)
     end
+  end
+
+  @doc """
+  How many turn events plugin `id`'s feed holds, still to deliver: 0 when it has no
+  feed. A plugin process restarted while its feed ran has lost what it knew of the
+  events before: any of these may have been sent before events it missed, and a report
+  of missed events may have reached the process that went down.
+  """
+  def feed_backlog(id) do
+    Enum.sum(
+      for {pid, %{id: ^id}} <- Plugins.Feed.lookup(:observe),
+          {:message_queue_len, n} <- [Process.info(pid, :message_queue_len)],
+          do: n
+    )
   end
 
   @ended ~w(completed interrupted failed cancelled)

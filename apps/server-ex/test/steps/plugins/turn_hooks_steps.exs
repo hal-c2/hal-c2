@@ -82,6 +82,18 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     run(context, provider, ["hello"])
   end
 
+  step "a {word} thread whose turn left a command running in the background",
+       %{args: [provider]} = context do
+    texts = %{
+      "Claude" => "background commands: build",
+      "Codex" => "start the dev server in the background"
+    }
+
+    provider
+    |> then(&run(context, &1, [Map.fetch!(texts, &1)]))
+    |> Map.put(:thread, @thread)
+  end
+
   step "a Codex thread works toward the goal {string}, then runs a turn",
        %{args: [objective]} = context do
     run(context, "Codex", ["/goal #{objective}", "next"])
@@ -188,6 +200,18 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     context
   end
 
+  step "it hears what Claude answered", context do
+    assert %{"text" => "Hello from claude"} =
+             said =
+             Enum.find(
+               context.events,
+               &(&1["type"] == "turn.item" and &1["itemType"] == "assistant_message")
+             )
+
+    assert said["runId"] == context.run_id
+    context
+  end
+
   step ~r/^the plugin hears the command end (?<status>\w+), then the turn end$/,
        %{args: [status]} = context do
     events = heard([])
@@ -196,6 +220,18 @@ defmodule HalC2.Steps.Plugins.TurnHooks do
     assert %{"status" => ^status} =
              Enum.find(events, &(&1["type"] == "turn.item" and &1["tool"] == "Bash"))
 
+    context
+  end
+
+  step "the plugin hears the command end interrupted after the turn, in the turn it ran in",
+       context do
+    assert %{"type" => "turn.finished", "runId" => run_id} = List.last(heard([]))
+
+    assert_receive {:observed,
+                    %{"type" => "turn.item", "itemType" => "command_execution"} = ended},
+                   5_000
+
+    assert %{"status" => "interrupted", "runId" => ^run_id} = ended
     context
   end
 
