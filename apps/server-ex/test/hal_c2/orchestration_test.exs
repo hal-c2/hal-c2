@@ -4261,7 +4261,7 @@ defmodule HalC2.OrchestrationTest do
       source_id = launch("hello")
       [run] = runs(await_statuses(source_id, ["completed"]))
 
-      source_doc = "#{HalC2.Attachments.thread_segment(source_id)}-doc"
+      source_doc = "#{HalC2.Attachments.thread_segment(source_id)}-mcp-app-doc"
       File.mkdir_p!(HalC2.Attachments.dir())
       File.write!(Path.join(HalC2.Attachments.dir(), source_doc <> ".html"), "<p>app</p>")
 
@@ -4285,10 +4285,40 @@ defmodule HalC2.OrchestrationTest do
                StreamState.get(current(fork_id), "turn-item")["app-item"]
 
       assert copy != source_doc
+      assert HalC2.McpApps.document_id?(copy)
       assert String.starts_with?(copy, HalC2.Attachments.thread_segment(fork_id) <> "-")
 
       HalC2.Attachments.delete_thread(source_id)
       assert File.read!(HalC2.Attachments.path(%{"id" => copy})) == "<p>app</p>"
+    end
+
+    # The item keeps its output; `mcpApp` needs its `attachmentId` to decode, so it goes.
+    test "a fork drops mcpApp when the source document is missing" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"turn-item", "app-item",
+           %{
+             "s" => %{
+               "id" => "app-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "output" => "result",
+               "mcpApp" => %{
+                 "attachmentId" => "gone-mcp-app-doc",
+                 "toolResult" => %{"ok" => true}
+               }
+             }
+           }}
+        ])
+
+      fork_id = fork(source_id, run["id"])
+      item = StreamState.get(current(fork_id), "turn-item")["app-item"]
+      assert item["output"] == "result"
+      refute Map.has_key?(item, "mcpApp")
     end
 
     # Fork history is selected by ordinal (start order): a held queued run a

@@ -311,7 +311,7 @@ defmodule HalC2.Orchestration.Fork do
   defp own_app(%{"mcpApp" => %{"attachmentId" => id} = app} = item, target_id) do
     case HalC2.Attachments.copy(target_id, id) do
       {:ok, copy} -> %{item | "mcpApp" => %{app | "attachmentId" => copy}}
-      :error -> %{item | "mcpApp" => Map.delete(app, "attachmentId")}
+      :error -> Map.delete(item, "mcpApp")
     end
   end
 

@@ -194,12 +194,19 @@ defmodule HalC2.Attachments do
   # sobelow_skip ["Traversal.FileModule"]
   def copy(thread_id, id) do
     with source when is_binary(source) <- path(%{"id" => id}),
-         new_id = "#{thread_segment(thread_id)}-#{copy_tag()}",
+         new_id = copy_id(thread_id, id),
          :ok <- File.cp(source, Path.join(dir(), new_id <> Path.extname(source))) do
       {:ok, new_id}
     else
       _ -> :error
     end
+  end
+
+  # An MCP app document keeps its `-mcp-app-` marker, which is how its inline URL gets
+  # the app sandbox when the client sends no `renderIntent` (`mcp_app_claims/2`).
+  defp copy_id(thread_id, id) do
+    marker = if HalC2.McpApps.document_id?(id), do: "mcp-app-", else: ""
+    "#{thread_segment(thread_id)}-#{marker}#{copy_tag()}"
   end
 
   defp copy_tag, do: 4 |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
