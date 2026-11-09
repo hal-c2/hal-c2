@@ -225,6 +225,41 @@ defmodule HalC2.PluginsTurnHooksTest do
            } = start["config"]
   end
 
+  # The shape is asked for as the turn starts, before Codex finds the conversation gone.
+  test "a conversation Codex starts afresh, because the one to resume was gone, runs with the kept shape without asking",
+       %{work: work, dir: dir} do
+    grant(%{"shaper" => ["runs:shape"]})
+    shape = %{"context" => "Keep answers short.", "deniedTools" => ["collaboration"]}
+    feed("shaper", nil, shape)
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "first")
+    assert_receive {:shaping, _}, 5_000
+    await_statuses(thread_id, ["completed"])
+
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    :ok = GenServer.stop(runtime, :shutdown)
+    System.put_env("FAKE_CODEX_RESUME_ERROR", "no rollout found for thread id gone")
+    on_exit(fn -> System.delete_env("FAKE_CODEX_RESUME_ERROR") end)
+
+    {:ok, _} = send_message(thread_id, "m2", "second")
+    await_statuses(thread_id, ["completed", "completed"])
+    refute_received {:shaping, _}
+
+    log =
+      for line <- File.read!(Path.join(dir, "codex.log")) |> String.split("\n", trim: true),
+          do: JSON.decode!(line)
+
+    starts = for %{"in" => %{"method" => "thread/start", "params" => p}} <- log, do: p
+    texts = for %{"in" => %{"method" => "turn/start", "params" => p}} <- log, do: JSON.encode!(p)
+
+    assert [_, _] = starts
+    assert Enum.all?(starts, &(&1["config"]["features"]["multi_agent"] == false))
+    assert [first, second] = texts
+    assert first =~ "Keep answers short."
+    assert second =~ ~r/Keep answers short\..*second/s
+  end
+
   test "a plugin that fails while shaping leaves the conversation as it was",
        %{thread_id: thread_id, dir: dir} do
     grant(%{"shaper" => ["runs:shape"]})
