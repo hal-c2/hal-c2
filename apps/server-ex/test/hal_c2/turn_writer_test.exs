@@ -295,6 +295,29 @@ defmodule HalC2.Orchestration.TurnWriterTest do
       refute Map.has_key?(provider_thread, "contextUsage")
       assert StreamState.get(stream, "run")["run-2"]["sentTokens"] > 3
     end
+
+    # A start that outlived its caller's timeout opens its conversation after the next
+    # run was planned for the old one. That run waits behind the start and goes on in the
+    # new conversation, which holds none of the thread, so its own mark says too little:
+    # the start's mark stands for the whole thread, and the run after hands it over.
+    test "a fresh start a later run overtook marks the whole thread unconfirmed" do
+      mark = %{"lastRunOrdinal" => 3, "unconfirmedRunId" => "run-3", "unconfirmedSince" => 1}
+      {:ok, _} = HalC2.Streams.commit("t1", :thread, [{"provider-thread", "pt", %{"s" => mark}}])
+      ids = %{thread: "t1", run: "run-2", provider_thread: "pt", driver: "codex"}
+
+      turn = %{
+        ids: ids,
+        text: "next",
+        fresh: %{thread: "t1", ordinal: 2, merged: nil, moved: nil, restart: nil, text: "next"}
+      }
+
+      {_state, _turn} = HalC2.Orchestration.Handoff.fresh_start(%{fresh_start: true}, turn)
+
+      stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("t1"))
+
+      assert %{"lastRunOrdinal" => 3, "unconfirmedRunId" => "run-2", "unconfirmedSince" => 0} =
+               StreamState.get(stream, "provider-thread")["pt"]
+    end
   end
 
   describe "a finished command" do

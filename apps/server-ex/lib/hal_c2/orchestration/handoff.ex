@@ -1689,6 +1689,9 @@ defmodule HalC2.Orchestration.Handoff do
   # the provider confirms the run, so the run marks its provider thread as any
   # handoff does, with nothing known to be held before it (`plan/6`). The
   # conversation's runs begin here, and how full the old one was says nothing of it.
+  # A start that outlived its caller's timeout may find the next run planned, and
+  # marked, for the old conversation: that run goes on in this one, so this mark, which
+  # stands for the whole thread, replaces its own, and the run after hands it over.
   defp started_afresh(turn, fresh, context) do
     HalC2.Streams.transact(fresh.thread, :thread, fn stream ->
       changes = [
