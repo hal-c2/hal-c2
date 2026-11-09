@@ -315,6 +315,49 @@ defmodule HalC2.CodeReviewTest do
              label.([labeled.("monalisa"), labeled.("monalisa")], "2026-09-04T00:00:00Z")
   end
 
+  test "an account that shares a trusted login but is not that user does not start a review",
+       context do
+    save_settings(%{"label" => "ship-it"})
+
+    labeled = fn type, login ->
+      %{
+        "__typename" => "LabeledEvent",
+        "createdAt" => "2026-09-01T00:00:00Z",
+        "actor" => %{"__typename" => type, "login" => login},
+        "label" => %{"name" => "ship-it"}
+      }
+    end
+
+    label = fn timeline, updated ->
+      rules!(context,
+        head: 1,
+        labels: ["ship-it"],
+        updated: updated,
+        timeline: timeline,
+        permissions: [{"custodian", %{"role_name" => "write", "permission" => "write"}}]
+      )
+
+      refresh()
+      review()
+    end
+
+    # A mannequin of an import with the user's login, or a collaborator's, is neither:
+    # its permission is not read by the login, which names the user.
+    for {timeline, at} <- [
+          {[labeled.("Mannequin", "monalisa")], "2026-09-02T00:00:00Z"},
+          {[labeled.("Mannequin", "custodian")], "2026-09-03T00:00:00Z"},
+          # A bot with the user's login, at the same time as the user, is someone else.
+          {[labeled.("User", "monalisa"), labeled.("Bot", "monalisa")], "2026-09-04T00:00:00Z"},
+          {[labeled.("Bot", "monalisa"), labeled.("User", "monalisa")], "2026-09-05T00:00:00Z"}
+        ] do
+      assert %{"status" => "ready"} = review = label.(timeline, at)
+      refute review["trigger"], inspect(timeline)
+    end
+
+    assert %{"trigger" => "label"} =
+             label.([labeled.("User", "custodian")], "2026-09-06T00:00:00Z")
+  end
+
   test "a head pushed back to the commit reviewed is no longer changed since the review",
        context do
     review = start_review()

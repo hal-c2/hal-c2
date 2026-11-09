@@ -1390,7 +1390,7 @@ defmodule HalC2Plugins.CodeReview do
     comments =
       for comment <- trust["comments"],
           String.starts_with?(String.trim(comment["body"] || ""), command),
-          do: Map.take(comment, ~w(login isBot association role createdAt))
+          do: Map.take(comment, ~w(login isBot isUser association role createdAt))
 
     %{"command" => command, "viewer" => trust["viewer"], "comments" => comments}
   end
@@ -3132,10 +3132,21 @@ defmodule HalC2Plugins.CodeReview do
 
   defp trusted?(settings, actor, viewer) do
     login = actor["login"]
-    names = if actor["isBot"], do: [login, "#{login}[bot]"], else: [login]
+    user? = actor["isUser"] == true and actor["isBot"] != true
     listed = settings["trustedLogins"] || []
 
-    same?(login, viewer) or Enum.any?(names, fn name -> Enum.any?(listed, &same?(&1, name)) end) or
+    # A login names the account of its kind: a bot's is listed as itself or with
+    # `[bot]`, and the viewer is a user. A mannequin of an import, or any other kind
+    # of account, goes by what GitHub says of it alone.
+    names =
+      cond do
+        actor["isBot"] == true -> [login, "#{login}[bot]"]
+        user? -> [login]
+        true -> []
+      end
+
+    (user? and same?(login, viewer)) or
+      Enum.any?(names, fn name -> Enum.any?(listed, &same?(&1, name)) end) or
       actor["association"] in @trusted_associations or actor["role"] in @trusted_roles
   end
 
@@ -3158,7 +3169,7 @@ defmodule HalC2Plugins.CodeReview do
         "Opened by #{author["login"]}, who is not a member or collaborator of the repository."
 
       trust["isCrossRepository"] == true and not same?(owner, author["login"]) and
-          not trusted?(settings, %{"login" => owner}, trust["viewer"]) ->
+          not trusted?(settings, %{"login" => owner, "isUser" => true}, trust["viewer"]) ->
         "Its commits come from #{owner || "a fork"}, not from its author."
 
       true ->

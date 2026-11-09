@@ -2336,7 +2336,10 @@ defmodule HalC2.PullRequests.GitHub do
   where GitHub would not say. `comments` are the last hundred, each an actor with its
   `body` and `createdAt`; `labeled` and `requested` are that event's actor with its
   `createdAt`, or nil, and when other events matched at the same time, `tied` lists
-  their actors who are someone else (an unreadable one with a nil `login`).
+  their actors who are someone else (an unreadable one with a nil `login`). `isUser`
+  says the account is a user's: a bot or a mannequin of an import may have a user's
+  login, so only a user's login can name the viewer or a user, and only a user has a
+  `role` read.
   """
   def trust(ctx, label \\ nil) do
     with {:ok, data} <- graphql(ctx, @trust_query, vars(ctx)),
@@ -2395,6 +2398,7 @@ defmodule HalC2.PullRequests.GitHub do
       %{
         "login" => login,
         "isBot" => actor["isBot"] == true,
+        "isUser" => raw["__typename"] == "User",
         "association" => up(association),
         "role" => nil
       }
@@ -2426,11 +2430,17 @@ defmodule HalC2.PullRequests.GitHub do
   defp event_actors(_ctx, {nil, _tied}, _author), do: nil
 
   defp event_actors(ctx, {event, tied}, author) do
-    with %{"login" => login} = actor <- event_actor(ctx, event, author) do
+    with %{} = actor <- event_actor(ctx, event, author) do
+      # Someone else is another account: a login and its kind, as a bot or a mannequin
+      # may have a user's login.
+      account =
+        &{get_in(&1, ["actor", "__typename"]),
+         String.downcase(get_in(&1, ["actor", "login"]) || "")}
+
       others =
         tied
-        |> Enum.reject(&same_login?(get_in(&1, ["actor", "login"]), login))
-        |> Enum.uniq_by(&String.downcase(get_in(&1, ["actor", "login"]) || ""))
+        |> Enum.reject(&(account.(&1) == account.(event)))
+        |> Enum.uniq_by(account)
         |> Enum.map(&(event_actor(ctx, &1, author) || %{"login" => nil}))
 
       if others == [], do: actor, else: Map.put(actor, "tied", others)
@@ -2438,19 +2448,23 @@ defmodule HalC2.PullRequests.GitHub do
   end
 
   # The event's actor with their permission on the repository: GitHub gives events no
-  # association. The author's own is their association already. Unreadable, nil.
+  # association. The author's own is their association already. Only a user's is read:
+  # the permission is read by login, and a bot, a mannequin of an import or any other
+  # kind of account may share its login with a user it is not. Unreadable, nil.
   defp event_actor(ctx, event, author) do
     case trust_actor(event["actor"], nil) do
       nil ->
         nil
 
       %{"login" => login} = actor ->
+        user? = get_in(event, ["actor", "__typename"]) == "User"
+
         actor =
           cond do
-            author && same_login?(login, author["login"]) ->
+            (user? and author) && same_login?(login, author["login"]) ->
               %{actor | "association" => author["association"]}
 
-            actor["isBot"] ->
+            not user? ->
               actor
 
             true ->
