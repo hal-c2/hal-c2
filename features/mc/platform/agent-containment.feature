@@ -12,7 +12,8 @@
 #   apps/server-ex/lib/hal_c2/subprocess/durable.ex (survivors, the shim's watcher)
 #   apps/server-ex/lib/hal_c2/diagnostics.ex (the 15-second sampler)
 #   Shared domain: mc/platform/host-integration.feature holds upstream's scope, slice and
-#   out-of-memory scenarios; mc/orchestration/recovery-and-idle-sessions.feature holds the
+#   out-of-memory scenarios, and owns which endings stop an agent's scope ("An agent's
+#   detached helpers end with it on Linux"); this file owns what Stop does to them; mc/orchestration/recovery-and-idle-sessions.feature holds the
 #   boot kill by records and marks; threads/heavy-runs.feature holds what clients show.
 Feature: Containing what an agent runs
 
@@ -23,7 +24,8 @@ Feature: Containing what an agent runs
 
   # hal-c2/hal-c2#483: background jobs belong to the session, which providers keep across
   # turns on purpose (dev servers, background shells), so Stop ends the turn and Force stop
-  # ends the session. Blocked on the maintainer's answer to whether Stop should end them too.
+  # ends the session. Blocked on the maintainer's answer to whether Stop should end them too;
+  # this is the one scenario for Stop and detached jobs, so the answer changes only it.
   @backlog @blocked @mc
   Scenario: Stopping a turn leaves the session's background jobs running
     Given the MC runs on Linux under a systemd user manager
@@ -32,28 +34,13 @@ Feature: Containing what an agent runs
     Then the turn ends and the command it was running ends
     And the dev server keeps running until the session of "t1" ends
 
-  @backlog @mc @priority-high
-  Scenario Outline: Ending a session ends everything its agent started, even what left its group
-    Given the MC runs on Linux under a systemd user manager
-    And the agent of "t1" started a dev server that put itself in a session of its own
-    When <ending>
-    Then the dev server ends with the agent of "t1"
-
-    Examples:
-      | ending                                            |
-      | the user force stops "t1"                         |
-      | the user stops the session of "t1"                |
-      | the user deletes "t1"                             |
-      | the agent of "t1" exits on its own                |
-      | the agent of "t1" is restarted for a model change |
-
   # The boot kills by scope first; the records and marks of recovery-and-idle-sessions.feature
   # stay as the fallback where there are no scopes.
   @backlog @mc @priority-high
   Scenario: Restarting the MC ends what agents left behind, except the sessions it takes back
     Given the MC runs on Linux under a systemd user manager
     And "t1" is mid-run on an agent the MC takes back when it restarts
-    And the agent of "t2" left a dev server running when its session ended
+    And the MC stopped while the agent of "t2", which it does not take back, ran a dev server
     When the MC restarts
     Then the agent of "t1" and everything it started keep running
     And the dev server of "t2" has been stopped before any thread resumes
