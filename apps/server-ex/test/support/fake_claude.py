@@ -504,6 +504,24 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}k", "role": "assistant", "content": [{"type": "text", "text": "It grew"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "It grew", "session_id": session})
         continue
+    # "create tasks: A, B": Claude's task tools create one task per subject, numbered on
+    # from those the session keeps in $CLAUDE_CONFIG_DIR/tasks/<session id>/, each saved
+    # there before Claude reports it, and the turn ends.
+    if text.startswith("create tasks: "):
+        folder = os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "tasks", session)
+        os.makedirs(folder, exist_ok=True)
+        kept = [int(name[:-5]) for name in os.listdir(folder) if re.fullmatch(r"\d+\.json", name)]
+        for number, subject in enumerate(text[len("create tasks: "):].split(", "), max(kept, default=0) + 1):
+            task_id, call = str(number), f"task-create-{turn}-{number}"
+            with open(os.path.join(folder, f"{task_id}.json"), "w") as f:
+                json.dump({"id": task_id, "subject": subject, "description": "", "status": "pending"}, f)
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}c{number}", "role": "assistant", "content": [
+                {"type": "tool_use", "id": call, "name": "TaskCreate", "input": {"subject": subject}}]}})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": call, "content": "Task tool finished.", "is_error": False}]},
+                  "tool_use_result": {"task": {"id": task_id, "subject": subject}}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Tasks created", "session_id": session})
+        continue
     # "start a monitor": the Monitor tool watches a command (task task-mon-N) and the
     # turn ends while it runs. "start a monitor and hold the turn" holds the turn's
     # answer until the test has marked the monitor as awaited (the gate file
