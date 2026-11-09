@@ -6,6 +6,7 @@
 #   plugins/token-economizer/plugin.json (microSkills, microSkillsMaxFacts, microSkillsMaxTokens, microSkillsProposeEvery, runs:shape, textGeneration)
 #   apps/server-ex/test/steps/plugins/token_economizer_micro_skills_steps.exs, apps/server-ex/test/support/fake_claude.py ("repair the test command", "run the tests the working way"), apps/server-ex/test/support/fake_text_cli.py (the model)
 #   microsoft/TokenEconomizer@cb42207e3e09 tokeneconomizer/microskills/{envfacts,observe,lifecycle,stage,distiller}.py (what this ports)
+#   plugins/token-economizer/ui/TokenEconomizerPage.qml, apps/desktop-qt/tests/native/features/TokenEconomizerSteps.cpp (the plugin's page)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port)
 
 @plugin-token-economizer
@@ -178,7 +179,7 @@ Feature: TokenEconomizer's micro-skills
     When the person sets the turns between the model's proposals to 0
     Then the settings are refused, naming the turns between proposals
 
-  @desktop @mobile @tui @backlog
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The person sees a project's learned facts and drops one from the plugin's page
     Given TokenEconomizer has learned a fact on a project
     When the person opens TokenEconomizer's page

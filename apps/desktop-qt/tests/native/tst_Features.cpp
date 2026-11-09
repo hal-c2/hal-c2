@@ -266,6 +266,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("plugins/keymaps.feature"),
     QStringLiteral("plugins/plugin-contributions.feature"),
     QStringLiteral("plugins/turn-hooks.feature"),
+    QStringLiteral("plugins/token-economizer-*.feature"),
     QStringLiteral("navigation/qt-shell-backlog.feature:A device tab streams a device screen"),
     QStringLiteral("navigation/qt-shell-backlog.feature:Opening a folder*"),
     QStringLiteral("desktop/shell-host.feature:A screenshot taken without a display shows the app's window"),

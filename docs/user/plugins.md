@@ -197,8 +197,32 @@ out. Each proposal costs a model call; the plugin's status counts them and
 their tokens. Its facts are listed, dropped and restored like the others.
 
 A project whose saved micro-skills cannot be read is held rather than started
-afresh: nothing is learned or stated there, and its listing says why, until
+afresh: nothing is learned or stated there, and its page says why, until
 the file is fixed or removed.
+
+### TokenEconomizer's page
+
+On the desktop, TokenEconomizer has a tab of its own. It shows, for one machine
+at a time:
+
+- what the loop guard did lately, with a way to open each thread;
+- a project's facts, each with how many turns confirmed it and how often it
+  fires once stated. **Drop** keeps a fact from being stated or learned again
+  until you **Restore** it. **Forget** clears what the project learned (dropped
+  facts stay dropped) and, with **Learn from earlier threads** on, reads its
+  earlier threads again; the page shows how far that read got and what it left
+  out;
+- each project's tools per agent: those turned off, proposed and given back,
+  with how long each went unused. **Apply proposal** or **Turn off** applies
+  them, **Give back** returns them.
+
+Tool pruning turns nothing off for a project while a thread's turns it heard
+only in part cannot be read back: the page names those threads, and each new
+conversation in the project tries again. A thread moved to another machine is
+listed apart and holds nothing off. If tool uses saved earlier cannot be read,
+pruning is held for that agent until you apply or give back its tools, or
+change **Tool pruning** in **Settings → Plugins → TokenEconomizer**, where all
+of its settings are.
 
 ## Connect Slack for plugins
 

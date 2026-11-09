@@ -173,5 +173,8 @@
       "default": [],
       "description": "Tool names or patterns such as mcp__headroom__*, on top of the work-surface tools that are never proposed anyway."
     }
-  ]
+  ],
+  "contributes": {
+    "pages": [{ "id": "token-economizer", "title": "TokenEconomizer", "qml": "ui/TokenEconomizerPage.qml" }]
+  }
 }

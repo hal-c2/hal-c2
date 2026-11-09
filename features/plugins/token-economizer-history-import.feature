@@ -5,6 +5,7 @@
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (project_threads/2, history/3 after:)
 #   apps/server-ex/test/steps/plugins/token_economizer_micro_skills_steps.exs
 #   microsoft/TokenEconomizer@cb42207e3e09 tokeneconomizer/plugin/history.py (what this ports)
+#   plugins/token-economizer/ui/TokenEconomizerPage.qml, apps/desktop-qt/tests/native/features/TokenEconomizerSteps.cpp (the plugin's page)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port)
 
 @plugin-token-economizer
@@ -81,7 +82,7 @@ Feature: TokenEconomizer learns from a project's earlier threads
     When the person sets "historyDays" to 0
     Then the settings are refused, naming "historyDays"
 
-  @desktop @mobile @tui @backlog
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The person sees a project's import and forgets what it learned from the plugin's page
     Given TokenEconomizer's history import on a project is under way
     When the person opens TokenEconomizer's page

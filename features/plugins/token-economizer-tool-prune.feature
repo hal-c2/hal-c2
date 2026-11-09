@@ -6,6 +6,7 @@
 #   plugins/token-economizer/plugin.json (toolPrune, toolPruneEvidence, toolPruneMinSessions, toolPruneSessions, toolPruneQuietMinutes, toolPruneProtect)
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's tools, kept for the whole conversation)
 #   microsoft/TokenEconomizer@cb42207e3e09 tokeneconomizer/toolprune/, tokeneconomizer/plugin/fold.py, denylist.py, adapter.py (what this ports)
+#   plugins/token-economizer/ui/TokenEconomizerPage.qml, apps/desktop-qt/tests/native/features/TokenEconomizerSteps.cpp (the plugin's page)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port)
 
 @plugin-token-economizer
@@ -95,21 +96,21 @@ Feature: TokenEconomizer's tool pruning
     Then tool pruning answers that it has no evidence for that project
     And tool pruning keeps nothing for that project
 
-  @backlog
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The plugin's page shows what is off, proposed and kept, and lets the person apply and restore
     Given a project where "CronCreate" is turned off for Claude
     When the person opens TokenEconomizer's page
     Then the page shows "CronCreate" as off, with the evidence for it
     And the page offers to give it back
 
-  @backlog
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The plugin's page shows that pruning is held off while a thread's turns cannot be read back
     Given tool pruning heard only part of a turn of a Claude thread in a project
     And it could not read that turn back from the thread
     When the person opens TokenEconomizer's page
     Then the page shows that nothing is turned off for the project's new conversations until that thread is read back
 
-  @backlog
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The plugin's page shows a thread moved away apart from those holding pruning off
     Given tool pruning heard only part of a turn of a Claude thread in a project
     And the thread moved to another machine before that turn could be read back
