@@ -47,6 +47,21 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
 
   def refuse_every(_stage, _stream_id), do: :ok
 
+  # The store's first write waits for the test's go.
+  def hold_once(test, gate, :append_change, _stream_id) do
+    if self() == Process.whereis(HalC2.Store) and Process.put({:held, gate}, true) == nil do
+      send(test, {:held, gate, self()})
+
+      receive do
+        {:go, ^gate} -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  def hold_once(_test, _gate, _stage, _stream_id), do: :ok
+
   test "a run the store failed ends the work in its subagents' threads once it recovers",
        %{work: work} do
     {pid, runtime, run} = running_turn(work)
@@ -230,6 +245,39 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
     await(fn -> match?([%{"status" => "failed"}], list(@tid, "run")) end)
     assert [%{"status" => "failed"}] = list(@tid, "subagent")
     assert %{"status" => "failed"} = command(child)
+  end
+
+  # Review of #1398: the runtime can go after a try took it for alive and before the
+  # try's end is recorded. The run is recorded with its subagent kept running; the try
+  # after ends what went with the runtime.
+  test "a runtime that goes while the run's end is recorded takes its subagent with it",
+       %{work: work} do
+    {pid, runtime, run} = running_turn(work)
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    child_command(pid, runtime, native)
+    [%{"childThreadId" => child}] = list(@tid, "subagent")
+
+    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :refuse_every, []})
+    completed = Map.put(native, "turn", %{"id" => native["turnId"], "status" => "completed"})
+    notify(pid, runtime, "turn/completed", completed)
+    assert {:unrecorded, _} = TurnWatch.attempted(run)
+
+    # The next try holds at its first write, the runtime alive when it started.
+    gate = make_ref()
+    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :hold_once, [self(), gate]})
+    assert_receive {:held, ^gate, store}, 5_000
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+    send(store, {:go, gate})
+
+    await(fn ->
+      match?([%{"status" => "failed"}], list(@tid, "run")) and
+        match?(%{"status" => "failed"}, command(child))
+    end)
+
+    assert [%{"status" => "failed"}] = list(@tid, "subagent")
+    assert %{"status" => "failed"} = item(@tid, "subagent")
   end
 
   # The subagent an earlier run left running is ended by the run's end however long

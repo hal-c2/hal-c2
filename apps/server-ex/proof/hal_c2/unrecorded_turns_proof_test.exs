@@ -46,12 +46,14 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Orchestration.TurnWatch handle_call {:claim, _, _, _}" => "take",
       "HalC2.Orchestration.TurnWatch handle_cast {:release, _}" => "finish",
       "HalC2.Orchestration.TurnWatch handle_cast {:unrecorded, _, _, _}" =>
-        ~w(unrecorded hand-over deadline record),
+        ~w(unrecorded hand-over deadline try),
       "HalC2.Orchestration.TurnWatch handle_call {:driven?, _}" =>
         ~w(interrupt-driven interrupt-undriven),
-      "HalC2.Orchestration.TurnWatch handle_info {:DOWN, _, :process, _, _}" => "gone",
-      "HalC2.Orchestration.TurnWatch handle_info {:retry, _}" => "record",
-      "HalC2.Orchestration.TurnWatch handle_info {:attempted, _, _}" => ~w(record attempt-failed),
+      "HalC2.Orchestration.TurnWatch handle_info {:DOWN, _, :process, _, _}" => ~w(gone try),
+      "HalC2.Orchestration.TurnWatch handle_info {:retry, _}" => "try",
+      # A try that recorded the run, its runtime gone meanwhile, starts the next.
+      "HalC2.Orchestration.TurnWatch handle_info {:attempted, _, _}" =>
+        ~w(commit attempt-failed try),
       # A turn left over is stopped first, and the new one waits for its end.
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take hold refuse-start),
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupt-driven unrecorded),
@@ -212,7 +214,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
         {"goalStop goals", "overwritten", "a dry goal hold handing over its completed turn"},
         {"reend goals", "overwritten", "the run's end leaving a provider turn that ended"},
         {"noLeftoverRetry", "stale", "a left-over turn's refused end being tried again"},
-        {"noWatchHeld", "stale", "TurnWatch watching a runtime whose end it holds"}
+        {"noWatchHeld", "stale", "TurnWatch watching a runtime whose end it holds"},
+        {"noRecheck", "stale", "a try that recorded the run looking again at its runtime"}
       ] do
     [part | with] = String.split(part)
 

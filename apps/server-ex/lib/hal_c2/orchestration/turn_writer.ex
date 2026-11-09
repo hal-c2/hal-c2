@@ -952,7 +952,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   its recorded end would have. Without it, or with `lost: true` (the runtime went
   before the end recorded, its app-server with it), everything the run left open ends.
   With `lost: true`, so does the work the runtime kept running from the earlier runs
-  of its provider instance (`held/2`).
+  of its provider instance (`held/2`), and of a run already ended, everything it left
+  open and a provider turn still read as running (a runtime that went as the run's end
+  recorded).
 
   `leftover:`, `{id, status}`, is how a provider turn an earlier run left running
   ended, which the runtime heard and the store refused (`provider_turn_ended/3`).
@@ -969,7 +971,7 @@ defmodule HalC2.Orchestration.TurnWriter do
         else: MapSet.union(MapSet.new(opts[:ended] || []), held(stream, run_id))
 
     # First, so a child thread the store refuses leaves the run to be tried again.
-    if active?(stream, run_id),
+    if active?(stream, run_id) or not keep?,
       do: NativeSubagent.settle_run_children(thread_id, run_id, status, at, ended, keep?)
 
     {scope_id, checkpoint, cwd} = stopped_checkpoint(thread_id, run_id, status, at)
@@ -998,6 +1000,20 @@ defmodule HalC2.Orchestration.TurnWriter do
                 )
 
             {Enum.filter(changes, &is_tuple/1), {state, queue_starts?(stream, thread_id)}}
+
+          # Its runtime went as its end recorded: what it kept running went with it.
+          %{} = run when not keep? ->
+            ids = abandoned_turn(stream, thread_id, run).turn.ids
+            turn = opts[:provider_turn] || run["status"]
+
+            changes =
+              left_open(stream, run, status, at, ended, false) ++
+                if(turn != "running",
+                  do: leftover_ended(stream, {ids[:provider_turn], turn}, at),
+                  else: []
+                )
+
+            {Enum.filter(changes, &is_tuple/1), {:already, recorded?(stream, checkpoint)}}
 
           _ ->
             {[], {:already, recorded?(stream, checkpoint)}}

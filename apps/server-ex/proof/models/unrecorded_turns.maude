@@ -63,10 +63,11 @@ mod UNRECORDED-TURNS is
   --- the run is still active, the failure going with its turn however it ended, a dry
   --- goal hold handing its completed turn over as completed, and the run's end leaving
   --- a provider turn recorded as ended as it is (TurnWriter.ended/7), a left-over
-  --- turn's end the store refused being tried again, and TurnWatch watching the runtime
-  --- of every end it holds.
+  --- turn's end the store refused being tried again, TurnWatch watching the runtime
+  --- of every end it holds, and a try that recorded the run looking again at a runtime
+  --- that went while it ran.
   ops noRetry nowTime overwrite noLeftoverStop noLeftoverWait noInterrupt notDriven noActiveCheck
-    keepMark goalStop reend noLeftoverRetry noWatchHeld : -> Sw [ctor] .
+    keepMark goalStop reend noLeftoverRetry noWatchHeld noRecheck : -> Sw [ctor] .
   op off : Sw -> Item [ctor] .
 
   --- Codex pursues a goal.
@@ -113,8 +114,10 @@ mod UNRECORDED-TURNS is
   op mark : Rid Nat -> Item [ctor] .
 
   --- TurnWatch: a run's end held until the store takes it (time, provider turn, and
-  --- whether a try has failed), and a runtime's `:DOWN` it has yet to act on.
+  --- whether a try has failed), a try at it on its way (the task of try_record/2) with
+  --- the provider turn it took, and a runtime's `:DOWN` it has yet to act on.
   op pend : Rid Nat Pv Bool -> Item [ctor] .
+  op try : Rid Pv -> Item [ctor] .
   op downed : Rid -> Item [ctor] .
 
   --- Boot recovery still to run; the next message, sent and dispatched; a user's stop.
@@ -130,7 +133,7 @@ mod UNRECORDED-TURNS is
   vars R R' : Rid .
   vars S S' : St .
   var X : Rpt .
-  var P : Pv .
+  vars P P' : Pv .
   var Z : Rs .
   vars N T M K F : Nat .
   vars B B' : Bool .
@@ -172,6 +175,7 @@ mod UNRECORDED-TURNS is
   op wiped : Conf -> Conf .
   eq wiped(pend(R, T, P, B) C) = forgot(R) wiped(C) .
   eq wiped(downed(R) C) = wiped(C) .
+  eq wiped(try(R, P) C) = wiped(C) .
   eq wiped(lend(R, S, B) C) = wiped(C) .
   eq wiped(settling C) = wiped(C) .
   eq wiped(rt(Y) C) = rt(down) wiped(C) .
@@ -234,6 +238,16 @@ mod UNRECORDED-TURNS is
   op downs? : Conf Rid -> Bool .
   eq downs?(downed(R) C, R) = true .
   eq downs?(C, R) = false [owise] .
+  op trying : Conf Rid -> Bool .
+  eq trying(try(R, P) C, R) = true .
+  eq trying(C, R) = false [owise] .
+  op up : Conf -> Bool .
+  eq up(store(true) C) = true .
+  eq up(C) = false [owise] .
+  --- How TurnWatch reads a held end: a runtime that went before its `:DOWN` reached it
+  --- went as one that had.
+  op seen : Conf Rid Pv -> Pv .
+  eq seen(C, R, P) = (if downs?(C, R) and not has(C, noWatchHeld) then went(P) else P fi) .
   op holds : Conf -> Bool .
   eq holds(pend(R, T, P, B) C) = true .
   eq holds(C) = false [owise] .
@@ -379,28 +393,44 @@ mod UNRECORDED-TURNS is
   --- An end no turn of the runtime's takes is dropped (`notification/3`, no turn).
   crl [ignored-end] : { endmsg(R, S) C } => { C } if not hears(C, R) .
 
-  --- TurnWatch's try at a held end, once the provider turn's end is known, in
-  --- try_record/2 and TurnWriter.abandon/5: the run fails at the time it failed, its
-  --- provider turn as it ended. A run already ended is left as it is. A runtime that went
-  --- before its `:DOWN` reached TurnWatch is gone to the try as to [gone].
-  crl [record] : { store(true) clock(N) pend(R, T, P, B) run(R, active) ends(R, K) rpt(R, X) C }
+  --- TurnWatch's try at a held end, once the provider turn's end is known (try_record/2),
+  --- one at a time; one that failed waits for the store. It takes the provider turn as
+  --- the runtime stands at its start.
+  crl [try] : { pend(R, T, P, B) C } => { pend(R, T, P, B) try(R, seen(C, R, P)) C }
+    if P =/= pending /\ not trying(C, R) /\ (not B or up(C)) .
+
+  --- The try's TurnWriter.abandon/5 and {:attempted, _, :ok}: the run fails at the time it
+  --- failed, its provider turn as the try took it.
+  rl [commit] : { store(true) clock(N) pend(R, T, P, B) try(R, P') run(R, active) ends(R, K)
+      rpt(R, X) C }
     => { store(true) clock(N) run(R, over(failed, (if has(C, nowTime) then N else T fi)))
-         ends(R, s K)
-         rpt(R, written(has(C, overwrite), has(C, reend),
-           (if downs?(C, R) and not has(C, noWatchHeld) then went(P) else P fi), X))
-         watched(R) C }
-    if P =/= pending .
-  crl [record] : { store(true) pend(R, T, P, B) run(R, over(S, M)) ends(R, K) C }
+         ends(R, s K) rpt(R, written(has(C, overwrite), has(C, reend), P', X)) watched(R)
+         again(C, R, T, P, P', B) } .
+  --- A run already ended is left as it is (abandon/5's check that it is still active), but
+  --- for a provider turn still read as running, which a try after its runtime went ends
+  --- as that runtime's end says.
+  crl [commit] : { store(true) pend(R, T, P, B) try(R, P') run(R, over(S, M)) ends(R, K) C }
     => { store(true) run(R, over(failed, T)) ends(R, s K) watched(R) C }
-    if P =/= pending /\ has(C, noActiveCheck) .
-  crl [record] : { store(true) pend(R, T, P, B) run(R, over(S, M)) C }
-    => { store(true) run(R, over(S, M)) C }
-    if P =/= pending /\ not has(C, noActiveCheck) .
+    if has(C, noActiveCheck) .
+  crl [commit] : { store(true) pend(R, T, P, B) try(R, P') run(R, over(S, M)) rpt(R, X) C }
+    => { store(true) run(R, over(S, M)) rpt(R, (if X == running then settles(P', X) else X fi))
+         again(C, R, T, P, P', B) }
+    if not has(C, noActiveCheck) .
+
+  --- After a try recorded: a runtime that went while it ran leaves the end held, as
+  --- TurnWatch reads it now, for a try at the recorded run; otherwise TurnWatch forgets
+  --- the run, its `:DOWN` flushed (forget/2). The code tries again on `lost` alone; here
+  --- that shows only in the provider turn, which is all a try changes in this model.
+  op again : Conf Rid Nat Pv Pv Bool -> Conf .
+  eq again(downed(R) C, R, T, P, P', B) =
+    (if seen(downed(R) C, R, P) =/= P' and not has(C, noRecheck)
+     then downed(R) pend(R, T, seen(downed(R) C, R, P), B) else empty fi) C .
+  eq again(C, R, T, P, P', B) =
+    (if P =/= P' and not has(C, noRecheck) then pend(R, T, P, B) else empty fi) C [owise] .
 
   --- {:attempted, _, {:error, _}}: the store refused the try; it is retried.
-  crl [attempt-failed] : { store(false) pend(R, T, P, false) C }
-    => { store(false) (if has(C, noRetry) then empty else pend(R, T, P, true) fi) C }
-    if P =/= pending .
+  rl [attempt-failed] : { store(false) pend(R, T, P, B) try(R, P') C }
+    => { store(false) (if has(C, noRetry) then empty else pend(R, T, P, true) fi) C } .
 
   --- TurnWatch's `:DOWN` of a crashed runtime: the end it held keeps its time, or the
   --- run fails now; the provider turn went with the runtime, one it could not stop
@@ -528,6 +558,7 @@ mod UNRECORDED-TURNS is
   eq quiet({ start(R) C }) = false .
   eq quiet({ pend(R, T, P, B) C }) = false .
   eq quiet({ downed(R) C }) = false .
+  eq quiet({ try(R, P) C }) = false .
   eq quiet({ settling C }) = false .
   eq quiet({ endmsg(R, S) C }) = false .
   eq quiet({ asked(R) C }) = false .

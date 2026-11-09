@@ -18,7 +18,8 @@ defmodule HalC2.Orchestration.TurnWatch do
   same way. Until it is recorded the run reads as running and nothing else ends it,
   and the runtime stays watched: one that goes first took its app-server with it, so
   the work it kept running ends with the run, and a provider turn it could not stop
-  reads as interrupted.
+  reads as interrupted. One that goes while a try runs leaves that try's end short of
+  what went with it: the try after ends that too, the run already recorded.
   An MC that stops first loses it: the next boot settles the run
   (`HalC2.Orchestration.Recovery`), with its own time.
   """
@@ -157,9 +158,16 @@ defmodule HalC2.Orchestration.TurnWatch do
   def handle_info({:attempted, run_id, result}, state) do
     case {result, state.pending} do
       {:ok, %{^run_id => ending}} ->
-        {waiters, state} = pop_in(state.waiters[run_id])
-        for from <- waiters || [], do: GenServer.reply(from, {:recorded, ending.at})
-        {:noreply, forget(%{state | pending: Map.delete(state.pending, run_id)}, run_id)}
+        claim = state.claims[run_id]
+        ending = if claim && lost?(elem(claim, 1)), do: gone(ending), else: ending
+
+        # The runtime went while the try ran, its `:DOWN` heard or not: the work it
+        # kept running went with it, which the next try ends, the run recorded.
+        if ending[:lost] == true and ending[:tried_lost] != true,
+          do:
+            {:noreply,
+             try_record(put_in(state.pending[run_id], %{ending | trying: false}), run_id)},
+          else: {:noreply, recorded(state, run_id, ending)}
 
       {{:error, error}, %{^run_id => ending}} ->
         failures = ending.failures + 1
@@ -182,19 +190,25 @@ defmodule HalC2.Orchestration.TurnWatch do
   def code_change(_old, %{claims: _} = state, _extra), do: {:ok, state}
   def code_change(_old, claims, _extra), do: {:ok, %{claims: claims, pending: %{}, waiters: %{}}}
 
+  defp recorded(state, run_id, ending) do
+    {waiters, state} = pop_in(state.waiters[run_id])
+    for from <- waiters || [], do: GenServer.reply(from, {:recorded, ending.at})
+    forget(%{state | pending: Map.delete(state.pending, run_id)}, run_id)
+  end
+
   # One try at a time, off this process: ending a run writes to the thread and starts
-  # the next one. A run whose provider turn has not ended yet waits for it.
+  # the next one. A run whose provider turn has not ended yet waits for it. What the
+  # try took of its runtime (`tried_lost`) is kept for when it is answered.
   defp try_record(state, run_id) do
     case state.pending do
       %{^run_id => %{trying: false, provider_turn: provider_turn} = ending}
       when provider_turn != :pending ->
         watch = self()
         claim = state.claims[run_id]
+        # A runtime that went before its `:DOWN` reached here went as one that had.
+        ending = if claim && lost?(elem(claim, 1)), do: gone(ending), else: ending
 
         Task.start(fn ->
-          # A runtime that went before its `:DOWN` reached here went as one that had.
-          ending = if claim && lost?(elem(claim, 1)), do: gone(ending), else: ending
-
           result =
             try do
               TurnWriter.abandon(ending.thread, run_id, "failed", ending.failure,
@@ -215,7 +229,10 @@ defmodule HalC2.Orchestration.TurnWatch do
           send(watch, {:attempted, run_id, result})
         end)
 
-        put_in(state.pending[run_id].trying, true)
+        put_in(
+          state.pending[run_id],
+          Map.merge(ending, %{trying: true, tried_lost: ending[:lost] == true})
+        )
 
       _ ->
         state
