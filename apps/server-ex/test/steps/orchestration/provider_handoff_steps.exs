@@ -1059,28 +1059,17 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
 
   step "the user sends the command {string} with an image to {string}",
        %{args: [text, thread]} = context do
-    png = <<137, 80, 78, 71, 13, 10, 26, 10>>
+    send_with(
+      context,
+      thread,
+      text,
+      attach("image", "a.png", "image/png", <<137, 80, 78, 71, 13, 10, 26, 10>>)
+    )
+  end
 
-    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
-      HalC2.Attachments.create_upload_url(%{
-        "name" => "a.png",
-        "mimeType" => "image/png",
-        "sizeBytes" => byte_size(png)
-      })
-
-    :ok = HalC2.Attachments.store(token, png)
-
-    image = %{
-      "type" => "image",
-      "id" => id,
-      "name" => "a.png",
-      "mimeType" => "image/png",
-      "sizeBytes" => byte_size(png)
-    }
-
-    context = World.dispatch_message(context, thread, text, %{"attachments" => [image]})
-    assert {:ok, _} = context.reply
-    context |> Map.delete(:reply) |> Map.put(:thread, thread)
+  step "the user sends the command {string} with a text file to {string}",
+       %{args: [text, thread]} = context do
+    send_with(context, thread, text, attach("file", "notes.txt", "text/plain", "the notes\n"))
   end
 
   step "Claude gets the conversation and the image ahead of {string}",
@@ -1097,6 +1086,32 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
            ] = blocks
 
     assert String.ends_with?(history, @history_end <> "\n\n")
+    Map.put(context, :blocks, blocks)
+  end
+
+  step "Claude gets the image ahead of {string} with no conversation",
+       %{args: [command]} = context do
+    await_goal(context, String.replace_prefix(command, "/goal ", ""))
+    blocks = List.last(claude_messages(context))
+
+    assert [
+             %{"type" => "text", "text" => "[Attached image \"a.png\" is saved at: " <> _},
+             %{"type" => "image"},
+             %{"type" => "text", "text" => ^command}
+           ] = blocks
+
+    Map.put(context, :blocks, blocks)
+  end
+
+  step "Claude gets where the file is saved ahead of {string}", %{args: [command]} = context do
+    await_goal(context, String.replace_prefix(command, "/goal ", ""))
+    blocks = List.last(claude_messages(context))
+
+    assert [
+             %{"type" => "text", "text" => "[Attached file \"notes.txt\" is saved at: " <> _},
+             %{"type" => "text", "text" => ^command}
+           ] = blocks
+
     Map.put(context, :blocks, blocks)
   end
 
@@ -1596,6 +1611,33 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   # Sends `text` and waits for its run to finish. A whole turn starts a fake provider
   # process, which on a loaded machine takes longer than the usual wait.
   # A thread on Codex the fake answers, Claude's prompts logged for after a switch.
+  # An uploaded attachment of `type`, as a message carries it.
+  defp attach(type, name, mime, bytes) do
+    {:ok, %{"attachmentId" => id, "relativeUrl" => "/api/attachments/upload/" <> token}} =
+      HalC2.Attachments.create_upload_url(%{
+        "type" => type,
+        "name" => name,
+        "mimeType" => mime,
+        "sizeBytes" => byte_size(bytes)
+      })
+
+    :ok = HalC2.Attachments.store(token, bytes)
+
+    %{
+      "type" => type,
+      "id" => id,
+      "name" => name,
+      "mimeType" => mime,
+      "sizeBytes" => byte_size(bytes)
+    }
+  end
+
+  defp send_with(context, thread, text, attachment) do
+    context = World.dispatch_message(context, thread, text, %{"attachments" => [attachment]})
+    assert {:ok, _} = context.reply
+    context |> Map.delete(:reply) |> Map.put(:thread, thread)
+  end
+
   defp run(context, thread, text, extra \\ %{}) do
     done = length(finished(context, thread))
     context = World.dispatch_message(context, thread, text, extra)

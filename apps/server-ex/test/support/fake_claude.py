@@ -401,10 +401,15 @@ for line in sys.stdin:
     record("user", text)
     # What the fake does is the user's message, not the history handed over before it.
     full, text = text, text.rsplit("</conversation_history>\n\n", 1)[-1]
-    # Claude runs a command from the last block of a message in blocks.
-    last = content[-1] if isinstance(content, list) and content else None
-    if isinstance(last, dict) and last.get("type") == "text" and last.get("text", "").lstrip().startswith("/"):
-        text = last["text"]
+    # Claude runs a command only from the last block of a message in blocks: a command
+    # in an earlier block, or ahead of an image, is words.
+    commands = True
+    if isinstance(content, list) and content:
+        last = content[-1]
+        if isinstance(last, dict) and last.get("type") == "text":
+            text = last.get("text", "")
+        else:
+            commands = False
     # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
     # automatic resume with a 429 naming no reset.
     if os.path.exists(os.environ.get("FAKE_CLAUDE_REJECT_RESUME_FILE", "")) and text == "Continue where you left off.":
@@ -412,7 +417,7 @@ for line in sys.stdin:
         continue
     # "/compact": Claude summarises the conversation (compact_boundary) and answers with
     # a result that echoes the message's uuid, as Claude Code 2.1.285 does.
-    if text == "/compact":
+    if commands and text == "/compact":
         lifecycle("started")
         send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
               "compact_metadata": {"trigger": "manual", "pre_tokens": 27445, "post_tokens": 1192}})
@@ -428,7 +433,7 @@ for line in sys.stdin:
     # task-agent-N) and ends the turn while it runs, deferring the check. "/goal" alone
     # says the goal's state, "/goal clear" clears it. Like Claude Code, it reads "/goal
     # pause" as a goal named "pause".
-    if text == "/goal" or text.startswith("/goal "):
+    if commands and (text == "/goal" or text.startswith("/goal ")):
         synthetic = lambda said: send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"goal-uuid-{turn}",
                                        "message": {"id": f"m{turn}goal", "model": "<synthetic>", "role": "assistant", "content": [{"type": "text", "text": said}]}})
         objective = text[len("/goal"):].strip()

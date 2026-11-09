@@ -406,6 +406,24 @@ Feature: Changing model and provider mid-thread
     And the command is the last block of the message
     And Claude sets the goal "make the tests pass"
 
+  # With no conversation to hand over, what came with the command still goes ahead of it.
+  @mc
+  Scenario: A slash command sent with an image on a thread that has always used Claude comes last
+    Given thread "t2" has completed runs on "claudeAgent" with model "claude-haiku"
+    When the user sends the command "/goal make the tests pass" with an image to "t2"
+    Then Claude gets the image ahead of "/goal make the tests pass" with no conversation
+    And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
+
+  # A file that is not an image is only a note of where it is saved, and that goes ahead too.
+  @mc
+  Scenario: A slash command sent with a file on a thread that has always used Claude comes last
+    Given thread "t2" has completed runs on "claudeAgent" with model "claude-haiku"
+    When the user sends the command "/goal make the tests pass" with a text file to "t2"
+    Then Claude gets where the file is saved ahead of "/goal make the tests pass"
+    And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
+
   # Codex's `/goal <objective>` sends its own prompt for the goal's first turn, and the
   # conversation goes ahead of it: the turn starting confirms the handoff, so history
   # left out then would never be sent.
