@@ -352,10 +352,15 @@ defmodule HalC2.Orchestration.TurnWriter do
           Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
         ]
 
-        {Enum.filter(changes, &is_tuple/1), observing && heard_end(before, ended, %{})}
+        # Its turn may have gone: its node names its provider.
+        provider =
+          get_in(StreamState.fetch(stream, "node", node_id) || %{}, ["nativeItemRef", "driver"])
+
+        heard = observing && heard_end(before, ended, %{})
+        {Enum.filter(changes, &is_tuple/1), heard && {heard, provider}}
       end)
 
-    if current, do: observed_item_event(state, status, current)
+    with {item, provider} <- current, do: observed_item_event(state, status, item, provider)
     state
   end
 
@@ -385,7 +390,7 @@ defmodule HalC2.Orchestration.TurnWriter do
     :ok
   end
 
-  defp observed_item_event(state, status, current) do
+  defp observed_item_event(state, status, current, provider \\ nil) do
     HalC2.Plugins.observe(
       current
       |> observed_item()
@@ -394,6 +399,7 @@ defmodule HalC2.Orchestration.TurnWriter do
         "threadId" => state.thread_id,
         # The run it ran in: a background command can end after its turn did.
         "runId" => current["runId"] || state.turn.ids.run,
+        "provider" => provider || (state.turn && Entities.driver(state.turn.ids)),
         "status" => heard_status(status)
       })
     )

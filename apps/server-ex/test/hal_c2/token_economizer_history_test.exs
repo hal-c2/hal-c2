@@ -440,6 +440,41 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert Enum.map(runs, & &1["subagents"]) == [true, true, false, false]
   end
 
+  test "a Claude subagent's call heard after its thread went on in Codex protects Claude's tool",
+       %{thread: thread, project: p} do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+    {:ok, _} =
+      Registry.register(HalC2.Plugins.Hooks, {:observe, "listener"}, %{
+        id: "listener",
+        dropped: :counters.new(1, [])
+      })
+
+    {:ok, state} = TokenEconomizer.init(%{})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+
+    ids = %{
+      thread: thread,
+      run: "r1",
+      root_node: "node:root:r1",
+      provider_thread: "pt",
+      driver: "claudeAgent"
+    }
+
+    sub = NativeSubagent.start(ids, "agent-1", %{"prompt" => "Schedule it"})
+    state = Enum.reduce(heard(), state, &observe(&2, &1))
+    state = observe(state, finished(thread, "r1", 1))
+    # The thread goes on in Codex while the Claude subagent works in the background.
+    state = observe(state, started(thread, "r2", p, %{"provider" => "codex"}))
+
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", %{
+      "providerToolName" => "CronCreate"
+    })
+
+    state = Enum.reduce(heard(), state, &observe(&2, &1))
+    assert "CronCreate" in state.prunes[{p, "claudeAgent"}]["used"]
+  end
+
   test "a thread's history says a subagent resumed later worked in neither the turns between nor after",
        %{thread: thread} do
     at = &"2026-11-09T10:0#{&1}:00.000Z"
@@ -542,6 +577,15 @@ defmodule HalC2.TokenEconomizerHistoryTest do
            }}
         ] ++ rows
       )
+  end
+
+  # What this process, listening as a plugin's feed, heard so far.
+  defp heard do
+    receive do
+      {:observe, event} -> [event | heard()]
+    after
+      0 -> []
+    end
   end
 
   defp observe(state, event) do

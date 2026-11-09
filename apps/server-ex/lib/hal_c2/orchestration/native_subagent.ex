@@ -159,7 +159,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
     if HalC2.Plugins.observing?() do
       item
       |> TurnWriter.observed_item()
-      |> Map.merge(%{"type" => "turn.item", "threadId" => ids.thread, "runId" => ids.run})
+      |> Map.merge(%{
+        "type" => "turn.item",
+        "threadId" => ids.thread,
+        "runId" => ids.run,
+        "provider" => Entities.driver(ids)
+      })
       |> HalC2.Plugins.observe()
     end
   end
@@ -479,6 +484,8 @@ defmodule HalC2.Orchestration.NativeSubagent do
         "type" => "turn.item",
         "threadId" => sub.thread,
         "runId" => Map.get(sub, :run),
+        # The provider of the run that started it, though the thread went on in another.
+        "provider" => sub.driver,
         "subagent" => true
       })
       |> HalC2.Plugins.observe()

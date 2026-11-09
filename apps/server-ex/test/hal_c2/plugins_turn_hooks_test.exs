@@ -614,8 +614,12 @@ defmodule HalC2.PluginsTurnHooksTest do
                     %{"type" => "turn.item", "itemType" => "command_execution"} = stopped},
                    5_000
 
-    assert %{"status" => "interrupted", "input" => "npm run dev", "runId" => ^codex_run} =
-             stopped
+    assert %{
+             "status" => "interrupted",
+             "input" => "npm run dev",
+             "runId" => ^codex_run,
+             "provider" => "codex"
+           } = stopped
 
     {:ok, _} = send_message(claude, "m1", "background commands: build")
     [%{"id" => claude_run}] = await_statuses(claude, ["completed"])
@@ -626,7 +630,8 @@ defmodule HalC2.PluginsTurnHooksTest do
                     %{"type" => "turn.item", "threadId" => ^claude, "tool" => "Bash"} = ended},
                    5_000
 
-    assert %{"status" => "interrupted", "runId" => ^claude_run} = ended
+    assert %{"status" => "interrupted", "runId" => ^claude_run, "provider" => "claudeAgent"} =
+             ended
   end
 
   test "a plugin hears what a Claude edit changed and what a web call searched for" do

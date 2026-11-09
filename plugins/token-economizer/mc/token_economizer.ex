@@ -542,25 +542,32 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   defp hear_prune(state, %{"type" => "turn.item", "threadId" => thread_id} = item) do
-    case state.convs[thread_id] do
-      nil ->
+    case {state.convs[thread_id], item["provider"]} do
+      {nil, _} ->
         state
 
-      conv ->
+      # A use of a run on another provider than the thread's now, heard after the thread
+      # went on (a subagent of that run's, still at work): its segment has folded, so the
+      # use is that provider's evidence alone.
+      {%{project: {project_id, provider}}, other} when is_binary(other) and other != provider ->
+        project = {project_id, other}
+
+        case Prune.unit_for_provider(other) do
+          nil ->
+            state
+
+          unit ->
+            {_prune, state} = prune(state, project, unit)
+            note_used(state, project, Prune.used_in_item(item, unit))
+        end
+
+      {conv, _} ->
         unit = Prune.unit_for_provider(elem(conv.project, 1))
         used = Prune.used_in_item(item, unit)
         conv = %{conv | used: Enum.uniq(conv.used ++ used)}
         state = put_in(state.convs[thread_id], conv)
         {prune, state} = prune(state, conv.project, unit)
-        state = touch(state, conv.project, prune)
-        # A use protects its tool at once, not only when the segment folds.
-        noted = Prune.note_used(state.prunes[conv.project], used, prune_cfg(state))
-
-        if noted != state.prunes[conv.project] do
-          state |> put_prune(conv.project, noted, true) |> publish_prune()
-        else
-          state
-        end
+        state |> touch(conv.project, prune) |> note_used(conv.project, used)
     end
   end
 
@@ -598,6 +605,17 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   defp hear_prune(state, _event), do: state
+
+  # A use protects its tool at once, not only when the segment folds.
+  defp note_used(state, project, used) do
+    noted = Prune.note_used(state.prunes[project], used, prune_cfg(state))
+
+    if noted != state.prunes[project] do
+      state |> put_prune(project, noted, true) |> publish_prune()
+    else
+      state
+    end
+  end
 
   defp default_loaded(state, project, unit) do
     {prune, _state} = prune(state, project, unit)
