@@ -21,9 +21,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   alias HalC2Plugins.TokenEconomizer.LoopGuard.State
 
   @shells ~w(sh bash zsh dash ksh)
-  # A heredoc's delimiter, quoted (`<<'EOF-CODE'`, `<<"END"`) or not (`<<EOF`, `<<\EOF`);
-  # not a here-string (`<<<`).
-  @heredoc_start ~r/(?<!<)<<-?\s*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z_][^\s'"<>|&;()]*))/
+  # A heredoc: `<<` or `<<-`, then its delimiter, any word, quoted in whole or part or
+  # not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`); not a here-string (`<<<`).
+  @heredoc_start ~r/(?<!<)<<(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
   # Redirects that write their operand.
   @out [">", ">>", ">|", "&>", "&>>"]
@@ -176,28 +176,43 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   @doc """
   The command's shell text without heredoc bodies, and the bodies: every heredoc a line
-  opens (`cat <<A <<B`), read in order.
+  opens (`cat <<A <<B`), read in order. A body ends only at its delimiter alone on a line
+  (after leading tabs, for `<<-`), as the shell's does; one never ended runs to the end. A
+  line continued with a backslash is one line, and its heredocs start after it.
   """
   def split_heredocs(cmd) do
-    {shell, bodies, tags, body} =
-      cmd
-      |> String.split("\n")
-      |> Enum.reduce({[], [], [], []}, fn
-        line, {shell, bodies, [], []} ->
-          tags =
-            for [_ | tags] <- Regex.scan(@heredoc_start, line),
-                do: Enum.find(tags, &(&1 != ""))
-
-          {[line | shell], bodies, tags, []}
-
-        line, {shell, bodies, [tag | rest] = tags, body} ->
-          if String.trim(line) == tag,
-            do: {shell, [Enum.join(Enum.reverse(body), "\n") | bodies], rest, []},
-            else: {shell, bodies, tags, [line | body]}
-      end)
-
-    bodies = if tags != [], do: [Enum.join(Enum.reverse(body), "\n") | bodies], else: bodies
+    {shell, bodies} = shell_lines(String.split(cmd, "\n"), [], [])
     {shell |> Enum.reverse() |> Enum.join("\n"), Enum.reverse(bodies)}
+  end
+
+  defp shell_lines([], shell, bodies), do: {shell, bodies}
+
+  defp shell_lines(lines, shell, bodies) do
+    {line, rest} = logical_line(lines)
+
+    docs =
+      for [_, dash, word] <- Regex.scan(@heredoc_start, line),
+          do: {dash == "-", Regex.replace(~r/\\(.)|['"]/, word, "\\1")}
+
+    {bodies, rest} = read_bodies(docs, rest, bodies)
+    shell_lines(rest, [line | shell], bodies)
+  end
+
+  defp logical_line([line | rest]) do
+    if rest != [] and Regex.match?(~r/(?<!\\)(?:\\\\)*\\$/, line) do
+      {next, rest} = logical_line(rest)
+      {binary_part(line, 0, byte_size(line) - 1) <> next, rest}
+    else
+      {line, rest}
+    end
+  end
+
+  defp read_bodies([], lines, bodies), do: {bodies, lines}
+
+  defp read_bodies([{dash, tag} | docs], lines, bodies) do
+    ends? = fn line -> if(dash, do: String.trim_leading(line, "\t"), else: line) == tag end
+    {body, rest} = Enum.split_while(lines, &(not ends?.(&1)))
+    read_bodies(docs, Enum.drop(rest, 1), [Enum.join(body, "\n") | bodies])
   end
 
   # Simple commands as unquoted word lists, and the files their redirects write.

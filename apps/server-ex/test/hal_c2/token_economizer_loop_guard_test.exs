@@ -704,6 +704,37 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert digest(~s(grep -rn "def handle" src)) =~ ~s(grep -rn "def handle" src)
     end
 
+    test "ends a heredoc where the shell does, and hides the rest when nothing ends it" do
+      for cmd <- [
+            # Any word is a delimiter.
+            "python3 <<123\nSECRET = 1\n123",
+            "cat <<@@ > notes.txt\nSECRET line\n@@",
+            # Only the delimiter alone on its line ends the body: not indented without
+            # `<<-`, nor with a space after it.
+            "cat <<EOF\n  EOF\nSECRET words\nEOF",
+            "cat <<EOF\nEOF \nSECRET words\nEOF",
+            "cat <<\"E\"OF\nSECRET\nEOF\nls",
+            "cat <<EOF\nSECRET"
+          ] do
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # The delimiter is the word without its quotes, and `<<-` drops only leading tabs.
+      assert ShellEdits.split_heredocs("cat <<\"E\"OF\nx\nEOF\nls") ==
+               {"cat <<\"E\"OF\nls", ["x"]}
+
+      assert ShellEdits.split_heredocs("cat <<E\\OF\nx\nEOF\nls") == {"cat <<E\\OF\nls", ["x"]}
+
+      assert ShellEdits.split_heredocs("cat <<-EOF\n\tx\n\tEOF\nls") ==
+               {"cat <<-EOF\nls", ["\tx"]}
+
+      # A line continued with a backslash is one line, and its heredoc starts after it.
+      assert ShellEdits.targets("sed -i \\\n  's/a/b/' a.py") == ["a.py"]
+      assert ShellEdits.targets("cat <<EOF \\\n  > a.py\nSECRET = 1\nEOF\nls") == ["a.py"]
+      refute digest("cat <<EOF \\\n  > a.py\nSECRET = 1\nEOF") =~ "SECRET"
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",
