@@ -1637,6 +1637,28 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the user dismisses a comment of the review of \#{int} while it is being posted",
+       %{args: [number]} = context do
+    context = await_review!(context, number, &(&1["status"] == "publishing"))
+
+    {reply, context} =
+      plugin(context, "dismiss", %{"key" => key(context, number), "commentId" => "c1"})
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user is told the comments stay as posted", context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "its comments stay as posted"
+    context
+  end
+
+  step "the review of \#{int} keeps both comments", %{args: [number]} = context do
+    review = review(GenServer.call(HalC2Plugins.CodeReview, :snapshot), number)
+    assert [%{"dismissed" => false}, %{"dismissed" => false}] = review["comments"]
+    context
+  end
+
   step "once GitHub has it, \#{int} has one review and it is marked as published",
        %{args: [number]} = context do
     context = context |> take_reviews() |> await_review!(number, &(&1["status"] == "published"))

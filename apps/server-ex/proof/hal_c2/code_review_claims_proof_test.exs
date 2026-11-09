@@ -70,7 +70,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.Checkout.prepare/5" => ~w(checkout claim lock),
       "HalC2Plugins.CodeReview.Checkout.remove/2" => "defer",
       "HalC2.Plugins.Host.peers/4" =>
-        ~w(peers started defer post peer-claims note heldBy restart admit tell toldOf restartingOf),
+        ~w(peers started defer post peer-claims note heldBy restart admit tell toldOf restartingOf muted),
       "HalC2.Plugins.Host.peer/3" => ~w(hardBy softBy publishedBy),
       "HalC2.Plugins.Host.pull_requests/3" => ~w(peers post),
       "HalC2.Plugins.Host.cluster_machines/1" => ~w(members membersOf admit over)
@@ -138,6 +138,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "bounce" => "the plugin's server alone goes down, its node connected throughout",
       "restart" => "the plugin, and its machine if down, come back: init/1 and load/0",
       "partition" => "a connection drops",
+      "mute" =>
+        "a connected machine does not answer the others' Host.peers/4 in time, too busy, say",
+      "unmute" => "it answers again, telling no one",
       "connect" => "Discovery connects two machines that are up"
     },
     scenarios: %{
@@ -207,6 +210,24 @@ defmodule HalC2.CodeReviewClaimsProofTest do
   test "members of a cluster that never met run no more reviews than the limits allow",
        %{proof: proof} do
     for init <- @strangers, do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  # A machine that does not answer in time may stop doing so at any step and answer
+  # again at any later one: once for one of the two, twice for both.
+  test "no machine claims, starts or posts a commit over a connected machine that does not answer",
+       %{proof: proof} do
+    for init <- ~w[quiet(1) quiet(2) quietApart(2)],
+        do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  test "machines that do not answer each other in time run no more reviews than the limits allow",
+       %{proof: proof} do
+    for init <- ~w[hushed(2,2) hushed(3,1)], do: refute_reachable(proof, init, "unsafe", [])
+  end
+
+  test "a machine that stepped back for one that did not answer leaves it the review",
+       %{proof: proof} do
+    assert_ltl(proof, "quiet(1)", "<> [] reviewed", fair: ["unmute" | @fair])
   end
 
   test "a push does not start or post a commit twice", %{proof: proof} do

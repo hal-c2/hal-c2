@@ -404,8 +404,6 @@ defmodule HalC2Plugins.CodeReview do
     # Runs and posts are linked to the server, so stopping the plugin stops them; the
     # server itself only hears that one ended.
     Process.flag(:trap_exit, true)
-    :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
-    :ets.new(@starts, [:named_table, :protected, read_concurrency: true])
     # A machine leaving gives back the reviews it had queued; they are looked at again.
     :net_kernel.monitor_nodes(true)
     send(self(), :poll)
@@ -442,9 +440,10 @@ defmodule HalC2Plugins.CodeReview do
       lister: nil
     }
 
-    # What this machine holds is back before a peer can read the table empty.
-    put_claims(state)
-    put_starts(state)
+    # The tables go up with what this machine holds in them: until then a peer reads
+    # that the plugin is restarting (`claims/1`, `starts/0`), never an empty table.
+    table(__MODULE__, claim_rows(state))
+    table(@starts, [{:starts, state.starts}])
     {:ok, state, {:continue, :announce}}
   end
 
@@ -497,6 +496,21 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   defp unpause(state), do: %{state | paused_until: nil, paused_reason: nil}
+
+  # A review queued on an approval it no longer has goes back to not started.
+  defp unqueue(review, settings) do
+    if review["status"] == "queued" and gated(settings, review),
+      do: Map.merge(review, %{"status" => "ready", "queuedAt" => nil}),
+      else: review
+  end
+
+  # An approval vouches for the commit the user looked at: a push since takes it back,
+  # so a head pushed back to that commit later waits for the user again.
+  defp moved_on(%{"approved" => approved, "headSha" => head} = review, settings)
+       when is_binary(approved) and approved != head,
+       do: unqueue(Map.put(review, "approved", nil), settings)
+
+  defp moved_on(review, _settings), do: review
 
   # Every setting applies from here on: the next look watches the repositories saved,
   # a new pace re-arms the wait for it, more room starts queued reviews (less lets the
@@ -604,21 +618,6 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  # A review queued on an approval it no longer has goes back to not started.
-  defp unqueue(review, settings) do
-    if review["status"] == "queued" and gated(settings, review),
-      do: Map.merge(review, %{"status" => "ready", "queuedAt" => nil}),
-      else: review
-  end
-
-  # An approval vouches for the commit the user looked at: a push since takes it back,
-  # so a head pushed back to that commit later waits for the user again.
-  defp moved_on(%{"approved" => approved, "headSha" => head} = review, settings)
-       when is_binary(approved) and approved != head,
-       do: unqueue(Map.put(review, "approved", nil), settings)
-
-  defp moved_on(review, _settings), do: review
-
   # Counts a start against the review limits, under the lock across the machines
   # connected now (`budget/1`), with what the peers answered they started, and
   # answers `{:ok, row, told}`: the start to tell the machines `told` of before it
@@ -699,9 +698,12 @@ defmodule HalC2Plugins.CodeReview do
     {:reply, state.starts, state}
   end
 
+  # A comment is dismissed or kept only while its review waits to be published: once
+  # a post is under way, or done, the findings stay as they were posted.
   def handle_call({:dismiss, key, id, dismissed}, _from, state) do
     with %{} = review <- state.reviews[key],
-         true <- Enum.any?(review["comments"] || [], &(&1["id"] == id)) do
+         true <- Enum.any?(review["comments"] || [], &(&1["id"] == id)),
+         %{"status" => "waiting"} <- review do
       comments =
         Enum.map(
           review["comments"],
@@ -711,7 +713,18 @@ defmodule HalC2Plugins.CodeReview do
       {:reply, {:ok, nil}, state |> put(Map.put(review, "comments", comments)) |> changed()}
       |> reply_snapshot()
     else
-      _ -> {:reply, {:error, "There is no comment #{id} on #{key}."}, state}
+      %{"status" => "publishing"} ->
+        {:reply,
+         {:error, "The review of #{key} is being published; its comments stay as posted."}, state}
+
+      %{"status" => "published"} ->
+        {:reply, {:error, "The review of #{key} is already published."}, state}
+
+      %{} ->
+        {:reply, {:error, "The review of #{key} is not waiting to be published."}, state}
+
+      _ ->
+        {:reply, {:error, "There is no comment #{id} on #{key}."}, state}
     end
   end
 
@@ -1124,7 +1137,7 @@ defmodule HalC2Plugins.CodeReview do
     if heads != %{} do
       spawn_link(fn ->
         answers = Host.peers(@id, :claims, [Map.keys(heads)])
-        restarting = for %{"result" => :restarting, "node" => node} <- answers, do: node
+        restarting = for %{"node" => node} = answer <- answers, unsure?(answer), do: node
         send(server, {:elsewhere_seen, heads, seen(heads, rows(answers)), restarting})
       end)
     end
@@ -1132,7 +1145,8 @@ defmodule HalC2Plugins.CodeReview do
     {:noreply, state}
   end
 
-  # A machine restarting its plugin still has what it had until it says otherwise.
+  # A machine restarting its plugin, or one that did not answer, still has what it
+  # had until it says otherwise.
   def handle_info({:elsewhere_seen, heads, seen, restarting}, state) do
     reviews =
       for {key, head} <- heads,
@@ -2089,14 +2103,12 @@ defmodule HalC2Plugins.CodeReview do
       fn ->
         answers = Host.peers(@id, :claims, [[key]])
 
-        # A machine whose plugin is restarting cannot say what it holds; it tells
-        # this one when it can, and this one looks again then.
+        # A machine whose plugin is restarting, or that did not answer, cannot say
+        # what it holds; a restarting one tells this one when it can, and this one
+        # looks again then, or at the next look.
         held =
           Enum.find(rows(answers), &(&1["claimed"] and &1["sha"] == started["headSha"])) ||
-            Enum.find_value(
-              answers,
-              &(&1["result"] == :restarting && Map.put(&1, "status", "queued"))
-            )
+            Enum.find_value(answers, &(unsure?(&1) && Map.put(&1, "status", "queued")))
 
         case held do
           nil -> server({:started, key, thread_id, started})
@@ -2508,11 +2520,13 @@ defmodule HalC2Plugins.CodeReview do
   # The agent's words made safe to post and to show: no mention or team mention that
   # would notify anyone, no HTML (an image, a hidden comment), no image, and no
   # marker of this plugin's posts. A zero-width space breaks each, and shows nothing.
+  # Every `@` before a login's character is broken, whatever comes before it: GitHub
+  # also mentions after markup such as `_` or `*`, and an address breaks the same way.
   @nested_fence ~r/^([ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t>]*)*)([`~])(?=\2\2)/
   @doc false
   def neutral(text) do
     text
-    |> String.replace(~r/(?<![\w@])@(?=[\w-])/u, "@\u200B")
+    |> String.replace(~r/@(?=[\w-])/u, "@\u200B")
     |> String.replace(~r/<(?=[A-Za-z!\/?])/u, "<\u200B")
     |> String.replace("![", "!\u200B[")
     |> String.replace("hal-c2-code-review:", "hal-c2-code-review\u200B:")
@@ -2738,9 +2752,9 @@ defmodule HalC2Plugins.CodeReview do
   defp post(review, input) do
     # Two machines that reviewed the same commit while apart post it once: the
     # post and its outcome are under one lock across the machines connected now.
-    # A machine whose plugin is restarting cannot say whether it posted, so the
-    # post waits for it. One that stopped between its post and saving so forgot
-    # it, so the pull request itself is read for the review last. A commit whose
+    # A machine whose plugin is restarting, or that did not answer, cannot say
+    # whether it posted, so the post waits for it. One that stopped between its post
+    # and saving so forgot it, so the pull request itself is read for the review last. A commit whose
     # review is posted already is published, with why nothing was posted from here.
     # A post that waited here behind another of the pull request and whose run has
     # been replaced since posts nothing: the new run has the say.
@@ -2748,7 +2762,7 @@ defmodule HalC2Plugins.CodeReview do
       {{__MODULE__, {:post, review["key"]}}, self()},
       fn ->
         answers = Host.peers(@id, :claims, [[review["key"]]])
-        restarting = Enum.find(answers, &(&1["result"] == :restarting))
+        unsure = Enum.find(answers, &unsure?/1)
 
         posted =
           Enum.find(
@@ -2764,8 +2778,12 @@ defmodule HalC2Plugins.CodeReview do
             posted ->
               {:posted, "#{posted["machine"]} already posted its review of this commit."}
 
-            restarting ->
-              {:error, "#{restarting["machine"]} is restarting code review; try again."}
+            unsure && unsure["result"] == :restarting ->
+              {:error, "#{unsure["machine"]} is restarting code review; try again."}
+
+            unsure ->
+              {:error,
+               "#{unsure["machine"]} did not answer whether it posted this review; try again."}
 
             true ->
               post_unless_on_github(review, input)
@@ -3045,10 +3063,23 @@ defmodule HalC2Plugins.CodeReview do
     if put_claims(state) and Node.list() != [], do: tell_peers()
   end
 
+  # A named table that appears already holding `rows`: it is filled under another
+  # name, then renamed.
+  defp table(name, rows) do
+    loading = :"#{name}.loading"
+    :ets.new(loading, [:named_table, :protected, read_concurrency: true])
+    :ets.insert(loading, rows)
+    :ets.rename(loading, name)
+  end
+
+  defp claim_rows(state) do
+    paused? = paused?(state)
+    for {key, review} <- state.reviews, row = claim_row(review, paused?), do: {key, row}
+  end
+
   # Whether the claims changed.
   defp put_claims(state) do
-    paused? = paused?(state)
-    rows = for {key, review} <- state.reviews, row = claim_row(review, paused?), do: {key, row}
+    rows = claim_rows(state)
 
     before = :ets.tab2list(__MODULE__)
     :ets.insert(__MODULE__, rows)
@@ -3091,6 +3122,10 @@ defmodule HalC2Plugins.CodeReview do
 
   # Reviews saved before claims were kept claim what they reviewed.
   defp claimed?(review), do: Map.get(review, "claimed", review["reviewedSha"] != nil)
+
+  # A machine that cannot say what it has: its plugin is restarting, or it is
+  # connected and did not answer (`Host.peers/4`). It may hold anything.
+  defp unsure?(%{"result" => result}), do: result in [:restarting, :unanswered]
 
   # The other machines' rows in their answers to `claims/1`, each with its key and
   # machine; a commit held behind a review queued again is a claimed row of its own.

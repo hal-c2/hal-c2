@@ -5,7 +5,8 @@ sload model-checker
 --- connected machine that queued or claimed the head, and claim the commit they checked
 --- out under a :global lock across the machines connected then, reading the others'
 --- rows under it. Posts go under a lock of their own. Machines crash, partition, have
---- their plugin restart, fail a checkout and hit a usage limit; the pull request gets
+--- their plugin restart, stop answering the others in time, fail a checkout and hit a
+--- usage limit; the pull request gets
 --- pushes. A post first reads the pull request for the plugin's own marker of the
 --- commit, so a machine that restarted before it saved its post does not post again,
 --- and a commit posted already is published. A review shown on a machine that started
@@ -114,8 +115,12 @@ mod CODE-REVIEW-CLAIMS is
   --- The machine is paused at its agent's usage limit (paused_until).
   op paused : Id -> Item [ctor] .
 
+  --- A connected machine that does not answer the others' Host.peers/4 in time (too
+  --- busy, say), which answers :unanswered for it.
+  op mute : Id -> Item [ctor] .
+
   --- What is left to happen.
-  ops pushes crashes splits bounces fails limits : Nat -> Item [ctor] .
+  ops pushes crashes splits bounces fails limits mutes : Nat -> Item [ctor] .
 
   --- A review's life after its claim (a failed turn, the report, the post) happens; the
   --- checks that reviews get done leave it out, as nothing in it gives a claim up.
@@ -264,29 +269,39 @@ mod CODE-REVIEW-CLAIMS is
   eq left(rv(St, Cl, Rd, Hd, E, Ho)) = not active(St) and Rd =/= Hd .
   eq left(unknown) = false .
 
+  op muted : Id Conf -> Bool .
+  eq muted(Y, mute(Y) C) = true .
+  eq muted(Y, C) = false [owise] .
+
   --- peer_claims/1 on X: a connected machine whose plugin runs (Host.peer/3 answers
-  --- :none for one that does not) with a hard row at S, a soft one, a published one.
+  --- :none for one that does not) and that answers, with a hard row at S, a soft one,
+  --- a published one.
   op hardBy : Id Sha Conf -> Ref .
-  ceq hardBy(X, S, mc(Y, true, N, R) C) = Y if linked(X, Y, C) /\ hard(S, St) + Ro := shareOf(Y, R, C) .
+  ceq hardBy(X, S, mc(Y, true, N, R) C) = Y
+    if linked(X, Y, C) /\ not muted(Y, C) /\ hard(S, St) + Ro := shareOf(Y, R, C) .
   eq hardBy(X, S, C) = nobody [owise] .
   op softBy : Id Sha Conf -> Ref .
-  ceq softBy(X, S, mc(Y, true, N, R) C) = Y if linked(X, Y, C) /\ soft(S) + Ro := shareOf(Y, R, C) .
+  ceq softBy(X, S, mc(Y, true, N, R) C) = Y
+    if linked(X, Y, C) /\ not muted(Y, C) /\ soft(S) + Ro := shareOf(Y, R, C) .
   eq softBy(X, S, C) = nobody [owise] .
   op publishedBy : Id Sha Conf -> Ref .
   ceq publishedBy(X, S, mc(Y, true, N, R) C) = Y
-    if linked(X, Y, C) /\ hard(S, published) + Ro := shareOf(Y, R, C) .
+    if linked(X, Y, C) /\ not muted(Y, C) /\ hard(S, published) + Ro := shareOf(Y, R, C) .
   eq publishedBy(X, S, C) = nobody [owise] .
   --- claims/1 answers :restarting on a connected machine whose plugin runs without its
-  --- server (the table went with it); claim/3 takes it for a claim at the head. The
-  --- other reads skip it, as a machine with no rows.
+  --- server (the table went with it), and Host.peers/4 :unanswered for one that does
+  --- not answer; claim/3 takes either for a claim at the head (unsure?/1). The other
+  --- reads skip them, as machines with no rows.
   op restartingBy : Id Conf -> Ref .
   ceq restartingBy(X, mc(Y, false, true, R) C) = Y if linked(X, Y, C) .
+  ceq restartingBy(X, mc(Y, true, true, R) mute(Y) C) = Y if linked(X, Y, C) .
   eq restartingBy(X, C) = nobody [owise] .
   --- All of them, which :peer_claims collects.
   op restarting : Id Conf -> Ids .
   ceq restarting(X, mc(Y, false, true, R) C) = Y & restarting(X, C) if linked(X, Y, C) .
+  ceq restarting(X, mc(Y, true, true, R) mute(Y) C) = Y & restarting(X, C) if linked(X, Y, C) .
   eq restarting(X, C) = noids [owise] .
-  --- What claim/3 steps back for: a claim at the head, or a machine restarting.
+  --- What claim/3 steps back for: a claim at the head, or a machine that cannot say.
   op heldBy : Id Sha Conf -> Ref .
   eq heldBy(X, S, C) = if hardBy(X, S, C) =/= nobody then on(hardBy(X, S, C)) else restartingBy(X, C) fi .
   --- elsewhere/1: a claim wins over a queued one.
@@ -466,16 +481,17 @@ mod CODE-REVIEW-CLAIMS is
   eq next(a) = b .
   eq next(b) = a .
 
-  --- The machines connected to X whose plugin runs, which answer what they started,
-  --- and those whose plugin is restarting.
+  --- The machines connected to X whose plugin runs and that answer, which answer what
+  --- they started, and those whose plugin is restarting or that do not answer.
   op toldOf : Id Conf -> Ids .
-  ceq toldOf(X, bm(Y, true, Sts, I, F) C) = Y & toldOf(X, C) if linked(X, Y, C) .
+  ceq toldOf(X, bm(Y, true, Sts, I, F) C) = Y & toldOf(X, C) if linked(X, Y, C) /\ not muted(Y, C) .
   eq toldOf(X, C) = noids [owise] .
   op restartingOf : Id Conf -> Ids .
   ceq restartingOf(X, bm(Y, false, Sts, I, F) C) = Y & restartingOf(X, C) if linked(X, Y, C) .
+  ceq restartingOf(X, bm(Y, true, Sts, I, F) mute(Y) C) = Y & restartingOf(X, C) if linked(X, Y, C) .
   eq restartingOf(X, C) = noids [owise] .
   op heard : Id Id Conf -> Bool .
-  eq heard(X, Y, bm(Y, true, Sts, I, F) C) = linked(X, Y, C) .
+  eq heard(X, Y, bm(Y, true, Sts, I, F) C) = linked(X, Y, C) and not muted(Y, C) .
   eq heard(X, Y, C) = false [owise] .
   --- learn/2 starts from the cluster's other members, whether in reach or never met.
   op membersOf : Id Conf -> Ids .
@@ -746,9 +762,14 @@ mod CODE-REVIEW-CLAIMS is
     { bp(X, St0, Y & J, M, H, F) bm(Y, true, Sts, I, F') bm(X, true, Sts', I', F'') C }
     => { bp(X, St0, J, M, H, F) bm(Y, true, join(Sts, St0), I, F')
          bm(X, true, join(Sts', join(Sts, St0)), I', F'') C }
-    if linked(X, Y, C) .
+    if linked(X, Y, C) /\ not muted(Y, C) .
   crl [tell] : { bp(X, St0, Y & J, M, H, F) C } => { bp(X, St0, J, Y & M, H, F) C }
     if not heard(X, Y, C) .
+  --- One that does not answer in time may count the start all the same.
+  crl [tell] :
+    { bp(X, St0, Y & J, M, H, F) bm(Y, true, Sts, I, F') mute(Y) C }
+    => { bp(X, St0, J, Y & M, H, F) bm(Y, true, join(Sts, St0), I, F') mute(Y) C }
+    if linked(X, Y, C) .
   --- ... and handle_call {:told, ...} lets the review run once all heard, if the
   --- starts they answered, its own aside, still leave it room (one of them may have
   --- counted one of its own after the lock on it went with a partition) ...
@@ -789,6 +810,14 @@ mod CODE-REVIEW-CLAIMS is
 
   rl [partition] : { link(X, Y) splits(s F) C } => { sever(X, Y, link(X, Y) C) splits(F) } .
 
+  --- A machine stops answering the others in time, and later answers again, telling
+  --- no one.
+  crl [mute] : { mc(X, true, true, R) mutes(s F) C } => { mc(X, true, true, R) mute(X) mutes(F) C }
+    if not muted(X, C) .
+  crl [mute] : { bm(X, true, Sts, I, F') mutes(s F) C } => { bm(X, true, Sts, I, F') mute(X) mutes(F) C }
+    if not muted(X, C) .
+  rl [unmute] : { mute(X) C } => { C } .
+
   crl [connect] :
     { mc(X, P, true, R) mc(Y, B, true, R') C }
     => { link(X, Y) mc(X, P, true, R) mc(Y, B, true, R') C }
@@ -810,7 +839,7 @@ mod CODE-REVIEW-CLAIMS is
   --- periodic looks, pushes, crashes, partitions, plugin restarts, failed checkouts and
   --- usage limits.
   ops two three : Nat Nat Nat Nat Nat Nat Nat -> Sys .
-  vars Pe Pu Cr Sp Bo Fa Li : Nat .
+  vars Pe Pu Cr Sp Bo Fa Li Mu : Nat .
   op budget : Nat Nat Nat Nat Nat Nat -> Conf .
   eq budget(Pu, Cr, Sp, Bo, Fa, Li) =
        pushes(Pu) crashes(Cr) splits(Sp) bounces(Bo) fails(Fa) limits(Li) .
@@ -852,6 +881,21 @@ mod CODE-REVIEW-CLAIMS is
          run(a, fetch) run(b, fetch) link(a, b) gh(h1) periodic(Bu) turn(a)
          budget(0, 0, 0, Bo, 0, 0) } .
 
+  --- Both are starting the review, and a machine may stop answering, Mu times between
+  --- them; then both reviewed it apart and post it.
+  op quiet : Nat -> Sys .
+  eq quiet(Mu) =
+       { mc(a, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(a, spent) looks(a, nolook)
+         mc(b, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
+         run(a, fetch) run(b, fetch) link(a, b) gh(h1) periodic(0) turn(a)
+         budget(0, 0, 0, 0, 0, 0) mutes(Mu) } .
+  op quietApart : Nat -> Sys .
+  eq quietApart(Mu) =
+       { mc(a, true, true, rv(waiting, true, h1, h1, nobody, nohold)) poll(a, spent) looks(a, nolook)
+         mc(b, true, true, rv(waiting, true, h1, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
+         made(a, h1) made(b, h1) link(a, b) gh(h1) periodic(0) free later
+         budget(0, 0, 0, 0, 0, 0) mutes(Mu) } .
+
   --- a reviewed and posted the head; b's run checked it out long before and is about to
   --- lock. The pull request gets two more pushes and a looks twice: a push and a push back.
   op pushedBack : -> Sys .
@@ -876,6 +920,12 @@ mod CODE-REVIEW-CLAIMS is
   eq limited(F, Sp, Bo, Cr) =
        { bm(a, true, nostart, b, 0) bm(b, true, nostart, a, 0) link(a, b) members(a & b) cap(F)
          asks(a, s F) asks(b, s F) splits(Sp) bounces(Bo) crashes(Cr) } .
+  --- The same with a limit of F, where a machine may stop answering, Mu times between
+  --- them.
+  op hushed : Nat Nat -> Sys .
+  eq hushed(F, Mu) =
+       { bm(a, true, nostart, b, 0) bm(b, true, nostart, a, 0) link(a, b) members(a & b) cap(F)
+         asks(a, s F) asks(b, s F) mutes(Mu) } .
   --- Two members of a cluster that have never answered each other, which may connect
   --- at any step.
   op strangers : Nat Nat Nat -> Sys .
@@ -962,6 +1012,7 @@ mod CODE-REVIEW-CLAIMS is
   eq renamedItem(posted(X, S), Pm) = posted(X @ Pm, S) .
   eq renamedItem(repost(X, Y, S), Pm) = repost(X @ Pm, Y @ Pm, S) .
   eq renamedItem(hurt(X), Pm) = hurt(X @ Pm) .
+  eq renamedItem(mute(X), Pm) = mute(X @ Pm) .
   eq renamedItem(bm(X, P, Sts, I, F), Pm) = bm(X @ Pm, P, startsAs(Sts, Pm), idsAs(I, Pm), F) .
   eq renamedItem(asks(X, F), Pm) = asks(X @ Pm, F) .
   eq renamedItem(bw(X, I), Pm) = bw(X @ Pm, idsAs(I, Pm)) .
@@ -982,6 +1033,7 @@ mod CODE-REVIEW-CLAIMS is
   eq renamedItem(bounces(F), Pm) = bounces(F) .
   eq renamedItem(fails(F), Pm) = fails(F) .
   eq renamedItem(limits(F), Pm) = limits(F) .
+  eq renamedItem(mutes(F), Pm) = mutes(F) .
   eq renamedItem(cap(F), Pm) = cap(F) .
   op startAs : Start Perm -> Start .
   eq startAs(sr(X, F), Pm) = sr(X @ Pm, F) .

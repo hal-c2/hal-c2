@@ -757,6 +757,16 @@ Feature: Agent code review
       And once GitHub has it, #12 has one review and it is marked as published
 
     @mc
+    Scenario: A comment of a review being posted stays as it is posted
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub is slow to take reviews
+      When the review of #12 finishes with two comments
+      And the user dismisses a comment of the review of #12 while it is being posted
+      Then the user is told the comments stay as posted
+      And once GitHub has it, #12 has one review and it is marked as published
+      And the review of #12 keeps both comments
+
+    @mc
     Scenario: Saving the settings leaves a post under way to finish
       Given the publishing mode for "acme/api" is "automatic"
       And GitHub is slow to take reviews

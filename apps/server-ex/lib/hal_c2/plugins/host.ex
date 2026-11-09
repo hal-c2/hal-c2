@@ -213,18 +213,41 @@ defmodule HalC2.Plugins.Host do
   Calls `function` of the plugin's MC part with `args` on every other machine of
   the cluster connected now, all at once:
   `[%{"machine" => label, "node" => node, "result" => result}]`. One that does not
-  run the plugin, or runs a version without `function`, answers `:none`. A machine
-  that does not answer within `timeout`, or runs a version without this call, is
-  left out, as one out of reach is, so a plugin that defers to its peers keeps
-  working alone.
+  run the plugin, or runs a version without `function`, answers `:none`. One out of
+  reach, or that runs a version without this call, is left out, so a plugin that
+  defers to its peers keeps working alone. One still connected that does not answer
+  within `timeout`, or fails to, answers `:unanswered`: it may hold anything, so a
+  plugin that defers to it waits for it as for one that cannot say.
   """
   def peers(id, function, args, timeout \\ 5_000) do
     nodes = Node.list()
     results = :erpc.multicall(nodes, __MODULE__, :peer, [id, function, args], timeout)
 
-    for {node, {:ok, {:ok, answer}}} <- Enum.zip(nodes, results),
-        do: Map.put(answer, "node", to_string(node))
+    answers =
+      for {node, result} <- Enum.zip(nodes, results),
+          answer = answer(result),
+          do: Map.put(answer, "node", to_string(node))
+
+    if Enum.any?(answers, &(&1["result"] == :unanswered)) do
+      labels = cluster_machines(id)
+
+      Enum.map(answers, fn
+        %{"result" => :unanswered, "node" => node} = answer ->
+          Map.put(answer, "machine", labels[node] || node)
+
+        answer ->
+          answer
+      end)
+    else
+      answers
+    end
   end
+
+  defp answer({:ok, {:ok, %{} = answer}}), do: answer
+  defp answer({:ok, _other}), do: nil
+  defp answer({:error, {:erpc, :noconnection}}), do: nil
+  defp answer({:error, {:exception, :undef, [{__MODULE__, :peer, _, _} | _]}}), do: nil
+  defp answer(_silent), do: %{"result" => :unanswered}
 
   @doc false
   def peer(id, function, args) do

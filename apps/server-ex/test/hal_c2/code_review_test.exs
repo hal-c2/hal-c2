@@ -587,7 +587,13 @@ defmodule HalC2.CodeReviewTest do
     neutral = &apply(@server, :neutral, [&1])
 
     assert neutral.("ask @acme/security and @octocat, not me@example.com") ==
-             "ask @\u200Bacme/security and @\u200Boctocat, not me@example.com"
+             "ask @\u200Bacme/security and @\u200Boctocat, not me@\u200Bexample.com"
+
+    # Markup around a mention does not keep it whole.
+    assert neutral.("ask _@octocat_, __@acme/security__ and *@octocat*") ==
+             "ask _@\u200Boctocat_, __@\u200Bacme/security__ and *@\u200Boctocat*"
+
+    assert neutral.(neutral.("_@octocat_")) == neutral.("_@octocat_")
 
     assert neutral.("![x](https://example.com/p.png) <img src=x> <!-- hi --> a < b") ==
              "!\u200B[x](https://example.com/p.png) <\u200Bimg src=x> <\u200B!-- hi --> a < b"
@@ -701,7 +707,7 @@ defmodule HalC2.CodeReviewTest do
     texts = [shown["summary"] | Enum.map(shown["comments"], & &1["body"])]
 
     for text <- texts do
-      refute text =~ ~r/(?<![\w@])@(?=[\w-])/u
+      refute text =~ ~r/@(?=[\w-])/u
       refute text =~ "!["
       refute text =~ ~r/<[A-Za-z]/
       # No code block left open.
@@ -1761,6 +1767,82 @@ defmodule HalC2.CodeReviewTest do
     assert %{"status" => "running"} = review()
   end
 
+  # A comment dismissed while its review was being posted changed what the page showed
+  # as posted, though GitHub had the comment.
+  test "a comment of a review being posted stays as it was posted", context do
+    hold = Path.join(context.dir, "post.hold")
+    held = Path.join(context.dir, "post.held")
+    File.write!(hold, "")
+
+    rules!(context,
+      head: 1,
+      post: "touch '#{held}'; while [ -e '#{hold}' ]; do sleep 0.05; done"
+    )
+
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "comment",
+      "summary" => "One thing.",
+      "comments" => [%{"path" => "src/limits.ts", "line" => 1, "body" => "One."}]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+    posting = publishing()
+    await_file(held)
+
+    assert {:error, %{"message" => message}} =
+             call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert message =~ "is being published"
+
+    File.rm!(hold)
+    assert_receive {^posting, {:ok, _}}, 15_000
+    settle()
+    assert %{"status" => "published", "comments" => [%{"dismissed" => false}]} = review()
+
+    assert {:error, %{"message" => message}} =
+             call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert message =~ "already published"
+    assert [_] = posts(context)
+  end
+
+  # While the plugin started again, its claims table was up before the claims saved on
+  # disk were in it, so a peer reading it then was told this machine claimed nothing.
+  test "a plugin starting again holds its saved claims from the moment a peer can read them",
+       _context do
+    start_review()
+    pid = Process.whereis(@server)
+    {:parent, sup} = Process.info(pid, :parent)
+    :sys.suspend(sup)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+    # The plugin's first call on the file server, finding where its reviews are,
+    # waits there until the claims are checked.
+    fs = Process.whereis(:file_server_2)
+    :erlang.trace(fs, true, [:receive])
+    :sys.suspend(fs)
+
+    try do
+      :sys.resume(sup)
+      await_file_call(fs)
+      assert apply(@server, :claims, [[@key]]) == :restarting
+      assert apply(@server, :starts, []) == :restarting
+    after
+      :sys.resume(fs)
+      :erlang.trace(fs, false, [:receive])
+    end
+
+    :sys.get_state(sup)
+    :sys.get_state(@server)
+    assert %{@key => %{"claimed" => true}} = apply(@server, :claims, [[@key]])
+    assert [_] = apply(@server, :starts, [])
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   # Reports findings from the review's thread, starting a run first if there is none.
@@ -2114,6 +2196,12 @@ defmodule HalC2.CodeReviewTest do
     {:links, links} = Process.info(pid, :links)
     {:monitors, monitors} = Process.info(pid, :monitors)
     Enum.find_value(monitors, fn {:process, p} -> p in links and p end)
+  end
+
+  # Waits for the plugin's server to call the file server `fs`, traced for receives.
+  defp await_file_call(fs) do
+    assert_receive {:trace, ^fs, :receive, {:"$gen_call", {from, _}, _}}, 5_000
+    if from != Process.whereis(@server), do: await_file_call(fs)
   end
 
   defp await_file(path) do

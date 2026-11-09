@@ -9,11 +9,12 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   one review at a time, and publishing when asked. The other machine, "laptop", is a
   bare `:peer` node with only a stand-in `HalC2.Plugins.Host`, whose `peer/3` answers
   the rows (queued, running, claimed, published, each maybe holding a claim of the
-  other commit) the test gives it, or that its plugin is restarting, so the plugin sees
-  a peer whose claims the test controls. The laptop is a member of this machine's
+  other commit) the test gives it, or that its plugin is restarting, or does not answer
+  at all, so the plugin sees a peer whose claims the test controls. The laptop is a member of this machine's
   cluster, connected at the start or never yet in reach, when this machine has only
   its share of the limits until the two meet. The commands set and clear those rows,
-  restart the laptop's plugin, cut the laptop off and connect it again, push, look,
+  restart the laptop's plugin, stop it answering and let it answer again (telling no
+  one), cut the laptop off and connect it again, push, look,
   ask for reviews, hold checkouts at the fetch, report, stop a run at the agent's usage
   limit, publish, crash the plugin, and put a review on GitHub as the laptop or this
   machine would have just before its plugin stopped, before it saved that it posted
@@ -22,7 +23,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   `Host.peer/3` calling `claims_changed/0` here. After every step:
 
   - a run launches its thread only when the connected laptop neither claims the commit
-    it checked out at the moment it claims it nor is restarting its plugin; one that
+    it checked out at the moment it claims it nor cannot say, restarting its plugin or
+    not answering; one that
     does not is back to ready, left to the laptop, and its checkout is gone;
   - what this machine shares (`claims/1`) is the model's row for each review, a commit
     it reviewed held when the review is queued again for another head;
@@ -30,9 +32,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     the model, a review left to the laptop shown out of reach exactly while it is cut
     off;
   - nothing is posted exactly when the connected laptop has published the reviewed
-    commit or is restarting its plugin, or GitHub already has a review of that commit
-    under the user's login; the review is published then, but while the laptop
-    restarts;
+    commit or cannot say, or GitHub already has a review of that commit under the
+    user's login; the review is published then, but while the laptop cannot say;
   - when the laptop leaves, a review it had only queued or not yet started is looked
     at again at once, and one it started stays its own while it is away; when it
     tells it no longer has a review this machine left to it, that review is looked at
@@ -43,7 +44,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   - a review the look found starts only while the repository's daily limit has room,
     counting the reviews this machine started and those the connected laptop tells it
     started in the last day (kept once heard, cut off or not); while the laptop cannot
-    say, cut off or restarting its plugin, only this machine's half of the limit. One
+    say, cut off, restarting its plugin or not answering, only this machine's half of
+    the limit. One
     over it waits as ready, limited (while the laptop is cut off, for a half), and one
     the user asked for starts anyway and counts;
   - the laptop hears of every start this machine makes while it can say what it
@@ -186,7 +188,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # `{key, reviewed}`. `github`: the reviews on GitHub no post of this run made,
   # `{key, head, whether under the user's login}`. `laptop`: whether it is
   # connected; `restarting`: whether its plugin is restarting, so it cannot say what
-  # it has; `rows`: key → `{head, status,
+  # it has; `silent`: whether, connected, it does not answer at all, so it cannot say
+  # either and does not tell when it answers again; `rows`: key → `{head, status,
   # claimed, held}` it shares, `held` the status of a claim of the other head or nil.
   # `held` (of the model): runs held at the fetch. `paused`: stopped at the agent's
   # usage limit, until the user asks for a review. `starts`: the starts this machine
@@ -209,6 +212,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       github: [],
       laptop: met,
       restarting: false,
+      silent: false,
       rows: %{},
       hold: false,
       held: [],
@@ -306,6 +310,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         {2, {:call, __MODULE__, :hold, [boolean()]}},
         {1, {:call, __MODULE__, :peer_started, [frequency([{3, true}, {1, false}])]}},
         {if(m.restarting, do: 4, else: 1), {:call, __MODULE__, :restarting, [not m.restarting]}},
+        {if(m.silent, do: 4, else: 1), {:call, __MODULE__, :silent, [not m.silent]}},
         if(m.laptop,
           do: {if(left?, do: 6, else: 1), {:call, __MODULE__, :disconnect, []}},
           else: {4, {:call, __MODULE__, :reconnect, []}}
@@ -394,6 +399,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     {if(tells?(m), do: peer_claims(m), else: m), :ok}
   end
 
+  # A laptop that does not answer says nothing when it answers again.
+  defp step(m, {:call, _, :silent, [on]}), do: {%{m | silent: on}, :ok}
+
   # What a look had left to the laptop and the laptop had not started is looked at
   # again once it is gone; a commit it started stays its own.
   defp step(m, {:call, _, :disconnect, []}) do
@@ -446,6 +454,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
             {put_review(m, key, %{r | status: :published, publish_error: false}), :refused}
 
           # The laptop cannot say whether it posted, so the post waits for it.
+          m.laptop and m.silent ->
+            {put_review(m, key, %{r | publish_error: true}), :silent}
+
           m.laptop and m.restarting ->
             {put_review(m, key, %{r | publish_error: true}), :restarting}
 
@@ -482,9 +493,13 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   defp put_review(m, key, review), do: %{m | reviews: Map.put(m.reviews, key, review)}
 
-  # Whether the laptop tells this machine its claims changed: it does when connected
-  # and its plugin runs.
-  defp tells?(m), do: m.laptop and not m.restarting
+  # Whether the laptop tells this machine its claims changed: it does when connected,
+  # answering, and its plugin runs.
+  defp tells?(m), do: m.laptop and not m.restarting and not m.silent
+
+  # Whether the connected laptop cannot say what it has: its plugin is restarting, or
+  # it does not answer.
+  defp unsure?(m), do: m.laptop and (m.restarting or m.silent)
 
   # A limit holds a review back for the day, or for the half of it this machine had
   # while the laptop could not say, until the laptop is connected again.
@@ -493,14 +508,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # This machine read the laptop's claims again, told by the laptop or after a run
   # stepped back: each review this machine has not taken up at the head it saw shows
   # where the laptop has it now, and one the laptop let go of is looked at again at
-  # once. A laptop restarting its plugin still has what it had.
+  # once. A laptop restarting its plugin, or not answering, still has what it had.
   defp peer_claims(m) do
     changed =
       for {key, r} <- m.reviews,
           r.status not in [:queued, :running] and r.reviewed != r.seen,
           other <- [laptop_status(m, key, r.seen) || away(m, r, r.seen)],
           other != r.elsewhere,
-          other != nil or not (m.laptop and m.restarting),
+          other != nil or not unsure?(m),
           into: %{},
           do: {key, %{r | elsewhere: other}}
 
@@ -524,9 +539,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   defp away(_m, _review, _head), do: nil
 
   # The laptop's rows of `key` as this machine reads them, `{head, status, claimed}`,
-  # a commit it holds behind a review queued again among them. One cut off, or
-  # restarting its plugin, has none.
-  defp laptop_rows(%{laptop: true, restarting: false, rows: rows}, key) do
+  # a commit it holds behind a review queued again among them. One cut off, restarting
+  # its plugin or not answering, has none.
+  defp laptop_rows(%{laptop: true, restarting: false, silent: false, rows: rows}, key) do
     case rows[key] do
       nil -> []
       {head, status, claimed, nil} -> [{head, status, claimed}]
@@ -679,7 +694,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # Run `k` of `key` checks out the head there is now and claims it, unless the
-  # connected laptop claimed that commit, or is restarting its plugin and cannot say:
+  # connected laptop claimed that commit, or cannot say (restarting its plugin, or not
+  # answering):
   # then it steps back, the next queued starts, and it reads the laptop's claims again.
   defp resolve(m, key, k) do
     case m.reviews[key] do
@@ -690,7 +706,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           Enum.find_value(laptop_rows(m, key), fn
             {^head, status, true} -> {status, true}
             _ -> nil
-          end) || if(m.laptop and m.restarting, do: {"queued", false})
+          end) || if(unsure?(m), do: {"queued", false})
 
         case other do
           status when status != nil ->
@@ -824,13 +840,23 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     observe(:ok)
   end
 
-  # Told as a real peer's `Host.peers/4` tells it; one cut off, or whose plugin is
-  # restarting, tells no one. The plugin has the message by the time the call returns.
+  # The laptop connected but not answering (as one too busy to, within the time
+  # `Host.peers/4` gives it), so this machine cannot tell what it has; answering
+  # again, it tells no one.
+  def silent(on) do
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_silent, on])
+    observe(:ok)
+  end
+
+  # Told as a real peer's `Host.peers/4` tells it; one cut off, not answering, or whose
+  # plugin is restarting, tells no one. The plugin has the message by the time the call
+  # returns.
   defp tell do
     %{pid: peer, node: node} = laptop()
 
     if node in Node.list() and
-         not :peer.call(peer, :persistent_term, :get, [:cr_peer_restarting, false]) do
+         not :peer.call(peer, :persistent_term, :get, [:cr_peer_restarting, false]) and
+         not :peer.call(peer, :persistent_term, :get, [:cr_peer_silent, false]) do
       case :peer.call(peer, :erpc, :call, [
              node(),
              HalC2.Plugins.Host,
@@ -976,10 +1002,20 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       {:error, %{"message" => message}} ->
         observe(
           cond do
-            message =~ "laptop already posted its review of this commit." -> :refused
-            message =~ "laptop is restarting code review; try again." -> :restarting
-            message =~ "The review of this commit is already on the pull request." -> :on_github
-            true -> :error
+            message =~ "laptop already posted its review of this commit." ->
+              :refused
+
+            message =~ "laptop is restarting code review; try again." ->
+              :restarting
+
+            message =~ "laptop did not answer whether it posted this review; try again." ->
+              :silent
+
+            message =~ "The review of this commit is already on the pull request." ->
+              :on_github
+
+            true ->
+              :error
           end
         )
     end
@@ -1344,19 +1380,24 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     source = """
     -module('Elixir.HalC2.Plugins.Host').
     -export([peer/3]).
-    peer(<<"code-review">>, claims, [Keys]) ->
+    peer(Id, Function, Args) ->
+        case persistent_term:get(cr_peer_silent, false) of
+            true -> exit(busy);
+            false -> answer(Id, Function, Args)
+        end.
+    answer(<<"code-review">>, claims, [Keys]) ->
         Result = case persistent_term:get(cr_peer_restarting, false) of
             true -> restarting;
             false -> maps:with(Keys, persistent_term:get(cr_peer_rows, \#{}))
         end,
         {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
-    peer(<<"code-review">>, starts, []) ->
+    answer(<<"code-review">>, starts, []) ->
         Result = case persistent_term:get(cr_peer_restarting, false) of
             true -> restarting;
             false -> persistent_term:get(cr_peer_starts, []) ++ persistent_term:get(cr_peer_told, [])
         end,
         {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
-    peer(<<"code-review">>, count_start, [Row]) ->
+    answer(<<"code-review">>, count_start, [Row]) ->
         Result = case persistent_term:get(cr_peer_restarting, false) of
             true -> restarting;
             false ->
@@ -1364,7 +1405,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
                 persistent_term:get(cr_peer_starts, []) ++ persistent_term:get(cr_peer_told, [])
         end,
         {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
-    peer(_, _, _) ->
+    answer(_, _, _) ->
         none.
     """
 
@@ -1437,6 +1478,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     %{pid: peer, node: node} = laptop()
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_rows, %{}])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_restarting, false])
+    :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_silent, false])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_starts, []])
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_told, []])
     :net_kernel.monitor_nodes(true)
