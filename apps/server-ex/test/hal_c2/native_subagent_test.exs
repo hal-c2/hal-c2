@@ -120,9 +120,53 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
              StreamState.get(HalC2.Streams.state("c"), "turn-item")["turn-item:claudeAgent:cmd-1"]
   end
 
+  # Review of #1398 (Copilot): the try read which run drives the subagent, then settled
+  # the work in its thread in a transaction of its own. The run that resumed it, and
+  # the command it started in its thread, landed between the two, and the try failed
+  # that command while the subagent ran on. The resume lands at the `n`th time the try
+  # reaches the subagent's thread (or after it, if it does not reach it that often).
+  for ended? <- [false, true], n <- [1, 2] do
+    test "a lost end leaves the command a run that resumes the subagent meanwhile starts (ended: #{ended?}, at #{n})" do
+      subagent(%{1 => "failed", 2 => "running"}, "run-1")
+      test = self()
+      HalC2.Test.Env.put_app(:streams_hook, {__MODULE__, :resume_at, [test, unquote(n)]})
+      ended = if unquote(ended?), do: [ended: NativeSubagent.keys("sub")], else: []
+
+      assert :ok = TurnWriter.abandon("p", "run-1", "failed", "gone", [lost: true] ++ ended)
+      Application.delete_env(:hal_c2, :streams_hook)
+      unless Process.get(:resumed), do: resume("run-2")
+
+      assert_running("run-1")
+    end
+  end
+
+  @doc false
+  # The `n`th time the test's process reaches the subagent's thread, the run that
+  # resumes it does, once.
+  def resume_at(test, n, :ensured, "c") do
+    count = Process.get(:reached, 0) + 1
+    Process.put(:reached, count)
+
+    if self() == test and count == n and not Process.get(:resumed, false) do
+      Process.put(:resumed, true)
+      resume("run-2")
+    end
+
+    :ok
+  end
+
+  def resume_at(_test, _n, _stage, _stream), do: :ok
+
   # Thread "p" with runs of `statuses` by ordinal, and a provider subagent run `origin`
   # started and ended, which run `resumer` resumed: it runs a command in its thread "c".
   defp resumed_subagent(statuses, origin, resumer) do
+    subagent(statuses, origin)
+    resume(resumer)
+  end
+
+  # Thread "p" with runs of `statuses` by ordinal, and a provider subagent run `origin`
+  # started and ended, with its thread "c".
+  defp subagent(statuses, origin) do
     run = fn ordinal, status ->
       id = "run-#{ordinal}"
 
@@ -176,7 +220,10 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
       HalC2.Streams.commit("c", :thread, [
         {"thread", "c", %{"s" => %{"id" => "c", "title" => "c"}}}
       ])
+  end
 
+  # Run `resumer` resumes the subagent, and it runs a command in its thread.
+  defp resume(resumer) do
     entity = StreamState.get(HalC2.Streams.state("p"), "subagent")["sub"]
     ids = %{thread: "p", run: resumer, driver: "claudeAgent", instance: "claudeAgent"}
     NativeSubagent.resume(ids, entity, "go on")

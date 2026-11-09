@@ -517,30 +517,62 @@ defmodule HalC2.Orchestration.NativeSubagent do
   ended are settled whichever run they are of (one it resumed), and the run's it keeps
   running are left to it, unless `keep?` is false (the runtime went, and its
   app-server with them). A child thread the store refuses raises.
+
+  A later run can resume a subagent as this settles it, and start work in its thread.
+  What runs in the thread is read before which run drives the subagent, and only that
+  ends: a resume records its run (`resume/3`) before the work it starts, so the work
+  of a run whose resume this does not see is not among it.
   """
   def settle_run_children(thread_id, run_id, status, at, ended \\ nil, keep? \\ true) do
-    for subagent <- StreamState.list(stream(thread_id), "subagent"),
-        subagent["origin"] == "provider_native" and is_binary(subagent["childThreadId"]),
-        settles?(subagent, run_id, ended, keep?) do
+    for %{"id" => id, "origin" => "provider_native", "childThreadId" => child} <-
+          StreamState.list(stream(thread_id), "subagent"),
+        is_binary(child),
+        # Its thread's work, then the subagent as it stands after it.
+        open = running(child),
+        parent = stream(thread_id),
+        subagent = StreamState.get(parent, "subagent")[id],
+        settles?(parent, subagent, run_id, ended, keep?) do
       ended = if subagent["status"] in @terminal, do: subagent["status"], else: status
-      settle_child(%{child: subagent["childThreadId"]}, ended, at)
+      settle_child(%{child: child}, ended, at, open)
     end
 
     :ok
   end
 
-  defp settles?(subagent, run_id, nil, _keep?), do: run(subagent) == run_id
-
-  defp settles?(%{"id" => id} = subagent, run_id, ended, keep?),
+  defp running(child),
     do:
-      {"subagent", id} in ended or
+      HalC2.Streams.read(child, fn state ->
+        for item <- StreamState.list(state, "turn-item"),
+            item["status"] == "running",
+            into: MapSet.new(),
+            do: item["id"]
+      end)
+
+  defp settles?(_state, nil, _run_id, _ended, _keep?), do: false
+  defp settles?(_state, subagent, run_id, nil, _keep?), do: run(subagent) == run_id
+
+  # What the runtime ended is settled whichever run it is of, but not once a later run
+  # drives it (`TurnWriter`'s `unless_later/3`, as the subagent stands now).
+  defp settles?(state, %{"id" => id} = subagent, run_id, ended, keep?),
+    do:
+      ({"subagent", id} in ended and not later?(state, run(subagent), run_id)) or
         (run(subagent) == run_id and (not keep? or subagent["status"] in @terminal))
 
-  # Work still open in the child thread (a tool call, the progress) ends with it.
-  defp settle_child(sub, status, at) do
+  defp later?(state, run, than) do
+    runs = StreamState.get(state, "run")
+
+    case {(runs[run] || %{})["ordinal"], (runs[than] || %{})["ordinal"]} do
+      {ordinal, other} when is_integer(ordinal) and is_integer(other) -> ordinal > other
+      _ -> false
+    end
+  end
+
+  # Work still open in the child thread (a tool call, the progress) ends with it: of
+  # `only`, the ids of the work to end, what still runs.
+  defp settle_child(sub, status, at, only \\ nil) do
     HalC2.Streams.transact(sub.child, :thread, fn state ->
       {for item <- StreamState.list(state, "turn-item"),
-           item["status"] == "running" do
+           item["status"] == "running" and (only == nil or item["id"] in only) do
          Orchestration.upsert(state, "turn-item", item["id"], fn item ->
            item
            |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})

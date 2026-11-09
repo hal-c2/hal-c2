@@ -69,14 +69,16 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
   end
 
   # A process that marked itself (`:hold_after`, the subagent's thread) waits for the
-  # test's go at its first use of the parent thread after the subagent's.
+  # test's go at its first use of the parent thread after it settled the subagent's:
+  # its second use of it, which reads what runs there first
+  # (`NativeSubagent.settle_run_children/6`).
   def hold_after_child(test, :ensured, stream_id) do
     case Process.get(:hold_after) do
       ^stream_id ->
-        Process.put(:child_seen, true)
+        Process.put(:child_seen, Process.get(:child_seen, 0) + 1)
 
       child when is_binary(child) and stream_id == @tid ->
-        if Process.get(:child_seen, false) and Process.put(:held, true) == nil do
+        if Process.get(:child_seen, 0) >= 2 and Process.put(:held, true) == nil do
           send(test, {:held_after_child, self()})
 
           receive do

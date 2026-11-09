@@ -144,7 +144,11 @@ defmodule HalC2.TurnWatchPropTest do
             [
               {10,
                {:call, __MODULE__, :recover,
-                [oneof([:during_try, :after_answer]), boolean(), resumable(state)]}}
+                [
+                  oneof([:during_try, :after_answer]),
+                  oneof([false, true, :mid]),
+                  resumable(state)
+                ]}}
             ]
 
           nil ->
@@ -293,13 +297,14 @@ defmodule HalC2.TurnWatchPropTest do
   def next_state(state, result, {:call, mod, :late_stop, []}),
     do: next_state(state, result, {:call, mod, :accept, []})
 
-  # A subagent the next run resumed is that run's runtime's.
+  # A subagent the next run resumed is that run's runtime's, whether it resumed it
+  # during the try or after it.
   def next_state(state, _result, {:call, _, :recover, [_at, next?, resumed]}) do
     ordinal = map_size(state.runs)
     state = put_in(state.runs[ordinal].lost, true)
     state = recorded(%{state | refusing: false, runtime: nil}, ordinal)
 
-    if next? do
+    if next? != false do
       state = next_state(state, nil, {:call, __MODULE__, :start_run, []})
 
       state =
@@ -534,6 +539,19 @@ defmodule HalC2.TurnWatchPropTest do
 
   def hold_try(_test, _watch, _stage, _stream_id), do: :ok
 
+  # TurnWatch's try waits for the test's go at its first use of a subagent's thread.
+  def hold_child(test, watch, :ensured, stream_id) do
+    if Process.get(:"$callers") == [watch] and stream_id != @tid and
+         Process.put({__MODULE__, :held}, true) == nil do
+      send(test, {:held_child, self()})
+      receive do: (:go -> :ok)
+    end
+
+    :ok
+  end
+
+  def hold_child(_test, _watch, _stage, _stream_id), do: :ok
+
   def waiting(test, run_id), do: send(test, {:waiting, run_id})
 
   # The runtime records its run completed and releases it, its work left running.
@@ -583,21 +601,47 @@ defmodule HalC2.TurnWatchPropTest do
   # TurnWatch heard its answer. `next?` starts the thread's next run on a new runtime,
   # with one piece of each kind of work, between that answer and TurnWatch hearing it,
   # and resumes the `resumed` provider subagents earlier runs started
-  # (`NativeSubagent.resume/3`), each running a command again in its own thread.
+  # (`NativeSubagent.resume/3`), each running a command again in its own thread. With
+  # `:mid` the next run starts and resumes them during the try instead, as the try
+  # first comes to a subagent's thread, after it read the thread's subagents (review
+  # of #1398).
   def recover(at, next?, resumed) do
     watch = Process.whereis(TurnWatch)
     pid = Process.get({__MODULE__, :runtime})
     run = run_id(latest())
     gate = make_ref()
-    Application.put_env(:hal_c2, :store_hook, {__MODULE__, :hold_once, [self(), gate]})
+    hold = {__MODULE__, :hold_once, [self(), gate]}
+    Application.put_env(:hal_c2, :store_hook, hold)
+
+    if next? == :mid,
+      do: Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :hold_child, [self(), watch]})
+
     send(watch, {:retry, run})
 
-    store =
+    {store, resumer} =
       receive do
-        {:held, ^gate, store} -> store
+        {:held, ^gate, store} ->
+          {store, nil}
+
+        {:held_child, try} ->
+          # The test's own writes go by the store's hold.
+          Application.delete_env(:hal_c2, :streams_hook)
+          Application.delete_env(:hal_c2, :store_hook)
+          ordinal = new_run()
+          for id <- resumed, do: resume(id, ordinal)
+          Application.put_env(:hal_c2, :store_hook, hold)
+          send(try, :go)
+
+          receive do
+            {:held, ^gate, store} -> {store, ordinal}
+          after
+            @wait_ms -> raise "no try at recording #{run}"
+          end
       after
         @wait_ms -> raise "no try at recording #{run}"
       end
+
+    Application.delete_env(:hal_c2, :streams_hook)
 
     if at == :during_try do
       stop_runtime(pid, :crash)
@@ -611,12 +655,12 @@ defmodule HalC2.TurnWatchPropTest do
     if at == :after_answer, do: stop_runtime(pid, :crash)
 
     claim =
-      if next? do
-        ordinal = new_run()
+      if next? != false do
+        ordinal = resumer || new_run()
         ids = Enum.map(@kinds, &{new_work(&1), &1})
         seed(Enum.flat_map(ids, fn {id, kind} -> work(id, ordinal, kind) end))
         for {id, kind} <- ids, do: child_thread(id, kind)
-        for id <- resumed, do: resume(id, ordinal)
+        unless resumer, do: for(id <- resumed, do: resume(id, ordinal))
         runtime() |> ask(fn -> TurnWatch.claim(@tid, run_id(ordinal)) end)
       end
 
