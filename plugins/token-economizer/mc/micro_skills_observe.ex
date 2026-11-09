@@ -135,6 +135,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @launcher_re ~r/^(?:conda|poetry|pipenv|uv|npx|uvx|bundle|yarn|pnpm|pipx)\s+(?:run|exec)\b/
   @env_incode_re ~r/os\.environ(?:\.setdefault\(\s*|\[\s*)['"]([A-Z][A-Z0-9_]{2,})['"]\s*(?:,|\]\s*=)\s*['"]([\w.\-\/:]+)['"]/
   @failed_re ~r/(?m)Traceback \(most recent call last\)|^\w*Error\b|\b[Ee]xit [Cc]ode[:=\s]+[1-9]/
+  # Output that shows something failed, whatever its kind.
+  @failure_shown_re ~r/\*\*\*|\b(?:error|failed|fatal)\b/i
   @label_token_re ~r/^[A-Za-z_][\w.\-\/]*(?:::[\w.\-\[\]]+)*$/
 
   @doc "The error classes a network produces."
@@ -1065,18 +1067,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     homogeneous = n_seg == length(obs) and length(Enum.uniq(Enum.map(obs, & &1.intent))) == 1
     err = error_class(out)
 
-    # Which segments the call's status speaks for. Exit 0 proves a segment ran
-    # only when each operator after it is `&&`: `a || b`, `a; b` and `a | b`
-    # exit with what came last. A failed call ran its first work only when
-    # nothing before it could have stopped it (`test -f x && make`). A test run
-    # its output shows, the call's only one, ran whatever the status says.
+    # Which segments the call's status speaks for (`covers?/3`). A failed call
+    # ran its first work only when nothing before it could have stopped it
+    # (`test -f x && make`). A test run its output shows, the call's only one,
+    # ran whatever the status says.
     {texts, seps} = cmd |> unwrap() |> split() |> Enum.unzip()
     runners = Enum.count(obs, &(&1.intent == "run_tests"))
     shown = fn o -> o.intent == "run_tests" and o.tests_ran and runners == 1 end
-
-    proven = fn o ->
-      shown.(o) or seps |> Enum.slice(o.index..-2//1) |> Enum.all?(&(&1 == "&&"))
-    end
+    proven = fn o -> shown.(o) or covers?(seps, o.index, out) end
 
     reached = fn o -> shown.(o) or texts |> Enum.take(o.index) |> Enum.all?(&setup?/1) end
 
@@ -1141,6 +1139,16 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         o
       end
     end)
+  end
+
+  # Does a call's exit 0 speak for its segment `i`? Only when each operator
+  # after it is `&&` (`a || b`, `a; b` and `a | b` exit with what came last),
+  # and only when it ran at all: after `||` it did only if what came before
+  # failed, which the output must show (`a || b` exits 0 when `a` passed too).
+  defp covers?(seps, i, out) do
+    seps |> Enum.slice(i..-2//1) |> Enum.all?(&(&1 == "&&")) and
+      (i == 0 or Enum.at(seps, i - 1) != "||" or error_class(out) != nil or
+         Regex.match?(@failed_re, out) or Regex.match?(@failure_shown_re, out))
   end
 
   defp attribute_error(obs, err, out, success, proven) do

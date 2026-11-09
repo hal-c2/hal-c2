@@ -113,6 +113,14 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert outcomes.("pytest -q || python -m pytest -q", "pytest: command not found\n4 passed", 0) ==
              [{"pytest", "command_missing"}, {"python -m pytest", "ran"}]
 
+    # After `||`, exit 0 with nothing failing shown: the first may have passed
+    # and the fallback never run.
+    assert outcomes.("pytest -q || python -m pytest -q", "4 passed", 0) ==
+             [{"pytest", nil}, {"python -m pytest", nil}]
+
+    assert outcomes.("make build || cargo build", "Finished dev", 0) ==
+             [{"make build", nil}, {"cargo build", nil}]
+
     # A test run its output shows ran, whatever came before it.
     assert outcomes.("source .venv/bin/activate && pytest -q", "1 failed, 3 passed", 1) ==
              [{"pytest", "ran"}]
