@@ -4,7 +4,10 @@ defmodule HalC2.GrokPromptCompletionPropTest do
   Grok may never answer: a turn ends by whichever settles it first, Grok's
   `x.ai/session/prompt_complete` notice (naming the running prompt, an
   earlier one, some other one, or none) or the prompt's own answer, with an
-  interrupt in between if the user stops the turn first.
+  interrupt in between if the user stops the turn first. The store may also
+  refuse one of the running turn's writes (a full disk, hal-c2#1285): the MC
+  then stops the turn itself, its run fails, and a Grok that never answers
+  that stop has its process stopped once its time is out.
 
   The promise: every turn ends exactly once, with the status its settler
   says, and no notice or late answer ends a turn other than its own. A
@@ -34,14 +37,17 @@ defmodule HalC2.GrokPromptCompletionPropTest do
   # More turns than a case's commands can send (`max_size` below).
   @turns 16
 
-  property "a Grok turn ends once, by its own notice or answer, never another's",
+  property "a Grok turn ends once, by its own notice, answer or stop deadline, never another's",
     numtests: HalC2.Prop.numtests(15),
     max_size: 12 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
         start_case()
+        Application.put_env(:hal_c2, :antigravity_cancel_timeout_ms, 3_600_000)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :antigravity_cancel_timeout_ms)
+        HalC2.Test.Machines.refuse_changes(nil)
         HalC2.Acp.forget("grok")
 
         (result == :ok)
@@ -56,9 +62,10 @@ defmodule HalC2.GrokPromptCompletionPropTest do
   # runs: every turn's status, in the order sent; current: the running
   # turn's number; interrupted: its user stop landed; unanswered: the turns
   # whose prompt the fake has not answered yet, oldest first (a turn the MC
-  # already ended by notice stays here until its late answer is released).
+  # already ended by notice stays here until its late answer is released);
+  # unrecorded: the store refused one of the running turn's writes.
   def initial_state,
-    do: %{runs: [], current: nil, interrupted: false, unanswered: [], next: 1}
+    do: %{runs: [], current: nil, interrupted: false, unrecorded: false, unanswered: [], next: 1}
 
   def command(state) do
     notices =
@@ -75,9 +82,13 @@ defmodule HalC2.GrokPromptCompletionPropTest do
           else: []
         ) ++
         if(state.current != nil and not state.interrupted,
-          do: [{1, {:call, __MODULE__, :interrupt, []}}],
+          do: [
+            {1, {:call, __MODULE__, :interrupt, []}},
+            {2, {:call, __MODULE__, :fail_write, []}}
+          ],
           else: []
-        )
+        ) ++
+        if(state.unrecorded, do: [{3, {:call, __MODULE__, :outlast, []}}], else: [])
     )
   end
 
@@ -87,8 +98,10 @@ defmodule HalC2.GrokPromptCompletionPropTest do
   def precondition(state, {:call, _, :answer, [n]}),
     do: state.unanswered != [] and hd(state.unanswered) == n
 
-  def precondition(state, {:call, _, :interrupt, []}),
+  def precondition(state, {:call, _, call, []}) when call in [:interrupt, :fail_write],
     do: state.current != nil and not state.interrupted
+
+  def precondition(state, {:call, _, :outlast, []}), do: state.unrecorded
 
   def precondition(_state, {:call, _, :notice, [_]}), do: true
   def precondition(_state, _call), do: false
@@ -121,10 +134,25 @@ defmodule HalC2.GrokPromptCompletionPropTest do
   def next_state(state, _result, {:call, _, :interrupt, []}),
     do: %{state | interrupted: true}
 
+  # The MC stops the turn the store failed, as the user's stop does.
+  def next_state(state, _result, {:call, _, :fail_write, []}),
+    do: %{state | interrupted: true, unrecorded: true}
+
+  # Grok's process is stopped, and the prompts it held with it.
+  def next_state(state, _result, {:call, _, :outlast, []}),
+    do: %{end_turn(state) | unanswered: []}
+
+  # However a turn the store failed ends, its run fails.
   defp end_turn(state) do
-    status = if state.interrupted, do: "interrupted", else: "completed"
+    status =
+      cond do
+        state.unrecorded -> "failed"
+        state.interrupted -> "interrupted"
+        true -> "completed"
+      end
+
     runs = List.replace_at(state.runs, state.current - 1, status)
-    %{state | runs: runs, current: nil, interrupted: false}
+    %{state | runs: runs, current: nil, interrupted: false, unrecorded: false}
   end
 
   def postcondition(state, {:call, _, _, _} = call, seen) do
@@ -219,6 +247,33 @@ defmodule HalC2.GrokPromptCompletionPropTest do
   def interrupt do
     {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid})
     await_until(fn -> match?({_pid, %{interrupted: true}}, runtime()) end)
+    settled()
+  end
+
+  # The store refuses the running turn's task list, so the MC stops the turn, which
+  # Grok does not answer while its prompt waits.
+  def fail_write do
+    {pid, %{conn: conn, session_id: session}} = runtime()
+    entry = %{"content" => "Save", "status" => "in_progress", "priority" => "medium"}
+
+    params = %{
+      "sessionId" => session,
+      "update" => %{"sessionUpdate" => "plan", "entries" => [entry]}
+    }
+
+    HalC2.Test.Machines.refuse_changes(@tid)
+    send(pid, {:json_rpc, conn, {:notification, "session/update", params}})
+    %{unrecorded: %{}, interrupted: true} = :sys.get_state(pid)
+    HalC2.Test.Machines.refuse_changes(nil)
+    settled()
+  end
+
+  # The time Grok has to answer the MC's stop runs out: its process is stopped and
+  # the turn ends. The property's bound is an hour, so only this ends it.
+  def outlast do
+    {pid, %{turn: %{ids: %{run: run}}}} = runtime()
+    send(pid, {:antigravity_cancel_timeout, run})
+    await_until(fn -> match?({_pid, %{turn: nil}}, runtime()) or runtime() == nil end)
     settled()
   end
 

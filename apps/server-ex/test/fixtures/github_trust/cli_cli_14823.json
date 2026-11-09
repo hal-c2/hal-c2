@@ -1,0 +1,91 @@
+{
+  "data": {
+    "viewer": {
+      "login": "olafura"
+    },
+    "repository": {
+      "pullRequest": {
+        "author": {
+          "__typename": "User",
+          "login": "Hrushikesh-ramilla"
+        },
+        "authorAssociation": "NONE",
+        "isCrossRepository": true,
+        "headRefOid": "cbf6368a9c4284271ec16c359a0ca369fec89ccc",
+        "headRepositoryOwner": {
+          "login": "Hrushikesh-ramilla"
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "authorAssociation": "CONTRIBUTOR",
+              "body": "Thanks for your pull request! Unfortunately, it doesn't meet the requirements fo",
+              "createdAt": "2026-10-26T09:48:10Z"
+            }
+          ]
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-10-26T09:47:57Z",
+              "actor": {
+                "__typename": "User",
+                "login": "Hrushikesh-ramilla"
+              },
+              "requestedReviewer": null
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-10-26T09:47:58Z",
+              "actor": {
+                "__typename": "User",
+                "login": "Hrushikesh-ramilla"
+              },
+              "requestedReviewer": {
+                "login": "babakks"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-10-26T09:48:07Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "label": {
+                "name": "external"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-10-26T09:48:07Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "label": {
+                "name": "needs-triage"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-10-26T09:48:09Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "label": {
+                "name": "unmet-requirements"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

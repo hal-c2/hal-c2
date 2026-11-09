@@ -16,6 +16,7 @@ defmodule HalC2.CodexGoalRuntimeTest do
     # The test fires the grace itself.
     HalC2.Test.Env.put_app(:codex_goal_grace_ms, 3_600_000)
     HalC2.Test.Env.put_system("FAKE_CODEX_GOAL_STALL", "1")
+    on_exit(fn -> HalC2.Test.Machines.refuse_changes(nil) end)
 
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)
@@ -210,6 +211,51 @@ defmodule HalC2.CodexGoalRuntimeTest do
         "dispatchMode" => %{"type" => "start_immediately"}
       })
   end
+
+  # The stop of a goal's run the store failed between its turns wrote the turn Codex had
+  # completed as interrupted.
+  test "a goal's run the store fails between turns fails, its completed turn kept",
+       %{work: work} do
+    thread_id = "thread-goal-unrecorded"
+    HalC2.Test.Env.put_app(:unrecorded_retry_ms, 20)
+    start_goal_run(thread_id, work)
+    [{pid, _}] = await(fn -> Registry.lookup(HalC2.Codex.Registry, thread_id) end)
+    %{conn: conn, native_thread_id: native} = await_state(pid, &(&1.goal_hold != nil))
+    assert ["completed"] = provider_turns(thread_id)
+
+    # Codex reports what the goal used so far, which the store refuses.
+    HalC2.Test.Machines.refuse_changes(thread_id)
+    goal = %{"objective" => "ship the fix", "status" => "active", "tokensUsed" => 10}
+    params = %{"threadId" => native, "goal" => goal}
+    send(pid, {:json_rpc, conn, {:notification, "thread/goal/updated", params}})
+    assert %{turn: nil, goal_hold: nil} = :sys.get_state(pid)
+    HalC2.Test.Machines.refuse_changes(nil)
+
+    assert %{"status" => "failed", "failure" => "The turn could not be saved" <> _} =
+             await_run(thread_id)
+
+    assert ["completed"] = provider_turns(thread_id)
+  end
+
+  # Wakes on the thread stream's commits until its one run ended.
+  defp await_run(thread_id) do
+    case runs(thread_id) do
+      [%{"status" => status} = run] when status in ~w(completed failed interrupted) ->
+        run
+
+      _ ->
+        assert_receive {:hal_c2_stream, _, _}, 5_000
+        await_run(thread_id)
+    end
+  end
+
+  defp provider_turns(thread_id),
+    do: Enum.map(list(thread_id, "provider-turn"), & &1["status"])
+
+  defp runs(thread_id), do: list(thread_id, "run")
+
+  defp list(thread_id, kind),
+    do: HalC2.Streams.ensure(thread_id) |> HalC2.Streams.Server.state() |> StreamState.list(kind)
 
   # Codex's answer to the activation came behind its reports of the goal turns it ran
   # and of the goal it completed in the last; dropping those as stale left the run
