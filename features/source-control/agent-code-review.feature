@@ -486,8 +486,8 @@ Feature: Agent code review
 
     The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
     sandbox: a checkout of the pull request made from a bundle, a home of its own, no
-    credential in its environment, and a network that reaches only the model's API and
-    the one tool it reports with. A pull request is untrusted as the rule on who gets
+    credential in its environment, and a network that reaches only its model's own
+    requests on the model's API and the one tool it reports with. A pull request is untrusted as the rule on who gets
     reviews says, and its review still waits for the user's approval of its head.
 
     @mc
@@ -497,6 +497,14 @@ Feature: Agent code review
       Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
       And the review of #12 is finished with the agent's verdict
       And its sandbox and the sandbox's provider are deleted
+
+    # The API key is the user's, and the rest of the API opens the rest of their
+    # account with it, their uploaded files among them.
+    @mc
+    Scenario: A review sandbox reaches its model's requests and nothing else on the model's API
+      Given pull requests are not trusted and OpenShell is installed
+      When #12 is reviewed
+      Then its sandbox lets the agent send its model's requests and nothing else on the model's API
 
     @mc
     Scenario: With "Sandbox every review" on, a trusted pull request is reviewed in a sandbox too

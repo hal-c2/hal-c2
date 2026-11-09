@@ -40,13 +40,20 @@ defmodule HalC2.OpenShell.Review do
   @limits %{cpu: "2", memory: "4Gi"}
   @ready_ms 300_000
 
-  # The drivers whose agent can run in a review sandbox, with the API it calls, the
-  # provider profile (`profile/1`) and key holding its credential and how that key is
-  # sent, and the executables in the review image (`HalC2.OpenShell.Manifest`) the
-  # policy lets reach it. Every other driver refuses (`refusal/2`).
+  # The drivers whose agent can run in a review sandbox, with the API it calls and the
+  # requests the policy lets reach it (its model's endpoints alone: the key is the
+  # user's, and opens their files and everything else on the API), the provider
+  # profile (`profile/1`) and key holding its credential and how that key is sent, and
+  # the executables in the review image (`HalC2.OpenShell.Manifest`) the policy lets
+  # reach it. Every other driver refuses (`refusal/2`).
   @drivers %{
     "claudeAgent" => %{
       host: "api.anthropic.com",
+      requests: [
+        {"POST", "/v1/messages"},
+        {"POST", "/v1/messages/count_tokens"},
+        {"GET", "/v1/models"}
+      ],
       type: "hal-c2-claude",
       key: "ANTHROPIC_API_KEY",
       auth: {"header", "x-api-key"},
@@ -55,6 +62,11 @@ defmodule HalC2.OpenShell.Review do
     },
     "codex" => %{
       host: "api.openai.com",
+      requests: [
+        {"POST", "/v1/responses"},
+        {"POST", "/v1/responses/compact"},
+        {"GET", "/v1/models"}
+      ],
       type: "hal-c2-codex",
       key: "OPENAI_API_KEY",
       auth: {"bearer", "authorization"},
@@ -227,7 +239,13 @@ defmodule HalC2.OpenShell.Review do
 
       policy =
         Policy.review(%{
-          model: %{host: model.host, port: 443, binaries: model.binaries, provider: name},
+          model: %{
+            host: model.host,
+            port: 443,
+            requests: model.requests,
+            binaries: model.binaries,
+            provider: name
+          },
           broker: broker,
           tool: spec.tool
         })

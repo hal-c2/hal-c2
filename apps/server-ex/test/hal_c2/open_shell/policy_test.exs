@@ -9,6 +9,7 @@ defmodule HalC2.OpenShell.PolicyTest do
     model: %{
       host: "api.anthropic.com",
       port: 443,
+      requests: [{"POST", "/v1/messages"}, {"GET", "/v1/models"}],
       binaries: ["/usr/local/bin/claude"],
       provider: "hal-c2-review-1"
     },
@@ -49,6 +50,38 @@ defmodule HalC2.OpenShell.PolicyTest do
 
   test "the model's TLS is left to OpenShell to terminate, never skipped" do
     assert model(Policy.review(@review)).tls == :NETWORK_TLS_MODE_UNSPECIFIED
+  end
+
+  # The key is the user's: with it the rest of the API reads their files, and every
+  # program the agent starts reaches the endpoint as the agent does.
+  test "the model endpoint lets through its model's requests and nothing else" do
+    endpoint = model(Policy.review(@review))
+
+    assert endpoint.access == :NETWORK_ACCESS_PRESET_UNSPECIFIED
+    assert Enum.map(endpoint.rules, &{&1.allow.method, &1.allow.path}) == @review.model.requests
+
+    for widen <- [
+          &%{&1 | rules: [], access: :NETWORK_ACCESS_PRESET_READ_WRITE},
+          &%{
+            &1
+            | rules: [
+                %Sb.L7Rule{allow: %Sb.L7Allow{method: "GET", path: "/v1/files/**"}} | &1.rules
+              ]
+          }
+        ] do
+      wider = put_model(Policy.review(@review), widen)
+      assert Validator.violations(wider) == []
+
+      assert Policy.check(wider, Policy.review(@review)) ==
+               {:error, "network rule model is not the one asked for"}
+    end
+  end
+
+  test "a model request that is a glob is refused" do
+    for request <- [{"GET", "/v1/files/**"}, {"*", "/v1/messages"}, {"POST", "/v1/*"}] do
+      review = put_in(@review.model.requests, [request])
+      assert_raise ArgumentError, fn -> Policy.review(review) end
+    end
   end
 
   test "the report endpoint lets through the MCP handshake and a call of the one tool" do

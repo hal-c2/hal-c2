@@ -1139,6 +1139,20 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "its sandbox lets the agent send its model's requests and nothing else on the model's API",
+       context do
+    assert_receive {:openshell_request, "CreateSandbox", %{spec: spec}}, 15_000
+    assert [model] = spec.policy.network_policies["model"].endpoints
+    assert model.host == "api.openai.com"
+    assert model.access == :NETWORK_ACCESS_PRESET_UNSPECIFIED
+
+    requests = Enum.map(model.rules, &{&1.allow.method, &1.allow.path})
+    assert {"POST", "/v1/responses"} in requests
+    assert Enum.all?(requests, fn {_, path} -> path =~ ~r"^/v1/(responses|models)(/|$)" end)
+    refute Enum.any?(requests, fn {method, path} -> method == "*" or path =~ "*" end)
+    context
+  end
+
   step "the review of \#{int} is finished with the agent's verdict",
        %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["verdict"] != nil))

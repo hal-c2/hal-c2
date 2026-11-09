@@ -3,8 +3,9 @@ defmodule HalC2.OpenShell.Policy do
   The policy a review sandbox runs under (#1412), and the check of what the gateway
   composed from it before an agent starts.
 
-  A review sandbox reaches two places and nothing else: its model's API, with the
-  credential OpenShell injects for the sandbox's provider, and the MC's report broker
+  A review sandbox reaches two places and nothing else: its model's endpoints on its
+  API, with the credential OpenShell injects for the sandbox's provider, and the MC's
+  report broker
   (`HalC2.OpenShell.Broker`), as MCP with one tool. Both are enforced, named by exact
   host, port and binary, and Landlock is a hard requirement, so a kernel without it
   fails the sandbox rather than running it open.
@@ -44,8 +45,9 @@ defmodule HalC2.OpenShell.Policy do
   def broker_body, do: @broker_body
 
   @doc """
-  The policy for a review: `model` is `%{host, port, binaries, provider}` (the API the
-  agent calls, the agent's executables, the OpenShell provider holding its key),
+  The policy for a review: `model` is `%{host, port, requests, binaries, provider}`
+  (the API the agent calls, the `{method, path}` of each request it makes there, the
+  agent's executables, the OpenShell provider holding its key),
   `broker` is `%{host, port, path, ips}` (where the report broker listens, as the
   sandbox reaches it) and `tool` the one tool the broker takes a call of.
   """
@@ -76,7 +78,9 @@ defmodule HalC2.OpenShell.Policy do
               protocol: "rest",
               # Unset: 0.1.7 terminates TLS by itself and takes no other mode but skip.
               enforcement: :NETWORK_ENFORCEMENT_MODE_ENFORCE,
-              access: :NETWORK_ACCESS_PRESET_READ_WRITE,
+              # Only these: the key opens the rest of the user's account on the API too,
+              # and every program the agent starts reaches this endpoint as it does.
+              rules: model_rules(model.requests),
               credential_binding: %Sb.NetworkCredentialBinding{provider: model.provider}
             }
           ]
@@ -100,6 +104,16 @@ defmodule HalC2.OpenShell.Policy do
         }
       }
     }
+  end
+
+  # Each path exactly, any query: a glob in one would let more through than it names.
+  defp model_rules(requests) do
+    for {method, path} <- requests do
+      unless method =~ ~r/\A[A-Z]+\z/ and path =~ ~r/\A(\/[A-Za-z0-9_.-]+)+\z/,
+        do: raise(ArgumentError, "not one request: #{method} #{path}")
+
+      %Sb.L7Rule{allow: %Sb.L7Allow{method: method, path: path}}
+    end
   end
 
   # The handshake and listing, then `tools/call` of `tool` alone.

@@ -101,8 +101,9 @@ settings list an agent's models only when it is installed on the MC, so install
 it there to pick a model.
 
 A sandboxed review is stopped, and its sandbox deleted, when it runs past
-**Sandboxed review time limit** or uses up **Sandboxed review token budget**, and
-when you stop, discard or review it again. **Stop** on the Reviews page or in the
+**Sandboxed review time limit** or its agent uses up **Sandboxed review token
+budget**, and when you stop, discard or review it again. The budget counts what
+the agent reports, so a spending limit on the API key is the firm cap. **Stop** on the Reviews page or in the
 review's thread stops a running review.
 
 ## The agent and its prompt

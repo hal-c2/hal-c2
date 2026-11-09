@@ -109,16 +109,20 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 ## What to know
 
 - Telemetry is off: the gateway sends no usage data and exports no traces or logs.
-- A review sandbox reaches only the model's API and this MC. It cannot download
-  packages, so a review uses the tools its image already has.
+- A review sandbox reaches only this MC and the model's own requests on its API
+  (sending messages, counting tokens, listing models), so the API key opens nothing
+  else of your account there. It cannot download packages, so a review uses the
+  tools its image already has.
 - Claude in a sandbox needs an Anthropic API key. A Claude subscription sign-in does
   not work there.
 - The API key reaches the sandbox only through a provider profile HAL-C2 adds to the
   gateway, `hal-c2-claude` or `hal-c2-codex`, which sends it to nothing but the
   model's API. If the gateway already has a profile by that id that differs, the
   review does not start: delete that profile from the gateway and HAL-C2 adds its own.
-- A review's token budget counts everything the model reads, cached prompts and
-  subagents included.
+- A review's token budget counts what the review's agent reports, cached prompts
+  and subagents included. Model calls made outside the agent's own session, by a
+  program it starts, are not counted; the time limit bounds those. To cap what a
+  review can spend, give its API key a spending limit at Anthropic or OpenAI.
 - A review sandbox has 2 GiB for the checkout (`/sandbox`) and 512 MiB for `/tmp`,
   held in memory. It needs OpenShell's Podman or Docker driver, the ones that can
   bound it, and a gateway that leaves its disk unbounded gets no review.

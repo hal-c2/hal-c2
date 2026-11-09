@@ -1773,7 +1773,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   # environment (none is even loaded), no attachments directory, and nothing durable,
   # since an exec stream ends with the MC.
   defp in_sandbox(opts, %{sandbox: true} = turn, _state) do
-    env = %{"MCP_TOOL_TIMEOUT" => to_string(HalC2.Mcp.tool_timeout_ms())}
+    env = %{
+      "MCP_TOOL_TIMEOUT" => to_string(HalC2.Mcp.tool_timeout_ms()),
+      # Its policy lets through the model's requests alone (`HalC2.OpenShell.Policy`).
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" => "1"
+    }
 
     with {:ok, sandbox} <- HalC2.OpenShell.Review.for_turn(turn, env) do
       {:ok,
