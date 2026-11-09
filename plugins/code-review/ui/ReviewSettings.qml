@@ -438,6 +438,8 @@ ColumnLayout {
 
                 ShellTextField {
                     objectName: "codeReviewSetting:label"
+                    Accessible.name: qsTr("Label that asks for a review")
+                    Accessible.description: qsTr("Leave empty to turn off.")
                     implicitWidth: 240
                     text: settings.values.label ?? ""
                     onTextEdited: settings.set("label", text)
@@ -450,6 +452,8 @@ ColumnLayout {
 
                 ShellTextField {
                     objectName: "codeReviewSetting:command"
+                    Accessible.name: qsTr("Comment that asks for a review")
+                    Accessible.description: qsTr("A comment starting with this starts a review. Leave empty to turn off.")
                     implicitWidth: 240
                     text: settings.values.command ?? ""
                     onTextEdited: settings.set("command", text)
@@ -473,6 +477,8 @@ ColumnLayout {
 
                 ShellTextField {
                     objectName: "codeReviewSetting:ignoredAuthors"
+                    Accessible.name: qsTr("Ignored authors")
+                    Accessible.description: qsTr("Logins, separated by commas.")
                     Layout.fillWidth: true
                     text: (settings.values.ignoredAuthors ?? []).join(", ")
                     onTextEdited: settings.set("ignoredAuthors", text.split(",").map(each => each.trim()).filter(each => each.length > 0))
@@ -485,6 +491,8 @@ ColumnLayout {
 
                 Count {
                     key: "maxChangedLines"
+                    Accessible.name: qsTr("Largest change reviewed automatically")
+                    Accessible.description: qsTr("Lines added and removed. 0 for no limit.")
                 }
             }
         }
@@ -599,6 +607,7 @@ ColumnLayout {
 
                 Count {
                     key: "sandboxMinutes"
+                    Accessible.name: qsTr("Sandboxed review time limit (minutes)")
                 }
             }
 
@@ -609,6 +618,8 @@ ColumnLayout {
 
                 Count {
                     key: "sandboxTokens"
+                    Accessible.name: qsTr("Sandboxed review token budget")
+                    Accessible.description: qsTr("0 for no limit.")
                 }
             }
         }
@@ -623,6 +634,7 @@ ColumnLayout {
 
                 Count {
                     key: "concurrency"
+                    Accessible.name: qsTr("Reviews at once")
                 }
             }
 
@@ -632,6 +644,7 @@ ColumnLayout {
 
                 Count {
                     key: "pollMinutes"
+                    Accessible.name: qsTr("Look for pull requests every (minutes)")
                 }
             }
         }
