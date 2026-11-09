@@ -49,6 +49,9 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
       World.call!(context, "plugins.enable", %{"id" => @id, "acceptPermissions" => accepted})
 
     assert %{"status" => "running"} = Fixtures.entry(@id)
+
+    # Off until turned on: these scenarios are about them on, say so.
+    context = save(context, %{"microSkills" => "envfacts"})
     context |> Map.put(:folded, 0) |> watch()
   end
 

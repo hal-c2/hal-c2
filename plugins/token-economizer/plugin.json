@@ -81,8 +81,8 @@
         { "value": "on", "label": "On" },
         { "value": "off", "label": "Off" }
       ],
-      "default": "envfacts",
-      "description": "Facts about a project's environment, learned from its turns and stated at the start of a new conversation. On will add facts a model proposes in a later version; today it does the same as learning environment facts, which asks no model."
+      "default": "off",
+      "description": "Facts about a project's environment, learned from its turns and stated at the start of a new conversation. Off until you turn it on. On will add facts a model proposes in a later version; today it does the same as learning environment facts, which asks no model."
     },
     {
       "key": "microSkillsMaxFacts",

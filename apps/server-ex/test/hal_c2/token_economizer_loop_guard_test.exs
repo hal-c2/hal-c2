@@ -3,7 +3,7 @@
 # tests/test_config_integer_thresholds.py (microsoft/TokenEconomizer@cb42207e3e09).
 
 for file <-
-      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge token_economizer),
+      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_lifecycle micro_skills_observe micro_skills_envfacts token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerLoopGuardTest do
@@ -18,6 +18,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
   alias HalC2Plugins.TokenEconomizer
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Rules, ShellEdits, State, Turn}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
 
   # Printed by Playwright on Windows as it exits, after a passing run as after a failing one.
   @libuv ~S"Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76"
@@ -30,6 +31,8 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
     defaults = Map.new(manifest.settings, &{&1.key, &1.default})
     assert :ok = TokenEconomizer.validate_settings(defaults)
+    # The micro-skills are opt-in.
+    assert defaults["microSkills"] == "off"
   end
 
   describe "an exit status covers a command unless its work could fail unseen" do
@@ -976,6 +979,85 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
       assert_receive {:DOWN, _, :process, ^judge, _}
       assert state.tasks == %{} and state.turns == %{}
+    end
+  end
+
+  describe "the micro-skills at the plugin's seam" do
+    defp settings(state, settings) do
+      {:reply, :ok, state} = TokenEconomizer.handle_call({:settings, settings}, nil, state)
+      state
+    end
+
+    test "switching learning under a turn leaves it partial, and only then" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+      refute state.turns["a"].partial
+
+      state = settings(state, %{"microSkills" => "envfacts", "loopGuardLevel" => "strict"})
+      refute state.turns["a"].partial
+
+      state = settings(state, %{"microSkills" => "off"})
+      assert state.turns["a"].partial
+    end
+
+    test "staging is keyed by the conversation, and nothing stages past its deadline" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      future = System.monotonic_time(:millisecond) + 60_000
+      past = System.monotonic_time(:millisecond) - 1
+
+      run = %{"threadId" => "t", "projectId" => "p", "instanceId" => "claudeAgent"}
+
+      {:reply, nil, state} =
+        TokenEconomizer.handle_call({:shape_run, run, past}, nil, state)
+
+      assert state.staged == %{}
+
+      {:reply, nil, state} =
+        TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+      other = %{run | "instanceId" => "codex"}
+      {:reply, nil, state} = TokenEconomizer.handle_call({:shape_run, other, future}, nil, state)
+
+      assert Map.keys(state.staged) |> Enum.sort() == [{"t", "claudeAgent"}, {"t", "codex"}]
+    end
+
+    test "a drop that cannot be saved is refused, and the plugin stands" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+
+      skills =
+        EnvFacts.add_candidate(EnvFacts.new(), %{
+          id: "form_repair:run_tests:pytest",
+          family: "form_repair",
+          high: false,
+          drift: false,
+          params: %{
+            "intent" => "run_tests",
+            "a" => "pytest",
+            "b_counts" => %{},
+            "error_counts" => %{}
+          }
+        })
+
+      state = put_in(state.skills["p"], skills)
+
+      # The write's temp path is a directory: the save cannot land.
+      tmp = TokenEconomizer.micro_skills_path("p") <> ".tmp"
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf(tmp) end)
+
+      assert {:reply, {:error, message}, state} =
+               TokenEconomizer.handle_call(
+                 {:micro_skill_drop,
+                  %{"projectId" => "p", "id" => "form_repair:run_tests:pytest"}},
+                 nil,
+                 state
+               )
+
+      assert message =~ "could not be saved"
+      assert Map.has_key?(state.skills["p"].facts, "form_repair:run_tests:pytest")
     end
   end
 end

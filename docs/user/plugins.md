@@ -153,9 +153,10 @@ project is told it up front, so its agent skips the failing first attempt. A
 fact the evidence turns against -- the plain command starts working -- stops
 being stated on its own.
 
-Learning is per project and needs no model. Under the plugin's **Settings**,
-**Micro-skills** can turn learning off, and two settings bound what a new
-conversation is told: **Most facts stated** and the facts' **token budget**.
+Learning is per project and needs no model. It is off until you turn it on:
+under the plugin's **Settings**, set **Micro-skills** to **Learn environment
+facts**. Two settings there bound what a new conversation is told: **Most
+facts stated** and the facts' **token budget**.
 
 ## Connect Slack for plugins
 

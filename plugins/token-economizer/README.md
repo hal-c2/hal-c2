@@ -6,7 +6,8 @@ and offers you a stop if it still does not recover. What counts as stuck is lear
 per project from turns that ended green. Its micro-skills learn short facts about a
 project's environment from those turns -- which way of running the tests works here,
 which tool is not installed -- and state them at the start of a new conversation.
-What they do, scenario by scenario, is in
+The micro-skills are off until turned on in the plugin's settings. What they
+do, scenario by scenario, is in
 [features/plugins/token-economizer-loop-guard.feature](../../features/plugins/token-economizer-loop-guard.feature)
 and [features/plugins/token-economizer-micro-skills.feature](../../features/plugins/token-economizer-micro-skills.feature).
 

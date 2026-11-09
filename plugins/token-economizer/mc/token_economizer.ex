@@ -215,9 +215,24 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   @impl GenServer
   def handle_call({:settings, settings}, _from, state) do
+    was_micro = micro_on?(state)
+
     # The level and pinned thresholds shape each tracker, and the micro-skills'
     # caps shape what is staged: read them afresh.
     state = %{state | settings: settings, trackers: %{}, skills: %{}, published_skills: nil}
+
+    # Learning switched under a turn leaves what it folds from incomplete
+    # either way (its calls were not all kept, or its context predates the
+    # switch): the turns under way are partial, and read back whole.
+    state =
+      if micro_on?(state) != was_micro do
+        %{
+          state
+          | turns: Map.new(state.turns, fn {id, turn} -> {id, %{turn | partial: true}} end)
+        }
+      else
+        state
+      end
 
     state =
       cond do
@@ -267,8 +282,19 @@ defmodule HalC2Plugins.TokenEconomizer do
       {skills, state} = skills_for(state, run["projectId"])
       {text, skills} = EnvFacts.render(skills)
       state = put_in(state.skills[run["projectId"]], skills)
-      state = stage(state, run["threadId"], EnvFacts.injected_ids(skills))
-      {:reply, if(text == "", do: nil, else: %{"context" => text}), state}
+
+      # The render itself can cross the deadline (a project's first load):
+      # past it the answer is discarded, so stage nothing for it either.
+      if System.monotonic_time(:millisecond) <= deadline do
+        # Staged per conversation, not per thread: a thread carried on by
+        # another provider gets its own staging, and each fold credits the
+        # conversation it belongs to.
+        key = {run["threadId"], run["provider"] || run["instanceId"]}
+        state = stage(state, key, EnvFacts.injected_ids(skills))
+        {:reply, if(text == "", do: nil, else: %{"context" => text}), state}
+      else
+        {:reply, nil, state}
+      end
     else
       {:reply, nil, state}
     end
@@ -290,9 +316,9 @@ defmodule HalC2Plugins.TokenEconomizer do
   # Remembers what a thread's conversation was staged, keeping the latest
   # conversations only: an evicted thread's later turns count no prevented
   # waste, and learn from failures as an unstaged conversation does.
-  defp stage(state, thread_id, ids) do
-    order = (state.staged_order -- [thread_id]) ++ [thread_id]
-    staged = Map.put(state.staged, thread_id, ids)
+  defp stage(state, key, ids) do
+    order = (state.staged_order -- [key]) ++ [key]
+    staged = Map.put(state.staged, key, ids)
 
     {order, staged} =
       Enum.reduce_while(order, {order, staged}, fn _oldest, {order, staged} ->
@@ -465,7 +491,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   # was half heard is never half learned; if it cannot be read back, it is not
   # learned from at all.
   defp fold_skills(state, thread_id, turn) do
-    {project_id, _provider} = turn.project
+    {project_id, provider} = turn.project
 
     if micro_on?(state) and is_binary(project_id) do
       case fold_calls(thread_id, turn) do
@@ -477,7 +503,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
           skills =
             skills
-            |> EnvFacts.seed_injected(Map.get(state.staged, thread_id, []))
+            |> EnvFacts.seed_injected(Map.get(state.staged, {thread_id, provider}, []))
             |> EnvFacts.update_turn(calls, turn.run)
 
           save_skills(project_id, skills)
@@ -693,7 +719,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # The micro-skills' mode: upstream's `on` gains the paid proposer in a later
   # version; today it and `envfacts` both learn the free environment facts.
-  defp micro_mode(state), do: state.settings["microSkills"] || "envfacts"
+  defp micro_mode(state), do: state.settings["microSkills"] || "off"
   defp micro_on?(state), do: micro_mode(state) != "off"
 
   defp skills_caps(state) do
@@ -737,13 +763,24 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
+  # As `save_tracker/2`: a failed write costs persistence, never the plugin.
+  # Callers that answer a person (drop and restore) report the failure; a
+  # turn's fold keeps what it learned in memory.
   defp save_skills(project_id, skills) do
     path = micro_skills_path(project_id)
-    File.mkdir_p!(Path.dirname(path))
-    saved = Map.merge(EnvFacts.dump(skills), %{"projectId" => project_id})
     tmp = path <> ".tmp"
-    File.write!(tmp, JSON.encode!(saved))
-    File.rename!(tmp, path)
+    saved = Map.merge(EnvFacts.dump(skills), %{"projectId" => project_id})
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(tmp, JSON.encode!(saved)),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("token-economizer: micro-skills not saved to #{path}: #{inspect(reason)}")
+
+        :error
+    end
   end
 
   # The projects with micro-skills of their own: from disk once, then as
@@ -841,16 +878,23 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       case if(action == :drop, do: EnvFacts.drop(skills, id), else: EnvFacts.restore(skills, id)) do
         {:ok, skills} ->
-          save_skills(project_id, skills)
+          case save_skills(project_id, skills) do
+            :ok ->
+              state =
+                state
+                |> know_skill(project_id)
+                |> put_in([:skills, project_id], skills)
+                |> publish_skills()
 
-          state =
-            state
-            |> know_skill(project_id)
-            |> put_in([:skills, project_id], skills)
-            |> publish_skills()
+              {view, state} = micro_skills_view(state, project_id)
+              {:reply, {:ok, view}, state}
 
-          {view, state} = micro_skills_view(state, project_id)
-          {:reply, {:ok, view}, state}
+            :error ->
+              {:reply,
+               {:error,
+                "That could not be saved, so it has not been " <>
+                  if(action == :drop, do: "dropped.", else: "restored.")}, state}
+          end
 
         {:error, message} ->
           {:reply, {:error, message}, state}
