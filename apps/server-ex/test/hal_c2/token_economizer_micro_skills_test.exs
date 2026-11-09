@@ -121,6 +121,22 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert outcomes.("make build || cargo build", "Finished dev", 0) ==
              [{"make build", nil}, {"cargo build", nil}]
 
+    # A passing run's zero count of failures does not show it failed.
+    for output <- [
+          "test result: ok. 4 passed; 0 failed; 0 ignored",
+          "Tests: 4 passed, 0 failed",
+          "failed: 0\npassed: 4",
+          "Ran 4 tests, 0 errors"
+        ] do
+      assert outcomes.("cargo test || cargo test --offline", output, 0) ==
+               [{"cargo test", nil}, {"cargo test", nil}],
+             output
+    end
+
+    # A count above zero does.
+    assert outcomes.("make build || cargo build", "1 failed\nFinished dev", 0) ==
+             [{"make build", nil}, {"cargo build", "ran"}]
+
     # A test run its output shows ran, whatever came before it.
     assert outcomes.("source .venv/bin/activate && pytest -q", "1 failed, 3 passed", 1) ==
              [{"source .venv/bin/activate && pytest", "ran"}]

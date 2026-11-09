@@ -142,8 +142,11 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @activated_re ~r/(?:^|&&\s)(?:(?:source|\.)\s|(?:conda|mamba|micromamba)\s+activate\s|nvm\s+use\b)/
   @env_incode_re ~r/os\.environ(?:\.setdefault\(\s*|\[\s*)['"]([A-Z][A-Z0-9_]{2,})['"]\s*(?:,|\]\s*=)\s*['"]([\w.\-\/:]+)['"]/
   @failed_re ~r/(?m)Traceback \(most recent call last\)|^\w*Error\b|\b[Ee]xit [Cc]ode[:=\s]+[1-9]/
-  # Output that shows something failed, whatever its kind.
-  @failure_shown_re ~r/\*\*\*|\b(?:error|failed|fatal)\b/i
+  # Output that shows something failed, whatever its kind: make's `***`, a
+  # line that opens with `error`, `fatal` or `failed`, or a count of failures
+  # above zero. A zero count (`0 failed`, `failed: 0`, `0 errors`), which a
+  # passing run prints, shows nothing.
+  @failure_shown_re ~r/(?im)\*\*\*|^(?:error|fatal|failed)\b(?!\s*[:=]?\s*0\b)|\b[1-9]\d*\s+(?:failed|failures?|errors?)\b|\b(?:failed|failures?|errors?)\s*[:=]\s*[1-9]/
   @label_token_re ~r/^[A-Za-z_][\w.\-\/]*(?:::[\w.\-\[\]]+)*$/
 
   @doc "The error classes a network produces."
