@@ -3459,6 +3459,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp subagent_block(sub, %{"type" => "tool_use", "id" => tool_id, "name" => name} = block, _key) do
     {kind, fields} = tool_kind(name, block["input"] || %{}, block["presentation"])
+    # Its own name for the tool, for plugins that hear turns, as on the turn's own calls.
+    fields = Map.put(fields, "providerToolName", name)
     sub = NativeSubagent.item(sub, tool_id, @item_types[kind], "running", fields)
     Map.put(sub, :tools, Map.put(Map.get(sub, :tools, %{}), tool_id, kind))
   end

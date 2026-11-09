@@ -349,7 +349,10 @@ defmodule HalC2.Plugins.Extension do
       started, as it starts, with `"itemType"` `subagent`: `"threadId", "runId", "itemId",
       "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
       "status", "input", "output"`, cut to 4,000 characters, `"exitCode"` and, for a
-      file change, the file's `"path"`) and
+      file change, the file's `"path"`; a call a subagent of the turn's made has
+      `"subagent" => true`, and a use of a provider's own tool that no thread shows as a
+      call, such as Codex viewing an image or setting its goal, comes as an item of its
+      own) and
       `turn.finished` (`"threadId", "runId", "ordinal"`, the run's place in its thread
       as `HalC2.Plugins.Host.history/3` has it, `"status", "tokenUsage"`: the provider's
       last report of the conversation's context, `%{"usedTokens", "inputTokens",

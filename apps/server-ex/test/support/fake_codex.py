@@ -506,12 +506,25 @@ for line in sys.stdin:
             send({"method": "item/started", "params": {**ctx, "item": {**call, "status": "inProgress", "agentsStates": {}}}})
             send({"method": "item/started", "params": {**child, "item": {"type": "agentMessage", "id": "child-msg", "text": ""}}})
             send({"method": "item/agentMessage/delta", "params": {**child, "itemId": "child-msg", "delta": "lib has three modules"}})
+            if "that views an image" in text:
+                send({"method": "item/completed", "params": {**child, "item": {"type": "imageView", "id": "child-image", "path": "/r/shot.png"}}})
             send({"method": "item/completed", "params": {**child, "item": {"type": "agentMessage", "id": "child-msg", "text": "lib has three modules"}}})
             send({"method": "turn/completed", "params": {**child, "turn": {"id": child["turnId"], "status": "completed"}}})
             send({"method": "item/completed", "params": {**ctx, "item": {**call, "status": "completed",
                   "agentsStates": {child["threadId"]: {"status": "completed", "message": "lib has three modules"}}}}})
             send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-sub", "text": ""}}})
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-sub", "text": "The subagent found three modules."}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+            continue
+        # "use own tools": Codex views an image, makes one, and waits on its agents, none
+        # of which the turn shows.
+        if "use own tools" in text:
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "imageView", "id": "image-1", "path": "/r/shot.png"}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "imageView", "id": "image-1", "path": "/r/shot.png"}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "imageGeneration", "id": "gen-1", "status": "completed", "inputImages": []}}})
+            call = {"type": "collabAgentToolCall", "id": "collab-w", "tool": "wait", "senderThreadId": thread_id, "receiverThreadIds": [], "agentsStates": {}}
+            send({"method": "item/started", "params": {**ctx, "item": {**call, "status": "inProgress"}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {**call, "status": "completed"}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
         if "plan" in text:

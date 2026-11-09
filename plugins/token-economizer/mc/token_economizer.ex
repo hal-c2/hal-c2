@@ -891,6 +891,9 @@ defmodule HalC2Plugins.TokenEconomizer do
     state |> close(thread_id, false) |> put_in([:turns, thread_id], turn)
   end
 
+  # A subagent's call is not the turn's own: the loop guard watches the agent's loop.
+  defp hear(state, %{"type" => "turn.item", "subagent" => true}), do: state
+
   defp hear(state, %{"type" => "turn.item", "threadId" => thread_id, "runId" => run_id} = item) do
     case {state.turns[thread_id], call_of(item)} do
       {%{run: ^run_id} = turn, {name, args, result, code}} ->

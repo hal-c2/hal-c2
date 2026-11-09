@@ -82,6 +82,11 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
     run_thread(context, "First")
   end
 
+  step "a Claude thread in the project runs a turn in which a subagent uses {string}",
+       %{args: [tool]} = context do
+    run_thread(context, "First", "subagent works on: Check the tests using #{tool}")
+  end
+
   step "another Claude thread in the project runs a turn", context do
     run_thread(context, "Second")
   end
@@ -211,8 +216,8 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerToolPrune do
   end
 
   # A new thread, so a new provider conversation, which shape_run/2 shapes.
-  defp run_thread(context, title) do
-    context = World.launch_on(context, title, @instance, "hello")
+  defp run_thread(context, title, text \\ "hello") do
+    context = World.launch_on(context, title, @instance, text)
     World.await_runs(context, title, ["completed"])
     Map.put(context, :prune_thread, title)
   end

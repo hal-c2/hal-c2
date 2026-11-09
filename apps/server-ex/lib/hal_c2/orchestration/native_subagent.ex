@@ -14,6 +14,8 @@ defmodule HalC2.Orchestration.NativeSubagent do
   alias HalC2.Orchestration.{Entities, TurnWriter}
 
   @terminal ~w(completed failed interrupted cancelled)
+  # What the subagent says and thinks is no tool call of its, for plugins that hear turns.
+  @unheard ~w(assistant_message reasoning)
 
   @doc """
   Records a subagent the provider started as `native` (its tool call id) in the turn
@@ -129,6 +131,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
       id: id,
       item: item_id,
       thread: ids.thread,
+      run: ids.run,
       child: child_id,
       root: child_root,
       native: native,
@@ -177,6 +180,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
       id: id,
       item: "turn-item:subagent:#{id}",
       thread: entity["threadId"],
+      run: ids.run,
       child: child,
       root: "node:subagent-root:#{driver}:#{native}",
       # Its own messages, after those the child thread already has.
@@ -382,15 +386,10 @@ defmodule HalC2.Orchestration.NativeSubagent do
             )
         end
 
-      changes =
-        if StreamState.fetch(state, "turn-item", item_id) do
-          [Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message]
-        else
-          [
-            message,
-            Orchestration.create(
-              "turn-item",
-              item_id,
+      {changes, stored} =
+        case StreamState.fetch(state, "turn-item", item_id) do
+          nil ->
+            item =
               Entities.turn_item(
                 ids,
                 item_id,
@@ -401,14 +400,41 @@ defmodule HalC2.Orchestration.NativeSubagent do
                 fields
               )
               |> Map.put("nativeItemRef", Entities.provider_ref(native, sub.driver))
-            )
-          ]
+
+            {[message, Orchestration.create("turn-item", item_id, item)], item}
+
+          stored ->
+            {[Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message],
+             Map.merge(stored, put)}
         end
 
-      {Enum.filter(changes, &is_tuple/1), :ok}
+      {Enum.filter(changes, &is_tuple/1), stored}
     end)
+    |> then(&if(status in @terminal and type not in @unheard, do: observe(sub, &1)))
 
     if message_id, do: Map.put(sub, :said, fields["text"]), else: sub
+  end
+
+  @doc """
+  Plugins that hear turns hear `item`, a turn item of the subagent's work that ended,
+  as their parent turn's, marked `"subagent"` (`HalC2.Plugins.observe/1`): the agent
+  used the tool, though not in its own turn. `item/5` hears what it writes; this is
+  for work a provider reports that the child thread does not show.
+  """
+  def observe(sub, item) do
+    if HalC2.Plugins.observing?() and is_map(item) do
+      item
+      |> TurnWriter.observed_item()
+      |> Map.merge(%{
+        "type" => "turn.item",
+        "threadId" => sub.thread,
+        "runId" => Map.get(sub, :run),
+        "subagent" => true
+      })
+      |> HalC2.Plugins.observe()
+    end
+
+    :ok
   end
 
   @doc "What the subagent said so far, or nil."

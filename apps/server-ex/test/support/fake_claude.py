@@ -542,9 +542,11 @@ for line in sys.stdin:
         continue
     # "subagent works on: TASK": a subagent (tool use agent-N) runs TASK in the turn,
     # its own messages under its tool call: partial text, then text, a Bash call and a
-    # task list, their results, and its answer "The tests pass".
+    # task list, their results, and its answer "The tests pass". A TASK "... using NAME"
+    # has it call the tool NAME in place of the task list.
     if text.startswith("subagent works on: "):
         agent, task = f"agent-{turn}", text[len("subagent works on: "):]
+        listing = task.split(" using ", 1)[1] if " using " in task else "TodoWrite"
         side = lambda msg: send({**msg, "session_id": session, "parent_tool_use_id": agent})
         send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
             "description": "Helper", "prompt": task, "subagent_type": "general-purpose"}}]}})
@@ -557,7 +559,7 @@ for line in sys.stdin:
         side({"type": "assistant", "uuid": f"sub-uuid-{turn}a", "message": {"id": f"s{turn}a", "role": "assistant", "content": [
             {"type": "text", "text": "Running the tests"},
             {"type": "tool_use", "id": f"sub-bash-{turn}", "name": "Bash", "input": {"command": "mix test"}},
-            {"type": "tool_use", "id": f"sub-todo-{turn}", "name": "TodoWrite", "input": {"todos": [{"content": "Run the tests", "status": "in_progress", "activeForm": "Running"}]}}]}})
+            {"type": "tool_use", "id": f"sub-todo-{turn}", "name": listing, "input": {"todos": [{"content": "Run the tests", "status": "in_progress", "activeForm": "Running"}]}}]}})
         side({"type": "user", "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": f"sub-bash-{turn}", "content": "12 tests, 0 failures", "is_error": False},
             {"type": "tool_result", "tool_use_id": f"sub-todo-{turn}", "content": "Todos updated", "is_error": False}]}})

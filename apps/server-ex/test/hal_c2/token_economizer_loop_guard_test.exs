@@ -739,6 +739,32 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert state.prunes[claude]["sessions"] == 1
     end
 
+    test "a subagent's call counts as a use of its tool, and is no call of the turn's to the loop guard" do
+      p = project()
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = put_in(state.seeded[{"a", {p, "claudeAgent"}}], :read)
+      state = observe(state, started("a", %{"projectId" => p, "newConversation" => true}))
+      guard = state.turns["a"].guard
+
+      call = %{
+        "type" => "turn.item",
+        "threadId" => "a",
+        "runId" => "run-a",
+        "itemType" => "command_execution",
+        "tool" => "CronCreate",
+        "status" => "completed",
+        "input" => "ls",
+        "subagent" => true
+      }
+
+      state = observe(state, call)
+      assert "CronCreate" in state.convs["a"].used
+      assert state.turns["a"].guard == guard
+
+      # The turn's own call is the loop guard's.
+      refute observe(state, Map.delete(call, "subagent")).turns["a"].guard == guard
+    end
+
     test "a thread's watermark moves when its segment folds, not when its turn ends" do
       p = project()
       {:ok, state} = TokenEconomizer.init(%{})

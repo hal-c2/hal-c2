@@ -4,7 +4,7 @@
 #   apps/server-ex/lib/hal_c2/plugins.ex (observe/1, shape_run/1: asked as a new conversation starts, each plugin apart from the asker, with its saved settings)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item, turn.finished; the calls a stopped or abandoned turn closed; a turn's usage)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (a Codex turn and a goal's run, started by Codex's own writer)
-#   apps/server-ex/lib/hal_c2/orchestration/native_subagent.ex (a subagent the provider started, as a turn.item)
+#   apps/server-ex/lib/hal_c2/orchestration/native_subagent.ex (a subagent the provider started, as a turn.item; its calls, marked as a subagent's)
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread, a native fork's inherited)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (a native fork carries its source's shape; fresh_start/2: a resume that started afresh is a new conversation)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (new_run: another instance with the same home takes over the conversation and its shape)
@@ -52,6 +52,18 @@ Feature: Plugins that watch and shape turns
     Given a plugin that hears turns
     When a Codex thread runs a turn that starts a subagent
     Then the plugin hears the subagent start in that turn, before it ends
+
+  @mc
+  Scenario: A plugin hears a subagent's tool calls in the turn that runs it, marked as a subagent's
+    Given a plugin that hears turns
+    When a Claude thread runs a turn in which a subagent calls a tool
+    Then the plugin hears the subagent's tool call in that turn, marked as a subagent's
+
+  @mc
+  Scenario: A plugin hears Codex use the tools no thread shows as calls
+    Given a plugin that hears turns
+    When a Codex thread runs a turn that views an image, makes one and waits on its agents
+    Then the plugin hears each use in that turn, by Codex's name for the tool
 
   @mc
   Scenario: A plugin without turns:observe hears nothing of a turn
