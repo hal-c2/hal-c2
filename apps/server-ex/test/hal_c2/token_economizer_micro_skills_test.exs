@@ -74,6 +74,22 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
 
   # --- observations -----------------------------------------------------------------------
 
+  test "a separator quoted or escaped as the shell reads it ends no segment" do
+    # A backslash in single quotes is literal: the quote ends there.
+    assert Observe.segments(~S(printf 'a\' ; pytest -q ; printf '; make build')) ==
+             [~S(printf 'a\'), "pytest -q", "printf '; make build'"]
+
+    assert Observe.segments(~S(echo 'C:\' && echo '; npm run build')) ==
+             [~S(echo 'C:\'), "echo '; npm run build'"]
+
+    # Outside quotes it escapes the separator after it.
+    assert Observe.segments(~S(echo a\;make build)) == [~S(echo a\;make build)]
+    assert Observe.classify_command(~S(echo a\;make build)) == []
+
+    assert [%{intent: "run_tests", form: "pytest"}] =
+             Observe.classify_command(~S(printf 'a\' ; pytest -q ; printf '; make build'))
+  end
+
   test "classify forms and intents" do
     assert form(
              ~s(/bin/bash -lc "source /opt/env/bin/activate proj && python -m pytest tests -q")

@@ -191,7 +191,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   newlines, outside quotes. Heredoc bodies are elided first so their contents
   are never mistaken for commands.
   """
-  def segments(cmd) do
+  def segments(cmd), do: cmd |> split() |> Enum.map(&elem(&1, 0))
+
+  # Each segment with the operator after it (`&&`, `||`, `;`, `|`, a newline;
+  # nil after the last). As the shell reads it: a single quote takes everything
+  # to the next one literally, a backslash escapes in double quotes, and outside
+  # quotes it escapes the character after it, so `a\;b` is one word.
+  defp split(cmd) do
     cmd =
       Regex.replace(@heredoc_re, cmd || "", fn whole, _tag ->
         hd(String.split(whole, "\n", parts: 2)) <> " <heredoc>"
@@ -205,9 +211,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
       |> Tuple.to_list()
       |> Enum.with_index()
       |> Enum.reduce({[], {[], nil, false}}, fn {char, i}, {out, {buf, quote, skip}} ->
+        pair = char <> (next.(i) || "")
+
         cond do
           skip ->
             {out, {buf, quote, false}}
+
+          quote == "'" ->
+            {out, {[char | buf], if(char == "'", do: nil, else: quote), false}}
 
           quote != nil ->
             buf = [char | buf]
@@ -218,22 +229,30 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
               true -> {out, {buf, quote, false}}
             end
 
+          char == "\\" and next.(i) != nil ->
+            {out, {[next.(i), char | buf], nil, true}}
+
           char in ["\"", "'"] ->
             {out, {[char | buf], char, false}}
 
-          char in ["\n", ";", "|"] or (char == "&" and next.(i) == "&") ->
-            {[buf | out], {[], nil, (char <> (next.(i) || "")) in ["&&", "||"]}}
+          pair in ["&&", "||"] ->
+            {[{buf, pair} | out], {[], nil, true}}
+
+          char in ["\n", ";", "|"] ->
+            {[{buf, char} | out], {[], nil, false}}
 
           true ->
             {out, {[char | buf], quote, false}}
         end
       end)
 
-    [buf | out]
+    [{buf, nil} | out]
     |> Enum.reverse()
-    |> Enum.map(fn rev -> rev |> Enum.reverse() |> Enum.join() end)
-    |> Enum.map(&(&1 |> String.trim() |> String.trim("()") |> String.trim()))
-    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(fn {rev, sep} ->
+      text = rev |> Enum.reverse() |> Enum.join()
+      {text |> String.trim() |> String.trim("()") |> String.trim(), sep}
+    end)
+    |> Enum.reject(&(elem(&1, 0) == ""))
   end
 
   @doc "`rtk pytest -q` becomes `pytest -q`; anything else is unchanged."
