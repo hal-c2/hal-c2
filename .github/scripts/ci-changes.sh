@@ -7,12 +7,16 @@
 #
 # Run with HEAD a pull request's merge commit or a push to main, so HEAD^1..HEAD is the
 # whole change, unless a push to main holds several commits (a rebase merge). Then it is
-# the last one, and at worst that merge's build isn't saved until the next. The argument
+# the last one, and at worst that merge's build isn't saved until the next. A merge queue
+# entry sets CI_BASE to the queue's base, which replaces HEAD^1: the queue may rebase, and
+# in a group only the last entry runs. The argument
 # says how much to test:
 #   all       every job (the nightly run)
 #   merged    only mc_check, whose build is what every pull request restores: the merge's
 #             tests already ran on its pull request, and the nightly run covers the rest
-#   pr        only what the change needs
+#   queue     what the change needs (a merge queue entry, the commit that lands)
+#   pr        what the change needs of the quick tier: mc_check, unit tests and the TUI.
+#             Properties, scenarios and proofs wait for the queue
 #
 # Each path list names what a job cannot depend on, not what it does: a path no one
 # thought of runs everything.
@@ -74,7 +78,7 @@ if [ "$mode" = all ] || ! git rev-parse -q --verify HEAD^1 >/dev/null; then
   scenarios=$(printf '%s\n' "${scenario_groups[@]}")
 else
   # Without rename detection a moved file lists both paths: it left one place and reached another.
-  changed=$(git diff --no-renames --name-only HEAD^1 HEAD)
+  changed=$(git diff --no-renames --name-only "${CI_BASE:-HEAD^1}" HEAD)
   mc=$(needed '^$')
   if [ "$mode" = merged ]; then
     unit=false props=false tui=false scenarios='' selected=''
@@ -90,6 +94,9 @@ else
       touched=$(sed -nE 's#^apps/server-ex/proof/(hal_c2/(.*)_proof_test\.exs|models/(.*)\.maude)$#\2\3#p' <<<"$changed" | sort -u)
       # A proof deleted by this change has nothing left to run.
       selected=$(grep -Fx -f <(printf '%s\n' "$proofs") <<<"$touched" || true)
+    fi
+    if [ "$mode" = pr ]; then
+      props=false scenarios='' selected=''
     fi
   fi
 fi

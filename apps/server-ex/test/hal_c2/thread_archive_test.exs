@@ -137,6 +137,28 @@ defmodule HalC2.ThreadArchiveTest do
     assert ThreadArchive.stays(%{"title" => "X", "plugin" => escape}) == :ok
   end
 
+  # A thread run in a review sandbox (#1412) stays with the sandbox, whatever its
+  # plugin's manifest says: no move, export or import takes it off this machine.
+  test "a sandboxed thread is kept on its machine", %{context: context, root: root, tmp_dir: dir} do
+    context = World.create_thread(context, "Sandboxed")
+    mark = %{"id" => "notes", "kind" => "review", "sandboxed" => true}
+    context = World.patch_thread(context, "Sandboxed", %{"plugin" => mark})
+    kept = {:error, "Sandboxed was started by notes, which keeps it on this machine."}
+    assert ThreadArchive.stays(World.thread(context, "Sandboxed")) == kept
+
+    assert ThreadArchive.export_file("Sandboxed", Path.join(dir, "s.hal-c2-thread")) == kept
+    refute File.exists?(Path.join(dir, "s.hal-c2-thread"))
+
+    cart = %{"id" => "th-cart", "title" => "Cart", "plugin" => mark}
+    file = archive(root, %{"entities" => [["thread", "th-cart", cart]]})
+
+    assert ThreadArchive.import_archive(file, project: "shop") ==
+             {:error,
+              "Cart was started by notes, which keeps it on the machine it started on. Cart was not imported."}
+
+    assert ThreadArchive.local_thread("th-cart") == nil
+  end
+
   # An MC from before plugins kept their threads sends such a thread on, by a move or a
   # file, so the MC it reaches refuses it: by its mark, or by the plugin's manifest here.
   test "a thread its plugin keeps on its machine is not imported", %{root: root} do

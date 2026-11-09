@@ -73,6 +73,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19320
 #   https://github.com/pingdotgg/t3code/pull/19314
 #   https://github.com/pingdotgg/t3code/pull/19322
+#   https://github.com/pingdotgg/t3code/pull/21299 (a session's background jobs end with it)
 #   https://github.com/pingdotgg/t3code/pull/17778
 #   https://github.com/pingdotgg/t3code/pull/15872
 #   https://github.com/pingdotgg/t3code/pull/20061
@@ -2187,12 +2188,13 @@ Feature: Claude
     And the usage is marked as partial
 
   # Upstream #19322: the claude CLI stops the MCP servers it starts, but not their children.
+  # Upstream #21299 later ended a session's background jobs with it too, so the shell job no
+  # longer outlives the session (mc/platform/agent-containment.feature).
   @backlog
   Scenario: Closing a Claude session stops what its MCP servers started
     Given a Claude session runs a plugin MCP server through a wrapper that starts a child process
     When the session is closed or its thread is deleted
     Then the MCP server's child process stops too
-    And a background job the agent started from its shell keeps running
 
   # T3 Code's #18887 took back showing the last block as text: under summarized thinking
   # Claude's progress updates cannot be told apart from its reasoning.

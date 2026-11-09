@@ -130,6 +130,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
     |> open(pr)
     |> change(pr, "its checks start failing")
     |> change(pr, "it comes to conflict with its base branch")
+    |> change(pr, "it leaves the merge queue because its checks failed there")
     |> change(pr, "the owner comments")
   end
 
@@ -225,6 +226,11 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
     context
   end
 
+  step "the message does not say {string}", %{args: [text]} = context do
+    refute context.wake["text"] =~ text, "the message was:\n#{context.wake["text"]}"
+    context
+  end
+
   step "the timeline of {string} shows the notification {string}",
        %{args: [thread, summary]} = context do
     item = World.state(context, thread) |> StreamState.get("turn-item")
@@ -278,7 +284,9 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
       "author" => %{"__typename" => "User", "login" => "monalisa"},
       "commits" => %{"nodes" => []},
       "comments" => %{"nodes" => []},
-      "reviews" => %{"nodes" => []}
+      "reviews" => %{"nodes" => []},
+      "mergeQueueEntry" => nil,
+      "mergeQueueRemoval" => %{"nodes" => []}
     }
 
     context |> put_in([:prs, pr], state) |> serve()
@@ -307,6 +315,15 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
 
         "it comes to conflict with its base branch" ->
           Map.put(pr_state, "mergeable", "CONFLICTING")
+
+        "it enters the merge queue" ->
+          Map.put(pr_state, "mergeQueueEntry", %{"state" => "QUEUED", "position" => 1})
+
+        "it leaves the merge queue because its checks failed there" ->
+          left_queue(pr_state, at)
+
+        "it is merged after leaving the merge queue" ->
+          pr_state |> left_queue(at) |> Map.merge(%{"state" => "MERGED", "mergedAt" => at})
 
         "it is merged" ->
           Map.merge(pr_state, %{"state" => "MERGED", "mergedAt" => at})
@@ -349,6 +366,14 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
   defp tick(context) do
     clock = context.clock + 1
     {%{context | clock: clock}, World.iso_from_now(clock * 1_000)}
+  end
+
+  defp left_queue(pr, at) do
+    pr
+    |> Map.put("mergeQueueEntry", nil)
+    |> Map.put("mergeQueueRemoval", %{
+      "nodes" => [%{"createdAt" => at, "reason" => "failed_checks"}]
+    })
   end
 
   defp checks(pr, state),

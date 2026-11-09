@@ -116,7 +116,8 @@ defmodule HalC2.Claude.Session do
         executable = Keyword.get(opts, :command, [Keyword.get(opts, :executable, "claude")])
         cmd = fn _durable_dir -> executable ++ Protocol.cli_args(opts) end
 
-        with {:ok, sub} <- Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable])) do
+        with {:ok, sub} <-
+               Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable, :sandbox])) do
           HalC2.ProviderLog.options(Keyword.get(opts, :log), opts)
 
           init =

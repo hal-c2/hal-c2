@@ -79,6 +79,36 @@ If the reviewing agent runs into its provider's usage limit, reviews pause
 until the limit resets: the review it stopped and the ones behind it wait in
 the queue instead of failing one by one, and the Reviews page says so.
 
+## Reviews in a sandbox
+
+A review of a pull request HAL-C2 does not trust runs in a sandbox, and so does
+every review with **Sandbox every review** on. HAL-C2 trusts a pull request opened
+by a member or collaborator of the repository, or by one of your **Trusted logins**,
+unless its commits come from someone else's fork. With the switch off, reviews of the
+pull requests it trusts run on your machine. A sandbox needs
+[OpenShell on the MC](openshell.md), and its agent must be Claude or Codex with an API
+key; any other agent, or an MC without OpenShell, fails the review and says what to
+set up.
+
+The agent reviews a copy of the pull request's commits and has no access to your
+machine, your GitHub login or HAL-C2's tools. It reaches only its model's API and
+one tool to report with. The first report it sends is the review, and its sandbox
+is deleted then. The Reviews page, the review's thread and its row in the thread
+list say a review runs in a sandbox.
+
+The sandbox brings its own copy of the agent, so the agent doesn't have to be
+installed or signed in on the MC, and the MC's version of it doesn't matter. None
+of the MC's agent settings, skills or task lists reach the sandbox, and what the
+review uses counts against its API key, not your account's usage limits. The
+settings list an agent's models only when it is installed on the MC, so install
+it there to pick a model.
+
+A sandboxed review is stopped, and its sandbox deleted, when it runs past
+**Sandboxed review time limit** or its agent uses up **Sandboxed review token
+budget**, and when you stop, discard or review it again. The budget counts what
+the agent reports, so a spending limit on the API key is the firm cap. **Stop** on the Reviews page or in the
+review's thread stops a running review.
+
 ## The agent and its prompt
 
 Pick the agent, its model, what that model offers beside itself (its reasoning

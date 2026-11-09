@@ -31,9 +31,12 @@ defmodule HalC2.OpenShell.Exec do
   # enough that one write does not hold the connection for long.
   @chunk 65_536
 
+  # `dial` opens the exec's own connection, in the exec's process: the connection is
+  # linked to whoever opens it, and a caller that traps exits would otherwise hear
+  # its processes come and go.
   @doc false
-  def start(channel, %Pb.ExecSandboxRequest{} = start, owner) do
-    GenServer.start(__MODULE__, {channel, start, owner})
+  def start(dial, %Pb.ExecSandboxRequest{} = start, owner) when is_function(dial, 0) do
+    GenServer.start(__MODULE__, {dial, start, owner})
   end
 
   @doc "Writes `data` (iodata) to the command's stdin. `:ok` once the gateway took it."
@@ -113,8 +116,26 @@ defmodule HalC2.OpenShell.Exec do
   # --- server ------------------------------------------------------------------------
 
   @impl true
-  def init({channel, start, owner}) do
+  def init({dial, start, owner}) do
     Process.flag(:trap_exit, true)
+
+    case dial.() do
+      {:ok, channel} -> opened(channel, start, owner)
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  # The connection is the gRPC supervisor's, not this process's, and a stop from
+  # `init/1` runs no `terminate/2`: a stream that fails to open closes it here.
+  defp opened(channel, start, owner) do
+    open(channel, start, owner)
+  catch
+    kind, reason ->
+      quietly(fn -> GRPC.Stub.disconnect(channel) end)
+      {:stop, Exception.normalize(kind, reason, __STACKTRACE__)}
+  end
+
+  defp open(channel, start, owner) do
     monitor = Process.monitor(owner)
     stream = Stub.exec_sandbox_interactive(channel, timeout: :infinity)
 

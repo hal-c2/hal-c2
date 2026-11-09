@@ -13,6 +13,7 @@ Rectangle {
     readonly property var review: thread !== null ? (threads[thread.id] ?? null) : null
     readonly property string status: review?.status ?? ""
     readonly property string verdict: review?.verdict ?? ""
+    readonly property bool sandboxed: review?.sandboxed === true
     readonly property color tone: {
         if (status === "failed")
             return Theme.palette.color("error", "#ef4444");
@@ -63,7 +64,7 @@ Rectangle {
     color: Qt.alpha(tone, 0.14)
     border.color: Qt.alpha(tone, status === "waiting" ? 0.7 : 0.3)
     Accessible.role: Accessible.StaticText
-    Accessible.name: status === "waiting" ? qsTr("Review: %1, not published").arg(label) : qsTr("Review: %1").arg(label)
+    Accessible.name: (status === "waiting" ? qsTr("Review: %1, not published").arg(label) : qsTr("Review: %1").arg(label)) + (sandboxed ? qsTr(", in a sandbox") : "")
     onThreadChanged: follow()
     Component.onCompleted: follow()
 
@@ -71,7 +72,8 @@ Rectangle {
         id: text
 
         anchors.centerIn: parent
-        text: mark.label
+        // A sandboxed review's mark says so; it is stopped from its header.
+        text: mark.sandboxed ? qsTr("%1 · sandbox").arg(mark.label) : mark.label
         color: mark.tone
         font.pixelSize: Math.round(10 * Theme.fontScale)
         font.weight: Font.Medium

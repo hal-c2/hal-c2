@@ -233,6 +233,54 @@ defmodule HalC2.ProviderUsageLimitsTest do
     assert Limits.get("claude-gone") == nil
   end
 
+  # A sandboxed review's agent (#1412) runs on its sandbox's API key, not this
+  # machine's account: what it reports of its quota is not this machine's.
+  test "a sandboxed review's quota leaves this machine's account alone" do
+    start()
+
+    assert {:noreply, _} =
+             HalC2.Codex.ThreadRuntime.handle_info(
+               {:json_rpc, nil,
+                {:notification, "account/rateLimits/updated",
+                 %{
+                   "rateLimits" => %{
+                     "limitId" => "codex",
+                     "primary" => %{"usedPercent" => 88, "windowDurationMins" => 300}
+                   }
+                 }}},
+               %{instance: "codex", turn: nil, sandboxed: true, v: 0}
+             )
+
+    for state <- [
+          %{turn: %{sandbox: true, ids: %{instance: "claudeAgent"}}, wake: nil, last_ids: nil},
+          %{turn: nil, wake: nil, last_ids: %{instance: "claudeAgent"}, launch: %{sandbox: true}}
+        ] do
+      assert {:noreply, _} =
+               HalC2.Claude.ThreadRuntime.handle_info(
+                 {:claude, nil,
+                  {:message,
+                   %{
+                     "type" => "rate_limit_event",
+                     "rate_limit_info" => %{
+                       "rateLimitType" => "five_hour",
+                       "utilization" => 0.66,
+                       "resetsAt" => 1_790_000_000
+                     }
+                   }}},
+                 state
+               )
+    end
+
+    :sys.get_state(Limits)
+    # What the boot probe of this machine's accounts found stands.
+    used = fn instance ->
+      for window <- (Limits.get(instance) || %{})["windows"] || [], do: window["usedPercent"]
+    end
+
+    refute 88 in used.("codex")
+    refute 66.0 in used.("claudeAgent")
+  end
+
   # An upgrade that lands while a turn runs has no `:instance` in the old
   # state; the turn's own ids say whose quota its updates are.
   test "a Codex runtime upgraded mid-turn keeps that turn's instance" do

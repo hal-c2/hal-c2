@@ -464,6 +464,8 @@ ColumnLayout {
 
                 ShellTextField {
                     objectName: "codeReviewSetting:label"
+                    Accessible.name: qsTr("Label that asks for a review")
+                    Accessible.description: qsTr("Leave empty to turn off.")
                     implicitWidth: 240
                     text: settings.values.label ?? ""
                     onTextEdited: settings.set("label", text)
@@ -476,6 +478,8 @@ ColumnLayout {
 
                 ShellTextField {
                     objectName: "codeReviewSetting:command"
+                    Accessible.name: qsTr("Comment that asks for a review")
+                    Accessible.description: qsTr("A comment starting with this starts a review. Leave empty to turn off.")
                     implicitWidth: 240
                     text: settings.values.command ?? ""
                     onTextEdited: settings.set("command", text)
@@ -510,6 +514,8 @@ ColumnLayout {
 
                 Count {
                     key: "maxChangedLines"
+                    Accessible.name: qsTr("Largest change reviewed automatically")
+                    Accessible.description: qsTr("Lines added and removed. 0 for no limit.")
                 }
             }
         }
@@ -647,25 +653,58 @@ ColumnLayout {
             }
         }
 
-        RowLayout {
+        Toggle {
+            key: "sandboxEveryReview"
+            label: qsTr("Sandbox every review")
+            hint: qsTr("Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key.")
+        }
+
+        // Side by side where they fit, one under the other on a narrow screen.
+        Flow {
             Layout.fillWidth: true
             spacing: 24
 
             Field {
-                Layout.fillWidth: false
-                label: qsTr("Reviews at once")
+                label: qsTr("Sandboxed review time limit (minutes)")
 
                 Count {
-                    key: "concurrency"
+                    key: "sandboxMinutes"
+                    Accessible.name: qsTr("Sandboxed review time limit (minutes)")
                 }
             }
 
             Field {
-                Layout.fillWidth: false
+                label: qsTr("Sandboxed review token budget")
+                hint: qsTr("0 for no limit.")
+
+                Count {
+                    key: "sandboxTokens"
+                    Accessible.name: qsTr("Sandboxed review token budget")
+                    Accessible.description: qsTr("0 for no limit.")
+                }
+            }
+        }
+
+        // Side by side where they fit, one under the other on a narrow screen.
+        Flow {
+            Layout.fillWidth: true
+            spacing: 24
+
+            Field {
+                label: qsTr("Reviews at once")
+
+                Count {
+                    key: "concurrency"
+                    Accessible.name: qsTr("Reviews at once")
+                }
+            }
+
+            Field {
                 label: qsTr("Look for pull requests every (minutes)")
 
                 Count {
                     key: "pollMinutes"
+                    Accessible.name: qsTr("Look for pull requests every (minutes)")
                 }
             }
         }

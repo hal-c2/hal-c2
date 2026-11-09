@@ -7,14 +7,15 @@ defmodule HalC2.CodeReviewPropTest do
 
   Three pull requests (`acme/api#1`, `acme/api#2`, `acme/web#1`) each have two head
   commits to push between. The commands open and close them, push, break a head so its
-  checkout fails, hold checkouts at the fetch and posts at GitHub, refuse posts, look
-  for pull requests, start, retry, report, dismiss, discard and publish reviews, end
-  turns (one of them stopped by the provider's usage limit, which parks its review
-  in the queue and starts nothing else until the limit resets, restarts included,
-  unless the user asks for a review), answer a
-  superseded post late, comment the review command and label pull requests, change
-  settings (also while a look reads GitHub), turn the plugin off and on,
-  and crash it. After every step:
+  checkout fails, turn Codex off so a review's thread is refused once it is checked
+  out, hold checkouts at the fetch and posts at GitHub, refuse posts, look
+  for pull requests, start, retry, stop (once as a run reads the pull request), report,
+  dismiss, discard and publish reviews, end turns (one of them stopped by the
+  provider's usage limit, which parks its review in the queue and starts nothing else
+  until the limit resets, restarts included, unless the user asks for a review),
+  answer a superseded post late, comment the review command and label pull requests,
+  change settings (also while a look reads GitHub), turn the plugin off and on, and
+  crash it. After every step:
 
   - one review runs per pull request: each run has a thread of its own once it starts
     and none before, and a retry replaces a run rather than adding one;
@@ -27,6 +28,11 @@ defmodule HalC2.CodeReviewPropTest do
     waited posts nothing;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
+  - a review stopped while its checkout is fetched, or once claimed as it reads the
+    pull request, gets no thread and keeps no checkout, nor does one whose thread
+    Codex, turned off, refused, and one stopped later keeps
+    its thread but not its checkout nor a turn running, and its agent's report is
+    refused;
   - a new run stops the thread it replaces before its checkout goes, and a report from
     a thread the review moved past, or whose review is published, is refused;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
@@ -240,15 +246,22 @@ defmodule HalC2.CodeReviewPropTest do
     assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
   end
 
-  # From hal-c2/hal-c2#1423: a usage limit stops the run of a pull request nobody
-  # trusted after its commit was checked out; the user takes the approval back and
-  # gives it again, and nothing has reviewed the commit yet.
-  test "an approval given again after a usage limit stopped its run queues the review" do
+  # From hal-c2/hal-c2#1439: Stop came once the run had claimed its commit, as it read
+  # the pull request, and the run went on to start the agent of a stopped review.
+  test "a review stopped between its claim and its thread gets no thread" do
+    replay([{:start_stop, ["acme/api#1"]}])
+  end
+
+  # From hal-c2/hal-c2#1423: the run of a pull request nobody trusted stops after its
+  # commit was checked out; the user takes the approval back and gives it again, and
+  # nothing has reviewed the commit yet. Its run stopped at a usage limit then; on this
+  # MC, which has no OpenShell, it stops at its sandbox (#1412), and the usage limit is
+  # `HalC2.CodeReviewTest`'s, whose gateway is a fake.
+  test "an approval given again after the run of its commit stopped runs the review again" do
     replay([
       {:distrust, ["acme/api#1"]},
       {:refresh, []},
       {:approve, ["acme/api#1", true]},
-      {:limited, [{"acme/api#1", 1}]},
       {:unapprove, ["acme/api#1"]},
       {:approve, ["acme/api#1", true]}
     ])
@@ -379,6 +392,8 @@ defmodule HalC2.CodeReviewPropTest do
   def initial_state do
     look(%{
       enabled: true,
+      # Whether Codex, the reviews' provider, is on.
+      codex: true,
       settings: %{
         publishing: "draft",
         concurrency: 2,
@@ -462,6 +477,10 @@ defmodule HalC2.CodeReviewPropTest do
           Enum.at(m.runs[key], k - 1),
           do: key
 
+    # Mostly a running review, often one still held at its fetch.
+    running = for {key, %{status: :running}} <- m.reviews, do: key
+    stopped = if running == [], do: key, else: frequency([{4, elements(running)}, {1, key}])
+
     relists = if finished == [], do: 1, else: 4
     finished = if finished == [], do: key, else: frequency([{6, elements(finished)}, {1, key}])
     relisted = if m.settings.display == "page", do: oneof(~w(threads both)), else: "page"
@@ -476,6 +495,8 @@ defmodule HalC2.CodeReviewPropTest do
         {1, {:call, __MODULE__, :unapprove, [key]}},
         {2, {:call, __MODULE__, :dismiss, [commented, oneof([1, 2]), boolean()]}},
         {2, {:call, __MODULE__, :discard, [key]}},
+        {if(running == [], do: 1, else: 2), {:call, __MODULE__, :stop, [stopped]}},
+        {1, {:call, __MODULE__, :start_stop, [key]}},
         {relists, {:call, __MODULE__, :relist_discard, [finished, relisted]}},
         {if(waiting == [], do: 2, else: 10),
          {:call, __MODULE__, :publish, [published, frequency([{6, true}, {1, false}])]}},
@@ -510,6 +531,7 @@ defmodule HalC2.CodeReviewPropTest do
       {2, {:call, __MODULE__, :save, [trust_setting()]}},
       {2, {:call, __MODULE__, :toggle_open, [key]}},
       {1, {:call, __MODULE__, :break, [key]}},
+      {1, {:call, __MODULE__, :codex, [boolean()]}},
       {2, {:call, __MODULE__, :gate, [oneof([:open, :closed])]}},
       {1, {:call, __MODULE__, :refuse, [boolean()]}},
       {2, {:call, __MODULE__, :hold, [boolean()]}},
@@ -547,7 +569,7 @@ defmodule HalC2.CodeReviewPropTest do
         {"label", oneof(~w(agent-review ship-it))}
       ])
 
-  @plugin_commands ~w(refresh poll start retry approve unapprove dismiss discard relist_discard publish age disable report turn_finished limited late_published save_mid_read)a
+  @plugin_commands ~w(refresh poll start start_stop retry approve unapprove dismiss discard stop relist_discard publish age disable report turn_finished limited late_published save_mid_read)a
 
   def precondition(m, call), do: allowed?(m, call) and not contested?(m, call)
 
@@ -560,6 +582,16 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp allowed?(m, {:call, _, :late_published, [{key, k}]}),
     do: m.enabled and k < length(m.runs[key] || [])
+
+  # Only a start of `key` alone that would make its thread has a launch to stop.
+  defp allowed?(m, {:call, c, :start_stop, [key]}) do
+    {after_start, _} = step(m, {:call, c, :start, [key]})
+    running = fn m -> for {key, %{status: :running}} <- m.reviews, do: key end
+
+    m.enabled and not m.hold and key not in running.(m) and
+      Enum.sort(running.(after_start)) == Enum.sort([key | running.(m)]) and
+      Enum.at(after_start.runs[key], after_start.reviews[key].run - 1) == true
+  end
 
   defp allowed?(m, {:call, _, cmd, _}) when cmd in @plugin_commands, do: m.enabled
   defp allowed?(m, {:call, _, :push, [key]}), do: not m.prs[key].broken
@@ -687,8 +719,7 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  # Only a review waiting to be published takes a dismissal: a kept one never posts,
-  # and one being or already posted stays as posted.
+  # Only while the review waits to be published: a posted comment stays as posted.
   defp step(m, {:call, _, :dismiss, [key, i, flag]}) do
     case m.reviews[key] do
       %{status: :waiting, comments: comments} = r when length(comments) >= i ->
@@ -704,6 +735,28 @@ defmodule HalC2.CodeReviewPropTest do
       nil -> {m, :error}
       %{status: s} when s in [:running, :publishing] -> {m, :error}
       _ -> {pump(%{m | reviews: Map.delete(m.reviews, key)}), :ok}
+    end
+  end
+
+  # A start stopped once its run claimed the commit and before it made its thread:
+  # the run makes none.
+  defp step(m, {:call, c, :start_stop, [key]}) do
+    {m, started} = step(%{m | hold: true}, {:call, c, :start, [key]})
+    m = put_review(m, key, %{m.reviews[key] | reviewed: m.prs[key].head})
+    {m, stopped} = step(m, {:call, c, :stop, [key]})
+    {m, :ok} = step(m, {:call, c, :hold, [false]})
+    {m, {started, stopped}}
+  end
+
+  # Stop fails a running review and takes its checkout; a run stopped while its
+  # checkout was fetched gets no thread when the fetch is done.
+  defp step(m, {:call, _, :stop, [key]}) do
+    case m.reviews[key] do
+      %{status: :running} = r ->
+        {m |> put_review(key, %{r | status: :failed, stopped: true}) |> pump(), :ok}
+
+      _ ->
+        {m, :error}
     end
   end
 
@@ -728,6 +781,10 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp step(m, {:call, _, :report, [{key, k}, kind]}) do
     case m.reviews[key] do
+      # A stopped run's checkout is gone; what its agent says is not a review.
+      %{run: ^k, stopped: true} ->
+        {m, :error}
+
       # A run's first report is final.
       %{run: ^k, verdict: v} when v != nil ->
         {m, :error}
@@ -870,6 +927,8 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :break, [key]}),
     do: {update_pr(m, key, &%{&1 | broken: not &1.broken}), :ok}
 
+  defp step(m, {:call, _, :codex, [on]}), do: {%{m | codex: on}, :ok}
+
   defp step(m, {:call, _, :gate, [:closed]}), do: {%{m | gate: :closed}, :ok}
 
   defp step(m, {:call, _, :gate, [:open]}) do
@@ -932,6 +991,7 @@ defmodule HalC2.CodeReviewPropTest do
       publish_error: false,
       seq: nil,
       followed: false,
+      stopped: false,
       past: [],
       # Whether its author is trusted, as the plugin last read it, the head the user
       # approved, and both as its run started with them.
@@ -1129,7 +1189,8 @@ defmodule HalC2.CodeReviewPropTest do
              | status: :running,
                run: length(runs),
                launched: {r.trusted, r.approved},
-               started: m.tick
+               started: m.tick,
+               stopped: false
            }), held}
         end
       end)
@@ -1207,12 +1268,21 @@ defmodule HalC2.CodeReviewPropTest do
       %{status: :running, run: ^k} = r ->
         {trusted, approved} = r.launched
 
-        # Nobody trusted, it is checked out only at the head the user approved.
-        if m.prs[key].broken or (not trusted and approved != m.prs[key].head) do
-          m |> put_review(key, %{r | status: :failed}) |> fail() |> pump()
-        else
-          m = put_review(m, key, %{r | reviewed: m.prs[key].head})
-          %{m | runs: Map.update!(m.runs, key, &List.replace_at(&1, k - 1, true))}
+        cond do
+          # Nobody trusted, it is checked out only at the head the user approved.
+          m.prs[key].broken or (not trusted and approved != m.prs[key].head) ->
+            m |> put_review(key, %{r | status: :failed}) |> fail() |> pump()
+
+          # And runs in a sandbox (#1412), which this MC, with no OpenShell, cannot open:
+          # checked out, it fails before its thread starts.
+          # Codex turned off refuses its thread the same way, checked out.
+          not trusted or not m.codex ->
+            r = %{r | status: :failed, reviewed: m.prs[key].head}
+            m |> put_review(key, r) |> fail() |> pump()
+
+          true ->
+            m = put_review(m, key, %{r | reviewed: m.prs[key].head})
+            %{m | runs: Map.update!(m.runs, key, &List.replace_at(&1, k - 1, true))}
         end
 
       _ ->
@@ -1368,10 +1438,12 @@ defmodule HalC2.CodeReviewPropTest do
     end)
   end
 
-  # A review's checkout stays from its run's start until its next run starts or it is
-  # discarded.
+  # A review's checkout stays from its run's start until its next run starts, or it is
+  # stopped or discarded.
   defp checkouts(m) do
-    Enum.count(m.reviews, fn {key, r} -> r.run != nil and Enum.at(m.runs[key], r.run - 1) end)
+    Enum.count(m.reviews, fn {key, r} ->
+      r.run != nil and not r.stopped and Enum.at(m.runs[key], r.run - 1)
+    end)
   end
 
   # --- commands ---------------------------------------------------------------------------
@@ -1444,6 +1516,32 @@ defmodule HalC2.CodeReviewPropTest do
     do: observe(call("dismiss", %{"key" => key, "commentId" => "c#{i}", "dismissed" => flag}))
 
   def discard(key), do: observe(discarding(key))
+
+  def stop(key), do: observe(call("stop", %{"key" => key}))
+
+  # Starts `key` with its run held at the fetch, then at its read of the pull request
+  # once it claimed the commit, stops the review there and lets the read go: Stop
+  # reaches a run past its claim only through the server (#1439).
+  def start_stop(key) do
+    {repo, number} = @prs[key]
+    for name <- ~w(read.hold read.held), do: File.rm(fx_path(name))
+    File.write!(fx_path("fetch.hold"), "")
+    started = call("start", %{"repository" => "acme/#{repo}", "number" => number})
+    await_sh("[ -n \"$(ls '#{fx_path("holds")}' | grep -v go-)\" ]")
+    File.write!(fx_path("read.hold"), "")
+    File.rm(fx_path("fetch.hold"))
+    await_sh("[ -e '#{fx_path("read.held")}' ]")
+    stopped = call("stop", %{"key" => key})
+    File.rm(fx_path("read.hold"))
+    observe({started, stopped})
+  end
+
+  defp await_sh(condition) do
+    {_, status} =
+      System.cmd("timeout", ["5", "sh", "-c", "until #{condition}; do sleep 0.05; done"])
+
+    if status != 0, do: problem("waited in vain for #{condition}")
+  end
 
   # Saves the display with the listing of the threads it starts held on its way to the
   # first, discards the review while it is, then lets the listing go.
@@ -1782,6 +1880,18 @@ defmodule HalC2.CodeReviewPropTest do
     observe(:ok)
   end
 
+  def codex(on) do
+    HalC2.Settings.update(fn settings ->
+      update_in(
+        settings,
+        [Access.key("providers", %{}), Access.key("codex", %{})],
+        &Map.put(&1, "enabled", on)
+      )
+    end)
+
+    observe(:ok)
+  end
+
   def gate(:closed) do
     File.write!(fx_path("gate.closed"), "")
     observe(:ok)
@@ -1879,16 +1989,23 @@ defmodule HalC2.CodeReviewPropTest do
     }
   end
 
-  # The threads that lost their checkout to a newer run or a discard, and still have
-  # a turn running: a review's earlier threads, once it has a checkout of a later one.
+  # The threads that lost their checkout to a newer run or a discard, or whose review
+  # was stopped, and still have a turn running: a review's earlier threads, once it has
+  # a checkout of a later one, and the thread of a stopped run.
   defp unstopped(:off), do: []
 
   defp unstopped(_view) do
     reviews = GenServer.call(@server, :reviews)
 
-    for {key, tids} <- Process.get(:cr_tids),
-        %{"checkout" => checkout} when is_binary(checkout) <- [reviews[key]],
-        tid <- Enum.take_while(tids, &(&1 != Path.basename(checkout))),
+    earlier =
+      for {key, tids} <- Process.get(:cr_tids),
+          %{"checkout" => checkout} when is_binary(checkout) <- [reviews[key]],
+          tid <- Enum.take_while(tids, &(&1 != Path.basename(checkout))),
+          do: tid
+
+    stopped = for {_, %{"stopped" => true, "threadId" => tid}} <- reviews, do: tid
+
+    for tid <- Enum.uniq(earlier ++ stopped),
         thread(tid) != nil,
         Enum.any?(
           HalC2.StreamState.list(HalC2.Streams.state(tid), "run"),
@@ -2211,7 +2328,7 @@ defmodule HalC2.CodeReviewPropTest do
     File.write!(fx_path("calls.jsonl"), "")
     File.write!(fx_path("taken.jsonl"), "")
 
-    for name <- ~w(gate.closed fetch.hold list.hold gate.pids list.pids),
+    for name <- ~w(gate.closed fetch.hold list.hold read.hold gate.pids list.pids),
         do: File.rm(fx_path(name))
 
     File.rm_rf!(fx_path("holds"))
@@ -2337,7 +2454,7 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   defp end_case do
-    for name <- ~w(gate.closed fetch.hold list.hold), do: File.rm(fx_path(name))
+    for name <- ~w(gate.closed fetch.hold list.hold read.hold), do: File.rm(fx_path(name))
     HalC2.Prop.stop_services()
     # The fake Codex turns still open end, and their processes with them.
     File.write(Path.join(System.get_env("FAKE_CODEX_GATE"), "answer"), "")
@@ -2522,6 +2639,14 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   defp details(world) do
+    fx = fx_dir()
+
+    # While `read.hold` exists a read of a pull request on its own waits, and says so
+    # in `read.held`.
+    read_hold =
+      "if [ -e '#{fx}/read.hold' ]; then touch '#{fx}/read.held'; " <>
+        "while [ -e '#{fx}/read.hold' ] && [ -d '#{fx}' ]; do sleep 0.05; done; fi"
+
     for key <- @keys do
       {repo, number} = @prs[key]
 
@@ -2540,6 +2665,7 @@ defmodule HalC2.CodeReviewPropTest do
       %{
         "args" => ["api graphql"],
         "stdin" => ["viewerCanUpdateBranch", ~s("name":"#{repo}"), ~s("number":#{number})],
+        "run" => read_hold,
         "stdout" => %{
           "data" => %{"repository" => %{"viewerPermission" => "WRITE", "pullRequest" => pr}}
         }

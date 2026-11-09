@@ -419,7 +419,8 @@ defmodule HalC2.Service do
 
   # The home variables the user set for this process that the unit should keep:
   # `HAL_C2_MC_HOME`, or a `HAL_C2_HOME` root. An old home is never written back.
-  defp chosen_home do
+  @doc false
+  def chosen_home do
     for {name, kind} <- [{"HAL_C2_MC_HOME", :mc}, {"HAL_C2_HOME", :root}],
         dir = System.get_env(name),
         dir not in [nil, ""],
