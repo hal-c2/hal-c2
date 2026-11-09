@@ -1107,6 +1107,22 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert {again.staged, again.staged_order} == {%{}, []}
     end
 
+    test "a settings save keeps what the projects learned and gives it the new caps" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      # Learned in memory only: its save failed, or it was never due.
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+
+      state = settings(state, %{"microSkills" => "envfacts", "loopGuardLevel" => "strict"})
+      assert Map.has_key?(state.skills["seam"].facts, @pytest)
+
+      state = settings(state, %{"microSkills" => "envfacts", "microSkillsMaxFacts" => 2})
+      assert Map.has_key?(state.skills["seam"].facts, @pytest)
+      assert state.skills["seam"].max_facts == 2
+
+      state = settings(state, %{"microSkills" => "envfacts"})
+      assert state.skills["seam"].max_facts == EnvFacts.max_facts()
+    end
+
     test "with the guard off a settings save keeps the turns learning hears" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})

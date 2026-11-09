@@ -225,9 +225,19 @@ defmodule HalC2Plugins.TokenEconomizer do
     was_on = on?(state)
     was_micro = micro_on?(state)
 
-    # The level and pinned thresholds shape each tracker, and the micro-skills'
-    # caps shape what is staged: read them afresh.
-    state = %{state | settings: settings, trackers: %{}, skills: %{}, published_skills: nil}
+    # The level and pinned thresholds shape each tracker: read them afresh. The
+    # micro-skills' caps shape only what is staged, so the projects' learning
+    # stays as it is, some of it maybe never saved, and takes the new caps.
+    state = %{state | settings: settings, trackers: %{}, published_skills: nil}
+    caps = EnvFacts.new(skills_caps(state))
+
+    state = %{
+      state
+      | skills:
+          Map.new(state.skills, fn {project_id, skills} ->
+            {project_id, %{skills | max_facts: caps.max_facts, max_tokens: caps.max_tokens}}
+          end)
+    }
 
     # Learning switched under a turn leaves what it folds from incomplete
     # either way (its calls were not all kept, or its context predates the
