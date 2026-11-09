@@ -57,8 +57,9 @@ An update, a rotation or an uninstall waits while this MC has sandboxes running.
 Add `--drain` to delete them first. Only the sandboxes this MC created are touched.
 If the gateway is running but cannot say which sandboxes it holds
 (`sandboxes-unknown`), they wait too; `--force` goes ahead anyway and ends any that
-run. If the gateway's service does not stop (`gateway-stop-failed`), nothing is
-changed.
+run. If the gateway's service does not stop (`gateway-stop-failed`), or its files
+cannot be backed up first (`backup-failed`), nothing is changed and the service
+keeps running.
 
 A gateway started with `mise run openshell` must be stopped before you update,
 rotate or uninstall it (`gateway-running`). After a rotation, start it again to use

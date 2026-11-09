@@ -93,6 +93,25 @@ defmodule HalC2.OpenShell.InstallTest do
     assert Path.wildcard(Path.join(OpenShell.root(), "**/ca.key"), match_dot: true) == []
   end
 
+  describe "replace_dir/2" do
+    test "keeps the old directory when the new one cannot take its place", %{tmp_dir: dir} do
+      dir = Path.join(dir, "swap")
+      to = Path.join(dir, "pki")
+      File.mkdir_p!(to)
+      File.write!(Path.join(to, "ca.crt"), "old")
+
+      assert {:error, :enoent} = Install.replace_dir(Path.join(dir, "missing"), to)
+      assert File.read!(Path.join(to, "ca.crt")) == "old"
+
+      from = Path.join(dir, "new")
+      File.mkdir_p!(from)
+      File.write!(Path.join(from, "ca.crt"), "new")
+      assert :ok = Install.replace_dir(from, to)
+      assert File.read!(Path.join(to, "ca.crt")) == "new"
+      assert File.ls!(dir) == ["pki"]
+    end
+  end
+
   describe "extract/2" do
     test "takes an archive holding only the gateway binary", %{tmp_dir: dir} do
       for name <- [~c"openshell-gateway", ~c"./openshell-gateway"] do
@@ -200,6 +219,20 @@ defmodule HalC2.OpenShell.InstallTest do
       assert Storage.service_calls(ctx.log) == []
     end
 
+    test "a gateway command that hangs is stopped and fails the install", ctx do
+      FakeOpenShell.put_env(openshell_command_timeout: 200)
+      File.write!(Path.join(ctx.control, "hang"), "30")
+
+      assert {:error, message} = install(ctx, "0.1.7")
+      assert message =~ "`openshell-gateway config preflight` did not finish within 200 ms"
+      assert OpenShell.state() == nil
+      refute File.exists?(Service.unit_path(:systemd))
+
+      # The command has been stopped, and reaped, by the time the install fails.
+      pid = File.read!(Path.join(ctx.control, "hung")) |> String.trim()
+      assert {_, 1} = System.cmd("kill", ["-0", pid], stderr_to_stdout: true)
+    end
+
     test "an unsupported machine is refused before anything is fetched", ctx do
       FakeOpenShell.put_env(openshell_facts: %{@facts | runtime: nil})
       assert {:error, "[podman-missing]" <> _} = install(ctx, "0.1.7")
@@ -270,8 +303,14 @@ defmodule HalC2.OpenShell.InstallTest do
 
       assert {:error, message} = install(ctx, "0.1.7", smoke: smoke)
       assert message =~ "Stopping the new gateway failed too, so nothing was put back"
-      backup = OpenShell.backup_dir("0.1.6")
-      assert message =~ backup
+      [backup] = Regex.run(~r/backup is in (\S+)\.$/, message, capture: :all_but_first)
+      assert File.read!(Path.join(backup, "openshell.db")) == "old database"
+
+      # The next update, once the gateway stops, backs up what is there now: the kept
+      # backup is not replaced, nor pruned when that update succeeds.
+      File.rm!(Path.join(ctx.bin, "stop-fails"))
+      File.write!(OpenShell.db_path(), "the failed update's database")
+      assert {:ok, _} = install(ctx, "0.1.7")
       assert File.read!(Path.join(backup, "openshell.db")) == "old database"
     end
 
@@ -299,6 +338,101 @@ defmodule HalC2.OpenShell.InstallTest do
         assert File.exists?(OpenShell.gateway_bin("0.1.6"))
         assert File.read!(Service.unit_path(Service.manager())) == unit
       end
+    end
+
+    test "an update whose backup fails changes nothing and starts the gateway again", ctx do
+      assert {:ok, old} = install(ctx, "0.1.6")
+      old_config = File.read!(OpenShell.config_path())
+      File.mkdir_p!(Path.dirname(OpenShell.db_path()))
+      File.write!(OpenShell.db_path(), "old database")
+      File.chmod!(OpenShell.db_path(), 0o000)
+      on_exit(fn -> File.chmod(OpenShell.db_path(), 0o600) end)
+      File.write!(ctx.log, "")
+
+      assert {:error, "[backup-failed]" <> message} = install(ctx, "0.1.7")
+      assert message =~ "The gateway was started again."
+      assert OpenShell.state() == old
+      assert File.read!(OpenShell.config_path()) == old_config
+      assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, old)
+      refute File.exists?(OpenShell.backup_dir("0.1.6"))
+
+      # Stopped for the backup, then started again on the unit it had.
+      assert Storage.service_calls(ctx.log) == [
+               "systemctl --user stop #{Service.name(:systemd)}",
+               "systemctl --user daemon-reload",
+               "systemctl --user enable #{Service.name(:systemd)}",
+               "systemctl --user restart #{Service.name(:systemd)}"
+             ]
+    end
+
+    test "a rollback whose files cannot all be put back starts nothing on them", ctx do
+      assert {:ok, _} = install(ctx, "0.1.6")
+      File.mkdir_p!(Path.dirname(OpenShell.db_path()))
+      File.write!(OpenShell.db_path(), "old database")
+      backup = Path.join(OpenShell.backup_dir("0.1.6"), "openshell.db")
+
+      smoke = fn
+        %{"version" => "0.1.7"} ->
+          File.chmod!(backup, 0o000)
+          {:error, "[smoke] no."}
+
+        _ ->
+          flunk("the previous gateway was started on a partial restore")
+      end
+
+      on_exit(fn ->
+        for path <- Path.wildcard(Path.join([OpenShell.root(), "*", "*", "openshell.db"])),
+            do: File.chmod(path, 0o600)
+      end)
+
+      assert {:error, message} = install(ctx, "0.1.7", smoke: smoke)
+
+      assert message =~
+               "Restoring the previous gateway (0.1.6) failed too: Putting its files back failed"
+
+      [kept] = Regex.run(~r/backup is in (\S+)\.$/, message, capture: :all_but_first)
+      assert File.exists?(Path.join(kept, "openshell.db"))
+
+      # The new gateway was stopped, and nothing started after it.
+      assert List.last(Storage.service_calls(ctx.log)) ==
+               "systemctl --user stop #{Service.name(:systemd)}"
+    end
+
+    test "a failed fresh install whose service will not go says so", ctx do
+      smoke = fn _ ->
+        File.write!(Path.join(ctx.bin, "disable-fails"), "")
+        {:error, "[smoke] no."}
+      end
+
+      assert {:error, message} = install(ctx, "0.1.7", smoke: smoke)
+      refute message =~ "Nothing was installed."
+      assert message =~ "Removing the new gateway's service failed too"
+    end
+
+    test "the config and unit replace a link at their path rather than write through it",
+         ctx do
+      assert {:ok, _} = install(ctx, "0.1.6")
+      outside = Path.join(ctx.tmp_dir, "outside")
+      File.mkdir_p!(outside)
+
+      links =
+        for path <- [OpenShell.config_path(), Service.unit_path(:systemd)] do
+          target = Path.join(outside, Path.basename(path))
+          File.cp!(path, target)
+          File.rm!(path)
+          File.ln_s!(target, path)
+          {path, target, File.read!(target)}
+        end
+
+      assert {:ok, new} = install(ctx, "0.1.7")
+
+      for {path, target, text} <- links do
+        assert File.read!(target) == text
+        assert {:ok, %{type: :regular}} = File.lstat(path)
+      end
+
+      assert mode(OpenShell.config_path()) == 0o600
+      assert File.read!(Service.unit_path(:systemd)) == Service.render(:systemd, new)
     end
 
     test "uninstall stops a gateway whose unit file is gone before removing its files", ctx do

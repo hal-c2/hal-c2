@@ -468,6 +468,15 @@ defmodule HalC2.OpenShell.ClientTest do
       assert_receive {:DOWN, ^ref, :process, ^handler, _}
     end
 
+    # The gateway never answers whether the sandbox is there.
+    @tag gateway: [get_sandbox: &__MODULE__.never/0], timeout: 5_000
+    test "the upload's deadline covers starting its command", %{conn: conn} do
+      assert {:error, :timeout} =
+               Client.upload(conn, "box", "/sandbox", "archive", upload_timeout: 200)
+
+      refute_received {:openshell_request, "ExecSandboxInteractive", _}
+    end
+
     @tag exec: :untar
     test "an archive that cannot be read is the upload's error, and its command is stopped", %{
       conn: conn,
@@ -483,6 +492,9 @@ defmodule HalC2.OpenShell.ClientTest do
       refute_received {:openshell_exec, _, _}
     end
   end
+
+  @doc false
+  def never, do: receive(do: (:never -> :ok))
 
   # What the fake gateway runs for a test's `@tag exec:`.
   defp handler(:fails, _test) do

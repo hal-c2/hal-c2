@@ -123,6 +123,15 @@ Feature: The OpenShell gateway review sandboxes run in
     And its reaper runs
 
   @mc
+  Scenario: An update whose backup cannot be written changes nothing
+    Given OpenShell 0.1.6 is installed and has a database
+    And the gateway's backup cannot be written
+    When the user updates to OpenShell 0.1.7
+    Then the install is refused because "backup-failed"
+    And OpenShell 0.1.6 runs with its database, certificates and service as they were
+    And the gateway's service is running again
+
+  @mc
   Scenario: An update waits while this MC's sandboxes cannot be counted, unless forced
     Given an OpenShell gateway this MC runs that does not answer the MC, with a sandbox of this MC's and one of someone else's
     When the user updates OpenShell with a drain

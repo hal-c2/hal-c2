@@ -2,9 +2,9 @@ defmodule HalC2.OpenShellInstallPropTest do
   @moduledoc """
   `HalC2.OpenShell.Install` against a model of what an install promises, over any
   sequence of installs and updates (as a service or for the dev run, with the
-  gateway's preflight or its check after start failing, or a service or its reaper
-  that will not stop), certificate rotations, uninstalls (also of a service or a
-  reaper that will not stop),
+  gateway's preflight or its check after start failing, a service or its reaper
+  that will not stop, or a backup that cannot be written), certificate rotations,
+  uninstalls (also of a service or a reaper that will not stop),
   the gateway writing its database, and the gateway of a user (`reuse`)
   that is clean or already holds another HAL-C2 environment's sandboxes, or comes
   to hold one later.
@@ -19,7 +19,8 @@ defmodule HalC2.OpenShellInstallPropTest do
 
     * an install, update or rotation that fails changes nothing: the installed
       state, the certificates, the database and the unit are what they were; one
-      over a service, or a reaper, that will not stop fails;
+      over a service, or a reaper, that will not stop fails, and one whose backup
+      fails leaves the service it stopped running again;
     * an uninstall over a service or a reaper that will not stop fails and removes
       nothing, and the units are not rewritten over one that will not stop;
     * one that succeeds installs what was asked, and only a fresh install or a
@@ -186,7 +187,8 @@ defmodule HalC2.OpenShellInstallPropTest do
          {:call, __MODULE__, :install,
           [oneof(["0.1.6", "0.1.7"]), oneof(["managed", "foreground"]), outcome()]}},
         {2,
-         {:call, __MODULE__, :rotate, [oneof([:ok, :smoke_fails, :stop_fails, :reap_stop_fails])]}},
+         {:call, __MODULE__, :rotate,
+          [oneof([:ok, :smoke_fails, :stop_fails, :reap_stop_fails, :backup_fails])]}},
         {2, {:call, __MODULE__, :reuse, [oneof([:clean, :shared])]}},
         {1, {:call, __MODULE__, :uninstall, [oneof([:ok, :stop_fails, :reap_stop_fails])]}},
         {2, {:call, __MODULE__, :other_home, [oneof([:install, :update, :uninstall])]}},
@@ -230,7 +232,8 @@ defmodule HalC2.OpenShellInstallPropTest do
         {1, :smoke_fails},
         {1, :preflight_fails},
         {1, :stop_fails},
-        {1, :reap_stop_fails}
+        {1, :reap_stop_fails},
+        {1, :backup_fails}
       ])
 
   # The reaper stops before the gateway, so either not stopping fails the same way.
@@ -278,7 +281,11 @@ defmodule HalC2.OpenShellInstallPropTest do
       stop_fails(outcome) and match?({"managed", _, _}, state.installed) ->
         seen(state, :stop_failed)
 
-      outcome == :ok or stop_fails(outcome) or mode == "foreground" ->
+      # Any gateway of its own is backed up before an update; a fresh install has none.
+      outcome == :backup_fails and state.installed != nil ->
+        seen(state, :backup_failed)
+
+      outcome in [:ok, :backup_fails] or stop_fails(outcome) or mode == "foreground" ->
         previous = with {_, v, _} <- state.installed, do: v
         seen(%{state | installed: {mode, version, previous}}, :ok)
 
@@ -296,6 +303,7 @@ defmodule HalC2.OpenShellInstallPropTest do
       {"external", _, _} -> seen(state, :external)
       {"managed", _, _} when outcome == :smoke_fails -> seen(state, :smoke)
       {"managed", _, _} when stop_fails(outcome) -> seen(state, :stop_failed)
+      _ when outcome == :backup_fails -> seen(state, :backup_failed)
       _ -> seen(%{state | pki: gen}, :ok)
     end
   end
@@ -403,12 +411,14 @@ defmodule HalC2.OpenShellInstallPropTest do
     preflight(outcome == :preflight_fails)
 
     failing(outcome, fn ->
-      Install.install(
-        release: release,
-        archive: archive,
-        service: mode == "managed",
-        smoke: smoke(outcome == :smoke_fails)
-      )
+      backup_fails(outcome == :backup_fails, fn ->
+        Install.install(
+          release: release,
+          archive: archive,
+          service: mode == "managed",
+          smoke: smoke(outcome == :smoke_fails)
+        )
+      end)
     end)
     |> observe()
   end
@@ -418,9 +428,26 @@ defmodule HalC2.OpenShellInstallPropTest do
     preflight(false)
 
     failing(outcome, fn ->
-      Install.rotate(smoke: smoke(outcome == :smoke_fails))
+      backup_fails(outcome == :backup_fails, fn ->
+        Install.rotate(smoke: smoke(outcome == :smoke_fails))
+      end)
     end)
     |> observe()
+  end
+
+  # Runs `fun` with the backups directory read-only, so no backup can be written.
+  defp backup_fails(false, fun), do: fun.()
+
+  defp backup_fails(true, fun) do
+    dir = Path.join(OpenShell.root(), "backups")
+    HalC2.Paths.mkdir_private!(dir)
+    File.chmod!(dir, 0o500)
+
+    try do
+      fun.()
+    after
+      File.chmod!(dir, 0o700)
+    end
   end
 
   # Runs `fun` with the service manager failing every stop of the gateway
@@ -736,6 +763,7 @@ defmodule HalC2.OpenShellInstallPropTest do
   defp classify(:ok), do: :ok
   defp classify({:error, "[smoke]" <> _}), do: :smoke
   defp classify({:error, "[gateway-stop-failed]" <> _}), do: :stop_failed
+  defp classify({:error, "[backup-failed]" <> _}), do: :backup_failed
   defp classify({:error, "[external]" <> _}), do: :external
   defp classify({:error, "[managed]" <> _}), do: :managed
   defp classify({:error, "[shared-gateway]" <> _}), do: :shared

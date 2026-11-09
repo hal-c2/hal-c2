@@ -77,6 +77,40 @@ defmodule HalC2.Paths do
   end
 
   @doc """
+  Replaces the file at `path` with `content` and `mode`, through a new file beside
+  it renamed over it: a reader, or a crash, sees the old file or the new one whole,
+  the new one never has a wider mode than `mode`, and a link at `path` is replaced
+  rather than written through.
+  """
+  # Callers name a file in this MC's own directories.
+  # sobelow_skip ["Traversal.FileModule"]
+  @spec write_replace(Path.t(), iodata, non_neg_integer) :: :ok | {:error, File.posix()}
+  def write_replace(path, content, mode) do
+    tmp = "#{path}.#{System.unique_integer([:positive])}.tmp"
+
+    # :exclusive refuses a file, or a link, already at `tmp`.
+    result =
+      with {:ok, file} <- File.open(tmp, [:write, :exclusive, :binary]) do
+        try do
+          with :ok <- File.chmod(tmp, mode),
+               :ok <- IO.binwrite(file, content),
+               :ok <- :file.sync(file),
+               do: :ok
+        after
+          File.close(file)
+        end
+      end
+
+    with :ok <- result, :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      error ->
+        File.rm(tmp)
+        error
+    end
+  end
+
+  @doc """
   Where the MC keeps disposable files (`HalC2.Scratch`) given the folder the user chose,
   or `HAL_C2_TMPDIR` without one: a folder of this home's own in it, so MCs given the same
   one never meet, or with neither the cache directory.

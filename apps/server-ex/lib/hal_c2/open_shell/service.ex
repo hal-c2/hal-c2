@@ -239,10 +239,21 @@ defmodule HalC2.OpenShell.Service do
       path = unit_path(manager)
       File.mkdir_p!(Path.dirname(path))
       File.mkdir_p!(Path.dirname(OpenShell.log_path()))
-      File.write!(path, render(manager, state))
-      for {path, unit} <- reaper(manager), do: File.write!(path, unit)
-      load(manager, path)
+
+      with :ok <- HalC2.Paths.write_replace(path, render(manager, state), 0o644),
+           :ok <- write_reaper(manager),
+           do: load(manager, path)
     end
+  end
+
+  # The reaper's units, each replaced whole like the gateway's.
+  defp write_reaper(manager) do
+    Enum.reduce_while(reaper(manager), :ok, fn {path, unit}, :ok ->
+      case HalC2.Paths.write_replace(path, unit, 0o644) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
   end
 
   @doc """

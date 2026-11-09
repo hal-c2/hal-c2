@@ -25,7 +25,8 @@ defmodule HalC2.Test.FakeOpenShell do
   Starts the fake and returns `%{port, endpoint, credentials, server, store}`.
   Options: `:version` ("0.1.7"), `:roles` (["openshell-user"]), `:exec`,
   `:notify`, `:widen`, a `fn policy -> policy end` standing for a gateway-wide
-  policy that `GetSandboxConfig` answers with on top of a sandbox's own, and
+  policy that `GetSandboxConfig` answers with on top of a sandbox's own,
+  `:get_sandbox` (a function GetSandbox runs before it answers), and
   `:delete`: how DeleteSandbox answers, `:completed` (the default),
   `:unspecified`, `{:accepted, n}` (the sandbox goes after `n` more GetSandbox
   calls, or never for `:never`) or `:replaced` (another sandbox takes its name).
@@ -135,7 +136,8 @@ defmodule HalC2.Test.FakeOpenShell do
   copies the next certificate set queued in `control/sets` (`queue_certificates/1`;
   a CA's certificate, the gateway's and a client certificate from it) and adds a CA
   key and the token key, and fails when none is left; `config preflight` exits with the number in
-  `control/preflight` (0 if there is none). Anything else prints its environment
+  `control/preflight` (0 if there is none), after sleeping the seconds in
+  `control/hang` if there is one, its pid in `control/hung`. Anything else prints its environment
   and arguments. Every call is appended to `control/calls`.
   """
   def release(control, archives, version) do
@@ -155,6 +157,7 @@ defmodule HalC2.Test.FakeOpenShell do
         echo s > "$out/jwt/signing.pem"; echo p > "$out/jwt/public.pem"; echo k > "$out/jwt/kid"
         exit 0 ;;
       config)
+        [ -f "$control/hang" ] && { echo $$ > "$control/hung"; exec sleep "$(cat "$control/hang")"; }
         echo "preflight checked $*"
         exit "$(cat "$control/preflight" 2>/dev/null || echo 0)" ;;
     esac
@@ -508,6 +511,7 @@ defmodule HalC2.Test.FakeOpenShell do
     defp unary(conn, "GetSandbox", body, config) do
       %{name: name} = Pb.GetSandboxRequest.decode(body)
       notify(config, "GetSandbox", %{name: name})
+      if hold = config[:get_sandbox], do: hold.()
       settle_deletion(config.store, name)
 
       case Agent.get(config.store, & &1.sandboxes[name]) do
