@@ -1102,7 +1102,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
     runtime = context.runtime
 
     assert_receive {:trace, ^runtime, :receive,
-                    {:json_rpc, _, {:notification, "turn/completed", %{"turn" => turn}}}},
+                    {:json_rpc, _, {:notification, "turn/completed", %{"turn" => turn} = ended}}},
                    5_000
 
     assert turn["status"] == "interrupted"
@@ -1115,11 +1115,29 @@ defmodule HalC2.Steps.Orchestration.Runs do
       |> Enum.map(& &1["status"])
 
     assert statuses == ["failed", "running"]
-    context
+    Map.put(context, :first_turn, %{thread: ended["threadId"], turn: turn["id"]})
   end
 
   step "the second run starts a new Codex conversation", context do
     assert [_, _] = World.codex_requests(context, "thread/start")
+    context
+  end
+
+  # Codex reports the stopped turn's usage after the second turn began.
+  step "the first turn's usage leaves the context meter of {string} alone",
+       %{args: [thread]} = context do
+    World.codex_notify(context, thread, "thread/tokenUsage/updated", %{
+      "threadId" => context.first_turn.thread,
+      "turnId" => context.first_turn.turn,
+      "tokenUsage" => %{"last" => %{"totalTokens" => 150_000}, "modelContextWindow" => 200_000}
+    })
+
+    # Handled in order: the report is through once the runtime answers.
+    _ = :sys.get_state(context.runtime)
+
+    assert [nil] =
+             for(t <- World.entities(context, thread, "provider-thread"), do: t["contextUsage"])
+
     context
   end
 

@@ -2335,8 +2335,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # provider thread, so it outlives the run, and a model change, until Codex says more.
   # Provider turn `turn` keeps it too, which says which run it counts
   # (`HalC2.Orchestration.Handoff.room/3`); the provider thread is the one that turn ran
-  # on, or the running turn's.
-  defp record_usage(state, %{"tokenUsage" => %{"last" => last} = usage}, turn) do
+  # on, or the running turn's. A report from another conversation than the runtime's, or
+  # of a turn the MC never recorded (one whose run ended as Codex started it), says
+  # nothing of the provider thread's.
+  defp record_usage(state, %{"tokenUsage" => %{"last" => last} = usage} = params, turn) do
     counts =
       for {key, field} <- [
             {"inputTokens", "inputTokens"},
@@ -2357,7 +2359,19 @@ defmodule HalC2.Codex.ThreadRuntime do
       stored = turn && HalC2.StreamState.fetch(stream, "provider-turn", turn)
 
       provider_thread =
-        (stored && stored["providerThreadId"]) || (state.turn && state.turn.ids.provider_thread)
+        cond do
+          params["threadId"] not in [nil, state.native_thread_id] ->
+            nil
+
+          stored ->
+            stored["providerThreadId"]
+
+          state.turn && turn in [nil, Map.get(state.turn.ids, :provider_turn)] ->
+            state.turn.ids.provider_thread
+
+          true ->
+            nil
+        end
 
       [
         provider_thread &&
