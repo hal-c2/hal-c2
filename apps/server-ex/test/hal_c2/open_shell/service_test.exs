@@ -139,14 +139,17 @@ defmodule HalC2.OpenShell.ServiceTest do
     end
 
     test "the reaper runs openshell reap every minute with the MC's home", %{tmp_dir: dir} do
+      previous =
+        Map.new(~w(HAL_C2_MC_HOME XDG_DATA_HOME XDG_STATE_HOME), &{&1, System.get_env(&1)})
+
+      on_exit(fn ->
+        for {name, value} <- previous,
+            do: if(value, do: System.put_env(name, value), else: System.delete_env(name))
+      end)
+
       System.put_env("HAL_C2_MC_HOME", Path.join(dir, "mc dir"))
       System.put_env("XDG_DATA_HOME", Path.join(dir, "xdg data"))
       System.delete_env("XDG_STATE_HOME")
-
-      on_exit(fn ->
-        System.delete_env("HAL_C2_MC_HOME")
-        System.delete_env("XDG_DATA_HOME")
-      end)
 
       [{service, unit}, {timer, schedule}] = Service.reaper(:systemd)
       assert Path.basename(service) == "hal-c2-openshell-#{OpenShell.instance()}-reap.service"
