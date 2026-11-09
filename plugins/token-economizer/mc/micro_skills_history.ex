@@ -35,7 +35,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.History do
     * `"turns"`, the turns folded, and `"skipped"`, what was left out and why;
     * `"envelopes"`: per provider driver, whether the loop guard's envelope was
       seeded from the imported turns (`%{"seeded" => n}`) or left out (`%{"left"
-      => reason}`).
+      => reason}`), and how many pages it missed for the guard being off
+      (`"guardOff"`), so one seeded around them does not read as whole.
 
   Nothing here reads a thread or a file: the plugin's process reads in a task
   of its own (`HalC2Plugins.TokenEconomizer`), a page at a time, and folds what
@@ -389,6 +390,21 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.History do
       not guard_on and match?(%{"seeded" => _}, entry) -> :keep
       not guard_on -> {:left, "the loop guard was off"}
       true -> with :seeding <- seedable(tracker, fold_id), do: :seed
+    end
+  end
+
+  @doc """
+  A provider driver's fold entry after a page whose `envelope/4` decision
+  came to `outcome`: `{:seeded, n}`, `:keep` or `{:left, reason}`.
+  """
+  def noted(entry, guard_on, outcome) do
+    entry = entry || %{}
+    entry = if guard_on, do: entry, else: Map.update(entry, "guardOff", 1, &(&1 + 1))
+
+    case outcome do
+      {:seeded, n} -> entry |> Map.delete("left") |> Map.put("seeded", n)
+      :keep -> entry
+      {:left, reason} -> Map.put(entry, "left", reason)
     end
   end
 

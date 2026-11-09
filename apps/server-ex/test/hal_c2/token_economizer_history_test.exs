@@ -301,6 +301,15 @@ defmodule HalC2.TokenEconomizerHistoryTest do
       assert reason =~ "already learned"
     end
 
+    test "an envelope seeded around a page the guard was off for says it missed it" do
+      entry = History.noted(nil, false, {:left, "the loop guard was off"})
+      assert entry == %{"left" => "the loop guard was off", "guardOff" => 1}
+      entry = History.noted(entry, true, {:seeded, 3})
+      assert entry == %{"seeded" => 3, "guardOff" => 1}
+      assert History.noted(entry, false, :keep) == %{"seeded" => 3, "guardOff" => 2}
+      assert History.noted(nil, true, {:seeded, 4}) == %{"seeded" => 4}
+    end
+
     test "a seed saved with the tracker loads back; a bad one does not" do
       seed = %{"fold" => "f", "n" => 2, "step" => 3}
       assert History.load_seed(seed) == seed

@@ -1551,19 +1551,20 @@ defmodule HalC2Plugins.TokenEconomizer do
       key = {project_id, provider}
       {tracker, state} = tracker(state, key)
 
-      case History.envelope(fold["envelopes"][provider], on?(state), tracker, fold["id"]) do
-        :seed ->
-          tracker = History.seed(tracker, fold["id"], fold["step"], samples)
-          save_tracker(key, tracker)
-          seeded = %{"seeded" => tracker.seed["n"]}
-          {put_in(fold, ["envelopes", provider], seeded), put_in(state.trackers[key], tracker)}
+      entry = fold["envelopes"][provider]
 
-        :keep ->
-          {fold, state}
+      {outcome, state} =
+        case History.envelope(entry, on?(state), tracker, fold["id"]) do
+          :seed ->
+            tracker = History.seed(tracker, fold["id"], fold["step"], samples)
+            save_tracker(key, tracker)
+            {{:seeded, tracker.seed["n"]}, put_in(state.trackers[key], tracker)}
 
-        {:left, reason} ->
-          {put_in(fold, ["envelopes", provider], %{"left" => reason}), state}
-      end
+          outcome ->
+            {outcome, state}
+        end
+
+      {put_in(fold, ["envelopes", provider], History.noted(entry, on?(state), outcome)), state}
     end)
   end
 
