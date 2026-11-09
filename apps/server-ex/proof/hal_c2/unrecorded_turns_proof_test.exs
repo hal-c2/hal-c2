@@ -27,6 +27,9 @@ defmodule HalC2.UnrecordedTurnsProofTest do
     model: "unrecorded_turns.maude",
     module: "UNRECORDED-TURNS",
     check: "UNRECORDED-TURNS-PROPS",
+    # Its widest search, the deadlock one from init(4, true, empty), takes about three
+    # minutes alone, and past five on a CI runner beside the others.
+    timeout: 900_000,
     code: [
       {:exports, HalC2.Orchestration.Unrecorded},
       {:exports, HalC2.Orchestration.TurnWatch},
