@@ -136,6 +136,33 @@ defmodule HalC2.CodexUnrecordedSubagentTest do
     assert %{"status" => "failed"} = command(child)
   end
 
+  # Review of #1398: the crash's end failed the work in the subagent's thread, then the
+  # store refused the run. A Stop once it recovered won the run, as interrupted, and the
+  # crash's try after it found the run ended: the two read apart for good.
+  test "an end the store refused after its subagent's thread stands for the ends after it",
+       %{work: work} do
+    {pid, runtime, run} = running_turn(work)
+    native = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    child_command(pid, runtime, native)
+    [%{"childThreadId" => child}] = list(@tid, "subagent")
+
+    HalC2.Test.Machines.refuse_changes(@tid)
+    assert catch_error(TurnWriter.abandon(@tid, run, "failed", "The provider stopped"))
+    assert %{"status" => "failed"} = command(child)
+    assert [%{"status" => "running"}] = list(@tid, "run")
+
+    HalC2.Test.Machines.refuse_changes(nil)
+    assert :ok = TurnWriter.abandon(@tid, run, "interrupted", nil)
+    assert [%{"status" => "failed"}] = list(@tid, "run")
+
+    # The crash's try after it, and the next end of the run, find it ended.
+    assert :ok = TurnWriter.abandon(@tid, run, "failed", "The provider stopped")
+    assert :ok = TurnWriter.abandon(@tid, run, "interrupted", nil)
+    assert [%{"status" => "failed"}] = list(@tid, "run")
+    assert [%{"status" => "failed"}] = list(@tid, "subagent")
+    assert %{"status" => "failed"} = command(child)
+  end
+
   test "a run the store failed ends the work in its subagents' threads once it recovers",
        %{work: work} do
     {pid, runtime, run} = running_turn(work)

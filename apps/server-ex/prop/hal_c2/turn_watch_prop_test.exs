@@ -25,7 +25,10 @@ defmodule HalC2.TurnWatchPropTest do
   A provider subagent's work runs in a thread of its own. A Stop of a run whose
   runtime crashed can race TurnWatch's end of it (`stop_crashed/0`): the end that
   settles the work in the subagents' threads is the one that ends the run, so they
-  read alike (review of #1398).
+  read alike, and so is one the store refused after those threads took it, ahead of a
+  Stop that comes once the store recovers (`late_stop/0`) (review of #1398). The next
+  run's runtime can resume a subagent an earlier run started (Claude's SendMessage)
+  before the lost runtime's last try: that try leaves it running (`recover/3`).
 
   TurnWatch's mailbox is traced, so each step waits on the messages it receives (a
   runtime's `:DOWN`, a try's answer, a state read) rather than on time.
@@ -139,11 +142,12 @@ defmodule HalC2.TurnWatchPropTest do
           :held ->
             [
               {10,
-               {:call, __MODULE__, :recover, [oneof([:during_try, :after_answer]), boolean()]}}
+               {:call, __MODULE__, :recover,
+                [oneof([:during_try, :after_answer]), boolean(), resumable(state)]}}
             ]
 
           nil ->
-            []
+            if(late_stop?(state), do: [{4, {:call, __MODULE__, :late_stop, []}}], else: [])
         end ++
         if(state.runtime != nil,
           do: [
@@ -158,6 +162,18 @@ defmodule HalC2.TurnWatchPropTest do
 
   defp ended([]), do: []
   defp ended(open), do: let(ids <- resize(3, list(oneof(open))), do: Enum.uniq(ids))
+
+  # Provider subagents an earlier end failed, which a later run can resume.
+  defp resumable(state) do
+    state.work
+    |> Enum.filter(&match?({_, %{kind: :native, status: :failed}}, &1))
+    |> Enum.map(&elem(&1, 0))
+    |> ended()
+  end
+
+  # The run in progress lost its runtime while the store refused its end.
+  defp late_stop?(state),
+    do: state.refusing and match?(%{status: :held, lost: true}, active(state))
 
   # The thread's run in progress, the latest: running, or its end held.
   defp active(state) do
@@ -189,8 +205,13 @@ defmodule HalC2.TurnWatchPropTest do
           &match?(%{status: :running, kind: kind} when kind != :delegated, state.work[&1])
         )
 
-  def precondition(state, {:call, _, :recover, [_at, _next]}),
-    do: state.refusing and state.runtime != nil and driving(state) == :held
+  def precondition(state, {:call, _, :recover, [_at, _next, resumed]}),
+    do:
+      state.refusing and state.runtime != nil and driving(state) == :held and
+        Enum.all?(resumed, &match?(%{kind: :native, status: :failed}, state.work[&1]))
+
+  def precondition(state, {:call, _, :late_stop, []}),
+    do: late_stop?(state) and driving(state) == nil
 
   def precondition(state, {:call, _, :exit_runtime, [reason]}),
     do: state.runtime != nil and (reason == :crash or driving(state) != :running)
@@ -266,7 +287,12 @@ defmodule HalC2.TurnWatchPropTest do
     end
   end
 
-  def next_state(state, _result, {:call, _, :recover, [_at, next?]}) do
+  # The Stop ends the run as the try the store refused chose: failed.
+  def next_state(state, result, {:call, mod, :late_stop, []}),
+    do: next_state(state, result, {:call, mod, :accept, []})
+
+  # A subagent the next run resumed is that run's runtime's.
+  def next_state(state, _result, {:call, _, :recover, [_at, next?, resumed]}) do
     ordinal = map_size(state.runs)
     state = put_in(state.runs[ordinal].lost, true)
     state = recorded(%{state | refusing: false, runtime: nil}, ordinal)
@@ -274,8 +300,13 @@ defmodule HalC2.TurnWatchPropTest do
     if next? do
       state = next_state(state, nil, {:call, __MODULE__, :start_run, []})
 
-      Enum.reduce(@kinds, state, fn kind, state ->
-        next_state(state, nil, {:call, __MODULE__, :add_work, [kind]})
+      state =
+        Enum.reduce(@kinds, state, fn kind, state ->
+          next_state(state, nil, {:call, __MODULE__, :add_work, [kind]})
+        end)
+
+      Enum.reduce(resumed, state, fn id, state ->
+        update_in(state.work[id], &%{&1 | status: :running, run: ordinal + 1})
       end)
     else
       state
@@ -311,6 +342,19 @@ defmodule HalC2.TurnWatchPropTest do
       postcondition(state, {:call, __MODULE__, :exit_runtime, [:crash]}, observed) and
         (Enum.all?(children, &(&1 == "failed")) or
            (IO.puts("the subagents' threads read #{inspect(children)}") && false))
+
+  # And the work in each subagent's thread reads as the subagent does.
+  def postcondition(state, {:call, _, :late_stop, []} = call, {observed, children}) do
+    expected =
+      for {id, %{kind: :native, status: status}} <- next_state(state, nil, call).work,
+          into: %{},
+          do: {id, Atom.to_string(status)}
+
+    postcondition(state, {:call, __MODULE__, :accept, []}, observed) and
+      (children == expected or
+         (IO.puts("the subagents' threads read #{inspect(children)}, not #{inspect(expected)}") &&
+            false))
+  end
 
   def postcondition(state, call, observed) do
     expected = expected(next_state(state, nil, call))
@@ -366,6 +410,32 @@ defmodule HalC2.TurnWatchPropTest do
     Application.delete_env(:hal_c2, :store_hook)
     drain()
     observe()
+  end
+
+  # The store takes writes again, and a Stop that took the run for undriven before
+  # (`TurnWriter.abandon/5` as `Orchestration.interrupt_undriven/2` calls it) ends it
+  # ahead of TurnWatch's next try, which waits on the run's lock the test holds. The
+  # try the store refused had ended the work in the subagents' threads.
+  def late_stop do
+    run = run_id(latest())
+    lock = {{TurnWriter, :abandon, run}, self()}
+    true = :global.set_lock(lock, [node()])
+    Application.delete_env(:hal_c2, :store_hook)
+    # The Stop takes the lock the test holds, and releases it.
+    :ok = TurnWriter.abandon(@tid, run, "interrupted", nil)
+    :global.del_lock(lock, [node()])
+    drain()
+
+    children =
+      for {id, :native} <- Process.get({__MODULE__, :work}, %{}),
+          into: %{},
+          do:
+            {id,
+             HalC2.Streams.state(child_id(id))
+             |> StreamState.get("turn-item")
+             |> get_in([child_item(id), "status"])}
+
+    {observe(), children}
   end
 
   # The live runtime starts the next run and claims it, a new runtime if none lives.
@@ -512,8 +582,10 @@ defmodule HalC2.TurnWatchPropTest do
   # The store takes the thread's writes again while the runtime of the held run goes:
   # during the try that records the run, or after that try recorded it and before
   # TurnWatch heard its answer. `next?` starts the thread's next run on a new runtime,
-  # with one piece of each kind of work, between that answer and TurnWatch hearing it.
-  def recover(at, next?) do
+  # with one piece of each kind of work, between that answer and TurnWatch hearing it,
+  # and resumes the `resumed` provider subagents earlier runs started
+  # (`NativeSubagent.resume/3`), each running a command again in its own thread.
+  def recover(at, next?, resumed) do
     watch = Process.whereis(TurnWatch)
     pid = Process.get({__MODULE__, :runtime})
     run = run_id(latest())
@@ -545,6 +617,7 @@ defmodule HalC2.TurnWatchPropTest do
         ids = Enum.map(@kinds, &{new_work(&1), &1})
         seed(Enum.flat_map(ids, fn {id, kind} -> work(id, ordinal, kind) end))
         for {id, kind} <- ids, do: child_thread(id, kind)
+        for id <- resumed, do: resume(id, ordinal)
         runtime() |> ask(fn -> TurnWatch.claim(@tid, run_id(ordinal)) end)
       end
 
@@ -641,7 +714,12 @@ defmodule HalC2.TurnWatchPropTest do
 
   # A provider subagent's own thread, a command of its running.
   defp child_thread(id, :native) do
-    item = %{"id" => child_item(id), "status" => "running", "type" => "command_execution"}
+    item = %{
+      "id" => child_item(id),
+      "status" => "running",
+      "type" => "command_execution",
+      "ordinal" => 1
+    }
 
     :ok =
       HalC2.Streams.transact(child_id(id), :thread, fn _stream ->
@@ -653,6 +731,18 @@ defmodule HalC2.TurnWatchPropTest do
   end
 
   defp child_thread(_id, _kind), do: :ok
+
+  defp resume(id, ordinal) do
+    entity = StreamState.get(HalC2.Streams.state(@tid), "subagent")["sub-#{id}"]
+    entity = Map.put(entity, "threadId", @tid)
+    HalC2.Orchestration.NativeSubagent.resume(%{run: run_id(ordinal)}, entity, "go on")
+    item = &Map.merge(&1, %{"status" => "running", "completedAt" => nil})
+
+    :ok =
+      HalC2.Streams.transact(child_id(id), :thread, fn stream ->
+        {[Orchestration.upsert(stream, "turn-item", child_item(id), item)], :ok}
+      end)
+  end
 
   defp child_id(id), do: "child-#{id}"
   defp child_item(id), do: "child-item-#{id}"

@@ -21,6 +21,8 @@ defmodule HalC2.UnrecordedTurnsProofTest do
   @items "writes a turn's items and streamed text; dry, it writes nothing, and the [unrecorded] step stands for the first that fails"
   @steer "adds a message to the turn the runtime drives; no run or provider turn ends"
 
+  @partway "keeps the end a run's first abandon chose, which the store refused after a subagent's thread took it, for the ends after it; abandon/5 is one step here, so no end is ever partway"
+
   use HalC2.Proof,
     model: "unrecorded_turns.maude",
     module: "UNRECORDED-TURNS",
@@ -79,6 +81,10 @@ defmodule HalC2.UnrecordedTurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call _" => ~w(take hold refuse-start interrupt-driven)
     },
     abstracts: %{
+      "HalC2.Orchestration.TurnWatch.ending/2" => @partway,
+      "HalC2.Orchestration.TurnWatch.ended/1" => @partway,
+      "HalC2.Orchestration.TurnWatch handle_call {:ending, _, _}" => @partway,
+      "HalC2.Orchestration.TurnWatch handle_cast {:ended, _}" => @partway,
       "HalC2.Orchestration.TurnWatch.attempted/2" =>
         "for tests: waits on TurnWatch's next try; changes nothing",
       "HalC2.Orchestration.TurnWatch handle_call {:attempted, _}" =>

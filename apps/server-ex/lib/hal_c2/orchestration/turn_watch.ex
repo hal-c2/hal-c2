@@ -69,6 +69,22 @@ defmodule HalC2.Orchestration.TurnWatch do
     do: GenServer.cast(__MODULE__, {:unrecorded, thread_id, run_id, ending})
 
   @doc """
+  The end run `run_id` takes, `{status, failure, at}`: the first one asked for since
+  its end last recorded (`ended/1`). An end the store refused partway (the work in a
+  subagent's thread ended, the run not) stands, so another end of the run that comes
+  before the try after it ends the run as that one did. An MC upgraded in place, where
+  this process has not started yet, takes `ending`.
+  """
+  def ending(run_id, {_status, _failure, _at} = ending) do
+    GenServer.call(__MODULE__, {:ending, run_id, ending})
+  catch
+    :exit, _ -> ending
+  end
+
+  @doc "Run `run_id`'s end recorded: the next end asked for is its own (`ending/2`)."
+  def ended(run_id), do: GenServer.cast(__MODULE__, {:ended, run_id})
+
+  @doc """
   Waits for the next try at recording run `run_id`'s unrecorded end to fail, or for
   it to be recorded: `{:unrecorded, at}` or `{:recorded, at}`, `at` the time the run
   failed. One already failed answers at once. For tests.
@@ -77,7 +93,7 @@ defmodule HalC2.Orchestration.TurnWatch do
     do: GenServer.call(__MODULE__, {:attempted, run_id}, timeout)
 
   @impl true
-  def init(nil), do: {:ok, %{claims: %{}, pending: %{}, waiters: %{}}}
+  def init(nil), do: {:ok, %{claims: %{}, pending: %{}, waiters: %{}, endings: %{}}}
 
   @impl true
   # A run whose end is held keeps its runtime watched until the end records
@@ -88,6 +104,9 @@ defmodule HalC2.Orchestration.TurnWatch do
       do: {:noreply, state},
       else: {:noreply, forget(state, run_id)}
   end
+
+  def handle_cast({:ended, run_id}, state),
+    do: {:noreply, %{state | endings: Map.delete(state.endings, run_id)}}
 
   def handle_cast({:unrecorded, thread_id, run_id, ending}, state) do
     ending =
@@ -105,6 +124,11 @@ defmodule HalC2.Orchestration.TurnWatch do
   def handle_call({:claim, pid, thread_id, run_id}, _from, state) do
     state = forget(state, run_id)
     {:reply, :ok, put_in(state.claims[run_id], {Process.monitor(pid), pid, thread_id})}
+  end
+
+  def handle_call({:ending, run_id, ending}, _from, state) do
+    ending = Map.get(state.endings, run_id, ending)
+    {:reply, ending, put_in(state.endings[run_id], ending)}
   end
 
   # A process that has exited no longer drives its run, though its `:DOWN` may still
@@ -194,8 +218,11 @@ defmodule HalC2.Orchestration.TurnWatch do
 
   # An MC upgraded in place carries the claims alone.
   @impl true
-  def code_change(_old, %{claims: _} = state, _extra), do: {:ok, state}
-  def code_change(_old, claims, _extra), do: {:ok, %{claims: claims, pending: %{}, waiters: %{}}}
+  def code_change(_old, %{claims: _} = state, _extra),
+    do: {:ok, Map.put_new(state, :endings, %{})}
+
+  def code_change(_old, claims, _extra),
+    do: {:ok, %{claims: claims, pending: %{}, waiters: %{}, endings: %{}}}
 
   defp recorded(state, run_id, ending) do
     {waiters, state} = pop_in(state.waiters[run_id])
@@ -246,10 +273,11 @@ defmodule HalC2.Orchestration.TurnWatch do
     end
   end
 
+  # A run claimed again, or released once it ended, starts from no end of its own.
   defp forget(state, run_id) do
     {claim, claims} = Map.pop(state.claims, run_id)
     if claim, do: Process.demonitor(elem(claim, 0), [:flush])
-    %{state | claims: claims}
+    %{state | claims: claims, endings: Map.delete(state.endings, run_id)}
   end
 
   defp lost?(pid),

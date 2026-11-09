@@ -941,8 +941,9 @@ defmodule HalC2.Orchestration.TurnWriter do
   runtime crashed, or stopped without ending it. What the run left open ends with it,
   from what the thread recorded, in the same transaction as the run, so of two
   callers racing (a crash and a stop) only the first ends it. They end it one at a
-  time: the work in its subagents' threads, which ends first, ends as the run does.
-  `at:` is when it ended
+  time: the work in its subagents' threads, which ends first, ends as the run does,
+  and an end the store refused partway stands for the ends after it until one records
+  (`TurnWatch.ending/2`), whatever `status` they ask for. `at:` is when it ended
   (now if omitted), and `provider_turn:` how its provider turn did, if not as the run.
 
   `ended:`, the `{kind, id}`s of the work a runtime that drove the turn to its end
@@ -969,7 +970,10 @@ defmodule HalC2.Orchestration.TurnWriter do
     end
 
     try do
-      abandon_now(thread_id, run_id, status, failure, opts)
+      at = opts[:at] || Entities.now()
+      {status, failure, at} = TurnWatch.ending(run_id, {status, failure, at})
+      :ok = abandon_now(thread_id, run_id, status, failure, Keyword.put(opts, :at, at))
+      TurnWatch.ended(run_id)
     after
       :global.del_lock(lock, nodes)
     end
@@ -985,7 +989,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   defp abandon_now(thread_id, run_id, status, failure, opts) do
-    at = opts[:at] || Entities.now()
+    at = opts[:at]
     failure = UserFacingErrors.sanitize_failure(failure)
     keep? = opts[:lost] != true
     stream = HalC2.Streams.state(thread_id)
