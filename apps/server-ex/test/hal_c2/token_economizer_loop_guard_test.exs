@@ -1210,6 +1210,23 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
                [{"t", "claude-work"}, {"t", "claudeAgent"}, {"t", "codex"}]
     end
 
+    test "a run naming no conversation stages nothing" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      future = System.monotonic_time(:millisecond) + 60_000
+
+      for run <- [
+            %{"projectId" => "p", "instanceId" => "claudeAgent"},
+            %{"projectId" => "p", "threadId" => "t"},
+            %{"projectId" => "p", "threadId" => 7, "provider" => "codex"}
+          ] do
+        {:reply, nil, after_run} =
+          TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+        assert after_run.staged == %{}
+      end
+    end
+
     test "a drop that cannot be saved is refused, and the plugin stands" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"microSkills" => "envfacts"})

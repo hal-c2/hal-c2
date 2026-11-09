@@ -304,11 +304,17 @@ defmodule HalC2Plugins.TokenEconomizer do
         # another provider instance (another driver, or another account of
         # the same one) gets its own staging, and each fold credits the
         # conversation it belongs to. Saved once the answer is on its way.
+        # A run naming no conversation still gets the facts, but stages
+        # nothing: no turn could be credited to it.
         key = {run["threadId"], run["instanceId"] || run["provider"]}
-        state = stage(state, key, EnvFacts.injected_ids(skills))
+        reply = if(text == "", do: nil, else: %{"context" => text})
 
-        {:reply, if(text == "", do: nil, else: %{"context" => text}), state,
-         {:continue, :save_staged}}
+        if is_binary(elem(key, 0)) and is_binary(elem(key, 1)) do
+          state = stage(state, key, EnvFacts.injected_ids(skills))
+          {:reply, reply, state, {:continue, :save_staged}}
+        else
+          {:reply, reply, state}
+        end
       else
         {:reply, nil, state}
       end
