@@ -860,7 +860,7 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert state.unresolved == %{}
   end
 
-  test "a subagent's use heard with no project holds its provider's pruning off until its thread names one",
+  test "a subagent's use heard with no project is its thread's project's at once, though the thread never runs again",
        %{thread: thread, project: p} do
     {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
     ended(thread, "r1", 1, [])
@@ -868,32 +868,66 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
     state = observe(state, finished(thread, "r1", 1))
     state = apply_tools(state, p, ["CronCreate"])
-    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, "other", "o1", p)
+    assert {%{"deniedTools" => ["CronCreate"]}, _state} = shape(state, "other", "o1", p)
+
+    # The thread's record names its project; the plugin restarted under its subagent.
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [{"thread", thread, %{"s" => %{"projectId" => p}}}])
+
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, stray_item(thread, "CronCreate"))
+
+    assert state.strays == %{}
+    assert "CronCreate" in state.prunes[{p, "claudeAgent"}]["used"]
+    assert {nil, _state} = shape(state, "other", "o2", p)
+  end
+
+  test "a subagent's use heard with no project holds its provider's pruning off, across a restart, until its thread names one",
+       %{thread: thread, project: p} do
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    assert {%{"deniedTools" => ["CronCreate"]}, _state} = shape(state, "other", "o1", p)
 
     # The plugin restarted under a subagent whose handle had neither run nor project.
     {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
 
-    state =
-      observe(state, %{
-        "type" => "turn.item",
-        "threadId" => thread,
-        "runId" => nil,
-        "projectId" => nil,
-        "provider" => "claudeAgent",
-        "itemType" => "dynamic_tool_call",
-        "tool" => "CronCreate",
-        "status" => "completed",
-        "subagent" => true
-      })
+    # Its thread's record names no project.
+    state = observe(state, stray_item(thread, "CronCreate"))
 
     assert {nil, state} = shape(state, "other", "o2", p)
     assert [%{"unresolved" => [^thread]}] = TokenEconomizer.prune_status(state)["projects"]
 
-    # Its thread's next turn names the project: the use is the project's.
-    state = observe(state, started(thread, "r2", p, %{}))
+    # Restarted again, it still holds.
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    assert state.strays == %{{thread, "claudeAgent"} => ["CronCreate"]}
+    assert {nil, state} = shape(state, "other", "o3", p)
+
+    # Its thread's next turn, on a provider pruning has nothing for, names the project:
+    # the use is the project's.
+    state = observe(state, started(thread, "r2", p, %{"provider" => "opencode"}))
     assert state.strays == %{}
-    assert {nil, _state} = shape(state, "other", "o3", p)
+    assert "CronCreate" in state.prunes[{p, "claudeAgent"}]["used"]
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    assert state.strays == %{}
+    assert {nil, _state} = shape(state, "other", "o4", p)
   end
+
+  defp stray_item(thread, tool),
+    do: %{
+      "type" => "turn.item",
+      "threadId" => thread,
+      "runId" => nil,
+      "projectId" => nil,
+      "provider" => "claudeAgent",
+      "itemType" => "dynamic_tool_call",
+      "tool" => tool,
+      "status" => "completed",
+      "subagent" => true
+    }
 
   defp subagent(thread) do
     case HalC2.Streams.state(thread) |> HalC2.StreamState.list("subagent") do

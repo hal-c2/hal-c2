@@ -171,6 +171,21 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       start: ["a", "r3", 2, false, false],
       finish: ["b", "r2", 1],
       start: ["b", "r4", 2, true, false]
+    ],
+    # A restart keeps a use heard with no project, till its thread's record names one.
+    stray_kept: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      finish: ["a", "r1", 1],
+      down: [],
+      up: [],
+      stray_use: ["a", "CronCreate"],
+      down: [],
+      up: [],
+      start: ["b", "r2", 1, true, true],
+      finish: ["b", "r2", 1],
+      thread_placed: ["a"],
+      start: ["b", "r3", 2, true, false]
     ]
   ]
 
@@ -283,8 +298,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # `named`: the tools the person last turned off by name, which turns go on to use
   # more often than others (a conversation shaped before still has them). `gone`: the
   # deleted threads. `away`: those moved to another MC, which may come back. `strays`:
-  # `{thread, tool}`, a subagent's uses heard with no project, until its thread's next
-  # turn names it.
+  # `{thread, tool}`, a subagent's uses heard with no project while its thread's record
+  # names none, kept across restarts until a turn of its or its record names one.
+  # `placed`: the threads whose record names their project.
   def initial_state,
     do: %{
       up: true,
@@ -303,7 +319,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       forked: false,
       gone: [],
       away: [],
-      strays: []
+      strays: [],
+      placed: []
     }
 
   def command(s) do
@@ -312,6 +329,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     idle = threads -- open
     live = Map.keys(s.threads) -- s.gone
     here = live -- s.away
+    unplaced = live -- s.placed
 
     rollbackable =
       for {t, %{runs: runs}} <- s.threads, t in here, t not in open, ended(runs) != [], do: t
@@ -347,7 +365,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       s.away != [] and {2, {:call, __MODULE__, :thread_returned, [elements(s.away)]}},
       s.away != [] and s.runs < @max_runs and {2, ran_away_call(s)},
       s.up and here != [] and
-        {1, {:call, __MODULE__, :stray_use, [elements(here), elements(@tools)]}}
+        {1, {:call, __MODULE__, :stray_use, [elements(here), elements(@tools)]}},
+      unplaced != [] and {1, {:call, __MODULE__, :thread_placed, [elements(unplaced)]}}
     ]
     |> Enum.filter(& &1)
     |> frequency()
@@ -486,9 +505,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def precondition(s, {:call, _, :stray_use, [thread, _tool]}),
     do: s.up and Map.has_key?(s.threads, thread) and thread not in (s.gone ++ s.away)
 
+  def precondition(s, {:call, _, :thread_placed, [thread]}),
+    do: Map.has_key?(s.threads, thread) and thread not in (s.placed ++ s.gone)
+
   def precondition(_s, _call), do: true
 
-  def next_state(s, _res, {:call, _, :start, [thread, run, ordinal, _new?, _first?]}) do
+  def next_state(s, _res, {:call, _, :start, [thread, run, ordinal, new?, _first?]}) do
     s =
       s
       |> told()
@@ -500,8 +522,13 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       |> put_in([:open, thread], run)
       |> Map.update!(:runs, &(&1 + 1))
 
-    # Its turn names its project, which the uses heard with none are then the evidence of.
-    {settled, strays} = Enum.split_with(s.strays, &(elem(&1, 0) == thread and s.up))
+    # Its turn names its project, which the uses heard with none are then the evidence
+    # of; so does, as a conversation is shaped, the record of any thread that names it.
+    {settled, strays} =
+      Enum.split_with(s.strays, fn {t, _} ->
+        s.up and (t == thread or (new? and t in s.placed))
+      end)
+
     s = %{s | strays: strays, owed: Enum.uniq(s.owed ++ Enum.map(settled, &elem(&1, 1)))}
 
     cond do
@@ -592,9 +619,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def next_state(s, _res, {:call, _, :restore, [tools]}),
     do: %{s | named: s.named -- (tools || s.named)}
 
-  # A restart loses the uses heard with no project.
+  # The uses heard with no project are kept.
   def next_state(s, _res, {:call, _, :down, _}),
-    do: untold(%{s | up: false, heard: [], read: [], strays: []})
+    do: untold(%{s | up: false, heard: [], read: []})
 
   def next_state(s, _res, {:call, _, :up, _}), do: %{s | up: true, period: s.period + 1}
   def next_state(s, _res, {:call, _, :history, [on]}), do: %{s | history: on}
@@ -645,12 +672,17 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     |> Map.update!(:runs, &(&1 + 1))
   end
 
-  def next_state(s, _res, {:call, _, :stray_use, [thread, tool]}),
-    do: %{
-      told(s)
-      | strays: Enum.uniq(s.strays ++ [{thread, tool}]),
-        used: Enum.uniq(s.used ++ [tool])
-    }
+  # With no project of its own, the use is its thread's record's project's at once.
+  def next_state(s, _res, {:call, _, :stray_use, [thread, tool]}) do
+    s = %{told(s) | used: Enum.uniq(s.used ++ [tool])}
+
+    if thread in s.placed,
+      do: %{s | owed: Enum.uniq(s.owed ++ [tool])},
+      else: %{s | strays: Enum.uniq(s.strays ++ [{thread, tool}])}
+  end
+
+  def next_state(s, _res, {:call, _, :thread_placed, [thread]}),
+    do: %{s | placed: [thread | s.placed]}
 
   def next_state(s, _res, _call), do: s
 
@@ -1018,6 +1050,13 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       "subagent" => true
     })
 
+    snapshot()
+  end
+
+  # The thread's record comes to name its project, as every thread's but those made
+  # before it kept one does.
+  def thread_placed(thread) do
+    commit(thread, [{"thread", thread, %{"s" => %{"projectId" => @project_id}}}])
     snapshot()
   end
 

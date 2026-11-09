@@ -494,6 +494,27 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
+  The project a thread is in, from its stream: `{:ok, project id}`, kept once the
+  thread is deleted or moved away. When its record names none, `{:error, {:gone,
+  message}}` for a thread deleted or never here, `{:error, {:away, message}}` for one
+  on another machine and `{:error, {:unknown, message}}` otherwise. Needs
+  `turns:observe`.
+  """
+  def thread_project(id, thread_id) do
+    with :ok <- permit(id, "turns:observe") do
+      HalC2.Streams.read(thread_id, fn stream ->
+        case HalC2.StreamState.get(stream, "thread")[thread_id] do
+          nil -> {:error, {:gone, "There is no thread #{thread_id}."}}
+          %{"projectId" => project_id} when is_binary(project_id) -> {:ok, project_id}
+          %{"deletedAt" => at} when at != nil -> {:error, {:gone, "#{thread_id} was deleted."}}
+          %{"movedTo" => %{}} -> {:error, {:away, "#{thread_id} is on another machine."}}
+          _thread -> {:error, {:unknown, "#{thread_id} names no project."}}
+        end
+      end)
+    end
+  end
+
+  @doc """
   How many turn events plugin `id`'s feed may still deliver: 0 when it has no feed. A
   plugin process restarted while its feed ran has lost what it knew of the events
   before: any of these may have been sent before events it missed, and a report of

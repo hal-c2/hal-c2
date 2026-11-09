@@ -143,7 +143,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer state :away" =>
         "which unresolved threads are on another MC, shown on the topic: the model has one MC, and an away thread's marks stay unresolved without holding the shape off, which the plain test and the plugin property cover",
       "HalC2Plugins.TokenEconomizer state :strays" =>
-        "a subagent's uses heard with no project, held until its thread's next turn names one: the model's uses always carry their project, and the plain test and the plugin property cover these",
+        "a subagent's uses heard with no project while its thread's record names none either, kept across restarts until a turn of the thread's or its record names one: the model's uses always carry their project, and the plain test and the plugin property cover these",
       "HalC2Plugins.TokenEconomizer state :prune_timers" =>
         "when the tick looks again; time passing is the wait rule",
       "HalC2Plugins.TokenEconomizer state :stats" => @guard,

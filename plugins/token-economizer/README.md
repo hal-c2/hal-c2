@@ -40,9 +40,10 @@ apply or restore just those), carry what is off, proposed and kept per project,
 with the evidence for each tool — what the plugin's page and settings show and
 drive. Their `unresolved` lists the threads whose turns the plugin heard only in
 part and could not read back yet: while there are any, the project's new
-conversations are turned off nothing. So does a thread whose subagent used a tool
-the plugin heard with no project, until the thread's next turn names it. A deleted
-thread leaves that list. One
+conversations are turned off nothing. A tool a subagent used that the plugin heard
+with no project counts for its thread's project; when even the thread cannot say
+which that is, its provider's new conversations are turned off nothing until a turn
+of the thread's or its record names it. A deleted thread leaves that list. One
 moved to another machine is listed under `away` instead, and holds nothing off
 while it is there; once it is moved back, its turns are read back before
 anything is turned off again.

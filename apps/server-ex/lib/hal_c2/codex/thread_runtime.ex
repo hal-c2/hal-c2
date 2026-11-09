@@ -2954,6 +2954,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           state
       end
 
+    state = hear_unfinished_images(state)
     state = GeneratedImages.turn_ended(state, status, stream)
     state = close_open_items(state, status)
     finish(state, status, failure)
@@ -3770,11 +3771,24 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp complete_item(state, _item), do: state
 
   # Plugins hear a generated image in the turn that made it; one finished after its turn
-  # ended is heard by none, as the turn's other late reports are.
+  # ended is heard by none, as the turn's other late reports are: they heard it as the
+  # turn ended (`hear_unfinished_images/1`).
   defp hear_image(%{turn: %{native_turn_id: turn_id}} = state, turn_id, item),
     do: complete_item(state, item)
 
   defp hear_image(state, _turn_id, _item), do: state
+
+  # The images the turn ends still generating: plugins hear each as the turn's, still
+  # `inProgress`, before the turn ends, for it used Codex's image tool whether or not
+  # the image ever arrives.
+  defp hear_unfinished_images(state) do
+    for native <- GeneratedImages.generating(state) do
+      heard = unshown_item(state.turn.ids, %{"type" => "imageGeneration", "id" => native})
+      observe_item(state, "inProgress", %{heard | "status" => "inProgress"})
+    end
+
+    state
+  end
 
   # An item of `@unshown` as plugins hear it, under the id its turn item would have.
   defp unshown_item(ids, %{"type" => type, "id" => native} = item) do

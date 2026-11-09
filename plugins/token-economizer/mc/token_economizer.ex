@@ -222,8 +222,9 @@ defmodule HalC2Plugins.TokenEconomizer do
        # for it may come back, but holding nothing off while it is away
        away: MapSet.new(),
        # {thread id, provider} => the tools used in it heard with no project to keep
-       # them for (`strays/2`)
-       strays: %{},
+       # them for, its thread's own unreadable (`strays/2`); saved, for it holds
+       # pruning off until it is
+       strays: read_strays(),
        # {project id, provider} => the timer that folds its idle conversations
        prune_timers: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
@@ -400,8 +401,8 @@ defmodule HalC2Plugins.TokenEconomizer do
          is_binary(run["provider"]) do
       cfg = prune_cfg(state)
       state = seed_history(state, run["threadId"], run["runId"], project, unit)
-      {prune, state} = prune(state, project, unit)
       {held?, state} = strays(state, project)
+      {prune, state} = prune(state, project, unit)
 
       {prune, denied, state} =
         case recover_uses(prune, state, project, unit, run) do
@@ -546,13 +547,14 @@ defmodule HalC2Plugins.TokenEconomizer do
        ) do
     unit = Prune.unit_for_provider(event["provider"])
     project = {event["projectId"], event["provider"]}
+    # Whatever provider the turn is on, it names the project.
+    state = settle_strays(state, thread_id, event["projectId"])
 
     if unit == nil or not is_binary(event["projectId"]) do
       state
     else
       # Running here, it is back.
       state = update_in(state.away, &MapSet.delete(&1, {thread_id, project}))
-      state = settle_strays(state, thread_id, event["projectId"])
       state = seed_history(state, thread_id, event["runId"], project, unit)
       {prune, state} = prune(state, project, unit)
       state = touch(state, project, prune)
@@ -600,13 +602,21 @@ defmodule HalC2Plugins.TokenEconomizer do
              unit when unit != nil <- Prune.unit_for_provider(provider) do
           used = Prune.used_in_item(item, unit)
 
-          if is_binary(item["projectId"]) do
-            project = {item["projectId"], provider}
-            {_prune, state} = prune(state, project, unit)
-            note_used(state, project, used)
-          else
-            # Nor a project to keep it for: its thread's next turn names one.
-            stray(state, {thread_id, provider}, used)
+          # With no project, its thread's names it; one never here keeps nothing.
+          case if(is_binary(item["projectId"]),
+                 do: {:ok, item["projectId"]},
+                 else: thread_project(thread_id)
+               ) do
+            {:ok, project_id} ->
+              project = {project_id, provider}
+              {_prune, state} = prune(state, project, unit)
+              note_used(state, project, used)
+
+            :gone ->
+              state
+
+            _away_or_error ->
+              stray(state, {thread_id, provider}, used)
           end
         else
           _ -> state
@@ -694,38 +704,88 @@ defmodule HalC2Plugins.TokenEconomizer do
   # A use protects its tool at once, not only when the segment folds.
   defp stray(state, _key, []), do: state
 
-  defp stray(state, key, used),
-    do: update_in(state.strays, &Map.update(&1, key, used, fn was -> Enum.uniq(was ++ used) end))
+  defp stray(state, key, used) do
+    state
+    |> update_in([:strays], &Map.update(&1, key, used, fn was -> Enum.uniq(was ++ used) end))
+    |> save_strays()
+  end
 
   # The uses heard with no project of `thread_id`'s, now its turn names it.
-  defp settle_strays(state, thread_id, project_id) do
+  defp settle_strays(state, thread_id, project_id) when is_binary(project_id) do
     Enum.reduce(state.strays, state, fn
-      {{^thread_id, provider} = key, used}, state ->
-        project = {project_id, provider}
-        {_prune, state} = prune(state, project, Prune.unit_for_provider(provider))
-        state = update_in(state.strays, &Map.delete(&1, key))
-        note_used(state, project, used)
-
-      _, state ->
-        state
+      {{^thread_id, _} = key, used}, state -> settle_stray(state, key, project_id, used)
+      _, state -> state
     end)
   end
 
+  defp settle_strays(state, _thread_id, _project_id), do: state
+
+  defp settle_stray(state, {_, provider} = key, project_id, used) do
+    project = {project_id, provider}
+    {_prune, state} = prune(state, project, Prune.unit_for_provider(provider))
+    state = state |> update_in([:strays], &Map.delete(&1, key)) |> save_strays()
+    note_used(state, project, used)
+  end
+
   # Whether uses heard with no project (`hear_prune/2`), of the project's provider,
-  # hold its pruning off: any may be its own, until their thread's next turn names
-  # its project. Those of a deleted thread drop; those of one away hold nothing.
+  # hold its pruning off: any may be its own while its thread cannot say which
+  # project it is in. Once it can, they are that project's evidence; those of a
+  # thread no longer here drop, and those of one away hold nothing until it is back.
   defp strays(state, {_, provider}) do
     Enum.reduce(state.strays, {false, state}, fn
-      {{thread_id, ^provider} = key, _}, {held?, state} ->
-        case history(thread_id, nil) do
-          :gone -> {held?, update_in(state.strays, &Map.delete(&1, key))}
+      {{thread_id, ^provider} = key, used}, {held?, state} ->
+        case thread_project(thread_id) do
+          {:ok, project_id} -> {held?, settle_stray(state, key, project_id, used)}
+          :gone -> {held?, state |> update_in([:strays], &Map.delete(&1, key)) |> save_strays()}
           :away -> {held?, state}
-          _ -> {true, state}
+          :error -> {true, state}
         end
 
       _, acc ->
         acc
     end)
+  end
+
+  # The project `thread_id` is in, kept once it is deleted or moved. Naming none,
+  # `:gone` when it was deleted or never here, `:away` while on another machine, and
+  # `:error` when it could not be read or names none.
+  defp thread_project(thread_id) do
+    case Host.thread_project(@id, thread_id) do
+      {:ok, project_id} when is_binary(project_id) -> {:ok, project_id}
+      {:error, {:gone, _}} -> :gone
+      {:error, {:away, _}} -> :away
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
+  end
+
+  defp strays_path, do: Path.join([Host.data_dir(@id), "toolprune", "strays.json"])
+
+  defp read_strays do
+    with {:ok, text} <- File.read(strays_path()),
+         {:ok, saved} when is_list(saved) <- JSON.decode(text) do
+      for %{"threadId" => t, "provider" => p, "tools" => tools} <- saved,
+          is_binary(t) and is_binary(p) and is_list(tools),
+          into: %{},
+          do: {{t, p}, tools}
+    else
+      _ -> %{}
+    end
+  end
+
+  defp save_strays(state) do
+    save_json(
+      strays_path(),
+      for(
+        {{t, p}, tools} <- state.strays,
+        do: %{"threadId" => t, "provider" => p, "tools" => tools}
+      )
+    )
+
+    state
   end
 
   defp note_used(state, project, used) do
