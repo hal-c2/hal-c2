@@ -522,7 +522,9 @@ defmodule HalC2.PluginsTurnHooksTest do
     grant(%{"steerer" => ["threads:steer"]})
 
     # Nothing runs: neither a turn started nor a message kept.
-    assert {:error, _} = Host.steer("steerer", thread_id, nil, "unnamed")
+    # Refused as the orchestration refuses a steer only for its run that names none.
+    assert {:error, "A steer meant only for its run must name the run."} =
+             Host.steer("steerer", thread_id, nil, "unnamed")
 
     unnamed = %{
       "type" => "message.dispatch",

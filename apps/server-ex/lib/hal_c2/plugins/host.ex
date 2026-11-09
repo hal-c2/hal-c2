@@ -235,8 +235,9 @@ defmodule HalC2.Plugins.Host do
   also when `run_id` names no run.
   """
   def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
-    with :ok <- permit(id, "threads:steer"),
-         :ok <- if(is_binary(run_id), do: :ok, else: {:error, "A steer must name its run."}) do
+    # One naming no run is refused as the orchestration refuses any steer meant only
+    # for its run that names none.
+    with :ok <- permit(id, "threads:steer") do
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
         "commandId" => "plugin:#{id}:#{HalC2.Environment.uuid4()}",
