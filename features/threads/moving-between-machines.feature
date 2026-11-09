@@ -15,6 +15,8 @@
 #     every other member says, a switched-off one once it is back)
 #   apps/server-ex/lib/hal_c2/thread_archive.ex (what the destination writes of a thread: a plugin's
 #     mark stays behind)
+#   apps/server-ex/lib/hal_c2/plugins/package.ex (threadsStay read from the package on disk; an install
+#     cut off at any point leaves the package installed or aside, never missing)
 #   apps/server-ex/lib/hal_c2/project_environment.ex (a session loads the environment of the project it
 #     runs in, on the machine it runs on)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
@@ -521,6 +523,20 @@ Feature: Moving a thread and its agent to another machine
       Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
       And the plugin "code-review" is installed on "laptop" and keeps its threads there, but is turned off
       And a new version of "code-review" is being installed on "laptop", the old one moved aside and the new one not yet in place
+      When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+      And no file is written
+      When the user moves "Alpha" to "desktop"
+      Then the user is told "Alpha was started by code-review, which keeps it on this machine."
+
+    # An install cut off between its two renames leaves the old version aside and nothing in its
+    # place. The next install puts it back before it copies the new one, so when that one is cut
+    # off too (a crash, a full disk), the plugin is still installed and still keeps its threads.
+    @mc
+    Scenario: A thread its plugin keeps is kept when installs of a new version are cut off
+      Given "Alpha" was started by the plugin "code-review" before it kept its threads on the machine
+      And the plugin "code-review" is installed on "laptop" and keeps its threads there, but is turned off
+      And an install of a new version of "code-review" on "laptop" was cut off between its renames, and the next one while it copied
       When the user exports "Alpha" on "laptop" to the file "alpha.hal-c2-thread"
       Then the user is told "Alpha was started by code-review, which keeps it on this machine."
       And no file is written

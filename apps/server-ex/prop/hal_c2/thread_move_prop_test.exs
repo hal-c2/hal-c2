@@ -20,8 +20,9 @@ defmodule HalC2.ThreadMovePropTest do
   that was never run, on a thread from before the mark (`HalC2.Plugins.threads_stay?/1`).
   That plugin also starts threads, which take the mark from its manifest, and a case
   breaks its manifest (a reload that fails, leaving the version before it loaded) or
-  moves it aside as an install does between its two renames: neither lets a thread it
-  keeps go, nor one it starts then leave without the mark. The plugin host may also start
+  moves it aside as an install does between its two renames, or has the next install cut
+  off while it copies: none lets a thread it keeps go, nor one it starts then leave
+  without the mark. The plugin host may also start
   again while the manifest is broken, loading no version of it: a package that is there
   with a manifest that cannot be read is taken to keep its threads (#1432), so the ones
   from before the mark still stay, and so do the ones it starts then. A case may also
@@ -105,7 +106,7 @@ defmodule HalC2.ThreadMovePropTest do
   #   there), and let_go whether the source has let go of it already
   # running: the machines the plugin runs on
   # keeper: the machines whose keeper package `Cluster.keeper/1` left :broken,
-  #   :replacing or :removed; the others have it installed
+  #   :replacing, :cut_off or :removed; the others have it installed
   def initial_state, do: %{threads: %{}, held: nil, running: [], keeper: %{}}
 
   def command(state) do
@@ -126,7 +127,7 @@ defmodule HalC2.ThreadMovePropTest do
         {2, {:call, __MODULE__, :plugin, [oneof(@mcs), boolean()]}},
         {2,
          {:call, __MODULE__, :keeper,
-          [oneof(@mcs), oneof([:installed, :broken, :replacing, :removed])]}}
+          [oneof(@mcs), oneof([:installed, :broken, :replacing, :cut_off, :removed])]}}
       ] ++
         for(
           {mc, :broken} <- state.keeper,

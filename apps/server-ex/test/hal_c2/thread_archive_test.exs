@@ -253,6 +253,61 @@ defmodule HalC2.ThreadArchiveTest do
     end
   end
 
+  # An install cut off between its two renames leaves the package aside with nothing in
+  # its place. The next install, cut off in turn while it copies (a crash, a full disk:
+  # here a file it cannot read), must not leave the package missing, which would read as
+  # uninstalled and let a thread from before the mark be exported with no MC running.
+  test "a thread its plugin keeps is kept through installs that are cut off",
+       %{context: context, tmp_dir: dir} do
+    context = World.create_thread(context, "Review")
+    mark = %{"id" => "keeper", "kind" => "review", "listed" => false}
+    context = World.patch_thread(context, "Review", %{"plugin" => mark})
+    review = World.thread(context, "Review")
+    kept = {:error, "Review was started by keeper, which keeps it on this machine."}
+    manifest = JSON.encode!(%{"id" => "keeper", "threadsStay" => true})
+
+    plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+    installed = Path.join(plugins, "keeper")
+    File.mkdir_p!(installed)
+    File.write!(Path.join(installed, "plugin.json"), manifest)
+
+    checkout = Path.join(dir, "checkout")
+    package = Path.join(checkout, "plugins/keeper")
+    File.mkdir_p!(Path.join(package, "mc"))
+    File.write!(Path.join(package, "plugin.json"), manifest)
+    locked = Path.join(package, "mc/keeper.ex")
+    File.write!(locked, "defmodule Keeper do\nend\n")
+    World.git!(checkout, ~w(init -q))
+    Application.put_env(:hal_c2, :plugins_install_checkout, checkout)
+    on_exit(fn -> Application.delete_env(:hal_c2, :plugins_install_checkout) end)
+
+    File.rename!(installed, HalC2.Plugins.Package.aside_dir(plugins, "keeper"))
+    assert ThreadArchive.stays(review) == kept
+
+    File.chmod!(locked, 0o000)
+
+    try do
+      assert_raise File.CopyError, fn ->
+        Mc.run_task(Mix.Tasks.HalC2.Plugins.Install, ["keeper"])
+      end
+    after
+      File.chmod!(locked, 0o644)
+    end
+
+    assert ThreadArchive.stays(review) == kept
+    file = Path.join(dir, "review.hal-c2-thread")
+    assert ThreadArchive.export_file("Review", file) == kept
+    refute File.exists?(file)
+    # The version before is back in its place.
+    assert File.read!(Path.join(installed, "plugin.json")) == manifest
+
+    Mc.run_task(Mix.Tasks.HalC2.Plugins.Install, ["keeper"])
+    assert File.exists?(Path.join(installed, "mc/keeper.ex"))
+    refute File.exists?(HalC2.Plugins.Package.aside_dir(plugins, "keeper"))
+    refute File.exists?(HalC2.Plugins.Package.staged_dir(plugins, "keeper"))
+    assert ThreadArchive.stays(review) == kept
+  end
+
   test "a failed import takes back the worktree branch it made", %{context: context, root: root} do
     {bundle, carried} = feature_bundle(context, root)
     branches = World.git!(root, ~w(for-each-ref refs/heads))

@@ -1185,6 +1185,25 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  # The first install's old version left aside; the second, putting it back first, fails
+  # as a full disk fails a copy.
+  step "an install of a new version of {string} on {string} was cut off between its renames, and the next one while it copied",
+       %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+    installed = Path.join(plugins, plugin)
+    File.rename!(installed, HalC2.Plugins.Package.aside_dir(plugins, plugin))
+
+    assert_raise File.CopyError, fn ->
+      HalC2.Plugins.Package.replace(plugins, plugin, fn staged ->
+        File.mkdir_p!(staged)
+        raise File.CopyError, source: "plugin.json", destination: staged, reason: :enospc
+      end)
+    end
+
+    context
+  end
+
   step "the user asks which machines {string} could move to", %{args: [title]} = context do
     result = HalC2.ThreadMove.destinations(World.thread_id(context, title))
     assert {:error, %{"code" => "thread_not_movable", "message" => message}} = result

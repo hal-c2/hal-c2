@@ -110,8 +110,8 @@ defmodule HalC2.Plugins.Package do
   the mark would otherwise leave when the plugin host starts with the manifest broken.
   Its threads stay until the manifest is fixed or the package is uninstalled.
 
-  While `mix hal_c2.plugins.install` replaces the package, which takes two renames
-  (`aside_dir/2`), the manifest moved aside speaks for it. The installed package is
+  While `replace/3` replaces the package, which takes two renames (`aside_dir/2`), the
+  manifest moved aside speaks for it. The installed package is
   read, then the one aside, then the installed one again: absent at the first read,
   the package was aside then, and absent aside too, the replacement is in place by
   the next read. A few rounds cover installs one after another.
@@ -167,17 +167,45 @@ defmodule HalC2.Plugins.Package do
   end
 
   @doc """
-  Where `mix hal_c2.plugins.install` copies a new version of package `id` before it
-  goes into `plugins`, beside that directory, where a scan does not see it.
+  Where `replace/3` copies a new version of package `id` before it goes into `plugins`, beside that directory, where a scan does not see it.
   """
   def staged_dir(plugins, id), do: Path.join(Path.dirname(plugins), ".plugin-#{id}.partial")
 
   @doc """
-  Where `mix hal_c2.plugins.install` moves the installed package `id` aside, between
+  Where `replace/3` moves the installed package `id` aside, between
   renaming it away and renaming its replacement (`staged_dir/2`) into its place, and
   then removes it. `threads_stay?/1` reads it.
   """
   def aside_dir(plugins, id), do: Path.join(Path.dirname(plugins), ".plugin-#{id}.old")
+
+  @doc """
+  Replaces package `id` in `plugins` with the one `fill` writes into the directory it is
+  given (`staged_dir/2`), or installs it there, as `mix hal_c2.plugins.install` does: the
+  installed package goes aside (`aside_dir/2`), the new one into its place, and the one
+  aside is removed.
+
+  Cut off at any point (a crash, a kill, a full disk), it leaves the package installed
+  or aside, so `threads_stay?/1` always has a manifest to read and a plugin's threads
+  never read as those of a plugin that was uninstalled. An install cut off between its
+  two renames left the package aside with nothing in its place: the next one puts it
+  back before it stages, and removes what is aside only with a package in place.
+  """
+  def replace(plugins, id, fill) do
+    staged = staged_dir(plugins, id)
+    aside = aside_dir(plugins, id)
+    target = Path.join(plugins, id)
+
+    if presence(target) == :absent, do: File.rename(aside, target)
+    File.rm_rf!(staged)
+    if presence(target) == :present, do: File.rm_rf!(aside)
+
+    fill.(staged)
+
+    if presence(target) == :present, do: File.rename!(target, aside)
+    File.rename!(staged, target)
+    File.rm_rf!(aside)
+    :ok
+  end
 
   @doc """
   A file of the package at `dir` as `PluginFileResult` fields, or an error when the

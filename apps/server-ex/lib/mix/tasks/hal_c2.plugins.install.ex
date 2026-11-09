@@ -63,15 +63,9 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
     |> Enum.sort()
   end
 
-  # Staged beside the plugins directory, where a rescan does not see it, then swapped in.
-  # Between the two renames the old version is aside, where
-  # `HalC2.Plugins.Package.threads_stay?/1` still reads its manifest.
+  # Staged beside the plugins directory, where a rescan does not see it, then swapped in
+  # by `HalC2.Plugins.Package.replace/3`, which never leaves the package missing.
   defp install(id, plugins, checkout) do
-    staged = HalC2.Plugins.Package.staged_dir(plugins, id)
-    old = HalC2.Plugins.Package.aside_dir(plugins, id)
-    target = Path.join(plugins, id)
-    Enum.each([staged, old], &File.rm_rf!/1)
-
     {files, 0} =
       System.cmd(
         "git",
@@ -81,18 +75,16 @@ defmodule Mix.Tasks.HalC2.Plugins.Install do
 
     package = Path.join(checkout, "plugins/#{id}")
 
-    # A link that leads out of the package is left out, as `HalC2.Plugins.Package.copy/2` does.
-    for file <- String.split(files, <<0>>, trim: true),
-        relative = Path.relative_to(file, "plugins/#{id}"),
-        File.regular?(Path.join(package, relative)),
-        {:ok, _} <- [Path.safe_relative(relative, package)] do
-      to = Path.join(staged, relative)
-      File.mkdir_p!(Path.dirname(to))
-      File.cp!(Path.join(package, relative), to)
-    end
-
-    if File.exists?(target), do: File.rename!(target, old)
-    File.rename!(staged, target)
-    File.rm_rf!(old)
+    HalC2.Plugins.Package.replace(plugins, id, fn staged ->
+      # A link that leads out of the package is left out, as `HalC2.Plugins.Package.copy/2` does.
+      for file <- String.split(files, <<0>>, trim: true),
+          relative = Path.relative_to(file, "plugins/#{id}"),
+          File.regular?(Path.join(package, relative)),
+          {:ok, _} <- [Path.safe_relative(relative, package)] do
+        to = Path.join(staged, relative)
+        File.mkdir_p!(Path.dirname(to))
+        File.cp!(Path.join(package, relative), to)
+      end
+    end)
   end
 end

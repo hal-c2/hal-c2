@@ -293,8 +293,10 @@ defmodule HalC2.Prop.ThreadMoveCluster do
   Puts the keeper package in a state: `:installed`; `:broken`, a new version whose
   manifest is not valid JSON, which fails to load and leaves the one before it loaded;
   or `:replacing`, moved aside as `mix hal_c2.plugins.install` leaves it between its
-  two renames (`HalC2.Plugins.Package.aside_dir/2`), which a scan then finds gone; or
-  `:removed`, uninstalled, as on an MC from before plugins kept their threads.
+  two renames (`HalC2.Plugins.Package.aside_dir/2`), which a scan then finds gone;
+  `:cut_off`, that install cut off between its renames and the next one
+  (`HalC2.Plugins.Package.replace/3`) cut off while it copies; or `:removed`,
+  uninstalled, as on an MC from before plugins kept their threads.
   """
   def keeper(how) do
     plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
@@ -304,6 +306,7 @@ defmodule HalC2.Prop.ThreadMoveCluster do
     case how do
       :installed ->
         File.rm_rf!(aside)
+        File.rm_rf!(HalC2.Plugins.Package.staged_dir(plugins, @keeper))
         File.mkdir_p!(installed)
         File.write!(Path.join(installed, "plugin.json"), JSON.encode!(keeper_manifest()))
 
@@ -312,6 +315,18 @@ defmodule HalC2.Prop.ThreadMoveCluster do
 
       :replacing ->
         File.rename!(installed, aside)
+
+      :cut_off ->
+        File.rename!(installed, aside)
+
+        try do
+          HalC2.Plugins.Package.replace(plugins, @keeper, fn staged ->
+            File.mkdir_p!(staged)
+            raise File.CopyError, source: "plugin.json", destination: staged, reason: :enospc
+          end)
+        rescue
+          File.CopyError -> :ok
+        end
 
       :removed ->
         File.rm_rf!(installed)
