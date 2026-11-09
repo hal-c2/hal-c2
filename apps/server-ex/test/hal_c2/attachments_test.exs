@@ -156,6 +156,31 @@ defmodule HalC2.AttachmentsTest do
     assert (conn(:get, "/api/assets/bad.token") |> HalC2.Web.Router.call([])).status == 403
   end
 
+  test "a copied MCP app document is still served inline in the app sandbox" do
+    File.mkdir_p!(Attachments.dir())
+    source = Attachments.thread_segment("src") <> "-mcp-app-abc123"
+    File.write!(Path.join(Attachments.dir(), source <> ".html"), "<p>app</p>")
+
+    assert {:ok, copy} = Attachments.copy("fork", source)
+    assert copy != source and HalC2.McpApps.document_id?(copy)
+
+    # No `renderIntent`: the marker alone puts the document in its sandbox.
+    {:ok, %{"relativeUrl" => url}} =
+      Attachments.create_url(%{
+        "resource" => %{
+          "_tag" => "attachment",
+          "attachmentId" => copy,
+          "disposition" => "inline"
+        }
+      })
+
+    conn = conn(:get, url) |> HalC2.Web.Router.call([])
+    assert conn.status == 200
+
+    assert ["sandbox allow-scripts" <> _] =
+             Plug.Conn.get_resp_header(conn, "content-security-policy")
+  end
+
   test "media URLs serve only media files" do
     dir = Application.fetch_env!(:hal_c2, :home)
     File.write!(Path.join(dir, "clip.mp4"), "video")

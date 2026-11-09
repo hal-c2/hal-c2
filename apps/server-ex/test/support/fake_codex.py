@@ -12,7 +12,12 @@
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
 import glob, json, os, re, signal, string, sys, threading, time, uuid
+sys.dont_write_bytecode = True  # its own modules leave no __pycache__ in the tree
 import fake_codex_goals as goals  # thread/goal/*: Codex's own goal
+import fake_codex_chatgpt  # the ChatGPT sign-in, while FAKE_CODEX_CHATGPT is set
+import fake_codex_images  # images and partial answers, which it describes
+import fake_codex_mcp_apps  # MCP Apps: tool calls that return a ui:// app, and the app's requests
+import fake_codex_models  # the model catalog Codex refreshes, and its config/read
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -43,7 +48,7 @@ interrupted_turns = set()
 
 def send(msg):
     with send_lock:
-        write(msg)
+        write(fake_codex_images.outgoing(msg))
     goals.sent(msg)
 
 goals.setup(send)
@@ -195,6 +200,8 @@ def rollout_history():
     return [r["payload"]["content"][0]["text"] for r in records
             if r.get("type") == "response_item" and r["payload"].get("role") == "user"]
 
+fake_codex_images.setup(rollout_find=rollout_find if SESSIONS else None, rollout_append=rollout_append, gate=gate)
+
 # With FAKE_CODEX_INSTANCE set, the fake is that provider instance's Codex: its thread and
 # turn ids start with the instance, and it cannot resume another instance's thread, which
 # lives in another home.
@@ -210,6 +217,7 @@ closing = False  # "closing": the turn takes a steer, answers it and ends before
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
+    fake_codex_images.incoming(msg)
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     # Wire test hooks: "test/hang" is a request that is never answered,
     # "test/exit" leaves with code 1, and "test/garbage" writes a line that is
@@ -286,6 +294,8 @@ for line in sys.stdin:
             send({"method": "item/started", "params": {**ctx, "item": item}})
             text = "received " + json.dumps(msg.get("result"), sort_keys=True)
             send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
+        continue
+    if fake_codex_chatgpt.handle(method, params, mid, send) or fake_codex_mcp_apps.answer(method, params, mid, send) or fake_codex_models.handle(method, mid, params, send):
         continue
     if method == "initialize":
         # FAKE_CODEX_PROBE_ERROR is answered as the initialize call's error, and
@@ -372,6 +382,8 @@ for line in sys.stdin:
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
+        if fake_codex_images.turn(ctx, text, send) or fake_codex_mcp_apps.play(text, ctx, turn_id, send):
+            continue
         if "stream paragraphs" in text or "stream a reply" in text:
             stream_reply(ctx, text)
             continue

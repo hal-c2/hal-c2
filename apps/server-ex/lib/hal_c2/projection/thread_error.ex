@@ -32,7 +32,8 @@ defmodule HalC2.Projection.ThreadError do
   end
 
   @doc """
-  The shell's `usageLimitResetAt`, `lastError` and `lastErrorClass` for the thread's
+  The shell's `usageLimitResetAt`, `lastError`, `lastErrorClass` and `lastErrorCode`
+  (the provider's own code for it, such as a ChatGPT plan's sharing limit) for the thread's
   latest `run`. The provider session keeps its last error after later runs, so it
   counts only while that run failed (or before the thread has a run).
   """
@@ -47,7 +48,8 @@ defmodule HalC2.Projection.ThreadError do
       "usageLimitResetAt" =>
         if(get(current, "class") == "usage_limit", do: get(current, "resetAt")),
       "lastError" => session_error || get(failure, "message"),
-      "lastErrorClass" => get(current, "class")
+      "lastErrorClass" => get(current, "class"),
+      "lastErrorCode" => get(current, "code")
     }
   end
 end

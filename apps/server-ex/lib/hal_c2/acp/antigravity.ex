@@ -96,24 +96,9 @@ defmodule HalC2.Acp.Antigravity do
   # --- platform and release -------------------------------------------------------
 
   @doc "This host's OS and CPU as `{\"linux\" | \"darwin\" | \"win32\", \"x64\" | \"arm64\"}`."
-  def platform do
-    Application.get_env(:hal_c2, :antigravity_platform) ||
-      {os(), arch(to_string(:erlang.system_info(:system_architecture)))}
-  end
-
-  defp os do
-    case :os.type() do
-      {:unix, :darwin} -> "darwin"
-      {:win32, _} -> "win32"
-      {:unix, name} -> to_string(name)
-    end
-  end
-
-  defp arch("x86_64" <> _), do: "x64"
-  defp arch("amd64" <> _), do: "x64"
-  defp arch("aarch64" <> _), do: "arm64"
-  defp arch("arm64" <> _), do: "arm64"
-  defp arch(other), do: other |> String.split("-") |> hd()
+  def platform,
+    do:
+      Application.get_env(:hal_c2, :antigravity_platform) || HalC2.ProviderInstall.host_platform()
 
   @doc "Google's runtime for this host, or nil where Google publishes none."
   def release do
@@ -249,15 +234,7 @@ defmodule HalC2.Acp.Antigravity do
   end
 
   @doc "Whether `path` is an executable regular file (of `bytes`, when given)."
-  def executable?(path, bytes \\ nil) do
-    case File.stat(path) do
-      {:ok, %{type: :regular, size: size, mode: mode}} ->
-        (bytes == nil or size == bytes) and Bitwise.band(mode, 0o111) != 0
-
-      _ ->
-        false
-    end
-  end
+  defdelegate executable?(path, bytes \\ nil), to: HalC2.ProviderInstall
 
   defp read_json(path) do
     with {:ok, body} <- File.read(path),

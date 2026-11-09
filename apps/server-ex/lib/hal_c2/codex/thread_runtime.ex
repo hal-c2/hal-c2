@@ -25,9 +25,9 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   import HalC2.Orchestration.TurnWriter
 
+  alias HalC2.Codex.{GeneratedImages, Goals}
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, TurnWatch}
-  alias HalC2.Codex.Goals
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
 
@@ -191,6 +191,22 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  @doc """
+  The thread's live connection, native thread and the instance the connection was
+  opened for, for `HalC2.Codex.McpApps`, or nil when no session runs. Never starts one.
+  """
+  def mcp_session(thread_id) do
+    case Registry.lookup(HalC2.Codex.Registry, thread_id) do
+      [{pid, _}] ->
+        Orchestration.session_call(fn -> GenServer.call(pid, :mcp_session, 5_000) end, nil)
+
+      [] ->
+        nil
+    end
+  catch
+    :exit, _ -> nil
+  end
+
   def start_link(thread_id),
     do:
       GenServer.start_link(__MODULE__, thread_id,
@@ -280,7 +296,10 @@ defmodule HalC2.Codex.ThreadRuntime do
        goal: nil,
        goal_thread: nil,
        goal_hold: nil,
-       goal_stop: false
+       goal_stop: false,
+       # Images Codex generates, per native turn, until they join its reply
+       # (`HalC2.Codex.GeneratedImages`); kept past the turn for late ones.
+       images: %{}
      }}
   end
 
@@ -524,6 +543,10 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:error, reason} -> {:reply, {:error, rpc_message(reason)}, state}
     end
   end
+
+  # The live connection and native thread an MCP app's requests go through.
+  def handle_call(:mcp_session, _from, state),
+    do: {:reply, {state.conn, state.native_thread_id, state.conn_instance}, state}
 
   def handle_call({:upload_feedback, reason}, _from, state) do
     params =
@@ -789,7 +812,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         else: end_background(state, "failed")
 
     # The native thread was loaded in that app-server; the next one resumes it.
-    {:noreply, %{state | conn: nil, native_thread_id: nil}}
+    {:noreply, %{GeneratedImages.forget(state) | conn: nil, native_thread_id: nil}}
   end
 
   def handle_info({:interrupt_deadline, turn_id}, %{turn: %{native_turn_id: turn_id}} = state) do
@@ -821,7 +844,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         do: end_turn(state, "failed", "Codex sent output that is not a protocol message", :ended),
         else: finish_subagents(state, "failed")
 
-    {:noreply, end_background(state, "failed")}
+    {:noreply, state |> end_background("failed") |> GeneratedImages.forget()}
   end
 
   def handle_info(:flush, state),
@@ -881,6 +904,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:goal_thread, nil)
      |> Map.put_new(:goal_hold, nil)
      |> Map.put_new(:goal_stop, false)
+     |> Map.put_new(:images, %{})
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
@@ -1230,20 +1254,21 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp connect(%{conn: nil} = state, %{ids: ids} = turn) do
     instance = Entities.instance(ids)
 
-    cmd =
-      HalC2.Settings.instance_command(
-        instance,
-        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
-      )
+    cmd = HalC2.Codex.Installation.command(instance)
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
     # home its settings name (`HalC2.Codex.Home`), and both over the project's
-    # environment when the project loads it.
-    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    # environment when the project loads it. A managed instance's shadow home wins.
+    env = HalC2.Codex.Home.instance_env(instance)
 
     with {:ok, args} <- launch_args(instance),
          {:ok, home} <- home_env(instance),
-         env = HalC2.ProjectEnvironment.for_turn(turn, home ++ env, cmd ++ args),
+         env =
+           HalC2.ProjectEnvironment.for_turn(
+             turn,
+             HalC2.Codex.Provider.app_server_env(home ++ env),
+             cmd ++ args
+           ),
          {:ok, conn} <-
            Connection.start_link(
              cmd: cmd ++ args,
@@ -1266,7 +1291,8 @@ defmodule HalC2.Codex.ThreadRuntime do
              },
              "capabilities" => %{
                "experimentalApi" => true,
-               "optOutNotificationMethods" => ["turn/diff/updated"]
+               "optOutNotificationMethods" => ["turn/diff/updated"],
+               "extensions" => HalC2.McpApps.client_extensions()
              }
            }) do
       Connection.notify(conn, "initialized", nil)
@@ -1648,7 +1674,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       Map.get(@runtime_policies, turn.runtime_mode, @runtime_policies["full-access"])
 
     plan? = Map.get(turn, :interaction_mode) == "plan"
-    context = if not plan?, do: context(state, turn)
+    context = with_app_context(if(not plan?, do: context(state, turn)), state.thread_id)
 
     params = %{
       "threadId" => state.native_thread_id,
@@ -1716,7 +1742,9 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # The context Codex's history holds, to put back after a compaction: a plan
   # turn sends none and leaves the earlier one in place.
-  defp remember_context(state, true, _context), do: state
+  defp remember_context(state, true, context),
+    do: %{state | context: plan_context(state, context)}
+
   defp remember_context(state, false, context), do: %{state | context: context}
 
   # Compaction rebuilds Codex's history from the user's messages and its own
@@ -1725,13 +1753,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # messages. Awaited, so they are back before the turn goes on.
   defp restore_context(%{context: context} = state) when is_map(context) do
     items =
-      for {key, %{"value" => value}} <- Enum.sort(context) do
-        %{
-          "type" => "message",
-          "role" => "developer",
-          "content" => [%{"type" => "input_text", "text" => "<#{key}>#{value}</#{key}>"}]
-        }
-      end
+      for {key, entry} <- Enum.sort(context), do: context_item(key, entry)
 
     params = %{"threadId" => state.native_thread_id, "items" => items}
 
@@ -1748,6 +1770,52 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp restore_context(_state), do: :ok
+
+  # --- MCP apps (`HalC2.Codex.McpApps`) -----------------------------------------
+
+  # What the thread's MCP apps told the model goes with every turn, a plan turn's
+  # too: it informs, it does not steer the work. An MCP server wrote it, so it goes
+  # in as untrusted context, which Codex renders as quoted user-side input, never as
+  # instructions.
+  defp with_app_context(context, thread_id) do
+    case Map.merge(context || %{}, HalC2.Codex.McpApps.context_entries(thread_id)) do
+      merged when merged == %{} -> nil
+      merged -> merged
+    end
+  end
+
+  # A plan turn keeps the HAL-C2 context Codex's history holds and takes its own
+  # turn's app context.
+  defp plan_context(state, context) do
+    kept =
+      for {key, %{"kind" => kind} = entry} <- state.context || %{},
+          kind != "untrusted",
+          into: %{},
+          do: {key, entry}
+
+    apps =
+      for {key, %{"kind" => "untrusted"} = entry} <- context || %{}, into: %{}, do: {key, entry}
+
+    if kept == %{} and apps == %{}, do: nil, else: Map.merge(kept, apps)
+  end
+
+  # Restored as Codex sent them: HAL-C2's context as developer input, an app's as
+  # quoted user-side input.
+  defp context_item(key, %{"kind" => "untrusted", "value" => value}),
+    do: %{
+      "type" => "message",
+      "role" => "user",
+      "content" => [
+        %{"type" => "input_text", "text" => "<external_#{key}>#{value}</external_#{key}>"}
+      ]
+    }
+
+  defp context_item(key, %{"value" => value}),
+    do: %{
+      "type" => "message",
+      "role" => "developer",
+      "content" => [%{"type" => "input_text", "text" => "<#{key}>#{value}</#{key}>"}]
+    }
 
   # --- notifications ----------------------------------------------------------
 
@@ -1843,7 +1911,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # turn resumes the thread Codex no longer has loaded.
   defp notification("thread/closed", %{"threadId" => thread}, %{native_thread_id: thread} = state)
        when is_binary(thread) do
-    %{end_background(state, "interrupted") | native_thread_id: nil}
+    state = state |> end_background("interrupted") |> GeneratedImages.forget()
+    %{state | native_thread_id: nil}
   end
 
   # Codex settling a request itself (its own timeout, say) frees the MC's wait
@@ -2058,13 +2127,31 @@ defmodule HalC2.Codex.ThreadRuntime do
        when is_binary(native) and is_integer(used),
        do: record_usage(state, params, "provider-turn:codex:#{native}")
 
+  # An image Codex generates joins its turn's reply, also one it finishes after
+  # the turn ended (`HalC2.Codex.GeneratedImages`).
+  defp notification(
+         "item/" <> event,
+         %{"turnId" => turn_id, "item" => %{"type" => "imageGeneration"} = item} = params,
+         state
+       )
+       when event in ["started", "completed"] and is_binary(turn_id) do
+    if params["threadId"] in [nil, state.native_thread_id] do
+      case event do
+        "started" -> GeneratedImages.started(state, turn_id, item["id"])
+        "completed" -> GeneratedImages.completed(flush(state), turn_id, item)
+      end
+    else
+      state
+    end
+  end
+
   # Between a goal's turns, Codex's reports of the turn that ended are not the next one's.
   defp notification(_method, _params, %{turn: %{native_turn_id: nil}, goal_hold: hold} = state)
        when hold != nil,
        do: state
 
   # Between turns, everything above (background commands, memory threads,
-  # subagents) still lands; a turn's own notifications need its turn.
+  # subagents and images) still lands; a turn's own notifications need its turn.
   defp notification(_method, _params, %{turn: nil} = state), do: state
 
   # Another turn's item that is not running any more (a command stopped with its
@@ -2244,6 +2331,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     restore_context(state)
     complete_item(flush(state), item)
   end
+
+  # A final reply is the one the turn's generated images join.
+  defp notification("item/completed", %{"item" => %{"type" => "agentMessage"} = item}, state),
+    do: state |> flush() |> complete_item(item) |> GeneratedImages.answered(item)
 
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
@@ -2556,6 +2647,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           state
       end
 
+    state = GeneratedImages.turn_ended(state, status, stream)
     state = close_open_items(state, status)
     finish(state, status, failure)
 
@@ -2620,15 +2712,14 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp run_goal(state, turn, :clear, _goal) do
     with {:ok, _} <- goal_call(state, "thread/goal/clear", %{}) do
-      state |> drain_goal_updates() |> put_goal(nil) |> goal_command_done(turn, nil)
+      state |> settle_goal(nil) |> goal_command_done(turn, nil)
     end
   end
 
   defp run_goal(state, turn, :pause, _goal) do
     with {:ok, got} <- goal_call(state, "thread/goal/set", %{"status" => "paused"}) do
       state
-      |> drain_goal_updates()
-      |> put_goal(Goals.from_codex(got["goal"]))
+      |> settle_goal(Goals.from_codex(got["goal"]))
       |> goal_command_done(turn, nil)
     end
   end
@@ -2665,7 +2756,7 @@ defmodule HalC2.Codex.ThreadRuntime do
          {:ok, %{turn: %{}} = state} <- native_turn_started(state, turn, native_turn) do
       case goal_call(state, "thread/goal/set", %{"status" => "active"}) do
         {:ok, got} ->
-          {:ok, state |> drain_goal_updates() |> put_goal(Goals.from_codex(got["goal"]))}
+          {:ok, settle_goal(state, Goals.from_codex(got["goal"]), :keep_ended)}
 
         {:error, reason, state} ->
           Logger.warning("codex goal not activated: #{inspect(reason)}")
@@ -2753,14 +2844,31 @@ defmodule HalC2.Codex.ThreadRuntime do
     |> finish_item(native, "completed", &Map.merge(&1, %{"text" => reply, "streaming" => false}))
   end
 
-  # Setting a goal passes through cleared and paused ones on its way: Codex's reports
-  # of those, already here behind its answer, are stale once the answer is in.
-  defp drain_goal_updates(%{conn: conn} = state) do
+  # Codex's goal reports already here behind its answer to a goal command are stale
+  # once the answer is in, so the answer stands (`:drop_ended`): a clear or pause that
+  # Codex answered is newer than its report that it had finished the goal. Activating a
+  # goal (`:keep_ended`) is the exception: a fast Codex works on and finishes the goal
+  # before the answer is read, and dropping that report would leave it active, holding
+  # the run until the grace paused it.
+  defp settle_goal(%{conn: conn} = state, answered, ended \\ :drop_ended) do
+    put_goal(state, drain_goal_updates(conn, answered, ended))
+  end
+
+  defp drain_goal_updates(conn, goal, ended) do
     receive do
-      {:json_rpc, ^conn, {:notification, "thread/goal/" <> _, _params}} ->
-        drain_goal_updates(state)
+      {:json_rpc, ^conn, {:notification, "thread/goal/updated", %{"goal" => reported}}} ->
+        reported = Goals.from_codex(reported)
+
+        keep? =
+          ended == :keep_ended and reported != nil and
+            reported["status"] not in ["active", "paused"]
+
+        drain_goal_updates(conn, if(keep?, do: reported, else: goal), ended)
+
+      {:json_rpc, ^conn, {:notification, "thread/goal/cleared", _params}} ->
+        drain_goal_updates(conn, goal, ended)
     after
-      0 -> state
+      0 -> goal
     end
   end
 
@@ -2999,22 +3107,10 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  defp sharing_limit?(error) when is_map(error) do
-    message = String.downcase(error["message"] || "")
-    String.contains?(message, "sharing") and String.contains?(message, "usage limit")
-  end
+  defp sharing_limit?(error), do: HalC2.Codex.SharingLimit.code(error) != nil
 
-  defp sharing_limit?(_error), do: false
-
-  defp sharing_failure(error) do
-    %{
-      "class" => "usage_limit",
-      "message" => "ChatGPT sharing usage limit reached.",
-      "code" => error_code(error["codexErrorInfo"]),
-      "retryable" => nil,
-      "resetAt" => nil
-    }
-  end
+  defp sharing_failure(error),
+    do: error |> HalC2.Codex.SharingLimit.code() |> HalC2.Codex.SharingLimit.failure()
 
   # Instead of Codex's own sentence (which on a workspace blames credits for a window
   # that simply ran out): the used-up window resetting last, and what to do next.
@@ -3384,15 +3480,36 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp complete_item(state, %{"type" => type, "id" => native} = item)
        when type in ["mcpToolCall", "dynamicToolCall"] do
-    fields = tool_fields(item)
+    fields =
+      item
+      |> tool_fields()
+      |> HalC2.Codex.ToolImages.store(state.thread_id, item)
+
     status = if item["status"] == "failed", do: "failed", else: "completed"
 
     state
     |> ensure_item(native, :tool, fields)
     |> finish_item(native, status, &Map.merge(&1, fields))
+    |> capture_app(native, item)
   end
 
   defp complete_item(state, _item), do: state
+
+  # The MCP app a tool item names is read from its server off the runtime: a slow
+  # server must not hold a Stop, an approval or the turn's streamed text behind
+  # it. The app lands on the finished item when the read returns.
+  defp capture_app(state, native, item) do
+    if HalC2.Codex.McpApps.resource_uri(item) do
+      %{conn: conn, native_thread_id: native_thread, thread_id: thread_id} = state
+      item_id = state.items[native].id
+
+      Task.start(fn ->
+        HalC2.Codex.McpApps.attach(conn, native_thread, thread_id, item_id, item)
+      end)
+    end
+
+    state
+  end
 
   # Codex sends each change's `diff` without file headers: bare `@@` hunks for
   # an update, the file's content for an add or delete. The clients split a
@@ -3453,7 +3570,10 @@ defmodule HalC2.Codex.ThreadRuntime do
           HalC2.Orchestration.NativeSubagent.start(state.turn.ids, "#{id}:#{thread}", %{
             "prompt" => item["prompt"] || "",
             "title" => nil,
-            "model" => if(item["model"] in [nil, ""], do: nil, else: item["model"])
+            "model" => if(item["model"] in [nil, ""], do: nil, else: item["model"]),
+            # Codex names each subagent's own effort; none named is none, not the parent's.
+            "reasoningEffort" =>
+              if(item["reasoningEffort"] in [nil, ""], do: nil, else: item["reasoningEffort"])
           })
 
         {thread, %{sub: sub, done: false}}

@@ -13,7 +13,7 @@ defmodule HalC2.Orchestration.Fork do
   alias HalC2.Orchestration.Entities
 
   # What a thread's history is made of; each belongs to a run.
-  @history ~w(run-attempt node message turn-item plan checkpoint)
+  @history ~w(run-attempt node message turn-item plan checkpoint mcp-app-context)
 
   @spec fork(map) :: :ok | {:error, String.t()}
   def fork(%{"sourceThreadId" => source_id, "targetThreadId" => target_id} = command) do
@@ -82,11 +82,11 @@ defmodule HalC2.Orchestration.Fork do
             end
           catch
             kind, reason ->
-              drop_copies(copies)
+              discard(copies)
               :erlang.raise(kind, reason, __STACKTRACE__)
           end
 
-        unless result == :ok, do: drop_copies(copies)
+        unless result == :ok, do: discard(copies)
         result
       end
     end
@@ -327,15 +327,18 @@ defmodule HalC2.Orchestration.Fork do
       end
 
     with {:ok, ids, copies} <- own_files(rows, target_id) do
-      changes =
-        for {kind, id, entity} <- rows, do: create(kind, id, with_files(entity, kind, ids))
+      {changes, copies} =
+        Enum.map_reduce(rows, copies, fn {kind, id, entity}, copies ->
+          {entity, made} = entity |> with_files(kind, ids) |> own_app(target_id)
+          {create(kind, id, entity), made ++ copies}
+        end)
 
       {:ok, changes, copies}
     end
   end
 
   # The fork's own copy of each file its messages name, so it keeps them when the
-  # source is deleted: the copy's id for each source id, and the copies. A message and
+  # source is deleted: the copy's id for each source id, and the copies' ids. A message and
   # the turn item that shows it name the same files, and get the same copies.
   defp own_files(rows, target_id) do
     named =
@@ -348,7 +351,7 @@ defmodule HalC2.Orchestration.Fork do
 
     case HalC2.Attachments.copy_into(target_id, named) do
       {:ok, copied} ->
-        copies = for {was, now} <- Enum.zip(named, copied), was != now, do: now
+        copies = for {was, now} <- Enum.zip(named, copied), was != now, do: now["id"]
         ids = for {was, now} <- Enum.zip(named, copied), into: %{}, do: {was["id"], now["id"]}
         {:ok, ids, copies}
 
@@ -386,12 +389,60 @@ defmodule HalC2.Orchestration.Fork do
     end
   end
 
-  # The copies `own_files/2` made, for a fork that is not written.
+  # An MCP app's document and the images of a tool's output are attachments of the
+  # source thread, which deleting the source removes: the fork gets copies of its own.
+  # An app whose document is gone keeps its result and loses the reference, and an
+  # image whose file is gone loses its block.
+  # Returns the item and the ids of the copies made for it.
+  defp own_app(item, target_id) do
+    {item, document} = own_document(item, target_id)
+    {item, output} = own_images(item, "output", target_id)
+    {item, images} = own_images(item, "images", target_id)
+    {item, document ++ output ++ images}
+  end
+
+  defp own_document(%{"mcpApp" => %{"attachmentId" => id} = app} = item, target_id) do
+    case HalC2.Attachments.copy(target_id, id) do
+      {:ok, copy} -> {%{item | "mcpApp" => %{app | "attachmentId" => copy}}, [copy]}
+      :error -> {Map.delete(item, "mcpApp"), []}
+    end
+  end
+
+  defp own_document(item, _target_id), do: {item, []}
+
+  defp own_images(item, field, target_id) do
+    case item do
+      %{^field => blocks} when is_list(blocks) ->
+        {blocks, copies} =
+          Enum.flat_map_reduce(blocks, [], fn block, copies ->
+            {block, made} = own_image(block, target_id)
+            {block, made ++ copies}
+          end)
+
+        {Map.put(item, field, blocks), copies}
+
+      _ ->
+        {item, []}
+    end
+  end
+
+  defp own_image(%{"type" => "image", "id" => id} = block, target_id) when is_binary(id) do
+    case HalC2.Attachments.copy(target_id, id) do
+      {:ok, copy} -> {[%{block | "id" => copy}], [copy]}
+      :error -> {[], []}
+    end
+  end
+
+  defp own_image(block, _target_id), do: {[block], []}
+
+  # The copies a fork made (`history/4`), for a fork that is not written. Their ids are
+  # unique to this attempt, so another fork's are safe.
   # The files come from `HalC2.Attachments.path/1`: `safe_id?` ids inside the
   # attachments folder.
   # sobelow_skip ["Traversal.FileModule"]
-  defp drop_copies(copies) do
-    for copy <- copies, path = HalC2.Attachments.path(copy), do: File.rm(path)
+  defp discard(ids) do
+    for id <- ids, path = HalC2.Attachments.path(%{"id" => id}), do: File.rm(path)
+    :ok
   end
 
   defp create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}

@@ -4703,6 +4703,199 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(state, "context-transfer")
     end
 
+    # An MCP app's document is an attachment of its thread, removed with it.
+    test "a fork keeps an MCP app's document when its source is deleted" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      source_doc = "#{HalC2.Attachments.thread_segment(source_id)}-mcp-app-doc"
+      File.mkdir_p!(HalC2.Attachments.dir())
+      File.write!(Path.join(HalC2.Attachments.dir(), source_doc <> ".html"), "<p>app</p>")
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"turn-item", "app-item",
+           %{
+             "s" => %{
+               "id" => "app-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "mcpApp" => %{"attachmentId" => source_doc, "toolResult" => %{"ok" => true}}
+             }
+           }}
+        ])
+
+      fork_id = fork(source_id, run["id"])
+
+      assert %{"mcpApp" => %{"attachmentId" => copy, "toolResult" => %{"ok" => true}}} =
+               StreamState.get(current(fork_id), "turn-item")["app-item"]
+
+      assert copy != source_doc
+      assert HalC2.McpApps.document_id?(copy)
+      assert String.starts_with?(copy, HalC2.Attachments.thread_segment(fork_id) <> "-")
+
+      HalC2.Attachments.delete_thread(source_id)
+      assert File.read!(HalC2.Attachments.path(%{"id" => copy})) == "<p>app</p>"
+    end
+
+    # The copies are made before the target's stream decides, so a rejected fork must
+    # take back what it copied, and never what the winning fork references.
+    defp app_source do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      source_doc = "#{HalC2.Attachments.thread_segment(source_id)}-mcp-app-doc"
+      File.mkdir_p!(HalC2.Attachments.dir())
+      File.write!(Path.join(HalC2.Attachments.dir(), source_doc <> ".html"), "<p>app</p>")
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"turn-item", "app-item",
+           %{
+             "s" => %{
+               "id" => "app-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "mcpApp" => %{"attachmentId" => source_doc, "toolResult" => %{"ok" => true}}
+             }
+           }}
+        ])
+
+      {source_id, run}
+    end
+
+    defp fork_to(source_id, run, target_id) do
+      Orchestration.dispatch(%{
+        "type" => "thread.fork",
+        "commandId" => "cmd-fork-#{target_id}-#{System.unique_integer([:positive])}",
+        "createdBy" => "user",
+        "creationSource" => "web",
+        "sourceThreadId" => source_id,
+        "targetThreadId" => target_id,
+        "sourcePoint" => %{"type" => "run", "runId" => run["id"]}
+      })
+    end
+
+    test "a fork to an existing target leaves no copies behind" do
+      {source_id, run} = app_source()
+      fork_id = fork(source_id, run["id"])
+      before = attachment_files()
+
+      assert {:error, _} = fork_to(source_id, run, fork_id)
+      assert attachment_files() == before
+    end
+
+    test "concurrent forks to one target leave only the winner's copies" do
+      {source_id, run} = app_source()
+      target_id = "thread-#{System.unique_integer([:positive])}"
+      before = attachment_files()
+
+      results =
+        1..4
+        |> Enum.map(fn _ -> Task.async(fn -> fork_to(source_id, run, target_id) end) end)
+        |> Task.await_many(30_000)
+
+      assert [{:ok, _}] = Enum.filter(results, &match?({:ok, _}, &1))
+
+      assert %{"mcpApp" => %{"attachmentId" => copy}} =
+               StreamState.get(current(target_id), "turn-item")["app-item"]
+
+      assert [HalC2.Attachments.path(%{"id" => copy})] == attachment_files() -- before
+    end
+
+    # Tool images (the `output` blocks, and an MCP tool's `images`) are attachments of
+    # the source thread too, with or without an MCP app on the item.
+    test "a fork keeps tool images when its source is deleted" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      File.mkdir_p!(HalC2.Attachments.dir())
+      segment = HalC2.Attachments.thread_segment(source_id)
+
+      for name <- ~w(out-img img-a img-b) do
+        File.write!(Path.join(HalC2.Attachments.dir(), "#{segment}-#{name}.png"), name)
+      end
+
+      doc = "#{segment}-mcp-app-doc"
+      File.write!(Path.join(HalC2.Attachments.dir(), doc <> ".html"), "<p>app</p>")
+
+      block = fn name ->
+        %{"type" => "image", "id" => "#{segment}-#{name}", "mimeType" => "image/png"}
+      end
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"turn-item", "plain-item",
+           %{
+             "s" => %{
+               "id" => "plain-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "output" => [%{"type" => "text", "text" => "hi"}, block.("out-img")],
+               "images" => [block.("img-a"), %{"type" => "image", "id" => "#{segment}-gone"}]
+             }
+           }},
+          {"turn-item", "app-item",
+           %{
+             "s" => %{
+               "id" => "app-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "images" => [block.("img-b")],
+               "mcpApp" => %{"attachmentId" => doc, "toolResult" => %{"ok" => true}}
+             }
+           }}
+        ])
+
+      fork_id = fork(source_id, run["id"])
+      items = StreamState.get(current(fork_id), "turn-item")
+      HalC2.Attachments.delete_thread(source_id)
+
+      resolves = fn %{"id" => id} ->
+        assert String.starts_with?(id, HalC2.Attachments.thread_segment(fork_id) <> "-")
+        assert is_binary(HalC2.Attachments.path(%{"id" => id}))
+      end
+
+      assert %{"output" => [%{"text" => "hi"}, out], "images" => [img]} = items["plain-item"]
+      resolves.(out)
+      resolves.(img)
+      assert %{"images" => [img_b], "mcpApp" => %{"attachmentId" => _}} = items["app-item"]
+      resolves.(img_b)
+    end
+
+    # The item keeps its output; `mcpApp` needs its `attachmentId` to decode, so it goes.
+    test "a fork drops mcpApp when the source document is missing" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"turn-item", "app-item",
+           %{
+             "s" => %{
+               "id" => "app-item",
+               "threadId" => source_id,
+               "runId" => run["id"],
+               "type" => "dynamic_tool",
+               "output" => "result",
+               "mcpApp" => %{
+                 "attachmentId" => "gone-mcp-app-doc",
+                 "toolResult" => %{"ok" => true}
+               }
+             }
+           }}
+        ])
+
+      fork_id = fork(source_id, run["id"])
+      item = StreamState.get(current(fork_id), "turn-item")["app-item"]
+      assert item["output"] == "result"
+      refute Map.has_key?(item, "mcpApp")
+    end
+
     # Fork history is selected by ordinal (start order): a held queued run a
     # newer run passed was renumbered above the fork point when the passer
     # started, so it and its queued message stay in the source — the same
