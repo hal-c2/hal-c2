@@ -1161,10 +1161,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
           # Judged only when every segment is a probe: another segment's output
           # would otherwise be read as the probe's.
           # Empty is genuinely empty output from a call that exited 0;
-          # output in no recognized shape says nothing either way.
+          # output in no recognized shape says nothing either way. A probe
+          # that changed directory first, or ran with its own variables
+          # (`GIT_DIR=...`), may have asked another repository.
           outcome =
             cond do
               not homogeneous -> nil
+              o.env or String.starts_with?(o.form, "cd ") -> nil
               String.trim(out) == "" -> if success, do: "empty"
               Regex.match?(@probe_hit[o.probe], out) -> "hit"
               true -> nil

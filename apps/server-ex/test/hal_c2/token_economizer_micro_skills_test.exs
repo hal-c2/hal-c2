@@ -1391,6 +1391,28 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert [%{outcome: nil}] = digest.obs
   end
 
+  test "a probe that may have asked another repository says nothing about this one" do
+    outcome = fn cmd, out ->
+      Observe.observe_turn([bash(cmd, out, 0)]).obs |> hd() |> Map.fetch!(:outcome)
+    end
+
+    for cmd <- [
+          "cd /srv/other && git remote -v",
+          "cd ../other && git remote -v",
+          "cd vendor/lib && git tag --contains HEAD",
+          "GIT_DIR=/srv/other/.git git remote -v",
+          "GIT_WORK_TREE=/srv/other git branch -r"
+        ] do
+      assert outcome.(cmd, "") == nil, cmd
+      assert outcome.(cmd, "origin\n") == nil, cmd
+    end
+
+    # Staying where it started, it is still this repository's answer.
+    assert outcome.("cd . && git remote -v", "") == "empty"
+    # Pointed elsewhere by its own flags, it is no probe at all.
+    assert Observe.observe_turn([bash("git -C /srv/other remote -v", "", 0)]).obs == []
+  end
+
   test "nonempty probe output in a real shape is a hit, other output unknown" do
     outcome = fn cmd, out ->
       Observe.observe_turn([bash(cmd, out, 0)]).obs |> hd() |> Map.fetch!(:outcome)
