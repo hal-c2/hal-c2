@@ -50,9 +50,7 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     numtests: HalC2.Prop.numtests(1000) do
     forall budget <- integer(0, 2) do
       forall cmds <- more_commands(8, commands(__MODULE__, initial_state(budget))) do
-        open_case(budget)
-        {history, state, result} = run_commands(__MODULE__, cmds)
-        reached = close_case()
+        {history, state, result, reached} = run_case(budget, cmds)
 
         (result == :ok)
         |> when_fail(
@@ -66,6 +64,25 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         |> aggregate(command_names(cmds))
         |> collect(reached)
       end
+    end
+  end
+
+  test "a case leaves the MC's home and environment as it found them" do
+    before = {Application.fetch_env(:hal_c2, :home), System.fetch_env("GIT_CEILING_DIRECTORIES")}
+    {_, _, :ok, :watched} = run_case(0, [])
+
+    assert {Application.fetch_env(:hal_c2, :home), System.fetch_env("GIT_CEILING_DIRECTORIES")} ==
+             before
+  end
+
+  defp run_case(budget, cmds) do
+    open_case(budget)
+
+    try do
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      {history, state, result, close_case()}
+    after
+      HalC2.Prop.restore_env()
     end
   end
 
