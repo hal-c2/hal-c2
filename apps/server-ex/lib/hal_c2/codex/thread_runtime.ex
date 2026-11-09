@@ -1062,7 +1062,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     end)
     |> case do
       :ok ->
-        {:ok, state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)}
+        state = state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)
+        observe_started(state)
+        {:ok, state}
 
       # The run ended while Codex started its turn: nothing wants the turn now.
       :ended ->
@@ -1642,9 +1644,30 @@ defmodule HalC2.Codex.ThreadRuntime do
           }
       end
 
-    if state.workers_only,
-      do: Map.put(mcp, "features", %{"multi_agent" => false, "multi_agent_v2" => false}),
-      else: mcp
+    features =
+      if state.workers_only, do: %{"multi_agent" => false, "multi_agent_v2" => false}, else: %{}
+
+    {features, toggles} = capabilities_off(features, Map.get(turn, :denied_tools, []))
+    config = Map.merge(mcp, toggles)
+    if features == %{}, do: config, else: Map.put(config, "features", features)
+  end
+
+  # The capabilities plugins turned off for the conversation (`HalC2.Orchestration.RunShape`),
+  # as Codex's config: `{features, other keys}`.
+  @capabilities %{
+    "collaboration" =>
+      {%{"multi_agent" => false, "multi_agent_v2" => false},
+       %{"include_collaboration_mode_instructions" => false}},
+    "goals" => {%{"goals" => false}, %{}},
+    "image_media" => {%{"view_image" => false}, %{}}
+  }
+
+  defp capabilities_off(features, denied) do
+    for capability <- denied,
+        {more, toggles} <- [@capabilities[capability]],
+        reduce: {features, %{}} do
+      {features, config} -> {Map.merge(features, more), Map.merge(config, toggles)}
+    end
   end
 
   # Codex takes `features` only when a native thread starts, so the choice is read then
@@ -2316,6 +2339,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # How full the conversation's context is, for the context meter. It belongs to the
   # provider thread, so it outlives the run, and a model change, until Codex says more.
+  # The provider turn it came in keeps it too, with when it came: a turn Codex reports
+  # nothing in keeps none, never an earlier turn's.
   defp notification(
          "thread/tokenUsage/updated",
          %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
@@ -2338,14 +2363,24 @@ defmodule HalC2.Codex.ThreadRuntime do
     snapshot =
       if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
 
+    ids = state.turn.ids
+    reported = Map.put(snapshot, "updatedAt", Entities.now())
+
     commit(state, fn stream ->
       [
         Orchestration.upsert(
           stream,
           "provider-thread",
-          state.turn.ids.provider_thread,
+          ids.provider_thread,
           &Map.put(&1, "contextUsage", snapshot)
-        )
+        ),
+        HalC2.StreamState.get(stream, "provider-turn")[ids[:provider_turn]] &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            ids.provider_turn,
+            &Map.put(&1, "tokenUsage", reported)
+          )
       ]
     end)
 
@@ -2687,22 +2722,39 @@ defmodule HalC2.Codex.ThreadRuntime do
   # under way, so the turn is the one asked to work toward it. The thread shows only
   # the goal that results, never the cleared or paused ones on the way.
   defp run_goal(state, turn, {:set, objective}, goal) do
-    turn = %{turn | text: Goals.first_prompt(objective)}
+    turn = %{turn | text: goal_prompt(turn, objective)}
     paused = %{"objective" => objective, "status" => "paused"}
 
     with {:ok, _} <- if(goal, do: goal_call(state, "thread/goal/clear", %{}), else: {:ok, %{}}),
          {:ok, _} <- goal_call(state, "thread/goal/set", paused),
          {:ok, native_turn, state} <- start_native_turn(state, turn),
          {:ok, %{turn: %{}} = state} <- native_turn_started(state, turn, native_turn) do
+      mark = goal_mark()
+
       case goal_call(state, "thread/goal/set", %{"status" => "active"}) do
         {:ok, got} ->
-          {:ok, settle_goal(state, Goals.from_codex(got["goal"]), :keep_ended)}
+          {:ok, state |> drop_goal_reports(mark) |> put_goal(Goals.from_codex(got["goal"]))}
 
         {:error, reason, state} ->
           Logger.warning("codex goal not activated: #{inspect(reason)}")
           {:ok, state}
       end
     end
+  end
+
+  # The goal's first prompt in place of the user's `/goal` message, after what the turn
+  # put ahead of it: a new conversation's context from the plugins
+  # (`HalC2.Orchestration.RunShape`) and a handed-off history. A resumed conversation
+  # has nothing ahead, so nothing is put there again.
+  defp goal_prompt(%{text: text} = turn, objective) do
+    message = Map.get(turn, :message)
+
+    ahead =
+      if is_binary(text) and is_binary(message) and String.ends_with?(text, message),
+        do: binary_part(text, 0, byte_size(text) - byte_size(message)),
+        else: ""
+
+    ahead <> Goals.first_prompt(objective)
   end
 
   defp goal_call(state, method, params) do
@@ -2760,8 +2812,13 @@ defmodule HalC2.Codex.ThreadRuntime do
       ]
     end)
     |> case do
-      :ok -> {:ok, %{state | turn: turn}}
-      :ended -> {:ended, %{state | turn: nil}}
+      :ok ->
+        state = %{state | turn: turn}
+        observe_started(state)
+        {:ok, state}
+
+      :ended ->
+        {:ended, %{state | turn: nil}}
     end
   end
 
@@ -2785,30 +2842,30 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # Codex's goal reports already here behind its answer to a goal command are stale
-  # once the answer is in, so the answer stands (`:drop_ended`): a clear or pause that
-  # Codex answered is newer than its report that it had finished the goal. Activating a
-  # goal (`:keep_ended`) is the exception: a fast Codex works on and finishes the goal
-  # before the answer is read, and dropping that report would leave it active, holding
-  # the run until the grace paused it.
-  defp settle_goal(%{conn: conn} = state, answered, ended \\ :drop_ended) do
-    put_goal(state, drain_goal_updates(conn, answered, ended))
+  # once the answer is in, so the answer stands: a clear or pause that Codex answered is
+  # newer than its report that it had finished the goal.
+  defp settle_goal(state, answered), do: state |> drop_goal_reports() |> put_goal(answered)
+
+  # Drops Codex's goal reports ahead of `mark`, by default all those already here.
+  # Setting a goal passes through cleared and paused ones on its way, whose reports are
+  # stale once Codex answers the activation, but marks its mailbox before asking: the
+  # connection reports to this process in the order Codex wrote, so what Codex said of
+  # the goal after it was asked (finishing it in turns of its own, before the answer is
+  # read) is behind the mark and still heard, after those turns. A mark left by a call
+  # that failed is dropped by `handle_info/2`'s last clause.
+  defp goal_mark do
+    mark = make_ref()
+    send(self(), {:codex_goal_mark, mark})
+    mark
   end
 
-  defp drain_goal_updates(conn, goal, ended) do
+  defp drop_goal_reports(%{conn: conn} = state, mark \\ goal_mark()) do
     receive do
-      {:json_rpc, ^conn, {:notification, "thread/goal/updated", %{"goal" => reported}}} ->
-        reported = Goals.from_codex(reported)
+      {:codex_goal_mark, ^mark} ->
+        state
 
-        keep? =
-          ended == :keep_ended and reported != nil and
-            reported["status"] not in ["active", "paused"]
-
-        drain_goal_updates(conn, if(keep?, do: reported, else: goal), ended)
-
-      {:json_rpc, ^conn, {:notification, "thread/goal/cleared", _params}} ->
-        drain_goal_updates(conn, goal, ended)
-    after
-      0 -> goal
+      {:json_rpc, ^conn, {:notification, "thread/goal/" <> _, _params}} ->
+        drop_goal_reports(state, mark)
     end
   end
 
@@ -2865,15 +2922,13 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{ids: ids} = turn = state.turn
     at = Entities.now()
 
+    # As the run's end would leave it: the run may end before Codex starts another turn.
     commit(state, fn stream ->
+      done = %{"status" => "completed", "completedAt" => at}
+
       [
         HalC2.StreamState.get(stream, "provider-turn")[ids.provider_turn] &&
-          Orchestration.upsert(
-            stream,
-            "provider-turn",
-            ids.provider_turn,
-            &Map.merge(&1, %{"status" => "completed", "completedAt" => at})
-          )
+          Orchestration.upsert(stream, "provider-turn", ids.provider_turn, &Map.merge(&1, done))
       ]
     end)
 
@@ -3152,7 +3207,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp background_done(state, native, item) do
     {%{item: %{id: item_id, node: node_id}}, background} = Map.pop(state.background, native)
-    end_command(state, item_id, node_id, command_status(item), &command_result(&1, item))
+    end_item(state, item_id, node_id, command_status(item), &command_result(&1, item))
     # Codex does not hear of it by itself: the thread tells it, after any running turn.
     wake(state, item)
     %{state | background: background}
@@ -3222,29 +3277,12 @@ defmodule HalC2.Codex.ThreadRuntime do
             {Map.put(left, native, entry), [reason | errors]}
 
           :ok ->
-            end_command(state, item.id, item.node, status, & &1)
+            end_item(state, item.id, item.node, status)
             {left, errors}
         end
       end)
 
     {%{state | background: left}, Enum.reverse(errors)}
-  end
-
-  defp end_command(state, item_id, node_id, status, fun) do
-    at = Entities.now()
-    done = %{"status" => status, "completedAt" => at}
-
-    commit(state, fn stream ->
-      [
-        Orchestration.upsert(
-          stream,
-          "turn-item",
-          item_id,
-          &(fun.(&1) |> Map.merge(Map.put(done, "updatedAt", at)))
-        ),
-        Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
-      ]
-    end)
   end
 
   # Codex keeps a unified exec process running when its turn is interrupted; this
@@ -3381,6 +3419,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       |> Enum.map(fn {change, detail} -> file_diff(change, detail) end)
       |> Enum.join()
 
+    fields = %{"fileName" => hd(details)["path"], "diffStr" => diff, "changes" => details}
+
     commit(state, fn stream ->
       [
         Orchestration.create(
@@ -3393,15 +3433,18 @@ defmodule HalC2.Codex.ThreadRuntime do
             Orchestration.next_ordinal(stream),
             "completed",
             at,
-            %{
-              "fileName" => hd(details)["path"],
-              "diffStr" => diff,
-              "changes" => details
-            }
+            fields
           )
         )
       ]
     end)
+
+    # Written ended, never through `finish_item/5`: plugins that hear turns hear it here.
+    observe_item(
+      state,
+      "completed",
+      Map.merge(fields, %{"id" => item_id, "type" => "file_change", "status" => "completed"})
+    )
 
     Map.put(
       state,

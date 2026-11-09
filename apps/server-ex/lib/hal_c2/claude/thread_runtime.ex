@@ -116,9 +116,14 @@ defmodule HalC2.Claude.ThreadRuntime do
   }
 
   # The subagent tool, taken from the CLI for a session kept to HAL-C2's workers
-  # (`HalC2.Mcp.workers_only?/1`). Part of the launch, so a change restarts the CLI when
-  # the next turn starts.
-  defp disallowed_tools(mcp), do: if(HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: [])
+  # (`HalC2.Mcp.workers_only?/1`, read once into the launch's `:workers_only`). Part of
+  # the launch, so a change restarts the CLI when the next turn starts.
+  # So are the tools plugins turned off for the conversation (`HalC2.Orchestration.RunShape`),
+  # the same on every turn of it.
+  defp disallowed_tools(workers_only, turn) do
+    workers = if workers_only, do: @agent_tools, else: []
+    Enum.uniq(workers ++ Map.get(turn, :denied_tools, []))
+  end
 
   def driver, do: "claudeAgent"
 
@@ -391,7 +396,8 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> auto_compact(Entities.instance(ids))
       |> with_launch_args(Entities.instance(ids), Map.get(turn, :cwd))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
-      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
+      |> then(&Map.put(&1, :workers_only, HalC2.Mcp.workers_only?(&1.mcp)))
+      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.workers_only, turn)))
       |> Map.put(:instance, Entities.instance(ids))
 
     # Where the turn resumes the conversation, until Claude writes (`kept_head/3`).
@@ -1034,11 +1040,16 @@ defmodule HalC2.Claude.ThreadRuntime do
     launch
     |> Map.put_new_lazy(:mcp, fn -> HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)) end)
     |> Map.put_new(:disallowed_tools, [])
+    |> then(&Map.put_new(&1, :workers_only, kept_to_workers?(&1.disallowed_tools)))
     |> Map.put_new(:context_window, 200_000)
     |> Map.put_new(:instance, :unknown)
   end
 
   defp upgrade_launch(launch, _state), do: launch
+
+  # A launch from before `:workers_only` was kept: such a session had the subagent tool
+  # taken away.
+  defp kept_to_workers?(disallowed), do: Enum.any?(@agent_tools, &(&1 in disallowed))
 
   # Allowing for the session keeps the CLI's own suggested rules, scoped to this
   # session, or allows the whole tool when it suggested none.
@@ -1678,6 +1689,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         if(Map.get(turn, :read_only) and turn.launch.mcp,
           do: HalC2.Mcp.Tools.read_only_allowed()
         ),
+      workers_only: Map.get(turn.launch, :workers_only, false),
       disallowed_tools: Map.get(turn.launch, :disallowed_tools, []),
       appended: Map.get(turn.launch, :appended, []),
       extra_args: Map.get(turn.launch, :extra_args, []),
@@ -3483,7 +3495,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         else: state
 
     {kind, fields} = tool_kind(name, input, block["presentation"])
-    ensure_item(state, tool_id, kind, fields)
+    ensure_item(state, tool_id, kind, Map.put(fields, :native_name, name))
   end
 
   # Claude Code names each MCP tool use on its assistant message, in `tool_use_meta`
@@ -3744,9 +3756,17 @@ defmodule HalC2.Claude.ThreadRuntime do
         status = result_status(result)
         output = result_text(result["content"])
 
-        finish_item(state, tool_id, status, fn entity ->
-          if field = result_field(kind), do: Map.put(entity, field, output), else: entity
-        end)
+        # A web call's result is not kept on the thread, which shows what it searched
+        # for or fetched; plugins that hear turns hear it.
+        finish_item(
+          state,
+          tool_id,
+          status,
+          fn entity ->
+            if field = result_field(kind), do: Map.put(entity, field, output), else: entity
+          end,
+          if(kind == :web, do: %{"output" => output}, else: %{})
+        )
     end
   end
 
@@ -3989,18 +4009,8 @@ defmodule HalC2.Claude.ThreadRuntime do
         NativeSubagent.finish(sub, status, result, opts)
 
       %{item: %{id: item_id, node: node_id}} ->
-        at = Entities.now()
-        done = %{"status" => status, "completedAt" => at}
-
-        commit(state, fn stream ->
-          [
-            Orchestration.upsert(stream, "turn-item", item_id, fn item ->
-              item
-              |> Map.merge(Map.put(done, "updatedAt", at))
-              |> then(&if(result, do: Map.put(&1, "output", result), else: &1))
-            end),
-            Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
-          ]
+        end_item(state, item_id, node_id, status, fn item ->
+          if result, do: Map.put(item, "output", result), else: item
         end)
 
       _ ->

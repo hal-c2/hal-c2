@@ -67,7 +67,8 @@ defmodule HalC2.OrchestrationPropTest do
   held queue, and starts ahead of it when nothing runs (upstream #21473). While a turn
   is being stopped (its provider slow to answer the stop), a steer or restart into it
   and a promote are refused, and any other message waits in the queue (#16926). The
-  queue of an archived thread cannot be resumed.
+  queue of an archived thread cannot be resumed. A plugin's steer meant only for its run
+  (`steerOnly`) that names no run (or "") is refused, steering nothing and starting no turn.
   """
 
   use ExUnit.Case, async: false
@@ -216,6 +217,7 @@ defmodule HalC2.OrchestrationPropTest do
       {2,
        {:call, __MODULE__, :steer_twice,
         [tid, msg, oneof(@instances), oneof([:taken, :taken, :refused])]}},
+      {1, {:call, __MODULE__, :steer_unnamed, [tid, msg, oneof(@instances), oneof([nil, ""])]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {2, {:call, __MODULE__, :switch, [tid, oneof(@instances)]}},
       {1, {:call, __MODULE__, :switch, [tid, @disabled]}},
@@ -609,6 +611,9 @@ defmodule HalC2.OrchestrationPropTest do
     off = how == :off
     %{state | off: off, threads: Map.new(state.threads, fn {t, th} -> {t, %{th | off: off}} end)}
   end
+
+  # A steer meant only for its run that names none leaves the thread as it was.
+  defp step(state, _result, {:call, _, :steer_unnamed, _}), do: %{state | next: state.next + 1}
 
   # The second of two identical sends finds the first: they are one send. A steer Codex
   # refuses leaves the thread as it was.
@@ -1137,6 +1142,9 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
+  defp expected_reply(state, :steer_unnamed, [tid, _msg, instance, _target]),
+    do: send_refusal(state, tid, :auto, instance) || {:error, :unnamed}
+
   defp expected_reply(state, :rename, [tid, _]), do: refusal(state, tid, :rename) || :ok
 
   defp expected_reply(state, :switch, [tid, instance]),
@@ -1282,6 +1290,9 @@ defmodule HalC2.OrchestrationPropTest do
     do:
       message ==
         "Codex is turned off for this project. Turn it on in the project's provider settings or pick another provider."
+
+  defp reply_matches?({:error, :unnamed}, {:error, message}),
+    do: message == "A steer meant only for its run must name the run."
 
   defp reply_matches?(expected, reply), do: expected == reply
 
@@ -1699,6 +1710,22 @@ defmodule HalC2.OrchestrationPropTest do
 
   def send(tid, msg, mode, instance),
     do: deliver(tid, message(tid, msg, mode, instance), mode, instance)
+
+  # A plugin's steer meant only for its run (`Plugins.Host.steer/4`) that names none,
+  # or names "".
+  def steer_unnamed(tid, msg, instance, target) do
+    tid
+    |> message(msg, :auto, instance)
+    |> Map.merge(%{
+      "createdBy" => "system",
+      "creationSource" => "server",
+      "deliveryIntent" => "steer",
+      "dispatchMode" => %{"type" => "steer_active", "targetRunId" => target},
+      "steerOnly" => true
+    })
+    |> Orchestration.dispatch()
+    |> reply([])
+  end
 
   # A message implementing a proposed plan, as the composer sends one.
   def implement(tid, msg, mode, instance, pt, plan),
