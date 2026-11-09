@@ -101,9 +101,9 @@ defmodule HalC2.OpenShell do
   # sobelow_skip ["Traversal.FileModule"]
   def put_state(state) do
     HalC2.Paths.mkdir_private!(root())
-    tmp = state_path() <> ".tmp"
-    File.write!(tmp, Jason.encode_to_iodata!(state, pretty: true))
-    File.rename!(tmp, state_path())
+
+    :ok =
+      HalC2.Paths.write_replace(state_path(), Jason.encode_to_iodata!(state, pretty: true), 0o600)
   end
 
   @doc false

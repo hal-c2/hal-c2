@@ -151,8 +151,9 @@ defmodule HalC2.OpenShell.Service do
       path = unit_path(manager)
       File.mkdir_p!(Path.dirname(path))
       File.mkdir_p!(Path.dirname(OpenShell.log_path()))
-      File.write!(path, render(manager, state))
-      load(manager, path)
+
+      with :ok <- HalC2.Paths.write_replace(path, render(manager, state), 0o644),
+           do: load(manager, path)
     end
   end
 

@@ -419,7 +419,9 @@ defmodule HalC2.Test.Storage do
         [ -f "$state/stop-fails" ] && [ -f "$state/active" ] && exit 1
         [ -f "$state/not-loaded" ] && [ ! -f "$state/active" ] && { echo "Unit $3 not loaded."; exit 5; }
         rm -f "$state/active" ;;
-      disable) rm -f "$state/enabled" "$state/active" ;;
+      disable)
+        [ -f "$state/disable-fails" ] && exit 1
+        rm -f "$state/enabled" "$state/active" ;;
     esac
     exit 0
     """)

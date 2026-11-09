@@ -463,6 +463,8 @@ defmodule HalC2.OpenShell.Client do
       request_id: request_id()
     }
 
+    {opts, dial} = within(opts, dial)
+
     with {:ok, _sandbox} <- get_sandbox(conn, name, opts),
          {:ok, channel} <- dial(dial) do
       case Exec.start(channel, start, Keyword.get(opts, :owner, self())) do
@@ -473,6 +475,20 @@ defmodule HalC2.OpenShell.Client do
           GRPC.Stub.disconnect(channel)
           error
       end
+    end
+  end
+
+  # An exec started for a caller with a `:deadline` checks the sandbox, and opens
+  # its connection, within what is left of it.
+  defp within(opts, {target, dial_opts} = dial) do
+    case Keyword.fetch(opts, :deadline) do
+      {:ok, deadline} ->
+        left = max(deadline - now(), 1)
+        opts = Keyword.put(opts, :timeout, min(Keyword.get(opts, :timeout, @timeout), left))
+        {opts, {target, Keyword.put(dial_opts, :connect_timeout, left)}}
+
+      :error ->
+        {opts, dial}
     end
   end
 
@@ -487,9 +503,9 @@ defmodule HalC2.OpenShell.Client do
   """
   def upload(%__MODULE__{} = conn, name, dest, tar, opts \\ []) do
     deadline = now() + Keyword.get(opts, :upload_timeout, 600_000)
+    command = ["tar", "-x", "--no-same-owner", "-C", dest, "-f", "-"]
 
-    with {:ok, exec} <-
-           exec(conn, name, ["tar", "-x", "--no-same-owner", "-C", dest, "-f", "-"], opts) do
+    with {:ok, exec} <- started(exec(conn, name, command, [deadline: deadline] ++ opts), deadline) do
       # The writer is its own process: a write waits on flow control for as long as
       # the sandbox does not read, and only killing the writer ends that wait.
       {writer, ref} =
@@ -506,6 +522,13 @@ defmodule HalC2.OpenShell.Client do
         flush(exec)
       end
     end
+  end
+
+  # A start that failed for want of time is the upload's timeout.
+  defp started({:ok, exec}, _deadline), do: {:ok, exec}
+
+  defp started(error, deadline) do
+    if now() >= deadline, do: {:error, :timeout}, else: error
   end
 
   # Once cancelled, the exec sends nothing more; what it already sent is the upload's.

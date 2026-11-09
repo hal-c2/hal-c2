@@ -81,7 +81,9 @@ defmodule HalC2.OpenShell.Install do
              :ok <- File.write(config, Config.render(atomize(state))),
              :ok <- preflight(state["version"], config),
              :ok <- drained(previous, opts) do
-          switch(previous, state, opts, fn -> File.cp(config, OpenShell.config_path()) end)
+          switch(previous, state, opts, fn ->
+            HalC2.Paths.write_replace(OpenShell.config_path(), File.read!(config), 0o600)
+          end)
         end
       end)
     end
@@ -152,15 +154,35 @@ defmodule HalC2.OpenShell.Install do
 
   # Stops `previous` and copies what it runs on (nil: nothing of it to keep). Its
   # database is only copied, or written over, once it has stopped.
+  # A backup that fails changes nothing: the stopped service starts again.
   defp stop_and_backup(%{"mode" => "managed"} = previous) do
-    with :ok <- service_stopped(), do: {:ok, backup(previous)}
+    with :ok <- service_stopped() do
+      case backup(previous) do
+        {:ok, dir} ->
+          {:ok, dir}
+
+        {:error, reason} ->
+          again =
+            case Service.start() do
+              :ok -> "The gateway was started again."
+              {:error, start} -> "Starting the gateway again failed too: #{message(start)}"
+            end
+
+          {:error, "#{backup_failed(reason)} #{again}"}
+      end
+    end
   end
 
   defp stop_and_backup(%{"mode" => "foreground"} = previous) do
-    with :ok <- foreground_stopped(previous), do: {:ok, backup(previous)}
+    with :ok <- foreground_stopped(previous) do
+      with {:error, reason} <- backup(previous), do: {:error, backup_failed(reason)}
+    end
   end
 
   defp stop_and_backup(_previous), do: {:ok, nil}
+
+  defp backup_failed(reason),
+    do: "[backup-failed] Backing up the gateway failed, so nothing was changed: #{reason}"
 
   # The gateway's service stops before any of its files change.
   defp service_stopped do
@@ -184,7 +206,7 @@ defmodule HalC2.OpenShell.Install do
         put_back(previous, state, backup, opts, reason)
 
       {:error, stop} ->
-        kept = if backup, do: " The previous gateway's backup is in #{backup}.", else: ""
+        kept = if backup, do: " The previous gateway's backup is in #{keep(backup)}.", else: ""
 
         "#{reason} Stopping the new gateway failed too, so nothing was put back: #{message(stop)}.#{kept}"
     end
@@ -194,21 +216,28 @@ defmodule HalC2.OpenShell.Install do
     managed = state["mode"] == "managed"
 
     if backup do
-      restore(backup)
-      if managed and previous["mode"] != "managed", do: Service.uninstall()
-
-      case start(previous, opts) do
-        :ok ->
-          "#{reason} The previous gateway (#{previous["version"]}) is back in place."
-
+      # A gateway is started only on files restored whole.
+      with :ok <- restore(backup),
+           :ok <-
+             if(managed and previous["mode"] != "managed", do: Service.uninstall(), else: :ok),
+           :ok <- start(previous, opts) do
+        "#{reason} The previous gateway (#{previous["version"]}) is back in place."
+      else
         {:error, again} ->
-          "#{reason} Restoring the previous gateway (#{previous["version"]}) failed too: #{message(again)} Its backup is in #{backup}."
+          "#{reason} Restoring the previous gateway (#{previous["version"]}) failed too: #{message(again)} Its backup is in #{keep(backup)}."
       end
     else
-      if managed, do: Service.uninstall()
+      removed = if managed, do: Service.uninstall(), else: :ok
       # The failed gateway may have created its database; the next install starts clean.
       for {"openshell.db" <> _, path} <- backup_files(), do: File.rm_rf!(path)
-      "#{reason} Nothing was installed. The gateway's log: #{OpenShell.log_path()}"
+
+      case removed do
+        :ok ->
+          "#{reason} Nothing was installed. The gateway's log: #{OpenShell.log_path()}"
+
+        {:error, again} ->
+          "#{reason} Removing the new gateway's service failed too, so it may start again at login: #{message(again)} The gateway's log: #{OpenShell.log_path()}"
+      end
     end
   end
 
@@ -478,23 +507,44 @@ defmodule HalC2.OpenShell.Install do
   defp db_url, do: Config.args() |> List.last()
 
   # Runs the installed gateway binary for a one-off command, in the environment
-  # the service gives it.
-  # Runs the binary this MC verified and unpacked itself.
-  # sobelow_skip ["CI.System"]
+  # the service gives it, for at most `:openshell_command_timeout` ms (two minutes):
+  # one that hangs is killed, and has exited, before the step fails. Runs the binary
+  # this MC verified and unpacked itself.
   defp gateway(version, args) do
-    [env | argv] = Config.command(OpenShell.gateway_bin(version), args)
+    command = Config.command(OpenShell.gateway_bin(version), args)
     HalC2.Paths.mkdir_private!(Path.dirname(OpenShell.db_path()))
+    name = "`openshell-gateway #{Enum.join(Enum.take(args, 2), " ")}`"
+    timeout = Application.get_env(:hal_c2, :openshell_command_timeout, 120_000)
 
-    case System.cmd(env, argv,
-           cd: OpenShell.root(),
-           stderr_to_stdout: true
-         ) do
-      {_, 0} ->
-        :ok
+    {:ok, proc} =
+      Exile.Process.start_link(command, cd: OpenShell.root(), stderr: :redirect_to_stdout)
 
-      {out, status} ->
-        {:error,
-         "`openshell-gateway #{Enum.join(Enum.take(args, 2), " ")}` failed (#{status}): #{String.trim(out)}"}
+    :ok = Exile.Process.close_stdin(proc)
+    reader = Task.async(fn -> receive(do: (:read -> read_all(proc, []))) end)
+    :ok = Exile.Process.change_pipe_owner(proc, :stdout, reader.pid)
+    send(reader.pid, :read)
+
+    case Task.yield(reader, timeout) do
+      {:ok, out} ->
+        case Exile.Process.await_exit(proc, 5_000) do
+          {:ok, 0} -> :ok
+          {:ok, status} -> {:error, "#{name} failed (#{status}): #{String.trim(out)}"}
+          {:error, reason} -> {:error, "#{name} failed: #{inspect(reason)}"}
+        end
+
+      nil ->
+        # The exit status is the receipt that it is gone.
+        :ok = Exile.Process.kill(proc, :sigkill)
+        Exile.Process.await_exit(proc, 5_000)
+        Task.shutdown(reader, :brutal_kill)
+        {:error, "#{name} did not finish within #{timeout} ms, so it was stopped."}
+    end
+  end
+
+  defp read_all(proc, acc) do
+    case Exile.Process.read(proc) do
+      {:ok, data} -> read_all(proc, [acc, data])
+      _ -> IO.iodata_to_binary(acc)
     end
   end
 
@@ -525,7 +575,11 @@ defmodule HalC2.OpenShell.Install do
       File.cp_r!(from, Path.join(dir, name))
     end
 
-    dir
+    {:ok, dir}
+  rescue
+    error in [File.Error, File.CopyError] ->
+      File.rm_rf(OpenShell.backup_dir(state["version"]))
+      {:error, Exception.message(error)}
   end
 
   # Every path is below this MC's own OpenShell directories, or an archive or
@@ -539,6 +593,24 @@ defmodule HalC2.OpenShell.Install do
     end
 
     :ok
+  rescue
+    error in [File.Error, File.CopyError] ->
+      {:error, "Putting its files back failed: #{Exception.message(error)}."}
+  end
+
+  # Moves a backup a failed rollback could not put back out of the way of the next
+  # update's, which would replace it, and of pruning; `uninstall` removes it.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp keep(backup) do
+    kept =
+      Path.join([OpenShell.root(), "kept", "#{Path.basename(backup)}-#{System.os_time(:second)}"])
+
+    HalC2.Paths.mkdir_private!(Path.dirname(kept))
+
+    case File.rename(backup, kept) do
+      :ok -> kept
+      {:error, _} -> backup
+    end
   end
 
   defp backup_files do
@@ -944,7 +1016,7 @@ defmodule HalC2.OpenShell.Install do
 
       {:error, reason} ->
         {:error,
-         "[probe-cleanup-failed] The isolation check's sandbox #{name} could not be deleted (#{message(reason)}), so the check did not pass. The next check deletes it first."}
+         "[probe-cleanup-failed] The isolation check's sandbox #{name} could not be deleted (#{message(reason)}), so the check did not pass. The next check deletes it first, on a gateway whose database still records it; after a failed update puts back the previous gateway's database, which does not, its container is left to remove with the container runtime."}
     end
   end
 
@@ -1293,10 +1365,34 @@ defmodule HalC2.OpenShell.Install do
     end
   end
 
-  # Puts directory `from` where `to` is, replacing it.
-  defp replace_dir(from, to) do
-    File.rm_rf!(to)
-    File.rename(from, to)
+  # Puts directory `from` where `to` is, replacing it. The old directory is renamed
+  # aside first and back again if `from` cannot take its place, so `to` is never
+  # missing or half deleted; it is deleted only once the new one is in place.
+  # Both are below this MC's own OpenShell directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  @doc false
+  def replace_dir(from, to) do
+    aside = to <> ".old"
+    File.rm_rf!(aside)
+
+    case File.rename(to, aside) do
+      :ok ->
+        case File.rename(from, to) do
+          :ok ->
+            File.rm_rf(aside)
+            :ok
+
+          error ->
+            File.rename!(aside, to)
+            error
+        end
+
+      {:error, :enoent} ->
+        File.rename(from, to)
+
+      error ->
+        error
+    end
   end
 
   defp message(reason) when is_binary(reason), do: reason

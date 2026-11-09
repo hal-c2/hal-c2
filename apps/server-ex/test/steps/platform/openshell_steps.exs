@@ -193,6 +193,19 @@ defmodule HalC2.Steps.Platform.OpenShell do
     context
   end
 
+  step "the gateway's backup cannot be written", context do
+    backups = Path.join(OpenShell.root(), "backups")
+    HalC2.Paths.mkdir_private!(backups)
+    File.chmod!(backups, 0o500)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(backups, 0o700) end)
+    context
+  end
+
+  step "the gateway's service is running again", context do
+    assert %{"current" => true, "running" => true} = Service.status(OpenShell.state())
+    context
+  end
+
   step "the user updates to OpenShell 0.1.7", context do
     installed(context, install(context, "0.1.7"))
   end
