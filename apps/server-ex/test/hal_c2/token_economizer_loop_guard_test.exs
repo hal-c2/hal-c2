@@ -735,6 +735,23 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute digest("cat <<EOF \\\n  > a.py\nSECRET = 1\nEOF") =~ "SECRET"
     end
 
+    test "reads a redirect run together with the operator before it" do
+      for cmd <- [
+            "(echo SECRET)>a.py",
+            "true;>a.py echo SECRET",
+            "true&&>a.py echo SECRET",
+            "echo SECRET >& a.py"
+          ] do
+        assert ShellEdits.targets(cmd) == ["a.py"], cmd
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # Duplicating a descriptor writes no file.
+      assert ShellEdits.targets("pytest 2>&1 | tee log") == []
+      assert digest("pytest -q tests >&2") =~ "pytest -q tests >&2"
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",

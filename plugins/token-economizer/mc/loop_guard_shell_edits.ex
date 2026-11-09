@@ -2,9 +2,11 @@
 # SPDX-FileCopyrightText: The TokenEconomizer authors (microsoft/TokenEconomizer); HAL-C2 contributors
 # Ported from tokeneconomizer/loopguard/shell_edits.py (microsoft/TokenEconomizer@cb42207e3e09),
 # into Elixir for HAL-C2's MC. Changed: Python's `shlex` (non-POSIX, with punctuation
-# characters) is reimplemented here, quirks included, so commands split as upstream's do;
-# `fold_shell_edits` lives in State; a heredoc's delimiter may be any word (`<<'EOF-CODE'`),
-# not only an identifier; `programs/1` and `writes?/1` are new; QML counts as source.
+# characters) is reimplemented here, quirks included, so commands split as upstream's do,
+# but for a run of operators (`)>`), split as the shell splits it; `fold_shell_edits` lives
+# in State; a heredoc ends where the shell's does, its delimiter any word (`<<'EOF-CODE'`,
+# `<<123`), and every heredoc a line opens is read; `programs/1` and `writes?/1` are new;
+# QML counts as source.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @moduledoc """
@@ -251,8 +253,14 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
     writes =
       case rest do
-        [next | _] when t in @out and next not in @ops -> writes ++ [unquote_word(next)]
-        _ -> writes
+        [next | _] when next not in @ops ->
+          # `>& file` writes it, as `&>` does; `>&2` and `>&-` only duplicate or close.
+          if t in @out or (t == ">&" and not Regex.match?(~r/^(?:\d+|-)$/, next)),
+            do: writes ++ [unquote_word(next)],
+            else: writes
+
+        _ ->
+          writes
       end
 
     simple(Enum.drop(rest, 1), cmds, writes, cur)
@@ -417,7 +425,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   defp pemit(tok, _, acc), do: [tok |> Enum.reverse() |> List.to_string() | acc]
 
   # ---- Python's shlex.shlex(text, posix=False, punctuation_chars="();<>|&\n"), with
-  # whitespace " \t\r" and whitespace_split: shell words and operators. Quotes stay on
+  # whitespace " \t\r" and whitespace_split: shell words and operators, a run of operator
+  # characters split into the shell's operators (shlex keeps it whole). Quotes stay on
   # quoted words, so a quoted `'>'` or `'|'` is never read as an operator; :error on
   # unbalanced quotes. As in shlex, `#` starts a comment that runs to the end of the
   # line, newline included, and a quote inside a word is part of the word.
@@ -431,8 +440,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp lex([], :space, [], acc), do: {:ok, Enum.reverse(acc)}
 
-  defp lex([], state, tok, acc) when state in [:space, :word, :punct],
+  defp lex([], state, tok, acc) when state in [:space, :word],
     do: {:ok, Enum.reverse(emit(tok, acc))}
+
+  defp lex([], :punct, tok, acc), do: {:ok, Enum.reverse(emit_ops(tok, acc))}
 
   defp lex([], {:quote, _}, _, _), do: :error
 
@@ -458,10 +469,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp lex([c | rest], :punct, tok, acc) do
     cond do
-      c in @space -> lex(rest, :space, [], emit(tok, acc))
+      c in @space -> lex(rest, :space, [], emit_ops(tok, acc))
       c == ?# -> lex(drop_line(rest), :punct, tok, acc)
       c in @punct -> lex(rest, :punct, [c | tok], acc)
-      true -> lex([c | rest], :space, [], emit(tok, acc))
+      true -> lex([c | rest], :space, [], emit_ops(tok, acc))
     end
   end
 
@@ -473,6 +484,21 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   defp emit([], acc), do: acc
   defp emit(tok, acc), do: [tok |> Enum.reverse() |> List.to_string() | acc]
+
+  # A run of operator characters, which shlex keeps as one token, as the shell splits it:
+  # longest operator first, so `)>` is `)` then `>`, and `;>` or `&&>` a redirect.
+  @operators ~w(&>> <<< ;; && || |& &> >> >| >& << <& <>) ++
+               ["<", ">", "|", "&", ";", "(", ")", "\n"]
+
+  defp emit_ops([], acc), do: acc
+  defp emit_ops(tok, acc), do: split_ops(tok |> Enum.reverse() |> List.to_string(), acc)
+
+  defp split_ops("", acc), do: acc
+
+  defp split_ops(run, acc) do
+    op = Enum.find(@operators, &String.starts_with?(run, &1)) || String.first(run)
+    split_ops(binary_part(run, byte_size(op), byte_size(run) - byte_size(op)), [op | acc])
+  end
 
   defp drop_line(chars) do
     case Enum.drop_while(chars, &(&1 != ?\n)) do
