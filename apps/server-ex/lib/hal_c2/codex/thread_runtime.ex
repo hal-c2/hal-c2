@@ -1957,8 +1957,9 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{state | subagents: Map.put(subagents, thread, entry)}
   end
 
-  # Codex's own tools whose calls no thread shows (an image it viewed or made), as the
-  # item type and tool name plugins that hear turns hear them under (`observe_item/3`).
+  # Codex's own tools whose calls no thread shows as calls (an image it viewed, or one it
+  # made, which joins the reply), as the item type and tool name plugins that hear turns
+  # hear them under (`observe_item/3`).
   @unshown %{
     "imageView" => {"image_view", "view_image"},
     "imageGeneration" => {"image_generation", "image_generation"}
@@ -2162,8 +2163,14 @@ defmodule HalC2.Codex.ThreadRuntime do
        when event in ["started", "completed"] and is_binary(turn_id) do
     if params["threadId"] in [nil, state.native_thread_id] do
       case event do
-        "started" -> GeneratedImages.started(state, turn_id, item["id"])
-        "completed" -> GeneratedImages.completed(flush(state), turn_id, item)
+        "started" ->
+          GeneratedImages.started(state, turn_id, item["id"])
+
+        "completed" ->
+          state
+          |> flush()
+          |> hear_image(turn_id, item)
+          |> GeneratedImages.completed(turn_id, item)
       end
     else
       state
@@ -3529,6 +3536,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp complete_item(state, _item), do: state
+
+  # Plugins hear a generated image in the turn that made it; one finished after its turn
+  # ended is heard by none, as the turn's other late reports are.
+  defp hear_image(%{turn: %{native_turn_id: turn_id}} = state, turn_id, item),
+    do: complete_item(state, item)
+
+  defp hear_image(state, _turn_id, _item), do: state
 
   # An item of `@unshown` as plugins hear it, under the id its turn item would have.
   defp unshown_item(ids, %{"type" => type, "id" => native} = item) do
