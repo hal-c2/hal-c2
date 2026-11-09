@@ -770,4 +770,72 @@ defmodule HalC2.ProviderUsageLimitsTest do
       assert Limits.command_coverage(nil) == MapSet.new()
     end
   end
+
+  # Review of #1284: `CURSOR_AUTH_TOKEN` was read before the API key the sidecar runs on,
+  # so the dashboard showed another account's quota.
+  describe "Cursor usage" do
+    defmodule CursorPlug do
+      @behaviour Plug
+      import Plug.Conn
+
+      def init(test), do: test
+
+      def call(conn, test) do
+        [auth] = get_req_header(conn, "authorization")
+        send(test, {:cursor_request, conn.request_path, auth})
+
+        body =
+          case conn.request_path do
+            "/auth/exchange_user_api_key" -> %{"accessToken" => "from-key"}
+            _ -> %{"planUsage" => %{"totalPercentUsed" => 10}}
+          end
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, JSON.encode!(body))
+      end
+    end
+
+    defp cursor_usage(environment) do
+      server = start_supervised!({Bandit, plug: {CursorPlug, self()}, port: 0, ip: :loopback})
+      {:ok, {_, port}} = ThousandIsland.listener_info(server)
+      Application.put_env(:hal_c2, :cursor_api_url, "http://127.0.0.1:#{port}")
+      on_exit(fn -> Application.delete_env(:hal_c2, :cursor_api_url) end)
+
+      {:ok, _} =
+        HalC2.Settings.put(
+          %{
+            "providerInstances" => %{
+              "cursor" => %{
+                "driver" => "cursor",
+                "enabled" => true,
+                "environment" =>
+                  for({name, value} <- environment, do: %{"name" => name, "value" => value})
+              }
+            }
+          },
+          0
+        )
+
+      HalC2.ProviderUsageLimits.Acp.probe("cursor", "2026-11-08T00:00:00Z")
+    end
+
+    test "the sidecar's API key is read before a CURSOR_AUTH_TOKEN" do
+      cursor_usage([{"CURSOR_API_KEY", "key-1"}, {"CURSOR_AUTH_TOKEN", "token-1"}])
+
+      assert_received {:cursor_request, "/auth/exchange_user_api_key", "Bearer key-1"}
+
+      assert_received {:cursor_request, "/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+                       "Bearer from-key"}
+
+      refute_received {:cursor_request, _, "Bearer token-1"}
+    end
+
+    test "the token is the fallback when there is no API key" do
+      cursor_usage([{"CURSOR_AUTH_TOKEN", "token-1"}])
+
+      assert_received {:cursor_request, "/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+                       "Bearer token-1"}
+    end
+  end
 end
