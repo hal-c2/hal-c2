@@ -24,8 +24,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       into short turns, and a whole thread folded as one would look stuck merely by being
       long.
     * There is no grader, so the project's envelope learns from turns that ended green:
-      the agent stopped on its own, the guard did not stop it, and no verification after
-      its last edit failed (`resolved_proxy/2`).
+      the agent stopped on its own, the guard did not stop it, no verification after
+      its last edit failed, and it read every command after that edit whole
+      (`resolved_proxy/2`).
   """
 
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Rules, ShellEdits, State}
@@ -40,7 +41,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   # `State.test_run_re/0` (the Python vocabulary the thresholds were tuned on); used only
   # for the ended-green proxy, never to change what `State` counts. A runner is often
   # named by path (`python tests/runtests.py`, `.venv/bin/pytest`).
-  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
+  @verify ~r/\A(?:^|[\s;&|(])(?:(?:~?\/)?(?:[\w.\-]+\/)*python\d?(?:\.\d+)?\s+)?(?:~?\/)?(?:[\w.\-]+\/)*(?:pytest|py\.test|tox|nox|python\d?(?:\.\d+)?\s+-m\s+(?:pytest|unittest)|manage\.py\s+test|runtests(?:\.py)?|jest|vitest|mocha|ava|playwright\s+test|(?:npm|pnpm|yarn|bun|vp)\s+(?:run\s+)?test|go\s+test|cargo\s+(?:test|nextest)|(?:mvn|mvnw|\.\/mvnw)\s+(?:\S+\s+)*test|(?:gradle|gradlew|\.\/gradlew)\s+(?:\S+\s+)*test|make\s+(?:test|check)|ctest|rspec|phpunit|dotnet\s+test|swift\s+test|mix\s+(?:test|features|prop|proof)|deno\s+test|node\s+--test|bazel\s+test|(?:\.\/)?bin\/test)(?![\w.\-\/])/i
 
   # A command line's exit status is its last command's, so it may not be the test run's:
   # `npm test 2>&1 | tail -n 8` exits with `tail`'s status, `npm test || true` with 0.
@@ -153,6 +154,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # Whether an edit was tried after the last check ran: one that failed to apply too,
       # and one later in the check's own command (`pytest && sed -i ...`).
       unchecked: false,
+      # The last call that ran a command this did not read whole (`ShellEdits.read?/1`),
+      # whose checks it may not have heard: 0 for none.
+      unread: 0,
       edits: 0,
       verifications: 0,
       # %{"id", "since", "segment"} of the judge job out, or nil.
@@ -163,6 +167,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       nudge_ready: nil,
       # A redirect sent, until it is known whether it reached the agent (`redirected/2`).
       redirecting: false,
+      # Whether one did not: the agent cannot take one now, so none is sent again.
+      refused: false,
       # The redirects that reached the agent.
       redirects: 0
     }
@@ -351,6 +357,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         verifies = status_of_tests(cmd) != nil
 
         g =
+          if canon == "bash" and not ShellEdits.read?(cmd),
+            do: %{g | unread: g.cum_turns},
+            else: g
+
+        g =
           cond do
             shell_edits == [] ->
               g
@@ -394,11 +405,14 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   @doc """
   Whether this turn ended green, the stand-in for the grader the envelope cannot have:
-  green unless a verification after the last edit failed.
+  green unless a verification after the last edit failed, or a command after it was not
+  read whole (a nested shell's script, inline code, a capped or garbled command, a
+  heredoc not placed), which may have run a check that failed unheard.
   """
   def resolved_proxy(g, stopped_normally \\ true) do
     stopped_normally and not g.aborted and g.cum_turns != 0 and
-      not (g.last_verify_failed and g.last_verify > g.last_edit)
+      not (g.last_verify_failed and g.last_verify > g.last_edit) and
+      not (g.unread > 0 and g.unread >= g.last_edit)
   end
 
   # ---- what the judge is told -----------------------------------------------------------
@@ -471,7 +485,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
               "id" => id,
               "digest" => live_digest(g, digest),
               "segment" => g.segment,
-              "redirect" => g.nudges_done < budget
+              "redirect" => redirect_left?(g, budget)
             }
 
             {%{
@@ -568,6 +582,10 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       else: decide(g, envelope, thr, budget, opts)
   end
 
+  # Whether a stuck call is answered with a redirect rather than a stop offer: one is
+  # left in the budget, and none was refused.
+  defp redirect_left?(g, budget), do: g.nudges_done < budget and not g.refused
+
   defp verified?(g), do: g.verifications > 0 and not g.last_verify_failed and not g.unchecked
 
   defp decide(g, envelope, thr, budget, opts) do
@@ -585,7 +603,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # nudge goes first; after it, a fresh segment must be stuck again before the
       # backstop stops it.
       reason = "cum-backstop:#{g.cum_turns}>=#{Rules.fixed(backstop, 0)}t"
-      action = if g.nudges_done < budget, do: :nudge, else: :abort
+      action = if redirect_left?(g, budget), do: :nudge, else: :abort
       {g, decision} = stop(g, action, reason, envelope)
       {g, decision, nil}
     else
@@ -594,11 +612,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       cond do
         abort ->
           {g, decision} =
-            stop(g, if(g.nudges_done < budget, do: :nudge, else: :abort), reason, envelope)
+            stop(g, if(redirect_left?(g, budget), do: :nudge, else: :abort), reason, envelope)
 
           {g, decision, job}
 
-        thr["nudge_on_ambiguous"] && reason == "judge-ambiguous-spared" && g.nudges_done < budget ->
+        thr["nudge_on_ambiguous"] && reason == "judge-ambiguous-spared" &&
+            redirect_left?(g, budget) ->
           {g, decision} = stop(g, :nudge, "ambiguous-past-envelope", envelope)
           {g, decision, job}
 
@@ -669,7 +688,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
   with a fresh state: the agent's fair window to recover, which the calls made before it
   are not part of. A verdict on the old segment is about the old one. One that did not
   (the provider cannot take a message while it works) leaves the segment as it was, and
-  the next stuck call is offered a stop.
+  the next stuck call is offered a stop, whatever redirects the budget has left.
   """
   def redirected(g, true) do
     %{
@@ -686,7 +705,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
     }
   end
 
-  def redirected(g, false), do: %{g | redirecting: false}
+  def redirected(g, false), do: %{g | redirecting: false, refused: true}
 
   @doc "A redirect sent and taken at once, as watching decides."
   def after_nudge(g), do: g |> redirect() |> redirected(true)

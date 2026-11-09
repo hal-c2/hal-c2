@@ -87,6 +87,7 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer state :trackers" => ~w(taught close),
       "HalC2Plugins.TokenEconomizer state :settings" => ~w(cfg budget),
       "HalC2Plugins.TokenEconomizer state :tasks" => ~w(task asking drop),
+      "HalC2Plugins.TokenEconomizer.learns?/2" => ~w(close taught),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.new/1" => "fresh",
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.fold/6" => ~w(calm backstop judge see act ask),
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.verdict/3" => ~w(verdict arrive),

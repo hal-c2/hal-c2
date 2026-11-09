@@ -1175,7 +1175,9 @@ defmodule HalC2.Codex.ThreadRuntime do
           "thread",
           ids.thread,
           &Map.put(&1, "activeProviderThreadId", ids.provider_thread)
-        )
+        ),
+        # Codex answering `turn/start` took the prompt.
+        confirmed(stream, ids)
       ]
     end)
     |> case do
@@ -1184,14 +1186,31 @@ defmodule HalC2.Codex.ThreadRuntime do
         observe_started(state)
         {:ok, state}
 
-      # The run ended while Codex started its turn: nothing wants the turn now.
+      # The run ended while Codex started its turn: nothing wants the turn now. Codex
+      # took the prompt all the same, which the run's start says: a run that ended
+      # unstarted sent nothing (`HalC2.Orchestration.Handoff.plan/6`).
       :ended ->
+        commit(state, fn stream ->
+          [
+            Orchestration.upsert(
+              stream,
+              "run",
+              ids.run,
+              &(&1 && Map.update(&1, "startedAt", at, fn started -> started || at end))
+            )
+          ]
+        end)
+
         Connection.call(state.conn, "turn/interrupt", %{
           "threadId" => state.native_thread_id,
           "turnId" => native_turn
         })
 
-        {:ok, %{state | turn: nil}}
+        # A conversation the turn opened holds its prompt under an id the MC never
+        # learnt, which no handoff counts: the next turn opens its own instead.
+        native = if state.native_thread_id == turn.native_thread_id, do: turn.native_thread_id
+
+        {:ok, %{state | turn: nil, native_thread_id: native}}
     end
   end
 
@@ -1468,11 +1487,7 @@ defmodule HalC2.Codex.ThreadRuntime do
         {:ok, state, turn}
 
       {:error, reason, state} ->
-        turn = %{
-          turn
-          | fork: nil,
-            text: HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
-        }
+        turn = HalC2.Orchestration.Handoff.ahead(%{turn | fork: nil}, fork[:fallback])
 
         with {:ok, state} <- ensure_native_thread(state, turn) do
           not_carried(state, turn, rpc_message(reason))
@@ -2300,6 +2315,18 @@ defmodule HalC2.Codex.ThreadRuntime do
       else: state
   end
 
+  # A usage report naming its turn lands on that turn, running or not: it can come
+  # after `turn/completed`, between a goal's turns, or before the next run starts. One of
+  # another thread than the conversation's (subagents and memory threads routed above
+  # aside) is neither its turn's nor the meter's (`record_usage/3`).
+  defp notification(
+         "thread/tokenUsage/updated",
+         %{"turnId" => native, "tokenUsage" => %{"last" => %{"totalTokens" => used}}} = params,
+         state
+       )
+       when is_binary(native) and is_integer(used),
+       do: record_usage(state, params, "provider-turn:codex:#{native}")
+
   # An image Codex generates joins its turn's reply, also one it finishes after
   # the turn ended (`HalC2.Codex.GeneratedImages`).
   defp notification(
@@ -2345,16 +2372,6 @@ defmodule HalC2.Codex.ThreadRuntime do
          %{native_thread_id: thread, turn: %{native_turn_id: current}} = state
        )
        when turn_id != current,
-       do: state
-
-  # So is a usage report of another turn, or of a thread that is not the conversation's
-  # (those routed above aside): the running turn keeps only its own usage.
-  defp notification(
-         "thread/tokenUsage/updated",
-         %{"threadId" => thread, "turnId" => turn_id},
-         %{native_thread_id: own, turn: %{native_turn_id: current}} = state
-       )
-       when thread != own or turn_id != current,
        do: state
 
   # A turn's first final answer streams as it comes; a later one is held back
@@ -2532,55 +2549,14 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp notification("item/completed", %{"item" => item}, state),
     do: complete_item(flush(state), item)
 
-  # How full the conversation's context is, for the context meter. It belongs to the
-  # provider thread, so it outlives the run, and a model change, until Codex says more.
-  # The provider turn it came in keeps it too, with when it came: a turn Codex reports
-  # nothing in keeps none, never an earlier turn's.
+  # A usage report naming no turn is the running turn's.
   defp notification(
          "thread/tokenUsage/updated",
-         %{"tokenUsage" => %{"last" => %{"totalTokens" => used} = last} = usage},
+         %{"tokenUsage" => %{"last" => %{"totalTokens" => used}}} = params,
          state
        )
-       when is_integer(used) do
-    counts =
-      for {key, field} <- [
-            {"inputTokens", "inputTokens"},
-            {"cachedInputTokens", "cachedInputTokens"},
-            {"outputTokens", "outputTokens"},
-            {"reasoningOutputTokens", "reasoningOutputTokens"}
-          ],
-          is_integer(last[field]),
-          into: %{"usedTokens" => max(used, 0)},
-          do: {key, max(last[field], 0)}
-
-    window = usage["modelContextWindow"]
-
-    snapshot =
-      if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
-
-    ids = state.turn.ids
-    reported = Map.put(snapshot, "updatedAt", Entities.now())
-
-    commit(state, fn stream ->
-      [
-        Orchestration.upsert(
-          stream,
-          "provider-thread",
-          ids.provider_thread,
-          &Map.put(&1, "contextUsage", snapshot)
-        ),
-        HalC2.StreamState.get(stream, "provider-turn")[ids[:provider_turn]] &&
-          Orchestration.upsert(
-            stream,
-            "provider-turn",
-            ids.provider_turn,
-            &Map.put(&1, "tokenUsage", reported)
-          )
-      ]
-    end)
-
-    state
-  end
+       when is_integer(used),
+       do: record_usage(state, params, Map.get(state.turn.ids, :provider_turn))
 
   defp notification("error", %{"error" => error} = params, state) do
     cond do
@@ -2670,6 +2646,72 @@ defmodule HalC2.Codex.ThreadRuntime do
        do: turn_id == current
 
   defp this_turn?(_params, _state), do: true
+
+  # How full the conversation's context is, for the context meter. It belongs to the
+  # provider thread, so it outlives the run, and a model change, until Codex says more.
+  # Provider turn `turn` keeps it too, which says which run it counts
+  # (`HalC2.Orchestration.Handoff.room/3`); the provider thread is the one that turn ran
+  # on, or the running turn's. A report from another conversation than the runtime's says
+  # nothing of either; one of a turn the MC never recorded (one whose run ended as Codex
+  # started it) says nothing of the provider thread's.
+  defp record_usage(state, %{"tokenUsage" => %{"last" => last} = usage} = params, turn) do
+    counts =
+      for {key, field} <- [
+            {"inputTokens", "inputTokens"},
+            {"cachedInputTokens", "cachedInputTokens"},
+            {"outputTokens", "outputTokens"},
+            {"reasoningOutputTokens", "reasoningOutputTokens"}
+          ],
+          is_integer(last[field]),
+          into: %{"usedTokens" => max(last["totalTokens"], 0)},
+          do: {key, max(last[field], 0)}
+
+    window = usage["modelContextWindow"]
+
+    snapshot =
+      if is_integer(window) and window > 0, do: Map.put(counts, "maxTokens", window), else: counts
+
+    if params["threadId"] in [nil, state.native_thread_id],
+      do: put_usage(state, turn, snapshot),
+      else: state
+  end
+
+  defp put_usage(state, turn, snapshot) do
+    commit(state, fn stream ->
+      stored = turn && HalC2.StreamState.fetch(stream, "provider-turn", turn)
+
+      provider_thread =
+        cond do
+          stored ->
+            stored["providerThreadId"]
+
+          state.turn && turn in [nil, Map.get(state.turn.ids, :provider_turn)] ->
+            state.turn.ids.provider_thread
+
+          true ->
+            nil
+        end
+
+      [
+        provider_thread &&
+          Orchestration.upsert(
+            stream,
+            "provider-thread",
+            provider_thread,
+            &Map.put(&1, "contextUsage", snapshot)
+          ),
+        stored &&
+          Orchestration.upsert(
+            stream,
+            "provider-turn",
+            turn,
+            &Map.put(&1, "tokenUsage", Map.put(snapshot, "updatedAt", Entities.now()))
+          )
+      ]
+    end)
+
+    state
+  end
 
   # The instance quota is published under, resolved once: a turn's own
   # instance when settings here know it, or the driver when they do not (a
@@ -3008,7 +3050,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # under way, so the turn is the one asked to work toward it. The thread shows only
   # the goal that results, never the cleared or paused ones on the way.
   defp run_goal(state, turn, {:set, objective}, goal) do
-    turn = %{turn | text: goal_prompt(turn, objective)}
+    turn = Goals.first_turn(turn, objective)
     paused = %{"objective" => objective, "status" => "paused"}
 
     with {:ok, _} <- if(goal, do: goal_call(state, "thread/goal/clear", %{}), else: {:ok, %{}}),
@@ -3026,21 +3068,6 @@ defmodule HalC2.Codex.ThreadRuntime do
           {:ok, state}
       end
     end
-  end
-
-  # The goal's first prompt in place of the user's `/goal` message, after what the turn
-  # put ahead of it: a new conversation's context from the plugins
-  # (`HalC2.Orchestration.RunShape`) and a handed-off history. A resumed conversation
-  # has nothing ahead, so nothing is put there again.
-  defp goal_prompt(%{text: text} = turn, objective) do
-    message = Map.get(turn, :message)
-
-    ahead =
-      if is_binary(text) and is_binary(message) and String.ends_with?(text, message),
-        do: binary_part(text, 0, byte_size(text) - byte_size(message)),
-        else: ""
-
-    ahead <> Goals.first_prompt(objective)
   end
 
   defp goal_call(state, method, params) do

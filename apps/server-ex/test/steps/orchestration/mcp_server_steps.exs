@@ -145,31 +145,18 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     context
   end
 
-  # Launched as a client launches one: its first turn does not wait on its sidebar row.
-  step "a thread {string} is launched in {string} with a first message",
-       %{args: [thread, project]} = context do
-    thread_id = "th-launch-#{System.unique_integer([:positive])}"
+  step "a new thread in {string} starts its first run before the sidebar lists it", context do
+    shell = Process.whereis(HalC2.Shell)
+    :sys.suspend(shell)
 
-    {:ok, _} =
-      HalC2.Orchestration.launch_thread(%{
-        "commandId" => "cmd-#{thread_id}",
-        "threadId" => thread_id,
-        "projectId" => World.project(context, project).id,
-        "title" => thread,
-        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
-        "runtimeMode" => "full-access",
-        "interactionMode" => "default",
-        "workspaceStrategy" => %{"type" => "root"},
-        "initialMessage" => %{
-          "messageId" => "m-#{thread_id}",
-          "text" => "wait for it",
-          "attachments" => []
-        }
-      })
-
-    context = put_in(context, [:threads, thread], thread_id)
-    await_active(context, thread)
-    context
+    try do
+      context = World.launch_on(context, "newcomer", "codex", "wait for it")
+      await_active(context, "newcomer")
+      assert HalC2.Shell.row(node(), World.thread_id(context, "newcomer")) == nil
+      context
+    after
+      :sys.resume(shell)
+    end
   end
 
   step "the agent is given no {string} server", %{args: [name]} = context do

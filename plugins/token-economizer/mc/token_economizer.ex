@@ -22,8 +22,8 @@ defmodule HalC2Plugins.TokenEconomizer do
   enough of them the guard watches and does nothing. The paid judge, the user's text
   generation model, runs only when the free gate opens, in a process of its own; its
   verdict is read at the turn's next call. The judge's jobs and the deliveries are the
-  plugin's tasks, which end with it: a job is stopped once its segment or turn is over, a
-  delivery once the mode no longer delivers.
+  plugin's tasks, which end with it: a job is stopped once its segment or turn is over or
+  the guard is turned off; a delivery under way always finishes, whatever the mode.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
@@ -234,29 +234,13 @@ defmodule HalC2Plugins.TokenEconomizer do
     # pruning reads its settings at each decision, so its evidence stays.
     state = %{state | settings: settings, trackers: %{}}
 
+    # Off, the guard hears no turn and no judge job is read. A delivery under way runs on:
+    # its steer may already have been taken, and its answer says what happened. Watching
+    # only starts none (`act/5`).
     state =
-      cond do
-        not on?(state) ->
-          %{cancel(state, fn _ -> true end) | turns: %{}}
-
-        # Watching delivers nothing: a redirect on its way is stopped, and did not land.
-        shadow?(state) ->
-          state = cancel(state, &match?({_, :delivery}, &1))
-
-          turns =
-            Map.new(state.turns, fn {id, turn} ->
-              {id,
-               update_in(
-                 turn.guard,
-                 &if(&1.redirecting, do: Turn.redirected(&1, false), else: &1)
-               )}
-            end)
-
-          %{state | turns: turns}
-
-        true ->
-          state
-      end
+      if on?(state),
+        do: state,
+        else: %{cancel(state, &match?({_, :judge}, &1)) | turns: %{}}
 
     {:reply, :ok, state |> publish() |> publish_prune()}
   end
@@ -1054,7 +1038,7 @@ defmodule HalC2Plugins.TokenEconomizer do
           "token-economizer: turn #{inspect(Map.put(summary, "partial", turn.partial))}"
         )
 
-        if not turn.partial and Turn.resolved_proxy(turn.guard, stopped_normally) do
+        if learns?(turn, stopped_normally) do
           {tracker, state} = tracker(state, turn.project)
           tracker = Envelope.record_turn(tracker, turn.guard, stopped_normally)
           save_tracker(turn.project, tracker)
@@ -1064,6 +1048,13 @@ defmodule HalC2Plugins.TokenEconomizer do
         end
     end
   end
+
+  @doc """
+  Whether a turn the plugin closes feeds its project's envelope: heard whole, and ended
+  green (`Turn.resolved_proxy/2`).
+  """
+  def learns?(turn, stopped_normally),
+    do: not turn.partial and Turn.resolved_proxy(turn.guard, stopped_normally)
 
   defp fold(state, thread_id, turn, name, args, result, code) do
     {tracker, state} = tracker(state, turn.project)

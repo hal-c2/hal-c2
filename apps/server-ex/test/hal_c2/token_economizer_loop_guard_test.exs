@@ -427,6 +427,35 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "after a redirect the agent refused is offered a stop, whatever redirects are left" do
+      opts = [envelope: 10.0, thr: Rules.defaults(), nudge_budget: 2]
+
+      {g, decisions} =
+        Enum.reduce(1..120, {Turn.new("t"), []}, fn i, {g, decisions} ->
+          {g, decision, _job} =
+            if rem(i, 2) == 0,
+              do: edit(g, opts),
+              else: Turn.fold(g, "Bash", %{"command" => "pytest -q"}, "FAILED t", 1, opts)
+
+          # The provider could not take the redirect while it worked.
+          g =
+            if match?({:nudge, _}, decision),
+              do: g |> Turn.redirect() |> Turn.redirected(false),
+              else: g
+
+          {g, if(decision, do: decisions ++ [decision], else: decisions)}
+        end)
+
+      assert [{:nudge, _}, {:abort, _}] = decisions
+      assert g.nudges_done == 1
+
+      # Nor is the judge asked to write one.
+      judged = [envelope: 30.0, thr: Map.put(Rules.defaults(), "gate_over_envelope", false)]
+      judged = judged ++ [judge: true, nudge_budget: 2, now: 0]
+      refused = Turn.new("t") |> Turn.redirect() |> Turn.redirected(false)
+      assert {_, %{"redirect" => false}} = until_job(refused, judged)
+    end
+
     test "with no redirects left is offered a stop straight away" do
       {_g, decisions} =
         stuck_turn(Turn.new("t"), 120, envelope: 10.0, thr: Rules.defaults(), nudge_budget: 0)
@@ -968,6 +997,57 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert digest(~s{node -e "require('fs')"}) =~ "$ node …"
       assert digest("pytest --maxfail=1 -k a=b") =~ "pytest --maxfail=1 -k a=…"
     end
+
+    test "shows only the programs of a command with any redirect but a read or a duplication" do
+      for cmd <- [
+            "printf %s PRIVATE_SOURCE 1<>a.py",
+            "printf PRIVATE_SOURCE <>notes.txt",
+            "printf PRIVATE_SOURCE >&out.txt",
+            "printf PRIVATE_SOURCE <&out.txt",
+            "printf PRIVATE_SOURCE >&$fd",
+            "printf PRIVATE_SOURCE > >(cat)"
+          ] do
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # Reading a file, discarding output and duplicating a descriptor write nothing.
+      for cmd <- [
+            "pytest -q < args.txt",
+            "pytest -q >/dev/null 2>&1",
+            "pytest -q 2>&1",
+            "pytest -q >&2",
+            "pytest -q 0<&3"
+          ] do
+        assert digest(cmd) =~ "$ #{cmd}"
+      end
+    end
+
+    test "shows only the programs of an interpreter handed code anywhere in its words" do
+      for cmd <- [
+            ~s{node --input-type commonjs -e "require('fs').writeFileSync('a','PRIVATE_SOURCE')"},
+            "node --import=data:text/javascript,PRIVATE_SOURCE app.js",
+            ~s{python3 -X dev -W error -c "open('a','w').write('PRIVATE_SOURCE')"},
+            ~s{timeout 10 ruby -w -e 'File.write("a", "PRIVATE_SOURCE")'},
+            "find . -name a -exec perl -0777 -pe 's/x/PRIVATE_SOURCE/' {} +",
+            ~s{deno eval "Deno.writeTextFileSync('a', 'PRIVATE_SOURCE')"},
+            ~s|awk 'BEGIN { print "PRIVATE_SOURCE" > "a.py" }'|
+          ] do
+        text = digest(cmd)
+        refute text =~ "PRIVATE_SOURCE", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # A module or a script run, and the words that are its own, are shown.
+      for cmd <- [
+            "python3 -m pytest -rA -p no:cacheprovider",
+            "python -W error tests/runtests.py --verbose",
+            "node --test",
+            "ruby -Ilib test/a_test.rb",
+            "awk -f count.awk a.txt"
+          ] do
+        assert digest(cmd) =~ "$ #{cmd}"
+      end
+    end
   end
 
   describe "missed events" do
@@ -988,6 +1068,16 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
         extra
       )
     end
+
+    # Thread "a"'s turn, its items heard in order. Never closed: a closed turn that
+    # learns writes its project's envelope to the plugin's data directory.
+    defp heard_turn(items) do
+      {:ok, state} = TokenEconomizer.init(%{})
+      at = %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"}
+      Enum.reduce(items, observe(state, started("a")), &observe(&2, Map.merge(at, &1)))
+    end
+
+    defp edited(path), do: %{"itemType" => "file_change", "status" => "completed", "path" => path}
 
     test "mark partial the turns under way and those heard before the feed's queue drains" do
       {:ok, state} = TokenEconomizer.init(%{})
@@ -1478,7 +1568,84 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute Turn.resolved_proxy(guard)
     end
 
-    test "a turn's end stops its judge job, watching stops deliveries, and off stops every task" do
+    test "a failing vp test run after an edit is a failed check, so the turn is not learned" do
+      for cmd <- ["vp test run src/a.test.ts", "vp test", "vp run test"] do
+        state =
+          heard_turn([
+            edited("/r/a.ts"),
+            command(cmd, "FAIL src/a.test.ts", "failed", %{"exitCode" => 1})
+          ])
+
+        refute TokenEconomizer.learns?(state.turns["a"], true), cmd
+        assert state.turns["a"].guard.last_verify_failed, cmd
+      end
+    end
+
+    test "a check run in a nested shell after an edit is not read, so the turn is not learned" do
+      for cmd <- [
+            "bash -lc 'pytest -q' || true",
+            "bash -c 'pytest -q' 2>&1 | tail -3",
+            "sh -c 'pytest -q' && echo done",
+            ~s{node -e "require('child_process').execSync('pytest -q')"}
+          ] do
+        state = heard_turn([edited("/r/a.py"), command(cmd, "1 failed in 0.02s", "completed")])
+        refute TokenEconomizer.learns?(state.turns["a"], true), cmd
+      end
+
+      # The script of a command run whole as `bash -lc '<script>'` is read.
+      state =
+        heard_turn([edited("/r/a.py"), command("bash -lc 'pytest -q'", "1 passed in 0.02s")])
+
+      assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a command heard only in part after an edit is not read, so the turn is not learned" do
+      capped = "cat > a.py <<'EOF'\n" <> String.duplicate("x = 1\n", 700) <> "EOF\npytest -q"
+      failing = command(capped, "1 failed in 0.02s", "failed", %{"exitCode" => 1})
+
+      state = heard_turn([edited("/r/a.py"), failing])
+      refute TokenEconomizer.learns?(state.turns["a"], true)
+
+      # An edit after it is the turn's last, and a check that passed after that is read.
+      passing = command("pytest -q", "1 passed in 0.02s")
+      state = heard_turn([edited("/r/a.py"), failing, edited("/r/a.py"), passing])
+      assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a heredoc operator quoted, escaped or in a comment opens no heredoc" do
+      for line <- [
+            "printf '%s\\n' '<<EOF'",
+            ~s{echo "<<EOF"},
+            "echo \\<<EOF",
+            "echo 'a\n<<EOF'",
+            "# cat <<EOF",
+            "true # <<EOF"
+          ] do
+        cmd = line <> "\npytest -q"
+        assert Turn.status_of_tests(cmd) == "own", cmd
+
+        failing = heard_turn([edited("/r/a.py"), command(cmd, "1 failed in 0.02s", "failed")])
+        assert failing.turns["a"].guard.last_verify_failed, cmd
+        refute TokenEconomizer.learns?(failing.turns["a"], true), cmd
+
+        passing = heard_turn([edited("/r/a.py"), command(cmd, "1 passed in 0.02s")])
+        assert TokenEconomizer.learns?(passing.turns["a"], true), cmd
+      end
+
+      # One opened after a quoted line, or on a line a quote spans, is read after that line.
+      cmd = "echo '<<A'; cat <<B\npytest -q\nB\npytest -q"
+      assert ShellEdits.split_heredocs(cmd) == {"echo '<<A'; cat <<B\npytest -q", ["pytest -q"]}
+      cmd = "echo 'a\nb' <<B\nbody\nB\npytest -q"
+      assert ShellEdits.split_heredocs(cmd) == {"echo 'a\nb' <<B\npytest -q", ["body"]}
+    end
+
+    test "a heredoc left open after an edit is not placed, so the turn is not learned" do
+      cmd = "cat > notes.txt <<EOF\nx = 1\npytest -q"
+      state = heard_turn([edited("/r/a.py"), command(cmd, "1 failed in 0.02s", "failed")])
+      refute TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a turn's end stops its judge job, and off stops every judge job; a delivery under way finishes" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = state |> observe(started("a")) |> observe(started("b"))
       {judge, state} = sleeper(state, "a", :judge)
@@ -1498,16 +1665,32 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       {:reply, :ok, state} =
         TokenEconomizer.handle_call({:settings, %{"loopGuard" => "watch"}}, nil, state)
 
-      assert_receive {:DOWN, _, :process, ^delivery, _}
-      assert state.tasks == %{}
-
       {judge, state} = sleeper(state, "b", :judge)
 
       {:reply, :ok, state} =
         TokenEconomizer.handle_call({:settings, %{"loopGuard" => "off"}}, nil, state)
 
       assert_receive {:DOWN, _, :process, ^judge, _}
-      assert state.tasks == %{} and state.turns == %{}
+      assert Process.alive?(delivery)
+      assert Map.values(state.tasks) == [{"b", :delivery}] and state.turns == %{}
+    end
+
+    # The steer may already have been taken when the mode changes: what the delivery
+    # answers is what happened.
+    test "a redirect on its way when watching starts lands as its delivery says" do
+      {delivery, state} = sleeper(redirecting("a"), "a", :delivery)
+
+      {:reply, :ok, state} =
+        TokenEconomizer.handle_call({:settings, %{"loopGuard" => "watch"}}, nil, state)
+
+      assert Process.alive?(delivery)
+      assert state.turns["a"].guard.redirecting
+
+      state = delivered(state, "a", {:ok, %{}})
+      guard = state.turns["a"].guard
+      refute guard.redirecting
+      assert guard.segment == 1 and guard.redirects == 1
+      assert [%{"action" => "nudge", "delivered" => true}] = state.recent
     end
   end
 end

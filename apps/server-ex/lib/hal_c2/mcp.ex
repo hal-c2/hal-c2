@@ -181,8 +181,11 @@ defmodule HalC2.Mcp do
   # its project's, launching differently (#1452). Without streams (tools, some
   # tests) there is no thread to read, so the environment's settings apply.
   defp project(thread_id) do
-    if Process.whereis(HalC2.Streams.Registry) do
-      (HalC2.Streams.get(thread_id, "thread", thread_id) || %{})["projectId"]
+    with pid when is_pid(pid) <- Process.whereis(HalC2.Streams.Registry),
+         %{"projectId" => project} <- HalC2.Streams.get(thread_id, "thread", thread_id) do
+      project
+    else
+      _ -> nil
     end
   end
 

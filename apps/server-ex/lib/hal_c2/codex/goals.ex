@@ -74,6 +74,33 @@ defmodule HalC2.Codex.Goals do
   def first_prompt(objective), do: "Start working toward this goal: #{objective}"
 
   @doc """
+  The turn that opens a goal: its text is the goal's first prompt in place of the
+  user's `/goal` message, after what the turn put ahead of it, a new conversation's
+  context from the plugins (`HalC2.Orchestration.RunShape`) and a handed-off history.
+  A resumed conversation has nothing ahead, so nothing is put there again. The turn
+  starting confirms the handoff, so history left out here would never be sent: a text
+  that does not end with the message still keeps the history the turn carries
+  (`HalC2.Orchestration.Handoff.ahead/2`).
+  """
+  def first_turn(%{text: text} = turn, objective) do
+    message = Map.get(turn, :message)
+
+    ahead =
+      cond do
+        is_binary(text) and is_binary(message) and String.ends_with?(text, message) ->
+          binary_part(text, 0, byte_size(text) - byte_size(message))
+
+        history = turn[:history] ->
+          history <> "\n\n"
+
+        true ->
+          ""
+      end
+
+    %{turn | text: ahead <> first_prompt(objective)}
+  end
+
+  @doc """
   The goal as the provider thread keeps it (`goal`), from Codex's `ThreadGoal`: nil
   for none, or one whose objective is blank.
   """

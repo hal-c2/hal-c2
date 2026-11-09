@@ -67,8 +67,12 @@ defmodule HalC2.OrchestrationPropTest do
   held queue, and starts ahead of it when nothing runs (upstream #21473). While a turn
   is being stopped (its provider slow to answer the stop), a steer or restart into it
   and a promote are refused, and any other message waits in the queue (#16926). The
-  queue of an archived thread cannot be resumed. A plugin's steer meant only for its run
-  (`steerOnly`) that names no run (or "") is refused, steering nothing and starting no turn.
+  queue of an archived thread cannot be resumed. A provider thread's unconfirmed mark,
+  which a switch between the instances sets as it hands the thread's history over,
+  names a run of that provider thread that has not completed, and an earlier run
+  through which its conversation holds the thread. A plugin's steer meant only for
+  its run (`steerOnly`) that names no run (or "") is refused, steering nothing and
+  starting no turn.
   """
 
   use ExUnit.Case, async: false
@@ -1670,6 +1674,7 @@ defmodule HalC2.OrchestrationPropTest do
         ),
       queue: thread.queue,
       foreign: [],
+      marks: [],
       messages:
         Map.new(thread.messages, fn {id, m} ->
           shown = if m.shown, do: {m.run, if(m.notice, do: "notification", else: "user_message")}
@@ -2775,6 +2780,7 @@ defmodule HalC2.OrchestrationPropTest do
             ),
           queue: queue,
           foreign: foreign(state, runs),
+          marks: marks(state, by_id),
           messages: messages,
           steered: provider_steers(Enum.map(user_messages, fn {_, m} -> m["text"] end)),
           requests:
@@ -2813,6 +2819,31 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   defp native(ref), do: (ref || %{})["nativeId"] || ""
+
+  # The provider threads whose unconfirmed mark (`unconfirmedRunId`) is wrong. A mark
+  # names a run of its own provider thread that the provider has not been seen to
+  # answer: never one that completed (its history would be handed over again for
+  # nothing), nor another provider thread's (nothing would take it off). It says
+  # through which earlier run the conversation holds the thread (`unconfirmedSince`),
+  # and nothing does without one.
+  defp marks(state, by_id) do
+    for {id, thread} <- StreamState.get(state, "provider-thread"),
+        wrong_mark?(id, thread["unconfirmedRunId"], thread["unconfirmedSince"], by_id),
+        do: {id, thread["unconfirmedRunId"], thread["unconfirmedSince"]}
+  end
+
+  defp wrong_mark?(_id, nil, nil, _by_id), do: false
+
+  defp wrong_mark?(id, run_id, since, by_id) do
+    case by_id[run_id] do
+      %{"providerThreadId" => ^id, "status" => status, "ordinal" => ordinal}
+      when status != "completed" and is_integer(since) and since < ordinal ->
+        false
+
+      _ ->
+        true
+    end
+  end
 
   defp answered_after?(items, item, text) do
     Enum.any?(Map.values(items), fn answer ->

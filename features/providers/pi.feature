@@ -682,6 +682,47 @@ Feature: Pi
     When the user sends the next message
     Then that turn's work log shows the extension's failure
 
+  # The run's prompt waits for Pi's compaction to end, and with it the history it hands
+  # over. Showing an extension's failure from between turns is not Pi taking either, so a
+  # handoff still counts that history as unconfirmed (#1363 review).
+  Scenario: A prompt waiting on Pi's compaction does not confirm its handoff
+    Given Pi is compacting a thread's conversation after an extension failed between turns
+    When the thread comes back to Pi from Codex while Pi still compacts
+    Then the run shows the extension's failure while its prompt waits
+    And the history it hands over is still unconfirmed
+
+  # Pi may have begun compacting before the prompt went out and say so only after it:
+  # the compaction shows in the run, but Pi still turns the prompt back, so it is no
+  # proof Pi took the prompt, and the history stays unconfirmed (#1363 review).
+  Scenario: A compaction Pi began before the prompt does not confirm its handoff
+    Given Pi is compacting a thread's conversation it has not said it compacts
+    When the thread comes back to Pi from Codex and Pi turns its prompt back for the compaction
+    Then the run shows the compaction while its prompt waits
+    And the history it hands over is still unconfirmed
+
+  # Taking over Pi's wake replays what Pi said before it began compacting: Pi's own work,
+  # not Pi taking the prompt, so the history it hands over stays unconfirmed too.
+  Scenario: A prompt that takes over a compacting Pi wake does not confirm its handoff
+    Given a Pi extension has woken Pi, which compacts after its first words
+    When the thread comes back to Pi from Codex while Pi still compacts
+    Then the run shows the wake's work while its prompt waits
+    And the history it hands over is still unconfirmed
+
+  # A prompt that takes over a wake Pi is still at goes to Pi as a follow-up. Pi answers
+  # that it queued it, at once or late, and delivers it only once the wake's work stops:
+  # until then what Pi does is still the wake's work, so it confirms no handoff; Pi
+  # delivering the prompt does.
+  Scenario Outline: A prompt that follows a running Pi wake confirms its handoff once Pi delivers it
+    Given a Pi extension has woken Pi, which runs a command once a message follows it, answering it "<answered>"
+    When the thread comes back to Pi from Codex while the wake runs
+    Then the run shows the wake's command before Pi takes its prompt
+    And the history it hands over stays unconfirmed until Pi takes the prompt
+
+    Examples:
+      | answered |
+      | at once  |
+      | late     |
+
   Scenario Outline: A Pi compaction shows how it ended
     When Pi's compaction of the conversation <ends>
     Then the work log entry reads "<title>"

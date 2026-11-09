@@ -407,7 +407,6 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> Map.put(:launch, launch)
       |> Map.put(:resumed_at, Map.get(turn, :head))
       |> bypass_policy()
-      |> unsaved_session(state)
 
     last_ids = state.last_ids
 
@@ -454,7 +453,22 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
 
       {:ok, state, turn} ->
+        # A session Claude could not resume starts afresh with the whole thread, in a
+        # conversation that holds no message of the old one: a turn stopped before
+        # Claude writes leaves it to be resumed whole (`kept_head/3`).
+        fresh? = Map.get(state, :fresh_start, false)
+
+        turn =
+          if fresh?,
+            do: turn |> new_conversation() |> Map.delete(:resumed_at),
+            else: turn
+
+        {state, turn} = HalC2.Orchestration.Handoff.fresh_start(state, turn)
         state = %{state | turn: turn}
+
+        # Claude's goal (`goal/2`) lived in the conversation it could not resume, and the
+        # new one has none: shown as still active, any turn's end would read as meeting it.
+        state = if fresh?, do: %{put_goal(state, nil) | goal_checked: false}, else: state
 
         # A run that ended while the session opened never reaches Claude.
         case started(state) do
@@ -1185,7 +1199,28 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp non_empty(_value, default), do: default
 
-  # The message, with where its files are; images go inline as content blocks.
+  # The message, with where its files are; images go inline as content blocks. The
+  # history a turn hands over (`HalC2.Orchestration.Handoff.ahead/2`) goes in front of
+  # what the user wrote, and in a block of its own when that is a command: Claude runs
+  # a slash command only from the last block (#1342). The user's text is read on its
+  # own either way, so a `$skill` someone mentioned earlier in the thread does not run.
+  defp claude_content(%{history: history} = turn) when is_binary(history) do
+    said = String.replace_prefix(turn.text, history <> "\n\n", "")
+
+    case claude_content(%{turn | history: nil, text: said}) do
+      text when is_binary(text) ->
+        if String.starts_with?(String.trim_leading(text), "/"),
+          do: [
+            %{"type" => "text", "text" => history <> "\n\n"},
+            %{"type" => "text", "text" => text}
+          ],
+          else: history <> "\n\n" <> text
+
+      blocks ->
+        [%{"type" => "text", "text" => history <> "\n\n"} | blocks]
+    end
+  end
+
   defp claude_content(turn) do
     attachments = Map.get(turn, :attachments, [])
     images = HalC2.Attachments.native_images(attachments)
@@ -1506,11 +1541,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   defp handed_over(state, turn, fork) do
-    turn = %{
-      turn
-      | fork: nil,
-        text: HalC2.Orchestration.Handoff.prompt(fork[:fallback], turn.text)
-    }
+    turn = HalC2.Orchestration.Handoff.ahead(%{turn | fork: nil}, fork[:fallback])
 
     with {:ok, state} <- ensure_session(state, turn) do
       not_carried(state, turn, fork)
@@ -1600,50 +1631,6 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp semver(_text), do: nil
 
   # Fast mode left off launches as it does unset.
-  # Upstream #19637: a session whose transcript saved no message (the MC stopped after
-  # sending a prompt, before Claude wrote it) cannot be resumed: Claude answers "No
-  # conversation found", and so would every later message. A new process for such a
-  # session starts a new conversation that carries the thread's history instead. A
-  # transcript that is missing, holds a message, or cannot be read resumes as before.
-  defp unsaved_session(turn, state) do
-    id = Map.get(turn, :native_thread_id)
-
-    if is_binary(id) and Map.get(turn, :fork) == nil and
-         (state.session == nil or not same_launch?(state.launch, turn.launch)) and
-         unsaved?(turn, id) do
-      turn
-      |> HalC2.Orchestration.Handoff.afresh()
-      |> Map.merge(%{native_thread_id: nil, head: nil, resumed_at: nil})
-    else
-      turn
-    end
-  end
-
-  # Every copy of the transcript, as Claude may have written one under another folder.
-  defp unsaved?(turn, id) do
-    files =
-      [
-        Provider.config_dir(Entities.instance(turn.ids), turn.cwd),
-        "projects",
-        "*",
-        id <> ".jsonl"
-      ]
-      |> Path.join()
-      |> Path.wildcard()
-
-    files != [] and not Enum.any?(files, &saved_message?/1)
-  end
-
-  defp saved_message?(file) do
-    file
-    |> File.stream!()
-    |> Enum.any?(
-      &match?({:ok, %{"type" => type}} when type in ["user", "assistant"], JSON.decode(&1))
-    )
-  rescue
-    File.Error -> true
-  end
-
   defp same_launch?(launch, other), do: plain_launch(launch) == plain_launch(other)
 
   defp plain_launch(%{settings: %{"fastMode" => false} = settings} = launch),
@@ -1683,9 +1670,64 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  # Claude cannot resume a session it never saved a message to, as when the MC sent
+  # a prompt and Claude went down before writing it (Upstream #19637): it exits, and
+  # every later turn would too. Such a session is replaced by a new one, handed the
+  # whole thread (`HalC2.Orchestration.Handoff.fresh_start/2`). Its transcript tells,
+  # where this instance keeps them. Any other session is opened, and replaced if
+  # Claude ends before it answers: its transcript may not be found here, or hold no
+  # message to resume at where the turn asks (a subagent's).
   defp ensure_session(state, turn) do
     Process.flag(:trap_exit, true)
 
+    case saved_session(turn) do
+      :new ->
+        start_session(state, turn)
+
+      :gone ->
+        start_session(Map.put(state, :fresh_start, true), new_conversation(turn))
+
+      :resume ->
+        with {:ok, state} <- start_session(state, turn) do
+          if opened?(state.session),
+            do: {:ok, state},
+            else:
+              start_session(
+                Map.put(%{state | session: nil}, :fresh_start, true),
+                new_conversation(turn)
+              )
+        end
+    end
+  end
+
+  # A fork names its own session, and a carried one is checked as it opens (`open_session/2`).
+  defp saved_session(%{fork: %{}}), do: :new
+
+  defp saved_session(%{native_thread_id: id} = turn) when is_binary(id) do
+    instance = Entities.instance(turn.ids)
+
+    case HalC2.PortableSessions.claude_transcript(instance, id, turn.cwd) do
+      nil -> :resume
+      path -> if saved_message?(path), do: :resume, else: :gone
+    end
+  end
+
+  defp saved_session(_turn), do: :new
+
+  defp saved_message?(path) do
+    path
+    |> File.stream!()
+    |> Enum.any?(
+      &match?({:ok, %{"type" => type}} when type in ["user", "assistant"], JSON.decode(&1))
+    )
+  rescue
+    # A transcript that cannot be read is Claude's to judge.
+    File.Error -> true
+  end
+
+  defp new_conversation(turn), do: %{turn | native_thread_id: nil} |> Map.delete(:head)
+
+  defp start_session(state, turn) do
     opts = [
       handler: self(),
       cd: turn.cwd,
@@ -1994,7 +2036,9 @@ defmodule HalC2.Claude.ThreadRuntime do
       "queued" ->
         put_in(state.turn.prompt, Map.put(prompt, :queued, true))
 
+      # Claude took the prompt.
       "started" ->
+        commit(state, &[confirmed(&1, state.turn.ids)])
         put_in(state.turn.prompt, %{prompt | started: true})
 
       # Claude ended the prompt without running it; a cancelled one is a stop, which
@@ -3826,6 +3870,17 @@ defmodule HalC2.Claude.ThreadRuntime do
           %{"lastRunOrdinal" => ^own} = thread ->
             thread
             |> Map.put("lastRunOrdinal", turn[:seen_run_ordinal])
+            # Nor did the history the run handed over: its mark goes, so the next run
+            # resumes the conversation and hands that over again (`Handoff.plan/6`). A
+            # mark the run found stands again: what it stands for is still unconfirmed.
+            |> then(fn thread ->
+              if thread["unconfirmedRunId"] == turn.ids.run,
+                do:
+                  thread
+                  |> Map.drop(["unconfirmedRunId", "unconfirmedSince"])
+                  |> Map.merge(Map.get(turn, :seen_mark, %{})),
+                else: thread
+            end)
             |> then(fn thread ->
               if head = turn[:head],
                 do:

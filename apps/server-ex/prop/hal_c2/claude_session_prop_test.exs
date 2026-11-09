@@ -15,7 +15,11 @@ defmodule HalC2.ClaudeSessionPropTest do
   answer about that server, so its message is held: meanwhile the MC can go down and
   the next one adopt the process (it runs durable), and the user can stop the turn,
   until Claude answers. Between turns Claude's settings in the project can turn
-  bypassing permissions off, and Auto mode with it.
+  bypassing permissions off, and Auto mode with it, the MC can let go of the thread's
+  runtime, as on a restart, and, with no Claude process up, Claude can lose what the
+  session's transcript held (its messages, or the whole file), as when it went down
+  before saving a prompt, or the thread can be left to resume it at a message Claude
+  cannot resume at (a subagent's).
 
   The promise: a turn on another selection (fast mode off and unset are one) while
   background work runs is refused, and the work and its Claude process are kept; any
@@ -36,7 +40,11 @@ defmodule HalC2.ClaudeSessionPropTest do
   mode when they turn Auto off too: each turn reads them again. The message of a turn
   refused for background work reaches Claude with the next turn's, before it; a
   `/compact` reaches Claude as the command alone, and leaves them for the turn after;
-  a refused one is not passed on.
+  a refused one is not passed on. A new process resumes the thread's session, unless
+  that session lost its transcript, Claude cannot resume it where the thread asks, or
+  its last prompt handed the thread over unconfirmed: then it starts a new one, handed the whole thread, which the next
+  process resumes. The MC looks for a session's transcript where Claude keeps it, in a
+  config dir given absolute or relative to the folder Claude runs in.
   """
 
   use ExUnit.Case, async: false
@@ -68,10 +76,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   property "a Claude thread keeps its background work across the turns it allows",
     numtests: HalC2.Prop.numtests(20),
     max_size: 20 do
-    forall access <- boolean() do
+    forall {relative?, access} <- {boolean(), boolean()} do
       forall cmds <- commands(__MODULE__, %{initial_state() | access: access}) do
         trap_exit do
-          start(access)
+          start(relative?, access)
           {history, state, result} = run_commands(__MODULE__, cmds)
           HalC2.Prop.stop_services()
           Application.delete_env(:hal_c2, :claude_command)
@@ -80,6 +88,7 @@ defmodule HalC2.ClaudeSessionPropTest do
           System.delete_env("FAKE_CLAUDE_MCP_HOLD")
           System.delete_env("CLAUDE_CONFIG_DIR")
           System.delete_env("FAKE_CLAUDE_INPUT_LOG")
+          Enum.each(~w(FAKE_SESSIONS FAKE_CLAUDE_TRACE FAKE_CLAUDE_USAGE), &System.delete_env/1)
           Application.put_env(:hal_c2, :durable_programs, false)
           Application.delete_env(:hal_c2, :claude_interrupt_timeout_ms)
 
@@ -91,7 +100,9 @@ defmodule HalC2.ClaudeSessionPropTest do
     end
   end
 
-  defp start(access) do
+  # Claude's config dir is given absolute, or relative, as Claude takes it: from the
+  # folder it runs in, where the MC must look for its transcripts too (#1363 review).
+  defp start(relative?, access) do
     home = HalC2.Prop.scratch_home("claude-session")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
@@ -99,10 +110,16 @@ defmodule HalC2.ClaudeSessionPropTest do
     # Claude's own settings are the scratch home's, never the user's (`policy/1`).
     config = Path.join(home, "claude")
     File.mkdir_p!(config)
-    System.put_env("CLAUDE_CONFIG_DIR", config)
+    System.put_env("CLAUDE_CONFIG_DIR", if(relative?, do: "../claude", else: config))
     Process.put(:work, work)
     # Every message Claude reads, one JSON string a line (`sent/1`).
     System.put_env("FAKE_CLAUDE_INPUT_LOG", Path.join(home, "input.log"))
+    # The fake keeps transcripts as Claude does, in that home, and traces its argv.
+    System.put_env("FAKE_SESSIONS", "1")
+    System.put_env("FAKE_CLAUDE_TRACE", Path.join(home, "claude-trace.jsonl"))
+    # Each answer reports its usage, as Claude's do: without, the handoff's room counts
+    # every turn's reserve as spent and soon refuses the history refused turns leave.
+    System.put_env("FAKE_CLAUDE_USAGE", "1")
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
     # Durable, so a process outlives the MC that started it (`adopt/0`).
     Application.put_env(:hal_c2, :durable_programs, true)
@@ -168,8 +185,10 @@ defmodule HalC2.ClaudeSessionPropTest do
   #   took it; held: the turn whose message waits on Claude's answer about the
   #   server (%{n, text, interrupted}), or nil; policy: what Claude's settings turn
   #   off (`policy/1`); access: whether the thread's project lets agents reach
-  #   HAL-C2's server (`HalC2.Mcp.agent_access/1`); missed: the texts of turns refused since a message last reached
-  #   Claude, oldest first; n: a counter.
+  #   HAL-C2's server (`HalC2.Mcp.agent_access/1`); missed: the texts of turns refused
+  #   since a message last reached Claude, oldest first; lost: whether the session's
+  #   transcript lost what it held; marked: whether the last prompt handed the thread
+  #   over and Claude never started it; n: a counter.
   def initial_state,
     do: %{
       launch: nil,
@@ -181,6 +200,8 @@ defmodule HalC2.ClaudeSessionPropTest do
       policy: :allowed,
       access: true,
       missed: [],
+      lost: false,
+      marked: false,
       n: 1
     }
 
@@ -198,7 +219,9 @@ defmodule HalC2.ClaudeSessionPropTest do
       {1, {:call, __MODULE__, :policy, [oneof([:allowed, :no_bypass, :no_auto])]}},
       {2,
        {:call, __MODULE__, :held_turn,
-        [n, oneof(@models), oneof([:unset, false, true]), oneof(@held_texts)]}}
+        [n, oneof(@models), oneof([:unset, false, true]), oneof(@held_texts)]}},
+      {2, {:call, __MODULE__, :let_go, []}},
+      {2, {:call, __MODULE__, :lose, [oneof([:messages, :file, :head])]}}
     ])
   end
 
@@ -219,14 +242,25 @@ defmodule HalC2.ClaudeSessionPropTest do
   # A held turn starts a new process; one half-answered runs until it is stopped. The
   # fake answers a message by what it finds in it, so a refused "never start a turn"
   # would fail every turn that carries it, and a held turn's answer is checked whole.
-  # Only a process handed HAL-C2's server is asked about it, so only one can hold.
+  # Only a process handed HAL-C2's server is asked about it, so only one can hold. One
+  # that hands the thread over is not modelled.
   def precondition(%{held: nil} = state, {:call, _, :held_turn, [_n, model, fast, _text]}),
     do:
       state.access and not reused?(state, model, fast) and not refused?(state, model, fast) and
-        state.missed == []
+        state.missed == [] and not state.marked and not state.lost
 
+  # How `/compact` meets a session that has to start over is not modelled.
   def precondition(%{held: nil} = state, {:call, _, :turn, [_n, model, fast, text]}),
-    do: not (refused?(state, model, fast) and text == :never_start)
+    do:
+      not (refused?(state, model, fast) and text == :never_start) and
+        not (text == :compact and (state.marked or state.lost))
+
+  # The MC lets go of an idle runtime only; a transcript is lost with no process up.
+  def precondition(%{held: nil} = state, {:call, _, :let_go, []}),
+    do: state.session and not state.background
+
+  def precondition(%{held: nil} = state, {:call, _, :lose, [_]}),
+    do: state.launch != nil and not state.session and not state.lost
 
   def precondition(%{held: nil}, {:call, _, name, _}),
     do: name in [:turn, :stop, :refuse_tools, :policy]
@@ -256,18 +290,33 @@ defmodule HalC2.ClaudeSessionPropTest do
       state
       | launch: {model, fast == true},
         session: true,
-        # The fake reads "never start a turn" before "in the background".
-        background:
-          state.background or text == :background or
-            (text != :never_start and carries?(state, :background, text)),
+        # A refused turn's message reaches Claude as history, context and not a request,
+        # so only the turn's own text starts work.
+        background: state.background or text == :background,
         tools: if(reused?(state, model, fast), do: state.tools, else: takes_tools?(state)),
-        missed: if(text == :compact, do: state.missed, else: [])
+        missed: missed(state, text),
+        lost: false,
+        marked: marks?(state, text)
     }
+
+  # A turn handed history that Claude never started leaves the handoff unconfirmed: the
+  # next turn is handed it again, its own message too.
+  defp marks?(state, text), do: history?(state, text) and text == :never_start
+
+  defp missed(state, text) do
+    cond do
+      text == :compact -> state.missed
+      marks?(state, text) -> state.missed ++ [text]
+      true -> []
+    end
+  end
 
   def next_state(state, _result, {:call, _, :refuse_tools, [refusing]}),
     do: %{state | refusing: refusing}
 
   def next_state(state, _result, {:call, _, :policy, [policy]}), do: %{state | policy: policy}
+  def next_state(state, _result, {:call, _, :let_go, []}), do: %{state | session: false}
+  def next_state(state, _result, {:call, _, :lose, [_]}), do: %{state | lost: true}
 
   def next_state(state, _result, {:call, _, :held_turn, [n, model, fast, text]}),
     do: %{
@@ -291,19 +340,33 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   def next_state(state, _result, {:call, _, :stop, []}), do: state
 
-  # Whether this turn hands Claude the refused message `missed` along with its own.
-  defp carries?(state, missed, text), do: text != :compact and missed in state.missed
+  # A turn runs on the same process when its selection is, and no handoff went
+  # unconfirmed, or background work keeps the conversation it went to.
+  defp reused?(state, model, fast),
+    do: state.session and state.launch == {model, fast == true} and not starts_over?(state)
 
   # Whether a process started now has HAL-C2's tools: handed them, and not refusing them.
   defp takes_tools?(state), do: state.access and not state.refusing
 
-  defp reused?(state, model, fast), do: state.session and state.launch == {model, fast == true}
+  # An unconfirmed handoff starts a new session, handed the whole thread, unless
+  # background work runs in the conversation: what it may lack goes into it again.
+  defp starts_over?(state), do: state.marked and not state.background
 
   defp refused?(state, model, fast),
     do: state.background and state.launch != {model, fast == true}
 
   # No turn has started Claude's session yet, so it has no conversation to compact.
   defp empty_compact?(state, text), do: text == :compact and state.launch == nil
+
+  # Whether a turn's Claude starts a new session rather than resume one.
+  defp fresh?(state),
+    do: state.launch == nil or starts_over?(state) or (state.lost and not state.session)
+
+  # Whether it is handed the thread: a new session after earlier turns.
+  defp handed?(state), do: fresh?(state) and state.launch != nil
+
+  # Whether history goes before its text: the whole thread, or the refused turns'.
+  defp history?(state, text), do: handed?(state) or (text != :compact and state.missed != [])
 
   def postcondition(state, {:call, _, :turn, [_n, model, fast, text]} = call, seen) do
     cond do
@@ -314,23 +377,20 @@ defmodule HalC2.ClaudeSessionPropTest do
         seen.status == "failed" and not seen.background and seen.compactions == 0
 
       text == :never_start ->
-        seen.status == "failed" and
-          seen.reused == (state.session and state.launch == {model, fast == true}) and
+        seen.status == "failed" and started?(state, model, fast, text, seen) and
           seen.background == state.background and
           sent?(state, text, seen.sent)
 
       # The fake answers what it finds first in a message, so one that carries refused
       # messages is checked by what reached Claude, not by its answer.
       text != :compact and state.missed != [] ->
-        seen.status == "completed" and
-          seen.reused == (state.session and state.launch == {model, fast == true}) and
+        seen.status == "completed" and started?(state, model, fast, text, seen) and
           seen.background == next_state(state, seen, call).background and
           sent?(state, text, seen.sent)
 
       true ->
         # A turn ends on its own answer, not on the one a turn of Claude's own gave.
-        seen.status == "completed" and
-          seen.reused == (state.session and state.launch == {model, fast == true}) and
+        seen.status == "completed" and started?(state, model, fast, text, seen) and
           seen.background == (state.background or text == :background) and
           (text != :which_mode or seen.reply == "mode #{@full_access_modes[state.policy]}") and
           (text != :hello or seen.reply == "Hello from claude") and
@@ -346,11 +406,11 @@ defmodule HalC2.ClaudeSessionPropTest do
   end
 
   # What reached Claude for a turn that ran: its text, after those of the turns refused
-  # before it, oldest first; a `/compact` alone.
+  # before it, oldest first, and the thread's history when handed it; a `/compact` alone.
   defp sent?(state, text, [sent]) do
     own = @texts[text]
 
-    if text == :compact or state.missed == [],
+    if not history?(state, text),
       do: sent == own,
       else:
         String.ends_with?(sent, "\n\n" <> own) and
@@ -373,6 +433,29 @@ defmodule HalC2.ClaudeSessionPropTest do
 
   def postcondition(_state, {:call, _, :refuse_tools, [_]}, seen), do: seen == :ok
   def postcondition(_state, {:call, _, :policy, [_]}, seen), do: seen == :ok
+  def postcondition(_state, {:call, _, :let_go, []}, seen), do: seen == :ok
+  def postcondition(_state, {:call, _, :lose, [_]}, _seen), do: true
+
+  # A new process starts a new session when `fresh?/1`, else resumes the thread's own;
+  # and history goes before the text only as `history?/2` says.
+  defp started?(state, model, fast, text, seen) do
+    reused = reused?(state, model, fast)
+
+    seen.reused == reused and seen.handed == history?(state, text) and
+      if reused,
+        do: seen.starts == [],
+        else:
+          seen.starts != [] and
+            resumed(List.last(seen.starts)) ==
+              if(fresh?(state), do: nil, else: seen.native)
+  end
+
+  defp resumed(argv) do
+    case Enum.drop_while(argv, &(&1 != "--resume")) do
+      ["--resume", id | _] -> id
+      _ -> nil
+    end
+  end
 
   # Nothing reaches Claude before it has answered about the server.
   def postcondition(_state, {:call, _, :held_turn, _}, seen),
@@ -406,10 +489,14 @@ defmodule HalC2.ClaudeSessionPropTest do
     runs = MapSet.new(StreamState.list(before, "run"), & &1["id"])
     session = session()
     read = read_lines()
+    traced = length(trace())
+    native = native(before)
 
     dispatch(n, model, fast, text)
     run = await_run(runs, System.monotonic_time(:millisecond) + @wait_ms)
     state = current(@tid)
+    new = Enum.drop(trace(), traced)
+    sent = sent(read)
 
     %{
       status: run["status"],
@@ -417,7 +504,10 @@ defmodule HalC2.ClaudeSessionPropTest do
       background: background?(),
       reply: reply(state, run),
       compactions: Enum.count(items(state, run), &(&1["type"] == "compaction")),
-      sent: sent(read)
+      sent: sent,
+      starts: for(%{"argv" => argv} <- new, do: argv),
+      handed: Enum.any?(sent, &(&1 =~ "<conversation_history>")),
+      native: native
     }
   end
 
@@ -542,6 +632,57 @@ defmodule HalC2.ClaudeSessionPropTest do
     %{stopped: stopped, held: held?()}
   end
 
+  # The MC lets go of the thread's idle runtime, as IdleSessions or a restart does.
+  def let_go do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, @tid)
+    ref = Process.monitor(pid)
+    :ok = GenServer.call(pid, :release)
+
+    receive do
+      {:DOWN, ^ref, :process, _, _} -> :ok
+    after
+      @wait_ms -> raise "the runtime was not let go of"
+    end
+  end
+
+  # Claude loses what the thread's session saved: its messages, or the transcript; or
+  # the thread resumes it at a message Claude cannot resume at, a subagent's, with the
+  # transcript kept.
+  def lose(:head) do
+    :ok =
+      HalC2.Streams.transact(@tid, :thread, fn stream ->
+        [id] = Map.keys(stream.entities["provider-thread"])
+        ref = HalC2.Orchestration.Entities.provider_ref("sub-uuid-1", "claudeAgent")
+
+        {[
+           Orchestration.upsert(
+             stream,
+             "provider-thread",
+             id,
+             &Map.put(&1, "nativeConversationHeadRef", ref)
+           )
+         ], :ok}
+      end)
+  end
+
+  def lose(what) do
+    path =
+      HalC2.PortableSessions.claude_transcript(
+        "claudeAgent",
+        native(current(@tid)),
+        Process.get(:work)
+      )
+
+    case what do
+      :file ->
+        File.rm!(path)
+
+      :messages ->
+        kept = path |> File.stream!() |> Enum.reject(&(JSON.decode!(&1)["type"] == "user"))
+        File.write!(path, kept)
+    end
+  end
+
   # The user stops the thread between turns.
   def stop do
     stopped = HalC2.Claude.ThreadRuntime.interrupt(@tid, nil) == :ok
@@ -624,4 +765,18 @@ defmodule HalC2.ClaudeSessionPropTest do
   end
 
   defp current(tid), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(tid))
+
+  defp native(state) do
+    state
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(&get_in(&1, ["nativeThreadRef", "nativeId"]))
+  end
+
+  # What the fake was started with and sent, oldest first.
+  defp trace do
+    case File.read(System.fetch_env!("FAKE_CLAUDE_TRACE")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:error, :enoent} -> []
+    end
+  end
 end

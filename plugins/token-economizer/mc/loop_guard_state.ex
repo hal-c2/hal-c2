@@ -56,9 +56,6 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
   @assignment Regex.compile!("(^|[\\s;&|(`])([A-Za-z_]\\w*)=#{@value}*")
   # A here-string's text, `<<< '...'`.
   @here_string Regex.compile!("<<<\\s*#{@value}+")
-  # Code run from the command line, which may write files no edit counter sees, or hold
-  # anything: `python -c`, `node -e`, `ruby -e`, `perl -ne`, `php -r`, `deno eval`.
-  @inline_code ~r/(?:^|[\s;&|(\/])(?:python\d?(?:\.\d+)?\s+(?:-\S+\s+)*-c|(?:node|bun)\s+(?:-\S+\s+)*(?:-e|-p|--eval|--print)|(?:ruby|osascript|Rscript)\s+(?:-\S+\s+)*-e|perl\s+(?:-\S+\s+)*-[a-zA-Z]*[eE]|php\s+(?:-\S+\s+)*-r|deno\s+eval)(?=[\s'"]|$)/
 
   def test_run_re, do: @test_run
   def error_re, do: @error
@@ -272,8 +269,8 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
   # does not read as the shell does (`ShellEdits.legible?/1`), for any of its words may
   # be what it writes; never a heredoc's body, a here-string's text, a quoted string over
   # several lines or the value a variable is set to (`API_TOKEN=... pytest`); and of a
-  # command that writes a file, source or not, runs code given inline (`node -e '...'`)
-  # or code this cannot read (`sh -c '...'`, `... | python3`), only the programs it
+  # command that writes a file, source or not, or runs code this does not read
+  # (`ShellEdits.opaque?/1`: `node -e '...'`, `sh -c '...'`, `... | python3`), only the programs it
   # runs, for any of its words may be what it writes (`printf '...' > a.py`, `echo
   # SECRET=1 > Main.qml`, `sed -i 's/x/y/' a.py`). `fold_shell_edits/2` names the source
   # files it wrote.
@@ -284,8 +281,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.State do
       not ShellEdits.legible?(cmd) ->
         "<shell command>"
 
-      ShellEdits.writes?(script) or Regex.match?(@inline_code, script) or
-          ShellEdits.opaque?(script) ->
+      ShellEdits.writes?(script) or ShellEdits.opaque?(script) ->
         Enum.join(ShellEdits.programs(script), "; ") <> " …"
 
       true ->

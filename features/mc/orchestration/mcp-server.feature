@@ -116,13 +116,13 @@ Feature: The HAL-C2 MCP server agents receive
     When a run of "caller" starts
     Then the agent is given no "hal-c2" server
 
-  # A new thread's sidebar row lands a moment after its first message is accepted:
-  # its first turn still reads its own project's choice, so its next turn does not
-  # launch the agent afresh.
+  # The sidebar lists a new thread a moment after it is made, and its first run can start
+  # before then. The project still decides: the run read the environment's settings
+  # once, and the next run, reading the project's, opened a new session.
   @mc
-  Scenario: A new thread's first turn keeps to its project's agent access
+  Scenario: A new thread's first run follows its project's agent access
     Given project "demo" turns agent access to HAL-C2 off
-    When a thread "fresh" is launched in "demo" with a first message
+    When a new thread in "demo" starts its first run before the sidebar lists it
     Then the agent is given no "hal-c2" server
 
   @mc

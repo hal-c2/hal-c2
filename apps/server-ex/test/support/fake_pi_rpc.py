@@ -17,13 +17,20 @@
 #                    (a turn may also set "afterCompaction": true, to start only once a
 #                    running compaction ends, "startDelaySec": n, to start its agent late,
 #                    "startUntil": name, to start it once the file FAKE_DIR/<name> exists,
-#                    or "compactAfter": n, to compact for n seconds once it settled,
+#                    or "compactAfter": n, to compact for n seconds once it settled
+#                    (with "compactUnheard": true, its `compaction_start` is sent only
+#                    once the next prompt reaches Pi, just before Pi turns it back, and
+#                    its n seconds count from then; "compactUnheardUntil": name holds
+#                    that prompt until the file FAKE_DIR/<name> exists),
 #                    or "wake": {"text", "steps"[, "quiet": true]}: once it settled, Pi runs
 #                    that turn by itself, as when an extension wakes it, once per
 #                    process; a "quiet" one shows nothing until a prompt reaches Pi, and
 #                    one with a "wake" of its own is followed by that one)
 #   startupUi        fire-and-forget extension UI requests (as a turn's `uiEmit`) Pi's
 #                    extensions send as an RPC Pi starts, before any command
+#   lateFollowUps    a followUp prompt is queued but not answered until an
+#                    `answerFollowUps` step (or the run's end): the work Pi was at goes on
+#                    in between, as it can before Pi's answer reaches the MC
 #   rejectWhileCompacting  as Pi 1.4: every prompt, steers included, sent while Pi
 #                    compacts is rejected (logged as `rejected`); a prompt Pi takes up
 #                    is logged as `accepted`, and compaction events as `compaction`
@@ -37,7 +44,8 @@
 # abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
 # or n steer prompts, which reach Pi only once this run has settled, in the order of their
 # text, and each start a run of its own), {"exit": code}, {"waitFollowUp": true} (until a
-# followUp prompt is queued), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
+# followUp prompt is queued), {"answerFollowUps": name} (once the file FAKE_DIR/<name>
+# exists, answers the followUps `lateFollowUps` held back; without it, only waits), {"until": name} (until the file FAKE_DIR/<name> exists, or a followUp is queued).
 # While Pi runs, a prompt without a streamingBehavior is turned back as Pi does ("Agent is
 # already processing"), and a followUp one is answered after the run's own work, before
 # it settles. While a turn waits, a steer saying "refuse" is rejected, and
@@ -76,6 +84,9 @@ SEND_LOCK = threading.Lock()
 # its call to its answer, counted apart so scripted events do not end it).
 compacting = [False]
 compacts_out = [0]
+# A compaction whose `compaction_start` the next prompt overtakes (`compactUnheard`):
+# the turn that compacts, or None.
+unheard_compaction = [None]
 
 
 def is_compacting():
@@ -218,7 +229,13 @@ class Session:
 
 def reply_to(session, text):
     before = session.history()[:-1]
-    return "Reply to %s after [%s]" % (text, " | ".join(before))
+    return "Reply to %s after [%s]" % (own_text(text), " | ".join(before))
+
+
+def own_text(text):
+    """A message handed the thread's history is the words after it: the history may name
+    other turns, and Pi answers the message, not what it was handed."""
+    return text.rsplit("</conversation_history>\n\n", 1)[-1]
 
 
 log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
@@ -261,6 +278,8 @@ aborted = [False]
 # While Pi runs (from a prompt to its settle): followUp prompts wait in `follow_ups`.
 running = [False]
 follow_ups = []
+# followUps queued but not yet answered (`lateFollowUps`).
+unanswered = []
 woken = set()
 BUSY_ERROR = ("Agent is already processing. Specify streamingBehavior ('steer' or "
               "'followUp') to queue the message.")
@@ -294,10 +313,28 @@ def read():
     return msg
 
 
+def end_compaction_in(seconds):
+    """Ends the compaction a turn left running, `seconds` from now."""
+    def later():
+        time.sleep(float(seconds))
+        send({"type": "compaction_end", "aborted": False,
+              "result": {"summary": "Compacted after the turn.", "tokensBefore": 1000,
+                         "estimatedTokensAfter": 200}})
+
+    threading.Thread(target=later, daemon=True).start()
+
+
 def rejected(msg, compacting=False):
     """Pi 1.4 turns a prompt back while it compacts (`compacting`: it is, mid-turn)."""
     if msg.get("type") == "prompt" and (compacting or (
             config().get("rejectWhileCompacting") and is_compacting())):
+        turn, unheard_compaction[0] = unheard_compaction[0], None
+        if turn:
+            if "compactUnheardUntil" in turn:
+                gate = os.path.join(DIR, turn["compactUnheardUntil"])
+                serve_while(lambda: not os.path.exists(gate))
+            send({"type": "compaction_start", "reason": "threshold"})
+            end_compaction_in(turn["compactAfter"])
         log({"rejected": msg.get("message")})
         respond(msg, error=COMPACTING_ERROR)
         return True
@@ -339,13 +376,25 @@ def steer(msg):
 
 def busy_prompt(msg):
     """A prompt while Pi runs: a followUp waits for the run's end, any other is turned back."""
-    if msg.get("streamingBehavior") == "followUp":
+    if msg.get("streamingBehavior") == "followUp" and config().get("lateFollowUps"):
+        log({"queued": msg.get("message"), "followUp": True})
+        unanswered.append(msg)
+    elif msg.get("streamingBehavior") == "followUp":
         log({"accepted": msg.get("message"), "followUp": True})
         respond(msg)
         follow_ups.append(msg.get("message", ""))
     else:
         log({"busy": msg.get("message")})
         respond(msg, error=BUSY_ERROR)
+
+
+def answer_follow_ups():
+    """Answers the followUps held back (`lateFollowUps`): they run once the work ends."""
+    while unanswered:
+        msg = unanswered.pop(0)
+        log({"accepted": msg.get("message"), "followUp": True})
+        respond(msg)
+        follow_ups.append(msg.get("message", ""))
 
 
 def workspace_commands():
@@ -408,7 +457,7 @@ def assistant(text, usage=None):
 
 def matching_turn(cfg, text):
     for turn in cfg.get("turns") or []:
-        if turn.get("match", "") in text:
+        if turn.get("match", "") in own_text(text):
             return turn
     return {}
 
@@ -429,17 +478,12 @@ def run_turn(text, wake=None):
     aborted[0] = False
     running[0] = True
     cfg = config()
-    steps = None
-    for turn in cfg.get("turns") or []:
-        if turn.get("match", "") in text:
-            steps = turn.get("steps") or []
-            break
-    if wake is not None:
-        steps = wake.get("steps") or []
-    session.append("user", text)
-    if steps is None:
-        steps = [{"text": reply_to(session, text)}]
     turn = wake if wake is not None else matching_turn(cfg, text)
+    session.append("user", text)
+    if wake is not None or turn:
+        steps = turn.get("steps") or []
+    else:
+        steps = [{"text": reply_to(session, text)}]
     if turn.get("quiet"):
         # Pi is at work it started by itself, and says nothing of it until a
         # prompt reaches it.
@@ -603,8 +647,12 @@ def run_turn(text, wake=None):
                   "result": {"summary": "Compacted mid-turn.", "tokensBefore": 1000,
                              "estimatedTokensAfter": 200}})
         elif "waitFollowUp" in step:
-            if not follow_ups and not aborted[0]:
-                wait_for(lambda m: follow_ups or aborted[0])
+            if not follow_ups and not unanswered and not aborted[0]:
+                wait_for(lambda m: follow_ups or unanswered or aborted[0])
+        elif "answerFollowUps" in step:
+            path = os.path.join(DIR, step["answerFollowUps"])
+            serve_while(lambda: not os.path.exists(path))
+            answer_follow_ups()
         elif "until" in step:
             path = os.path.join(DIR, step["until"])
             serve_while(lambda: not os.path.exists(path) and not follow_ups)
@@ -619,10 +667,15 @@ def run_turn(text, wake=None):
     final["stopReason"] = stop
     send({"type": "message_end", "message": final})
     session.append("assistant", "".join(said))
-    # Messages queued as followUps run before Pi settles, each answered in turn.
+    answer_follow_ups()
+    # Messages queued as followUps run before Pi settles, each answered in turn, once Pi
+    # delivers it as its user message (logged as `delivered`).
     while follow_ups and not aborted[0]:
         asked = follow_ups.pop(0)
         session.append("user", asked)
+        log({"delivered": asked, "followUp": True})
+        send({"type": "message_start", "message": {"role": "user", "content": asked}})
+        send({"type": "message_end", "message": {"role": "user", "content": asked}})
         texts = [s["text"] for s in matching_turn(config(), asked).get("steps") or [] if "text" in s]
         reply = "".join(texts) if texts else reply_to(session, asked)
         send({"type": "message_start", "message": {"role": "assistant"}})
@@ -640,15 +693,12 @@ def run_turn(text, wake=None):
     # between turns), once per process.
     if "compactAfter" in turn:
         # Pi compacts once the turn settled: its events come between turns.
-        send({"type": "compaction_start", "reason": "threshold"})
-
-        def later():
-            time.sleep(float(turn["compactAfter"]))
-            send({"type": "compaction_end", "aborted": False,
-                  "result": {"summary": "Compacted after the turn.", "tokensBefore": 1000,
-                             "estimatedTokensAfter": 200}})
-
-        threading.Thread(target=later, daemon=True).start()
+        if turn.get("compactUnheard"):
+            compacting[0] = True
+            unheard_compaction[0] = turn
+        else:
+            send({"type": "compaction_start", "reason": "threshold"})
+            end_compaction_in(turn["compactAfter"])
     global settled_sent
     if not settled_sent:
         settled_sent = True
@@ -728,7 +778,8 @@ def command(msg):
         start = ids.index(since) + 1 if since in ids else 0
         respond(msg, {"entries": session.entries[start:], "leafId": session.leaf()})
     elif kind == "get_session_stats":
-        usage = state["usage"] or {}
+        # A config's "usage" is what Pi reports when no turn's step reported any.
+        usage = state["usage"] or config().get("usage") or {}
         window = (current_model() or {}).get("contextWindow")
         respond(msg, {"contextUsage": {"tokens": usage.get("totalTokens"), "contextWindow": window},
                       "tokens": {"input": usage.get("input"), "output": usage.get("output"),

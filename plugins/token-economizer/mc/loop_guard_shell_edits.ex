@@ -29,14 +29,24 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   alias HalC2Plugins.TokenEconomizer.LoopGuard.State
 
   @shells ~w(sh bash zsh dash ksh)
-  # Programs that read code from stdin when given no script.
+  # Programs that run code: from stdin when given no script, or handed on the command line.
   @interpreter ~r/^(?:python\d?(?:\.\d+)?|node|bun|deno|ruby|perl|php|lua|osascript|Rscript|pwsh|fish)$/
-  # A heredoc: `<<` or `<<-`, then its delimiter, any word, quoted in whole or part or
-  # not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`); not a here-string (`<<<`).
-  @heredoc_start ~r/(?<!<)<<(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/
+  @awk ~w(awk gawk mawk nawk)
+  # The flags an interpreter is read with: none hands it code. Any other may (`-e`, `-c`,
+  # `-pe`, `--eval`, `--import=data:...`, `-M'X;...'`), wherever it is in the words.
+  @reading_flag ~r/^(?:-[wvVhI]|-I\S+|--(?:version|help|check|no-warnings|enable-source-maps|trace-warnings|trace-uncaught|test(?:-[\w-]+)?(?:=\S*)?))$/
+  # The flags an interpreter given no script runs without reading stdin (`node --test`).
+  @no_stdin_flag ~r/^(?:-[vVh]|--(?:version|help|test(?:-[\w-]+)?(?:=\S*)?))$/
+  # Python's own flags that hand it no code, and those that take the next word.
+  @python_flag ~r/^-[bBdEhiIOqsSuvVx]+$/
+  # A heredoc's delimiter, after its `<<`: `-` for `<<-`, then any word, quoted in whole
+  # or part or not (`<<'EOF-CODE'`, `<<"E"OF`, `<<\EOF`, `<<123`).
+  @heredoc_word ~r/\A(-?)[ \t]*((?:'[^'\n]*'|"(?:\\.|[^"\\\n])*"|\\.|[^\s'"<>|&;()\\])+)/u
+  # What ends a word, so a `#` after it starts a comment.
+  @boundary ~c" \t;&|()<>"
   @ops ["&&", "||", ";", ";;", "|", "|&", "&", "\n", "(", ")"]
-  # Redirects that write their operand.
-  @out [">", ">>", ">|", "&>", "&>>"]
+  # Redirects that write their operand: any that may, `<>` opening it read-write too.
+  @out [">", ">>", ">|", "&>", "&>>", "<>"]
   # The shell's words that open or close a group, a branch or a loop, before a command.
   @reserved ~w({ } ! if then else elif fi do done while until)
   # Programs that run another, given after their own words, and the programs this reads
@@ -47,7 +57,7 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   # The operands `find -exec` and `xargs -I` put file names in place of.
   @fed ["{}", "+", ";", "\\"]
   # Input, heredoc tags, fd duplication.
-  @skip_operand ["<", "<<", "<<<", "<&", ">&", "<>"]
+  @skip_operand ["<", "<<", "<<<", "<&", ">&"]
   # Redirect and `tee` targets count only when they look like source, so `> out.log` or
   # `| tee /tmp/run.txt`, capturing output, is not mistaken for an edit.
   @source_file ~r/\.(?:py|pyi|pyx|pxd|js|jsx|mjs|cjs|ts|tsx|rs|go|java|kt|kts|scala|c|cc|cpp|cxx|h|hh|hpp|rb|php|cs|swift|m|mm|sh|bash|zsh|lua|jl|ex|exs|erl|hs|ml|clj|sql|toml|ya?ml|json|cfg|ini|conf|md|rst|html?|css|scss|vue|svelte|qml|xml|gradle|properties|in)$/i
@@ -131,8 +141,12 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   @doc """
   Whether a shell command's words may be code this does not read: quotes that do not
-  balance, a nested shell's script or `eval`'s (`sh -c '...'`), or a program reading its
-  code from stdin (`... | python3`, `curl ... | sh`).
+  balance, a nested shell's script or `eval`'s (`sh -c '...'`), a program reading its
+  code from stdin (`... | python3`, `curl ... | sh`), awk's program, or an interpreter
+  given any flag but those it is only read with, wherever in its words (`node
+  --input-type commonjs -e '...'`, `python3 -X dev -c '...'`), behind a wrapper too
+  (`timeout 10 ruby -e '...'`, `find -exec perl -pe '...'`). Python's are read up to the
+  script or module it runs; the words after are that program's.
   """
   def opaque?(cmd) when is_binary(cmd) do
     {shell, _} = cmd |> script() |> split_heredocs()
@@ -149,6 +163,20 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   def opaque?(_), do: false
 
+  @doc """
+  Whether this reads the whole of a shell command, so the commands it finds in it are
+  all it runs: it has the text (a command too long for a plugin to hear has none), it
+  follows every quote and escape in it as `legible?/1` does (a comment aside, which runs
+  nothing), none of its words is code this does not read (`opaque?/1`), and each heredoc
+  is placed: opened outside quotes and ended at its delimiter.
+  """
+  def read?(cmd) when is_binary(cmd) do
+    {shell, _, placed} = heredocs(script(cmd))
+    placed and String.trim(cmd) != "" and followed(shell) != :error and not opaque?(cmd)
+  end
+
+  def read?(_), do: false
+
   defp runs_code?(["eval" | _]), do: true
 
   defp runs_code?([first | args]) do
@@ -159,13 +187,45 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
       name in @shells ->
         flags_only or Enum.any?(args, &Regex.match?(~r/^-[a-zA-Z]*c[a-zA-Z]*$/, &1))
 
+      String.starts_with?(name, "python") and Regex.match?(@interpreter, name) ->
+        not python_reads?(args)
+
       Regex.match?(@interpreter, name) ->
-        flags_only
+        (flags_only and not Enum.any?(args, &Regex.match?(@no_stdin_flag, &1))) or
+          List.first(Enum.reject(args, &String.starts_with?(&1, "-"))) == "eval" or
+          Enum.any?(args, &(String.starts_with?(&1, "-") and not Regex.match?(@reading_flag, &1)))
+
+      name in @awk ->
+        not Enum.any?(args, &(&1 in ~w(-f --file) or String.starts_with?(&1, "--file=")))
+
+      # `timeout 10 node -e ...`, `find . -exec perl -pe ... {} +`.
+      name in @wrappers ->
+        case Enum.drop_while(args, &(not runner?(head([&1])))) do
+          [] -> false
+          run -> runs_code?(run)
+        end
 
       true ->
         false
     end
   end
+
+  defp runner?(name),
+    do: name in @shells or name in @awk or name == "eval" or Regex.match?(@interpreter, name)
+
+  # Whether Python runs a script or a module with these words, its own flags handing it
+  # no code; the words after the script or module are that program's.
+  defp python_reads?([flag, _ | rest]) when flag in ["-W", "-X"], do: python_reads?(rest)
+  defp python_reads?(["-m" <> _ | _]), do: true
+  defp python_reads?(["-W" <> _ | rest]), do: python_reads?(rest)
+  defp python_reads?(["-X" <> _ | rest]), do: python_reads?(rest)
+  defp python_reads?([flag | rest]) when flag in ["--version", "--help"], do: python_reads?(rest)
+
+  defp python_reads?(["-" <> _ = flag | rest]),
+    do: Regex.match?(@python_flag, flag) and python_reads?(rest)
+
+  defp python_reads?([_script | _]), do: true
+  defp python_reads?([]), do: false
 
   @doc """
   Whether this reads every character of a shell command as the shell does, so what it
@@ -177,15 +237,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   def legible?(cmd) when is_binary(cmd) do
     {shell, _} = cmd |> script() |> split_heredocs()
 
-    with false <- Regex.match?(~r/`|\$['"({]/, shell),
-         {:ok, toks} <- tokens(shell) do
-      unspaced(Enum.join(toks)) == unspaced(shell)
-    else
-      _ -> false
+    case followed(shell) do
+      {:ok, toks} -> unspaced(Enum.join(toks)) == unspaced(shell)
+      :error -> false
     end
   end
 
   def legible?(_), do: false
+
+  # The shell text's words, when its quotes and escapes close and nothing in it opens a
+  # quoting context this does not follow.
+  defp followed(shell) do
+    if Regex.match?(~r/`|\$['"({]/, shell), do: :error, else: tokens(shell)
+  end
 
   defp unspaced(text), do: String.replace(text, ~r/\s/u, "")
 
@@ -347,27 +411,89 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   @doc """
   The command's shell text without heredoc bodies, and the bodies: every heredoc a line
-  opens (`cat <<A <<B`), read in order. A body ends only at its delimiter alone on a line
-  (after leading tabs, for `<<-`), as the shell's does; one never ended runs to the end. A
-  line continued with a backslash is one line, and its heredocs start after it.
+  opens (`cat <<A <<B`), read in order. Only a `<<` the shell reads opens one: not one
+  quoted, escaped or in a comment (`echo '<<EOF'`), nor a here-string (`<<<`). A body
+  ends only at its delimiter alone on a line (after leading tabs, for `<<-`), as the
+  shell's does; one never ended runs to the end. A line continued with a backslash is one
+  line, and so is one a quote spans: its heredocs start after it.
   """
   def split_heredocs(cmd) do
-    {shell, bodies} = shell_lines(String.split(cmd, "\n"), [], [])
-    {shell |> Enum.reverse() |> Enum.join("\n"), Enum.reverse(bodies)}
+    {shell, bodies, _} = heredocs(cmd)
+    {shell, bodies}
   end
 
-  defp shell_lines([], shell, bodies), do: {shell, bodies}
+  # `split_heredocs/1`, and whether every heredoc is placed: each `<<` had a delimiter,
+  # each body ended at it, and no quote was left open.
+  defp heredocs(cmd) do
+    {shell, bodies, placed} = shell_lines(String.split(cmd, "\n"), :none, [], [], [], true)
+    {shell |> Enum.reverse() |> Enum.join("\n"), Enum.reverse(bodies), placed}
+  end
 
-  defp shell_lines(lines, shell, bodies) do
+  # `quote`: the quote the lines so far end inside; `pending`: the heredocs they opened,
+  # whose bodies start after the line that closes it.
+  defp shell_lines([], quote, pending, shell, bodies, placed),
+    do: {shell, bodies, placed and quote == :none and pending == []}
+
+  defp shell_lines(lines, quote, pending, shell, bodies, placed) do
     {line, rest} = logical_line(lines)
+    {docs, quote, found} = heredoc_starts(String.to_charlist(line), quote, true, [], true)
+    pending = pending ++ docs
 
-    docs =
-      for [_, dash, word] <- Regex.scan(@heredoc_start, line),
-          do: {dash == "-", Regex.replace(~r/\\(.)|['"]/, word, "\\1")}
-
-    {bodies, rest} = read_bodies(docs, rest, bodies)
-    shell_lines(rest, [line | shell], bodies)
+    if quote == :none do
+      {bodies, rest, ended} = read_bodies(pending, rest, bodies, true)
+      shell_lines(rest, :none, [], [line | shell], bodies, placed and found and ended)
+    else
+      shell_lines(rest, quote, pending, [line | shell], bodies, placed and found)
+    end
   end
+
+  # The heredocs a line opens, `{dash, delimiter}`, the quote it ends inside, and whether
+  # each `<<` had a delimiter. `start`: whether the next character starts a word.
+  defp heredoc_starts([], quote, _, docs, found), do: {Enum.reverse(docs), quote, found}
+
+  defp heredoc_starts([?\\, _ | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :none, false, docs, found)
+
+  defp heredoc_starts([?$, ?' | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :ansi, false, docs, found)
+
+  defp heredoc_starts([q | rest], :none, _, docs, found) when q in [?', ?"],
+    do: heredoc_starts(rest, q, false, docs, found)
+
+  defp heredoc_starts([?# | _], :none, true, docs, found),
+    do: heredoc_starts([], :none, true, docs, found)
+
+  defp heredoc_starts([?<, ?<, ?< | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :none, true, docs, found)
+
+  defp heredoc_starts([?<, ?< | rest], :none, _, docs, found) do
+    text = List.to_string(rest)
+
+    case Regex.run(@heredoc_word, text) do
+      [all, dash, word] ->
+        doc = {dash == "-", Regex.replace(~r/\\(.)|['"]/, word, "\\1")}
+        rest = text |> binary_part(byte_size(all), byte_size(text) - byte_size(all))
+        heredoc_starts(String.to_charlist(rest), :none, false, [doc | docs], found)
+
+      nil ->
+        heredoc_starts(rest, :none, true, docs, false)
+    end
+  end
+
+  defp heredoc_starts([c | rest], :none, _, docs, found),
+    do: heredoc_starts(rest, :none, c in @boundary, docs, found)
+
+  defp heredoc_starts([?\\, _ | rest], quote, _, docs, found) when quote in [?", :ansi],
+    do: heredoc_starts(rest, quote, false, docs, found)
+
+  defp heredoc_starts([?' | rest], :ansi, _, docs, found),
+    do: heredoc_starts(rest, :none, false, docs, found)
+
+  defp heredoc_starts([q | rest], q, _, docs, found),
+    do: heredoc_starts(rest, :none, false, docs, found)
+
+  defp heredoc_starts([_ | rest], quote, _, docs, found),
+    do: heredoc_starts(rest, quote, false, docs, found)
 
   defp logical_line([line | rest]) do
     if rest != [] and Regex.match?(~r/(?<!\\)(?:\\\\)*\\$/, line) do
@@ -378,12 +504,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
     end
   end
 
-  defp read_bodies([], lines, bodies), do: {bodies, lines}
+  defp read_bodies([], lines, bodies, ended), do: {bodies, lines, ended}
 
-  defp read_bodies([{dash, tag} | docs], lines, bodies) do
+  defp read_bodies([{dash, tag} | docs], lines, bodies, ended) do
     ends? = fn line -> if(dash, do: String.trim_leading(line, "\t"), else: line) == tag end
     {body, rest} = Enum.split_while(lines, &(not ends?.(&1)))
-    read_bodies(docs, Enum.drop(rest, 1), [Enum.join(body, "\n") | bodies])
+    bodies = [Enum.join(body, "\n") | bodies]
+    read_bodies(docs, Enum.drop(rest, 1), bodies, ended and rest != [])
   end
 
   # Simple commands as unquoted word lists, and the files their redirects write.
@@ -420,13 +547,18 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
         [] -> cur
       end
 
+    # Anything but a read (`<`), a heredoc's tag or a here-string, or a duplication or
+    # close of a descriptor (`2>&1`, `>&-`) may write: `>& file` writes it, as `&>` does,
+    # and a target the shell computes (`>&$fd`) or a process (`> >(cmd)`) may be a file.
     writes =
       case rest do
         [next | _] when next not in @ops ->
-          # `>& file` writes it, as `&>` does; `>&2` and `>&-` only duplicate or close.
-          if t in @out or (t == ">&" and not Regex.match?(~r/^(?:\d+|-)$/, next)),
+          if t in @out or (t in [">&", "<&"] and not Regex.match?(~r/^(?:\d+|-)$/, next)),
             do: writes ++ [unquote_word(next)],
             else: writes
+
+        _ when t in @out ->
+          writes ++ ["(redirect)"]
 
         _ ->
           writes
