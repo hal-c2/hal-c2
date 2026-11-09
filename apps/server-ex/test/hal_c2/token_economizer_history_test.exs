@@ -253,7 +253,7 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert Prune.proposal(prune, Prune.config(state.settings)) == []
   end
 
-  test "Codex turns the plugin missed are no evidence its goal and image packages went unused",
+  test "Codex turns the plugin missed are no evidence any of its packages went unused",
        %{project: p} do
     project = {p, "codex"}
     thread = "codex-#{System.unique_integer([:positive])}"
@@ -264,20 +264,49 @@ defmodule HalC2.TokenEconomizerHistoryTest do
         {"provider-thread", "pt", %{"s" => %{"driver" => "codex"}}}
       ])
 
-    # Codex viewed an image in r1 while the plugin was not running: no item shows it.
+    # While the plugin was not running, Codex viewed an image in r1 and waited on an
+    # agent it had already spawned: no item shows either, and no subagent worked then.
     ended(thread, "r1", 1, [])
     {:ok, state} = TokenEconomizer.init(%{})
     state = observe(state, started(thread, "r2", p, %{"provider" => "codex"}))
 
     prune = state.prunes[project]
     assert prune["prompts"] == 1
-    assert %{"prompts" => 1} = prune["streaks"]["collaboration"]
-    assert prune["loadedSessions"]["collaboration"] == 1
 
-    for package <- ~w(goals image_media) do
+    for package <- ~w(collaboration goals image_media) do
       assert prune["streaks"][package] in [nil, %{"sessions" => 0, "prompts" => 0}]
       assert prune["loadedSessions"][package] in [nil, 0]
     end
+  end
+
+  test "a Codex segment the feed dropped a wait on its agents from is no evidence collaboration went unused",
+       %{project: p} do
+    project = {p, "codex"}
+    thread = "codex-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"thread", thread, %{"s" => %{}}},
+        {"provider-thread", "pt", %{"s" => %{"driver" => "codex"}}}
+      ])
+
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{})
+    started = &started(thread, &1, p, Map.put(&2, "provider", "codex"))
+    state = observe(state, started.("r1", %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+
+    # In r2 Codex waited on an agent it spawned earlier; the feed dropped the wait,
+    # which the history does not keep.
+    ended(thread, "r2", 2, [])
+    state = observe(state, started.("r2", %{"dropped" => 1, "waiting" => 0}))
+    state = observe(state, finished(thread, "r2", 2))
+    state = observe(state, started.("r3", %{"newConversation" => true}))
+
+    prune = state.prunes[project]
+    assert prune["prompts"] == 2
+    assert prune["streaks"]["collaboration"] in [nil, %{"sessions" => 0, "prompts" => 0}]
+    assert prune["loadedSessions"]["collaboration"] in [nil, 0]
   end
 
   test "a thread's history says which turns a subagent worked in, also one it ran on into or was resumed in",

@@ -40,9 +40,10 @@ sload model-checker
 ---             missed cannot protect its tool: what the design keeps is that its
 ---             conversation is no evidence the tool went unused.
 ---   Unrecorded - nor is a segment read back whose history cannot show the tool's
----             use (rec false: a Codex goal or image package, whose calls Codex
----             keeps out of the turn's items, or any tool in a turn a subagent
----             worked in, whose calls its own thread keeps): the tool counts as not
+---             use (rec false: any Codex package, whose goal and image calls Codex
+---             keeps out of the turn's items, and of whose collaboration calls only
+---             a spawn is kept; or any tool in a turn a subagent worked in, whose
+---             calls its own thread keeps): the tool counts as not
 ---             loaded in it unless it was heard used (unrecorded/2, fold_segment/7's
 ---             unrecorded, Host.history/3's "subagents").
 

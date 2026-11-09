@@ -514,15 +514,18 @@ defmodule HalC2Plugins.TokenEconomizer.ToolPrune.Evidence do
     |> drop_pending(used)
   end
 
-  # What a run's history never shows a Codex conversation using: its goal and image
-  # packages, whose uses plugins only hear (no thread shows them as calls).
-  @unrecorded %{"capability" => ~w(goals image_media)}
+  # What a run's history need not show a Codex conversation using: any of its
+  # packages. Plugins only hear its goal and image uses (no thread shows them as
+  # calls), and of its collaboration calls the history keeps only a spawn, as the
+  # subagent's item: a wait, a message or a close leaves nothing.
+  @unrecorded %{"capability" => ~w(collaboration goals image_media)}
 
   @doc """
   The tools of `unit` a run read back from its thread's history (`HalC2.Plugins.Host.history/3`)
   may have used without its items saying so, which a fold of it must not count as
   unused (`fold_segment/7`): every candidate when a subagent worked in it, whose calls
-  its child thread keeps (`"subagents"`), else Codex's goal and image packages.
+  its child thread keeps (`"subagents"`), else every Codex package (collaboration,
+  goals and image/media), whose uses the history need not show.
   """
   def unrecorded(run, unit) do
     if run["subagents"] == true,
