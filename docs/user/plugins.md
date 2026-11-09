@@ -65,12 +65,12 @@ default, 12-hour or 24-hour) and locale. Each function takes a `Date`, an ISO
 8601 string or milliseconds since the epoch, and returns `""` for a missing or
 invalid time.
 
-| Function                | Gives                                   |
-| ----------------------- | --------------------------------------- |
-| `Format.time(at)`       | `18:05`, `6:05 PM`                      |
-| `Format.date(at)`       | `9/20`, or `9/20/2025` in another year  |
-| `Format.dateTime(at)`   | `9/20 18:05`                            |
-| `Format.relative(at)`   | `just now`, `5m ago`, `in 2h`, `3d ago` |
+| Function              | Gives                                   |
+| --------------------- | --------------------------------------- |
+| `Format.time(at)`     | `18:05`, `6:05 PM`                      |
+| `Format.date(at)`     | `9/20`, or `9/20/2025` in another year  |
+| `Format.dateTime(at)` | `9/20 18:05`                            |
+| `Format.relative(at)` | `just now`, `5m ago`, `in 2h`, `3d ago` |
 
 ```qml
 import HalC2.Bricks
@@ -116,7 +116,9 @@ What a running plugin adds reaches every app connected to that machine:
 - **Threads it starts** carry its mark in the thread list and its header above
   the conversation. A plugin can keep its threads out of the list and show them
   on its page instead. They stay on their machine while the plugin runs there.
-  Turn the plugin off and they are ordinary threads again, free to move.
+  Turn the plugin off and they are ordinary threads again, free to move, unless
+  the plugin keeps its threads on their machine for good, as Code Review does:
+  those cannot be moved or exported, even once the plugin is off or removed.
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.

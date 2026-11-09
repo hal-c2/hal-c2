@@ -207,7 +207,8 @@ export const PluginManifest = Schema.Struct({
   /**
    * The plugin's threads never leave the machine they were started on: what it keeps
    * around them (a sandbox, a credential, a checkout) does not travel. They are refused
-   * a move and an export for as long as the plugin is installed, running or not.
+   * a move and an export whether the plugin runs or not, and once it is removed too:
+   * each such thread is marked `stays` when it starts.
    */
   threadsStay: Schema.optionalKey(Schema.Boolean),
 });
