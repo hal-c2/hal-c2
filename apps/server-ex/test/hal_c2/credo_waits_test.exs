@@ -110,4 +110,18 @@ defmodule HalC2.CredoWaitsTest do
 
     assert message =~ "lists `gone`"
   end
+
+  @tag :tmp_dir
+  test "the baseline asks for entries of files that are gone", %{tmp_dir: dir} do
+    baseline = Path.join(dir, "baseline.exs")
+    File.write!(baseline, ~s|[{"lib/hal_c2/no_such_file.ex", [loop: :loop]}]|)
+
+    # Not an issue of a checked file, so it is read off the run, as `mix credo` does.
+    exec = Credo.Execution.build()
+    source = to_source_file("defmodule Example, do: def(ok, do: :ok)", "lib/example.ex")
+    :ok = Check.run_on_all_source_files(exec, [source], baseline: baseline)
+
+    assert [[issue]] = Map.values(Credo.Execution.ExecutionIssues.to_map(exec))
+    assert issue.message =~ "lists `lib/hal_c2/no_such_file.ex`, which no longer exists"
+  end
 end

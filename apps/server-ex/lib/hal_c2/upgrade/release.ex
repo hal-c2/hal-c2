@@ -87,12 +87,7 @@ defmodule HalC2.Upgrade.Release do
           dir: dir,
           instructions: HalC2.Upgrade.Appup.instructions(old, new),
           native: for(mod <- HalC2.Upgrade.Appup.changed(old, new), new[mod].nif?, do: mod),
-          frozen:
-            for(
-              mod <- HalC2.Upgrade.Appup.changed(old, new),
-              Map.has_key?(old, mod) and new[mod].frozen?,
-              do: mod
-            )
+          frozen: HalC2.Upgrade.Appup.frozen(old, new)
         }
       end
 
@@ -444,14 +439,17 @@ defmodule HalC2.Upgrade.Release do
       for mod <- Application.spec(app, :modules) || [], not MapSet.member?(skip, mod), do: mod
 
     for mod <- Enum.uniq(Map.keys(on_disk) ++ listed), into: %{} do
-      md5 =
-        cond do
-          :code.is_loaded(mod) != false -> mod.module_info(:md5)
-          on_disk[mod] -> on_disk[mod].md5
-          true -> :unloaded
-        end
+      cond do
+        :code.is_loaded(mod) != false ->
+          frozen? = Keyword.get(mod.module_info(:attributes), :hal_c2_frozen) == [true]
+          {mod, %{md5: mod.module_info(:md5), frozen?: frozen?}}
 
-      {mod, %{md5: md5}}
+        on_disk[mod] ->
+          {mod, %{md5: on_disk[mod].md5, frozen?: on_disk[mod].frozen?}}
+
+        true ->
+          {mod, %{md5: :unloaded, frozen?: false}}
+      end
     end
   end
 

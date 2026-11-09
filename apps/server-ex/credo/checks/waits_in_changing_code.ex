@@ -54,6 +54,30 @@ defmodule HalC2.Credo.WaitsInChangingCode do
   # Remote calls that block until a peer acts, by function name.
   @blocking [:read, :read_stderr, :read_any, :recv, :accept, :transfer_accept, :binread]
 
+  # Entries for files that no longer exist are never reached by `run/2`, which runs
+  # per checked file, so they are asked for here, against the baseline itself.
+  @impl true
+  def run_on_all_source_files(exec, source_files, params) do
+    super(exec, source_files, params)
+
+    with file when is_binary(file) <- Params.get(params, :baseline, __MODULE__),
+         [_ | _] = gone <- Enum.reject(Map.keys(baseline(params)), &File.regular?/1) do
+      issue_meta = IssueMeta.for(SourceFile.parse(File.read!(file), file), params)
+
+      issues =
+        for path <- Enum.sort(gone) do
+          format_issue(issue_meta,
+            message: "the baseline lists `#{path}`, which no longer exists: remove it",
+            line_no: 1
+          )
+        end
+
+      Credo.Execution.ExecutionIssues.append(exec, issues)
+    end
+
+    :ok
+  end
+
   @impl true
   def run(%SourceFile{} = source_file, params) do
     issue_meta = IssueMeta.for(source_file, params)

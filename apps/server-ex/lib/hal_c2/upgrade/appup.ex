@@ -86,6 +86,19 @@ defmodule HalC2.Upgrade.Appup do
   end
 
   @doc """
+  The changed modules processes wait in (`HalC2.Frozen`), which take a restart.
+  Processes wait in the running version, so a module that stops being frozen counts
+  too; one new to the release has nobody waiting in it yet.
+  """
+  @spec frozen(%{module() => map()}, %{module() => beam()}) :: [module()]
+  def frozen(old, new) do
+    for mod <- changed(old, new),
+        was = old[mod],
+        was != nil and (was[:frozen?] == true or new[mod].frozen?),
+        do: mod
+  end
+
+  @doc """
   The upgrade instructions from `old` to `new` modules, in an order `systools`
   accepts: additions, then updates and loads, then deletions.
   """
