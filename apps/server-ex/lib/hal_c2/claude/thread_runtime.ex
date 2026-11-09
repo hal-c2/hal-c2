@@ -3164,10 +3164,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # What a sandboxed review's message cost counts against its budget (#1412), once per
-  # message however often its counts are reported.
+  # message however often its counts are reported. A cached prompt is still read, so
+  # cache reads count like any other input.
   defp spent(%{turn: %{sandbox: true}} = state, message_id, usage) when is_binary(message_id) do
     tokens =
-      for key <- ~w(input_tokens output_tokens cache_creation_input_tokens),
+      for key <-
+            ~w(input_tokens output_tokens cache_creation_input_tokens cache_read_input_tokens),
           is_integer(usage[key]),
           reduce: 0,
           do: (sum -> sum + usage[key])
@@ -3368,6 +3370,11 @@ defmodule HalC2.Claude.ThreadRuntime do
          state
        )
        when is_list(content) do
+    # A sandboxed review's subagents spend from its budget too; the context meter is
+    # the main conversation's, so their usage goes nowhere else.
+    with %{} = usage <- message["message"]["usage"],
+         do: spent(state, message["message"]["id"], usage)
+
     state
     |> parent_work(Enum.filter(content, &parent_work?/1))
     |> to_subagent(parent, fn sub ->

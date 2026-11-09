@@ -9,8 +9,10 @@ defmodule HalC2.Test.FakeSandbox do
   - `codex app-server` and `claude` are agents in Elixir that answer their handshakes
     and play one turn per message: they report through the MCP server they were given,
     the review broker, with `opts[:report]` (an approval unless it is `nil`), report
-    `opts[:tokens]` tokens used (0), and finish the turn. With `hang: true` Codex's
-    turn runs on, after `{:sandbox_turn, pid}` to `test`, until it is interrupted.
+    `opts[:tokens]` tokens used (0), and finish the turn. Claude also reports
+    `opts[:cached]` cache reads (0), and with `subagent_tokens: n` a subagent's message
+    that used `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
+    to `test`, until it is interrupted.
 
   `stat -f` of the review's writable paths answers the tmpfs mounts it asked for,
   or an overlay with `disk: :unbounded`.
@@ -238,9 +240,27 @@ defmodule HalC2.Test.FakeSandbox do
         "id" => "m-#{System.unique_integer([:positive])}",
         "role" => "assistant",
         "content" => [%{"type" => "text", "text" => "Reviewing"}],
-        "usage" => %{"input_tokens" => tokens, "output_tokens" => 0}
+        "usage" => %{
+          "input_tokens" => tokens,
+          "cache_read_input_tokens" => Map.get(s.opts, :cached, 0),
+          "output_tokens" => 0
+        }
       }
     })
+
+    if sub = s.opts[:subagent_tokens] do
+      out(io, %{
+        "type" => "assistant",
+        "session_id" => session,
+        "parent_tool_use_id" => "toolu-subagent",
+        "message" => %{
+          "id" => "m-#{System.unique_integer([:positive])}",
+          "role" => "assistant",
+          "content" => [%{"type" => "text", "text" => "Looking"}],
+          "usage" => %{"input_tokens" => sub, "output_tokens" => 0}
+        }
+      })
+    end
 
     report(s)
 
