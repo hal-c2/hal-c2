@@ -1062,6 +1062,11 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  step "the conversation's block starts with {string}", %{args: [text]} = context do
+    assert String.starts_with?(hd(context.blocks)["text"], text <> "\n\n")
+    context
+  end
+
   step "Claude sets the goal {string}", %{args: [objective]} = context do
     await_goal(context, objective)
     context

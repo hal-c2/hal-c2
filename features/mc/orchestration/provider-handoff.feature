@@ -386,6 +386,17 @@ Feature: Changing model and provider mid-thread
     And the command is the last block of the message
     And Claude sets the goal "make the tests pass"
 
+  # A plugin's context for the new conversation goes ahead of the conversation it is
+  # handed, in the same block, so the command still comes last and alone.
+  @mc
+  Scenario: A plugin's context comes ahead of the conversation a command after a switch to Claude gets
+    Given a plugin that shapes runs with the context "Keep answers short." and "WebFetch" off
+    And the user switched "t1" to "claudeAgent"
+    When the user sends the command "/goal make the tests pass" to "t1"
+    Then Claude gets the conversation in a block ahead of "/goal make the tests pass"
+    And the command is the last block of the message
+    And the conversation's block starts with "Keep answers short."
+
   # Codex's `/goal <objective>` sends its own prompt for the goal's first turn, and the
   # conversation goes ahead of it: the turn starting confirms the handoff, so history
   # left out then would never be sent.
