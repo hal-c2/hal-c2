@@ -623,6 +623,14 @@ export const OrchestrationV2Subagent = Schema.Struct({
   progress: Schema.optional(Schema.String),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  // A provider subagent resumed after it stopped: when it started working again, and
+  // the spans it worked before then. Absent on one never resumed.
+  resumedAt: Schema.optional(Schema.DateTimeUtc),
+  workedSpans: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ from: Schema.NullOr(Schema.DateTimeUtc), to: Schema.DateTimeUtc }),
+    ),
+  ),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
 });

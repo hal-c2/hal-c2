@@ -202,9 +202,26 @@ defmodule HalC2.Orchestration.NativeSubagent do
         "updatedAt" => at
       })
 
+    # A subagent that had stopped keeps the span it worked, and works again from now,
+    # so the turns between are none of its (`HalC2.Plugins.Host.history/3`).
+    reopen = fn
+      %{"completedAt" => stopped} = task when is_binary(stopped) ->
+        task
+        |> Map.put(
+          "workedSpans",
+          (task["workedSpans"] || []) ++
+            [%{"from" => task["resumedAt"] || task["startedAt"], "to" => stopped}]
+        )
+        |> Map.put("resumedAt", at)
+        |> open.()
+
+      task ->
+        open.(task)
+    end
+
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
-         Orchestration.upsert(state, "subagent", id, open),
+         Orchestration.upsert(state, "subagent", id, reopen),
          Orchestration.upsert(
            state,
            "node",

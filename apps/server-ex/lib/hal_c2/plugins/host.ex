@@ -455,13 +455,20 @@ defmodule HalC2.Plugins.Host do
     end)
   end
 
-  # A subagent worked during `run` if it started in it, or ran on or was resumed
-  # (`HalC2.Orchestration.NativeSubagent.resume/3`) while it did.
+  # A subagent worked during `run` if it started in it, or one of the spans it worked
+  # overlaps it: each before it was resumed (`HalC2.Orchestration.NativeSubagent.resume/3`),
+  # and the last, from its start or latest resume, still open while it runs.
   defp worked_in?(sub, run) do
-    sub["runId"] == run["id"] or
-      (is_binary(sub["startedAt"]) and is_binary(run["completedAt"]) and
-         sub["startedAt"] <= run["completedAt"] and
-         (sub["completedAt"] == nil or sub["completedAt"] >= (run["startedAt"] || "")))
+    spans =
+      (sub["workedSpans"] || []) ++
+        [%{"from" => sub["resumedAt"] || sub["startedAt"], "to" => sub["completedAt"]}]
+
+    sub["runId"] == run["id"] or Enum.any?(spans, &overlaps?(&1, run))
+  end
+
+  defp overlaps?(%{"from" => from, "to" => to}, run) do
+    is_binary(from) and is_binary(run["completedAt"]) and from <= run["completedAt"] and
+      (to == nil or to >= (run["startedAt"] || ""))
   end
 
   @doc "Whether plugin `id` was granted `permission`."

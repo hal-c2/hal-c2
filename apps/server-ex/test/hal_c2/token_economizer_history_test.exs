@@ -12,6 +12,7 @@ defmodule HalC2.TokenEconomizerHistoryTest do
   """
   use ExUnit.Case, async: false
 
+  alias HalC2.Orchestration.NativeSubagent
   alias HalC2Plugins.TokenEconomizer
   alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
 
@@ -413,6 +414,60 @@ defmodule HalC2.TokenEconomizerHistoryTest do
 
     assert {:ok, runs} = HalC2.Plugins.Host.history("token-economizer", thread)
     assert Enum.map(runs, & &1["subagents"]) == [true, true, false, false]
+  end
+
+  test "a thread's history says a subagent resumed later worked in neither the turns between nor after",
+       %{thread: thread} do
+    at = &"2026-11-09T10:0#{&1}:00.000Z"
+    run = &{"run", &1, %{"s" => %{"startedAt" => at.(&2), "completedAt" => at.(&3)}}}
+    for {id, n} <- [{"r1", 1}, {"r2", 2}, {"r3", 3}, {"r4", 4}], do: ended(thread, id, n, [])
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        run.("r1", 0, 1),
+        run.("r2", 2, 3),
+        run.("r3", 4, 5),
+        run.("r4", 6, 7),
+        {"thread", thread, %{"s" => %{"id" => thread}}}
+      ])
+
+    ids = %{thread: thread, run: "r1", root_node: "node:root:r1", provider_thread: "pt"}
+    sub = NativeSubagent.start(ids, "agent-1", %{"prompt" => "Look"})
+    NativeSubagent.finish(sub, "completed", "Done")
+    # Stopped in r1, resumed in r3 and done there: r2 and r4 had no subagent at work.
+    {:ok, entity} = subagent(thread)
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"subagent", entity["id"], %{"s" => %{"startedAt" => at.(0), "completedAt" => at.(1)}}}
+      ])
+
+    {:ok, entity} = subagent(thread)
+    sub = NativeSubagent.resume(%{ids | run: "r3"}, entity, "Look again")
+    {:ok, entity} = subagent(thread)
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"subagent", entity["id"], %{"s" => %{"resumedAt" => at.(4)}}}
+      ])
+
+    NativeSubagent.finish(sub, "completed", "Done again")
+    {:ok, entity} = subagent(thread)
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [
+        {"subagent", entity["id"], %{"s" => %{"completedAt" => at.(5)}}}
+      ])
+
+    assert {:ok, runs} = HalC2.Plugins.Host.history("token-economizer", thread)
+    assert Enum.map(runs, & &1["subagents"]) == [true, false, true, false]
+  end
+
+  defp subagent(thread) do
+    case HalC2.Streams.state(thread) |> HalC2.StreamState.list("subagent") do
+      [entity] -> {:ok, entity}
+      other -> {:error, other}
+    end
   end
 
   defp apply_tools(state, p, tools) do
