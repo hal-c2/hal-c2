@@ -5,16 +5,18 @@
 # characters) is reimplemented here, quirks included, so commands split as upstream's do,
 # but for a run of operators (`)>`), split as the shell splits it; `fold_shell_edits` lives
 # in State; a heredoc ends where the shell's does, its delimiter any word (`<<'EOF-CODE'`,
-# `<<123`), and every heredoc a line opens is read; `programs/1` and `writes?/1` are new;
-# QML counts as source.
+# `<<123`), and every heredoc a line opens is read; `dd`, `sponge`, `cp`, `mv`, `install`
+# and `truncate` write files too; `programs/1` and `writes?/1` are new; QML counts as
+# source.
 
 defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   @moduledoc """
   Edits made through the shell, which an edit-tool counter does not see.
 
-  An agent that edits through Bash (`sed -i`, `perl -pi`, a redirect or `tee` into a
-  source file, an inline Python script that writes the file back, `patch` or `git apply`,
-  Codex's `apply_patch` fed a patch on stdin) would otherwise look like one that edited
+  An agent that edits through Bash (`sed -i`, `perl -pi`, a redirect, `tee`, `sponge` or
+  `dd of=` into a source file, a `cp`, `mv` or `install` onto one, `truncate`, an inline
+  Python script that writes the file back, `patch` or `git apply`, Codex's `apply_patch`
+  fed a patch on stdin) would otherwise look like one that edited
   nothing, and a judge reading the digest would be told no file had been edited when four
   had. `targets/1` reads those writes off the command; `State.fold_shell_edits/2` counts
   them after the regular update, so the call still counts once.
@@ -156,11 +158,67 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
     end
   end
 
+  defp written_by("dd", tokens, _), do: for("of=" <> path <- tokens, do: {:capture, path})
+
+  defp written_by("sponge", [_ | args], _), do: for(p <- operands(args, []), do: {:capture, p})
+
+  defp written_by("truncate", [_ | args], _),
+    do: for(p <- operands(args, ~w(-s -r)), do: {:capture, p})
+
+  defp written_by(copier, [_ | args], _) when copier in ~w(cp mv install),
+    do: for(p <- copied(args), do: {:capture, p})
+
   defp written_by("patch", _, _), do: [{:edit, "(patch)"}]
   defp written_by("git", [_, "apply" | _], _), do: [{:edit, "(patch)"}]
   defp written_by(_, tokens, _), do: edits(restored(tokens))
 
   defp edits(paths), do: for(p <- paths, do: {:edit, p})
+
+  # The words that are not flags, nor the value of a flag in `valued`.
+  defp operands(args, valued) do
+    {found, _} =
+      Enum.reduce(args, {[], false}, fn t, {found, value?} ->
+        cond do
+          value? -> {found, false}
+          String.starts_with?(t, "-") -> {found, t in valued}
+          true -> {[t | found], false}
+        end
+      end)
+
+    Enum.reverse(found)
+  end
+
+  defp target_dir("--target-directory=" <> dir), do: dir
+  defp target_dir(_), do: nil
+
+  # The paths a `cp`, `mv` or `install` writes: its last operand, or each source's name
+  # in it when it is a directory (`-t dir`, a trailing `/`, or a name with no extension).
+  defp copied(args) do
+    paths = operands(args, ~w(-t -m -o -g -S -b))
+
+    dir =
+      case Enum.drop_while(args, &(&1 != "-t")) do
+        ["-t", dir | _] -> dir
+        _ -> Enum.find_value(args, fn a -> target_dir(a) end)
+      end
+
+    into = fn dir, sources -> for s <- sources, do: Path.join(dir, State.basename(s)) end
+
+    cond do
+      is_binary(dir) and dir != "" ->
+        into.(dir, paths)
+
+      length(paths) < 2 ->
+        []
+
+      true ->
+        {sources, [dest]} = Enum.split(paths, -1)
+
+        if String.ends_with?(dest, "/") or not String.contains?(State.basename(dest), "."),
+          do: into.(dest, sources),
+          else: [dest]
+    end
+  end
 
   defp head([first | _]), do: first |> String.split("/") |> List.last()
 

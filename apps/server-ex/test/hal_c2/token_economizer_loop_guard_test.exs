@@ -752,6 +752,29 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert digest("pytest -q tests >&2") =~ "pytest -q tests >&2"
     end
 
+    test "counts a source file a copy, move, dd, sponge or truncate writes" do
+      for {cmd, files} <- [
+            {"echo SECRET | dd of=src/a.py", ["a.py"]},
+            {"printf SECRET | dd of=a.py status=none", ["a.py"]},
+            {"echo SECRET | sponge a.py", ["a.py"]},
+            {"cp /tmp/new.py src/a.py", ["a.py"]},
+            {"mv -f a.py.new a.py", ["a.py"]},
+            {"install -m 644 new.py a.py", ["a.py"]},
+            {"cp new.py other.py src/", ["new.py", "other.py"]},
+            {"mv -t src new.py", ["new.py"]},
+            {"truncate -s 0 a.py", ["a.py"]}
+          ] do
+        assert ShellEdits.targets(cmd) == files, cmd
+        text = digest(cmd)
+        refute text =~ "SECRET", "#{inspect(cmd)} showed #{inspect(text)}"
+      end
+
+      # A copy kept aside, or one into scratch, is not an edit.
+      assert ShellEdits.targets("cp a.py a.py.bak") == []
+      assert ShellEdits.targets("cp -r src backup") == []
+      assert ShellEdits.targets("dd if=/dev/zero of=/tmp/x.py count=1") == []
+    end
+
     test "never shows what a command writes to a file it does not count as an edit" do
       for cmd <- [
             "echo SECRET=1 > Makefile",
