@@ -128,6 +128,13 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert form("bundle install") == {"package_tool", "bundle"}
   end
 
+  test "bun's package scripts are package scripts, not the interpreter" do
+    assert form("bun run test:unit") == {"run_tests", "bun run test:unit"}
+    assert form("bun run build") == {"run_build", "bun run build"}
+    assert form("bun run dev") == {"run_interpreter", "bun"}
+    assert form("bun src/index.ts") == {"run_interpreter", "bun"}
+  end
+
   test "module and launcher runs name the tool they run" do
     assert form("python -m mypy .") == {"run_build", "python -m mypy"}
     assert form("python3 -m ruff check .") == {"run_build", "python3 -m ruff"}

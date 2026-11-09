@@ -422,7 +422,10 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     form = fn expr -> if prefix == "", do: expr, else: prefix <> " " <> expr end
 
     cond do
-      base in @interpreters or Regex.match?(@interp_versioned_re, base) ->
+      # `bun run test:unit` is a package script, as `npm run test:unit` is, not
+      # the interpreter running a file.
+      (base in @interpreters or Regex.match?(@interp_versioned_re, base)) and
+          not package_script?(base, rest) ->
         cond do
           rest != [] and Enum.all?(rest, &(&1 in ["--version", "-V", "-VV", "-v"])) ->
             observation(call, "probe_env", form.(head), head, seg)
@@ -489,6 +492,12 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         classify_rest(call, head, base, rest, body, form, seg)
     end
   end
+
+  # A package script that runs the tests or a build: `npm run build`, `bun run test:unit`.
+  defp package_script?(base, ["run", script | _]) when base in @run_script_heads,
+    do: (script |> String.split(":", parts: 2) |> hd()) in ["test" | @build_subs]
+
+  defp package_script?(_base, _rest), do: false
 
   defp interpreter_or_script(call, head, rest, form, seg) do
     script = runner_script(rest)
