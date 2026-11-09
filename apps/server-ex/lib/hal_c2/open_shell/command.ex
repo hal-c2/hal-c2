@@ -24,6 +24,8 @@ defmodule HalC2.OpenShell.Command do
   alias HalC2.OpenShell.Manifest
   alias HalC2.OpenShell.Platform
 
+  require Logger
+
   @usage """
   usage: hal-c2-service openshell install [--archive FILE] [--drain] [--force]
          hal-c2-service openshell status | check
@@ -193,13 +195,31 @@ defmodule HalC2.OpenShell.Command do
   `server.getOpenShellStatus`: `HalC2.OpenShell.Install.status/0` as a client's
   settings show it, with each problem's message. Read when a client asks, never
   pushed. `{:error, %{"_tag" => "ServerOpenShellStatusError"}}` when it takes longer
-  than `timeout` ms.
+  than `timeout` ms, or fails; a failure's details go to the MC's log, not the client.
   """
   def settings_status(status \\ &Install.status/0, timeout \\ @status_timeout) do
-    task = Task.async(status)
+    # Caught inside the task: it is linked, so a raise would take the RPC down with it.
+    task =
+      Task.async(fn ->
+        try do
+          {:ok, status.()}
+        catch
+          kind, reason -> {:failed, Exception.format(kind, reason, __STACKTRACE__)}
+        end
+      end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, status} ->
+      {:ok, {:failed, failure}} ->
+        Logger.error("OpenShell's status failed for settings: " <> failure)
+
+        {:error,
+         %{
+           "_tag" => "ServerOpenShellStatusError",
+           "message" =>
+             "OpenShell's status could not be read. Run `hal-c2-service openshell status` on the MC's machine to see why."
+         }}
+
+      {:ok, {:ok, status}} ->
         {:ok,
          %{
            "supported" => status["supported"],

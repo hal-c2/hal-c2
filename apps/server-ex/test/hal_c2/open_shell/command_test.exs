@@ -60,6 +60,15 @@ defmodule HalC2.OpenShell.CommandTest do
 
       assert message =~ "hal-c2-service openshell status"
     end
+
+    @tag :capture_log
+    test "a status that raises is the contract's error, without its stack" do
+      assert {:error, %{"_tag" => "ServerOpenShellStatusError", "message" => message}} =
+               Command.settings_status(fn -> raise "state file is not JSON" end)
+
+      assert message =~ "hal-c2-service openshell status"
+      refute message =~ "state file is not JSON"
+    end
   end
 
   defp status(fields) do
