@@ -227,6 +227,39 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
     refute_deadlock(proof, "start(#{@design}, 1, #{@two_turns})", "over", besides: @faults)
   end
 
+  # A redirect the provider's runtime holds forks every later step of its run, landing
+  # late or never, so it has searches of its own, each with one hold (holding/2) and
+  # fewer turns or calls than the searches above.
+  test "a redirect its runtime holds, landing late or never, keeps the guard safe",
+       %{proof: proof} do
+    refute_reachable(
+      proof,
+      "holding(1, start(#{@design}, 1, 2, 2, 0, 0, true, true, false))",
+      "unsafe",
+      []
+    )
+  end
+
+  test "in one long turn with a judge job lost, a held redirect keeps the guard safe",
+       %{proof: proof} do
+    refute_reachable(
+      proof,
+      "holding(1, start(#{@design}, 1, 3, 1, 0, 1, true, true, false))",
+      "unsafe",
+      []
+    )
+  end
+
+  test "a turn whose redirect its runtime holds never gets stuck, with an event missed and a judge job lost",
+       %{proof: proof} do
+    refute_deadlock(
+      proof,
+      "holding(1, start(#{@design}, 1, 3, 1, 1, 1, true, true, false))",
+      "over",
+      besides: @faults
+    )
+  end
+
   test "every turn closes when the feed misses nothing", %{proof: proof} do
     assert_ltl(proof, "start(#{@design}, 1, 2, 2, 0, 1, true, true, false)", "<> finished", [])
   end
@@ -236,6 +269,19 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
   test "a turn stuck for good is redirected, then offered a stop the person takes, even when a judge job never answers",
        %{proof: proof} do
     assert_ltl(proof, "start(#{@design}, 1, loop, 1, 0, 1, false, false, true)", "<> finished",
+      fair:
+        ~w(start call hear-start hear-finish judge answer stale verdict deliver steered interrupt)
+    )
+  end
+
+  # Counting a held redirect as landed fails here: held, never handed over, every later
+  # call reads as started before it.
+  test "a turn stuck for good whose redirect its runtime holds, and never hands over, is still offered a stop",
+       %{proof: proof} do
+    assert_ltl(
+      proof,
+      "holding(1, start(#{@design}, 1, loop, 1, 0, 1, false, false, true))",
+      "<> finished",
       fair:
         ~w(start call hear-start hear-finish judge answer stale verdict deliver steered interrupt)
     )

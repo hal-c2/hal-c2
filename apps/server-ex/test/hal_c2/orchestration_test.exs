@@ -168,6 +168,19 @@ defmodule HalC2.OrchestrationTest do
   # Any GenServer.call exit reads as a stopped session, so one that is not a way a
   # session stops (another server a runtime adapter called first) is logged with
   # its reason instead of being silently reclassified.
+  # Whether a run is under way is the orchestration's one answer, which plugins read
+  # through the Host (`HalC2.Plugins.Host.run_active?/3`): a plugin that heard a run
+  # start drops its turn once this says the run ended.
+  test "a run is under way from its preparation until it ends, and only then" do
+    for status <- ~w(preparing starting running waiting),
+        do: assert(Orchestration.run_under_way?(%{"status" => status}), status)
+
+    for status <- ~w(queued pending ready completed interrupted failed cancelled stopped),
+        do: refute(Orchestration.run_under_way?(%{"status" => status}), status)
+
+    refute Orchestration.run_under_way?(nil)
+  end
+
   test "a session call that exits unexpectedly is gone, and the log says why" do
     call = fn why -> fn -> exit({why, {GenServer, :call, [:stand_in, :work, 0]}}) end end
 
