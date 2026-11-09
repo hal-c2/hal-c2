@@ -115,6 +115,21 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
     assert {"Read", %{"file_path" => "/r/a.ts"}, "x", nil} = TokenEconomizer.call_of(read)
 
+    # A shell run as a dynamic tool is read like a command — 0 only when its
+    # exit status covers the work, never for a status a pipe hid.
+    for {command, code} <- [{"pytest -q", 0}, {"pytest -q 2>&1 | head -n 0", nil}] do
+      shell = %{
+        "itemType" => "dynamic_tool",
+        "status" => "completed",
+        "tool" => "Bash",
+        "input" => JSON.encode!(%{"command" => command}),
+        "output" => "4 passed"
+      }
+
+      assert {"Bash", %{"command" => ^command}, "4 passed", ^code} =
+               TokenEconomizer.call_of(shell)
+    end
+
     assert TokenEconomizer.call_of(%{"itemType" => "assistant_message", "status" => "completed"}) ==
              nil
 

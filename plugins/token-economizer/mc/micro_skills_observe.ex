@@ -8,7 +8,11 @@
 # read: a `cd` inside one command still shapes its forms, but a directory an
 # earlier call left the shell in is not known here. Only upstream's generic
 # vocabulary -- the reading the plugin uses -- is ported; the experiments'
-# Python/git and Node vocabularies are not.
+# Python/git and Node vocabularies are not. Review on the port also fixed
+# readings upstream shares: `yarn run`/`pnpm run` reach the package-script
+# handler, an `exec` launcher keeps its subcommand, an environment value is
+# learned whole or not at all, an unknown exit status is no success, and a
+# probe is empty only on genuinely empty output.
 
 defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @moduledoc """
@@ -59,7 +63,11 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @cd_failed_re ~r/\bcd: [^\n]*: (?:No such file or directory|Not a directory)/
   @conda_activate_re ~r/^(?:conda|mamba)\s+activate\s+([\w.-]+)\s*$/
   @conda_run_re ~r/^(?:conda|mamba)\s+run\s+(?:--no-capture-output\s+|--live-stream\s+)*(?:-n|--name)\s+([\w.-]+)\s+/
-  @tool_run_re ~r/^(poetry|pipenv|uv|npx|bundle|yarn|pnpm)\s+(?:run|exec)\s+/
+  # `yarn run`/`pnpm run` are package scripts, not launchers: only their
+  # `exec` unwraps, so the script handler still sees the run. The subcommand
+  # as typed is kept: `bundle exec rspec` is not `bundle run rspec`.
+  @tool_run_re ~r/^(poetry|pipenv|uv|npx|bundle)\s+(run|exec)\s+/
+  @tool_exec_re ~r/^(yarn|pnpm)\s+(exec)\s+/
   @npx_re ~r/^npx\s+(?:(?:--yes|-y|--no-install|--no)\s+)*/
   @tool_launch_re ~r/^(uvx|uv\s+tool\s+run|pipx\s+run)\s+/
   @interp_versioned_re ~r/^(?:python|node)\d(?:\.\d+)?$/
@@ -91,11 +99,14 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
 
   @not_found_name_re ~r/([^\s:'"]+):\s+(?:command\s+)?not found\b(?!:)|command not found:\s+(\S+)|'([^']+)' is not recognized/i
 
-  # What "the probe returned something" looks like, per VCS probe kind.
+  # What "the probe returned something" looks like, per VCS probe kind:
+  # `git remote` names a remote per line (with `-v`, name, URL and direction),
+  # `git branch -r`/`-a` a remote branch as `origin/name`, and `git tag
+  # --contains` one tag name per line, version-shaped or not.
   @probe_hit %{
-    "remote" => ~r/(?m)^\S+\s+\S+\s+\((?:fetch|push)\)\s*$/,
-    "branch" => ~r/(?m)^\s*remotes\/\S+/,
-    "tag" => ~r/(?m)^v?\d+(?:\.\d+)+(?:[a-z]+\d*|\.post\d+|-\S+)?\s*$/,
+    "remote" => ~r/(?m)^\S+(?:\s+\S+\s+\((?:fetch|push)\))?\s*$/,
+    "branch" => ~r/(?m)^\s*\*?\s*(?:remotes\/)?\S+\/\S+/,
+    "tag" => ~r/(?m)^\S+\s*$/,
     "fsck" => ~r/(?m)^(?:unreachable|dangling)\s+(?:commit|tree|blob|tag)\s+[0-9a-f]{7,}/,
     "stash" => ~r/(?m)^stash@\{\d+\}/,
     "refs" => ~r/(?m)^[0-9a-f]{7,}\s+refs\//
@@ -106,7 +117,10 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
   @loaded_re ~r/\bRan [1-9]\d* tests?\b|\b[1-9]\d* (?:passed|failed|passing|failing)\b|\bcollected [1-9]\d* items?\b/
   @loaded_generic_re ~r/(?m)^ok\s+\S+\s+[\d.]+s\b|^--- (?:PASS|FAIL)\b|\btest result: (?:ok|FAILED)\b|\b[1-9]\d* examples?, \d+ failures?\b|\b(?:Passed|Failed)!\s+-|\bTests run: [1-9]\d*/
   @env_need_re ~r/environment variable\s+['"`]?([A-Z][A-Z0-9_]{2,})/
-  @env_prefix_re ~r/(?:^|[\s;&(])(?:export\s+)?([A-Z][A-Z0-9_]{2,})=(['"]?)([\w.\-\/:]+)\2/
+  # The value must end at a boundary: `APP_SETTINGS=conf.dev,conf.extra` is
+  # not the assignment `APP_SETTINGS=conf.dev`, and its prefix never ran.
+  @env_prefix_re ~r/(?:^|[\s;&(])(?:export\s+)?([A-Z][A-Z0-9_]{2,})=(['"]?)([\w.\-\/:]+)\2(?=$|[\s;&|])/
+  @launcher_re ~r/^(?:conda|poetry|pipenv|uv|npx|uvx|bundle|yarn|pnpm|pipx)\s+(?:run|exec)\b/
   @env_incode_re ~r/os\.environ(?:\.setdefault\(\s*|\[\s*)['"]([A-Z][A-Z0-9_]{2,})['"]\s*(?:,|\]\s*=)\s*['"]([\w.\-\/:]+)['"]/
   @failed_re ~r/(?m)Traceback \(most recent call last\)|^\w*Error\b|\b[Ee]xit [Cc]ode[:=\s]+[1-9]/
   @label_token_re ~r/^[A-Za-z_][\w.\-\/]*(?:::[\w.\-\[\]]+)*$/
@@ -347,8 +361,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
       match = Regex.run(@conda_run_re, body) ->
         {join.("conda run -n #{Enum.at(match, 1)}"), strip_match(body, hd(match))}
 
-      match = Regex.run(@tool_run_re, body) ->
-        {join.("#{Enum.at(match, 1)} run"), strip_match(body, hd(match))}
+      match = Regex.run(@tool_run_re, body) || Regex.run(@tool_exec_re, body) ->
+        {join.("#{Enum.at(match, 1)} #{Enum.at(match, 2)}"), strip_match(body, hd(match))}
 
       match = Regex.run(@npx_re, body) ->
         if hd(match) == "" do
@@ -715,15 +729,9 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     head = form |> String.split() |> List.first("")
 
     not String.contains?(head, "/") and not String.contains?(form, " activate ") and
-      not String.contains?(form, " run ") and
-      not String.starts_with?(form, [
-        "conda run",
-        "poetry run",
-        "pipenv run",
-        "uv run",
-        "npx ",
-        "uvx "
-      ])
+      not String.contains?(form, " run ") and not String.contains?(form, " exec ") and
+      not Regex.match?(@launcher_re, form) and
+      not String.starts_with?(form, ["npx ", "uvx "])
   end
 
   @doc "Every file an edit tool wrote, by basename, whatever its language."
@@ -790,7 +798,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
           else
             obs = classify_command(cmd, idx)
             hint = exit_code_hint(out)
-            ok = if code != nil, do: code == 0, else: true
+            # An unknown status (a pipe hid it) is no evidence of success.
+            ok = code == 0
             success = if hint == nil, do: ok, else: hint == 0
 
             env =
@@ -884,11 +893,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
         if o.intent == "probe_vcs_refs" do
           # Judged only when every segment is a probe: another segment's output
           # would otherwise be read as the probe's.
+          # Empty is genuinely empty output from a call that exited 0;
+          # output in no recognized shape says nothing either way.
           outcome =
             cond do
               not homogeneous -> nil
+              String.trim(out) == "" -> if success, do: "empty"
               Regex.match?(@probe_hit[o.probe], out) -> "hit"
-              success -> "empty"
               true -> nil
             end
 

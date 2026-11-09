@@ -108,6 +108,16 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     assert form("python - <<'PY'\npytest_is_a_word = 1\nPY") == {"run_interpreter", "python"}
   end
 
+  test "package scripts and exec launchers keep their shapes" do
+    assert form("pnpm run test:unit") == {"run_tests", "pnpm run test:unit"}
+    assert form("yarn run build") == {"run_build", "yarn run build"}
+    assert form("pnpm exec tsc -p .") == {"run_build", "pnpm exec tsc"}
+    assert form("bundle exec rspec spec") == {"run_tests", "bundle exec rspec"}
+    assert form("bundle run rspec spec") == {"run_tests", "bundle run rspec"}
+    refute Observe.bare?("bundle exec rspec")
+    refute Observe.bare?("pnpm exec tsc")
+  end
+
   test "the generic reading knows builds and other ecosystems" do
     assert form("npm run build") == {"run_build", "npm run build"}
     assert form("npm run test:unit") == {"run_tests", "npm run test:unit"}
@@ -270,6 +280,52 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
       low = "k" |> Lifecycle.new(false, false) |> promote.()
       # One contradiction weighs five confirmations: the score is already under.
       assert Lifecycle.update(low, 3, "contradict", false, false, []).state == "RETIRED"
+    end
+
+    test "evidence is aggregated, in bounded space, with the same score" do
+      # Fifty confirmations of one fact keep no list of them, and the score
+      # is upstream's sum over every one.
+      life =
+        Enum.reduce(0..49, Lifecycle.new("k", false, false), fn now, life ->
+          Lifecycle.update(life, now, "confirm", true, true, ["f#{now}.py"])
+        end)
+
+      assert life.confirms == [] and life.confirm_count == 50
+      expected = Enum.sum_by(0..49, fn i -> 0.8 ** (55 - i) end)
+      assert_in_delta Lifecycle.score(life, 55), expected, 1.0e-9
+
+      loaded = life |> Lifecycle.dump() |> JSON.encode!() |> JSON.decode!() |> Lifecycle.load()
+      assert_in_delta Lifecycle.score(loaded, 55), expected, 1.0e-9
+      assert Lifecycle.dump(loaded) == Lifecycle.dump(life)
+
+      # A drifting candidate keeps at most the sets promotion still needs.
+      drifting =
+        Enum.reduce(0..19, Lifecycle.new("k", false, true), fn now, life ->
+          Lifecycle.update(life, now, "confirm", false, false, ["same.py"])
+        end)
+
+      assert length(drifting.confirms) <= Lifecycle.k_promote()
+      assert drifting.confirm_count == 20
+
+      # A state saved before aggregation loads with the same score.
+      legacy = %{
+        "key" => "k",
+        "high" => false,
+        "drift" => false,
+        "state" => "ACTIVE",
+        "confirms" => [[0, ["a.py"]], [2, ["b.py"]], [5, ["c.py"]]],
+        "contradicts" => [4],
+        "fire_num" => 3,
+        "fire_den" => 4,
+        "promoted_at" => 5,
+        "retired_at" => nil
+      }
+
+      loaded = Lifecycle.load(legacy)
+      expected = 0.8 ** 10 + 0.8 ** 8 + 0.8 ** 5 - 5.0 * 0.8 ** 6
+      assert_in_delta Lifecycle.score(loaded, 10), expected, 1.0e-9
+      assert Lifecycle.drifted_confirms(loaded) == 3
+      assert Lifecycle.contradictions(loaded) == 1
     end
 
     test "the firing gate needs its rate over enough exercised tasks" do
@@ -586,7 +642,19 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
     end
 
     {state, _} = stream(Enum.map(0..3, empty))
-    assert render(state) =~ "history ends at the checked-out commit"
+    assert render(state) =~ "no git remote" and render(state) =~ "no tags"
+
+    # And only what was probed is claimed: remote probes alone never
+    # mention branches or tags.
+    remote_only = fn i ->
+      [edit("pkg/r#{i}.py"), bash("git remote -v", "", 0)]
+    end
+
+    {state, _} = stream(Enum.map(0..3, remote_only))
+
+    assert render(state) ==
+             "# environment facts learned from earlier sessions in this repository\n" <>
+               "- Probes of this checkout found no git remote; they have returned nothing every time.\n"
 
     leaky = fn i ->
       [edit("pkg/l#{i}.py"), bash("git tag --contains HEAD | head", "0.22\n0.22.1\n0.23.0", 0)]
@@ -823,6 +891,46 @@ defmodule HalC2.TokenEconomizerMicroSkillsTest do
 
   @need "Traceback (most recent call last):\n  ...\nRuntimeError: settings are missing. Define " <>
           "the environment variable APP_SETTINGS before importing app."
+
+  test "a value set only up to a comma is not learned as its prefix" do
+    digest =
+      Observe.observe_turn([
+        bash("APP_SETTINGS=conf.dev,conf.extra python -c 'import app'", "ran", 0)
+      ])
+
+    assert digest.env == []
+
+    digest =
+      Observe.observe_turn([
+        bash("APP_SETTINGS=conf.dev python -c 'import app'", "ran", 0)
+      ])
+
+    assert [%{sets: %{"APP_SETTINGS" => "conf.dev"}, ok: true}] = digest.env
+  end
+
+  test "an unknown exit status is no evidence of success" do
+    digest =
+      Observe.observe_turn([
+        bash("APP_SETTINGS=conf.dev python -c 'import app' 2>&1 | head -n 0", "", nil)
+      ])
+
+    assert [%{ok: false}] = digest.env
+
+    digest = Observe.observe_turn([bash("git remote -v", "", nil)])
+    assert [%{outcome: nil}] = digest.obs
+  end
+
+  test "nonempty probe output in a real shape is a hit, other output unknown" do
+    outcome = fn cmd, out ->
+      Observe.observe_turn([bash(cmd, out, 0)]).obs |> hd() |> Map.fetch!(:outcome)
+    end
+
+    assert outcome.("git remote", "origin") == "hit"
+    assert outcome.("git branch -r", "  origin/main\n  origin/release") == "hit"
+    assert outcome.("git tag --contains HEAD", "release") == "hit"
+    assert outcome.("git remote -v", "") == "empty"
+    assert outcome.("git fsck", "Checking object directories: 100% (256/256), done.") == nil
+  end
 
   describe "env value" do
     test "a variable the code asks for and its working value become a fact" do

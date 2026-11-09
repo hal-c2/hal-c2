@@ -965,7 +965,25 @@ defmodule HalC2Plugins.TokenEconomizer do
         {"grep", args(item["input"]), output, if(failed, do: 1)}
 
       type when type in ["dynamic_tool", "web_search"] ->
-        {item["tool"] || item["title"] || type, args(item["input"]), output, if(failed, do: 1)}
+        name = item["tool"] || item["title"] || type
+        parsed = args(item["input"])
+
+        # A shell run as a dynamic tool gets a command's exit reading: 0 only
+        # when the command's exit status covers the work it ran, as above.
+        code =
+          cond do
+            failed ->
+              1
+
+            status == "completed" and String.downcase(name) in ["bash", "shell"] and
+                Turn.exit_status_covers(text(parsed["command"] || parsed["cmd"])) ->
+              0
+
+            true ->
+              nil
+          end
+
+        {name, parsed, output, code}
 
       _ ->
         nil

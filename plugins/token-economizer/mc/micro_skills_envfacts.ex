@@ -316,9 +316,30 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
     "`#{fact.params["tool"]} …` fails here with command not found, and no other way to run it has worked."
   end
 
-  def claim(%Fact{family: "empty_probe"}) do
-    "This checkout has no git remote and no branches, tags or unreachable " <>
-      "objects beyond HEAD; its history ends at the checked-out commit."
+  # Only what was probed is claimed: four empty `git remote` calls say
+  # nothing about tags. `kinds` counts the probes by kind.
+  def claim(%Fact{family: "empty_probe"} = fact) do
+    surveyed =
+      [
+        {"remote", "no git remote"},
+        {"branch", "no remote branches"},
+        {"tag", "no tags pointing past the checked-out commit"},
+        {"fsck", "no unreachable objects"},
+        {"stash", "no stashes"},
+        {"refs", "no refs beyond the checked-out commit"}
+      ]
+      |> Enum.filter(fn {kind, _} -> (fact.params["kinds"][kind] || 0) > 0 end)
+      |> Enum.map(&elem(&1, 1))
+
+    case surveyed do
+      [] ->
+        ""
+
+      parts ->
+        "Probes of this checkout found " <>
+          join(parts) <>
+          "; they have returned nothing every time."
+    end
   end
 
   # A fact another proposer authored states its own claim.
@@ -425,7 +446,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
             "high" => fact.life.high,
             "evidence" => %{
               "confirms" => Lifecycle.drifted_confirms(fact.life),
-              "contradicts" => length(fact.life.contradicts),
+              "contradicts" => Lifecycle.contradictions(fact.life),
               "fired" => fact.life.fire_num,
               "exercised" => fact.life.fire_den,
               "firingRate" => Lifecycle.firing_rate(fact.life)
@@ -440,7 +461,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
 
   defp typed_ok?(o), do: Observe.form_worked(o) and not o.env
 
-  @run_words ~w(run npx uv uvx pipx poetry pipenv conda -m python python3)
+  @run_words ~w(run exec npx uv uvx pipx poetry pipenv conda bundle yarn pnpm -m python python3)
 
   # Can `form` stand in for the failing `a_form`? Another form -- and, outside
   # test runs and builds, not a bare one. A build or check is repaired only by
@@ -487,7 +508,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
       String.contains?(form, " && ") ->
         form |> String.split(" && ", parts: 2) |> hd()
 
-      String.starts_with?(form, ["conda run", "poetry run", "pipenv run", "uv run", "npx"]) ->
+      Regex.match?(~r/^(?:conda|poetry|pipenv|uv|bundle|yarn|pnpm|pipx)\s+(?:run|exec)\b/, form) or
+          String.starts_with?(form, "npx") ->
         form |> String.split() |> Enum.take(3) |> Enum.join(" ")
 
       true ->

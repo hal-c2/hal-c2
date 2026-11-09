@@ -98,7 +98,8 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
           "threadId" => thread_id,
           "runId" => run_id,
           "status" => "completed",
-          "dropped" => 2
+          "dropped" => 2,
+          "waiting" => 0
         },
         %{}
       )
