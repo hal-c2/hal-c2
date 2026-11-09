@@ -45,14 +45,26 @@ defmodule HalC2.Orchestration.TurnWriter do
   @doc "The turn item id for a provider's native item."
   def item_id(ids, native), do: "turn-item:#{Entities.driver(ids)}:#{native}"
 
+  # Drivers whose runtime confirms a run when the provider says it started the turn
+  # (`confirmed/2`).
+  @acknowledging ~w(codex claudeAgent muse)
+
   @doc """
   Creates the turn item (and its node) for a native item the first time it is seen.
   `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:search`, `:web`, `:tool`,
   `:compaction`, `:notice` (a message the provider itself announced), or `:error`
   (a provider failure, such as a retry);
-  `fields` are the item type's own fields.
+  `fields` are the item type's own fields. An item confirms the run reached its provider
+  (`confirmed/2`) unless the runtime still holds its prompt (`prompt_held`, as Pi's does
+  while it compacts), replays work the provider did before the turn (`replaying`, as
+  Pi's does taking over a wake), has sent the prompt to follow work the provider is
+  still at and not seen the provider deliver it (`follow_up: :sent`, or `:queued` once
+  Pi answered that it queued it, on the turn), or the item is no answer to the
+  prompt (`confirms: false`: one the runtime kept from before the turn, or a Pi
+  compaction, which may have begun before the prompt and still turn it back): none
+  is the provider answering the prompt.
   """
-  def ensure_item(state, native, kind, fields \\ %{}) do
+  def ensure_item(state, native, kind, fields \\ %{}, opts \\ []) do
     if Map.has_key?(state.items, native) do
       state
     else
@@ -73,6 +85,13 @@ defmodule HalC2.Orchestration.TurnWriter do
       message_id = if kind == :assistant, do: "message:#{driver}:#{native}"
       plan_id = if kind == :plan, do: "plan:#{driver}:#{native}"
       item_ids = Map.put(ids, :node, node_id)
+
+      confirms? =
+        driver not in @acknowledging and Keyword.get(opts, :confirms, true) and
+          Map.get(state, :prompt_held, false) == false and
+          Map.get(state, :replaying, false) == false and
+          Map.get(state.turn, :follow_up) not in [:sent, :queued]
+
       {node_kind, type, item_fields} = shape(kind, message_id, fields)
       item_fields = if plan_id, do: Map.put(item_fields, "planId", plan_id), else: item_fields
 
@@ -112,7 +131,10 @@ defmodule HalC2.Orchestration.TurnWriter do
               "plan",
               plan_id,
               plan(ids, plan_id, node_id, "proposed_plan", "draft", %{"markdown" => ""})
-            )
+            ),
+          # A provider that says when it starts the turn confirms the run then; an item
+          # can be something left over from before it, such as background work's.
+          confirms? && confirmed(stream, ids)
         ]
       end)
 
@@ -964,7 +986,17 @@ defmodule HalC2.Orchestration.TurnWriter do
       settle.("run-attempt", ids.attempt, done),
       settle.("run", ids.run, run_done),
       settle.("node", ids.root_node, done),
-      settle.("provider-thread", ids.provider_thread, %{"status" => "idle", "updatedAt" => at}),
+      StreamState.get(stream, "provider-thread")[ids.provider_thread] &&
+        Orchestration.upsert(
+          stream,
+          "provider-thread",
+          ids.provider_thread,
+          &(&1
+            |> Map.merge(%{"status" => "idle", "updatedAt" => at})
+            |> then(fn thread ->
+              if status == "completed", do: unmark(thread, ids), else: thread
+            end))
+        ),
       status == "interrupted" && interrupt_result(stream, ids, at),
       failure && status == "failed" &&
         settle.(
@@ -1029,6 +1061,30 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   defp kept_reset(failure, _stream, _ids), do: failure
+
+  @doc """
+  The change that confirms run `ids.run` reached its provider, or nil: the prompt, and
+  with it the history the run handed over (`unconfirmedRunId`, which
+  `HalC2.Orchestration.Handoff.plan/6` reads). The provider saying it started the turn
+  confirms it (a Codex `turn/start` answer, Claude starting the prompt's command, Muse's
+  `turn/started`); so does anything it says in the turn, or the turn completing, for a
+  provider that does not say so. Only the run's own mark comes off: a confirmation that
+  arrives after a newer run marked its handoff leaves that mark.
+  """
+  def confirmed(stream, ids) do
+    case StreamState.get(stream, "provider-thread")[ids.provider_thread] do
+      %{"unconfirmedRunId" => run} when run == ids.run ->
+        Orchestration.upsert(stream, "provider-thread", ids.provider_thread, &unmark(&1, ids))
+
+      _ ->
+        nil
+    end
+  end
+
+  defp unmark(%{"unconfirmedRunId" => run} = thread, %{run: run}),
+    do: Map.drop(thread, ["unconfirmedRunId", "unconfirmedSince"])
+
+  defp unmark(thread, _ids), do: thread
 
   # A run that left the queue and failed before its provider turn began (the runtime's
   # `start_failure/2`): the timeline says the queued message's provider could not start.
@@ -1612,6 +1668,7 @@ defmodule HalC2.Orchestration.TurnWriter do
               failure["code"] == "queued_start_failed" -> "Queued provider could not start"
               failure["code"] == "provider_turned_off" -> "Provider turned off"
               failure["code"] == "compact_empty_thread" -> "Cannot compact an empty thread"
+              failure["code"] == "compact_before_handoff" -> "Nothing to compact yet"
               failure["code"] == "goal_unsupported" -> "Goal command not supported"
               failure["code"] == "worktree_unavailable" -> "Worktree could not be made"
               true -> "Provider error"

@@ -64,13 +64,16 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.ThreadMove.locate/1" => "reads where the thread lives; changes nothing",
       "HalC2.ThreadMove.read/3" =>
         "serves the files the destination stages; a call that breaks off ends the staging, as stage and sever model",
-      "HalC2.Orchestration.Handoff.plan/5" => @handoff,
+      "HalC2.Orchestration.Handoff.plan/6" => @handoff,
+      "HalC2.Orchestration.Handoff.room/3" => @handoff,
       "HalC2.Orchestration.Handoff.prompt/2" => @handoff,
       "HalC2.Orchestration.Handoff.transcript/5" => @handoff,
       "HalC2.Orchestration.Handoff.legacy_summary/1" => @handoff,
+      "HalC2.Orchestration.Handoff.history/2" => @handoff,
+      "HalC2.Orchestration.Handoff.select/2" => @handoff,
+      "HalC2.Orchestration.Handoff.ahead/2" => @handoff,
       "HalC2.Orchestration.Handoff.fork_boundary/3" => @handoff,
-      "HalC2.Orchestration.Handoff.fresh_start/2" => @handoff,
-      "HalC2.Orchestration.Handoff.afresh/1" => @handoff
+      "HalC2.Orchestration.Handoff.fresh_start/2" => @handoff
     },
     environment: %{
       "crash" => "an MC stops: its processes die, its store stays, its links break",

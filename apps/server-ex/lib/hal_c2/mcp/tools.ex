@@ -827,6 +827,7 @@ defmodule HalC2.Mcp.Tools do
         item["title"] || item["markdown"] || item["prompt"] || ""
 
     rest = String.slice(text, offset, String.length(text))
+    message = item["messageId"] && messages[item["messageId"]]
 
     %{
       "position" => position,
@@ -844,7 +845,22 @@ defmodule HalC2.Mcp.Tools do
         do: Map.put(read, "reason", String.slice(item["reason"], 0, max_chars)),
         else: read
     end)
+    |> put_folds(message, text)
   end
+
+  # A message too long to send whole was saved as a file
+  # (`HalC2.Attachments.fold_long_text/3`): its text names the file, and the read says
+  # where it is, so the whole of the user's words can be read.
+  defp put_folds(read, %{} = message, text) do
+    case for file <- HalC2.Attachments.folded_into(text, List.wrap(message["attachments"])),
+             path = HalC2.Attachments.path(file),
+             do: %{"name" => file["name"], "path" => path} do
+      [] -> read
+      files -> Map.put(read, "files", files)
+    end
+  end
+
+  defp put_folds(read, _message, _text), do: read
 
   defp project(row),
     do: Map.take(row, ~w(id title workspaceRoot defaultModelSelection createdAt updatedAt))

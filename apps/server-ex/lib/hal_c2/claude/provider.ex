@@ -1189,10 +1189,11 @@ defmodule HalC2.Claude.Provider do
   @doc """
   The config directory instance `instance`'s Claude uses: its `homePath` setting
   (`~` expanded) when set, else the MC's own `CLAUDE_CONFIG_DIR` (a relative one
-  resolved from `cwd`, `~` left as written), else `.claude` in the user's home.
+  resolved from `cwd`, `~` left as written), else `.claude` in the user's home, or in
+  `home` when one is given.
   """
-  @spec config_dir(String.t(), String.t()) :: String.t()
-  def config_dir(instance \\ "claudeAgent", cwd \\ nil) do
+  @spec config_dir(String.t(), String.t() | nil, String.t() | nil) :: String.t()
+  def config_dir(instance \\ "claudeAgent", cwd \\ nil, home \\ nil) do
     cond do
       home = home_path(instance) ->
         expand_home(home)
@@ -1204,7 +1205,7 @@ defmodule HalC2.Claude.Provider do
         if Path.type(env) == :absolute, do: env, else: Path.absname(env, cwd || File.cwd!())
 
       true ->
-        Path.join(System.get_env("HOME") || System.user_home!(), ".claude")
+        Path.join(home || System.get_env("HOME") || System.user_home!(), ".claude")
     end
   end
 

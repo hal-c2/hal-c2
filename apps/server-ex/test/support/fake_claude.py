@@ -35,7 +35,13 @@ def trace(entry):
 
 # A held MCP answer is sent from its own thread (answer_mcp_servers).
 sending = threading.Lock()
+# With FAKE_CLAUDE_USAGE set, every result reports token usage, as Claude's do, a
+# stopped or failed turn's too.
+USAGE = os.environ.get("FAKE_CLAUDE_USAGE")
+
 def send(msg):
+    if USAGE and msg.get("type") == "result" and "usage" not in msg:
+        msg = {**msg, "usage": {"input_tokens": 1000, "output_tokens": 50}}
     with sending:
         sys.stdout.write(json.dumps(msg) + "\n")
         sys.stdout.flush()
@@ -354,7 +360,10 @@ for line in sys.stdin:
               **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
         continue
     turn += 1
-    text = msg["message"]["content"] if isinstance(msg["message"]["content"], str) else ""
+    # A message in blocks reads as its text blocks joined: the handoff sends the history
+    # and the user's message as two (`HalC2.Claude.ThreadRuntime`).
+    content = msg["message"]["content"]
+    text = content if isinstance(content, str) else "".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
     if os.environ.get("FAKE_CLAUDE_LOG"):
         with open(os.environ["FAKE_CLAUDE_LOG"], "a") as f:
             f.write(json.dumps({"text": text}) + "\n")
@@ -390,6 +399,8 @@ for line in sys.stdin:
               **({"user_message_uuids": [msg["uuid"]]} if msg.get("uuid") else {})})
         continue
     record("user", text)
+    # What the fake does is the user's message, not the history handed over before it.
+    full, text = text, text.rsplit("</conversation_history>\n\n", 1)[-1]
     # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
     # automatic resume with a 429 naming no reset.
     if os.path.exists(os.environ.get("FAKE_CLAUDE_REJECT_RESUME_FILE", "")) and text == "Continue where you left off.":
@@ -472,8 +483,9 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Still failing", "session_id": session})
         continue
     # "answer halfway": Claude writes part of its answer (message half-uuid-N) and stays open,
-    # as a turn the user stops mid-answer.
+    # as a turn the user stops mid-answer. Claude says it started the prompt first.
     if "answer halfway" in text.split("</conversation_history>")[-1]:
+        lifecycle("started")
         send({"type": "assistant", "session_id": session, "uuid": f"half-uuid-{turn}", "message": {"id": f"m{turn}h", "role": "assistant", "content": [{"type": "text", "text": "Half an answer"}]}})
         continue
     # "leave a tool pending": Claude calls Bash (tool-pending-N) and the call runs on, so
@@ -486,6 +498,9 @@ for line in sys.stdin:
     # A handoff's earlier conversation is history, not a directive, and so is a
     # delegated task's worker preamble (it asks the worker to finish its own waiting).
     if "wait" in text.split("</conversation_history>")[-1].split("\nTask:\n")[-1]:
+        # "start and wait": Claude says it started the prompt, and says nothing more.
+        if "start and wait" in text and msg.get("uuid"):
+            send({"type": "command_lifecycle", "session_id": session, "command_uuid": msg["uuid"], "state": "started"})
         continue
     # "never start a turn": Claude finishes the prompt without running a turn for it, as
     # it does one whose uuid its transcript already holds; "never start a turn (STATE)"
@@ -661,7 +676,7 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "where are we" in text:
-        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in full}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     # "edit a file": a Write tool call, and the file really is written.
