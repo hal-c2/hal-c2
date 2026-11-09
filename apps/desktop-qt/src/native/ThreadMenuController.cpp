@@ -840,25 +840,56 @@ void ThreadMenuController::startMove(const QString& key, const Machine& machine,
     move(key, machine, QString(), false, asking);
     return;
   }
+  // The palette lists the cluster's machines without asking the MC, which may
+  // keep the thread here (a plugin's review, say): its turn is not stopped for
+  // a move that would be refused.
+  whenMovable(key, [this, key, machine, asking] { stopAndMove(key, machine, asking); });
+}
+
+// Runs `then` once the MC says the thread may leave its machine, or tells why not.
+void ThreadMenuController::whenMovable(const QString& key, std::function<void()> then) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  m_client->call(this, thread->environmentId, QStringLiteral("hal-c2.moveDestinations"),
+                 QJsonObject{{QStringLiteral("threadId"), thread->id}},
+                 [this, then = std::move(then)](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) toasts()->error(QStringLiteral("Failed to move thread"), *error);
+                   else then();
+                 });
+}
+
+void ThreadMenuController::stopAndMove(const QString& key, const Machine& machine, const Asking& asking) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  const sidebar::Nullable runId = thread->activeRunId ? thread->activeRunId : thread->latestRunId;
+  if (!busy(*thread) || !runId) {
+    move(key, machine, QString(), false, asking);
+    return;
+  }
   NativeShell::of(this)->controller<MenuController>()->confirm(
       QStringLiteral("Stop \"%1\" and move it to %2?").arg(thread->title, machine.label),
       QStringLiteral("The agent is working in this thread. Its turn is stopped before the thread moves."),
       QStringLiteral("Stop and move"), false, [this, key, machine, asking, runId = *runId] {
-        const auto thread = m_store->thread(key);
-        if (!thread) return;
-        const QString toast = toasts()->show(QStringLiteral("loading"), QStringLiteral("Stopping \"%1\"…").arg(thread->title),
-                                             QString(), {}, 0);
-        m_stopping.insert(key, {machine, asking, toast});
-        m_client->dispatchCommand(this, thread->environmentId,
-                                  {{QStringLiteral("type"), QStringLiteral("run.interrupt")},
-                                   {QStringLiteral("threadId"), thread->id},
-                                   {QStringLiteral("runId"), runId}},
-                                  [this, key](const QJsonValue&, const std::optional<QString>& error) {
-                                    if (!error || !m_stopping.contains(key)) return;
-                                    toasts()->dismiss(m_stopping.take(key).toast);
-                                    toasts()->error(QStringLiteral("Failed to move thread"), *error);
-                                  });
+        // The MC may have started keeping the thread while the question was open.
+        whenMovable(key, [this, key, machine, asking, runId] { stop(key, machine, asking, runId); });
       });
+}
+
+void ThreadMenuController::stop(const QString& key, const Machine& machine, const Asking& asking, const QString& runId) {
+  const auto thread = m_store->thread(key);
+  if (!thread) return;
+  const QString toast =
+      toasts()->show(QStringLiteral("loading"), QStringLiteral("Stopping \"%1\"…").arg(thread->title), QString(), {}, 0);
+  m_stopping.insert(key, {machine, asking, toast});
+  m_client->dispatchCommand(this, thread->environmentId,
+                            {{QStringLiteral("type"), QStringLiteral("run.interrupt")},
+                             {QStringLiteral("threadId"), thread->id},
+                             {QStringLiteral("runId"), runId}},
+                            [this, key](const QJsonValue&, const std::optional<QString>& error) {
+                              if (!error || !m_stopping.contains(key)) return;
+                              toasts()->dismiss(m_stopping.take(key).toast);
+                              toasts()->error(QStringLiteral("Failed to move thread"), *error);
+                            });
 }
 
 void ThreadMenuController::moveStopped() {

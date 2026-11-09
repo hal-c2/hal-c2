@@ -53,6 +53,7 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.provider/1" => @reads,
       "HalC2.Plugins.providers/0" => @reads,
       "HalC2.Plugins.running?/2" => @reads,
+      "HalC2.Plugins.threads_stay?/1" => @reads,
       "HalC2.Plugins.sessions/1" => @reads,
       "HalC2.Plugins.text_backend?/1" => @reads,
       "HalC2.Plugins.tools/1" => @reads,

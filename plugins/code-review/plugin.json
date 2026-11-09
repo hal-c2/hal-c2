@@ -3,6 +3,7 @@
   "name": "Code Review",
   "version": "1.0.0",
   "apiVersion": 1,
+  "threadsStay": true,
   "description": "An agent of your choice reviews pull requests on the repositories you pick, and you decide what of it reaches the pull request.",
   "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
   "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/code-review",
