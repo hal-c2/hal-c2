@@ -346,6 +346,28 @@ const Steps steps([] {
     waitShownNamed(world, QStringLiteral("codeReviewApprove"));
   });
 
+  step(QStringLiteral("#(\\d+) is pushed to while the page is open"), [](World& world, const Captures& c, const Table&) {
+    waitText(world, QStringLiteral("codeReviewApproveCommit"), QStringLiteral("At commit abc%1").arg(c[0]));
+    state(world).reviews[key(c[0].toInt())].insert(QStringLiteral("headSha"), QStringLiteral("def%1").arg(c[0]));
+    publish(world);
+  });
+  step(QStringLiteral("the page says #(\\d+) was pushed since the user opened it"), [](World& world, const Captures& c, const Table&) {
+    waitText(world, QStringLiteral("codeReviewApproveCommit"), QStringLiteral("Pushed since you opened it: now at def%1, not abc%1").arg(c[0]));
+  });
+  step(QStringLiteral("the user approves #(\\d+) only at the new commit, once they have taken it in"), [](World& world, const Captures& c, const Table&) {
+    const int number = c[0].toInt();
+    // The first click takes in the new commit and approves nothing.
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewApprove")));
+    waitText(world, QStringLiteral("codeReviewApproveCommit"), QStringLiteral("At commit def%1").arg(number));
+    expect(asked(world, QStringLiteral("approve")).isEmpty(), QStringLiteral("a commit the user had not seen was approved"));
+
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewApprove")));
+    waitText(world, QStringLiteral("codeReviewStatus"), QStringLiteral("Queued"));
+    const QJsonObject approved = asked(world, QStringLiteral("approve")).value(0);
+    expect(approved == QJsonObject{{QStringLiteral("key"), key(number)}, {QStringLiteral("headSha"), QStringLiteral("def%1").arg(number)}},
+           QStringLiteral("the MC was asked %1").arg(show(approved)));
+  });
+
   step(QStringLiteral("the review of #(\\d+) is running on the user's machine %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // Another machine has its head: here it is not queued, and says where it runs.
     add(world, c[0].toInt(), QStringLiteral("ready"))

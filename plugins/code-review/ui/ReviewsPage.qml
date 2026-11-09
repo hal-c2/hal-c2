@@ -483,6 +483,26 @@ Item {
                     readonly property string status: review?.status ?? ""
                     // Only a waiting review can still be published; a kept one never is.
                     readonly property bool open: status === "waiting"
+                    // The head commit shown when the user opened this review, or last took
+                    // in: an approval vouches for it alone, so a push while the page is
+                    // open is shown and has to be taken in before it can be approved.
+                    property string seenId: ""
+                    property string seenSha: ""
+                    readonly property string headSha: review?.headSha ?? ""
+                    readonly property bool moved: seenSha.length > 0 && headSha.length > 0 && seenSha !== headSha
+                    readonly property bool approvable: review !== null && page.gated(review) && (!review.elsewhere || review.elsewhere.away === true) && seenSha.length > 0
+
+                    // Another review picked, or a head first known, is what is shown now.
+                    function see() {
+                        const id = review?.id ?? "";
+                        if (id !== seenId || seenSha.length === 0) {
+                            seenId = id;
+                            seenSha = review?.headSha ?? "";
+                        }
+                    }
+
+                    onReviewChanged: see()
+                    Component.onCompleted: see()
 
                     x: 20
                     y: 16
@@ -576,15 +596,35 @@ Item {
                             onClicked: page.ask("retry", { key: findings.review.key }, findings.review.environment)
                         }
 
+                        // The commit an approval vouches for, and a push since it was shown.
+                        Text {
+                            objectName: "codeReviewApproveCommit"
+                            visible: findings.approvable
+                            height: approve.height
+                            verticalAlignment: Text.AlignVCenter
+                            textFormat: Text.PlainText
+                            text: findings.moved ? qsTr("Pushed since you opened it: now at %1, not %2").arg(findings.headSha.slice(0, 7)).arg(findings.seenSha.slice(0, 7)) : qsTr("At commit %1").arg(findings.seenSha.slice(0, 7))
+                            color: findings.moved ? page.warningColor : page.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+
                         // The user vouches for the commit shown, and only that one: a push
-                        // needs another approval.
+                        // needs another approval, and one while the page is open is taken
+                        // in first rather than approved unseen.
                         ShellButton {
+                            id: approve
+
                             objectName: "codeReviewApprove"
-                            visible: findings.review !== null && page.gated(findings.review) && (!findings.review.elsewhere || findings.review.elsewhere.away === true)
+                            visible: findings.approvable
                             primary: true
                             enabled: page.busy === 0
-                            text: qsTr("Approve and review")
-                            onClicked: page.ask("approve", { key: findings.review.key, headSha: findings.review.headSha }, findings.review.environment)
+                            text: findings.moved ? qsTr("Show the new commit") : qsTr("Approve and review")
+                            onClicked: {
+                                if (findings.moved)
+                                    findings.seenSha = findings.headSha;
+                                else
+                                    page.ask("approve", { key: findings.review.key, headSha: findings.seenSha }, findings.review.environment);
+                            }
                         }
 
                         ShellButton {

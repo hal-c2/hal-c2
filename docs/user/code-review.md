@@ -53,10 +53,12 @@ Only pull requests from people the repository trusts are reviewed on their own:
 its owners, members and collaborators, and the logins you list under **Trusted
 logins**. A pull request from anyone else, or one whose commits come from
 someone else's fork, waits on the **Reviews** page, which says why. **Approve
-and review** reviews it at the commit shown there; a later push needs another
-approval, and **Withdraw approval** takes it back before the review starts.
-Asks on GitHub count only from trusted people: a review request or a label
-counts when GitHub shows who made it. A review you start in HAL-C2 is always
+and review** reviews it at the commit shown next to it; a later push needs another
+approval, and **Withdraw approval** takes it back before the review starts. A
+push while the page is open is shown there, and **Show the new commit** takes it
+in before you can approve it. Asks on GitHub count only from trusted people: a
+review request or a label counts when GitHub shows who made it, and not when
+someone untrusted made the same ask at the same time. A review you start in HAL-C2 is always
 yours to ask for.
 
 **Reviews per author a day** and **Reviews per repository a day** hold back

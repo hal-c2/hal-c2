@@ -334,6 +334,14 @@ Feature: Agent code review
       Then it says "stranger" is not a member or collaborator
       And the user can approve #13 at the commit shown, and withdraw the approval
 
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A push while the reviews page is open is shown before it can be approved
+      Given #13 by "stranger", who is not a member or collaborator, is listed
+      And the user opens the review of #13 on the "Reviews" page
+      When #13 is pushed to while the page is open
+      Then the page says #13 was pushed since the user opened it
+      And the user approves #13 only at the new commit, once they have taken it in
+
   Rule: The agent and its prompt are the user's to set
 
     @mc
