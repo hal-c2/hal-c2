@@ -131,6 +131,12 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer state :tasks" => @guard,
       "HalC2Plugins.TokenEconomizer handle_info _" => "any other message is ignored",
       "HalC2Plugins.TokenEconomizer state :turns" => @guard,
+      "HalC2Plugins.TokenEconomizer handle_info :sweep" =>
+        "the sweep of turns whose end was lost, which touches only the loop guard's turns: " <>
+          @guard,
+      "HalC2Plugins.TokenEconomizer state :active?" => @guard,
+      "HalC2Plugins.TokenEconomizer state :ended" => @guard,
+      "HalC2Plugins.TokenEconomizer state :sweep" => @guard,
       "HalC2Plugins.TokenEconomizer state :trackers" => @guard,
       "HalC2Plugins.TokenEconomizer state :seeded" =>
         "which threads' earlier turns were read back this run, or could not be yet (no fold then moves the watermark, which the plain test covers); their folds are imported, which differs only in the live streaks auto needs (the plain test covers it), and a restart stands for the missed turns here",
