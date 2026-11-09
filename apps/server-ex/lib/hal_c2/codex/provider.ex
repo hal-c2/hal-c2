@@ -228,19 +228,7 @@ defmodule HalC2.Codex.Provider do
            {:ok, args} <- launch_args(id),
            {:ok, home} <- HalC2.Codex.Home.env(id),
            {:ok, conn} <- start_probe(cmd ++ args, app_server_env(home ++ env)),
-           {:ok, %{} = init} <-
-             Connection.call(
-               conn,
-               "initialize",
-               %{
-                 "clientInfo" => %{
-                   "name" => "hal_c2_desktop",
-                   "title" => "HAL-C2 Desktop",
-                   "version" => "0.1.0"
-                 }
-               },
-               remaining(deadline)
-             ),
+           {:ok, %{} = init} <- initialize(conn, remaining(deadline)),
            :ok <- Connection.notify(conn, "initialized", nil) do
         # The account and binary checked out; only the model list can still be
         # slow. That must not throw the successful check away: the entry warns
@@ -351,6 +339,25 @@ defmodule HalC2.Codex.Provider do
         "installed" => true,
         "message" => "Codex app-server provider probe failed: invalid response."
       })
+  end
+
+  # A Codex that dies at once can stop its connection before this call reaches it;
+  # the call then fails with its exit and what it printed (`Connection.gone/2`).
+  defp initialize(conn, timeout) do
+    Connection.call(
+      conn,
+      "initialize",
+      %{
+        "clientInfo" => %{
+          "name" => "hal_c2_desktop",
+          "title" => "HAL-C2 Desktop",
+          "version" => "0.1.0"
+        }
+      },
+      timeout
+    )
+  catch
+    :exit, reason -> Connection.gone(conn, reason)
   end
 
   defp check_budget do

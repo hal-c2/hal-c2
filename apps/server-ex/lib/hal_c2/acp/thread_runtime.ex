@@ -1509,6 +1509,14 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # An agent that dies at once can stop its connection before this call reaches it;
+  # the call then fails with how the agent ended (`Connection.gone/2`).
+  defp initialize(conn, params) do
+    Connection.call(conn, "initialize", params)
+  catch
+    :exit, reason -> Connection.gone(conn, reason)
+  end
+
   # A registry agent's connection fails its calls with how the agent ended, in the ACP
   # client's words ("ACP process exited with code 1", "ACP input stream ended."), and
   # keeps its error output for the failure. Built-in agents keep their own wording.
@@ -1556,7 +1564,7 @@ defmodule HalC2.Acp.ThreadRuntime do
              )
            ),
          {:ok, init} <-
-           Connection.call(conn, "initialize", %{
+           initialize(conn, %{
              "protocolVersion" => 1,
              "clientCapabilities" =>
                %{

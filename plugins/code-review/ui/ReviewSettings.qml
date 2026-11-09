@@ -286,6 +286,32 @@ ColumnLayout {
             settings.set(count.key, Number(text))
     }
 
+    // Logins separated by commas. The text stays as typed while it is edited, with
+    // what it names set as it changes, and is shown from the setting again once
+    // editing ends, or when the setting changes to other logins (a reset, a load).
+    component Logins: ShellTextField {
+        id: logins
+
+        property string key
+        readonly property var list: settings.values[logins.key] ?? []
+
+        function parse(text) {
+            return text.split(",").map(each => each.trim()).filter(each => each.length > 0);
+        }
+
+        function show() {
+            logins.text = logins.list.join(", ");
+        }
+
+        objectName: "codeReviewSetting:" + key
+        Layout.fillWidth: true
+        Component.onCompleted: show()
+        onListChanged: if (JSON.stringify(logins.parse(logins.text)) !== JSON.stringify(logins.list))
+            logins.show()
+        onTextEdited: settings.set(logins.key, logins.parse(logins.text))
+        onEditingFinished: show()
+    }
+
     component Area: TextArea {
         Layout.fillWidth: true
         wrapMode: TextEdit.Wrap
@@ -471,11 +497,10 @@ ColumnLayout {
                 label: qsTr("Ignored authors")
                 hint: qsTr("Logins, separated by commas.")
 
-                ShellTextField {
-                    objectName: "codeReviewSetting:ignoredAuthors"
-                    Layout.fillWidth: true
-                    text: (settings.values.ignoredAuthors ?? []).join(", ")
-                    onTextEdited: settings.set("ignoredAuthors", text.split(",").map(each => each.trim()).filter(each => each.length > 0))
+                Logins {
+                    key: "ignoredAuthors"
+                    Accessible.name: qsTr("Ignored authors")
+                    Accessible.description: qsTr("Logins, separated by commas.")
                 }
             }
 
@@ -493,6 +518,45 @@ ColumnLayout {
             key: "reviewNewPushes"
             label: qsTr("Review new pushes")
             hint: qsTr("Review a pull request again when its head changes after a review.")
+        }
+
+        Field {
+            label: qsTr("Trusted logins")
+            hint: qsTr("Logins, separated by commas. Besides the repository's members and collaborators, these may have their pull requests reviewed and ask for reviews. Approve anyone else's pull request on the Reviews page.")
+
+            Logins {
+                key: "trustedLogins"
+                Accessible.name: qsTr("Trusted logins")
+                Accessible.description: qsTr("Logins, separated by commas, whose pull requests are reviewed and who may ask for reviews.")
+            }
+        }
+
+        // Side by side where they fit, one under the other on a narrow screen.
+        Flow {
+            Layout.fillWidth: true
+            spacing: 24
+
+            Field {
+                label: qsTr("Reviews per author a day")
+                hint: qsTr("Across your machines. 0 for no limit.")
+
+                Count {
+                    key: "reviewsPerAuthorPerDay"
+                    Accessible.name: qsTr("Reviews per author a day")
+                    Accessible.description: qsTr("Across your machines. 0 for no limit.")
+                }
+            }
+
+            Field {
+                label: qsTr("Reviews per repository a day")
+                hint: qsTr("Reviews you start yourself are never held back.")
+
+                Count {
+                    key: "reviewsPerRepositoryPerDay"
+                    Accessible.name: qsTr("Reviews per repository a day")
+                    Accessible.description: qsTr("Reviews you start yourself are never held back.")
+                }
+            }
         }
 
         Heading {
@@ -729,6 +793,7 @@ ColumnLayout {
             }
 
             ShellButton {
+                objectName: "codeReviewDiscard"
                 subtle: true
                 text: qsTr("Discard changes")
                 enabled: settings.dirty && !settings.saving

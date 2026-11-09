@@ -137,6 +137,48 @@ defmodule HalC2.JsonRpc.ConnectionTest do
     assert said == "noise\nERROR config is not trusted"
   end
 
+  # Upstream #23938 (a flake of features/providers/codex.feature): a Codex that dies as it
+  # starts can stop its connection before the first call reaches it. The call then exits
+  # (`:noproc`) and only the connection's exit reason still says why; this waits for the
+  # stop before calling, the order that once showed the generic "could not start".
+  test "a call that finds the connection already stopped fails with the program's exit" do
+    Process.flag(:trap_exit, true)
+    said = "Error: Missing optional dependency @openai/codex-darwin-arm64"
+    script = "printf '%s\\n' '#{said}' >&2; exit 1"
+
+    {:ok, conn} =
+      Connection.start_link(
+        cmd: ["sh", "-c", script],
+        handler: self(),
+        program: "Peer",
+        stderr_tail: true
+      )
+
+    error = %{
+      "message" => "Peer process exited with code 1",
+      "exitCode" => 1,
+      "stderr" => said,
+      "ended" => true
+    }
+
+    # Waits for the stop only: a monitor set after `start_link/1` may find the
+    # connection gone already and say `:noproc`. Its reason is the `:EXIT` below, left
+    # in the mailbox for `gone/2` to read.
+    ref = Process.monitor(conn)
+    assert_receive {:DOWN, ^ref, :process, ^conn, _}, 5_000
+
+    reply =
+      try do
+        Connection.call(conn, "initialize", %{})
+      catch
+        :exit, reason -> Connection.gone(conn, reason)
+      end
+
+    assert reply == {:error, error}
+    # The owner still gets the exit, for its own handling of the program's end.
+    assert_received {:EXIT, ^conn, {:shutdown, {:ended, ^error}}}
+  end
+
   # A refused OpenCode (macOS quarantine) dies before its first call; the read stops
   # its connection afterwards all the same.
   test "stopping a connection whose subprocess already closed it is a no-op" do

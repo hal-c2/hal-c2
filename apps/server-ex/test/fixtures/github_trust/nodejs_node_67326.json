@@ -1,0 +1,82 @@
+{
+  "data": {
+    "viewer": {
+      "login": "olafura"
+    },
+    "repository": {
+      "pullRequest": {
+        "author": {
+          "__typename": "User",
+          "login": "xixi-box"
+        },
+        "authorAssociation": "NONE",
+        "isCrossRepository": true,
+        "headRefOid": "e692972014ad186ab2f0651d14aaea6e73c5c844",
+        "headRepositoryOwner": {
+          "login": "xixi-box"
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "authorAssociation": "CONTRIBUTOR",
+              "body": "Welcome to Node.js, and thank you for your first contribution!",
+              "createdAt": "2026-11-07T19:36:04Z"
+            }
+          ]
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-11-07T19:35:56Z",
+              "actor": {
+                "__typename": "User",
+                "login": "nodejs-github-bot"
+              },
+              "label": {
+                "name": "c++"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-11-07T19:35:56Z",
+              "actor": {
+                "__typename": "User",
+                "login": "nodejs-github-bot"
+              },
+              "label": {
+                "name": "needs-ci"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-11-07T19:36:02Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "github-actions"
+              },
+              "label": {
+                "name": "agentscan:automated-account"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-11-07T22:50:50Z",
+              "actor": {
+                "__typename": "User",
+                "login": "MikeMcC399"
+              },
+              "label": {
+                "name": "invalid"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
