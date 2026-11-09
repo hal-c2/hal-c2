@@ -2607,6 +2607,24 @@ defmodule HalC2.OrchestrationTest do
       refute StreamState.get(state, "turn-item")["turn-item:user:m2"]
     end
 
+    # The file a long text was folded into is the message's, so a refused send takes
+    # it away again.
+    @tag :capture_log
+    test "a long message the thread refuses leaves no file behind" do
+      {thread_id, _run_id} = recorded_run("running")
+      odd_runtime(thread_id)
+
+      assert {:error, _} =
+               send_message(thread_id, "m2", String.duplicate("y", 130_000), %{
+                 "dispatchMode" => %{"type" => "start_immediately"},
+                 "deliveryIntent" => "steer"
+               })
+
+      refute StreamState.get(current(thread_id), "message")["m2"]
+      prefix = HalC2.Attachments.thread_segment(thread_id) <> "-"
+      assert Path.wildcard(Path.join(HalC2.Attachments.dir(), prefix <> "*")) == []
+    end
+
     @tag :capture_log
     test "a promote whose runtime stops as it is asked goes back first in the queue",
          %{tmp_dir: dir} do
