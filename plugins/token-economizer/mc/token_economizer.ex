@@ -302,38 +302,26 @@ defmodule HalC2Plugins.TokenEconomizer do
     do: drop_or_restore(state, input, :restore)
 
   def handle_call({:shape_run, run, deadline}, _from, state) do
-    if micro_on?(state) and is_binary(run["projectId"]) and
-         System.monotonic_time(:millisecond) <= deadline do
-      {skills, state} = skills_for(state, run["projectId"])
-      {text, skills} = EnvFacts.render(skills)
-      state = put_in(state.skills[run["projectId"]], skills)
+    {reply, ids, state} = shape(state, run, deadline)
 
-      # The render itself can cross the deadline (a project's first load):
-      # past it the answer is discarded, so stage nothing for it either.
-      if System.monotonic_time(:millisecond) <= deadline do
-        # Staged per conversation, not per thread: a thread carried on by
-        # another provider instance (another driver, or another account of
-        # the same one) gets its own staging, and each fold credits the
-        # conversation it belongs to. Saved once the answer is on its way.
-        # A run naming no conversation still gets the facts, but stages
-        # nothing: no turn could be credited to it. A conversation that
-        # carries on another's shape without asking (a native fork, a Claude
-        # home two instances share) has no staging of its own, so its turns
-        # fold as an unstaged conversation's (hal-c2/hal-c2#1473).
-        key = {run["threadId"], run["instanceId"] || run["provider"]}
-        reply = if(text == "", do: nil, else: %{"context" => text})
+    # Staged per conversation, not per thread: a thread carried on by another
+    # provider instance (another driver, or another account of the same one)
+    # gets its own staging, and each fold credits the conversation it belongs
+    # to. Saved once the answer is on its way. A run naming no conversation
+    # still gets the facts, but stages nothing: no turn could be credited to
+    # it. A conversation that carries on another's shape without asking (a
+    # native fork, a Claude home two instances share) has no staging of its
+    # own, so its turns fold as an unstaged conversation's
+    # (hal-c2/hal-c2#1473). One that replaces a staged conversation (a
+    # Handoff) and is given nothing, learning off or past its deadline, is
+    # staged nothing, so it is never credited its predecessor's facts.
+    key = {run["threadId"], run["instanceId"] || run["provider"]}
 
-        if is_binary(elem(key, 0)) and is_binary(elem(key, 1)) do
-          state = stage(state, key, EnvFacts.injected_ids(skills))
-          {:reply, reply, state, {:continue, :save_staged}}
-        else
-          {:reply, reply, state}
-        end
-      else
-        {:reply, nil, state}
-      end
+    if is_binary(elem(key, 0)) and is_binary(elem(key, 1)) and
+         (ids != nil or Map.has_key?(state.staged, key)) do
+      {:reply, reply, stage(state, key, ids || []), {:continue, :save_staged}}
     else
-      {:reply, nil, state}
+      {:reply, reply, state}
     end
   end
 
@@ -344,6 +332,27 @@ defmodule HalC2Plugins.TokenEconomizer do
     state = missed(state, event)
     state = if on?(state) or micro_on?(state), do: hear(state, event), else: state
     {:reply, :ok, suspect(state, event)}
+  end
+
+  # The facts a run is given, and their ids; nil ids when it is given none:
+  # learning off, no project, or past its deadline.
+  defp shape(state, run, deadline) do
+    if micro_on?(state) and is_binary(run["projectId"]) and
+         System.monotonic_time(:millisecond) <= deadline do
+      {skills, state} = skills_for(state, run["projectId"])
+      {text, skills} = EnvFacts.render(skills)
+      state = put_in(state.skills[run["projectId"]], skills)
+
+      # The render itself can cross the deadline (a project's first load):
+      # past it the answer is discarded, so nothing was given.
+      if System.monotonic_time(:millisecond) <= deadline,
+        do:
+          {if(text == "", do: nil, else: %{"context" => text}), EnvFacts.injected_ids(skills),
+           state},
+        else: {nil, nil, state}
+    else
+      {nil, nil, state}
+    end
   end
 
   @impl GenServer
@@ -498,6 +507,9 @@ defmodule HalC2Plugins.TokenEconomizer do
       project: project,
       instance: event["instanceId"] || event["provider"],
       guard: Turn.new("#{thread_id}:#{run_id}"),
+      # What its conversation was staged as it started, credited at its fold
+      # even if the conversation is replaced before then.
+      injected: Map.get(state.staged, {thread_id, event["instanceId"] || event["provider"]}, []),
       # The turn's calls, newest first, for the micro-skills to fold at its
       # end; `:history` once there were more than are kept, and the turn is
       # read back from the thread instead.
@@ -599,7 +611,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
           skills =
             skills
-            |> EnvFacts.seed_injected(Map.get(state.staged, {thread_id, turn.instance}, []))
+            |> EnvFacts.seed_injected(turn.injected)
             |> EnvFacts.update_turn(calls, turn.run)
 
           save_skills(project_id, skills)

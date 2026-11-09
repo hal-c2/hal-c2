@@ -525,6 +525,10 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
       while learning, and past that none: it is read back whole at its end;
     * what was staged is keyed by thread and instance, in the order staged,
       and survives a restart, which forgets the turns;
+    * a conversation that replaces a staged one (a Handoff) while learning is
+      off is given nothing and staged nothing, and a turn holds only what its
+      own conversation was staged as it started: one started on a conversation
+      given nothing is credited nothing, however learning is switched after;
     * the guard watches no turn while it is off.
 
   The laws of the facts themselves are `HalC2.TokenEconomizerMicroSkillsPropTest`,
@@ -537,6 +541,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
   use PropCheck.StateM
 
   alias HalC2Plugins.TokenEconomizer
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
 
   @threads ~w(a b)
   @instances [{"claude-work", "claudeAgent"}, {"claude-home", "claudeAgent"}, {"codex", "codex"}]
@@ -546,6 +551,7 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
     numtests: HalC2.Prop.numtests(200) do
     forall cmds <- more_commands(6, commands(__MODULE__)) do
       home = HalC2.Prop.scratch_home("token-economizer-seam")
+      learned()
       {:ok, plugin} = TokenEconomizer.init(settings(initial_state()))
       Process.put(:plugin, plugin)
       {history, state, result} = run_commands(__MODULE__, cmds)
@@ -566,9 +572,11 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
   end
 
   # The model: the modes in force, the turns under way by thread (their
-  # instance, whether partial, the calls heard while learning), and the
-  # conversations staged, oldest first.
-  def initial_state, do: %{guard: "off", micro: "envfacts", turns: %{}, staged: []}
+  # instance, whether partial, the calls heard while learning, whether their
+  # conversation was given facts as they started), the conversations staged,
+  # oldest first, and those of them last staged with learning off.
+  def initial_state,
+    do: %{guard: "off", micro: "envfacts", turns: %{}, staged: [], given_none: MapSet.new()}
 
   def command(_state) do
     frequency([
@@ -606,9 +614,10 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
   end
 
   def next_state(state, _result, {:call, _, :start, [thread, {instance, _driver}]}) do
-    if hears?(state),
-      do: put_in(state.turns[thread], %{instance: instance, partial: false, heard: 0}),
-      else: state
+    key = {thread, instance}
+    given = key in state.staged and not MapSet.member?(state.given_none, key)
+    turn = %{instance: instance, partial: false, heard: 0, given: given}
+    if hears?(state), do: put_in(state.turns[thread], turn), else: state
   end
 
   def next_state(state, _result, {:call, _, :calls, [thread, n]}) do
@@ -620,12 +629,28 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
   def next_state(state, _result, {:call, _, :finish, [thread]}),
     do: %{state | turns: Map.delete(state.turns, thread)}
 
+  # Learning off, a conversation is given nothing: one replacing a staged
+  # conversation is staged nothing, and one never staged stays unstaged.
   def next_state(state, _result, {:call, _, :stage, [thread, {instance, _driver}]}) do
-    if state.micro != "off" do
-      key = {thread, instance}
-      %{state | staged: (state.staged -- [key]) ++ [key]}
-    else
-      state
+    key = {thread, instance}
+
+    cond do
+      state.micro != "off" ->
+        %{
+          state
+          | staged: (state.staged -- [key]) ++ [key],
+            given_none: MapSet.delete(state.given_none, key)
+        }
+
+      key in state.staged ->
+        %{
+          state
+          | staged: (state.staged -- [key]) ++ [key],
+            given_none: MapSet.put(state.given_none, key)
+        }
+
+      true ->
+        state
     end
   end
 
@@ -644,12 +669,15 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
               do: kept.calls == :history,
               else: is_list(kept.calls) and length(kept.calls) == turn.heard
 
-          kept.instance == turn.instance and kept.partial == turn.partial and calls_ok
+          kept.instance == turn.instance and kept.partial == turn.partial and calls_ok and
+            (turn.given or kept.injected == [])
         end)
 
     staged_ok =
       view.staged_order == state.staged and
-        Enum.sort(view.staged_keys) == Enum.sort(state.staged)
+        Enum.sort(Map.keys(view.staged)) == Enum.sort(state.staged) and
+        Enum.all?(state.staged, &(view.staged[&1] != [] or MapSet.member?(state.given_none, &1))) and
+        Enum.all?(state.given_none, &(view.staged[&1] == []))
 
     watching_ok =
       view.watching == if(state.guard == "off", do: 0, else: map_size(state.turns))
@@ -741,6 +769,36 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
     put(plugin)
   end
 
+  # Project `p` has learned a fact, so a conversation staged while learning is
+  # given it: the bare `pytest` is missing, and `python -m pytest` works.
+  defp learned do
+    skills =
+      EnvFacts.add_candidate(EnvFacts.new(), %{
+        id: "form_repair:run_tests:pytest",
+        family: "form_repair",
+        high: false,
+        drift: false,
+        params: %{
+          "intent" => "run_tests",
+          "a" => "pytest",
+          "b_counts" => %{"python -m pytest" => 3},
+          "error_counts" => %{}
+        }
+      })
+
+    # Promoted, and fired so often no case's folds can sink it below the gate.
+    saved =
+      skills
+      |> EnvFacts.dump()
+      |> update_in(["facts", "form_repair:run_tests:pytest", "life"], fn life ->
+        %{life | "state" => "ACTIVE", "fire_num" => 1000, "fire_den" => 1000}
+      end)
+
+    path = TokenEconomizer.micro_skills_path("p")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, JSON.encode!(Map.put(saved, "projectId", "p")))
+  end
+
   # The MC restarts: the process starts afresh from what it saved, with the
   # settings it had.
   def restart do
@@ -766,10 +824,16 @@ defmodule HalC2.TokenEconomizerMicroSkillsSeamPropTest do
     %{
       turns:
         Map.new(plugin.turns, fn {thread, turn} ->
-          {thread, %{instance: turn.instance, partial: turn.partial, calls: turn.calls}}
+          {thread,
+           %{
+             instance: turn.instance,
+             partial: turn.partial,
+             calls: turn.calls,
+             injected: Map.get(turn, :injected, [])
+           }}
         end),
       staged_order: plugin.staged_order,
-      staged_keys: Map.keys(plugin.staged),
+      staged: plugin.staged,
       watching: TokenEconomizer.status(plugin)["watching"]
     }
   end

@@ -1889,6 +1889,64 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert [{_, {"a", :judge}}] = Map.to_list(state.tasks)
     end
 
+    test "a conversation replaced while learning is off is credited none of its predecessor's facts" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      run = %{"threadId" => "t", "projectId" => "seam", "instanceId" => "claude-work"}
+      future = System.monotonic_time(:millisecond) + 60_000
+
+      # A Handoff replaces the conversation while learning is off: it is given nothing.
+      state = settings(state, %{"microSkills" => "off"})
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+      assert state.staged[{"t", "claude-work"}] == []
+
+      state = settings(state, %{"microSkills" => "envfacts"})
+      assert state |> ran_tests("t", "claude-work") |> fired() == 0
+    end
+
+    test "a turn is credited what its own conversation was staged, however late it folds" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      at = %{"threadId" => "t", "runId" => "run-old"}
+
+      state =
+        observe(
+          state,
+          started("t", %{
+            "runId" => "run-old",
+            "projectId" => "seam",
+            "instanceId" => "claude-work"
+          })
+        )
+
+      # A replacement past its deadline is given nothing before the old turn ends.
+      run = %{"threadId" => "t", "projectId" => "seam", "instanceId" => "claude-work"}
+      past = System.monotonic_time(:millisecond) - 1
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, run, past}, nil, state)
+
+      assert state.staged[{"t", "claude-work"}] == []
+
+      ran =
+        Map.merge(at, %{
+          "type" => "turn.item",
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "python -m pytest -q",
+          "output" => "3 passed in 0.10s"
+        })
+
+      state = observe(state, ran)
+      state = observe(state, Map.merge(at, %{"type" => "turn.finished", "status" => "completed"}))
+      assert fired(state) == 1
+    end
+
     test "with the guard off a settings save keeps the turns learning hears" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})
