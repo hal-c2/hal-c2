@@ -1381,6 +1381,43 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       end
     end
 
+    test "a check run in a nested shell after an edit is not read, so the turn is not learned" do
+      for cmd <- [
+            "bash -lc 'pytest -q' || true",
+            "bash -c 'pytest -q' 2>&1 | tail -3",
+            "sh -c 'pytest -q' && echo done",
+            ~s{node -e "require('child_process').execSync('pytest -q')"}
+          ] do
+        state = heard_turn([edited("/r/a.py"), command(cmd, "1 failed in 0.02s", "completed")])
+        refute TokenEconomizer.learns?(state.turns["a"], true), cmd
+      end
+
+      # The script of a command run whole as `bash -lc '<script>'` is read.
+      state =
+        heard_turn([edited("/r/a.py"), command("bash -lc 'pytest -q'", "1 passed in 0.02s")])
+
+      assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a command heard only in part after an edit is not read, so the turn is not learned" do
+      capped = "cat > a.py <<'EOF'\n" <> String.duplicate("x = 1\n", 700) <> "EOF\npytest -q"
+      failing = command(capped, "1 failed in 0.02s", "failed", %{"exitCode" => 1})
+
+      state = heard_turn([edited("/r/a.py"), failing])
+      refute TokenEconomizer.learns?(state.turns["a"], true)
+
+      # An edit after it is the turn's last, and a check that passed after that is read.
+      passing = command("pytest -q", "1 passed in 0.02s")
+      state = heard_turn([edited("/r/a.py"), failing, edited("/r/a.py"), passing])
+      assert TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
+    test "a heredoc left open after an edit is not placed, so the turn is not learned" do
+      cmd = "cat > notes.txt <<EOF\nx = 1\npytest -q"
+      state = heard_turn([edited("/r/a.py"), command(cmd, "1 failed in 0.02s", "failed")])
+      refute TokenEconomizer.learns?(state.turns["a"], true)
+    end
+
     test "a turn's end stops its judge job, and off stops every judge job; a delivery under way finishes" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = state |> observe(started("a")) |> observe(started("b"))

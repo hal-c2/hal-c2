@@ -37,6 +37,8 @@ defmodule HalC2.TokenEconomizerPropTest do
 
   # --- one turn, as a state machine ------------------------------------------------------
 
+  @unread ~w(capped nested piped_shell inline substituted open_heredoc)
+
   property "a turn's guard keeps its laws in any order of calls, verdicts and time",
     numtests: HalC2.Prop.numtests(200) do
     forall {samples, budget} <- {learned(), integer(0, 2)} do
@@ -221,6 +223,26 @@ defmodule HalC2.TokenEconomizerPropTest do
   defp call("read"), do: {"Bash", %{"command" => "cat a.py"}, "x = 1", 0}
   defp call("bad_edit"), do: {"Edit", %{"path" => "a.py"}, "String to replace not found", 1}
 
+  # Commands the guard does not read whole, each hiding a failing check: capped (the
+  # plugin hears no text), in a nested shell, as inline code, in a substitution, or in a
+  # heredoc that never ends.
+  defp call("capped"), do: {"Bash", %{"command" => ""}, "1 failed in 0.02s", 1}
+
+  defp call("nested"),
+    do: {"Bash", %{"command" => "bash -lc 'pytest -q' || true"}, "1 failed in 0.02s", 0}
+
+  defp call("piped_shell"),
+    do: {"Bash", %{"command" => "sh -c 'pytest -q' | tail -3"}, "1 failed in 0.02s", nil}
+
+  defp call("inline"),
+    do: {"Bash", %{"command" => "node --input-type commonjs -e \"x()\""}, "1 failed in 0.02s", 0}
+
+  defp call("substituted"),
+    do: {"Bash", %{"command" => "echo $(pytest -q)"}, "1 failed in 0.02s", 0}
+
+  defp call("open_heredoc"),
+    do: {"Bash", %{"command" => "cat <<EOF\npytest -q"}, "1 failed in 0.02s", 1}
+
   def postcondition(state, {:call, _, :tools, _}, steps) do
     steps
     |> Enum.with_index(1)
@@ -306,6 +328,35 @@ defmodule HalC2.TokenEconomizerPropTest do
          ))
       |> when_fail(
         IO.puts("Turns: #{inspect(turns)}\nLearned: #{inspect(tracker.resolved_turns)}")
+      )
+    end
+  end
+
+  property "a turn with a command it did not read after its last edit is never learned",
+    numtests: HalC2.Prop.numtests(300) do
+    forall kinds <- list(elements(~w(read edit pass fail) ++ @unread)) do
+      g =
+        Enum.reduce(kinds, Turn.new("t:r"), fn kind, g ->
+          {name, args, result, code} = call(kind)
+          {g, _, _} = Turn.fold(g, name, args, result, code)
+          g
+        end)
+
+      # Positions from 1, as the guard counts calls; 0 when nothing was edited.
+      at = Enum.with_index(kinds, 1)
+      last_edit = Enum.max([0 | for({"edit", i} <- at, do: i)])
+      after_edit = for {kind, i} <- at, i > last_edit, do: kind
+      checks = Enum.filter(after_edit, &(&1 in ~w(pass fail)))
+
+      green =
+        kinds != [] and not Enum.any?(after_edit, &(&1 in @unread)) and
+          List.last(checks) != "fail"
+
+      (Turn.resolved_proxy(g) == green)
+      |> when_fail(
+        IO.puts(
+          "Calls: #{inspect(kinds)}\nGuard: #{inspect(Map.take(g, [:last_edit, :last_verify, :last_verify_failed]))}"
+        )
       )
     end
   end

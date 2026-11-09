@@ -24,8 +24,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       into short turns, and a whole thread folded as one would look stuck merely by being
       long.
     * There is no grader, so the project's envelope learns from turns that ended green:
-      the agent stopped on its own, the guard did not stop it, and no verification after
-      its last edit failed (`resolved_proxy/2`).
+      the agent stopped on its own, the guard did not stop it, no verification after
+      its last edit failed, and it read every command after that edit whole
+      (`resolved_proxy/2`).
   """
 
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Rules, ShellEdits, State}
@@ -153,6 +154,9 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
       # Whether an edit was tried after the last check ran: one that failed to apply too,
       # and one later in the check's own command (`pytest && sed -i ...`).
       unchecked: false,
+      # The last call that ran a command this did not read whole (`ShellEdits.read?/1`),
+      # whose checks it may not have heard: 0 for none.
+      unread: 0,
       edits: 0,
       verifications: 0,
       # %{"id", "since", "segment"} of the judge job out, or nil.
@@ -351,6 +355,11 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
         verifies = status_of_tests(cmd) != nil
 
         g =
+          if canon == "bash" and not ShellEdits.read?(cmd),
+            do: %{g | unread: g.cum_turns},
+            else: g
+
+        g =
           cond do
             shell_edits == [] ->
               g
@@ -394,11 +403,14 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.Turn do
 
   @doc """
   Whether this turn ended green, the stand-in for the grader the envelope cannot have:
-  green unless a verification after the last edit failed.
+  green unless a verification after the last edit failed, or a command after it was not
+  read whole (a nested shell's script, inline code, a capped or garbled command, a
+  heredoc not placed), which may have run a check that failed unheard.
   """
   def resolved_proxy(g, stopped_normally \\ true) do
     stopped_normally and not g.aborted and g.cum_turns != 0 and
-      not (g.last_verify_failed and g.last_verify > g.last_edit)
+      not (g.last_verify_failed and g.last_verify > g.last_edit) and
+      not (g.unread > 0 and g.unread >= g.last_edit)
   end
 
   # ---- what the judge is told -----------------------------------------------------------

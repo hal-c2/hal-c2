@@ -161,6 +161,19 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
 
   def opaque?(_), do: false
 
+  @doc """
+  Whether this reads the whole of a shell command, so the commands it finds in it are
+  all it runs: it has the text (a command too long for a plugin to hear has none), every
+  character is legible (`legible?/1`), none of its words is code this does not read
+  (`opaque?/1`), and each heredoc ends at its delimiter.
+  """
+  def read?(cmd) when is_binary(cmd) do
+    String.trim(cmd) != "" and legible?(cmd) and not opaque?(cmd) and
+      elem(heredocs(script(cmd)), 2)
+  end
+
+  def read?(_), do: false
+
   defp runs_code?(["eval" | _]), do: true
 
   defp runs_code?([first | args]) do
@@ -396,21 +409,27 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
   line continued with a backslash is one line, and its heredocs start after it.
   """
   def split_heredocs(cmd) do
-    {shell, bodies} = shell_lines(String.split(cmd, "\n"), [], [])
-    {shell |> Enum.reverse() |> Enum.join("\n"), Enum.reverse(bodies)}
+    {shell, bodies, _} = heredocs(cmd)
+    {shell, bodies}
   end
 
-  defp shell_lines([], shell, bodies), do: {shell, bodies}
+  # `split_heredocs/1`, and whether every heredoc ended at its delimiter.
+  defp heredocs(cmd) do
+    {shell, bodies, placed} = shell_lines(String.split(cmd, "\n"), [], [], true)
+    {shell |> Enum.reverse() |> Enum.join("\n"), Enum.reverse(bodies), placed}
+  end
 
-  defp shell_lines(lines, shell, bodies) do
+  defp shell_lines([], shell, bodies, placed), do: {shell, bodies, placed}
+
+  defp shell_lines(lines, shell, bodies, placed) do
     {line, rest} = logical_line(lines)
 
     docs =
       for [_, dash, word] <- Regex.scan(@heredoc_start, line),
           do: {dash == "-", Regex.replace(~r/\\(.)|['"]/, word, "\\1")}
 
-    {bodies, rest} = read_bodies(docs, rest, bodies)
-    shell_lines(rest, [line | shell], bodies)
+    {bodies, rest, ended} = read_bodies(docs, rest, bodies, true)
+    shell_lines(rest, [line | shell], bodies, placed and ended)
   end
 
   defp logical_line([line | rest]) do
@@ -422,12 +441,13 @@ defmodule HalC2Plugins.TokenEconomizer.LoopGuard.ShellEdits do
     end
   end
 
-  defp read_bodies([], lines, bodies), do: {bodies, lines}
+  defp read_bodies([], lines, bodies, ended), do: {bodies, lines, ended}
 
-  defp read_bodies([{dash, tag} | docs], lines, bodies) do
+  defp read_bodies([{dash, tag} | docs], lines, bodies, ended) do
     ends? = fn line -> if(dash, do: String.trim_leading(line, "\t"), else: line) == tag end
     {body, rest} = Enum.split_while(lines, &(not ends?.(&1)))
-    read_bodies(docs, Enum.drop(rest, 1), [Enum.join(body, "\n") | bodies])
+    bodies = [Enum.join(body, "\n") | bodies]
+    read_bodies(docs, Enum.drop(rest, 1), bodies, ended and rest != [])
   end
 
   # Simple commands as unquoted word lists, and the files their redirects write.
