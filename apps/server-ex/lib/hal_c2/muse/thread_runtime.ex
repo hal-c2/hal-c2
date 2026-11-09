@@ -185,6 +185,8 @@ defmodule HalC2.Muse.ThreadRuntime do
              log: snapshot.state.thread_id
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      # A stop Muse answered keeps its bound across the move.
+      if restored.turn != nil and restored.interrupted, do: settle_later(restored.turn)
       {:reply, :ok, Durable.restored(restored, :conn, conn, snapshot)}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -265,6 +267,7 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     case command(state, "turn/interrupt", %{"turnId" => state.native}, deadline) do
       {:ok, _} ->
+        settle_later(state.turn)
         {:reply, :ok, %{state | interrupted: true}}
 
       # A Muse that will not stop its turn is stopped with its host, as a compaction is:
@@ -401,10 +404,33 @@ defmodule HalC2.Muse.ThreadRuntime do
     {:noreply, %{state | conn: nil, host: nil, session: nil, model: nil}}
   end
 
+  # A turn Muse has not ended in time after answering its stop is ended as
+  # interrupted here, with its host, so the next turn resumes the session.
+  def handle_info({:settle_interrupt, run_id}, %{turn: %{ids: %{run: run_id}}} = state)
+      when state.interrupted,
+      do: {:noreply, state |> end_turn("interrupted", nil) |> close_host()}
+
   def handle_info(:flush, state),
     do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2, handle_call: 3
+
+  @impl true
+  def handle_info(message, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_info(__MODULE__, message, state, fn m, s ->
+        super(m, s)
+      end)
+
+  @impl true
+  def handle_call(request, from, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_call(request, from, state, fn r, f, s ->
+        super(r, f, s)
+      end)
 
   # Anything Muse says about this run's turn means it has started it.
   defp started(%{native: native} = state, params) when native != nil do
@@ -484,6 +510,12 @@ defmodule HalC2.Muse.ThreadRuntime do
       {:error, reason} ->
         {:error, reason, state}
     end
+  end
+
+  # Muse gets ten seconds to end a turn after answering its stop (`:settle_interrupt`).
+  defp settle_later(turn) do
+    settle = Application.get_env(:hal_c2, :muse_interrupt_timeout_ms, 10_000)
+    Process.send_after(self(), {:settle_interrupt, turn.ids.run}, settle)
   end
 
   defp close_host(%{conn: nil} = state), do: state

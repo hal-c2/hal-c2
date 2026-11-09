@@ -17,7 +17,7 @@ defmodule HalC2.Proof do
   `check` the one with its states and propositions (`module` if omitted), whose whole
   states are of sort `state` ("Sys" if omitted). The proof gets the test "the model
   covers the code", and its own tests get the loaded model as `%{proof: proof}` for
-  `refute_reachable/4`, `refute_deadlock/4`, `assert_ltl/4` and `assert_reachable/4`.
+  `refute_reachable/4`, `assert_reachable/4`, `refute_deadlock/4` and `assert_ltl/4`.
 
   `code` lists what to read of the code, as facts:
 
@@ -127,9 +127,9 @@ defmodule HalC2.Proof do
   end
 
   @doc """
-  Fails unless a state for which `bad` holds is reachable from `init`: a design switch
-  of the model turned off finds the flaw it is there to close. `depth: n` bounds the
-  search.
+  Fails unless a state for which `bad` holds is reachable from `init`: with a part of
+  the code's fix switched off in the model, it shows that part is what keeps `bad`
+  out. `depth: n` bounds the search.
   """
   def assert_reachable(proof, init, bad, opts \\ []) do
     bound = if opts[:depth], do: "[1, #{opts[:depth]}]", else: "[1]"

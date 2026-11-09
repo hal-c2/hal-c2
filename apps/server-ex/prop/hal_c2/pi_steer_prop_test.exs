@@ -41,7 +41,10 @@ defmodule HalC2.PiSteerPropTest do
   hand over, the work Pi does before it delivers the message confirms none of it). Send two messages,
   then an extension command that moves Pi's session back to before the second
   (`navigateTree`): only the second's run is rolled back, and the turns after find
-  their place in Pi's session past the branch it abandoned.
+  their place in Pi's session past the branch it abandoned. Send a message whose turn
+  Pi goes on with after an abort, and have the store refuse one of its writes (a full
+  disk, hal-c2#1285): the MC aborts the turn, Pi goes on, and once the time Pi has to
+  end it runs out the turn ends, Pi with it, and its run fails.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -74,6 +77,8 @@ defmodule HalC2.PiSteerPropTest do
 
   @turns [
     %{"match" => "joins", "steps" => [%{"text" => "Working on it."}, %{"waitAbort" => true}]},
+    # A turn Pi goes on with after an abort, until its process is stopped.
+    %{"match" => "persists", "steps" => [%{"text" => "Working on it."}, %{"hang" => true}]},
     # A "joins" turn whose tool first returns an image: it is stored with the thread.
     %{
       "match" => "shows",
@@ -348,6 +353,7 @@ defmodule HalC2.PiSteerPropTest do
         # Long enough that a working turn's first event always lands first:
         # the fake calls itself idle whenever it is asked.
         Application.put_env(:hal_c2, :pi_turn_watchdog_ms, 1_000)
+        Application.put_env(:hal_c2, :pi_abort_deadline_ms, 3_600_000)
 
         {:ok, _} =
           HalC2.Settings.put(
@@ -363,6 +369,8 @@ defmodule HalC2.PiSteerPropTest do
         HalC2.Acp.forget("pi")
         Application.delete_env(:hal_c2, :pi_steer_answer_ms)
         Application.delete_env(:hal_c2, :pi_turn_watchdog_ms)
+        Application.delete_env(:hal_c2, :pi_abort_deadline_ms)
+        HalC2.Test.Machines.refuse_changes(nil)
         Application.delete_env(:hal_c2, :pi_prop_fake_dir)
 
         (result == :ok)
@@ -423,6 +431,7 @@ defmodule HalC2.PiSteerPropTest do
        {:call, __MODULE__, :send,
         [id(next), oneof([:joins, :ends, :pair, :aborts, :shows, :delegates])]}},
       {2, {:call, __MODULE__, :send, [id(next), oneof([:compacts, :holds])]}},
+      {1, {:call, __MODULE__, :send, [id(next), :persists]}},
       {2,
        {:call, __MODULE__, :send_compacted, [id(next), id(next + 1), oneof([:heard, :unheard])]}},
       {1, {:call, __MODULE__, :send_handled, [id(next)]}},
@@ -448,6 +457,11 @@ defmodule HalC2.PiSteerPropTest do
   # A turn waiting behind the abandoned compaction takes no steer: Pi has
   # not started it. It can only be stopped.
   def command(%{how: :behind}), do: {:call, __MODULE__, :interrupt, []}
+
+  # A turn Pi goes on with after an abort is only stopped by the store failing it, and
+  # then only ends once Pi's time to end it runs out.
+  def command(%{how: :persists}), do: {:call, __MODULE__, :fail_write, []}
+  def command(%{how: :dry}), do: {:call, __MODULE__, :outlast, []}
 
   # A turn compacting before it works takes a steer once the compaction ends;
   # one whose compaction outlasts the test is stopped with the steer held.
@@ -498,8 +512,9 @@ defmodule HalC2.PiSteerPropTest do
 
   # Pi's compaction events are dropped while an abandoned one is out, so a
   # prompt it rejects would wait on that one's (never sent) answer.
-  def precondition(state, {:call, _, :send, [_, how]}) when how in [:compacts, :holds],
-    do: state.turn == nil and state.abandoned == :none
+  def precondition(state, {:call, _, :send, [_, how]})
+      when how in [:compacts, :holds, :persists],
+      do: state.turn == nil and state.abandoned == :none
 
   def precondition(state, {:call, _, :send_compacted, _}),
     do: state.turn == nil and state.abandoned == :none
@@ -536,6 +551,9 @@ defmodule HalC2.PiSteerPropTest do
     do: state.turn == nil and state.abandoned == :events
 
   def precondition(%{how: :behind}, {:call, _, call, _}), do: call == :interrupt
+  def precondition(%{how: :persists}, {:call, _, call, _}), do: call == :fail_write
+  def precondition(%{how: :dry}, {:call, _, call, _}), do: call == :outlast
+  def precondition(_state, {:call, _, call, _}) when call in [:fail_write, :outlast], do: false
   def precondition(%{how: :compacts}, {:call, _, call, args}), do: {call, args} |> taken?()
   def precondition(%{how: :holds}, {:call, _, call, _}), do: call == :steer_held_stop
   def precondition(_state, {:call, _, :steer_held_stop, _}), do: false
@@ -851,6 +869,10 @@ defmodule HalC2.PiSteerPropTest do
     do: end_turn(%{state | next: state.next + 1, abandoned: :replied}, "interrupted")
 
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
+
+  # The MC aborts the turn the store failed, which Pi goes on with, so it still runs.
+  def next_state(state, _result, {:call, _, :fail_write, _}), do: %{state | how: :dry}
+  def next_state(state, _result, {:call, _, :outlast, _}), do: end_turn(state, "failed")
 
   defp end_turn(%{turn: turn} = state, status) do
     runs = Enum.map(state.runs, fn {m, s} -> if m == turn, do: {m, status}, else: {m, s} end)
@@ -1877,6 +1899,28 @@ defmodule HalC2.PiSteerPropTest do
   def interrupt do
     ending = active_runs()
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid}), ending)
+  end
+
+  # The store refuses the running turn's next tool, so the MC aborts the turn.
+  def fail_write do
+    [{runtime, _}] = Registry.lookup(HalC2.Pi.Registry, @tid)
+    %{conn: conn} = :sys.get_state(runtime)
+    tool = %{"toolCallId" => "tool-unrecorded", "toolName" => "bash", "args" => %{}}
+    HalC2.Test.Machines.refuse_changes(@tid)
+    Kernel.send(runtime, {:json_rpc, conn, {:notification, "tool_execution_start", tool}})
+    %{unrecorded: %{}, interrupted: true} = :sys.get_state(runtime)
+    HalC2.Test.Machines.refuse_changes(nil)
+    reply({:ok, %{}}, [])
+  end
+
+  # The time Pi has to end the turn the MC aborted runs out. The property's bound is
+  # an hour, so only this ends it.
+  def outlast do
+    ending = active_runs()
+    [{runtime, _}] = Registry.lookup(HalC2.Pi.Registry, @tid)
+    %{turn: %{ids: %{run: run}}} = :sys.get_state(runtime)
+    Kernel.send(runtime, {:abort_deadline, run})
+    reply({:ok, %{}}, ending)
   end
 
   # Sends `a`, after which Pi compacts for a while rejecting prompts (as Pi

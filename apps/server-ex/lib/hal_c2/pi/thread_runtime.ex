@@ -93,6 +93,10 @@ defmodule HalC2.Pi.ThreadRuntime do
   # restarted: `abort` does not stop a compaction, so a turn stopped while
   # Pi compacts would otherwise never end (`compact_restart/1`).
   @compact_restart_ms 2_000
+  # The time Pi gets to end a turn the store could not record after its abort, before
+  # it is stopped: Pi may go on with a turn it has shown output for, and TurnWatch
+  # waits on that turn's end (`:abort_deadline`).
+  @abort_deadline_ms 10_000
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -141,6 +145,9 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp compact_restart_ms,
     do: Application.get_env(:hal_c2, :pi_compact_restart_ms, @compact_restart_ms)
+
+  defp abort_deadline_ms,
+    do: Application.get_env(:hal_c2, :pi_abort_deadline_ms, @abort_deadline_ms)
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def respond(thread_id, request_id, response) do
@@ -288,6 +295,9 @@ defmodule HalC2.Pi.ThreadRuntime do
              program: "pi"
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      # A stop of a turn the store failed keeps its deadline across the move.
+      if restored.interrupted and unrecorded?(restored), do: abort_later(restored.turn)
+
       {:reply, :ok,
        Durable.restored(%{restored | steers: :gen_server.reqids_new()}, :conn, conn, snapshot)}
     else
@@ -394,6 +404,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       Process.send_after(self(), {:compact_restart, turn.ids.run}, compact_restart_ms())
     end
 
+    if unrecorded?(state), do: abort_later(turn)
     {:reply, :ok, %{cancel_requests(state) | interrupted: true}}
   end
 
@@ -694,6 +705,12 @@ defmodule HalC2.Pi.ThreadRuntime do
       else: {:noreply, state}
   end
 
+  # A turn the store could not record that Pi has not ended in time after its abort
+  # ends here, with Pi, so the next turn starts on a fresh process.
+  def handle_info({:abort_deadline, run}, %{turn: %{ids: %{run: run}}} = state)
+      when state.interrupted,
+      do: {:noreply, state |> end_turn("interrupted", nil) |> stop_session()}
+
   def handle_info(message, state) do
     state = forget_abandoned(state, message)
 
@@ -787,6 +804,31 @@ defmodule HalC2.Pi.ThreadRuntime do
   # in this turn and has not ended, or one a stopped turn abandoned.
   defp compaction_out?(state),
     do: state.compact != nil or state.compacting or MapSet.size(state.abandoned_compacts) > 0
+
+  defp unrecorded?(%{turn: %{ids: %{run: run}}} = state),
+    do: match?(%{unrecorded: %{run: ^run}}, state)
+
+  defp unrecorded?(_state), do: false
+
+  defp abort_later(turn),
+    do: Process.send_after(self(), {:abort_deadline, turn.ids.run}, abort_deadline_ms())
+
+  # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
+  defoverridable handle_info: 2, handle_call: 3
+
+  @impl true
+  def handle_info(message, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_info(__MODULE__, message, state, fn m, s ->
+        super(m, s)
+      end)
+
+  @impl true
+  def handle_call(request, from, state),
+    do:
+      HalC2.Orchestration.Unrecorded.handle_call(request, from, state, fn r, f, s ->
+        super(r, f, s)
+      end)
 
   @impl true
   def terminate(_reason, state) do

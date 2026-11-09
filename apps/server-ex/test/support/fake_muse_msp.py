@@ -29,7 +29,8 @@
 # completed); no "answer" leaves it running), {"waitInterrupt": true} (until turn/interrupt, or a
 # turn/steer, which it answers with "steered: <text>"), {"fail": error} (the turn ends
 # failed with that `error`, e.g. a quota refusal: {"message", "quota": {"limitKind", "resetsAtMs"}}). With "interruptFails" turn/interrupt
-# answers an error, and with "interruptHangs" it is never answered. Without a match the reply names the conversation so
+# answers an error, with "interruptHangs" it is never answered, and with "interruptIgnored" it is
+# answered and the turn goes on. Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
 
@@ -357,6 +358,8 @@ def handle(msg):
         error(-32603, "internal error")
     elif method == "turn/interrupt" and config().get("interruptHangs"):
         pass
+    elif method == "turn/interrupt" and config().get("interruptIgnored"):
+        reply({})
     elif method == "turn/interrupt":
         reply({})
         if state["turn"] == params.get("turnId"):

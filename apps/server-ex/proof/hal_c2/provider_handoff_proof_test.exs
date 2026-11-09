@@ -58,7 +58,7 @@ defmodule HalC2.ProviderHandoffProofTest do
       "HalC2.Orchestration.TurnWriter.confirmed/2" => ~w(confirm late-ack clear),
       "HalC2.Orchestration.TurnWriter.finish/3" => ~w(complete fail),
       "HalC2.Orchestration.TurnWriter.checkpointed/4" => "complete",
-      "HalC2.Orchestration.TurnWriter.abandon/4" => ~w(refuse fail)
+      "HalC2.Orchestration.TurnWriter.abandon/5" => ~w(refuse fail)
     },
     abstracts: %{
       "HalC2.Orchestration.Handoff.prompt/2" => @handoff,
@@ -90,6 +90,8 @@ defmodule HalC2.ProviderHandoffProofTest do
       "HalC2.Orchestration.TurnWriter.resolve_request/4" => @items,
       "HalC2.Orchestration.TurnWriter.close_open_items/2" => @items,
       "HalC2.Orchestration.TurnWriter.message_request?/1" => @items,
+      "HalC2.Orchestration.TurnWriter.provider_turn_ended/3" =>
+        "how a provider turn kept running past its run ended; the model's provider turns end with their runs, and unrecorded_turns.maude models the rest",
       "HalC2.Orchestration.TurnWriter.start_failure/2" => "the message a failed start ends with"
     },
     environment: %{

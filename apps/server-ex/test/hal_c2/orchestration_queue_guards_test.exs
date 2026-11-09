@@ -155,23 +155,22 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
         do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
 
-    # (A failed end: an interrupted one first reads the run to capture its checkpoint.)
     # Held, the stream takes the run's end, then the unarchive, then what the end
-    # starts once it has returned.
+    # starts once it has returned. What the end reads before it is answered first.
     stream = HalC2.Streams.ensure(thread_id)
     :ok = :sys.suspend(stream)
-    :erlang.trace(stream, true, [:receive])
+    :erlang.trace(stream, true, [:receive, :send])
 
     ender = spawn(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
     :erlang.trace(ender, true, [:procs])
-    await_call(stream, ender)
+    await_transact(stream, ender)
 
     test = self()
     unarchive = %{"type" => "thread.unarchive", "threadId" => thread_id}
     unarchiver = spawn(fn -> send(test, {:unarchived, Orchestration.dispatch(unarchive)}) end)
     await_call(stream, unarchiver)
 
-    :erlang.trace(stream, false, [:receive])
+    :erlang.trace(stream, false, [:receive, :send])
     :ok = :sys.resume(stream)
     assert {:ok, _} = receive(do: ({:unarchived, result} -> result))
 
@@ -186,6 +185,8 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
   # A stop's interrupted end captures the run's checkpoint before its transaction: when
   # another end wins the run in between, the capture it no longer records is dropped.
+  # Another `abandon/5` of the run waits for this one, so the end that wins is one
+  # written outside it, as a runtime's own does.
   test "an interrupted end that loses its run to a failed one leaves no checkpoint behind",
        %{thread_id: thread_id, tmp_dir: dir} do
     {:ok, _} = send_message(thread_id, "m1")
@@ -197,6 +198,11 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
 
     # Held, the stream answers the stop's read of the run (still running), then the
     # failed end already waiting behind it, before the stop's capture is done.
+    failed_end = fn stream ->
+      done = %{"status" => "failed", "completedAt" => HalC2.Orchestration.Entities.now()}
+      {[Orchestration.upsert(stream, "run", running["id"], &Map.merge(&1, done))], :ok}
+    end
+
     stream = HalC2.Streams.ensure(thread_id)
     :ok = :sys.suspend(stream)
     :erlang.trace(stream, true, [:receive])
@@ -207,7 +213,7 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
     await_call(stream, stopper)
 
     {failer, failed} =
-      spawn_monitor(fn -> TurnWriter.abandon(thread_id, running["id"], "failed", nil) end)
+      spawn_monitor(fn -> :ok = HalC2.Streams.transact(thread_id, :thread, failed_end) end)
 
     await_call(stream, failer)
 
@@ -427,6 +433,23 @@ defmodule HalC2.OrchestrationQueueGuardsTest do
   # the test's timeout.
   defp await_call(stream, from),
     do: receive(do: ({:trace, ^stream, :receive, {:"$gen_call", {^from, _}, _}} -> :ok))
+
+  # Waits for `from`'s transaction on the suspended, traced (`:receive` and `:send`)
+  # `stream`, answering each call it makes before it and holding it again after.
+  defp await_transact(stream, from) do
+    receive do
+      {:trace, ^stream, :receive, {:"$gen_call", {^from, _}, {:transact, _, _}}} ->
+        :ok
+
+      {:trace, ^stream, :receive, {:"$gen_call", {^from, tag}, _}} ->
+        true = :erlang.suspend_process(from)
+        :ok = :sys.resume(stream)
+        receive(do: ({:trace, ^stream, :send, {^tag, _}, _} -> :ok))
+        :ok = :sys.suspend(stream)
+        true = :erlang.resume_process(from)
+        await_transact(stream, from)
+    end
+  end
 
   # Waits for monitor `ref`'s process to exit; returns why.
   defp await_down(ref), do: receive(do: ({:DOWN, ^ref, :process, _, reason} -> reason))

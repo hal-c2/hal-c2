@@ -79,6 +79,12 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.start_link/1" => "starts the supervisor tree; the model starts with it up",
       "HalC2.Streams.flush_shell/1" => "the same call as a commit that appends nothing",
       "HalC2.Streams.state/1" => @read,
+      "HalC2.Streams.unrecorded/2" =>
+        "drops one process's commits to a stream whose store refused its turn, so nothing is appended or sent; unrecorded_turns.maude models it",
+      "HalC2.Streams.take_unrecorded_ends/1" =>
+        "reads what one process's dropped commits ended; nothing is appended or sent",
+      "HalC2.Streams.forget_unrecorded/0" =>
+        "forgets one process's dropped commits; nothing is appended or sent",
       "HalC2.Streams.sequence/1" => @read,
       "HalC2.Streams.get/3" => @read,
       "HalC2.Streams.more/4" => @read,
