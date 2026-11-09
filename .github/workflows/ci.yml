@@ -5,11 +5,17 @@ name: CI
 #
 # Cheapest first: `changes` picks the jobs a commit needs, and nothing of the MC's starts
 # until mc_check has passed, so a formatting slip costs a minute, not every runner the
-# repository may use at once. A job that fails can be re-run alone. A merge to main runs
-# only mc_check, to save its build: its tests ran on its pull request.
+# repository may use at once. A job that fails can be re-run alone.
+#
+# A push to a pull request runs only the quick tier (mc_check, unit tests, the TUI): pushes
+# come often and each cancels the last, so a slow job there mostly runs on a commit no one
+# will merge. Properties, proofs and scenarios run once, in the merge queue, on the commit
+# that lands. A merge to main runs only mc_check, to save its build for pull requests.
+# `CI result` is the one check main's ruleset requires.
 
 on:
   pull_request:
+  merge_group:
   push:
     branches:
       - main
@@ -48,11 +54,18 @@ jobs:
           sparse-checkout: .github
           persist-credentials: false
 
+      # A queue entry's HEAD^1 is the PR's last commit when the queue rebases, and in a
+      # group only the last entry runs: diff against what the queue builds on instead.
+      - if: github.event_name == 'merge_group'
+        run: git fetch --no-tags --depth=1 --filter=blob:none origin "$BASE" && echo "CI_BASE=$BASE" >>"$GITHUB_ENV"
+        env:
+          BASE: ${{ github.event.merge_group.base_sha }}
+
       - id: changes
         # Naming the shell turns on pipefail. Without it a failed script is tee's success:
         # no outputs, every job skipped, and a run that tested nothing looks clean.
         shell: bash
-        run: .github/scripts/ci-changes.sh ${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && 'merged' || 'all' }} | tee -a "$GITHUB_OUTPUT"
+        run: .github/scripts/ci-changes.sh ${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'queue' || github.event_name == 'push' && 'merged' || 'all' }} | tee -a "$GITHUB_OUTPUT"
 
   pr_assets:
     name: PR assets
@@ -420,3 +433,18 @@ jobs:
         env:
           MISE_CONFIG_ROOT: ${{ github.workspace }}
         run: ../../mise-tasks/features/tui/all
+
+  # The check main's ruleset requires, since the jobs above vary with the change and matrix
+  # entries change their names. A skipped job passes; a failed or cancelled one does not.
+  result:
+    name: CI result
+    needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then echo "$failed" >&2; exit 1; fi
