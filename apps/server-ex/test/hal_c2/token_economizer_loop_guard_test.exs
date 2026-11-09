@@ -988,6 +988,77 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       state
     end
 
+    @pytest "form_repair:run_tests:pytest"
+
+    # A fact the project has learned: the bare `pytest` is missing here, and
+    # `python -m pytest` works.
+    defp learned(state) do
+      skills =
+        EnvFacts.add_candidate(EnvFacts.new(), %{
+          id: @pytest,
+          family: "form_repair",
+          high: false,
+          drift: false,
+          params: %{
+            "intent" => "run_tests",
+            "a" => "pytest",
+            "b_counts" => %{"python -m pytest" => 3},
+            "error_counts" => %{}
+          }
+        })
+
+      put_in(state.skills["seam"], skills)
+    end
+
+    defp stage(state, thread, instance, ids) do
+      %{
+        state
+        | staged: Map.put(state.staged, {thread, instance}, ids),
+          staged_order: state.staged_order ++ [{thread, instance}]
+      }
+    end
+
+    # One turn of `thread` on `instance` that runs the tests the working way,
+    # `calls` times.
+    defp ran_tests(state, thread, instance, calls \\ 1) do
+      run = "run-#{System.unique_integer([:positive])}"
+      at = %{"threadId" => thread, "runId" => run}
+
+      ran =
+        Map.merge(at, %{
+          "type" => "turn.item",
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "python -m pytest -q",
+          "output" => "3 passed in 0.10s"
+        })
+
+      state =
+        observe(
+          state,
+          started(thread, %{"runId" => run, "projectId" => "seam", "instanceId" => instance})
+        )
+
+      state = Enum.reduce(1..calls, state, fn _, state -> observe(state, ran) end)
+      observe(state, Map.merge(at, %{"type" => "turn.finished", "status" => "completed"}))
+    end
+
+    # How often the fact counted as given and doing its work.
+    defp fired(state), do: state.skills["seam"].facts[@pytest].life.fire_num
+
+    test "a fold credits the facts staged for the conversation's own instance" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+
+      # Another account of the same driver holds another conversation.
+      state = ran_tests(state, "t", "claude-home")
+      assert fired(state) == 0
+
+      state = ran_tests(state, "t", "claude-work")
+      assert fired(state) == 1
+    end
+
     test "switching learning under a turn leaves it partial, and only then" do
       {:ok, state} = TokenEconomizer.init(%{})
       state = settings(state, %{"microSkills" => "envfacts"})
@@ -1020,7 +1091,14 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       other = %{run | "instanceId" => "codex"}
       {:reply, nil, state} = TokenEconomizer.handle_call({:shape_run, other, future}, nil, state)
 
-      assert Map.keys(state.staged) |> Enum.sort() == [{"t", "claudeAgent"}, {"t", "codex"}]
+      # Another account of the same driver is another conversation.
+      account = Map.merge(run, %{"instanceId" => "claude-work", "provider" => "claudeAgent"})
+
+      {:reply, nil, state} =
+        TokenEconomizer.handle_call({:shape_run, account, future}, nil, state)
+
+      assert Map.keys(state.staged) |> Enum.sort() ==
+               [{"t", "claude-work"}, {"t", "claudeAgent"}, {"t", "codex"}]
     end
 
     test "a drop that cannot be saved is refused, and the plugin stands" do

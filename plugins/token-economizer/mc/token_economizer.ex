@@ -175,7 +175,7 @@ defmodule HalC2Plugins.TokenEconomizer do
        # The plugin's tasks, linked to it: `tasks` is pid => {thread id, :judge | :delivery}.
        sup: sup,
        tasks: %{},
-       # thread id => %{run, project, guard, partial}, the turn under way
+       # thread id => %{run, project, instance, guard, partial}, the turn under way
        turns: %{},
        # Events still to hear that the feed may have queued before ones it missed.
        missing: 0,
@@ -287,9 +287,10 @@ defmodule HalC2Plugins.TokenEconomizer do
       # past it the answer is discarded, so stage nothing for it either.
       if System.monotonic_time(:millisecond) <= deadline do
         # Staged per conversation, not per thread: a thread carried on by
-        # another provider gets its own staging, and each fold credits the
+        # another provider instance (another driver, or another account of
+        # the same one) gets its own staging, and each fold credits the
         # conversation it belongs to.
-        key = {run["threadId"], run["provider"] || run["instanceId"]}
+        key = {run["threadId"], run["instanceId"] || run["provider"]}
         state = stage(state, key, EnvFacts.injected_ids(skills))
         {:reply, if(text == "", do: nil, else: %{"context" => text}), state}
       else
@@ -409,11 +410,14 @@ defmodule HalC2Plugins.TokenEconomizer do
          state,
          %{"type" => "turn.started", "threadId" => thread_id, "runId" => run_id} = event
        ) do
+    # The envelope is the driver's (`claudeAgent`, `codex`); what was staged
+    # is the conversation's, on the instance that holds it.
     project = {event["projectId"], event["provider"] || event["instanceId"]}
 
     turn = %{
       run: run_id,
       project: project,
+      instance: event["instanceId"] || event["provider"],
       guard: Turn.new("#{thread_id}:#{run_id}"),
       # The turn's calls, newest first, for the micro-skills to fold at its end.
       calls: [],
@@ -491,7 +495,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   # was half heard is never half learned; if it cannot be read back, it is not
   # learned from at all.
   defp fold_skills(state, thread_id, turn) do
-    {project_id, provider} = turn.project
+    {project_id, _provider} = turn.project
 
     if micro_on?(state) and is_binary(project_id) do
       case fold_calls(thread_id, turn) do
@@ -503,7 +507,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
           skills =
             skills
-            |> EnvFacts.seed_injected(Map.get(state.staged, {thread_id, provider}, []))
+            |> EnvFacts.seed_injected(Map.get(state.staged, {thread_id, turn.instance}, []))
             |> EnvFacts.update_turn(calls, turn.run)
 
           save_skills(project_id, skills)
