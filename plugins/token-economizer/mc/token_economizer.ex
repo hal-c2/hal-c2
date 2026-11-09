@@ -206,6 +206,11 @@ defmodule HalC2Plugins.TokenEconomizer do
        # run, or {:unread, run id} while reading them failed: the first run heard
        # since, before which the next read stops (`seed_history/5`)
        seeded: %{},
+       # {thread id, project} => the runs, as `%{"run" => id, "ordinal" => n}`, of segments
+       # heard in part that folded before they could be read back: until they are
+       # (`recover_uses/5`, `heard/4`), a use the feed dropped from them may be any tool,
+       # so the project's conversations are denied nothing
+       unresolved: %{},
        # {project id, provider} => the timer that folds its idle conversations
        prune_timers: %{},
        stats: %{"turns" => 0, "nudges" => 0, "aborts" => 0, "judgeCalls" => 0, "judgeTokens" => 0},
@@ -362,14 +367,16 @@ defmodule HalC2Plugins.TokenEconomizer do
       state = seed_history(state, run["threadId"], run["runId"], project, unit)
       {prune, state} = prune(state, project, unit)
 
-      {prune, denied} =
+      {prune, denied, state} =
         case recover_uses(prune, state, project, unit, run) do
-          {:ok, prune} ->
+          {:ok, prune, recovered} ->
             {prune, _} = Prune.apply_pending(prune, cfg, now_s(), active?(state, project))
-            {prune, Prune.denied(prune, cfg)}
+
+            {prune, Prune.denied(prune, cfg),
+             update_in(state.unresolved, &Map.drop(&1, recovered))}
 
           :error ->
-            {prune, []}
+            {prune, [], state}
         end
 
       changed? = prune != state.prunes[project]
@@ -529,8 +536,19 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp hear_prune(state, %{"type" => "turn.item", "threadId" => thread_id} = item) do
     case {state.convs[thread_id], item["provider"]} do
-      {nil, _} ->
-        state
+      # A use heard before its thread's turn was (a subagent's call as the plugin
+      # restarted): no segment holds it, and its thread's history cannot show it, so
+      # it is its project's evidence at once.
+      {nil, provider} ->
+        with project_id when is_binary(project_id) <- item["projectId"],
+             true <- is_binary(provider),
+             unit when unit != nil <- Prune.unit_for_provider(provider) do
+          project = {project_id, provider}
+          {_prune, state} = prune(state, project, unit)
+          note_used(state, project, Prune.used_in_item(item, unit))
+        else
+          _ -> state
+        end
 
       # A use of a run on another provider than the thread's now, heard after the thread
       # went on (a subagent of that run's, still at work): its segment has folded, so the
@@ -564,6 +582,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       conv ->
         run = event["runId"]
+        state = ended_unresolved(state, thread_id, run, event["ordinal"])
 
         state =
           put_in(state.convs[thread_id], %{
@@ -591,6 +610,24 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   defp hear_prune(state, _event), do: state
+
+  # A run of a segment that folded unresolved has ended: absent from its thread's
+  # history from now on, a rollback took it out (`recover_uses/5`).
+  defp ended_unresolved(state, thread_id, run, ordinal) do
+    Map.update!(state, :unresolved, fn unresolved ->
+      Map.new(unresolved, fn
+        {{^thread_id, _} = key, marks} ->
+          {key,
+           Enum.map(marks, fn
+             %{"run" => ^run} = mark -> %{mark | "ordinal" => ordinal}
+             mark -> mark
+           end)}
+
+        other ->
+          other
+      end)
+    end)
+  end
 
   # A use protects its tool at once, not only when the segment folds.
   defp note_used(state, project, used) do
@@ -625,10 +662,12 @@ defmodule HalC2Plugins.TokenEconomizer do
     # Saved with the evidence, the thread's watermark moves to the segment's last run
     # (`seed_history/5`), so a restart before a segment folds reads its runs back; not
     # while its earlier runs are unread, which would leave them unread for good.
-    read? = state.seeded[{conv.thread, conv.project}] == :read
+    key = {conv.thread, conv.project}
+    read? = state.seeded[key] == :read
+    heard_in_part? = Map.get(conv, :partial, false)
 
     conv =
-      if read? and Map.get(conv, :partial, false),
+      if read? and heard_in_part?,
         do: heard(conv, prune, unit, before),
         else: conv
 
@@ -640,10 +679,29 @@ defmodule HalC2Plugins.TokenEconomizer do
     runs =
       if partial?, do: [], else: Enum.reject(conv.runs, &Prune.folded?(prune, conv.thread, &1))
 
+    # Its runs stay to read back, for every conversation the project shapes, until they
+    # are; read back now, so are the thread's that folded so before them.
+    state =
+      cond do
+        partial? ->
+          update_in(
+            state.unresolved,
+            &Map.update(&1, key, conv.runs, fn marks ->
+              Enum.uniq_by(marks ++ conv.runs, fn mark -> mark["run"] end)
+            end)
+          )
+
+        heard_in_part? ->
+          update_in(state.unresolved, &Map.delete(&1, key))
+
+        true ->
+          state
+      end
+
     # Nor does a later fold of the thread: its runs are read back at its next turn.
     state =
       if read? and partial?,
-        do: put_in(state.seeded[{conv.thread, conv.project}], :partial),
+        do: put_in(state.seeded[key], :partial),
         else: state
 
     prune =
@@ -706,25 +764,38 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # The uses of the project's segments heard in part (`missed/2`) that the feed may
   # have dropped, read back from their threads' histories and noted (`Prune.note_used/3`)
-  # before a conversation is shaped: each segment still folds as it ends, its runs
-  # read back then as they are now. `:error` when a history cannot be read.
+  # before a conversation is shaped: those under way, which still fold as they end,
+  # their runs read back then as they are now, and those that folded unresolved, which
+  # are then resolved. `:error` while a history cannot be read, or does not have all of
+  # a segment's runs yet: a run still going (the history has only those that ended)
+  # may have used any tool. A run that ended and is not there was rolled back.
   defp recover_uses(prune, state, project, unit, run) do
-    Enum.reduce_while(state.convs, {:ok, prune}, fn
-      {thread_id, %{project: ^project, partial: true}}, {:ok, acc} ->
-        before = if thread_id == run["threadId"], do: run["runId"]
+    open =
+      for {thread_id, %{project: ^project, partial: true} = conv} <- state.convs,
+          do: {thread_id, conv.runs}
 
-        case history(thread_id, before) do
-          {:ok, history} ->
-            {_, runs} = unfolded(acc, history, thread_id, project, before)
-            used = Enum.flat_map(runs, &uses(&1, unit))
-            {:cont, {:ok, Prune.note_used(acc, used, prune_cfg(state))}}
+    folded = for {{thread_id, ^project}, marks} <- state.unresolved, do: {thread_id, marks}
 
-          :error ->
-            {:halt, :error}
-        end
+    (open ++ folded)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Enum.reduce_while({:ok, prune, []}, fn {thread_id, marks}, {:ok, acc, recovered} ->
+      before = if thread_id == run["threadId"], do: run["runId"]
+      marks = marks |> Enum.concat() |> Enum.reject(&(&1["run"] == run["runId"]))
 
-      _, acc ->
-        {:cont, acc}
+      with {:ok, history} <- history(thread_id, before),
+           read = MapSet.new(history, & &1["runId"]),
+           true <-
+             Enum.all?(
+               marks,
+               &(&1["run"] in read or &1["ordinal"] != nil or Prune.folded?(acc, thread_id, &1))
+             ) do
+        {_, runs} = unfolded(acc, history, thread_id, project, before)
+        used = Enum.flat_map(runs, &uses(&1, unit))
+        noted = Prune.note_used(acc, used, prune_cfg(state))
+        {:cont, {:ok, noted, [{thread_id, project} | recovered]}}
+      else
+        _ -> {:halt, :error}
+      end
     end)
   end
 

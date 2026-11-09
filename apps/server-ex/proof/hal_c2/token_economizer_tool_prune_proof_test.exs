@@ -55,6 +55,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   # from the history. A missed use neither can show does not protect its tool, which
   # can still be turned off on the other conversations' evidence; that is the case
   # Partial and Unrecorded cover, by keeping its own conversation from being any.
+  # Until it is read back, though, every conversation shaped is denied nothing.
   @counts "the exact prompt and session counters and thresholds: prop/hal_c2/token_economizer_tool_prune_prop_test.exs and test/hal_c2/token_economizer_tool_prune_test.exs"
   @guard "the loop guard's, modelled in proof/hal_c2/token_economizer_loop_guard_proof_test.exs"
 
@@ -88,7 +89,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.used_in_item/2" => "use",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.unrecorded/2" => ~w(reread rec),
       "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" => "settings",
-      "HalC2Plugins.TokenEconomizer handle_call {:shape, _}" => "shape-start",
+      "HalC2Plugins.TokenEconomizer handle_call {:shape, _}" => ~w(shape-start shaped recover),
       "HalC2Plugins.TokenEconomizer handle_call {:toolprune, _, _}" =>
         ~w(apply apply-name restore),
       "HalC2Plugins.TokenEconomizer handle_call {:observe, _}" =>
@@ -99,7 +100,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer state :settings" => ~w(cfg mode),
       "HalC2Plugins.TokenEconomizer state :prunes" => "tool",
       "HalC2Plugins.TokenEconomizer state :convs" => ~w(conv hearing),
-      "HalC2Plugins.TokenEconomizer state :shaped" => "conv"
+      "HalC2Plugins.TokenEconomizer state :shaped" => "conv",
+      "HalC2Plugins.TokenEconomizer state :unresolved" => ~w(unread recover)
     },
     abstracts: %{
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.unit_for_provider/1" =>

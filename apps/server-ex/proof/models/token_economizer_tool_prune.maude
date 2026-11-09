@@ -47,9 +47,11 @@ sload model-checker
 ---             thread's next turn starts, after that turn's conversation was shaped,
 ---             so shape/2 first reads its uses back (recover_uses/5): the order here,
 ---             reread then shape-start, is the one the next conversation sees. When
----             it cannot, the use missed cannot protect its tool: what the design
----             keeps is that its conversation is no evidence the tool went unused,
----             and the conversation shaped while it is open is denied nothing.
+---             it cannot, the use missed cannot protect its tool yet: its
+---             conversation is no evidence the tool went unused, and it stays
+---             unread, the plugin's unresolved: every conversation shaped until a
+---             later read brings it back (recover) is denied nothing, whichever
+---             thread's.
 ---   Unrecorded - nor is a segment read back whose history cannot show the tool's
 ---             use (rec false: any Codex package, whose goal and image calls Codex
 ---             keeps out of the turn's items, and of whose collaboration calls only
@@ -95,6 +97,9 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   op seen : Bool -> Item [ctor] .
   --- Whether the thread's history records the tool's uses.
   op rec : Bool -> Item [ctor] .
+  --- A segment heard in part that folded before its history could be read back,
+  --- still to read (the plugin's unresolved; one at a time is enough here).
+  op unread : Bool -> Item [ctor] .
   --- The evidence, the conversation and its segment, what auto holds, whether the
   --- project has been quiet, this fold's demotions and the packages not yet
   --- demoted, the conversations left to run and the person's actions left.
@@ -121,7 +126,7 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   op {_} : Conf -> Sys [ctor] .
 
   vars S N P F : Nat .
-  vars SF KP FR GT QU CP EV PS PA UR PR RU K O PP D U B B' Q M1 PD LD PT RS REC SN : Bool .
+  vars SF KP FR GT QU CP EV PS PA UR PR RU K O PP D U B B' Q M1 PD LD PT RS REC SN UD : Bool .
   var M : Mode .
   var CD : Cand .
   var CV : Conv .
@@ -210,12 +215,34 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     (S >= 2 or not EV) .
 
   --- The MC runs a new conversation, shaped as it starts; the plugin hears it.
+  --- While a segment heard in part is still unread, it is denied nothing and
+  --- nothing auto held applies (recover_uses/5 failing in shape/2).
   rl [shape-start] :
-    { left(s N) conv(none) hearing(SG) tool(CD) pend(B) mode(M) prot(PR) quiet(Q)
+    { left(s N) conv(none) hearing(SG) tool(CD) pend(B) mode(M) prot(PR) quiet(Q) unread(UD)
       cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
     => { left(N) hearing(seg(false, true, false, false)) mode(M) prot(PR) quiet(false)
-         cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
-         begin(CD, B, M, PR, Q, SF, KP, FR, GT, QU) } .
+         unread(UD) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
+         shaped(UD, CD, B, M, PR, Q, SF, KP, FR, GT, QU) } .
+
+  op shaped : Bool Cand Bool Mode Bool Bool Bool Bool Bool Bool Bool -> Conf .
+  eq shaped(true, CD, PD, M, PR, Q, SF, KP, FR, GT, QU) =
+    tool(CD) conv(live(false, false)) pend(PD) .
+  eq shaped(false, CD, PD, M, PR, Q, SF, KP, FR, GT, QU) =
+    begin(CD, PD, M, PR, Q, SF, KP, FR, GT, QU) .
+
+  --- As a conversation is shaped, the segment still unread is read back: what the
+  --- agent used in it comes back as at use (note_used/3), when the history records
+  --- the tool's uses (Unrecorded's case otherwise). A read that fails again is
+  --- shape-start with it still unread.
+  rl [recover] :
+    { conv(none) unread(true) rec(REC) seen(SN) prot(PR) tool(cand(S, RU, K, O, PP, D))
+      cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
+    => { conv(none) unread(false) rec(REC) seen(SN or REC) prot(PR)
+         tool(if REC
+              then cand(S, true, K, O and allowed(cand(S, true, K, O, PP, D), PR, SF),
+                        false, D)
+              else cand(S, RU, K, O, PP, D) fi)
+         cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C } .
 
   --- The agent uses the tool, which it can only do while the tool is loaded. The
   --- use is noted at once (note_used/3): a tool applied by name for the next
@@ -244,12 +271,17 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   --- The conversation ends; the plugin folds what it heard (observe/2, and an idle
   --- segment folds the same way at the tick before it can resume; one that goes on
   --- folds at idle).
+  --- Heard in part, it stays unread until a read brings it back (recover).
   rl [finish] :
     { conv(live(M1, B)) hearing(SG) tool(CD) pend(PD) mode(M) prot(PR) demot(N) pkgs(P)
-      cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
-    => { conv(none) hearing(noseg) mode(M) prot(PR)
+      unread(UD) cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
+    => { conv(none) hearing(noseg) mode(M) prot(PR) unread(UD or inPart(SG))
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C
          folded(CD, SG, not B, M, PR, SF, KP, CP, EV, P) } .
+
+  op inPart : Seg -> Bool .
+  eq inPart(seg(U, B, PT, RS)) = PT .
+  eq inPart(noseg) = false .
 
   --- Or, heard only in part, it folds as the thread's history has it: what the
   --- agent really used in it, heard or missed, when the history records the tool's
@@ -342,10 +374,12 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   --- to or from off, that differs only for a tool that is off, which nothing
   --- proposes again (only restore or heal/2 brings it back, both for good), so the
   --- fold here uses the conversation's own tools.
+  --- What was still unread is lost with the process.
   rl [restart] :
-    { acts(s N) conv(CV) hearing(SG) tool(CD) pend(B)
+    { acts(s N) conv(CV) hearing(SG) tool(CD) pend(B) unread(UD)
       cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C }
-    => { acts(N) conv(CV) hearing(if CV == none then noseg else seg(false, false, false, false) fi)
+    => { acts(N) conv(CV) unread(false)
+         hearing(if CV == none then noseg else seg(false, false, false, false) fi)
          tool(if PS then CD else fresh fi) pend(if PS then B else false fi)
          cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) C } .
 
@@ -356,7 +390,7 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
     Nat -> Sys .
   eq start(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR, M, PR, REC, N, S, P, F) =
     { cfg(SF, KP, FR, GT, QU, CP, EV, PS, PA, UR) mode(M) prot(PR) rec(REC) truth(false)
-      seen(false)
+      seen(false) unread(false)
       tool(fresh) conv(none) hearing(noseg) pend(false) quiet(false)
       demot(0) pkgs(3) left(N) acts(S) switches(P) faults(F) } .
 
@@ -405,10 +439,17 @@ mod TOKEN-ECONOMIZER-TOOL-PRUNE is
   eq unsafePartial({ lied C }) = true .
   eq unsafePartial({ C }) = false [owise] .
 
+  --- A conversation shaped with the tool off while a segment heard in part is
+  --- still unread.
+  op unsafeUnread : Sys -> Bool .
+  eq unsafeUnread({ conv(live(true, B)) unread(true) C }) = true .
+  eq unsafeUnread({ C }) = false [owise] .
+
   op unsafe : Sys -> Bool .
   eq unsafe(X:Sys) =
     unsafeSafe(X:Sys) or unsafeKept(X:Sys) or unsafeFrozen(X:Sys) or
-    unsafeGate(X:Sys) or unsafeCap(X:Sys) or unsafeEvid(X:Sys) or unsafePartial(X:Sys) .
+    unsafeGate(X:Sys) or unsafeCap(X:Sys) or unsafeEvid(X:Sys) or unsafePartial(X:Sys) or
+    unsafeUnread(X:Sys) .
 
   --- Every conversation has ended.
   op over : Sys -> Bool .

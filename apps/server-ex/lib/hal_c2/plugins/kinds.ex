@@ -355,6 +355,8 @@ defmodule HalC2.Plugins.Extension do
       `turn.item` (a tool call or message that ended, or a subagent the provider
       started, as it starts, with `"itemType"` `subagent`: `"threadId", "runId", "provider"`
       (the run's, which a subagent's late call keeps after its thread went on in another),
+      `"projectId"` (the thread's, so a plugin that heard nothing of the turn yet knows
+      whose it is),
       `"itemId", "itemType", "tool"`, the provider's own name for the tool where it has
       one, `"title", "status"` (`"completed"`, `"failed"`, `"interrupted"` or
       `"cancelled"`), `"input", "output"` and an assistant message's `"text"`, each cut

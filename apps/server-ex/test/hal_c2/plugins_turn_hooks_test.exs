@@ -122,7 +122,9 @@ defmodule HalC2.PluginsTurnHooksTest do
     run_id = started["runId"]
 
     assert_receive {:observed, %{"type" => "turn.item", "tool" => "Bash"} = item}, 5_000
-    assert %{"runId" => ^run_id, "itemType" => "command_execution"} = item
+    # Its thread's project, so a plugin that heard nothing of the turn knows whose it is.
+    assert %{"runId" => ^run_id, "itemType" => "command_execution", "projectId" => "project-1"} =
+             item
 
     assert_receive {:observed,
                     %{"type" => "turn.item", "itemType" => "assistant_message"} = said},
@@ -148,6 +150,7 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     assert_receive {:observed, %{"type" => "turn.item", "tool" => "Bash"} = call}, 5_000
     assert %{"threadId" => ^thread_id, "runId" => ^run_id, "subagent" => true} = call
+    assert call["projectId"] == "project-1"
     assert %{"itemType" => "command_execution", "input" => "mix test"} = call
     assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id}}, 5_000
     # What the subagent said is no call of its.
@@ -620,7 +623,8 @@ defmodule HalC2.PluginsTurnHooksTest do
              "status" => "interrupted",
              "input" => "npm run dev",
              "runId" => ^codex_run,
-             "provider" => "codex"
+             "provider" => "codex",
+             "projectId" => "project-1"
            } = stopped
 
     {:ok, _} = send_message(claude, "m1", "background commands: build")
@@ -632,8 +636,12 @@ defmodule HalC2.PluginsTurnHooksTest do
                     %{"type" => "turn.item", "threadId" => ^claude, "tool" => "Bash"} = ended},
                    5_000
 
-    assert %{"status" => "interrupted", "runId" => ^claude_run, "provider" => "claudeAgent"} =
-             ended
+    assert %{
+             "status" => "interrupted",
+             "runId" => ^claude_run,
+             "provider" => "claudeAgent",
+             "projectId" => "project-1"
+           } = ended
   end
 
   test "a plugin hears what a Claude edit changed and what a web call searched for" do

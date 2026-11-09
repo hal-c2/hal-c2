@@ -650,6 +650,118 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert Enum.map(runs, & &1["subagents"]) == [true, false, true, false]
   end
 
+  test "a subagent's call heard as the plugin restarted, before its thread's next turn, protects its tool",
+       %{thread: thread, project: p} do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+    {:ok, _} =
+      Registry.register(HalC2.Plugins.Hooks, {:observe, "listener"}, %{
+        id: "listener",
+        dropped: :counters.new(1, [])
+      })
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread, :thread, [{"thread", thread, %{"s" => %{"projectId" => p}}}])
+
+    ids = %{
+      thread: thread,
+      run: "r1",
+      root_node: "node:root:r1",
+      provider_thread: "pt",
+      driver: "claudeAgent"
+    }
+
+    sub = NativeSubagent.start(ids, "agent-1", %{"prompt" => "Schedule it"})
+
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", %{
+      "providerToolName" => "CronCreate"
+    })
+
+    # The plugin restarted after r1 started: it hears the subagent's work, and nothing
+    # of the turn, whose history keeps none of the subagent's calls.
+    events = heard()
+    assert events != [] and Enum.all?(events, &(&1["projectId"] == p))
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = Enum.reduce(events, state, &observe(&2, &1))
+    assert "CronCreate" in state.prunes[{p, "claudeAgent"}]["used"]
+  end
+
+  test "a conversation shaped while a turn heard in part still runs is denied nothing, and once it has ended what it did not use",
+       %{thread: thread, project: p} do
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    state = observe(state, started(thread, "r2", p, %{}))
+
+    # r2 runs on, its history has only r1, and the feed says it dropped something.
+    state =
+      observe(
+        state,
+        started("other", "o1", p, %{"newConversation" => true, "dropped" => 1, "waiting" => 0})
+      )
+
+    ended("other", "o1", 1, [])
+    state = observe(state, finished("other", "o1", 1))
+    assert {nil, state} = shape(state, "third", "t1", p)
+
+    ended(thread, "r2", 2, [])
+    state = observe(state, finished(thread, "r2", 2))
+    assert {%{"deniedTools" => ["CronCreate"]}, _} = shape(state, "third", "t1", p)
+  end
+
+  test "a segment heard in part that a quiet project folds unread denies nothing to another thread until it is read back, and then what it did not use",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose", "toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    state = observe(state, started(thread, "r2", p, %{}))
+    # r2 used CronCreate, which the feed dropped, and says so as r2 ends.
+    ended(thread, "r2", 2, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronCreate"}])
+
+    state =
+      observe(state, Map.merge(finished(thread, "r2", 2), %{"dropped" => 1, "waiting" => 0}))
+
+    # The project goes quiet while the history cannot be read.
+    grant([])
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    refute "CronCreate" in state.prunes[project]["used"]
+    assert {nil, state} = shape(state, "other", "o1", p)
+
+    grant(["turns:observe"])
+    {shape, state} = shape(state, "other", "o1", p)
+    refute "CronCreate" in ((shape || %{})["deniedTools"] || [])
+    assert "CronCreate" in state.prunes[project]["used"]
+    assert state.unresolved == %{}
+  end
+
+  test "a segment heard in part whose ended run was rolled back out of its history is read back without it",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    ended(thread, "r1", 1, [])
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose", "toolPruneQuietMinutes" => 0})
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+    state = observe(state, started(thread, "r2", p, %{}))
+
+    state =
+      observe(state, Map.merge(finished(thread, "r2", 2), %{"dropped" => 1, "waiting" => 0}))
+
+    # r2 was rolled back: its history never has it.
+    {:noreply, state} = TokenEconomizer.handle_info({:toolprune_tick, project}, state)
+    assert Map.has_key?(state.unresolved, {thread, project})
+    assert {%{"deniedTools" => ["CronCreate"]}, state} = shape(state, "other", "o1", p)
+    assert state.unresolved == %{}
+  end
+
   defp subagent(thread) do
     case HalC2.Streams.state(thread) |> HalC2.StreamState.list("subagent") do
       [entity] -> {:ok, entity}

@@ -8,7 +8,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   (`HalC2Plugins.TokenEconomizer`): the Claude turns of two threads of one project,
   each written to the thread's stream as the MC writes it and heard through the feed,
   which may drop a tool use and say so with its next event, or tell of one after its
-  turn ended. A use may be a subagent's,
+  turn ended, also to a plugin that restarted since the turn started and so has heard
+  nothing of it (each item names its thread's project). A use may be a subagent's,
   heard as its parent turn's but kept in the child's thread: the parent's history
   shows only that a subagent worked in the turn. The plugin stops and
   starts again (missing whatever ran meanwhile), its history reads fail while it has
@@ -23,8 +24,14 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   - it uses no tool no turn used;
   - no tool it must know is used is proposed, or turned off for a new conversation;
   - a new conversation is turned off no tool a segment it heard in part used, dropped
-    use or not, in a turn the history still has, and nothing at all when that
-    history cannot be read;
+    use or not, in a turn the history still has or that still runs, nor one that
+    folded before it could be read back, and nothing at all when that history cannot
+    be read;
+  - no tool used in the scope is ever denied: a new conversation is turned off no
+    tool whose use the feed dropped from a conversation the plugin holds and then said
+    it dropped, while the turn is not rolled back, however the segment folded since
+    (one a quiet project folded before the feed said so is the known limit: it folds
+    as evidence, the Maude model's `unseenOff`);
   - no tool's streak counts more ended turns than those that did not use it, so a
     use it missed and could not read back is no evidence the tool went unused (a
     tool it knows is used is never proposed or turned off, so a use told of after its
@@ -62,6 +69,57 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       (result == :ok)
       |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
       |> aggregate(command_names(cmds))
+    end
+  end
+
+  # Interleavings the generator seldom reaches, each a way recovery fell short: a
+  # subagent's use heard as the plugin restarted, before its thread's next turn; a
+  # dropped use in a turn still under way, which no history read shows yet; and a
+  # segment heard in part that a quiet project folded while its history could not be
+  # read, then another thread's conversation.
+  @pinned [
+    restart: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      down: [],
+      up: [],
+      use: ["a", "r1", 1, "CronCreate", false, :subagent],
+      start: ["b", "r2", 1, true, true]
+    ],
+    running: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      use: ["a", "r1", 1, "CronCreate", true, :own],
+      start: ["b", "r2", 1, false, true],
+      finish: ["b", "r2", 1],
+      start: ["b", "r3", 2, true, false]
+    ],
+    quiet: [
+      start: ["a", "r1", 1, true, true],
+      apply_tools: [["CronCreate"]],
+      use: ["a", "r1", 1, "CronCreate", true, :own],
+      finish: ["a", "r1", 1],
+      history: [false],
+      tick: [],
+      start: ["b", "r2", 1, true, true],
+      finish: ["b", "r2", 1],
+      history: [true],
+      start: ["b", "r3", 2, true, false]
+    ]
+  ]
+
+  for {name, _} <- @pinned do
+    test "no tool used in the scope is denied: #{name}" do
+      calls = @pinned[unquote(name)]
+
+      cmds =
+        for {{f, args}, i} <- Enum.with_index(calls, 1),
+            do: {:set, {:var, i}, {:call, __MODULE__, f, args}}
+
+      open_case()
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      close_case()
+      assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
     end
   end
 
@@ -151,6 +209,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   # dropped the use, or nil, and whose use it was (`:own`, or a `:subagent`'s). `open`: thread => its run under way. `heard`: the threads whose
   # conversation the plugin holds, having heard a turn of it start since it started;
   # `read`: those whose history it read since. `owed`: the uses it must know of.
+  # `lost`: the own uses the feed dropped from a conversation the plugin holds, as
+  # `%{thread, run, tool, period, told}`, `told` once the feed said it dropped them.
+  # `named`: the tools the person last turned off by name, which turns go on to use
+  # more often than others (a conversation shaped before still has them).
   def initial_state,
     do: %{
       up: true,
@@ -162,6 +224,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       heard: [],
       read: [],
       owed: [],
+      lost: [],
+      named: [],
       used: [],
       runs: 0,
       forked: false
@@ -182,9 +246,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     tools = oneof([nil, elements(Enum.map(@tools, &[&1]))])
 
-    # Turns that ended, of threads whose conversation the plugin holds.
+    # Turns that ended, also of threads the plugin has heard nothing of since it started.
     closed =
-      for {t, %{runs: runs}} <- s.threads, s.up, t in s.heard, run <- ended(runs), do: {t, run}
+      for {t, %{runs: runs}} <- s.threads, s.up, run <- ended(runs), do: {t, run}
 
     [
       idle != [] and s.runs < @max_runs and {6, start_call(s, idle)},
@@ -225,7 +289,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   defp use_call(s, open) do
     let [
       thread <- elements(open),
-      tool <- elements(@tools),
+      tool <- tool(s),
       drop <- frequency([{3, false}, {1, true}]),
       via <- frequency([{3, :own}, {1, :subagent}])
     ] do
@@ -234,6 +298,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       {:call, __MODULE__, :use, [thread, run, n, tool, drop, via]}
     end
   end
+
+  defp tool(%{named: []}), do: elements(@tools)
+  defp tool(s), do: frequency([{1, elements(@tools)}, {2, elements(s.named)}])
 
   # A use the feed tells of after its turn ended: a subagent of the turn's still at
   # work, or an item the provider reported late. One the feed dropped too is a use
@@ -284,7 +351,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def precondition(s, {:call, _, :finish, [thread, run, _]}), do: s.open[thread] == run
 
   def precondition(s, {:call, _, :late_use, [thread, run, n | _]}) do
-    s.up and thread in s.heard and
+    s.up and
       Enum.any?(
         ended(s.threads[thread][:runs] || []),
         &(&1.id == run and length(&1.tools) + 1 == n)
@@ -309,6 +376,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   def next_state(s, _res, {:call, _, :start, [thread, run, ordinal, _new?, _first?]}) do
     s =
       s
+      |> told()
       |> update_in([:threads], &Map.put_new(&1, thread, %{runs: [], base: 0}))
       |> update_in(
         [:threads, thread, :runs],
@@ -341,8 +409,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     end
   end
 
-  def next_state(s, res, {:call, m, :late, [thread, run, ordinal, new?, first?, _]}) do
+  def next_state(s, res, {:call, m, :late, [thread, run, ordinal, new?, first?, tick?]}) do
     s
+    |> then(&if(tick?, do: untold(&1), else: &1))
     |> next_state(res, {:call, m, :start, [thread, run, ordinal, new?, first?]})
     |> next_state(res, {:call, m, :finish, [thread, run, ordinal]})
   end
@@ -360,9 +429,21 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     s = %{s | used: Enum.uniq(s.used ++ [tool])}
 
-    if s.up and not drop and thread in s.heard,
-      do: %{s | owed: Enum.uniq(s.owed ++ [tool])},
-      else: s
+    cond do
+      not s.up ->
+        s
+
+      drop and via == :own and thread in s.heard ->
+        lost = %{thread: thread, run: last.id, tool: tool, period: s.period, told: false}
+        %{s | lost: s.lost ++ [lost]}
+
+      drop ->
+        s
+
+      # Heard as it ends, whether or not the plugin holds its conversation.
+      true ->
+        %{told(s) | owed: Enum.uniq(s.owed ++ [tool])}
+    end
   end
 
   def next_state(s, _res, {:call, _, :late_use, [thread, run, _n, tool, via]}) do
@@ -374,18 +455,27 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         )
       end)
 
-    %{s | used: Enum.uniq(s.used ++ [tool]), owed: Enum.uniq(s.owed ++ [tool])}
+    %{told(s) | used: Enum.uniq(s.used ++ [tool]), owed: Enum.uniq(s.owed ++ [tool])}
   end
 
   def next_state(s, _res, {:call, _, :finish, [thread, _run, _]}) do
     runs = s.threads[thread].runs
     last = List.last(runs)
     s = put_in(s.threads[thread].runs, List.replace_at(runs, -1, %{last | status: "completed"}))
-    %{s | open: Map.delete(s.open, thread)}
+    %{told(s) | open: Map.delete(s.open, thread)}
   end
 
+  def next_state(s, _res, {:call, _, :tick, _}), do: untold(s)
+
   def next_state(s, _res, {:call, _, :mode, [mode]}), do: %{s | mode: mode}
-  def next_state(s, _res, {:call, _, :down, _}), do: %{s | up: false, heard: [], read: []}
+  def next_state(s, _res, {:call, _, :apply_tools, [tools]}), do: %{s | named: tools || []}
+
+  def next_state(s, _res, {:call, _, :restore, [tools]}),
+    do: %{s | named: s.named -- (tools || s.named)}
+
+  def next_state(s, _res, {:call, _, :down, _}),
+    do: untold(%{s | up: false, heard: [], read: []})
+
   def next_state(s, _res, {:call, _, :up, _}), do: %{s | up: true, period: s.period + 1}
   def next_state(s, _res, {:call, _, :history, [on]}), do: %{s | history: on}
 
@@ -404,6 +494,14 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   def next_state(s, _res, _call), do: s
 
+  # The feed delivers an event, which says what it dropped before it.
+  defp told(%{up: true} = s), do: %{s | lost: Enum.map(s.lost, &%{&1 | told: true})}
+  defp told(s), do: s
+
+  # A quiet project folds the segments it holds before the feed said what it dropped
+  # from them, as evidence: those uses are the known limit. A restart loses the report.
+  defp untold(s), do: %{s | lost: Enum.filter(s.lost, & &1.told)}
+
   def postcondition(_s, {:call, _, :down, _}, %{held: held, kept: kept}), do: held == kept
   def postcondition(_s, _call, %{down: true}), do: true
 
@@ -413,20 +511,21 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
     subset?(next.owed, res.used) and subset?(res.used, next.used) and
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
-      shaped_whole?(s, res, denied) and
+      shaped_whole?(s, res, denied) and disjoint?(denied, lost(s)) and
       res.prompts <= ended_runs(next) and
       Enum.all?(@tools -- res.used, &(streak(res, &1) <= unused_runs(next, &1)))
   end
 
   # A conversation is shaped knowing the uses of the segments heard in part that the
-  # history still has, dropped ones too, or, when it cannot read them, denied nothing.
+  # history still has or that still run, dropped ones too, or, when it cannot read
+  # them, denied nothing.
   defp shaped_whole?(s, res, denied) do
     partial = Map.get(res, :partial, [])
 
     recovered =
       for {t, ids} <- partial,
           run <- s.threads[t].runs,
-          run.id in ids and run.status == "completed",
+          run.id in ids and run.status != "rolled_back",
           {tool, _period, :own} <- run.tools,
           do: tool
 
@@ -435,6 +534,15 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       s.history -> disjoint?(denied, recovered)
       true -> denied == []
     end
+  end
+
+  # The uses dropped from the conversations the plugin holds that the feed said it
+  # dropped, of turns not rolled back.
+  defp lost(s) do
+    for %{told: true, period: period, thread: t, run: id, tool: tool} <- s.lost,
+        period == s.period,
+        Enum.any?(s.threads[t].runs, &(&1.id == id and &1.status != "rolled_back")),
+        do: tool
   end
 
   defp streak(res, tool),
@@ -513,10 +621,15 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       }
 
       # The segments it holds as heard in part as the conversation is shaped, and
-      # their runs: which those are is the feed's to say (`missed/2`), not the model's.
+      # their runs, and those that folded before they could be read back: which those
+      # are is the feed's to say (`missed/2`), not the model's.
+      plugin = Process.get(:plugin)
+
       partial =
-        for {t, %{partial: true, runs: runs}} <- Process.get(:plugin).convs,
-            do: {t, Enum.map(runs, & &1["run"])}
+        for({t, %{partial: true, runs: runs}} <- plugin.convs, do: {t, runs}) ++
+          for({{t, _}, marks} <- Map.get(plugin, :unresolved, %{}), do: {t, marks})
+
+      partial = for {t, marks} <- partial, do: {t, Enum.map(marks, & &1["run"])}
 
       shape = if new?, do: call({:shape, event})
 
@@ -550,6 +663,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
             "type" => "turn.item",
             "threadId" => thread,
             "runId" => run,
+            "projectId" => @project_id,
+            "provider" => @provider,
             "itemType" => "dynamic_tool_call",
             "tool" => tool,
             "status" => "completed"
@@ -569,6 +684,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         "type" => "turn.item",
         "threadId" => thread,
         "runId" => run,
+        "projectId" => @project_id,
         "provider" => @provider,
         "itemType" => "dynamic_tool_call",
         "tool" => tool,

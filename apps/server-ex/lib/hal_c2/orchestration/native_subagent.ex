@@ -93,7 +93,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
          Orchestration.create("turn-item", item_id, item)
        ], item}
     end)
-    |> observe_started(ids)
+    |> observe_started(ids, parent["projectId"])
 
     child =
       Entities.thread(
@@ -138,6 +138,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
       native: native,
       driver: driver,
       sender: ids.thread,
+      project: parent["projectId"],
       text: ""
     }
 
@@ -155,7 +156,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
   # Plugins that hear turns hear the agent start the subagent, a call of its turn's
   # that the turn writer never sees (`HalC2.Plugins.observe/1`).
-  defp observe_started(item, ids) do
+  defp observe_started(item, ids, project) do
     if HalC2.Plugins.observing?() do
       item
       |> TurnWriter.observed_item()
@@ -163,7 +164,8 @@ defmodule HalC2.Orchestration.NativeSubagent do
         "type" => "turn.item",
         "threadId" => ids.thread,
         "runId" => ids.run,
-        "provider" => Entities.driver(ids)
+        "provider" => Entities.driver(ids),
+        "projectId" => project
       })
       |> HalC2.Plugins.observe()
     end
@@ -182,7 +184,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
     driver = Entities.driver(ids)
     native = get_in(entity, ["nativeTaskRef", "nativeId"])
     at = Entities.now()
-    said = HalC2.Streams.read(child, &(&1 |> StreamState.all("message") |> Enum.count()))
+
+    {said, project} =
+      HalC2.Streams.read(child, fn state ->
+        {state |> StreamState.all("message") |> Enum.count(),
+         (StreamState.get(state, "thread")[child] || %{})["projectId"]}
+      end)
 
     sub = %{
       id: id,
@@ -196,6 +203,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
       ordinal: 100 + 2 * said,
       driver: driver,
       sender: entity["threadId"],
+      project: project,
       text: ""
     }
 
@@ -486,6 +494,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
         "runId" => Map.get(sub, :run),
         # The provider of the run that started it, though the thread went on in another.
         "provider" => sub.driver,
+        "projectId" => Map.get(sub, :project),
         "subagent" => true
       })
       |> HalC2.Plugins.observe()
