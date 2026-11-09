@@ -807,6 +807,69 @@ defmodule HalC2.TextGenerationTest do
     assert after_flag(argv, "--model") == "gpt-7-work-mini"
   end
 
+  test "Codex writes with the home and variables of the instance chosen for text generation",
+       %{repo: repo, log: log, tmp_dir: dir} do
+    install([:codex])
+    cli_home = Path.join(dir, "codex-work-home")
+
+    settings!(%{
+      "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-7"},
+      "providerInstances" => %{
+        "codex-work" => %{
+          "driver" => "codex",
+          "environment" => [%{"name" => "CODEX_HOME", "value" => cli_home}]
+        }
+      }
+    })
+
+    assert {:ok, _} = TextGeneration.thread_title(repo, "Fix the login redirect loop")
+    assert [%{"codexHome" => ^cli_home}] = calls(log)
+  end
+
+  test "Codex of a connected ChatGPT account writes in the account's home, not the CLI's",
+       %{repo: repo, log: log, tmp_dir: dir} do
+    install([:codex])
+    cli_home = Path.join(dir, "codex-work-home")
+
+    settings!(%{
+      "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-7"},
+      "providerInstances" => %{
+        "codex-work" => %{
+          "driver" => "codex",
+          "config" => %{"setupMode" => "managed"},
+          "environment" => [%{"name" => "CODEX_HOME", "value" => cli_home}]
+        }
+      }
+    })
+
+    assert {:ok, _} = TextGeneration.thread_title(repo, "Fix the login redirect loop")
+    managed = HalC2.Codex.ChatGpt.home("codex-work")
+    assert [%{"codexHome" => ^managed}] = calls(log)
+  end
+
+  test "Codex does not write when the instance's home cannot be made", %{
+    repo: repo,
+    log: log,
+    tmp_dir: dir
+  } do
+    install([:codex])
+    same = Path.join(dir, "same-home")
+
+    settings!(%{
+      "textGenerationModelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-7"},
+      "providerInstances" => %{
+        "codex-work" => %{
+          "driver" => "codex",
+          "config" => %{"homePath" => same, "shadowHomePath" => same}
+        }
+      }
+    })
+
+    assert {:error, message} = TextGeneration.thread_title(repo, "Fix the login redirect loop")
+    assert message =~ "must be different from the shared home path"
+    assert calls(log) == []
+  end
+
   test "Claude writes with the config folder of the instance chosen for text generation", %{
     repo: repo,
     log: log,

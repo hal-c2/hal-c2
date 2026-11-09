@@ -633,9 +633,18 @@ defmodule HalC2.TextGeneration do
             ["--output-schema", schema_path, "--output-last-message", output_path] ++
             Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-        cli = [label: "Codex", unexpected: unexpected(opts), env: env]
+        # The instance's home and variables reach the Codex that writes text as they
+        # reach its sessions: a connected ChatGPT account writes with its own login. A
+        # scratch Codex home (`env`) replaces the home they name.
+        instance = selection["instanceId"] || "codex"
 
-        with {:ok, _} <-
+        with {:ok, home} <- HalC2.Codex.Home.env(instance),
+             cli = [
+               label: "Codex",
+               unexpected: unexpected(opts),
+               env: run_env(home ++ HalC2.Codex.Home.instance_env(instance), env)
+             ],
+             {:ok, _} <-
                run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
              {:ok, text} <- File.read(output_path),
              {:ok, %{} = result} <- JSON.decode(text) do
@@ -647,6 +656,12 @@ defmodule HalC2.TextGeneration do
       end
     end)
   end
+
+  # The instance's variables, minus its `CODEX_HOME` when the run has a scratch home of its own.
+  defp run_env(instance_env, []), do: instance_env
+
+  defp run_env(instance_env, scratch),
+    do: Enum.reject(instance_env, &match?({"CODEX_HOME", _}, &1)) ++ scratch
 
   # What keeps the user's tools out of a Codex that only writes text: each MCP server its
   # configuration enables is switched off, and plugins and apps are disabled. The servers
@@ -1439,7 +1454,13 @@ defmodule HalC2.TextGeneration do
   # The CLI an instance writes text with: its binary path in settings, else the one on PATH.
   defp claude_command(instance), do: cli(instance, :text_claude_command, "claude")
   @doc false
-  def codex_command(instance), do: cli(instance, :text_codex_command, "codex")
+  def codex_command(instance),
+    do:
+      hd(
+        HalC2.Codex.Installation.command(instance, [
+          Application.get_env(:hal_c2, :text_codex_command, "codex")
+        ])
+      )
 
   defp cli(instance, key, default),
     do:

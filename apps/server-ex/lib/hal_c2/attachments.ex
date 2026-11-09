@@ -185,6 +185,30 @@ defmodule HalC2.Attachments do
 
   defp claim_one(_thread_id, attachment), do: {:ok, attachment}
 
+  @doc """
+  Copies the stored attachment `id` into `thread_id` under an id of its own, so a thread
+  forked from another keeps the document when the source is deleted
+  (`delete_thread/1`). `{:ok, new_id}`, or `:error` when the attachment is not stored.
+  """
+  # The source comes from `path/1` and the copy is named by a checked thread segment.
+  # sobelow_skip ["Traversal.FileModule"]
+  def copy(thread_id, id) do
+    with source when is_binary(source) <- path(%{"id" => id}),
+         new_id = copy_id(thread_id, id),
+         :ok <- File.cp(source, Path.join(dir(), new_id <> Path.extname(source))) do
+      {:ok, new_id}
+    else
+      _ -> :error
+    end
+  end
+
+  # An MCP app document keeps its `-mcp-app-` marker, which is how its inline URL gets
+  # the app sandbox when the client sends no `renderIntent` (`mcp_app_claims/2`).
+  defp copy_id(thread_id, id) do
+    marker = if HalC2.McpApps.document_id?(id), do: "mcp-app-", else: ""
+    "#{thread_segment(thread_id)}-#{marker}#{copy_tag()}"
+  end
+
   defp copy_tag, do: 4 |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
 
   @doc """
@@ -202,8 +226,18 @@ defmodule HalC2.Attachments do
     end)
     |> case do
       {:ok, decoded} ->
-        {:ok,
-         %{"attachments" => decoded |> Enum.reverse() |> Enum.map(&store_pasted(thread_id, &1))}}
+        decoded
+        |> Enum.reverse()
+        |> Enum.reduce_while({:ok, []}, fn image, {:ok, saved} ->
+          case store_pasted(thread_id, image) do
+            {:ok, attachment} -> {:cont, {:ok, [attachment | saved]}}
+            {:error, _} = error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:ok, saved} -> {:ok, %{"attachments" => Enum.reverse(saved)}}
+          error -> error
+        end
 
       error ->
         error
@@ -235,11 +269,21 @@ defmodule HalC2.Attachments do
     end
   end
 
+  # The file is named by a checked thread segment and a fresh uuid in the attachments folder.
+  # sobelow_skip ["Traversal.FileModule"]
   defp store_pasted(thread_id, {attachment, {mime, bytes}}) do
     id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
-    File.mkdir_p!(dir())
-    File.write!(Path.join(dir(), id <> extension("image", mime, attachment["name"])), bytes)
+    file = Path.join(dir(), id <> extension("image", mime, attachment["name"]))
 
+    with :ok <- File.mkdir_p(dir()),
+         :ok <- File.write(file, bytes) do
+      {:ok, stored(id, attachment, mime, bytes)}
+    else
+      {:error, _reason} -> {:error, persist_error(attachment)}
+    end
+  end
+
+  defp stored(id, attachment, mime, bytes) do
     %{
       "type" => "image",
       "id" => id,
@@ -396,6 +440,8 @@ defmodule HalC2.Attachments do
             if(resource["_tag"] == "attachment", do: "attachment", else: "inline")
       }
 
+      claims = mcp_app_claims(claims, resource)
+
       # A media file is served only while it is the file that was signed: one
       # replaced under its name (a rename over it) needs a new URL.
       {:ok,
@@ -403,6 +449,23 @@ defmodule HalC2.Attachments do
        name}
     end
   end
+
+  # An MCP app document shown inline is served as an app (`HalC2.McpApps`): in its
+  # own sandbox, with the host's bootstraps. It gets that sandbox whether or not the
+  # client asked for `renderIntent: "mcp-app"`, so no app document runs in the MC's
+  # origin. A download is the stored file as it is.
+  defp mcp_app_claims(
+         %{"disposition" => "inline", "path" => path} = claims,
+         %{"_tag" => "attachment"} = resource
+       ) do
+    if Path.extname(path) == ".html" and
+         (resource["renderIntent"] == "mcp-app" or
+            HalC2.McpApps.document_id?(resource["attachmentId"])),
+       do: Map.merge(claims, %{"renderIntent" => "mcp-app", "mimeType" => "text/html"}),
+       else: claims
+  end
+
+  defp mcp_app_claims(claims, _resource), do: claims
 
   # A favicon URL stays the same for half an hour, so clients cache one image.
   defp favicon_expiry(now), do: (div(now, 30 * 60_000) + 2) * 30 * 60_000
@@ -458,6 +521,39 @@ defmodule HalC2.Attachments do
     do: HalC2.Attachments.GitHubMedia.serve(claims, headers)
 
   defp serve_claims(%{"path" => nil}, _headers), do: {:error, 404, "The project has no favicon."}
+
+  # An MCP app's document, sandboxed (`HalC2.McpApps.serve_document/1`). `path` is the
+  # signed claim's, which `path/1` found by a checked id.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp serve_claims(%{"renderIntent" => "mcp-app", "path" => path} = claims, _headers) do
+    max = HalC2.McpApps.max_document_bytes()
+
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular, size: size}} when size > max ->
+        {:error, 413, "The MCP app is too large to show."}
+
+      {:ok, %File.Stat{type: :regular}} ->
+        case File.read(path) do
+          {:ok, html} ->
+            name = String.replace(claims["fileName"] || Path.basename(path), ~s("), "")
+
+            {:ok, 200,
+             [
+               {"content-type", "text/html; charset=utf-8"},
+               {"content-disposition", ~s(inline; filename="#{name}")},
+               {"cache-control", "private, no-cache"}
+               | HalC2.McpApps.serve_headers()
+             ], HalC2.McpApps.serve_document(html)}
+
+          _ ->
+            {:error, 404, "The file is gone."}
+        end
+
+      _ ->
+        {:error, 404, "The file is gone."}
+    end
+  end
+
   defp serve_claims(%{"path" => path} = claims, headers), do: serve_file(path, claims, headers)
 
   defp serve_file(path, claims, headers) do

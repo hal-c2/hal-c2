@@ -27,14 +27,14 @@ defmodule HalC2.Prop do
   """
   def scratch_home(name) do
     tmp = Path.expand("../../tmp", __DIR__)
-    System.put_env("GIT_CEILING_DIRECTORIES", tmp)
+    put_system_env("GIT_CEILING_DIRECTORIES", tmp)
 
     # The OS pid keeps two runs in one checkout out of each other's homes.
     dir = Path.join(tmp, "prop/#{name}-#{System.pid()}-#{System.unique_integer([:positive])}")
 
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
-    Application.put_env(:hal_c2, :home, dir)
+    put_env(:home, dir)
     dir
   end
 
@@ -64,6 +64,44 @@ defmodule HalC2.Prop do
   end
 
   @doc """
+  `Application.put_env(:hal_c2, key, value)` for one case; `restore_env/0` puts every
+  key it set back as it was (unset stays unset), so a case leaves no setting behind
+  for the tests that run after it.
+  """
+  def put_env(key, value) do
+    remember({:app, key}, Application.fetch_env(:hal_c2, key))
+    Application.put_env(:hal_c2, key, value)
+  end
+
+  @doc "`System.put_env/2` (or `System.delete_env/1` for nil) for one case; see `put_env/2`."
+  def put_system_env(name, value) do
+    remember({:system, name}, System.fetch_env(name))
+    if value, do: System.put_env(name, value), else: System.delete_env(name)
+  end
+
+  # Only the first setting of a key in a case is what to go back to.
+  defp remember(key, prior) do
+    saved = Process.get({__MODULE__, :env}, [])
+
+    if not List.keymember?(saved, key, 0),
+      do: Process.put({__MODULE__, :env}, [{key, prior} | saved])
+  end
+
+  @doc "Undoes what `put_env/2`, `put_system_env/2` and `scratch_home/1` set in this case."
+  def restore_env do
+    for {key, prior} <- Process.delete({__MODULE__, :env}) || [] do
+      case {key, prior} do
+        {{:app, key}, {:ok, value}} -> Application.put_env(:hal_c2, key, value)
+        {{:app, key}, :error} -> Application.delete_env(:hal_c2, key)
+        {{:system, name}, {:ok, value}} -> System.put_env(name, value)
+        {{:system, name}, :error} -> System.delete_env(name)
+      end
+    end
+
+    :ok
+  end
+
+  @doc """
   Starts `specs` under a supervisor of their own for one case and returns it.
 
   PropEr runs every case in a process of its own, where ExUnit's `start_supervised`
@@ -78,7 +116,10 @@ defmodule HalC2.Prop do
     sup
   end
 
-  @doc "Stops what `start_services/1` started, waiting for every child to exit."
+  @doc """
+  Stops what `start_services/1` started, waiting for every child to exit, then
+  `restore_env/0`: the case is over, and a `scratch_home/1` it set must not outlive it.
+  """
   def stop_services do
     case Process.delete({__MODULE__, :services}) do
       nil ->
@@ -89,6 +130,8 @@ defmodule HalC2.Prop do
         Supervisor.stop(sup)
         if plugins, do: await_down(plugins)
     end
+
+    restore_env()
   end
 
   # What runs the plugins hangs off `HalC2.Plugins` and ends after it, so stopping the

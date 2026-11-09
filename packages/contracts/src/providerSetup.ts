@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   ForwardCompatibleArray,
   ForwardCompatibleOptional,
   IsoDateTime,
@@ -20,6 +21,9 @@ export const ProviderAuthMethod = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.NullOr(Schema.String),
   type: Schema.Literals(["agent", "terminal", "credentials"]),
+  // The account this method last signed in, where HAL-C2 keeps it (a ChatGPT
+  // account of Codex). Clients hide it until the user asks to see it.
+  accountEmail: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProviderAuthMethod = typeof ProviderAuthMethod.Type;
 
@@ -128,6 +132,15 @@ export const ProviderAuthCompleteInput = Schema.Struct({
   callbackUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
 });
 export type ProviderAuthCompleteInput = typeof ProviderAuthCompleteInput.Type;
+
+// Moves the ChatGPT account HAL-C2 connected to a Codex instance to the same
+// instance on another environment of the cluster: that one is signed in with
+// it, and this one is signed out.
+export const ProviderChatGptMoveInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  environmentId: EnvironmentId,
+});
+export type ProviderChatGptMoveInput = typeof ProviderChatGptMoveInput.Type;
 
 export const ProviderAuthCancelInput = Schema.Struct({
   instanceId: ProviderInstanceId,

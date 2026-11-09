@@ -57,6 +57,7 @@ if log:
                             "codexHome": os.environ.get("CODEX_HOME"),
                             "codexFiles": codex_files()[0], "codexModes": codex_files()[1],
                             "claudeConfigDir": os.environ.get("CLAUDE_CONFIG_DIR"),
+                            "codexHome": os.environ.get("CODEX_HOME"),
                             "entrypoint": os.environ.get("CLAUDE_CODE_ENTRYPOINT"),
                             "claudecode": os.environ.get("CLAUDECODE")}) + "\n")
 
