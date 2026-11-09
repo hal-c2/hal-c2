@@ -279,8 +279,11 @@ defmodule HalC2.OpenShell.Broker do
     end
   end
 
-  defp call_tool(conn, _grant, id, params),
+  defp call_tool(conn, _grant, id, params) when is_map(params),
     do: send_json(conn, rpc_error(id, -32602, "Unknown tool: #{inspect(params["name"])}"))
+
+  defp call_tool(conn, _grant, id, _params),
+    do: send_json(conn, rpc_error(id, -32602, "Invalid params: an object is expected."))
 
   defp result(id, result), do: %{"jsonrpc" => "2.0", "id" => id, "result" => result}
 

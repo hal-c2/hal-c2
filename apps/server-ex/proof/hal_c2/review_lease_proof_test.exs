@@ -8,6 +8,8 @@ defmodule HalC2.ReviewLeaseProofTest do
   @reads "answers from the review process's tables; changes no lease"
   @turn "puts a bound review's sandbox, workdir and broker in its turn; changes no lease"
   @pure "a pure helper over names, labels or drivers"
+  # A sandbox another plugin opened or closed first refuses an open or close before any
+  # step of its lease, so the one review the model follows has one opener.
   @link "the review process's links ending: a listener started again, or a connection made again on the next call"
 
   use HalC2.Proof,
@@ -24,14 +26,14 @@ defmodule HalC2.ReviewLeaseProofTest do
     covers: %{
       "HalC2.OpenShell.Review.open/1" =>
         ~w(opening stopped-first issue create-provider create-sandbox bind bind-refused),
-      "HalC2.OpenShell.Review.close/2" => ~w(stop reported),
+      "HalC2.OpenShell.Review.close/3" => ~w(stop reported),
       "HalC2.OpenShell.Review.spent/3" => "spent",
       "HalC2.OpenShell.Review.reconcile/0" => ~w(reconcile wiped),
       "HalC2.OpenShell.Review.reap/2" => ~w(reap reap-no-sandboxes reap-no-providers),
       "HalC2.OpenShell.Review.expired/2" => "reap",
-      "HalC2.OpenShell.Review handle_call {:opening, _}" => ~w(opening stopped-first),
+      "HalC2.OpenShell.Review handle_call {:opening, _, _}" => ~w(opening stopped-first),
       "HalC2.OpenShell.Review handle_call {:bind, _}" => ~w(bind bind-refused),
-      "HalC2.OpenShell.Review handle_call {:close, _, _}" => ~w(stop reported close delete),
+      "HalC2.OpenShell.Review handle_call {:close, _, _, _}" => ~w(stop reported close delete),
       "HalC2.OpenShell.Review handle_cast {:spent, _, _, _}" => "spent",
       "HalC2.OpenShell.Review handle_cast :reconcile" => ~w(reconcile wiped),
       "HalC2.OpenShell.Review handle_info {:deadline, _}" => "deadline",
@@ -54,6 +56,7 @@ defmodule HalC2.ReviewLeaseProofTest do
       "HalC2.OpenShell.Review.mcp/1" => @turn,
       "HalC2.OpenShell.Review.refusal/2" => @reads,
       "HalC2.OpenShell.Review.ended/1" => @reads,
+      "HalC2.OpenShell.Review.opener/1" => @reads,
       "HalC2.OpenShell.Review.ended_text/1" => @pure,
       "HalC2.OpenShell.Review.why/1" => "words for a failed step; the model's open-fails",
       "HalC2.OpenShell.Review.labels/2" => @pure,

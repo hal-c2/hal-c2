@@ -91,6 +91,17 @@ defmodule HalC2.OpenShell.Review do
   end
 
   @doc """
+  The plugin that opened or closed the sandbox of `thread_id` first, which alone may
+  open or close it from then on, or nil.
+  """
+  def opener(thread_id) do
+    case :ets.whereis(@table) != :undefined and :ets.lookup(@table, {:opener, thread_id}) do
+      [{_, owner}] -> owner
+      _ -> nil
+    end
+  end
+
+  @doc """
   What `HalC2.Subprocess.start/2` takes as `:sandbox` for a program of `binding`, in
   `environment`.
   """
@@ -179,9 +190,10 @@ defmodule HalC2.OpenShell.Review do
   @doc """
   Opens the sandbox of review thread `thread_id`. `spec`: `%{thread_id,
   instance, clone, head_ref, base_ref, head, merge_base, review, tool, minutes,
-  tokens}`: the checkout is made from refs `head_ref` (at `head`) and `base_ref` of
+  tokens, owner}`: the checkout is made from refs `head_ref` (at `head`) and `base_ref` of
   the git repository at `clone`, and the broker takes one call of plugin tool `tool`
-  for `review`.
+  for `review`. `owner`, a plugin's id, is the only one that may close it
+  (`opener/1`); one another owner opened or closed is refused.
   `{:ok, %{sandbox, deadline}}` once the agent can start, or `{:error, message}`
   with nothing left behind.
   """
@@ -197,7 +209,7 @@ defmodule HalC2.OpenShell.Review do
          {:ok, model} <- model(driver, spec.instance),
          :ok <- Service.reaped(),
          {:ok, disk} <- disk(),
-         :ok <- GenServer.call(__MODULE__, {:opening, thread_id}),
+         :ok <- GenServer.call(__MODULE__, {:opening, thread_id, Map.get(spec, :owner)}),
          {:ok, conn} <- GenServer.call(__MODULE__, :conn, 30_000),
          {:ok, broker} <- GenServer.call(__MODULE__, :broker, 30_000) do
       name = name(thread_id)
@@ -277,11 +289,12 @@ defmodule HalC2.OpenShell.Review do
   @doc """
   Closes the sandbox of `thread_id`: its broker token is revoked and its binding
   goes, and the sandbox and its provider are deleted after the call returns.
-  `reason` is kept for `ended/1`.
+  `reason` is kept for `ended/1`. With an `owner`, one that another owner opened or
+  closed is refused (`open/1`), and the thread is `owner`'s from then on.
   """
-  def close(thread_id, reason \\ nil) do
+  def close(thread_id, reason \\ nil, owner \\ nil) do
     if Process.whereis(__MODULE__),
-      do: GenServer.call(__MODULE__, {:close, thread_id, reason}, 60_000),
+      do: GenServer.call(__MODULE__, {:close, thread_id, reason, owner}, 60_000),
       else: :ok
   end
 
@@ -409,10 +422,17 @@ defmodule HalC2.OpenShell.Review do
 
   # Each run has a thread of its own, so a thread closed before or while its sandbox
   # is made (its review stopped) gets none.
-  def handle_call({:opening, thread_id}, _from, state) do
-    if :ets.member(@table, {:ended, thread_id}),
-      do: {:reply, {:error, "The review was stopped before its sandbox was made."}, state},
-      else: {:reply, :ok, state}
+  def handle_call({:opening, thread_id, owner}, _from, state) do
+    cond do
+      not claim(thread_id, owner) ->
+        {:reply, {:error, theirs(thread_id)}, state}
+
+      :ets.member(@table, {:ended, thread_id}) ->
+        {:reply, {:error, "The review was stopped before its sandbox was made."}, state}
+
+      true ->
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call({:bind, binding}, _from, state) do
@@ -421,8 +441,21 @@ defmodule HalC2.OpenShell.Review do
       else: {:reply, :ok, bind(state, binding)}
   end
 
-  def handle_call({:close, thread_id, reason}, _from, state),
-    do: {:reply, :ok, end_sandbox(state, thread_id, reason)}
+  def handle_call({:close, thread_id, reason, owner}, _from, state) do
+    if claim(thread_id, owner),
+      do: {:reply, :ok, end_sandbox(state, thread_id, reason)},
+      else: {:reply, {:error, theirs(thread_id)}, state}
+  end
+
+  # The first owner to open or close a thread's sandbox keeps it; nil is the MC's own
+  # (the broker, a reap), which may close any.
+  defp claim(_thread_id, nil), do: true
+
+  defp claim(thread_id, owner) do
+    :ets.insert_new(@table, {{:opener, thread_id}, owner}) or opener(thread_id) == owner
+  end
+
+  defp theirs(thread_id), do: "The sandbox of thread #{thread_id} is another plugin's."
 
   defp bind(state, binding) do
     :ets.insert(@table, {{:binding, binding.thread_id}, binding})

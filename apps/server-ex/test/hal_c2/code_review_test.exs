@@ -1410,6 +1410,46 @@ defmodule HalC2.CodeReviewTest do
     end
 
     @tag sandbox: [hang: true]
+    test "only the plugin that opened a sandbox closes it, launches in it or reads it",
+         _context do
+      alias HalC2.OpenShell.Review
+      alias HalC2.Plugins.Host
+
+      {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+      assert_receive {:sandbox_turn, _}, 15_000
+      %{"threadId" => thread_id, "projectId" => project} = review()
+
+      assert {:error, _} = Review.close(thread_id, "stopped", "other")
+      assert Review.binding(thread_id)
+
+      # A sandbox another plugin opened or closed first is that plugin's.
+      :ok = Review.close("other-thread", "time", "other")
+      assert {:error, _} = Host.close_sandbox(@id, "other-thread")
+      assert Host.sandbox_ended(@id, "other-thread") == nil
+
+      assert {:error, _} =
+               Host.launch_thread(
+                 @id,
+                 "review",
+                 %{"threadId" => "other-thread", "projectId" => project, "title" => "Other"},
+                 sandboxed: true
+               )
+
+      assert HalC2.Streams.get("other-thread", "thread", "other-thread") == nil
+
+      # So is the sandbox of a thread another plugin started, which the review process
+      # does not remember after a restart.
+      {:ok, _} =
+        HalC2.Orchestration.launch_thread(
+          %{"threadId" => "other-started", "projectId" => project, "title" => "Other"},
+          plugin: %{"id" => "other", "kind" => "other", "listed" => false}
+        )
+
+      assert {:error, _} = Host.close_sandbox(@id, "other-started")
+      assert Review.ended("other-started") == nil
+    end
+
+    @tag sandbox: [hang: true]
     test "a stopped review takes no report from its sandbox", _context do
       {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
       assert_receive {:sandbox_turn, _}, 15_000

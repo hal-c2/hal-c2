@@ -8,6 +8,8 @@ defmodule HalC2.OpenShellReviewPropTest do
   is the TLS fake, each sandbox a directory of its own. The promises:
 
     * a review opens once: a thread stopped before its sandbox was made gets none;
+    * a thread's sandbox is the first owner's to open or close it: another owner's
+      open or close is refused and changes nothing, until a restart forgets owners;
     * a review has a binding and a broker token exactly while it is open, and its
       sandbox and provider are on the gateway meanwhile;
     * a review ends once, keeping the first reason it ended for, and its sandbox and
@@ -39,6 +41,7 @@ defmodule HalC2.OpenShellReviewPropTest do
   @wait 10_000
   @budget 100
   @threads ~w(T1 T2 T3)
+  @owners ~w(code-review other)
 
   property "a review sandbox is open exactly while its review is, and ends once",
     numtests: HalC2.Prop.numtests(25),
@@ -126,16 +129,19 @@ defmodule HalC2.OpenShellReviewPropTest do
   # stalled: the gateway only accepts provider deletions; pending: the providers it
   # accepted deleting and kept. bare: left sandboxes whose provider was asked to go by
   # a reap that could not list sandboxes.
+  # owners: by thread, the first owner to open or close its sandbox.
   def initial_state,
-    do: %{threads: %{}, left: 0, others: 0, stalled: false, pending: [], bare: []}
+    do: %{threads: %{}, owners: %{}, left: 0, others: 0, stalled: false, pending: [], bare: []}
 
   def command(state) do
     open = for {t, %{spent: _}} <- state.threads, do: t
 
     frequency(
       [
-        {4, {:call, __MODULE__, :open, [oneof(@threads)]}},
-        {3, {:call, __MODULE__, :close, [oneof(@threads), oneof(["stopped", "discarded"])]}},
+        {4, {:call, __MODULE__, :open, [oneof(@threads), oneof(@owners)]}},
+        {3,
+         {:call, __MODULE__, :close,
+          [oneof(@threads), oneof(["stopped", "discarded"]), oneof(@owners)]}},
         {1, {:call, __MODULE__, :left_behind, []}},
         {1, {:call, __MODULE__, :other_home_left, []}},
         {1, {:call, __MODULE__, :reconcile, []}},
@@ -161,7 +167,7 @@ defmodule HalC2.OpenShellReviewPropTest do
 
   # A provider the gateway kept takes its name: a review of that thread cannot open
   # until it goes (`CreateProvider` refuses it).
-  def precondition(state, {:call, _, :open, [t]}),
+  def precondition(state, {:call, _, :open, [t, _owner]}),
     do: not open?(state, t) and Review.name(t) not in state.pending
 
   # A reap here deletes everything past a far deadline, open reviews' sandboxes too.
@@ -177,13 +183,18 @@ defmodule HalC2.OpenShellReviewPropTest do
 
   def next_state(state, _result, call), do: model(state, call)
 
-  defp model(state, {:call, _, :open, [t]}) do
-    if Map.has_key?(state.threads, t),
-      do: state,
-      else: put_in(state.threads[t], %{spent: %{}})
+  defp model(state, {:call, _, :open, [t, owner]}) do
+    cond do
+      theirs?(state, t, owner) -> state
+      Map.has_key?(state.threads, t) -> claimed(state, t, owner)
+      true -> put_in(claimed(state, t, owner).threads[t], %{spent: %{}})
+    end
   end
 
-  defp model(state, {:call, _, :close, [t, reason]}), do: ended(state, t, reason)
+  defp model(state, {:call, _, :close, [t, reason, owner]}) do
+    if theirs?(state, t, owner), do: state, else: ended(claimed(state, t, owner), t, reason)
+  end
+
   defp model(state, {:call, _, :deadline, [t]}), do: ended(state, t, "time")
 
   defp model(state, {:call, _, :spent, [t, key, n]}) do
@@ -272,6 +283,9 @@ defmodule HalC2.OpenShellReviewPropTest do
 
   defp open?(state, t), do: match?(%{spent: _}, state.threads[t])
 
+  defp theirs?(state, t, owner), do: Map.get(state.owners, t, owner) != owner
+  defp claimed(state, t, owner), do: %{state | owners: Map.put_new(state.owners, t, owner)}
+
   def postcondition(state, call, observed) do
     after_ = model(state, call)
     open = for {t, %{spent: _}} <- after_.threads, do: t
@@ -280,18 +294,22 @@ defmodule HalC2.OpenShellReviewPropTest do
 
     result_ok(state, call, observed.result) and observed.missing == [] and
       observed.bound == Enum.sort(open) and observed.tokens == Enum.sort(open) and
-      observed.ended == ends and
+      observed.ended == ends and observed.owners == after_.owners and
       observed.sandboxes == Enum.sort(names ++ observed.left ++ observed.others) and
       observed.providers ==
         Enum.sort(Enum.uniq(names ++ (observed.left -- after_.bare) ++ after_.pending))
   end
 
-  defp result_ok(state, {:call, _, :open, [t]}, result) do
-    case state.threads[t] do
-      nil -> match?({:ok, %{sandbox: _}}, result)
-      {:ended, _} -> result == {:error, "The review was stopped before its sandbox was made."}
+  defp result_ok(state, {:call, _, :open, [t, owner]}, result) do
+    cond do
+      theirs?(state, t, owner) -> result == {:error, theirs(t)}
+      state.threads[t] == nil -> match?({:ok, %{sandbox: _}}, result)
+      true -> result == {:error, "The review was stopped before its sandbox was made."}
     end
   end
+
+  defp result_ok(state, {:call, _, :close, [t, _reason, owner]}, result),
+    do: result == if(theirs?(state, t, owner), do: {:error, theirs(t)}, else: :ok)
 
   defp result_ok(state, {:call, _, :reap, []}, result), do: reap_ok(state, nil, result)
 
@@ -299,6 +317,8 @@ defmodule HalC2.OpenShellReviewPropTest do
     do: reap_ok(state, method, result)
 
   defp result_ok(_state, _call, result), do: result == :ok
+
+  defp theirs(t), do: "The sandbox of thread #{t} is another plugin's."
 
   defp reap_ok(state, unlisted, result) do
     case {reap_expected(state, unlisted), result} do
@@ -318,9 +338,9 @@ defmodule HalC2.OpenShellReviewPropTest do
 
   # --- commands -------------------------------------------------------------------
 
-  def open(t), do: observe(fn -> Review.open(spec(t)) end, [])
+  def open(t, owner), do: observe(fn -> Review.open(Map.put(spec(t), :owner, owner)) end, [])
 
-  def close(t, reason), do: ending(t, fn -> Review.close(t, reason) end)
+  def close(t, reason, owner), do: ending(t, fn -> Review.close(t, reason, owner) end)
 
   def spent(t, key, n) do
     ending(t, fn ->
@@ -477,6 +497,7 @@ defmodule HalC2.OpenShellReviewPropTest do
       bound: Enum.sort(for t <- @threads, Review.binding(t), do: t),
       tokens: Enum.sort(for t <- @threads, :ets.lookup(Broker, {:thread, t}) != [], do: t),
       ended: for(t <- @threads, reason = Review.ended(t), into: %{}, do: {t, reason}),
+      owners: for(t <- @threads, owner = Review.opener(t), into: %{}, do: {t, owner}),
       left: left,
       others: others,
       sandboxes: Enum.sort(Map.keys(FakeOpenShell.sandboxes(g))),

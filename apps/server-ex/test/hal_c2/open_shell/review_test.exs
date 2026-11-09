@@ -195,6 +195,14 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert {200, body} = FakeSandbox.post(mcp, list)
     assert %{"error" => %{"code" => -32602}} = JSON.decode!(body)
 
+    # Params that are no object are refused as such, not failed on.
+    for params <- ["scalar", [], 1] do
+      assert {200, body} = FakeSandbox.post(mcp, %{list | "params" => params})
+
+      assert %{"error" => %{"code" => -32602, "message" => "Invalid params" <> _}} =
+               JSON.decode!(body)
+    end
+
     # Once the sandbox is closed, its token is too.
     :ok = Review.close(@thread, "stopped")
     assert {401, _} = FakeSandbox.post(mcp, list)
@@ -233,6 +241,25 @@ defmodule HalC2.OpenShell.ReviewTest do
              Task.await(task, 10_000)
 
     assert_gone(g)
+  end
+
+  test "a sandbox is its owner's: no other owner closes it or opens one for its thread",
+       %{repo: repo} do
+    {:ok, _} = Review.open(Map.put(spec(repo), :owner, "code-review"))
+    assert Review.opener(@thread) == "code-review"
+
+    message = "The sandbox of thread #{@thread} is another plugin's."
+    assert {:error, ^message} = Review.close(@thread, "stopped", "other")
+    assert Review.binding(@thread)
+
+    :ok = Review.close(@thread, "stopped", "code-review")
+    assert Review.ended(@thread) == "stopped"
+
+    # The first to close a thread's sandbox before it is made owns it from then on.
+    :ok = Review.close("Thread-2", "stopped", "other")
+
+    assert {:error, "The sandbox of thread Thread-2 is another plugin's."} =
+             Review.open(%{spec(repo) | thread_id: "Thread-2"} |> Map.put(:owner, "code-review"))
   end
 
   test "a stop before the sandbox is made leaves none made", %{gateway: g, repo: repo} do
