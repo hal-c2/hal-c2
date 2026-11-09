@@ -94,7 +94,7 @@ defmodule HalC2.Orchestration.Unrecorded do
       |> handle.(state)
       |> map_state(fn state ->
         if run(state) == run,
-          do: elem(module.handle_call(:interrupt, {self(), make_ref()}, state), 2),
+          do: state_of(module.handle_call(:interrupt, {self(), make_ref()}, state)),
           else: state
       end)
     end)
@@ -166,4 +166,12 @@ defmodule HalC2.Orchestration.Unrecorded do
   defp map_state({:noreply, state}, fun), do: {:noreply, fun.(state)}
   defp map_state({:noreply, state, next}, fun), do: {:noreply, fun.(state), next}
   defp map_state({:stop, reason, state}, fun), do: {:stop, reason, fun.(state)}
+
+  # The runtime's state after a callback, whatever shape its answer takes.
+  defp state_of({:reply, _reply, state}), do: state
+  defp state_of({:reply, _reply, state, _next}), do: state
+  defp state_of({:stop, _reason, _reply, state}), do: state
+  defp state_of({:noreply, state}), do: state
+  defp state_of({:noreply, state, _next}), do: state
+  defp state_of({:stop, _reason, state}), do: state
 end
