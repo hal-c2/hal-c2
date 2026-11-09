@@ -309,7 +309,9 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     state = observe(state, finished(thread, "r1", 1))
 
     # Run r2's subagent used CronCreate, which its child thread keeps; the feed dropped it.
-    ended(thread, "r2", 2, [%{"type" => "subagent", "title" => "Schedule it"}])
+    ended(thread, "r2", 2, [
+      %{"type" => "subagent", "origin" => "provider_native", "title" => "Schedule it"}
+    ])
 
     state =
       observe(
@@ -323,6 +325,41 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     # No tool's streak grew, so nothing is proposed, nor applied with the proposal.
     assert Enum.all?(Map.values(prune["streaks"]), &(&1["prompts"] == 0))
     assert Prune.proposal(prune, Prune.config(state.settings)) == []
+  end
+
+  test "a segment the feed dropped some of, in which the agent only delegated, is still evidence",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    ended(thread, "r1", 1, [])
+
+    {:ok, state} =
+      TokenEconomizer.init(%{
+        "toolPrune" => "propose",
+        "toolPruneEvidence" => 1,
+        "toolPruneMinSessions" => 1
+      })
+
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+
+    # Run r2 handed work to a thread of its own, whose calls are that thread's turns',
+    # not this one's.
+    ended(thread, "r2", 2, [
+      %{"type" => "subagent", "origin" => "app_owned", "title" => "Review it"}
+    ])
+
+    assert {:ok, runs} = HalC2.Plugins.Host.history("token-economizer", thread)
+    assert Enum.map(runs, & &1["subagents"]) == [false, false]
+
+    state =
+      observe(
+        state,
+        started(thread, "r3", p, %{"newConversation" => true, "dropped" => 3, "waiting" => 0})
+      )
+
+    prune = state.prunes[project]
+    assert prune["prompts"] == 2
+    assert Enum.any?(Map.values(prune["streaks"]), &(&1["prompts"] > 0))
   end
 
   test "Codex turns the plugin missed are no evidence any of its packages went unused",

@@ -527,9 +527,12 @@ defmodule HalC2.Plugins.Host do
           (items[run["id"]] || [])
           |> Enum.sort_by(& &1["ordinal"])
           |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1),
+        # A thread it delegated to (`"app_owned"`) makes its calls in turns of its own.
         "subagents" =>
-          Enum.any?(items[run["id"]] || [], &(&1["type"] == "subagent")) or
-            Enum.any?(subagents, &worked_in?(&1, run))
+          Enum.any?(
+            items[run["id"]] || [],
+            &(&1["type"] == "subagent" and &1["origin"] == "provider_native")
+          ) or Enum.any?(subagents, &worked_in?(&1, run))
       }
     end)
   end
