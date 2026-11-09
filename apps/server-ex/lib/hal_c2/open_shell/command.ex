@@ -146,6 +146,11 @@ defmodule HalC2.OpenShell.Command do
           {:ok, names} ->
             {:ok, "Deleted review sandboxes past their time: #{Enum.join(names, ", ")}"}
 
+          {:error, {:not_deleted, deleted, failed}} ->
+            left = Enum.map_join(failed, "; ", fn {name, why} -> "#{name}: #{inspect(why)}" end)
+            done = if deleted == [], do: "", else: " Deleted: #{Enum.join(deleted, ", ")}."
+            {:error, "Reaping review sandboxes left some behind: #{left}.#{done}"}
+
           {:error, reason} ->
             {:error, "Reaping review sandboxes failed: #{inspect(reason)}"}
         end

@@ -92,14 +92,21 @@ defmodule HalC2.OpenShell.Policy do
 
   @doc """
   `:ok` when the composed `policy` is no wider than `wanted` (`review/1`'s): the same
-  rules, each endpoint and binary exactly as asked, Landlock required, nothing in
-  audit mode, no TLS skipped, no credential let through uninspected and no
-  middleware. Otherwise `{:error, why}`.
+  paths readable and writable and the same user, as a gateway-wide policy replaces
+  them too; the same rules, each endpoint and binary exactly as asked, Landlock
+  required, nothing in audit mode, no TLS skipped, no credential let through
+  uninspected and no middleware. Otherwise `{:error, why}`.
   """
   def check(%Sb.SandboxPolicy{} = policy, %Sb.SandboxPolicy{} = wanted) do
     cond do
       policy.landlock == nil or policy.landlock.compatibility != "hard_requirement" ->
         {:error, "Landlock is not a hard requirement"}
+
+      filesystem(policy.filesystem) != filesystem(wanted.filesystem) ->
+        {:error, "the gateway changes the paths it may read or write"}
+
+      policy.process != wanted.process ->
+        {:error, "the gateway changes the user it runs as"}
 
       map_size(policy.network_middlewares || %{}) > 0 ->
         {:error, "the gateway adds network middleware"}
@@ -117,6 +124,12 @@ defmodule HalC2.OpenShell.Policy do
   end
 
   def check(_policy, _wanted), do: {:error, "the gateway reports no policy"}
+
+  # In any order, as a gateway may keep them.
+  defp filesystem(%Sb.FilesystemPolicy{} = fs),
+    do: %{fs | read_only: Enum.sort(fs.read_only), read_write: Enum.sort(fs.read_write)}
+
+  defp filesystem(other), do: other
 
   defp same_rule?(policy, wanted, name) do
     got = policy.network_policies[name]

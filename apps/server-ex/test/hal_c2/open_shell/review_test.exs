@@ -91,6 +91,23 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert_gone(g)
   end
 
+  @tag gateway: [widen: &__MODULE__.writable_usr/1]
+  test "a gateway that lets the review write its programs gets no review", %{
+    gateway: g,
+    repo: repo
+  } do
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "wider than asked: the gateway changes the paths it may read or write"
+    assert_gone(g)
+  end
+
+  @tag gateway: [widen: &__MODULE__.as_root/1]
+  test "a gateway that runs the review as another user gets no review", %{gateway: g, repo: repo} do
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "wider than asked: the gateway changes the user it runs as"
+    assert_gone(g)
+  end
+
   test "a review's disk is a tmpfs of its size on each path it writes", %{repo: repo} do
     assert {:ok, _} = Review.open(spec(repo))
     assert_received {:openshell_request, "CreateSandbox", %{spec: spec}}
@@ -310,11 +327,90 @@ defmodule HalC2.OpenShell.ReviewTest do
     assert Map.keys(FakeOpenShell.providers(g)) |> Enum.sort() == ["review-home", "review-new"]
   end
 
+  # The reaper's timer tries again a minute later; until then it says what is left.
+  @tag gateway: [delete_provider: :accepted]
+  test "a reaper that cannot confirm a lease's deletion says what is left and fails", %{
+    gateway: g
+  } do
+    now = System.os_time(:second)
+    FakeOpenShell.put_sandbox(g, "review-old", owned(Review.labels("old", now - 1)))
+    FakeOpenShell.put_provider(g, "review-old", owned(Review.labels("old", now - 1)))
+
+    assert {:error, "Reaping review sandboxes left some behind: review-old: " <> why} =
+             OpenShell.Command.command(["reap"])
+
+    assert why =~ "delete_pending"
+    refute why =~ "Deleted:"
+    assert Map.has_key?(FakeOpenShell.providers(g), "review-old")
+  end
+
+  test "a fresh gateway gets HAL-C2's key-only profile, and the review's provider is of it",
+       %{gateway: g, repo: repo} do
+    assert {:ok, %{sandbox: name}} = Review.open(spec(repo))
+
+    assert %{"hal-c2-codex" => profile} = FakeOpenShell.profiles(g)
+    assert profile.endpoints == [] and profile.binaries == [] and profile.files == []
+
+    assert [%{env_vars: ["OPENAI_API_KEY"], auth_style: "bearer", header_name: "authorization"}] =
+             profile.credentials
+
+    assert FakeOpenShell.providers(g)[name].type == "hal-c2-codex"
+  end
+
+  @tag gateway: [
+         profiles: [
+           %HalC2.OpenShell.Proto.Openshell.V1.ProviderProfile{
+             id: "hal-c2-codex",
+             credentials: [
+               %HalC2.OpenShell.Proto.Openshell.V1.ProviderProfileCredential{
+                 name: "api_key",
+                 env_vars: ["OPENAI_API_KEY"],
+                 required: true
+               }
+             ],
+             endpoints: [
+               %HalC2.OpenShell.Proto.Openshell.Sandbox.V1.NetworkEndpoint{
+                 host: "elsewhere.example",
+                 port: 443
+               }
+             ]
+           }
+         ]
+       ]
+  test "a review is not given a profile by its id that sends its key elsewhere", %{
+    gateway: g,
+    repo: repo
+  } do
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "hal-c2-codex is not the one HAL-C2 makes"
+    refute_received {:openshell_request, "CreateProvider", _}
+    refute_received {:openshell_request, "CreateSandbox", _}
+    assert FakeOpenShell.providers(g) == %{}
+    assert Review.binding(@thread) == nil
+  end
+
+  test "a review whose provider name is taken deletes nothing it did not make", %{
+    gateway: g,
+    repo: repo
+  } do
+    name = Review.name(@thread)
+    theirs = %{OpenShell.owner_label() => "another-mc"}
+    FakeOpenShell.put_provider(g, name, theirs)
+
+    assert {:error, message} = Review.open(spec(repo))
+    assert message =~ "already exists"
+    refute_received {:openshell_request, "DeleteProvider", _}
+    refute_received {:openshell_request, "DeleteSandbox", _}
+    assert FakeOpenShell.providers(g)[name].labels == theirs
+    assert Review.binding(@thread) == nil
+  end
+
   @tag before: [&__MODULE__.left_behind/1]
   test "an MC starting deletes the review sandboxes it holds no binding for", %{gateway: g} do
     assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-left"}}, 5_000
     assert_receive {:openshell_request, "DeleteProvider", %{name: "review-left"}}, 5_000
     refute Map.has_key?(FakeOpenShell.sandboxes(g), "review-left")
+    refute Map.has_key?(FakeOpenShell.providers(g), "review-left")
     assert Map.has_key?(FakeOpenShell.sandboxes(g), "review-home")
   end
 
@@ -336,6 +432,15 @@ defmodule HalC2.OpenShell.ReviewTest do
 
   # --- fixtures -------------------------------------------------------------------------
 
+  def writable_usr(policy),
+    do: %{
+      policy
+      | filesystem: %{policy.filesystem | read_write: ["/usr" | policy.filesystem.read_write]}
+    }
+
+  def as_root(policy),
+    do: %{policy | process: %{policy.process | run_as_user: "root"}}
+
   def widen(policy) do
     rule = %OpenShell.Proto.Openshell.Sandbox.V1.NetworkPolicyRule{name: "everywhere"}
     %{policy | network_policies: Map.put(policy.network_policies, "everywhere", rule)}
@@ -344,6 +449,7 @@ defmodule HalC2.OpenShell.ReviewTest do
   def left_behind(gateway) do
     labels = Review.labels("left", System.os_time(:second) + 600)
     FakeOpenShell.put_sandbox(gateway, "review-left", owned(labels))
+    FakeOpenShell.put_provider(gateway, "review-left", owned(labels))
     # Another home's, on a gateway the two share: not this MC's to reconcile.
     FakeOpenShell.put_sandbox(gateway, "review-home", owned(other_home(labels)))
   end

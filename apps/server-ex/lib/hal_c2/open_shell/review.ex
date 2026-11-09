@@ -26,6 +26,7 @@ defmodule HalC2.OpenShell.Review do
 
   alias HalC2.OpenShell
   alias HalC2.OpenShell.{Broker, Client, Policy, Service}
+  alias HalC2.OpenShell.Proto.Openshell.V1, as: Pb
 
   require Logger
 
@@ -40,21 +41,23 @@ defmodule HalC2.OpenShell.Review do
   @ready_ms 300_000
 
   # The drivers whose agent can run in a review sandbox, with the API it calls, the
-  # OpenShell provider type and key holding its credential, and the executables in
-  # the review image (`HalC2.OpenShell.Manifest`) the policy lets reach it. Every
-  # other driver refuses (`refusal/2`).
+  # provider profile (`profile/1`) and key holding its credential and how that key is
+  # sent, and the executables in the review image (`HalC2.OpenShell.Manifest`) the
+  # policy lets reach it. Every other driver refuses (`refusal/2`).
   @drivers %{
     "claudeAgent" => %{
       host: "api.anthropic.com",
-      type: "claude",
+      type: "hal-c2-claude",
       key: "ANTHROPIC_API_KEY",
+      auth: {"header", "x-api-key"},
       command: ["claude"],
       binaries: ["/usr/local/bin/claude"]
     },
     "codex" => %{
       host: "api.openai.com",
-      type: "codex",
+      type: "hal-c2-codex",
       key: "OPENAI_API_KEY",
+      auth: {"bearer", "authorization"},
       command: ["codex", "app-server"],
       # npm's launcher, which runs the native binary under it: OpenShell matches a
       # connection's binary by its process's ancestors too.
@@ -211,8 +214,12 @@ defmodule HalC2.OpenShell.Review do
           broker: broker
         })
 
+      # A provider this attempt could not make is not its to delete: its name may be
+      # taken by one it does not own. One whose answer was lost carries the lease
+      # label, so the reaper deletes it.
       result =
-        with :ok <- create_provider(conn, name, model, labels),
+        with {:made, :ok} <- {:made, Client.ensure_profile(conn, profile(model))},
+             {:made, :ok} <- {:made, create_provider(conn, name, model, labels)},
              {:ok, _} <-
                Client.create_sandbox(conn, name,
                  labels: labels,
@@ -248,6 +255,10 @@ defmodule HalC2.OpenShell.Review do
       case result do
         {:ok, _} = ok ->
           ok
+
+        {:made, error} ->
+          Broker.revoke(thread_id)
+          {:error, failure(error)}
 
         error ->
           Broker.revoke(thread_id)
@@ -288,15 +299,27 @@ defmodule HalC2.OpenShell.Review do
   Deletes this home's review sandboxes whose lease ended by `now` (unix seconds), with
   their providers, over `conn`, and any provider past its lease whose sandbox never
   came. Run by `hal-c2-service openshell reap` without the MC. `{:ok, names}` of the
-  sandboxes deleted.
+  sandboxes deleted, or, when any deletion failed, `{:error, {:not_deleted, names,
+  failed}}` with the sandboxes deleted anyway and each `{name, reason}` that was not.
   """
   def reap(conn, now) do
     with {:ok, sandboxes} <- Client.list_sandboxes(conn, selector()),
-         names = for(sandbox <- expired(sandboxes, now), do: sandbox.name),
-         :ok <- Enum.each(names, &remove(conn, &1)),
          {:ok, providers} <- Client.providers(conn, selector()) do
-      for %{name: name} <- expired(providers, now), do: Client.delete_provider(conn, name)
-      {:ok, names}
+      names = for sandbox <- expired(sandboxes, now), do: sandbox.name
+      removed = for name <- names, do: {name, remove(conn, name)}
+
+      # A provider of a sandbox removed above went with it.
+      orphans =
+        for %{name: name} <- expired(providers, now),
+            name not in names,
+            do: {name, Client.delete_provider(conn, name)}
+
+      deleted = for {name, :ok} <- removed, do: name
+
+      case for({name, {:error, reason}} <- removed ++ orphans, do: {name, reason}) do
+        [] -> {:ok, deleted}
+        failed -> {:error, {:not_deleted, deleted, failed}}
+      end
     end
   end
 
@@ -504,6 +527,28 @@ defmodule HalC2.OpenShell.Review do
             {:error,
              "A review sandbox needs #{model.key} for #{driver_name(driver)}: a sign-in on this machine does not reach the sandbox. Set it in the provider's environment in Settings."}
     end
+  end
+
+  # The provider profile a review's API key is held under: the key alone, as the
+  # agent's own variable, with no endpoints or binaries of its own. The review's
+  # policy binds it to the one endpoint its agent calls (`Policy.review/1`), which
+  # OpenShell allows only for a profile that names none, and adds nothing to it.
+  defp profile(%{type: id, key: key, auth: {style, header}}) do
+    %Pb.ProviderProfile{
+      id: id,
+      display_name: "HAL-C2 review (#{key})",
+      description: "The API key of a HAL-C2 review sandbox's agent.",
+      category: :PROVIDER_PROFILE_CATEGORY_AGENT,
+      credentials: [
+        %Pb.ProviderProfileCredential{
+          name: "api_key",
+          env_vars: [key],
+          required: true,
+          auth_style: style,
+          header_name: header
+        }
+      ]
+    }
   end
 
   defp create_provider(conn, name, model, labels) do
@@ -723,11 +768,18 @@ defmodule HalC2.OpenShell.Review do
     end)
   end
 
+  # `:ok` once sandbox `name` and its provider are both gone, or the first error.
+  # The provider is tried even when the sandbox is not, as its credential matters most.
   defp remove(conn, name) do
-    with {:error, reason} <- Client.delete_sandbox(conn, name),
-         do: Logger.warning("openshell: deleting #{name} failed: #{inspect(reason)}")
+    results = [
+      sandbox: Client.delete_sandbox(conn, name),
+      provider: Client.delete_provider(conn, name)
+    ]
 
-    Client.delete_provider(conn, name)
+    for {what, {:error, reason}} <- results,
+        do: Logger.warning("openshell: deleting #{what} #{name} failed: #{inspect(reason)}")
+
+    Enum.find(Keyword.values(results), :ok, &(&1 != :ok))
   end
 
   defp failure({:error, reason}), do: why(reason)
@@ -746,6 +798,13 @@ defmodule HalC2.OpenShell.Review do
 
   def why({:read, reason}),
     do: "The review's checkout could not be read for its sandbox: #{:file.format_error(reason)}."
+
+  def why({:profile_differs, id}),
+    do:
+      "OpenShell's provider profile #{id} is not the one HAL-C2 makes, so the review's API key was not given to it. Delete that profile from the gateway and HAL-C2 makes its own."
+
+  def why({:profile_refused, id, messages}),
+    do: "OpenShell would not take HAL-C2's provider profile #{id}: #{Enum.join(messages, "; ")}"
 
   def why({:shared_gateway, _environments}),
     do:

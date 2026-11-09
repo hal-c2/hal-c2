@@ -29,7 +29,14 @@ defmodule HalC2.Test.FakeOpenShell do
   `:get_sandbox` (a function GetSandbox runs before it answers), and
   `:delete`: how DeleteSandbox answers, `:completed` (the default),
   `:unspecified`, `{:accepted, n}` (the sandbox goes after `n` more GetSandbox
-  calls, or never for `:never`) or `:replaced` (another sandbox takes its name).
+  calls, or never for `:never`) or `:replaced` (another sandbox takes its name), and
+  `:delete_provider`: how DeleteProvider answers, `:completed` (the default),
+  `:accepted` (the provider stays) or `:unspecified`.
+
+  As 0.1.7's, it starts with no provider profiles (`:profiles`, a list of
+  `%ProviderProfile{}`, puts some there as if imported), and CreateProvider refuses
+  a type no profile of the provider's workspace has, or a credential its profile
+  does not declare. ImportProviderProfiles refuses an id it has already.
   """
   def start(dir, opts \\ []) do
     credentials = issue(dir)
@@ -41,6 +48,7 @@ defmodule HalC2.Test.FakeOpenShell do
           deleting: %{},
           workspaces: MapSet.new(),
           providers: %{},
+          profiles: Map.new(opts[:profiles] || [], &{&1.id, &1}),
           policies: %{}
         }
       end)
@@ -216,6 +224,9 @@ defmodule HalC2.Test.FakeOpenShell do
 
   @doc "The providers in the fake's store, by name: `%{type, credentials, labels}`."
   def providers(%{store: store}), do: Agent.get(store, & &1.providers)
+
+  @doc "The provider profiles in the fake's store, by id."
+  def profiles(%{store: store}), do: Agent.get(store, & &1.profiles)
 
   @doc "A certificate chain from a CA of its own, for a client the gateway must not trust."
   def stranger(dir) do
@@ -469,8 +480,73 @@ defmodule HalC2.Test.FakeOpenShell do
         labels: provider.metadata.labels
       }
 
-      Agent.update(config.store, &put_in(&1, [:providers, provider.metadata.name], entry))
-      reply(conn, %Pb.ProviderResponse{provider: provider})
+      profile =
+        if provider.profile_workspace == workspace(request.workspace_scope),
+          do: Agent.get(config.store, & &1.profiles[provider.type])
+
+      declared = if profile, do: Enum.flat_map(profile.credentials, & &1.env_vars), else: []
+
+      cond do
+        # As the real one, a type is a profile imported where the provider looks.
+        profile == nil ->
+          error(
+            conn,
+            3,
+            "provider profile '#{provider.type}' was not found in the requested scope"
+          )
+
+        Enum.any?(Map.keys(provider.credentials), &(&1 not in declared)) ->
+          error(conn, 3, "provider credential key is not declared by its profile")
+
+        # A name already taken is refused.
+        Agent.get(config.store, &Map.has_key?(&1.providers, provider.metadata.name)) ->
+          error(conn, 6, "provider already exists")
+
+        true ->
+          Agent.update(config.store, &put_in(&1, [:providers, provider.metadata.name], entry))
+          reply(conn, %Pb.ProviderResponse{provider: provider})
+      end
+    end
+
+    defp unary(conn, "GetProviderProfile", body, config) do
+      request = Pb.GetProviderProfileRequest.decode(body)
+      notify(config, "GetProviderProfile", request)
+
+      case Agent.get(config.store, & &1.profiles[request.id]) do
+        nil -> error(conn, 5, "provider profile not found")
+        profile -> reply(conn, %Pb.ProviderProfileResponse{profile: profile})
+      end
+    end
+
+    defp unary(conn, "ImportProviderProfiles", body, config) do
+      request = Pb.ImportProviderProfilesRequest.decode(body)
+      notify(config, "ImportProviderProfiles", request)
+      profiles = Enum.map(request.profiles, & &1.profile)
+      taken = Agent.get(config.store, & &1.profiles)
+
+      case Enum.filter(profiles, &Map.has_key?(taken, &1.id)) do
+        [] ->
+          Agent.update(config.store, fn store ->
+            Map.update!(store, :profiles, &Enum.into(profiles, &1, fn p -> {p.id, p} end))
+          end)
+
+          reply(conn, %Pb.ImportProviderProfilesResponse{imported: true, profiles: profiles})
+
+        conflicts ->
+          diagnostics =
+            for p <- conflicts,
+                do: %Pb.ProviderProfileDiagnostic{
+                  profile_id: p.id,
+                  field: "id",
+                  message: "provider profile #{p.id} already exists",
+                  severity: "error"
+                }
+
+          reply(conn, %Pb.ImportProviderProfilesResponse{
+            imported: false,
+            diagnostics: diagnostics
+          })
+      end
     end
 
     defp unary(conn, "ListProviders", body, config) do
@@ -496,16 +572,47 @@ defmodule HalC2.Test.FakeOpenShell do
       reply(conn, %Pb.ListProvidersResponse{providers: providers})
     end
 
+    # As the real one, with the provider's credentials left out.
+    defp unary(conn, "GetProvider", body, config) do
+      %{name: name} = Pb.GetProviderRequest.decode(body)
+      notify(config, "GetProvider", %{name: name})
+
+      case Agent.get(config.store, & &1.providers[name]) do
+        nil ->
+          error(conn, 5, "provider not found")
+
+        entry ->
+          reply(conn, %Pb.ProviderResponse{
+            provider: %HalC2.OpenShell.Proto.Openshell.Datamodel.V1.Provider{
+              metadata: %ObjectMeta{name: name, labels: entry.labels},
+              type: entry.type
+            }
+          })
+      end
+    end
+
     defp unary(conn, "DeleteProvider", body, config) do
       request = Pb.DeleteProviderRequest.decode(body)
       notify(config, "DeleteProvider", request)
 
-      Agent.update(
-        config.store,
-        &Map.update!(&1, :providers, fn p -> Map.delete(p, request.name) end)
-      )
+      outcome =
+        case config[:delete_provider] || :completed do
+          :completed ->
+            Agent.update(
+              config.store,
+              &Map.update!(&1, :providers, fn p -> Map.delete(p, request.name) end)
+            )
 
-      reply(conn, %Pb.DeleteProviderResponse{outcome: :DELETION_OUTCOME_COMPLETED})
+            :DELETION_OUTCOME_COMPLETED
+
+          :accepted ->
+            :DELETION_OUTCOME_ACCEPTED
+
+          :unspecified ->
+            :DELETION_OUTCOME_UNSPECIFIED
+        end
+
+      reply(conn, %Pb.DeleteProviderResponse{outcome: outcome})
     end
 
     defp unary(conn, "GetSandbox", body, config) do
@@ -739,6 +846,9 @@ defmodule HalC2.Test.FakeOpenShell do
       |> put_resp_header("content-type", "application/grpc")
       |> send_resp(200, frame(module.encode(message)))
     end
+
+    defp workspace(%{selection: {:workspace, name}}), do: name
+    defp workspace(_scope), do: ""
 
     defp error(conn, status, message) do
       conn

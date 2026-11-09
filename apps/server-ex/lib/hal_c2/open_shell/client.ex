@@ -441,7 +441,68 @@ defmodule HalC2.OpenShell.Client do
   defp now, do: System.monotonic_time(:millisecond)
 
   @doc """
-  Creates provider `name` of `type` (`"claude"`, `"codex"`, ...) holding
+  Makes provider profile `profile` (a `%ProviderProfile{}`) the one by its id in
+  this MC's workspace: a gateway imports profiles only when asked (OpenShell 0.1.7
+  starts with none), so one it lacks is imported. One it has already, imported here
+  before or by anyone else, must say what `profile` does of where its credentials
+  go and how: `{:error, {:profile_differs, id}}` otherwise, and nothing is changed.
+  """
+  def ensure_profile(%__MODULE__{} = conn, %Pb.ProviderProfile{id: id} = profile, opts \\ []) do
+    case get_profile(conn, id, opts) do
+      {:ok, found} ->
+        same_profile(found, profile)
+
+      {:error, %{status: :not_found}} ->
+        request = %Pb.ImportProviderProfilesRequest{
+          workspace_scope: scope(),
+          profiles: [%Pb.ProviderProfileImportItem{profile: profile, source: "hal-c2"}],
+          request_id: request_id()
+        }
+
+        case call(conn, :import_provider_profiles, request, opts) do
+          {:ok, %Pb.ImportProviderProfilesResponse{imported: true}} ->
+            :ok
+
+          # Refused, as when another MC on the gateway imported it first: whatever
+          # the gateway now has by its id must still be `profile`.
+          {:ok, %Pb.ImportProviderProfilesResponse{diagnostics: diagnostics}} ->
+            case get_profile(conn, id, opts) do
+              {:ok, found} -> same_profile(found, profile)
+              _ -> {:error, {:profile_refused, id, Enum.map(diagnostics, & &1.message)}}
+            end
+
+          error ->
+            error
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp get_profile(conn, id, opts) do
+    request = %Pb.GetProviderProfileRequest{workspace_scope: scope(), id: id}
+
+    with {:ok, %Pb.ProviderProfileResponse{profile: %Pb.ProviderProfile{} = found}} <-
+           call(conn, :get_provider_profile, request, opts),
+         do: {:ok, found}
+  end
+
+  defp same_profile(found, wanted) do
+    if credential_boundary(found) == credential_boundary(wanted),
+      do: :ok,
+      else: {:error, {:profile_differs, wanted.id}}
+  end
+
+  # What of a profile decides where its credentials reach and how: not its names,
+  # descriptions, category or provenance, nor the owners the gateway derives.
+  defp credential_boundary(%Pb.ProviderProfile{} = profile) do
+    {Enum.map(profile.credentials, &%{&1 | description: "", token_grant_owners: []}),
+     profile.endpoints, profile.binaries, profile.files, profile.inference_capable}
+  end
+
+  @doc """
+  Creates provider `name` of profile `type` (`ensure_profile/3`) holding
   `credentials` (`%{"ANTHROPIC_API_KEY" => key}`), with this MC's owner label. A
   sandbox created with it in `:providers` gets the credentials as OpenShell injects
   them, never as an environment value the MC set. Nothing here reads them back.
@@ -456,7 +517,10 @@ defmodule HalC2.OpenShell.Client do
             labels: labels
           },
           type: type,
-          credentials: Map.new(credentials)
+          credentials: Map.new(credentials),
+          # Its profile is this workspace's (`ensure_profile/3`), not one of the
+          # gateway's by the same id.
+          profile_workspace: OpenShell.workspace()
         },
         request_id: request_id()
       }
@@ -501,8 +565,16 @@ defmodule HalC2.OpenShell.Client do
     end
   end
 
-  @doc "Deletes provider `name`; `:ok` when it is gone, already or now."
+  @doc """
+  Deletes provider `name` if this MC owns it, read from its labels (never its
+  credentials): `:ok` once the gateway says it is gone, already or now.
+  `{:error, :not_owned}` for a provider this MC did not create,
+  `{:error, {:delete_pending, name}}` for a deletion the gateway only accepted, and
+  `{:error, {:deletion_outcome, outcome}}` for one that does not say it was deleted.
+  """
   def delete_provider(%__MODULE__{} = conn, name, opts \\ []) do
+    get = %Pb.GetProviderRequest{workspace_scope: scope(), name: name}
+
     request = %Pb.DeleteProviderRequest{
       workspace_scope: scope(),
       name: name,
@@ -510,9 +582,20 @@ defmodule HalC2.OpenShell.Client do
       request_id: request_id()
     }
 
-    case call(conn, :delete_provider, request, opts) do
-      {:ok, _} -> :ok
+    with {:ok, %Pb.ProviderResponse{provider: %{metadata: %{labels: labels}}}} <-
+           call(conn, :get_provider, get, opts),
+         true <- owned?(%{labels: labels}) || {:error, :not_owned},
+         {:ok, %Pb.DeleteProviderResponse{outcome: outcome}} <-
+           call(conn, :delete_provider, request, opts) do
+      case outcome do
+        o when o in [:DELETION_OUTCOME_COMPLETED, :DELETION_OUTCOME_ALREADY_ABSENT] -> :ok
+        :DELETION_OUTCOME_ACCEPTED -> {:error, {:delete_pending, name}}
+        other -> {:error, {:deletion_outcome, other}}
+      end
+    else
       {:error, %{status: :not_found}} -> :ok
+      # A provider the gateway shows without its metadata is not known to be ours.
+      {:ok, _} -> {:error, :not_owned}
       error -> error
     end
   end

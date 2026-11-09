@@ -5,6 +5,7 @@ defmodule HalC2.OpenShell.ClientTest do
   alias HalC2.OpenShell
   alias HalC2.OpenShell.Client
   alias HalC2.OpenShell.Exec
+  alias HalC2.OpenShell.Proto.Openshell.V1, as: Pb
   alias HalC2.Test.FakeOpenShell
 
   @moduletag :tmp_dir
@@ -290,6 +291,112 @@ defmodule HalC2.OpenShell.ClientTest do
 
       assert {:error, {:deletion_outcome, :DELETION_OUTCOME_UNSPECIFIED}} =
                Client.delete_sandbox(conn, "mine")
+    end
+  end
+
+  # A profile of one key, sent as a bearer token, and no endpoints of its own.
+  defp profile(id) do
+    %Pb.ProviderProfile{
+      id: id,
+      display_name: id,
+      credentials: [
+        %Pb.ProviderProfileCredential{
+          name: "api_key",
+          env_vars: ["OPENAI_API_KEY"],
+          required: true,
+          auth_style: "bearer",
+          header_name: "authorization"
+        }
+      ]
+    }
+  end
+
+  describe "provider profiles" do
+    test "a profile the gateway lacks is imported, and a provider can then be made of it",
+         %{conn: conn, gateway: g} do
+      assert {:error, %{status: :invalid_argument}} =
+               Client.create_provider(conn, "mine", "keyed", %{"OPENAI_API_KEY" => "k"})
+
+      assert :ok = Client.ensure_profile(conn, profile("keyed"))
+      assert %{"keyed" => _} = FakeOpenShell.profiles(g)
+      assert :ok = Client.create_provider(conn, "mine", "keyed", %{"OPENAI_API_KEY" => "k"})
+
+      # It is there now, as it was made: nothing is imported again.
+      assert :ok = Client.ensure_profile(conn, profile("keyed"))
+      assert_received {:openshell_request, "ImportProviderProfiles", _}
+      refute_received {:openshell_request, "ImportProviderProfiles", _}
+    end
+
+    @tag gateway: [
+           profiles: [
+             %Pb.ProviderProfile{
+               id: "keyed",
+               credentials: [
+                 %Pb.ProviderProfileCredential{
+                   name: "api_key",
+                   env_vars: ["OPENAI_API_KEY"],
+                   auth_style: "bearer",
+                   header_name: "authorization",
+                   required: true
+                 }
+               ],
+               endpoints: [
+                 %HalC2.OpenShell.Proto.Openshell.Sandbox.V1.NetworkEndpoint{
+                   host: "elsewhere.example",
+                   port: 443
+                 }
+               ]
+             }
+           ]
+         ]
+    test "a profile by its id that sends the key elsewhere is refused, and left as it is",
+         %{conn: conn, gateway: g} do
+      before = FakeOpenShell.profiles(g)
+      assert {:error, {:profile_differs, "keyed"}} = Client.ensure_profile(conn, profile("keyed"))
+      refute_received {:openshell_request, "ImportProviderProfiles", _}
+      assert FakeOpenShell.profiles(g) == before
+    end
+
+    test "a profile that differs only in what it is called is taken", %{conn: conn} do
+      :ok = Client.ensure_profile(conn, profile("keyed"))
+      renamed = %{profile("keyed") | display_name: "Another name", description: "Another"}
+      assert :ok = Client.ensure_profile(conn, renamed)
+    end
+  end
+
+  describe "providers" do
+    setup %{conn: conn} do
+      :ok = Client.ensure_profile(conn, profile("openai"))
+    end
+
+    test "a provider the MC did not create is not deleted", %{conn: conn, gateway: g} do
+      FakeOpenShell.put_provider(g, "theirs", %{OpenShell.owner_label() => "another-mc"})
+      assert {:error, :not_owned} = Client.delete_provider(conn, "theirs")
+      refute_received {:openshell_request, "DeleteProvider", _}
+      assert Map.has_key?(FakeOpenShell.providers(g), "theirs")
+    end
+
+    test "deleting its own provider, or one already gone, is :ok", %{conn: conn, gateway: g} do
+      :ok = Client.create_provider(conn, "mine", "openai", %{"OPENAI_API_KEY" => "k"})
+      assert :ok = Client.delete_provider(conn, "mine")
+      refute Map.has_key?(FakeOpenShell.providers(g), "mine")
+      assert :ok = Client.delete_provider(conn, "mine")
+    end
+
+    # Its credential may still be there.
+    @tag gateway: [delete_provider: :accepted]
+    test "an accepted provider deletion is pending, not done", %{conn: conn, gateway: g} do
+      :ok = Client.create_provider(conn, "mine", "openai", %{"OPENAI_API_KEY" => "k"})
+      assert {:error, {:delete_pending, "mine"}} = Client.delete_provider(conn, "mine")
+      assert Map.has_key?(FakeOpenShell.providers(g), "mine")
+    end
+
+    @tag gateway: [delete_provider: :unspecified]
+    test "an unspecified provider deletion outcome is not taken for done", %{conn: conn} do
+      :ok = Client.create_provider(conn, "mine", "openai", %{"OPENAI_API_KEY" => "k"})
+
+      assert {:error, {:deletion_outcome, :DELETION_OUTCOME_UNSPECIFIED}} =
+               Client.delete_provider(conn, "mine")
     end
   end
 
