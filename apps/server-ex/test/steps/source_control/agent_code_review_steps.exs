@@ -396,6 +396,22 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     report(context, findings("comment", 2))
   end
 
+  # Back at the commit it was reviewed, and approved, at.
+  step "\#{int} is pushed back to the commit the user approved", %{args: [number]} = context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    head = review(snapshot, number)["reviewedSha"]
+    assert is_binary(head)
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-05T00:00:00Z"})
+  end
+
+  step "the user asks to review \#{int} again", %{args: [number]} = context do
+    {reply, context} = plugin(context, "retry", %{"key" => key(context, number)})
+    Map.put(context, :reply, reply)
+  end
+
   step "the user withdraws the approval of \#{int}", %{args: [number]} = context do
     {reply, context} = plugin(context, "unapprove", %{"key" => key(context, number)})
     assert {:ok, _} = reply
@@ -435,6 +451,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "the user publishes the review of \#{int} as they saw it", context do
     {reply, context} = plugin(context, "publish", context.seen)
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user publishes the review of \#{int} without the verdict it was shown to be posted with",
+       context do
+    {reply, context} = plugin(context, "publish", Map.delete(context.seen, "verdict"))
     Map.put(context, :reply, reply)
   end
 
@@ -2527,9 +2549,18 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   # The review of `number` as the user sees it, to publish: its key and its version.
+  # The review as the user saw it before publishing: its findings' version and, read
+  # when it waits to be published, the verdict its post goes with.
   defp seen(context, number) do
     review = review(GenServer.call(HalC2Plugins.CodeReview, :snapshot), number)
-    %{"key" => key(context, number), "version" => review["version"]}
+    shown = %{"key" => key(context, number), "version" => review["version"]}
+
+    preview = %{"id" => @id, "method" => "preview", "input" => %{"key" => shown["key"]}}
+
+    case HalC2.Plugins.handle("call", preview) do
+      {:ok, %{"verdict" => verdict}} -> Map.put(shown, "verdict", verdict)
+      _ -> shown
+    end
   end
 
   defp take_reviews(context) do

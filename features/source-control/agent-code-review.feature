@@ -299,6 +299,18 @@ Feature: Agent code review
       And the review of #12 says "Opened by stranger"
 
     @mc
+    Scenario: A pull request pushed back to the commit the user approved needs their approval again
+      Given "code-review" reviews new pushes
+      And the user approved #12 by "stranger", who is not a member or collaborator, and it was reviewed
+      And #12 has a new head commit
+      And "code-review" looks at "acme/api" again
+      When #12 is pushed back to the commit the user approved
+      And "code-review" looks at "acme/api" again
+      And the user asks to review #12 again
+      Then the user is told "Approve it on the Reviews page"
+      And no new review of #12 starts
+
+    @mc
     Scenario: The user withdraws an approval before its review starts
       Given "code-review" runs at most 1 reviews at once
       And a review of #13 is running
@@ -359,6 +371,12 @@ Feature: Agent code review
       When the user opens the review of #13 on the "Reviews" page
       Then it says "stranger" is not a member or collaborator
       And the user can approve #13 at the commit shown, and withdraw the approval
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page lets the user withdraw an approval of any commit
+      Given #13 by "stranger", who is not a member or collaborator, is listed with an approval of an earlier commit
+      When the user opens the review of #13 on the "Reviews" page
+      Then the user can withdraw the approval of #13
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A push while the reviews page is open is shown before it can be approved
@@ -653,6 +671,14 @@ Feature: Agent code review
       And nothing is posted to #12
 
     @mc
+    Scenario: A publish that does not say how the user was shown it is posted is not published
+      Given the review of #12 is waiting to be published
+      And the user looked at the review of #12
+      When the user publishes the review of #12 without the verdict it was shown to be posted with
+      Then the user is told "Publishing needs what you were shown it would post"
+      And nothing is posted to #12
+
+    @mc
     Scenario: Publishing posts the review its preview showed
       Given the review of #12 is waiting with three comments
       When the user dismisses one comment and reads what publishing the review of #12 would post
@@ -811,7 +837,7 @@ Feature: Agent code review
       Given the review of #13 is waiting with two comments
       When the user opens the review of #13 on the "Reviews" page
       Then its verdict, summary and comments are shown
-      And the user can publish it or dismiss comments
+      And the user can dismiss comments, and publish it once shown how it is posted
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows a check the machine blocked as a problem of the machine

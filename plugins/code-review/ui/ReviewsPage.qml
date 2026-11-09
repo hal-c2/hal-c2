@@ -494,17 +494,68 @@ Item {
                     readonly property string headSha: review?.headSha ?? ""
                     readonly property bool moved: seenSha.length > 0 && headSha.length > 0 && seenSha !== headSha
                     readonly property bool approvable: review !== null && page.gated(review) && (!review.elsewhere || review.elsewhere.away === true) && seenSha.length > 0
+                    // What publishing would post (the MC's `preview`), read when the user
+                    // asks to publish and shown for them to confirm: the settings or
+                    // GitHub may post the verdict as a comment. Null while it is read.
+                    property bool confirming: false
+                    property var preview: null
+                    property int previewAsk: 0
+                    readonly property string version: review?.version ?? ""
 
                     // Another review picked, or a head first known, is what is shown now.
                     function see() {
                         const id = review?.id ?? "";
                         if (id !== seenId || seenSha.length === 0) {
+                            if (id !== seenId)
+                                cancelPublish();
                             seenId = id;
                             seenSha = review?.headSha ?? "";
                         }
                     }
 
+                    // Reads what publishing would post; an older answer, from before the
+                    // review changed, is dropped.
+                    function readPreview() {
+                        const ask = ++previewAsk;
+                        preview = null;
+                        page.refusal = "";
+                        page.plugin.call("preview", {
+                            key: review.key
+                        }, (result, error) => {
+                            if (ask !== findings.previewAsk)
+                                return;
+                            if (error) {
+                                page.refusal = error;
+                                findings.cancelPublish();
+                            } else {
+                                findings.preview = result;
+                            }
+                        }, review.environment);
+                    }
+
+                    function cancelPublish() {
+                        ++previewAsk;
+                        confirming = false;
+                        preview = null;
+                    }
+
+                    // Publishes what was shown: the findings' version and the verdict of the
+                    // post, which the MC refuses to post anything else under.
+                    function publish() {
+                        const shown = preview;
+                        cancelPublish();
+                        page.ask("publish", {
+                            key: review.key,
+                            version: shown.version,
+                            verdict: shown.verdict
+                        }, review.environment);
+                    }
+
                     onReviewChanged: see()
+                    onVersionChanged: if (confirming)
+                        readPreview()
+                    onOpenChanged: if (!open)
+                        cancelPublish()
                     Component.onCompleted: see()
 
                     x: 20
@@ -580,12 +631,44 @@ Item {
 
                         ShellButton {
                             objectName: "codeReviewPublish"
-                            visible: findings.open
+                            visible: findings.open && !findings.confirming
                             primary: true
                             enabled: page.busy === 0
                             text: qsTr("Publish to GitHub")
-                            // What is posted is what the user sees here: the MC refuses a review changed since.
-                            onClicked: page.ask("publish", { key: findings.review.key, version: findings.review.version }, findings.review.environment)
+                            onClicked: {
+                                findings.confirming = true;
+                                findings.readPreview();
+                            }
+                        }
+
+                        // How the post goes, for the user to confirm before anything is posted.
+                        Text {
+                            objectName: "codeReviewPublishVerdict"
+                            visible: findings.open && findings.confirming
+                            height: approve.height
+                            verticalAlignment: Text.AlignVCenter
+                            textFormat: Text.PlainText
+                            text: findings.preview ? qsTr("Posted as: %1").arg(page.verdictText(findings.preview.verdict)) : qsTr("Reading what will be posted…")
+                            color: page.foreground
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+
+                        ShellButton {
+                            objectName: "codeReviewPublishConfirm"
+                            visible: findings.open && findings.confirming
+                            primary: true
+                            // The post read is of the findings shown here.
+                            enabled: page.busy === 0 && findings.preview !== null && findings.preview.version === findings.version
+                            text: qsTr("Publish")
+                            onClicked: findings.publish()
+                        }
+
+                        ShellButton {
+                            objectName: "codeReviewPublishCancel"
+                            visible: findings.open && findings.confirming
+                            subtle: true
+                            text: qsTr("Cancel")
+                            onClicked: findings.cancelPublish()
                         }
 
                         ShellButton {
@@ -630,9 +713,10 @@ Item {
                             }
                         }
 
+                        // Any approval kept can be taken back, whichever commit it is of.
                         ShellButton {
                             objectName: "codeReviewUnapprove"
-                            visible: findings.review !== null && (findings.review.untrusted ?? "").length > 0 && findings.review.approved === findings.review.headSha && !["running", "publishing"].includes(findings.status)
+                            visible: findings.review !== null && (findings.review.untrusted ?? "").length > 0 && (findings.review.approved ?? "").length > 0 && !["running", "publishing"].includes(findings.status)
                             subtle: true
                             enabled: page.busy === 0
                             text: qsTr("Withdraw approval")

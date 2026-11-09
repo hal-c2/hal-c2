@@ -275,6 +275,7 @@ defmodule HalC2Plugins.CodeReview do
   # findings' as the user saw them (`snapshot/1`): a review changed since is not posted.
   # `verdict`, a preview's, holds the post to it too, so a post that would go as a
   # comment where the preview had the verdict, or the other way round, is not made.
+  # Without it the user has not seen how the post goes, and nothing is posted.
   def call("publish", %{"key" => key} = input, _context),
     do: GenServer.call(__MODULE__, {:publish, key, input["version"], input["verdict"]}, 120_000)
 
@@ -598,16 +599,25 @@ defmodule HalC2Plugins.CodeReview do
         {:reply, {:error, "There is no review #{key}."}, state}
 
       review ->
-        review = Map.put(review, "approved", nil)
-
-        review =
-          if review["status"] == "queued" and gated(state.settings, review),
-            do: Map.merge(review, %{"status" => "ready", "queuedAt" => nil}),
-            else: review
-
+        review = unqueue(Map.put(review, "approved", nil), state.settings)
         {:reply, {:ok, nil}, state |> put(review) |> changed()} |> reply_snapshot()
     end
   end
+
+  # A review queued on an approval it no longer has goes back to not started.
+  defp unqueue(review, settings) do
+    if review["status"] == "queued" and gated(settings, review),
+      do: Map.merge(review, %{"status" => "ready", "queuedAt" => nil}),
+      else: review
+  end
+
+  # An approval vouches for the commit the user looked at: a push since takes it back,
+  # so a head pushed back to that commit later waits for the user again.
+  defp moved_on(%{"approved" => approved, "headSha" => head} = review, settings)
+       when is_binary(approved) and approved != head,
+       do: unqueue(Map.put(review, "approved", nil), settings)
+
+  defp moved_on(review, _settings), do: review
 
   # Counts a start against the review limits, under the lock across the machines
   # connected now (`budget/1`), with what the peers answered they started, and
@@ -748,18 +758,27 @@ defmodule HalC2Plugins.CodeReview do
     case state.reviews[key] do
       # Reserved here, so two asks cannot both post it, and posted from a process
       # linked to this one, so turning the plugin off calls the post off. What is
-      # posted is what the user saw: the version they saw names it.
+      # posted is what the user saw: the version they saw names it, and the verdict they
+      # saw it go with is checked against the one it goes with now.
       %{"status" => "waiting"} = review when is_binary(version) ->
-        if version == version(review) do
-          review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
-          settings = state.settings
-          spawn_link(fn -> GenServer.reply(from, publish(review, settings, verdict)) end)
-          {:noreply, state |> put(review) |> changed()}
-        else
-          {:reply,
-           {:error,
-            "The review of #{key} changed since you looked at it. Look at it again, then publish."},
-           state}
+        cond do
+          version != version(review) ->
+            {:reply,
+             {:error,
+              "The review of #{key} changed since you looked at it. Look at it again, then publish."},
+             state}
+
+          review["report"] == @report and not is_binary(verdict) ->
+            {:reply,
+             {:error,
+              "Publishing needs what you were shown it would post. Look at it again, then publish."},
+             state}
+
+          true ->
+            review = Map.merge(review, %{"status" => "publishing", "publishError" => nil})
+            settings = state.settings
+            spawn_link(fn -> GenServer.reply(from, publish(review, settings, verdict)) end)
+            {:noreply, state |> put(review) |> changed()}
         end
 
       %{"status" => "waiting"} ->
@@ -1586,7 +1605,7 @@ defmodule HalC2Plugins.CodeReview do
       trigger = trigger(settings, pr)
       skipped = skipped(settings, pr)
       review = Map.merge(known || %{"status" => "ready"}, Map.put(pr, "elsewhere", nil))
-      review = Map.delete(review, "sizeUnknown")
+      review = review |> Map.delete("sizeUnknown") |> moved_on(settings)
       review = Map.put(review, "skipped", if(settings["activation"] == "automatic", do: skipped))
 
       # A followed pull request was asked for once; a new push is that ask

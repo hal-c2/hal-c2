@@ -54,7 +54,8 @@ its owners, members and collaborators, and the logins you list under **Trusted
 logins**. A pull request from anyone else, or one whose commits come from
 someone else's fork, waits on the **Reviews** page, which says why. **Approve
 and review** reviews it at the commit shown next to it; a later push needs another
-approval, and **Withdraw approval** takes it back before the review starts. A
+approval, even one that pushes back to the commit you approved, and **Withdraw
+approval** takes an approval back whenever it is shown. A
 push while the page is open is shown there, and **Show the new commit** takes it
 in before you can approve it. Asks on GitHub count only from trusted people: a
 review request or a label counts when GitHub shows who made it, and not when
@@ -127,9 +128,10 @@ an approval or a request for changes. On your own pull requests, which GitHub
 does not let you approve or request changes on, it always is. If GitHub refuses
 a review, you are told why and the review keeps waiting with its comments.
 
-**Publish** posts the review as you see it. In a review's thread it first shows
-the summary and comments it will post, and posts only that; if the review
-changes while it is shown, it shows the new one. If it changes in the meantime,
+**Publish** posts the review as you see it. On the **Reviews** page it first
+says whether the review goes up with its verdict or as a comment; in a review's
+thread it first shows the summary and comments it will post. Either way it posts
+only that, and if the review changes while it is shown, it shows the new one. If it changes in the meantime,
 say a comment is dismissed from another of your devices, nothing is posted and
 you are asked to look again. An agent reports once per review; what it writes
 mentions nobody on GitHub, shows no images and hides nothing, and a report too

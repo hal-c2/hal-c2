@@ -519,6 +519,12 @@ defmodule HalC2.CodeReviewTest do
     assert {:error, %{"message" => message}} = call("publish", looked)
     assert message =~ "changed since you looked at it"
     assert {:error, _} = call("publish", %{"key" => @key})
+
+    # Without how the post goes, as the user was shown it, nothing is posted either.
+    assert {:error, %{"message" => message}} =
+             call("publish", Map.delete(seen(), "verdict"))
+
+    assert message =~ "Publishing needs what you were shown it would post"
     assert %{"status" => "waiting"} = review()
     assert posts(context) == []
   end
@@ -548,6 +554,32 @@ defmodule HalC2.CodeReviewTest do
 
     assert %{"status" => "waiting"} = review()
     assert posts(context) == []
+  end
+
+  test "a push takes back the approval of a pull request nobody trusted, even pushed back",
+       context do
+    rules!(context, head: 1, association: "NONE")
+    settle()
+    {:error, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    {:ok, _} = call("approve", %{"key" => @key, "headSha" => context.shas[1]})
+    settle()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, thread_id)
+    settle()
+    first = context.shas[1]
+    assert %{"status" => "waiting", "approved" => ^first} = review()
+
+    rules!(context, head: 2, association: "NONE")
+    refresh()
+    assert %{"approved" => nil} = review()
+
+    # Back at the commit the user approved, it waits for the user again.
+    rules!(context, head: 1, association: "NONE")
+    refresh()
+    assert %{"approved" => nil, "headSha" => ^first} = review()
+    assert {:error, %{"message" => message}} = call("retry", %{"key" => @key})
+    assert message =~ "Approve it on the Reviews page"
   end
 
   test "what an agent writes mentions nobody, loads nothing and hides nothing", _context do
@@ -1749,7 +1781,13 @@ defmodule HalC2.CodeReviewTest do
   # Asks to publish #1 without waiting for GitHub. Returns the ref its reply comes with.
   defp publishing do
     ref = make_ref()
-    send(@server, {:"$gen_call", {self(), ref}, {:publish, @key, review()["version"], nil}})
+    shown = seen()
+
+    send(
+      @server,
+      {:"$gen_call", {self(), ref}, {:publish, @key, shown["version"], shown["verdict"]}}
+    )
+
     :sys.get_state(@server)
     ref
   end
@@ -2025,7 +2063,16 @@ defmodule HalC2.CodeReviewTest do
   end
 
   # The review as the user sees it, to publish: its key and the version of its findings.
-  defp seen, do: %{"key" => @key, "version" => review()["version"]}
+  # The review as the user saw it before publishing: its findings' version and, read
+  # when it waits to be published, the verdict its post goes with.
+  defp seen do
+    shown = %{"key" => @key, "version" => review()["version"]}
+
+    case call("preview", %{"key" => @key}) do
+      {:ok, %{"verdict" => verdict}} -> Map.put(shown, "verdict", verdict)
+      _ -> shown
+    end
+  end
 
   # Returns once the plugin has nothing in flight but the processes `held`, and has
   # heard from what ended.

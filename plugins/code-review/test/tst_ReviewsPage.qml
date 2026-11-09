@@ -18,6 +18,8 @@ Item {
         property var environments: ["local"]
         property var calls: []
         property var listener: null
+        // What `preview` answers: the post publishing would make.
+        property var preview: ({})
 
         function watch(topic, callback, environment) {
             listener = callback;
@@ -32,7 +34,7 @@ Item {
                     method: method,
                     input: input
                 }]);
-            callback({}, null);
+            callback(method === "preview" ? preview : {}, null);
         }
 
         function openThread(id, environment) {
@@ -59,6 +61,47 @@ Item {
                     }]
             });
         }
+
+        // #13 by stranger, `status` at `head`, with the user's approval of `approved`.
+        function publishApproved(status, head, approved) {
+            listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [{
+                        key: "acme/api#13",
+                        number: 13,
+                        title: "Limits",
+                        repository: "acme/api",
+                        author: "stranger",
+                        status: status,
+                        headSha: head,
+                        approved: approved,
+                        untrusted: "Opened by stranger, who is not a member or collaborator of the repository."
+                    }]
+            });
+        }
+
+        // #13 waiting to be published at findings `version`, with the agent's verdict.
+        function publishWaiting(version) {
+            listener({
+                watching: ["acme/api"],
+                unwatched: [],
+                activation: "selective",
+                reviews: [{
+                        key: "acme/api#13",
+                        number: 13,
+                        title: "Limits",
+                        repository: "acme/api",
+                        author: "octocat",
+                        status: "waiting",
+                        headSha: "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        verdict: "approve",
+                        version: version,
+                        comments: []
+                    }]
+            });
+        }
     }
 
     Loader {
@@ -80,6 +123,7 @@ Item {
 
         function init() {
             plugin.calls = [];
+            plugin.preview = {};
             loader.source = "";
             loader.setSource(Qt.resolvedUrl("../ui/ReviewsPage.qml"), {
                 plugin: plugin
@@ -129,6 +173,73 @@ Item {
                 apart: ["hal_c2@laptop.hal-c2"]
             });
             tryCompare(find("codeReviewProblem"), "text", "Held back: laptop did not hear of this review starting.");
+        }
+
+        function asked(method) {
+            return plugin.calls.filter(each => each.method === method);
+        }
+
+        // Clicks `name` once the layout has made room for it.
+        function clickShown(name) {
+            const detail = find("codeReviewDetail");
+            tryVerify(() => find(name)?.visible === true);
+            const button = find(name);
+            // The row places a button shown just now once it is polished.
+            waitForItemPolished(button.parent);
+            tryVerify(() => button.mapToItem(detail.contentItem, 0, button.height).y <= detail.contentHeight);
+            mouseClick(button);
+        }
+
+        // What is posted is what the user confirmed: the post the MC read, its verdict
+        // too, which the settings may have made a comment where the agent approved.
+        function test_publishing_shows_and_sends_the_verdict_it_posts_with() {
+            plugin.preview = {
+                version: "v1",
+                verdict: "comment",
+                body: "Looks right.",
+                comments: []
+            };
+            plugin.publishWaiting("v1");
+            clickShown("codeReviewPublish");
+            compare(asked("preview").length, 1);
+            compare(asked("publish").length, 0, "published before the user confirmed");
+            tryCompare(find("codeReviewPublishVerdict"), "text", "Posted as: Comment");
+
+            clickShown("codeReviewPublishConfirm");
+            compare(asked("publish").length, 1);
+            compare(asked("publish")[0].input.version, "v1");
+            compare(asked("publish")[0].input.verdict, "comment");
+        }
+
+        // A post read of other findings than shown is not confirmed: it is read again.
+        function test_a_review_changed_while_confirming_is_read_again() {
+            plugin.preview = {
+                version: "v1",
+                verdict: "approve",
+                body: "",
+                comments: []
+            };
+            plugin.publishWaiting("v1");
+            clickShown("codeReviewPublish");
+            tryCompare(find("codeReviewPublishVerdict"), "text", "Posted as: Approve");
+            plugin.preview = {
+                version: "v2",
+                verdict: "approve",
+                body: "",
+                comments: []
+            };
+            plugin.publishWaiting("v2");
+            tryVerify(() => asked("preview").length === 2);
+            clickShown("codeReviewPublishConfirm");
+            compare(asked("publish")[0].input.version, "v2");
+        }
+
+        // An approval kept of another commit than the head can still be taken back.
+        function test_an_approval_of_an_older_commit_can_be_withdrawn() {
+            plugin.publishApproved("queued", second, first);
+            clickShown("codeReviewUnapprove");
+            compare(asked("unapprove").length, 1);
+            compare(asked("unapprove")[0].input.key, "acme/api#13");
         }
     }
 }

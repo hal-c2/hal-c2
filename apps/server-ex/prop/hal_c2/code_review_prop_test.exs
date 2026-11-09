@@ -941,6 +941,13 @@ defmodule HalC2.CodeReviewPropTest do
     }
   end
 
+  defp moved_on(%{approved: approved} = r, head) when approved != nil and approved != head do
+    r = %{r | approved: nil}
+    if r.status == :queued and gated?(r, head), do: %{r | status: :ready}, else: r
+  end
+
+  defp moved_on(r, _head), do: r
+
   # Whether the review waits for the user's approval of `head`.
   defp gated?(r, head), do: not r.trusted and r.approved != head
 
@@ -1011,6 +1018,8 @@ defmodule HalC2.CodeReviewPropTest do
           if pr.open, do: read(m, key, m.reviews[key], read_label), else: {%{}, false}
 
         known = m.reviews[key] && Map.merge(m.reviews[key], facts)
+        # A push takes an approval back, and a review queued on it goes back to ready.
+        known = if pr.open and known, do: moved_on(known, pr.head), else: known
 
         cond do
           # A followed pull request found closed is followed no longer, so reopening
@@ -1479,18 +1488,30 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # Asked of the plugin directly, as `call("publish")` waits for GitHub's answer; with
-  # the version the user saw, or (`fresh` false) one the review had before.
+  # the version the user saw, or (`fresh` false) one the review had before, and the
+  # verdict its preview said it posts with.
   def publish(key, fresh) do
     ref = make_ref()
     shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
     version = if fresh, do: shown && shown["version"], else: "stale"
-    send(@server, {:"$gen_call", {self(), ref}, {:publish, key, version, nil}})
+    send(@server, {:"$gen_call", {self(), ref}, {:publish, key, version, verdict(key)}})
     drain()
 
     receive do
       {^ref, reply} -> observe(reply(reply))
     after
       0 -> observe(:held)
+    end
+  end
+
+  defp verdict(key) do
+    case HalC2.Plugins.handle("call", %{
+           "id" => @id,
+           "method" => "preview",
+           "input" => %{"key" => key}
+         }) do
+      {:ok, %{"verdict" => verdict}} -> verdict
+      _ -> nil
     end
   end
 

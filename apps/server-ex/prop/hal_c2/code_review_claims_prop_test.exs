@@ -953,7 +953,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
     shown = Enum.find(GenServer.call(@server, :snapshot)["reviews"], &(&1["key"] == key))
 
-    case call("publish", %{"key" => key, "version" => shown && shown["version"]}) do
+    preview =
+      with {:ok, preview} <- call("preview", %{"key" => key}), do: preview, else: (_ -> %{})
+
+    case call("publish", %{
+           "key" => key,
+           "version" => shown && shown["version"],
+           "verdict" => preview["verdict"]
+         }) do
       {:ok, snapshot} ->
         note = Enum.find_value(snapshot["reviews"], &(&1["key"] == key && &1["publishNote"]))
 
