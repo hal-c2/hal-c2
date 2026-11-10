@@ -196,7 +196,9 @@ jobs:
     needs: [changes, mc_check]
     if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The suite alone runs 10 to 12 minutes and the helpers before it 3 to 4 more:
+    # 15 cancelled whole passing runs at the cap.
+    timeout-minutes: 25
     env:
       MIX_ENV: test
     defaults:
