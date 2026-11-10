@@ -644,6 +644,7 @@ navigation/command-palette.feature: Backspace on an empty query leaves a submenu
 navigation/command-palette.feature: Choosing a project opens its latest thread
 navigation/command-palette.feature: Choosing a project with no threads starts a new thread in it
 navigation/command-palette.feature: Closing the palette returns focus to the composer
+navigation/command-palette.feature: Copying the thread's ID names the thread, never shows the ID
 navigation/command-palette.feature: Enter runs the highlighted entry
 navigation/command-palette.feature: Entries that appear under a resting pointer are not highlighted
 navigation/command-palette.feature: Equal thread matches are ordered by most recent activity
@@ -915,6 +916,7 @@ navigation/keybindings.feature: mod means the platform's primary modifier [Linux
 navigation/keybindings.feature: mod means the platform's primary modifier [Windows, Ctrl]
 navigation/keybindings.feature: mod means the platform's primary modifier [macOS, Command]
 navigation/landing.feature: A new thread that can not be started says so and tries again
+navigation/landing.feature: A new window lands on the same draft
 navigation/landing.feature: Leaving the thread lands on the same draft again
 navigation/landing.feature: Opening the app lands on a new thread in the most recent project
 navigation/landing.feature: The first project added lands on its draft
@@ -1044,6 +1046,7 @@ navigation/welcome-wizard.feature: Each selected computer is checked for an agen
 navigation/welcome-wizard.feature: Finishing setup can fail
 navigation/welcome-wizard.feature: Installing an agent opens a terminal with the command ready
 navigation/welcome-wizard.feature: Navigation pauses while an import runs
+navigation/welcome-wizard.feature: Saved and cluster computers are selected by default
 navigation/welcome-wizard.feature: Selecting all or none [Select all, every listed project is selected]
 navigation/welcome-wizard.feature: Selecting all or none [Select none, no project is selected]
 navigation/welcome-wizard.feature: The progress bar returns to an earlier step
@@ -2488,17 +2491,28 @@ threads/archive-delete.feature: The archived threads list says where it stands [
 threads/archive-delete.feature: The archived threads list says where it stands [the environments are still being checked, Loading archived threads]
 threads/archive-delete.feature: The archived threads page does not ask to reconnect a connected environment
 threads/archive-delete.feature: The worktree is removed without asking when the user chose automatic cleanup
+threads/creating.feature: A draft whose project is gone cannot be sent
+threads/creating.feature: A failed start does not put back a prompt over a newer draft
+threads/creating.feature: A failed thread creation is reported
+threads/creating.feature: A new thread cannot be created while the environment is offline
+threads/creating.feature: A new thread from another thread takes that thread's model and mode
+threads/creating.feature: A new thread keeps the current model and mode
+threads/creating.feature: A new thread started while the last one sets up its worktree opens a fresh draft
 threads/creating.feature: A new thread started while the list is scoped to a project uses that project
 threads/creating.feature: A new thread starts in the project the user is looking at
 threads/creating.feature: A new thread uses the project default model when the project has one
 threads/creating.feature: A new worktree needs a base branch
 threads/creating.feature: A thread cannot start from an empty task
+threads/creating.feature: A thread whose start fails gets its prompt back without touching a newer draft
 threads/creating.feature: Changing a draft's project picks an environment that has it
 threads/creating.feature: Each background start into a new worktree gets its own worktree
 threads/creating.feature: Fanning one request out to several models
 threads/creating.feature: Several models cannot be chosen outside a Git project
+threads/creating.feature: Shift on the new thread button starts in the current project
 threads/creating.feature: Starting a thread from another thread's branch
 threads/creating.feature: Starting a thread in the background opens a fresh draft
+threads/creating.feature: The new thread button asks which project when there are several
+threads/creating.feature: The new thread button starts straight away when there is one project
 threads/drafts.feature: A draft emptied before leaving it is no longer listed
 threads/drafts.feature: A draft moved onto a project with its own draft opens that draft
 threads/drafts.feature: A draft whose project the MC removes goes with it
@@ -2508,6 +2522,7 @@ threads/drafts.feature: A moved draft leaves its attachments where they were add
 threads/drafts.feature: A new draft is not listed while the user writes in it
 threads/drafts.feature: A project that is gone starts nothing
 threads/drafts.feature: An empty draft is not listed
+threads/drafts.feature: Another window lists a draft as the user writes in it
 threads/drafts.feature: Deleting the open draft lands on a new thread
 threads/drafts.feature: Dismissing the draft's menu keeps the draft
 threads/drafts.feature: Drafts are still there after a restart
@@ -2583,6 +2598,7 @@ threads/moving-between-machines.feature: A link to a moved thread opens it where
 threads/moving-between-machines.feature: A message cannot be sent while the thread is moving
 threads/moving-between-machines.feature: A moved thread can be moved back
 threads/moving-between-machines.feature: A notification from before the move opens the thread where it lives now
+threads/moving-between-machines.feature: A running thread its plugin keeps is not stopped to be moved
 threads/moving-between-machines.feature: Another client sees the thread move
 threads/moving-between-machines.feature: Machines with the same name are told apart
 threads/moving-between-machines.feature: Moving from the command palette
@@ -2628,8 +2644,12 @@ threads/search.feature: Leaving a search
 threads/search.feature: Moving through search results with the keyboard
 threads/search.feature: Searching from the thread list opens the command palette
 threads/search.feature: Searching spans every connected environment
+threads/settle.feature: A settled thread that woke earlier does not say it woke
 threads/settle.feature: A thread whose pull request merges moves to the settled section on its own
+threads/settle.feature: A thread's auto-settle can be turned off and back on
 threads/settle.feature: An offline environment keeps its auto-settle rules
+threads/settle.feature: An open settled thread says so and can be un-settled there
+threads/settle.feature: An un-settle that fails is reported
 threads/settle.feature: Choosing auto-settle rules for an environment [after 7 days, the environment "home", "home" only]
 threads/settle.feature: Choosing auto-settle rules for an environment [never on inactivity, all environments, every environment]
 threads/settle.feature: Choosing auto-settle rules for an environment [when the PR merges, all environments, every environment]
@@ -2637,28 +2657,66 @@ threads/settle.feature: Different rules across environments are shown as mixed
 threads/settle.feature: Settling a pinned thread removes the pin
 threads/settle.feature: Settling a snoozed thread ends the snooze
 threads/settle.feature: Settling a thread
+threads/settle.feature: Settling a thread with auto-settle off still works
+threads/settle.feature: Settling dismisses questions the agent is waiting on
 threads/settle.feature: Un-settling a thread
+threads/sidebar-list.feature: A drop in the sidebar sticks when another machine is offline
+threads/sidebar-list.feature: A project chooses how it is grouped regardless of the device's default [Group by repository path, with the folders of its repository path]
+threads/sidebar-list.feature: A project chooses how it is grouped regardless of the device's default [Group by repository, with the other folders of its repository]
+threads/sidebar-list.feature: A project chooses how it is grouped regardless of the device's default [Keep separate, on its own]
+threads/sidebar-list.feature: A project chooses how it is grouped regardless of the device's default [the device's default, the way the device's default says]
+threads/sidebar-list.feature: A project in the tree folds and unfolds its threads
+threads/sidebar-list.feature: A project in the tree shows a few threads and offers the rest
+threads/sidebar-list.feature: A project rename the environment refuses is reported
+threads/sidebar-list.feature: A remembered project filter waits until every environment has reported
 threads/sidebar-list.feature: A settled thread's age counts from when it settled
+threads/sidebar-list.feature: A thread row reads its title first, then its project and branch
+threads/sidebar-list.feature: A thread that stops working waits briefly before it leaves Working [it asks for approval, moves to the inbox at once]
+threads/sidebar-list.feature: A thread that stops working waits briefly before it leaves Working [its next run starts, never leaves the Working section]
+threads/sidebar-list.feature: A thread that stops working waits briefly before it leaves Working [nothing else happens, moves to the inbox once the two seconds are up]
+threads/sidebar-list.feature: A thread that stops working waits briefly before it leaves Working [the MC settles it, moves straight to Settled, never to the inbox]
+threads/sidebar-list.feature: A thread with unsent text in its composer is marked on its row
+threads/sidebar-list.feature: A thread's status has a spoken name
 threads/sidebar-list.feature: Active threads are listed newest first
 threads/sidebar-list.feature: An open settled plugin thread stays listed
 threads/sidebar-list.feature: Hiding and showing the thread list
 threads/sidebar-list.feature: Jump hints appear while holding the modifier
+threads/sidebar-list.feature: Leaving the thread list for settings keeps the project filter
 threads/sidebar-list.feature: Opening a draft from the list
 threads/sidebar-list.feature: Opening a thread from the list
+threads/sidebar-list.feature: Projects are dragged into place only when they are sorted by hand
 threads/sidebar-list.feature: Projects are ordered by recent use unless arranged by hand
 threads/sidebar-list.feature: Projects with the same name on two environments stay separate
+threads/sidebar-list.feature: Removing a project that still has threads asks first
+threads/sidebar-list.feature: Renaming a project from its menu [, the user is told "Project title cannot be empty"]
+threads/sidebar-list.feature: Renaming a project from its menu [shop, nothing is sent and the dialog closes]
+threads/sidebar-list.feature: Renaming a project from its menu [store, "shop" is now called "store"]
 threads/sidebar-list.feature: Scoping the list to one project
 threads/sidebar-list.feature: Search still finds a settled plugin thread
 threads/sidebar-list.feature: Settled threads a plugin started stay out of the settled section
 threads/sidebar-list.feature: Settled threads are listed by when they settled
+threads/sidebar-list.feature: The Working section folds away busy threads
+threads/sidebar-list.feature: The Working section is on until the user turns it off
 threads/sidebar-list.feature: The list catches up after a reconnect
 threads/sidebar-list.feature: The list starts over when its MC restarted
+threads/sidebar-list.feature: The number of threads a project shows is limited to a sensible range [0, 1]
+threads/sidebar-list.feature: The number of threads a project shows is limited to a sensible range [40, 15]
+threads/sidebar-list.feature: The number of threads a project shows is limited to a sensible range [8, 8]
+threads/sidebar-list.feature: The open thread stays in view when the rows change height
 threads/sidebar-list.feature: The open thread stays listed past the settled page
+threads/sidebar-list.feature: The project filter is remembered across restarts
 threads/sidebar-list.feature: The user can list settled plugin threads in the settled section
+threads/sidebar-list.feature: The user can switch the thread list to one tree of threads per project
+threads/sidebar-list.feature: The user chooses how projects and threads are sorted [projects, Created at, by when each project's threads were started]
+threads/sidebar-list.feature: The user chooses how projects and threads are sorted [projects, Last user message, by the latest message the user sent in each]
+threads/sidebar-list.feature: The user chooses how projects and threads are sorted [projects, Manual, in the order the user arranged them]
+threads/sidebar-list.feature: The user chooses how projects and threads are sorted [threads, Created at, by when each thread was started]
+threads/sidebar-list.feature: The user chooses how projects and threads are sorted [threads, Last user message, by the latest message the user sent in each]
 threads/sidebar-list.feature: Threads are grouped into sections
 threads/sidebar-list.feature: Threads on an offline environment are still listed
 threads/sidebar-list.feature: Threads started by other agents are not listed
 threads/sidebar-list.feature: Very long settled shelves are shown a page at a time
+threads/sidebar-list.feature: Working threads keep their order while agents finish and wake
 threads/snooze.feature: "This evening" is not offered when the evening is less than an hour away
 threads/snooze.feature: A custom snooze time must be in the future and exist [Tuesday 09:00]
 threads/snooze.feature: A custom snooze time must be in the future and exist [a time skipped by a daylight saving change]
@@ -2740,12 +2798,14 @@ threads/unread-and-status.feature: Pinning a thread does not change its age
 threads/unread-and-status.feature: Pointing at a thread previews it
 threads/unread-and-status.feature: Reading a thread tells the environment it was seen
 threads/unread-and-status.feature: The most urgent state wins
+threads/worktree-setup.feature: A setup that failed once the agent was starting cannot be retried
 threads/worktree-setup.feature: The conversation shows how the setup is going [failed, Worktree setup failed]
 threads/worktree-setup.feature: The conversation shows how the setup is going [finished, Worktree ready]
 threads/worktree-setup.feature: The conversation shows how the setup is going [is still running, Setting up worktree…]
 threads/worktree-setup.feature: The conversation shows how the setup is going [made the worktree but its setup script failed, Worktree ready, setup script failed]
 threads/worktree-setup.feature: The conversation shows how the setup is going [was cancelled, Worktree setup cancelled]
 threads/worktree-setup.feature: The user reads the setup details from the conversation
+threads/worktree-setup.feature: The user retries a setup that failed
 timeline/approvals-and-questions.feature: A failed answer is kept or closed depending on why it failed [the connection dropped for a moment, still open so the user can answer again]
 timeline/approvals-and-questions.feature: A failed answer is kept or closed depending on why it failed [the request was already resolved, closed]
 timeline/approvals-and-questions.feature: A failed answer is reported and can be sent again
