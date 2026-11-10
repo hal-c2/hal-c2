@@ -6,8 +6,10 @@ set -uo pipefail
 
 apt=(sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
 
+# At most 90+120 per attempt, 465s in all (515s with every kill grace), so the steps'
+# `timeout-minutes: 10` only fires if this script itself hangs.
 attempt() {
-  timeout -k 10 120 "${apt[@]}" update &&
+  timeout -k 10 90 "${apt[@]}" update &&
     timeout -k 10 120 "${apt[@]}" install -y "$@"
 }
 
@@ -15,5 +17,5 @@ attempt "$@" && exit 0
 echo "::warning::apt-get failed or timed out, retrying in 15s"
 sleep 15
 # A killed install can leave dpkg half-configured, which would fail the retry.
-timeout -k 10 60 sudo dpkg --configure -a
+timeout -k 10 30 sudo dpkg --configure -a
 attempt "$@"
