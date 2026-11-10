@@ -5,6 +5,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (turn.started, turn.item with an answer's text, turn.finished; end_item/5: a background command that ended after its turn; the calls a stopped or abandoned turn closed; a turn's usage)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (a Codex turn and a goal's run, started by Codex's own writer; end_background; a turn keeps only the usage Codex reports of it)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (end_work: a background command stopped between turns)
+#   apps/server-ex/lib/hal_c2/orchestration/native_subagent.ex (a subagent the provider started, as a turn.item; its calls, marked as a subagent's)
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's shape, kept on its provider thread, a native fork's inherited)
 #   apps/server-ex/lib/hal_c2/orchestration/handoff.ex (a native fork carries its source's shape; fresh_start/2: a resume that started afresh is a new conversation)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (new_run: another instance with the same home takes over the conversation and its shape)
@@ -47,6 +48,24 @@ Feature: Plugins that watch and shape turns
       | Claude   |
       | Codex    |
       | OpenCode |
+
+  @mc
+  Scenario: A plugin hears a subagent the agent starts, in the turn that starts it
+    Given a plugin that hears turns
+    When a Codex thread runs a turn that starts a subagent
+    Then the plugin hears the subagent start in that turn, before it ends
+
+  @mc
+  Scenario: A plugin hears a subagent's tool calls in the turn that runs it, marked as a subagent's
+    Given a plugin that hears turns
+    When a Claude thread runs a turn in which a subagent calls a tool
+    Then the plugin hears the subagent's tool call in that turn, marked as a subagent's
+
+  @mc
+  Scenario: A plugin hears Codex use the tools no thread shows as calls
+    Given a plugin that hears turns
+    When a Codex thread runs a turn that views an image, makes one and waits on its agents
+    Then the plugin hears each use in that turn, by Codex's name for the tool
 
   @mc
   Scenario: A plugin hears a Codex turn end with only the usage Codex reported of it

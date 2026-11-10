@@ -353,13 +353,21 @@ defmodule HalC2.Plugins.Extension do
     * `observe(event, context)`: with `turns:observe`, what agents do in every
       thread, as it happens (`HalC2.Plugins.observe/1`): `turn.started` (`"threadId",
       "runId", "projectId", "instanceId", "provider", "model", "newConversation"`),
-      `turn.item` (a tool call or message that ended: `"threadId", "runId", "itemId",
-      "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
-      "status"` (`"completed"`, `"failed"`, `"interrupted"` or `"cancelled"`), `"input",
-      "output"` and an assistant message's `"text"`, each cut to its last 4,000
-      characters, `"exitCode"`, `"ordinal"`, its place in the thread, given as it
-      started, and, for a file change, the file's `"path"`) and
-      `turn.finished` (`"threadId", "runId", "status", "tokenUsage"`: the provider's
+      `turn.item` (a tool call or message that ended, or a subagent the provider
+      started, as it starts, with `"itemType"` `subagent`: `"threadId", "runId", "provider"`
+      (the run's, which a subagent's late call keeps after its thread went on in another),
+      `"projectId"` (the thread's, so a plugin that heard nothing of the turn yet knows
+      whose it is),
+      `"itemId", "itemType", "tool"`, the provider's own name for the tool where it has
+      one, `"title", "status"` (`"completed"`, `"failed"`, `"interrupted"` or
+      `"cancelled"`), `"input", "output"` and an assistant message's `"text"`, each cut
+      to its last 4,000 characters, `"exitCode"`, `"ordinal"`, its place in the thread,
+      given as it started, and, for a file change, the file's `"path"`; a call a
+      subagent of the turn's made has `"subagent" => true`, and a use of a provider's
+      own tool that no thread shows as a call, such as Codex viewing an image or
+      setting its goal, comes as an item of its own) and
+      `turn.finished` (`"threadId", "runId", "ordinal"`, the run's place in its thread
+      as `HalC2.Plugins.Host.history/3` has it, `"status", "tokenUsage"`: the provider's
       last report of the conversation's context, `%{"usedTokens", "inputTokens",
       "cachedInputTokens", "outputTokens", "maxTokens"}` as far as it reports them, or
       nil when it has not). Events reach the plugin one at a time, in the order

@@ -175,12 +175,16 @@ defmodule HalC2.Mcp do
     :exit, _ -> MapSet.new()
   end
 
-  # The thread's own stream names its project. Its sidebar row is a projection that
-  # can trail a new thread's first turn, which would then read the environment's
-  # settings over the project's, and its next turn would relaunch the session.
+  # The thread's project from its own stream, not its sidebar row: the row is put a
+  # moment after the events (`@shell_debounce` in `HalC2.Streams.Server`), so a new
+  # thread's first turn would read the environment's settings and its second turn
+  # its project's, launching differently (#1452). Without streams (tools, some
+  # tests) there is no thread to read, so the environment's settings apply.
   defp project(thread_id) do
-    case HalC2.Streams.get(thread_id, "thread", thread_id) do
-      %{"projectId" => project} -> project
+    with pid when is_pid(pid) <- Process.whereis(HalC2.Streams.Registry),
+         %{"projectId" => project} <- HalC2.Streams.get(thread_id, "thread", thread_id) do
+      project
+    else
       _ -> nil
     end
   end

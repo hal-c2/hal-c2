@@ -11,9 +11,11 @@ defmodule HalC2.Orchestration.NativeSubagent do
   """
 
   alias HalC2.{Orchestration, StreamState}
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, TurnWriter}
 
   @terminal ~w(completed failed interrupted cancelled)
+  # What the subagent says and thinks is no tool call of its, for plugins that hear turns.
+  @unheard ~w(assistant_message reasoning)
 
   @doc """
   Records a subagent the provider started as `native` (its tool call id) in the turn
@@ -89,8 +91,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
            })
          ),
          Orchestration.create("turn-item", item_id, item)
-       ], :ok}
+       ], item}
     end)
+    |> observe_started(ids, parent["projectId"])
 
     child =
       Entities.thread(
@@ -129,11 +132,13 @@ defmodule HalC2.Orchestration.NativeSubagent do
       id: id,
       item: item_id,
       thread: ids.thread,
+      run: ids.run,
       child: child_id,
       root: child_root,
       native: native,
       driver: driver,
       sender: ids.thread,
+      project: parent["projectId"],
       text: ""
     }
 
@@ -149,6 +154,23 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
+  # Plugins that hear turns hear the agent start the subagent, a call of its turn's
+  # that the turn writer never sees (`HalC2.Plugins.observe/1`).
+  defp observe_started(item, ids, project) do
+    if HalC2.Plugins.observing?() do
+      item
+      |> TurnWriter.observed_item()
+      |> Map.merge(%{
+        "type" => "turn.item",
+        "threadId" => ids.thread,
+        "runId" => ids.run,
+        "provider" => Entities.driver(ids),
+        "projectId" => project
+      })
+      |> HalC2.Plugins.observe()
+    end
+  end
+
   @doc """
   Reopens a subagent the provider resumed with `message` (Claude's SendMessage to a
   subagent it started earlier): the subagent `entity` runs again, and the message is
@@ -162,12 +184,18 @@ defmodule HalC2.Orchestration.NativeSubagent do
     driver = Entities.driver(ids)
     native = get_in(entity, ["nativeTaskRef", "nativeId"])
     at = Entities.now()
-    said = HalC2.Streams.read(child, &(&1 |> StreamState.all("message") |> Enum.count()))
+
+    {said, project} =
+      HalC2.Streams.read(child, fn state ->
+        {state |> StreamState.all("message") |> Enum.count(),
+         (StreamState.get(state, "thread")[child] || %{})["projectId"]}
+      end)
 
     sub = %{
       id: id,
       item: "turn-item:subagent:#{id}",
       thread: entity["threadId"],
+      run: ids.run,
       child: child,
       root: "node:subagent-root:#{driver}:#{native}",
       # Its own messages, after those the child thread already has.
@@ -175,6 +203,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
       ordinal: 100 + 2 * said,
       driver: driver,
       sender: entity["threadId"],
+      project: project,
       text: ""
     }
 
@@ -188,11 +217,28 @@ defmodule HalC2.Orchestration.NativeSubagent do
         "updatedAt" => at
       })
 
+    # A subagent that had stopped keeps the span it worked, and works again from now,
+    # so the turns between are none of its (`HalC2.Plugins.Host.history/3`).
+    reopen = fn
+      %{"completedAt" => stopped} = task when is_binary(stopped) ->
+        task
+        |> Map.put(
+          "workedSpans",
+          (task["workedSpans"] || []) ++
+            [%{"from" => task["resumedAt"] || task["startedAt"], "to" => stopped}]
+        )
+        |> Map.put("resumedAt", at)
+        |> open.()
+
+      task ->
+        open.(task)
+    end
+
     resumed = if is_binary(ids[:run]), do: &Map.put(&1, "resumedRunId", ids.run), else: & &1
 
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
-         Orchestration.upsert(state, "subagent", id, &(&1 |> open.() |> resumed.())),
+         Orchestration.upsert(state, "subagent", id, &(&1 |> reopen.() |> resumed.())),
          Orchestration.upsert(
            state,
            "node",
@@ -397,15 +443,10 @@ defmodule HalC2.Orchestration.NativeSubagent do
             )
         end
 
-      changes =
-        if StreamState.fetch(state, "turn-item", item_id) do
-          [Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message]
-        else
-          [
-            message,
-            Orchestration.create(
-              "turn-item",
-              item_id,
+      {changes, stored} =
+        case StreamState.fetch(state, "turn-item", item_id) do
+          nil ->
+            item =
               Entities.turn_item(
                 ids,
                 item_id,
@@ -416,14 +457,62 @@ defmodule HalC2.Orchestration.NativeSubagent do
                 fields
               )
               |> Map.put("nativeItemRef", Entities.provider_ref(native, sub.driver))
-            )
-          ]
+
+            {[message, Orchestration.create("turn-item", item_id, item)], item}
+
+          # An item that had ended (`finish/4` cut it short) is heard of no more.
+          %{"status" => was} when was in @terminal ->
+            {[Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message],
+             nil}
+
+          stored ->
+            {[Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message],
+             Map.merge(stored, put)}
         end
 
-      {Enum.filter(changes, &is_tuple/1), :ok}
+      {Enum.filter(changes, &is_tuple/1), stored}
     end)
+    # Heard once, as it first ends (`TurnWriter`'s `heard_end/3`).
+    |> then(&if(&1 != nil and status in @terminal and type not in @unheard, do: observe(sub, &1)))
 
     if message_id, do: Map.put(sub, :said, fields["text"]), else: sub
+  end
+
+  @doc """
+  Plugins that hear turns hear `item`, a turn item of the subagent's work that ended,
+  as their parent turn's, marked `"subagent"` (`HalC2.Plugins.observe/1`): the agent
+  used the tool, though not in its own turn. `item/5` hears what it writes; this is
+  for work a provider reports that the child thread does not show.
+  """
+  def observe(sub, item) do
+    if HalC2.Plugins.observing?() and is_map(item) do
+      item
+      |> TurnWriter.observed_item()
+      |> Map.merge(%{
+        "type" => "turn.item",
+        "threadId" => sub.thread,
+        "runId" => Map.get(sub, :run),
+        # The provider of the run that started it, though the thread went on in another.
+        "provider" => sub.driver,
+        "projectId" => Map.get(sub, :project) || parent_project(sub.thread),
+        "subagent" => true
+      })
+      |> HalC2.Plugins.observe()
+    end
+
+    :ok
+  end
+
+  # A handle from before it kept the project (one an upgrade in place left running)
+  # finds it on the parent thread.
+  defp parent_project(thread_id) do
+    HalC2.Streams.read(thread_id, fn state ->
+      (StreamState.get(state, "thread")[thread_id] || %{})["projectId"]
+    end)
+  rescue
+    _ -> nil
+  catch
+    _, _ -> nil
   end
 
   @doc "What the subagent said so far, or nil."
@@ -462,7 +551,12 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
     at = Entities.now()
     done = &Map.merge(&1, %{"status" => status, "completedAt" => at})
-    settle_child(sub, status, at)
+
+    # The calls it left running end with it, heard as they end, before its parent's
+    # turn can: a call cut short is still a use.
+    for item <- settle_child(sub, status, at),
+        item["type"] not in @unheard,
+        do: observe(sub, item)
 
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
@@ -571,20 +665,25 @@ defmodule HalC2.Orchestration.NativeSubagent do
   end
 
   # Work still open in the child thread (a tool call, the progress) ends with it: of
-  # `only`, the ids of the work to end, what still runs.
+  # `only`, the ids of the work to end, what still runs. Returns the items it ended, as
+  # they are now.
   defp settle_child(sub, status, at, only \\ nil) do
     HalC2.Streams.transact(sub.child, :thread, fn state ->
-      {for item <- StreamState.list(state, "turn-item"),
-           item["status"] == "running" and (only == nil or item["id"] in only) do
-         Orchestration.upsert(state, "turn-item", item["id"], fn item ->
-           item
-           |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
-           |> then(
-             &if(Map.has_key?(&1, "streaming"), do: Map.put(&1, "streaming", false), else: &1)
-           )
-         end)
-       end
-       |> Enum.filter(&is_tuple/1), :ok}
+      ended =
+        for item <- StreamState.list(state, "turn-item"),
+            item["status"] == "running" and (only == nil or item["id"] in only) do
+          item
+          |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
+          |> then(
+            &if(Map.has_key?(&1, "streaming"), do: Map.put(&1, "streaming", false), else: &1)
+          )
+        end
+
+      {ended
+       |> Enum.map(fn item ->
+         Orchestration.upsert(state, "turn-item", item["id"], fn _ -> item end)
+       end)
+       |> Enum.filter(&is_tuple/1), ended}
     end)
   end
 
