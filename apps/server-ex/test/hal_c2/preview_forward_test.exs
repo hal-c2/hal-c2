@@ -129,6 +129,18 @@ defmodule HalC2.PreviewForwardTest do
       assert {port, _} = DevServer.on_free_port(start)
       assert [^port, _first] = Process.get(:tried)
     end
+
+    test "is the only failure started again" do
+      Process.put(:tried, 0)
+
+      start = fn _port ->
+        raise ArgumentError, "tried #{Process.put(:tried, Process.get(:tried) + 1)}"
+      end
+
+      assert_raise ArgumentError, fn -> DevServer.on_busy_port(start) end
+      assert_raise ArgumentError, fn -> DevServer.on_free_port(start) end
+      assert Process.get(:tried) == 2
+    end
   end
 
   # A forward listens at the dev server's port only when that is free on this

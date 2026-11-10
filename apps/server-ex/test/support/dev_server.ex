@@ -63,7 +63,9 @@ defmodule HalC2.Test.DevServer do
   rescue
     # Free here, but taken at the dev server's own address: another port.
     error ->
-      if tries > 1, do: on_free_port(start, tries - 1), else: reraise(error, __STACKTRACE__)
+      if tries > 1 and not_started?(error),
+        do: on_free_port(start, tries - 1),
+        else: reraise(error, __STACKTRACE__)
   end
 
   @doc """
@@ -88,8 +90,15 @@ defmodule HalC2.Test.DevServer do
   rescue
     # Free here, but taken at the dev server's own address: another port.
     error ->
-      if tries > 1, do: on_busy_port(start, tries - 1), else: reraise(error, __STACKTRACE__)
+      if tries > 1 and not_started?(error),
+        do: on_busy_port(start, tries - 1),
+        else: reraise(error, __STACKTRACE__)
   end
+
+  # `hold/2`'s failure, raised here or on the peer MC an `:erpc` call started it on.
+  defp not_started?(%RuntimeError{message: "the dev server did not start" <> _}), do: true
+  defp not_started?(%ErlangError{original: {:exception, error, _}}), do: not_started?(error)
+  defp not_started?(_error), do: false
 
   # A port free at 127.0.0.1 and ::1, listened on at both: `{v4, v6, port}`.
   defp free_pair do
