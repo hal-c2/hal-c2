@@ -164,7 +164,10 @@ enum Verdict {
 }
 
 thread_local! {
-    static PANIC: RefCell<String> = const { RefCell::new(String::new()) };
+    /// The panics of the running scenario, in order. The engine catches a
+    /// controller's panic and goes on, so a failure that follows one names
+    /// the first: it is usually the cause, and otherwise shows as a timeout.
+    static PANICS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Runs `scenario` on a world of its own.
@@ -182,6 +185,7 @@ fn run(steps: &Steps, scenario: &Scenario) -> Verdict {
         }
     }
     let mut at = (0, String::new());
+    PANICS.with(|p| p.borrow_mut().clear());
     let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| -> Result<(), Failure> {
         let mut world = World::new(&steps.extensions);
         for (step, (index, captures)) in scenario.steps.iter().zip(&found) {
@@ -197,12 +201,18 @@ fn run(steps: &Steps, scenario: &Scenario) -> Verdict {
         Ok(Err(Failure(why))) => Verdict::Fail {
             line: at.0,
             step: at.1,
-            why,
+            why: match PANICS.with(|p| p.borrow().first().cloned()) {
+                Some(panic) => format!("{why}\n        after a caught panic: {panic}"),
+                None => why,
+            },
         },
         Err(_) => Verdict::Fail {
             line: at.0,
             step: at.1,
-            why: format!("panicked: {}", PANIC.with(|p| p.borrow().clone())),
+            why: format!(
+                "panicked: {}",
+                PANICS.with(|p| p.borrow().last().cloned().unwrap_or_default())
+            ),
         },
     }
 }
@@ -232,7 +242,7 @@ fn main() -> ExitCode {
     // SAFETY: nothing else runs yet.
     unsafe { std::env::set_var("TZ", "UTC") };
     std::panic::set_hook(Box::new(|info| {
-        PANIC.with(|p| *p.borrow_mut() = info.to_string());
+        PANICS.with(|p| p.borrow_mut().push(info.to_string()));
     }));
     let args = args();
     let repo = repo();
