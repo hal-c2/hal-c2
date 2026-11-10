@@ -1137,12 +1137,24 @@ planning/planner.feature: A task that ends before its baseline says how many day
 planning/planner.feature: A task's thread keeps the task mark once its run is discarded
 planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the user opens the thread of a run of "Reschedule"]
 planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the work on "API" is discarded]
+planning/planner.feature: A user links a pull request of a GitHub Enterprise host by its web address
 planning/planner.feature: An action's thread is marked in the thread list
 planning/planner.feature: An action's thread shows its run above the conversation
 planning/planner.feature: Dragging a bar reschedules the task
 planning/planner.feature: Dragging the end of a bar changes when the task ends
 planning/planner.feature: Starting work is always on one task
 planning/planner.feature: The Gantt chart draws tasks, milestones, dependencies and today
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [acme/..#12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [ftp://github.example.com/acme/other/pull/12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://[1:2]/acme/other/pull/12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://git_hub.example.com/acme/other/pull/12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://github..example.com/acme/other/pull/12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://github.example.com/../other/pull/12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://github.example.com/acme/other/issues/12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://github.example.com/acme/other/pull/012]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://github.example.com/acme/other/pull/9007199254740993]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://github.example.com:99999/acme/other/pull/12]
+planning/planner.feature: The address <address> is not a pull request's and cannot be linked [https://user:token@github.example.com/acme/other/pull/12]
 planning/planner.feature: The board grouped by milestone moves a task to another milestone
 planning/planner.feature: The board grouped by parent moves a subtask to another parent
 planning/planner.feature: The board moves a task between states
@@ -2382,6 +2394,7 @@ space/visualize.feature: The user deletes a chart
 space/visualize.feature: The user sees the numbers behind a chart
 space/visualize.feature: The user visualises data on a page
 space/visualize.feature: Without a provider nothing is drawn
+terminal/composer-context.feature: A draft holding only expired terminal excerpts is not sent
 terminal/composer-context.feature: A one-line selection names a single line
 terminal/composer-context.feature: Adding to chat is not offered where there is no draft to add to
 terminal/composer-context.feature: An excerpt whose text is gone is dropped when the message is sent
@@ -2389,6 +2402,8 @@ terminal/composer-context.feature: Selecting only blank lines adds nothing
 terminal/composer-context.feature: The draft lists its terminal excerpts
 terminal/composer-context.feature: The terminal's menu offers selection actions only once something is selected
 terminal/composer-context.feature: The user adds selected terminal output to the draft
+terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [one terminal excerpt, Expired terminal context omitted from message]
+terminal/composer-context.feature: The user is told when expired terminal excerpts are left out of a message [two terminal excerpts, Expired terminal contexts omitted from message]
 terminal/composer-context.feature: The user removes a terminal excerpt from the draft
 terminal/drawer.feature: A draft thread has a terminal in its project
 terminal/drawer.feature: A new terminal takes the lowest free number
@@ -2417,7 +2432,10 @@ terminal/errors.feature: A failed terminal action is written into the terminal [
 terminal/errors.feature: A failed terminal action is written into the terminal [opening a file path from the output, , Unable to open path]
 terminal/errors.feature: A failed terminal action is written into the terminal [sending what the user typed, , Terminal write failed]
 terminal/errors.feature: A failed terminal action is written into the terminal [sending what the user typed, MC is unreachable, MC is unreachable]
+terminal/errors.feature: A first terminal that fails to start leaves no empty tab and is retried
+terminal/errors.feature: A link that cannot be opened anywhere is reported without losing the terminal
 terminal/errors.feature: A script that cannot reopen its terminal does not close it
+terminal/errors.feature: A terminal engine that fails to load tells the user how to retry
 terminal/errors.feature: A terminal that fails to open tells the user why
 terminal/errors.feature: A terminal that fails to start leaves the existing terminal as it was [opens a new terminal]
 terminal/errors.feature: A terminal that fails to start leaves the existing terminal as it was [runs a project script that wants a new terminal]
@@ -2426,7 +2444,10 @@ terminal/errors.feature: A terminal that fails to start leaves the existing term
 terminal/errors.feature: Each time the MC is unreachable is said
 terminal/errors.feature: Typing while the MC is unreachable says so once
 terminal/io.feature: A character typed with AltGr is typed as text
+terminal/io.feature: A hidden terminal keeps reading
+terminal/io.feature: A new connection starts over from its snapshot
 terminal/io.feature: A program that asks for the mouse receives the user's clicks
+terminal/io.feature: A terminal of a thread the user left stops reading until they return
 terminal/io.feature: A terminal that exits on its own closes without asking
 terminal/io.feature: Arrow keys with a modifier move by word or line [Linux, Alt+Right, one word right]
 terminal/io.feature: Arrow keys with a modifier move by word or line [Linux, Ctrl+Left, one word left]
@@ -2445,12 +2466,14 @@ terminal/io.feature: Cmd+K clears the terminal on macOS
 terminal/io.feature: Ctrl+C copies once on Linux and Windows and then interrupts [Linux]
 terminal/io.feature: Ctrl+C copies once on Linux and Windows and then interrupts [Windows]
 terminal/io.feature: Ctrl+C with nothing selected still interrupts the program
+terminal/io.feature: Dragging a selection past the edge scrolls the history while it grows
 terminal/io.feature: Holding a modifier selects text even while a program has the mouse [Cmd]
 terminal/io.feature: Holding a modifier selects text even while a program has the mouse [Ctrl]
 terminal/io.feature: Holding a modifier selects text even while a program has the mouse [Shift]
 terminal/io.feature: Middle-clicking where the button means something else does not paste [Windows]
 terminal/io.feature: Middle-clicking where the button means something else does not paste [macOS]
 terminal/io.feature: On macOS Cmd+C copies and Ctrl+C always interrupts
+terminal/io.feature: Output that stops is still said to be read, so the desktop never stalls itself
 terminal/io.feature: Scrolling the wheel in a full-screen program moves it with arrow keys
 terminal/io.feature: Scrolling the wheel reaches a program that asked for the mouse
 terminal/io.feature: Selecting with Shift and an arrow is left to the terminal
@@ -2461,6 +2484,9 @@ terminal/io.feature: The Linux and Windows copy and paste keys work in the termi
 terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Linux, Shift+Insert, the clipboard text is sent to the shell]
 terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Windows, Ctrl+Insert, the selected text is on the clipboard]
 terminal/io.feature: The Linux and Windows copy and paste keys work in the terminal [Windows, Shift+Insert, the clipboard text is sent to the shell]
+terminal/io.feature: The cursor blinks only while the terminal has focus
+terminal/io.feature: The cursor stays steady when the user prefers reduced motion
+terminal/io.feature: The desktop says what it has read in batches, not per chunk
 terminal/io.feature: The scrollbar's thumb stays large enough to grab
 terminal/io.feature: The terminal shows a scrollbar for its history
 terminal/io.feature: The user copies, pastes and clears from the terminal's menu [Copy, the selected text is on the clipboard]
@@ -2477,28 +2503,44 @@ terminal/io.feature: The usual copy and paste keys work in the terminal [Ctrl+V,
 terminal/io.feature: The wheel scrolls by the unit the device reports [pixels, by that many pixels, rounded down to rows]
 terminal/io.feature: The wheel scrolls by the unit the device reports [three lines, three rows]
 terminal/io.feature: What an input method is composing shows at the cursor
+terminal/io.feature: With history above it, the prompt sits flush with the bottom edge
+terminal/links-and-graphics.feature: A Ctrl-click that moves a little still follows the link
 terminal/links-and-graphics.feature: A branch range in git's output is not a file path
 terminal/links-and-graphics.feature: A file path in the output opens in the editor
+terminal/links-and-graphics.feature: A link cut off by the edge of the screen is not offered
+terminal/links-and-graphics.feature: A link is not offered while a program has the mouse
+terminal/links-and-graphics.feature: A link replaced before the pointer is released is not followed
 terminal/links-and-graphics.feature: A plain click on a file path does not open it
 terminal/links-and-graphics.feature: A plain click on a link does not follow it
 terminal/links-and-graphics.feature: A tap on a link on a touch screen follows it
+terminal/links-and-graphics.feature: Clicking a link twice or three times selects a word or a line
+terminal/links-and-graphics.feature: Ctrl still follows a link while a program has the mouse
+terminal/links-and-graphics.feature: Dragging from a link selects text instead of following it
 terminal/links-and-graphics.feature: Following a link opens the system browser when that is the chosen target
+terminal/links-and-graphics.feature: Holding Ctrl over a link underlines all of it and shows it can be followed
 terminal/links-and-graphics.feature: On macOS a program that asks for enhanced reporting gets Ctrl as Ctrl
 terminal/links-and-graphics.feature: Programs that ask for enhanced keyboard reporting receive it
+terminal/links-and-graphics.feature: The link's menu sends a link to the system browser
 terminal/links-and-graphics.feature: The terminal's menu opens or copies the link under the pointer [http://localhost:5173, Open link, Copy link, the address opens in the system browser]
 terminal/links-and-graphics.feature: The terminal's menu opens or copies the link under the pointer [src/app.ts:12:4, Open file, Copy path, "src/app.ts" opens in the user's editor at line 12, column 4]
 terminal/links-and-graphics.feature: The web terminal follows the app's theme and font
 terminal/reconnect.feature: The web terminal keeps up to 512 KiB of output per terminal
+terminal/sessions.feature: A hidden terminal stops drawing but keeps reading its shell
 terminal/sessions.feature: A new terminal opened from the drawer uses the thread's launch context
 terminal/sessions.feature: A terminal started by a project script shares that script's launch context
 terminal/sessions.feature: Hiding and showing the terminal keeps what it was showing
+terminal/sessions.feature: Hiding the terminal does not shrink the shell
+terminal/sessions.feature: Shrinking the window pulls a tall terminal back within its limit
 terminal/sessions.feature: The desktop terminal keeps a sensible height [100, 180]
 terminal/sessions.feature: The desktop terminal keeps a sensible height [400, 400]
 terminal/sessions.feature: The desktop terminal keeps a sensible height [900, 750]
 terminal/sessions.feature: The terminal toggle is only offered where a terminal can run
 terminal/sessions.feature: The user shows and hides the terminal on desktop
+terminal/tabs.feature: A new terminal is not dropped while the MC's list catches up
+terminal/tabs.feature: A single terminal shows its actions without a terminal list
 terminal/tabs.feature: A split group holds at most four terminals
 terminal/tabs.feature: A terminal tab runs its own terminal beside the drawer's
+terminal/tabs.feature: A terminal the user just closed does not come back from a late list
 terminal/tabs.feature: Closing a terminal asks before stopping its process
 terminal/tabs.feature: Closing a terminal tab stops its terminals
 terminal/tabs.feature: Closing a terminal that is not active keeps the active one
@@ -2506,6 +2548,7 @@ terminal/tabs.feature: Closing several terminals asks once for all of them
 terminal/tabs.feature: Closing the right-most active terminal activates the one before it
 terminal/tabs.feature: Declining the close confirmation keeps the terminal
 terminal/tabs.feature: Recently visited threads keep their terminals ready
+terminal/tabs.feature: The terminal list names each group and how many terminals it holds
 terminal/tabs.feature: The user splits a terminal tab [horizontally, side by side]
 terminal/tabs.feature: The user splits a terminal tab [vertically, stacked]
 terminal/tabs.feature: The user splits the terminal [horizontally, side by side]
@@ -2851,6 +2894,7 @@ threads/worktree-setup.feature: The user retries a setup that failed
 timeline/approvals-and-questions.feature: A failed answer is kept or closed depending on why it failed [the connection dropped for a moment, still open so the user can answer again]
 timeline/approvals-and-questions.feature: A failed answer is kept or closed depending on why it failed [the request was already resolved, closed]
 timeline/approvals-and-questions.feature: A failed answer is reported and can be sent again
+timeline/approvals-and-questions.feature: A half-written answer survives leaving the thread
 timeline/approvals-and-questions.feature: A provider's warning is shown with the option it applies to
 timeline/approvals-and-questions.feature: A question stays answerable after its turn ends
 timeline/approvals-and-questions.feature: A request says what kind of permission it wants [a permission for an app, App permission approval]
@@ -2885,6 +2929,13 @@ timeline/markdown.feature: A GitHub alert shows its kind [IMPORTANT, Important]
 timeline/markdown.feature: A GitHub alert shows its kind [NOTE, Note]
 timeline/markdown.feature: A GitHub alert shows its kind [TIP, Tip]
 timeline/markdown.feature: A GitHub alert shows its kind [WARNING, Warning]
+timeline/markdown.feature: A code block is coloured only when its fence names a language [, as plain text]
+timeline/markdown.feature: A code block is coloured only when its fence names a language [exs, coloured as Elixir]
+timeline/markdown.feature: A code block is coloured only when its fence names a language [klingon, as plain text]
+timeline/markdown.feature: A code block is coloured only when its fence names a language [py, coloured as Python]
+timeline/markdown.feature: A code block is coloured only when its fence names a language [qml, coloured as QML]
+timeline/markdown.feature: A code block is coloured only when its fence names a language [ts, coloured as TypeScript]
+timeline/markdown.feature: A code block still being written keeps the colours of its finished lines
 timeline/markdown.feature: A link to a script is not a link
 timeline/markdown.feature: A linked image opens as a preview
 timeline/markdown.feature: A reply being written keeps what is already shown
@@ -2892,6 +2943,8 @@ timeline/markdown.feature: A reply shows its formatting
 timeline/markdown.feature: A reply's right-click menu cannot change the reply
 timeline/markdown.feature: A reply's selected text is copied from its right-click menu
 timeline/markdown.feature: A user message keeps its line breaks
+timeline/markdown.feature: Code follows the theme without being read again
+timeline/markdown.feature: Inline code stays whole and reads as written
 timeline/markdown.feature: Line wrap in a code block can be turned off and on
 timeline/markdown.feature: Markup in a message is shown as it was written
 timeline/markdown.feature: Select All in a code block's right-click menu selects its code
@@ -2907,6 +2960,7 @@ timeline/notifications.feature: A thread that changes state raises an alert [com
 timeline/notifications.feature: A thread that changes state raises an alert [fails, Thread failed]
 timeline/notifications.feature: A thread that changes state raises an alert [stops at the provider's usage limit, Usage limit reached]
 timeline/notifications.feature: Clicking a system notification opens its own thread
+timeline/notifications.feature: Clicking a system notification opens its thread in the window last used
 timeline/notifications.feature: Coming back to the window clears its system notifications
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications only, shown, not played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications with sound, shown, played]
@@ -2921,26 +2975,64 @@ timeline/notifications.feature: Threads of other environments alert like the MC'
 timeline/notifications.feature: Threads that finished before the user connected do not alert
 timeline/notifications.feature: Threads that finished while the connection was down do not alert
 timeline/notifications.feature: Turning system notifications off clears the ones on screen
+timeline/plans-and-subagents.feature: A context compaction says how it stands [fails, Context compaction failed]
+timeline/plans-and-subagents.feature: A context compaction says how it stands [finishes, Context compacted]
+timeline/plans-and-subagents.feature: A context compaction says how it stands [is cancelled, Context compaction stopped]
+timeline/plans-and-subagents.feature: A context compaction says how it stands [is in progress, Compacting context]
+timeline/plans-and-subagents.feature: A context compaction says how it stands [is interrupted, Context compaction stopped]
+timeline/plans-and-subagents.feature: A context compaction says what it did [from 120000 to 30000 tokens, 120000 → 30000 tokens]
+timeline/plans-and-subagents.feature: A context compaction says what it did [knowing only that it ended at 30000 tokens, ? → 30000 tokens]
+timeline/plans-and-subagents.feature: A context compaction says what it did [with the summary "Dropped old tool output", Dropped old tool output]
+timeline/plans-and-subagents.feature: A context handoff shows where the context came from and went
+timeline/plans-and-subagents.feature: A context handoff that failed is marked as failed
+timeline/plans-and-subagents.feature: A created thread can be opened from where it was created
+timeline/plans-and-subagents.feature: A created thread shown as a resource opens as a card
 timeline/plans-and-subagents.feature: A delegated task's result shows as a notification, not a message of the user's
 timeline/plans-and-subagents.feature: A finished subagent shows its result, a working one its latest progress
 timeline/plans-and-subagents.feature: A finished subagent with work still running is shown as pending
 timeline/plans-and-subagents.feature: A finished task's notification names its worker and links to it
 timeline/plans-and-subagents.feature: A finished task's result is kept apart from the agent's replies until opened
+timeline/plans-and-subagents.feature: A fork learns where it came from after its history loaded
+timeline/plans-and-subagents.feature: A fork marker leads to the other end of the fork [another thread was forked from this one, Conversation fork, Open fork]
+timeline/plans-and-subagents.feature: A fork marker leads to the other end of the fork [this thread was forked from another, Forked from conversation, Open source conversation]
+timeline/plans-and-subagents.feature: A group of subagents counts what is still working first and then the outcomes [one is waiting for the user and one is not started yet, 2 working]
+timeline/plans-and-subagents.feature: A group of subagents counts what is still working first and then the outcomes [one is working, one is done, one failed, one stopped, one idle, 1 working · 1 done · 1 failed · 1 stopped · 1 idle]
+timeline/plans-and-subagents.feature: A group of subagents counts what is still working first and then the outcomes [two are done, one failed and one was stopped, 2 done · 1 failed · 1 stopped]
+timeline/plans-and-subagents.feature: A group of subagents counts what is still working first and then the outcomes [two are working and one is done, 2 working · 1 done]
+timeline/plans-and-subagents.feature: A group of subagents shows one span from the first launch to the last finish
+timeline/plans-and-subagents.feature: A group of subagents shows three avatars and how many more
+timeline/plans-and-subagents.feature: A group's span is withheld while a finished subagent has no end time
+timeline/plans-and-subagents.feature: A long plan is shown as a preview that can be opened [of 1,000 characters on 5 lines, the whole plan and no way to collapse it]
+timeline/plans-and-subagents.feature: A long plan is shown as a preview that can be opened [of 15 short lines, the whole plan and no way to collapse it]
+timeline/plans-and-subagents.feature: A long plan is shown as a preview that can be opened [of 30 short lines, its first 10 lines followed by an ellipsis]
 timeline/plans-and-subagents.feature: A message from another agent says which thread it came from
+timeline/plans-and-subagents.feature: A message from another agent without a known thread still says so
+timeline/plans-and-subagents.feature: A message sent by a scheduled task says so and leads to the task
+timeline/plans-and-subagents.feature: A message sent by automation that no task owns still says so
 timeline/plans-and-subagents.feature: A plan card does not repeat its title
+timeline/plans-and-subagents.feature: A plan follow-up that cannot be sent is taken back and reported
 timeline/plans-and-subagents.feature: A plan implemented in a new thread names the thread after the plan [titled "Add a tax line", Implement Add a tax line]
 timeline/plans-and-subagents.feature: A plan implemented in a new thread names the thread after the plan [with no heading, Implement plan]
 timeline/plans-and-subagents.feature: A plan is saved as the same text however it is kept [copies the plan]
 timeline/plans-and-subagents.feature: A plan is saved as the same text however it is kept [downloads the plan]
 timeline/plans-and-subagents.feature: A plan is saved as the same text however it is kept [saves the plan to the workspace]
+timeline/plans-and-subagents.feature: A plan saved to the workspace says where
 timeline/plans-and-subagents.feature: A plan that cannot be written says so and keeps the dialog
 timeline/plans-and-subagents.feature: A plan that cannot reach the clipboard says so
+timeline/plans-and-subagents.feature: A plan that is ready is announced above the composer by its title
+timeline/plans-and-subagents.feature: A plan's Summary heading is not repeated in its card
 timeline/plans-and-subagents.feature: A plan's copy is named after its title [(no heading), plan.md]
 timeline/plans-and-subagents.feature: A plan's copy is named after its title [Add a tax line, add-a-tax-line.md]
 timeline/plans-and-subagents.feature: A plan's copy is named after its title [Fix `cart.ts`, finally, fix-cartts-finally.md]
+timeline/plans-and-subagents.feature: A previewed plan is opened and closed again
 timeline/plans-and-subagents.feature: A proposed plan appears as a card titled by its first heading
+timeline/plans-and-subagents.feature: A pull request that woke the agent shows as a notification, not a message of the user's
 timeline/plans-and-subagents.feature: A result a thread stored as a user message still shows as a notification
+timeline/plans-and-subagents.feature: A result waiting to wake the parent names its worker and opens its thread
+timeline/plans-and-subagents.feature: A subagent row shows its latest word while it works and its answer when it ends
 timeline/plans-and-subagents.feature: A subagent shows the model it runs on
+timeline/plans-and-subagents.feature: A subagent that only ended is not given a note instead of an answer
+timeline/plans-and-subagents.feature: A subagent without a thread cannot be opened
 timeline/plans-and-subagents.feature: A subagent's approval request shows up in the parent thread
 timeline/plans-and-subagents.feature: A subagent's elapsed time moves only while the Agents tab shows
 timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [My Custom Model, My Custom Model]
@@ -2950,6 +3042,12 @@ timeline/plans-and-subagents.feature: A subagent's model is written the way a pe
 timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [gemini-2.5-pro-preview-06-05, Gemini 2.5 Pro Preview 06 05]
 timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [gpt-5.4, GPT-5.4]
 timeline/plans-and-subagents.feature: A subagent's model is written the way a person would write its name [openai/gpt-5.4-mini, openai/GPT-5.4-Mini]
+timeline/plans-and-subagents.feature: A subagent's pointing card gives the facts of its work [completed, a result of 400 characters, its first 280 characters followed by an ellipsis]
+timeline/plans-and-subagents.feature: A subagent's pointing card gives the facts of its work [running, its own branch, other than the parent's, the subagent's branch]
+timeline/plans-and-subagents.feature: A subagent's pointing card gives the facts of its work [running, its own project, the subagent's project]
+timeline/plans-and-subagents.feature: A subagent's pointing card gives the facts of its work [running, its own worktree with no branch, the worktree's folder name]
+timeline/plans-and-subagents.feature: A subagent's pointing card gives the facts of its work [running, no model reported, "Not reported" in place of the model]
+timeline/plans-and-subagents.feature: A subagent's pointing card gives the facts of its work [running, the model "model-b", the model's name and how long it has worked]
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [cancelled, Stopped]
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [completed, Completed]
 timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [failed, Failed]
@@ -2961,17 +3059,24 @@ timeline/plans-and-subagents.feature: A subagent's title is shown without its pr
 timeline/plans-and-subagents.feature: A subagent's title is shown without its provider's prefix or task path [/root/team/review_docs/, Review Docs]
 timeline/plans-and-subagents.feature: A subagent's title is shown without its provider's prefix or task path [Review the docs, Review the docs]
 timeline/plans-and-subagents.feature: A subagent's title is shown without its provider's prefix or task path [Subagent: Fix the cart, Fix the cart]
+timeline/plans-and-subagents.feature: A thread created without a title is still named
 timeline/plans-and-subagents.feature: A wake-up a thread stored as a user message is not from another agent either
+timeline/plans-and-subagents.feature: A working group's span keeps counting until the group is done
 timeline/plans-and-subagents.feature: A working subagent shows its latest progress
+timeline/plans-and-subagents.feature: An interrupt shows what was asked for and when
+timeline/plans-and-subagents.feature: An open task list closes when the user changes thread
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the agent creates a thread, Created thread]
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the context is compacted, Context compacted]
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the context is handed to another agent, Context handoff]
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the conversation is forked, Conversation fork]
+timeline/plans-and-subagents.feature: Implementing a plan with no feedback sends the plan as the user's message
+timeline/plans-and-subagents.feature: Inherited work says which thread it came from
 timeline/plans-and-subagents.feature: No plan is offered while the agent is still working
 timeline/plans-and-subagents.feature: Saving the plan fails when the workspace is unavailable
 timeline/plans-and-subagents.feature: Saving the plan to the workspace needs a path
 timeline/plans-and-subagents.feature: Saving the plan to the workspace starts from its file name
 timeline/plans-and-subagents.feature: Starting the implementation thread fails
+timeline/plans-and-subagents.feature: Subagents started together are one group in the timeline that opens to its rows
 timeline/plans-and-subagents.feature: The Agents tab follows a subagent as it finishes
 timeline/plans-and-subagents.feature: The Agents tab keeps its rows as work starts and ends
 timeline/plans-and-subagents.feature: The Agents tab keeps what is running above what has finished
@@ -2982,6 +3087,12 @@ timeline/plans-and-subagents.feature: The Agents tab tells the time as the user 
 timeline/plans-and-subagents.feature: The Agents tab's end times follow the day over midnight
 timeline/plans-and-subagents.feature: The Agents tab's end times follow the day when the desktop wakes after midnight
 timeline/plans-and-subagents.feature: The agent's own background wake-up is not a message from another agent
+timeline/plans-and-subagents.feature: The agent's task list is summed up above the composer
+timeline/plans-and-subagents.feature: The agents-working banner opens the Agents tab while a subagent is live
+timeline/plans-and-subagents.feature: The task summary is not shown when there is nothing for it to say [the agent has reported no task list]
+timeline/plans-and-subagents.feature: The task summary is not shown when there is nothing for it to say [the agent's task list is open and an approval comes in]
+timeline/plans-and-subagents.feature: The task summary is not shown when there is nothing for it to say [the agent's task list is open and the agent asks a question]
+timeline/plans-and-subagents.feature: The task summary opens to every step, its status and how long it took
 timeline/plans-and-subagents.feature: The user implements the plan in a new thread
 timeline/plans-and-subagents.feature: The user implements the proposed plan
 timeline/plans-and-subagents.feature: The user keeps a copy of the plan [copies the plan, the plan's markdown is on the clipboard]
@@ -2989,9 +3100,29 @@ timeline/plans-and-subagents.feature: The user keeps a copy of the plan [downloa
 timeline/plans-and-subagents.feature: The user keeps a copy of the plan [saves the plan to "docs/tax-plan.md", "docs/tax-plan.md" holds the plan in the workspace]
 timeline/plans-and-subagents.feature: The user moves between a subagent and its parent
 timeline/plans-and-subagents.feature: The user refines the plan with feedback
+timeline/plans-and-subagents.feature: Typing feedback turns implementing the plan into refining it
+timeline/plans-and-subagents.feature: Work a fork carried over or the system added is marked as such [HAL-C2 recorded rather than the agent, Synthetic]
+timeline/plans-and-subagents.feature: Work a fork carried over or the system added is marked as such [the fork's source thread did before the fork, Inherited]
 timeline/qt-shell-backlog.feature: A turn that finishes in the background notifies without extensions
 timeline/qt-shell-backlog.feature: The badge clears when the user returns
 timeline/qt-shell-backlog.feature: The dock or taskbar badge counts unseen completions
+timeline/runs-and-queue.feature: A context count that rounds up to a million reads as a million [1,000,000, 1m used]
+timeline/runs-and-queue.feature: A context count that rounds up to a million reads as a million [999,499, 999k used]
+timeline/runs-and-queue.feature: A context count that rounds up to a million reads as a million [999,500, 1m used]
+timeline/runs-and-queue.feature: A context window more than nine tenths full is flagged
+timeline/runs-and-queue.feature: A context window under a tenth full is read to one decimal [25,000, 13%]
+timeline/runs-and-queue.feature: A context window under a tenth full is read to one decimal [4,000, 2%]
+timeline/runs-and-queue.feature: A context window under a tenth full is read to one decimal [5,000, 2.5%]
+timeline/runs-and-queue.feature: A dismissed provider notice stays away until the problem changes
+timeline/runs-and-queue.feature: A finished turn that left work running says what it is waiting on [the task "watch tests", Waiting on background task]
+timeline/runs-and-queue.feature: A finished turn that left work running says what it is waiting on [the tasks "watch tests" and "lint", Waiting on 2 background tasks]
+timeline/runs-and-queue.feature: A later run that fails the same way shows its error again
+timeline/runs-and-queue.feature: A later run that succeeds does not bring a dismissed error back
+timeline/runs-and-queue.feature: A notice dismissed just before switching threads stays dismissed
+timeline/runs-and-queue.feature: A provider version known to break turns is flagged even when it is ready
+timeline/runs-and-queue.feature: A reply cut off by a steer is folded as cut off
+timeline/runs-and-queue.feature: A reply that finished before a steer stays the turn's answer
+timeline/runs-and-queue.feature: A reply that stopped without a steer is not folded as cut off
 timeline/runs-and-queue.feature: A sent attachment of a kind this client does not know is listed by name only
 timeline/runs-and-queue.feature: A sent file shows its name, kind and size
 timeline/runs-and-queue.feature: A sent message says how it reached the agent [queued and later promoted to a steer, Originally queued, then promoted to steer the active turn]
@@ -3000,6 +3131,26 @@ timeline/runs-and-queue.feature: A sent message says how it reached the agent [s
 timeline/runs-and-queue.feature: A sent message shows its images
 timeline/runs-and-queue.feature: A usage limit is one warning line naming when to retry
 timeline/runs-and-queue.feature: An image is still shown after its address stops working
+timeline/runs-and-queue.feature: Antigravity after a restart is not reported as signed out
+timeline/runs-and-queue.feature: Background work is not announced while a turn is running
+timeline/runs-and-queue.feature: Background work left by a turn that is not loaded can still be stopped
+timeline/runs-and-queue.feature: Background work that cannot be stopped says why
+timeline/runs-and-queue.feature: Dismissing the notice in front brings the next one forward
+timeline/runs-and-queue.feature: Errors and warnings stay in front of what the agent is doing [says it is waiting on the background work "watch tests", a usage limit with its recovery actions]
+timeline/runs-and-queue.feature: Errors and warnings stay in front of what the agent is doing [says it is waiting on the background work "watch tests", the error "Rate limited"]
+timeline/runs-and-queue.feature: Several notices above the composer show one at a time, the most pressing first
+timeline/runs-and-queue.feature: Stopping background work stays pending until that work ends
+timeline/runs-and-queue.feature: The context window reading is shown only when its setting is on
+timeline/runs-and-queue.feature: The context window's details show what the thread has processed and cost
+timeline/runs-and-queue.feature: The thread says when its provider cannot run [is not installed and HAL-C2 can install it, Codex provider status, Open provider setup to install Codex on this environment.]
+timeline/runs-and-queue.feature: The thread says when its provider cannot run [is signed out and HAL-C2 can sign it in, Codex is unauthenticated, Open provider setup to sign in.]
+timeline/runs-and-queue.feature: The thread says when its provider cannot run [is signed out and can only be signed in from its own CLI, Codex is unauthenticated, Sign in via the CLI to authenticate again.]
+timeline/runs-and-queue.feature: The thread says when its provider cannot run [is unavailable, Codex provider status, Codex provider is unavailable.]
+timeline/runs-and-queue.feature: The thread shows how full the context window is [of a 200,000 token window, 72% · 144k/200k]
+timeline/runs-and-queue.feature: The thread shows how full the context window is [of an unknown window, 144k used]
+timeline/runs-and-queue.feature: The user dismisses a thread's error
+timeline/runs-and-queue.feature: The user installs or signs in to the provider from the thread
+timeline/runs-and-queue.feature: Work started after a stop does not keep it pending
 timeline/scrolling-and-links.feature: A bare web address in a message can be opened
 timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [https://example.com/docs, holding Ctrl (Cmd on macOS), "https://example.com/docs" is opened]
 timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [https://example.com/docs, without holding Ctrl, nothing is opened]
@@ -3010,8 +3161,25 @@ timeline/scrolling-and-links.feature: A link's menu in a reply opens or copies i
 timeline/scrolling-and-links.feature: A long thread opens as its newest turns
 timeline/scrolling-and-links.feature: A thread that does not fill the view loads earlier turns by itself
 timeline/scrolling-and-links.feature: Earlier turns load when the user reaches the top
+timeline/scrolling-and-links.feature: Scrolling away stops the view from following
+timeline/scrolling-and-links.feature: The end of the thread holds still while nothing new is written
 timeline/scrolling-and-links.feature: The user cites part of a reply in the next message
+timeline/scrolling-and-links.feature: The user returns to the end of the thread
+timeline/scrolling-and-links.feature: The view follows new output while the user is at the end
 timeline/streaming.feature: A catch-up cut off part-way is not applied twice
+timeline/streaming.feature: A code block that is not one complete shell command offers no run [a Python snippet]
+timeline/streaming.feature: A code block that is not one complete shell command offers no run [a shell command ending in a backslash]
+timeline/streaming.feature: A code block that is not one complete shell command offers no run [a shell command still streaming]
+timeline/streaming.feature: A code block that is not one complete shell command offers no run [a shell command that spans several lines]
+timeline/streaming.feature: A code block that is not one complete shell command offers no run [an empty shell block]
+timeline/streaming.feature: A complete shell command in a reply runs in the thread's terminal
+timeline/streaming.feature: A copied reply confirms itself beside its copy button for a moment
+timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [1 hour 5 seconds, 1h 5s]
+timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [2 minutes, 2m]
+timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [340 milliseconds, 340ms]
+timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [38 seconds, 38s]
+timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [4.26 seconds, 4.3s]
+timeline/streaming.feature: A duration is written in hours, minutes and seconds, leaving out empty steps [62 seconds, 1m 2s]
 timeline/streaming.feature: A finished turn folds its work behind how long it took
 timeline/streaming.feature: A folded turn can be opened and closed again
 timeline/streaming.feature: A long message can be expanded and collapsed
@@ -3021,6 +3189,14 @@ timeline/streaming.feature: A message from an earlier day also says which day it
 timeline/streaming.feature: A message says when it was sent, in the time format the user chose [12-hour, 9:05 AM]
 timeline/streaming.feature: A message says when it was sent, in the time format the user chose [24-hour, 09:05]
 timeline/streaming.feature: A message says when it was sent, in the time format the user chose [locale, 9:05 AM]
+timeline/streaming.feature: A message the user sent is shortened only when it is long [600 characters on one line, shown in full]
+timeline/streaming.feature: A message the user sent is shortened only when it is long [601 characters on one line, shortened]
+timeline/streaming.feature: A message the user sent is shortened only when it is long [8 short lines, shown in full]
+timeline/streaming.feature: A message the user sent is shortened only when it is long [9 short lines, shortened]
+timeline/streaming.feature: A message the user sent is shortened only when it is long [only spaces and blank lines, shown in full]
+timeline/streaming.feature: A reply still being written is not called empty
+timeline/streaming.feature: A reply that cannot be copied says why beside its copy button
+timeline/streaming.feature: A reply that finished with no text says so
 timeline/streaming.feature: A reply that finishes while the connection is down is caught up
 timeline/streaming.feature: A running turn shows how long the agent has been working
 timeline/streaming.feature: A stopped turn says who stopped it [after 40 seconds, You stopped after 40s]
@@ -3034,6 +3210,7 @@ timeline/streaming.feature: Reasoning shows while it is written
 timeline/streaming.feature: Reasoning written in Markdown is labelled by its words alone
 timeline/streaming.feature: Retrying follows the thread again once its MC sends it
 timeline/streaming.feature: The user copies an assistant reply
+timeline/streaming.feature: The working time counts from the message while the agent is still starting up
 timeline/tool-calls.feature: A HAL-C2 tool call that answered with an error counts as failed though the provider finished it
 timeline/tool-calls.feature: A call is labelled by what it did
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [delegate_task, Delegate a child task]
@@ -3044,6 +3221,7 @@ timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for wh
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [link_pull_request, Link a pull request]
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [preview_open, Open a page in the preview browser]
 timeline/tool-calls.feature: A call to one of HAL-C2's own tools is named for what it does [task_cancel, Cancel delegated task]
+timeline/tool-calls.feature: A changed file offers the file's own actions on right click
 timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["/bin/zsh -lc 'git diff --check'", git]
 timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["CI=1 env -u DEBUG sudo -u root vp test run", vp]
 timeline/tool-calls.feature: A command is named by the program it runs, through the shells and set-up around it ["bash -lc \"zsh -c 'git status'\"", git]
@@ -3058,6 +3236,7 @@ timeline/tool-calls.feature: A command is shown without the shell the provider w
 timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["zsh -lc 'echo $1' name value", "zsh -lc 'echo $1' name value"]
 timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["zsh -lc 'pwd'; git status", "zsh -lc 'pwd'; git status"]
 timeline/tool-calls.feature: A command is shown without the shell the provider wrapped it in ["zsh script.sh", "zsh script.sh"]
+timeline/tool-calls.feature: A command that has not exited gives no exit code
 timeline/tool-calls.feature: A command the provider called finished is shown as failed when its output says it failed ["Cannot find path 'C:\x' because it does not exist"]
 timeline/tool-calls.feature: A command the provider called finished is shown as failed when its output says it failed ["No such file or directory"]
 timeline/tool-calls.feature: A command the provider called finished is shown as failed when its output says it failed ["command not found"]
@@ -3067,11 +3246,22 @@ timeline/tool-calls.feature: A command with no program to name is called "comman
 timeline/tool-calls.feature: A command with no program to name is called "command" ["export NODE_ENV=test"]
 timeline/tool-calls.feature: A command with no program to name is called "command" ["if test -f package.json; then vp test; fi"]
 timeline/tool-calls.feature: A command with no program to name is called "command" ["zsh -lc 'git status"]
+timeline/tool-calls.feature: A command's details say how it ended [0, a success]
+timeline/tool-calls.feature: A command's details say how it ended [2, a failure]
+timeline/tool-calls.feature: A command's own text is not shown again as its output
+timeline/tool-calls.feature: A file change that renamed a file shows where it came from
+timeline/tool-calls.feature: A file change's details name the file relative to the project
+timeline/tool-calls.feature: A file search's details list where each match is
+timeline/tool-calls.feature: A folder of changed files carries the totals of what is inside it
 timeline/tool-calls.feature: A group of only reasoning reads as a thought [one thought, Thought]
 timeline/tool-calls.feature: A group of only reasoning reads as a thought [three thoughts, Thought (×3)]
 timeline/tool-calls.feature: A group of tool calls reads as a summary of what the agent did
 timeline/tool-calls.feature: A group opens into each call's details
 timeline/tool-calls.feature: A group with a failed call is marked as having a failure
+timeline/tool-calls.feature: A long group opens again where the user had left it
+timeline/tool-calls.feature: A question the user answered is previewed in the tool call by what they said ["SQLite" and "WAL on", "SQLite · WAL on"]
+timeline/tool-calls.feature: A question the user answered is previewed in the tool call by what they said [nothing but the question "Which database?", "Which database?"]
+timeline/tool-calls.feature: A question the user answered is previewed in the tool call by what they said [only the files "schema.sql" and "seed.sql", "schema.sql, seed.sql"]
 timeline/tool-calls.feature: A running command's progress does not split the agent's message in two
 timeline/tool-calls.feature: A summary names at most two kinds of work
 timeline/tool-calls.feature: A summary of calls that all failed says what the agent tried
@@ -3100,6 +3290,7 @@ timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's 
 timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [the same task cancelled twice, Requested cancellation of 1 task]
 timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [two attachments sent to one thread, Sent 2 attachments to 1 thread]
 timeline/tool-calls.feature: A summary says what the agent did through HAL-C2's own tools [two tasks delegated to subagents, Delegated 2 tasks]
+timeline/tool-calls.feature: A to-do list's details show what is done
 timeline/tool-calls.feature: A tool call shows how it ended [failed, Failed]
 timeline/tool-calls.feature: A tool call shows how it ended [is still running, Running]
 timeline/tool-calls.feature: A tool call shows how it ended [was declined by the user, Declined]
@@ -3111,10 +3302,22 @@ timeline/tool-calls.feature: A tool call's icon says what kind of work it was [r
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the files, search]
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the web, globe]
 timeline/tool-calls.feature: A tool of another server with the same name is not shown as HAL-C2's
+timeline/tool-calls.feature: A turn that changed only files at the project's top has no folders to open
 timeline/tool-calls.feature: A turn's changed files are folded under their folders
+timeline/tool-calls.feature: A turn's changed files say how many there are and how much changed ["src/cart.ts" and "src/checkout.ts" with 5 lines added in all, 2 changed files +5]
+timeline/tool-calls.feature: A turn's changed files say how many there are and how much changed ["src/cart.ts" and "src/checkout.ts" with no line counts, 2 changed files]
+timeline/tool-calls.feature: A turn's changed files say how many there are and how much changed ["src/cart.ts" with 3 lines added and 1 removed, 1 changed file +3 -1]
+timeline/tool-calls.feature: A turn's changed files stay open or closed as the user left them
+timeline/tool-calls.feature: A web result without a title shows its address or a generic name
+timeline/tool-calls.feature: A web search's details link only to safe addresses ["https://example.com/tax", a link titled with the page's title]
+timeline/tool-calls.feature: A web search's details link only to safe addresses ["javascript:alert(1)", its title as plain text with no link]
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [fetch, a web search]
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [read, a file read]
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [search, a file search]
+timeline/tool-calls.feature: An image the agent looked at is shown in the call's details only when it is in the workspace ["/tmp/outside.png" outside the workspace, the path is shown and no image is loaded]
+timeline/tool-calls.feature: An image the agent looked at is shown in the call's details only when it is in the workspace ["assets/logo.png" in the thread's workspace, the image is shown]
+timeline/tool-calls.feature: An image the agent looked at is shown in the call's details only when it is in the workspace ["notes.txt" in the thread's workspace, the path is shown and no image is loaded]
+timeline/tool-calls.feature: An open group follows new calls only while the user is at its end
 timeline/tool-calls.feature: Calls a summary leaves out are counted
 timeline/tool-calls.feature: Calls through a named integration are summarised by its name
 timeline/tool-calls.feature: Consecutive tool calls in a running turn show only the latest
@@ -3127,10 +3330,12 @@ timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provi
 timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [hal_c2_thread_read]
 timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [mcp__hal-c2__hal_c2_thread_read]
 timeline/tool-calls.feature: HAL-C2's own tools are recognised however the provider writes their names [mcp__hal_c2__hal_c2_thread_read]
+timeline/tool-calls.feature: One folder can be opened without opening the rest
 timeline/tool-calls.feature: Reasoning is left out of a group's counts
 timeline/tool-calls.feature: Several integrations are named in a list [the "Chrome" and "Slack" integrations, Used Chrome and Slack integrations]
 timeline/tool-calls.feature: Several integrations are named in a list [the "Chrome", "Slack" and "Linear" integrations, Used Chrome, Slack, and Linear integrations]
 timeline/tool-calls.feature: Several integrations are named in a list [the built-in browser and computer controls, Used Browser and Computer Use]
+timeline/tool-calls.feature: The command as the provider ran it stays available in the call's details
 timeline/tool-calls.feature: The live row's verb follows how the command ended [fails, Failed npm]
 timeline/tool-calls.feature: The live row's verb follows how the command ended [is declined by the user, Declined npm]
 timeline/tool-calls.feature: The live row's verb follows how the command ended [is running, Running npm]
