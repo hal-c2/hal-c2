@@ -1101,9 +1101,10 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     project = {p, "claudeAgent"}
 
     # The facts are rendered in time; tool pruning's read of the thread's history
-    # then holds the ask until its deadline has passed.
-    deadline = System.monotonic_time(:millisecond) + 250
-    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :hold_read, ["other", deadline]})
+    # then carries the ask past its deadline.
+    state = %{state | clock: fn -> Process.get(:now, 0) end}
+    deadline = 100
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :pass_deadline, ["other", deadline]})
 
     late =
       try do
@@ -1119,7 +1120,7 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert late.seeded[{"other", project}] == :read
 
     run = %{run | "runId" => "o2"}
-    deadline = System.monotonic_time(:millisecond) + 60_000
+    deadline = 60_000
 
     {:reply, shape, state, {:continue, :save_staged}} =
       TokenEconomizer.handle_call({:shape_run, run, deadline}, nil, late)
@@ -1130,11 +1131,9 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert state.shaped[{"other", project}] == Prune.candidate_tools(unit) -- ["CronCreate"]
   end
 
-  @doc "A `:streams_hook` that holds a read of `thread`'s stream until `deadline` has passed."
-  def hold_read(thread, deadline, :ensured, thread),
-    do: Process.sleep(max(deadline - System.monotonic_time(:millisecond) + 1, 0))
-
-  def hold_read(_thread, _deadline, _stage, _stream_id), do: :ok
+  @doc "A `:streams_hook` under which a read of `thread`'s stream ends past `deadline`."
+  def pass_deadline(thread, deadline, :ensured, thread), do: Process.put(:now, deadline + 1)
+  def pass_deadline(_thread, _deadline, _stage, _stream_id), do: :ok
 
   # Project `p` with CronCreate turned off, and the fact that ruff is not installed
   # learned from four turns; and the text that fact is given as.

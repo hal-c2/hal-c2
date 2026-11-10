@@ -148,6 +148,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         "drops a turn whose run the MC says ended, its end lost, closing it as the next turn's start does (`hear-start`, `close`): prop/hal_c2/token_economizer_plugin_prop_test.exs",
       "HalC2Plugins.TokenEconomizer state :active?" =>
         "how a sweep asks the MC whether a run is under way",
+      "HalC2Plugins.TokenEconomizer state :clock" =>
+        "the time a conversation's shaping checks its deadline against",
       "HalC2Plugins.TokenEconomizer state :ended" =>
         "the runs the last sweep found ended, which decide only when a lost end's turn is dropped",
       "HalC2Plugins.TokenEconomizer state :sweep" => "the next sweep's timer",

@@ -272,7 +272,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   defp start_plugin do
     {:ok, plugin} = TokenEconomizer.init(settings(Process.get(:mode)))
-    Process.put(:plugin, plugin)
+    # Time stands still: a conversation is shaped in time or past its deadline as the
+    # command says, never by how long the step took.
+    Process.put(:plugin, %{plugin | clock: fn -> 0 end})
   end
 
   defp stop_plugin do
@@ -928,7 +930,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       partial = for {t, marks} <- partial, do: {t, Enum.map(marks, & &1["run"])}
 
       before = Process.get(:plugin)
-      shape = if new?, do: call({:shape_run, event, System.monotonic_time(:millisecond) + within})
+      shape = if new?, do: call({:shape_run, event, within})
       plugin = Process.get(:plugin)
 
       # Past its deadline nothing is staged and no loaded set recorded for it.

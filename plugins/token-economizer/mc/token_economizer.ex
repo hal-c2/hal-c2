@@ -291,6 +291,9 @@ defmodule HalC2Plugins.TokenEconomizer do
        # Whether a run is under way, as the MC says (`Host.run_active?/3`); the runs of
        # turns the last sweep found ended, as {thread id, run id}; the next sweep's timer.
        active?: &Host.run_active?(@id, &1, &2),
+       # The time, in ms, a conversation's shaping checks its deadline against
+       # (`shape_run/2` sets the deadline on the same clock).
+       clock: fn -> System.monotonic_time(:millisecond) end,
        ended: MapSet.new(),
        sweep: arm(nil)
      }}
@@ -405,7 +408,7 @@ defmodule HalC2Plugins.TokenEconomizer do
     # ask past its deadline: the answer then never reaches the conversation, so it
     # is staged no facts and keeps the loaded set it had; what the read learned stays.
     {reply, ids, state} =
-      if System.monotonic_time(:millisecond) <= deadline do
+      if in_time?(state, deadline) do
         case Map.merge(facts || %{}, denied || %{}) do
           reply when reply == %{} -> {nil, ids, state}
           reply -> {reply, ids, state}
@@ -453,15 +456,14 @@ defmodule HalC2Plugins.TokenEconomizer do
   # The facts a run is given, and their ids; nil ids when it is given none:
   # learning off, no project, or past its deadline.
   defp shape(state, run, deadline) do
-    if micro_on?(state) and is_binary(run["projectId"]) and
-         System.monotonic_time(:millisecond) <= deadline do
+    if micro_on?(state) and is_binary(run["projectId"]) and in_time?(state, deadline) do
       {skills, state} = skills_for(state, run["projectId"])
       {text, skills} = EnvFacts.render(skills)
       state = put_in(state.skills[run["projectId"]], skills)
 
       # The render itself can cross the deadline (a project's first load):
       # past it the answer is discarded, so nothing was given.
-      if System.monotonic_time(:millisecond) <= deadline,
+      if in_time?(state, deadline),
         do:
           {if(text == "", do: nil, else: %{"context" => text}), EnvFacts.injected_ids(skills),
            state},
@@ -470,6 +472,8 @@ defmodule HalC2Plugins.TokenEconomizer do
       {nil, nil, state}
     end
   end
+
+  defp in_time?(state, deadline), do: state.clock.() <= deadline
 
   @impl GenServer
   def handle_continue(:save_staged, state) do
