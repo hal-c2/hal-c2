@@ -62,12 +62,27 @@ impl Action {
     }
 }
 
+/// A line a toast lists under its text, with a button of its own (a
+/// provider update per environment): `kind` is idle, loading, success,
+/// failed or unchanged, and `action` the button's label, none when empty.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Row {
+    pub id: String,
+    pub label: String,
+    pub text: String,
+    pub kind: String,
+    pub action: String,
+}
+
 struct Toast {
     id: String,
     kind: String,
     title: String,
     description: String,
     actions: Vec<Action>,
+    rows: Vec<Row>,
+    /// Runs a row's button, by row id ([`Toasts::set_rows`]).
+    run_row: Option<Rc<dyn Fn(&Engine, &str)>>,
     /// Set while its time runs; while the stack is expanded the time left
     /// sits in `remaining` instead.
     deadline: Option<Time>,
@@ -114,6 +129,23 @@ impl Controller for Toasts {
                 .to_owned()
         };
         match action {
+            "notification.rowAction" => {
+                let (id, row_id) = (text("id"), text("rowId"));
+                let run = self.toasts.iter().find(|t| t.id == id).and_then(|toast| {
+                    // A click on a button the row no longer shows (a
+                    // spinner took its place) leaves it be.
+                    toast
+                        .rows
+                        .iter()
+                        .any(|row| row.id == row_id && !row.action.is_empty())
+                        .then(|| toast.run_row.clone())
+                        .flatten()
+                });
+                if let Some(run) = run {
+                    run(engine, &row_id);
+                }
+                true
+            }
             "notification.expand" => {
                 let expanded = payload
                     .get("expanded")
@@ -187,6 +219,8 @@ impl Toasts {
             title: title.into(),
             description: description.into(),
             actions,
+            rows: Vec::new(),
+            run_row: None,
             deadline: None,
             remaining: Duration::ZERO,
             revision: 0,
@@ -307,6 +341,26 @@ impl Toasts {
         toast.description = description.into();
         toast.revision += 1;
         self.publish(engine);
+        true
+    }
+
+    /// The toast's rows, and what a row's button runs, by row id; false
+    /// once the toast is gone.
+    pub fn set_rows(
+        &mut self,
+        engine: &Engine,
+        id: &str,
+        rows: Vec<Row>,
+        run: impl Fn(&Engine, &str) + 'static,
+    ) -> bool {
+        let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) else {
+            return false;
+        };
+        toast.run_row = Some(Rc::new(run));
+        if toast.rows != rows {
+            toast.rows = rows;
+            self.publish(engine);
+        }
         true
     }
 
@@ -498,6 +552,19 @@ impl Toasts {
                         })
                     })
                     .collect();
+                let rows: Vec<Json> = toast
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        json!({
+                            "id": row.id,
+                            "label": row.label,
+                            "text": row.text,
+                            "kind": row.kind,
+                            "action": row.action,
+                        })
+                    })
+                    .collect();
                 json!({
                     "id": toast.id,
                     "type": toast.kind,
@@ -505,6 +572,7 @@ impl Toasts {
                     "description": if toast.description.is_empty() { Json::Null } else { json!(toast.description) },
                     "updateKey": toast.revision,
                     "actions": actions,
+                    "rows": rows,
                 })
             })
             .collect();
