@@ -558,7 +558,9 @@ defmodule HalC2.OpenShellReviewPropTest do
     ctx.left
   end
 
-  # A sandbox without a provider is gone once its deletion is told.
+  # A sandbox without a provider is gone once its deletion is told. Only a name
+  # `mine/0` gave is waited on so: it drops the notices of sandboxes deleted before,
+  # which a step without it could take for its own.
   defp deleted?({:sandbox, name}) do
     ctx = Process.get(:review_prop)
 
