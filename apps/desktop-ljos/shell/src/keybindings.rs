@@ -368,6 +368,8 @@ static COMMANDS: LazyLock<Vec<String>> = LazyLock::new(|| {
             "thread.settle",
             "thread.pin",
             "thread.undo",
+            "space.open",
+            "space.agent.focus",
         ]
         .map(str::to_owned),
     );
@@ -476,6 +478,7 @@ static DEFAULTS: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         ("mod+shift+c", "thread.copyReference", not_terminal),
         ("mod+shift+s", "thread.settle", not_terminal),
         ("mod+shift+p", "thread.pin", not_terminal),
+        ("mod+alt+p", "space.open", not_terminal),
         ("mod+z", "thread.undo", "!terminalFocus && !editableFocus"),
     ]
     .iter()
@@ -829,6 +832,8 @@ pub fn command_label(command: &str) -> String {
         "thread.steerQueuedMessage" => "Queue: Send First Queued Message as Steer",
         "thread.editQueuedMessage" => "Queue: Edit Last Queued Message",
         "thread.copyReference" => "Pull Request: Copy Link or Thread ID",
+        "space.open" => "Space: Open",
+        "space.agent.focus" => "Space: Ask an Agent About the Page",
         _ => "",
     };
     if !special.is_empty() {
