@@ -319,41 +319,83 @@ connections/cluster.feature: Another settings section takes the cluster page's p
 connections/cluster.feature: Back leaves the desktop's cluster page
 connections/cluster.feature: The desktop says when only this machine can open an invite
 connections/cluster.feature: The desktop's settings show this machine's cluster
+connections/connection-health.feature: A blocked environment is tried again when the app returns to the foreground
+connections/connection-health.feature: A brief reconnect is not announced in the thread
 connections/connection-health.feature: A client opened without a network waits for it
 connections/connection-health.feature: A cluster connection resumes each stream from where it stopped
+connections/connection-health.feature: A computer restarting for an update shows the update, not a reconnect warning
+connections/connection-health.feature: A computer still reconnecting after two seconds is named in the thread
+connections/connection-health.feature: A computer that comes back inside the 20 seconds is never offered for disconnecting
+connections/connection-health.feature: A computer that stops connecting during an update can still be reconnected
 connections/connection-health.feature: A connection is ready only after the environment describes itself
+connections/connection-health.feature: A connection that does not answer the check on foregrounding is replaced at once
+connections/connection-health.feature: A connection that is not set up within 15 seconds counts as failed
+connections/connection-health.feature: A connection with nothing to say is kept alive every 25 seconds
 connections/connection-health.feature: A device that lost every network waits and says it is offline
 connections/connection-health.feature: A device that lost one of its two networks keeps trying
+connections/connection-health.feature: A disconnect that fails says why
+connections/connection-health.feature: A dropped connection is reported once, with one way to retry
 connections/connection-health.feature: A dropped connection retries with growing delays
+connections/connection-health.feature: A failed renewal affects only its request
 connections/connection-health.feature: A failed shell subscription is not shown as reconnecting
+connections/connection-health.feature: A kept copy the client cannot read is dropped and never blocks live data
 connections/connection-health.feature: A network that comes back is tried at once
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [a newer protocol than the client, update HAL-C2 on this device]
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [an older protocol than the client, update HAL-C2 on that environment]
+connections/connection-health.feature: A reconnect that fails says why
 connections/connection-health.feature: A reconnect within a second and a half is not shown
 connections/connection-health.feature: A refused credential waits for the user
+connections/connection-health.feature: A request the MC has not answered within 15 seconds is listed in a warning
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.3.2, 1.4.0, does not warn]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.3.2, warns of a version mismatch]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.4.0-nightly.20260901, does not warn]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0-nightly.20260902, 1.4.0-nightly.20260901, warns of a version mismatch]
+connections/connection-health.feature: A shell of the user's that uses the built-in layout reports a dropped connection once
+connections/connection-health.feature: A slow MC finishes opening a thread instead of loading it twice
+connections/connection-health.feature: A slow MC finishes the thread list instead of building it twice
 connections/connection-health.feature: A thread left for longer comes back from what the client kept
 connections/connection-health.feature: A thread left for under five minutes resumes without a snapshot
+connections/connection-health.feature: A thread on a computer that stays unavailable offers to disconnect it after 20 seconds
+connections/connection-health.feature: An action for an environment that is not connected fails by its name
+connections/connection-health.feature: An action waiting for its answer fails when the connection drops
+connections/connection-health.feature: An address that answers as a different environment is not used
 connections/connection-health.feature: An app that starts with its environment out of reach says so at once
 connections/connection-health.feature: An environment on this machine is reached without a network
+connections/connection-health.feature: An expiring credential does not close a healthy connection
+connections/connection-health.feature: An offline computer is named in the thread with a way to reconnect
 connections/connection-health.feature: An offline device waits instead of retrying
+connections/connection-health.feature: Answered requests leave the slow-request warning, which closes when none are waiting
+connections/connection-health.feature: Cached data never overwrites newer live data
 connections/connection-health.feature: Cached data stays readable offline without looking live
+connections/connection-health.feature: Disconnecting from a thread's notice hides that computer and goes home
 connections/connection-health.feature: Foregrounding probes a healthy connection instead of replacing it
 connections/connection-health.feature: Foregrounding wakes a waiting retry
 connections/connection-health.feature: One connection serves every MC of a cluster
+connections/connection-health.feature: Pull request lookups and live subscriptions are never reported as slow
 connections/connection-health.feature: Reconnecting does not repeat the user's actions
+connections/connection-health.feature: Reconnecting to a computer on another version is not taken for an update
 connections/connection-health.feature: Removing an environment clears everything the client kept for it
 connections/connection-health.feature: Subscriptions follow a replaced connection
+connections/connection-health.feature: The 20 seconds start again for another computer
+connections/connection-health.feature: The computer the app runs on cannot be disconnected from a thread [a backend running on this same desktop]
+connections/connection-health.feature: The computer the app runs on cannot be disconnected from a thread [the computer serving this client]
 connections/connection-health.feature: The connection's state is an icon with a word [connecting, circle-dashed, Connecting]
 connections/connection-health.feature: The connection's state is an icon with a word [on another protocol, octagon-alert, Update needed]
 connections/connection-health.feature: The connection's state is an icon with a word [refused its credential, lock, Needs pairing]
 connections/connection-health.feature: The connection's state is an icon with a word [retrying after a drop, refresh-cw, Reconnecting]
 connections/connection-health.feature: The connection's state is an icon with a word [waiting for the network, cloud, Offline]
 connections/connection-health.feature: The environment's status says it is reconnecting, in plain words
+connections/connection-health.feature: The retry delays start over only after a connection has held for 30 seconds [40 seconds, the shortest delay]
+connections/connection-health.feature: The retry delays start over only after a connection has held for 30 seconds [5 seconds, the next longer delay than before]
+connections/connection-health.feature: The slow-request warning lists each waiting request and when it started
 connections/connection-health.feature: The user copies a connection's trace id for a bug report
+connections/connection-health.feature: Updating a provider or the server is reported as slow only after two minutes
+connections/connection-health.feature: What the environment answers decides whether the client keeps trying [the credential lacks a scope the connection needs, stops retrying, The environment credential does not grant the required access.]
+connections/connection-health.feature: What the environment answers decides whether the client keeps trying [the environment answers with an internal error, keeps retrying, The environment could not authorize the connection.]
+connections/connection-health.feature: What the environment answers decides whether the client keeps trying [the environment answers with something that is not a reply, keeps retrying, Remote environment endpoint returned an invalid response.]
+connections/connection-health.feature: What the environment answers decides whether the client keeps trying [the environment has no such authentication endpoint, stops retrying, The environment endpoint could not be found.]
+connections/connection-health.feature: What the environment answers decides whether the client keeps trying [the environment rejects the authentication request, stops retrying, The environment rejected the authentication request.]
+connections/connection-health.feature: What the environment answers decides whether the client keeps trying [the environment says the credential is invalid, stops retrying, The environment credential is invalid.]
 connections/environments.feature: A preference saved by an older build snaps to the nearest choice
 connections/environments.feature: The icon cannot be changed [the environment is not connected, connect to the environment to change its icon]
 connections/environments.feature: The icon cannot be changed [the environment's server predates icons, the server is too old to keep an icon and should update]
