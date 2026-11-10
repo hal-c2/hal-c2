@@ -12,7 +12,7 @@ use ljos::prelude::Engine;
 use crate::bridge::{Acting, Bridge};
 use crate::json::Json;
 use crate::mc::{
-    BytesReply, Mc, OnFrame, OnReady, OnStatus, OnStream, Reply, Resume, Status, StreamId,
+    BytesReply, Mc, OnCall, OnFrame, OnReady, OnStatus, OnStream, Reply, Resume, Status, StreamId,
     StreamMessage, SubId,
 };
 
@@ -245,6 +245,11 @@ impl Mc for WindowMc {
                 *kept = running;
             }
         }));
+    }
+
+    fn on_call(&self, f: OnCall) {
+        // For the shared controllers: a call's life is the app's, not a window's.
+        self.inner.on_call(f);
     }
 
     fn retry_now(&self) {

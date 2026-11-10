@@ -46,6 +46,7 @@ pub mod settings;
 pub mod settings_scope;
 pub mod sidebar;
 pub mod slack_settings;
+pub mod slow_requests;
 pub mod snap_shot;
 pub mod source_control_settings;
 pub mod space;
@@ -206,6 +207,7 @@ pub fn registrations() -> Vec<Registration> {
             &["slackSettings"],
             Scope::Window,
         ),
+        Registration::new::<slow_requests::SlowRequests>("slowRequests", &[], Scope::Window),
         Registration::new::<snap_shot::SnapShot>("snapShot", &["snapShot"], Scope::Shared),
         Registration::new::<source_control_settings::SourceControlSettings>(
             "sourceControlSettings",

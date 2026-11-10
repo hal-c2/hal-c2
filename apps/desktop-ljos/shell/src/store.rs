@@ -47,6 +47,9 @@ struct McRows {
     capabilities: Row,
     environment: Row,
     online: bool,
+    /// The cluster has stopped trying to reach it while it is down
+    /// (`trying` false).
+    given_up: bool,
     /// The version of its rows; no epoch when the MC gave none.
     epoch: String,
     rev: i64,
@@ -397,8 +400,9 @@ impl ShellStore {
                         self.reset_rows(&name, &mut replaced);
                     }
                     self.set_environment(&name, object(mc.get("environment")));
-                    self.mcs.entry(name.clone()).or_default().online =
-                        mc.get("online").and_then(Value::as_bool).unwrap_or(false);
+                    let entry = self.mcs.entry(name.clone()).or_default();
+                    entry.online = mc.get("online").and_then(Value::as_bool).unwrap_or(false);
+                    entry.given_up = mc.get("trying").and_then(Value::as_bool) == Some(false);
                     self.set_version(&name, mc.get("epoch"), mc.get("rev"));
                 }
                 let gone: Vec<String> = self
@@ -439,10 +443,12 @@ impl ShellStore {
                 if frame.get("removed").and_then(Value::as_bool) == Some(true) {
                     self.remove_mc(&mc);
                 } else {
-                    self.mcs.entry(mc).or_default().online = frame
+                    let entry = self.mcs.entry(mc).or_default();
+                    entry.online = frame
                         .get("online")
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
+                    entry.given_up = frame.get("trying").and_then(Value::as_bool) == Some(false);
                 }
             }
             "shell.rows" => {
@@ -779,6 +785,13 @@ impl ShellStore {
     pub fn environment_online(&self, environment_id: &str) -> bool {
         self.serving(environment_id)
             .is_some_and(|(_, mc)| mc.online)
+    }
+
+    /// Whether the cluster still tries to reach the environment's MC: online,
+    /// or down and not given up on. True for one no MC serves.
+    pub fn environment_trying(&self, environment_id: &str) -> bool {
+        self.serving(environment_id)
+            .is_none_or(|(_, mc)| mc.online || !mc.given_up)
     }
 }
 

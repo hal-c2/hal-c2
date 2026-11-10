@@ -17,6 +17,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use hal_c2_mc::stream::Stream;
@@ -57,6 +58,9 @@ impl From<hal_c2_mc::CallError> for McError {
     }
 }
 
+/// What the MC answers a call for a cluster member it cannot reach.
+const UNREACHABLE: &str = "MC unavailable: noconnection";
+
 pub type Reply = Box<dyn FnOnce(&Engine, Result<Json, McError>)>;
 /// What [`Mc::download`] gives: the bytes, or why they could not be read.
 pub type BytesReply = Box<dyn FnOnce(&Engine, Result<Vec<u8>, McError>)>;
@@ -67,6 +71,22 @@ pub type OnFrame = Box<dyn FnMut(&Engine, &Frame)>;
 pub type Resume = Box<dyn FnMut() -> Frame>;
 pub type OnReady = Box<dyn FnMut(&Engine, bool)>;
 pub type OnStatus = Box<dyn FnMut(&Engine, &Status)>;
+/// A call went out or was settled ([`Mc::on_call`]).
+pub type OnCall = Box<dyn FnMut(&Engine, &CallEvent)>;
+
+/// A client RPC's life, for the "Some requests are slow" warning: its id is
+/// the connection's own, the same in both.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CallEvent {
+    Started {
+        id: u64,
+        environment: String,
+        method: String,
+    },
+    Ended {
+        id: u64,
+    },
+}
 /// A stream's events, in order, the last an [`StreamEvent::Ended`].
 pub type OnStream = Box<dyn FnMut(&Engine, StreamEvent)>;
 
@@ -120,6 +140,9 @@ pub trait Mc {
     }
     /// Runs `f` with every new status (phase, readiness, failure, ...).
     fn on_status(&self, _f: OnStatus) {}
+    /// Runs `f` as each [`Mc::call`] goes out and as it is answered or fails
+    /// (McClient's callStarted and callEnded).
+    fn on_call(&self, _f: OnCall) {}
     /// Tries again now, whatever the connection was waiting for.
     fn retry_now(&self) {}
     /// Drops the socket and connects again.
@@ -282,6 +305,30 @@ pub struct Connection {
     stream_queue: StreamQueue,
     streams: RefCell<HashMap<u64, OpenStream>>,
     next_stream: Cell<u64>,
+    calls: Rc<Calls>,
+}
+
+/// Who follows the calls ([`Mc::on_call`]), and the calls that went out
+/// since the last delivery: a call has no engine to tell them with, so they
+/// hear of it in the next [`Connection::deliver`], before its answer.
+#[derive(Default)]
+struct Calls {
+    next: Cell<u64>,
+    started: RefCell<Vec<CallEvent>>,
+    listeners: RefCell<Vec<OnCall>>,
+}
+
+impl Calls {
+    fn notify(&self, engine: &Engine, event: &CallEvent) {
+        // Taken out while they run: one may follow too.
+        let mut running = std::mem::take(&mut *self.listeners.borrow_mut());
+        for f in &mut running {
+            f(engine, event);
+        }
+        let mut kept = self.listeners.borrow_mut();
+        running.append(&mut kept);
+        *kept = running;
+    }
 }
 
 impl Connection {
@@ -305,6 +352,7 @@ impl Connection {
             stream_queue: StreamQueue::default(),
             streams: RefCell::default(),
             next_stream: Cell::new(0),
+            calls: Rc::default(),
         }
     }
 
@@ -323,6 +371,10 @@ impl Connection {
     /// Hands what the I/O thread and the streams said to the callbacks, in
     /// order.
     pub fn deliver(&self, engine: &Engine) {
+        let started = std::mem::take(&mut *self.calls.started.borrow_mut());
+        for event in &started {
+            self.calls.notify(engine, event);
+        }
         let events = self.queue.take();
         if !events.is_empty() {
             let outer = DELIVERING.with(|d| d.borrow_mut().replace(engine.clone()));
@@ -368,9 +420,57 @@ impl Mc for Connection {
     }
 
     fn call(&self, environment: &str, method: &str, payload: Json, reply: Reply) {
+        let client = self.client.downgrade();
+        let addressed = environment.to_owned();
+        let id = self.calls.next.get() + 1;
+        self.calls.next.set(id);
+        let calls = self.calls.clone();
+        let first = {
+            let mut started = calls.started.borrow_mut();
+            started.push(CallEvent::Started {
+                id,
+                environment: environment.to_owned(),
+                method: method.to_owned(),
+            });
+            started.len() == 1
+        };
+        if first
+            && self
+                .queue
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        {
+            (self.wake.lock().unwrap_or_else(|e| e.into_inner()))();
+        }
         self.client
             .call(environment, method, payload, move |result| {
-                with_delivering(|engine| reply(engine, result.map_err(McError::from)));
+                with_delivering(|engine| {
+                    calls.notify(engine, &CallEvent::Ended { id });
+                    let result = result.map_err(|e| {
+                        let mut error = McError::from(e);
+                        // A cluster member the MC cannot reach: named, as the
+                        // user knows it (McClient.cpp's environmentNames).
+                        if error.message == UNREACHABLE {
+                            let environment = match (addressed.is_empty(), client.upgrade()) {
+                                (true, Some(client)) => client.environment(),
+                                _ => addressed,
+                            };
+                            let label = crate::store::with(engine, |s| {
+                                s.environment(&environment)
+                                    .get("label")
+                                    .and_then(Json::as_str)
+                                    .unwrap_or_default()
+                                    .to_owned()
+                            });
+                            let name = if label.is_empty() { environment } else { label };
+                            error.message = format!("{name} is not connected.");
+                        }
+                        error
+                    });
+                    reply(engine, result)
+                });
             });
     }
 
@@ -437,6 +537,10 @@ impl Mc for Connection {
     fn on_status(&self, mut f: OnStatus) {
         self.client
             .on_status(move |status| with_delivering(|engine| f(engine, status)));
+    }
+
+    fn on_call(&self, f: OnCall) {
+        self.calls.listeners.borrow_mut().push(f);
     }
 
     fn retry_now(&self) {

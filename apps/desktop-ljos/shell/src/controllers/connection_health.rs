@@ -419,6 +419,10 @@ impl Controller for ConnectionHealth {
 
 impl ConnectionHealth {
     /// This app's version (the crate's by default).
+    pub fn client_version(&self) -> String {
+        self.client_version.clone()
+    }
+
     pub fn set_client_version(&mut self, engine: &Engine, version: &str) {
         self.client_version = version.to_owned();
         self.update(engine);
@@ -677,6 +681,8 @@ impl ConnectionHealth {
     fn update(&self, engine: &Engine) {
         let status = self.mc.status();
         let reason = status.failure.clone();
+        // What the MC's answer means, when it said: it reads better than the cause.
+        let message = status.failure_message.clone();
         let label = || self.label(&status, engine);
         let problem = store::with(engine, |s| s.problem().to_owned());
         let snapshots = store::with(engine, |s| s.snapshots());
@@ -697,7 +703,12 @@ impl ConnectionHealth {
                     state = "retrying";
                     words = "Reconnecting";
                     title = format!("Reconnecting to {}", label());
-                    detail = format!("{} HAL-C2 keeps trying.", cause(&reason, &label()));
+                    let why = if message.is_empty() {
+                        cause(&reason, &label())
+                    } else {
+                        message.clone()
+                    };
+                    detail = format!("{why} HAL-C2 keeps trying.");
                     can_retry = status.phase == Phase::Retrying;
                 }
             }
@@ -743,13 +754,24 @@ impl ConnectionHealth {
                 words = "Needs pairing";
                 title = format!("{} no longer accepts this device", label());
                 detail = "Pair again with a fresh pairing link from the environment.".to_owned();
+                if !message.is_empty() {
+                    detail = format!("{message} {detail}");
+                }
                 can_retry = true;
             }
             Phase::Blocked => {
                 name = "blocked";
                 state = "blocked";
-                words = "Update needed";
-                if status
+                // Turned away for good by what the environment answered.
+                words = if status.blocked_protocol.is_none() {
+                    "Can't connect"
+                } else {
+                    "Update needed"
+                };
+                if status.blocked_protocol.is_none() {
+                    title = format!("Can't connect to {}", label());
+                    detail = message.clone();
+                } else if status
                     .blocked_protocol
                     .is_some_and(|p| p > hal_c2_mc::PROTOCOL)
                 {
