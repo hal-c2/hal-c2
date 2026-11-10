@@ -2402,7 +2402,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     {projects, state} =
       Enum.map_reduce(ids, state, fn project_id, state ->
-        {_skills, state} = skills_for(state, project_id)
+        state = looked_at(state, project_id)
         {entry(state, project_id), state}
       end)
 
@@ -2410,9 +2410,19 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   defp micro_skills_view(state, project_id) do
-    {_skills, state} = skills_for(state, project_id)
+    state = looked_at(state, project_id)
 
     {%{"mode" => micro_mode(state), "projects" => [entry(state, project_id)]}, state}
+  end
+
+  # Looking reads a held project's file again; a project published since the
+  # plugin started publishes what that changed, so every page sees its hold end.
+  defp looked_at(state, project_id) do
+    {_skills, state} = skills_for(state, project_id)
+
+    if Map.has_key?(state.published_skills, project_id),
+      do: publish_skills(state, project_id),
+      else: state
   end
 
   # A held project's entry also names its file, so a person can repair or remove it.

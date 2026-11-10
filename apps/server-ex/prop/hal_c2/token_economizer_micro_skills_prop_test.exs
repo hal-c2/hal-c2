@@ -1702,7 +1702,9 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
       it a fold, so the hold is what keeps a held one from folding;
     * once the project's entry is published, the last `microSkillsProjects`
       naming it says held as that entry does, so a page listing the projects
-      lists it, held or not; and no process names it twice saying the same.
+      lists it, held or not; and no process names it twice saying the same;
+    * asking for the project by name (a page's Read again), once the process
+      has published it, leaves it named as held exactly while it is.
   """
   # The plugin keeps the micro-skills under the MC's home, which a scratch
   # home sets for the whole VM.
@@ -1752,6 +1754,7 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
         {2, {:call, __MODULE__, :settings, [elements(~w(off envfacts on)), boolean()]}},
         {5, {:call, __MODULE__, :turn, []}},
         {3, {:call, __MODULE__, :forget, []}},
+        {2, {:call, __MODULE__, :read_again, []}},
         {2, {:call, __MODULE__, :garble, []}},
         {1, {:call, __MODULE__, :restart, []}}
       ] ++ if(state.held, do: [{2, {:call, __MODULE__, :repair, []}}], else: [])
@@ -1796,6 +1799,9 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
   defp called(state, {:call, _, :turn, []}, %{fold: fold}) do
     if not state.held and state.micro != "off" and state.import, do: fold != nil, else: true
   end
+
+  defp called(state, {:call, _, :read_again, []}, %{pulsed: pulsed, listed: listed}),
+    do: pulsed == nil or listed == state.held
 
   defp called(_state, _call, _seen), do: true
 
@@ -1865,6 +1871,18 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
     restart()
   end
 
+  # A page asks for the project by name, and the process keeps what that read.
+  def read_again do
+    {:reply, {:ok, _view}, plugin} =
+      TokenEconomizer.handle_call(
+        {:micro_skills, %{"projectId" => "p"}},
+        nil,
+        Process.get(:plugin)
+      )
+
+    seen(plugin)
+  end
+
   # The file reads again, under the running process.
   def repair do
     readable()
@@ -1923,14 +1941,26 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
     {:reply, {:ok, %{"projects" => [entry]}}, _} =
       TokenEconomizer.handle_call({:micro_skills, %{"projectId" => "p"}}, nil, plugin)
 
+    # What looking published is forgotten with the state it left.
+    ignore_published()
+
     %{
       entry: entry,
       fold: plugin.folds["p"],
       file: File.read!(path()),
       entry_held: Process.get(:entry_held, :none),
       listed: Process.get(:listed, :none),
-      repeated: Process.get(:repeated, false)
+      repeated: Process.get(:repeated, false),
+      pulsed: Process.get(:pulsed)
     }
+  end
+
+  defp ignore_published do
+    receive do
+      {:"$gen_cast", {:publish, "token-economizer", _topic, _value}} -> ignore_published()
+    after
+      0 -> :ok
+    end
   end
 
   # Takes what the plugin published since, in order.

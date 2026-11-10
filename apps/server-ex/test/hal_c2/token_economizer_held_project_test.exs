@@ -112,7 +112,7 @@ defmodule HalC2.TokenEconomizerHeldProjectTest do
     refute Map.has_key?(entry, "file")
   end
 
-  test "a project's turns name it on microSkillsProjects as it first shows and as its hold ends",
+  test "a project is named on microSkillsProjects as it first shows and as its hold ends",
        %{project: p, path: path} do
     # The test stands in for the plugin host, which publishes what it is cast.
     Process.register(self(), HalC2.Plugins)
@@ -125,14 +125,17 @@ defmodule HalC2.TokenEconomizerHeldProjectTest do
     state = turn(state, p, "r2")
     assert projects_published() == []
 
-    # Repaired, the next turn reads the file again and the hold ends.
+    # Repaired and asked for by name (a page's Read again), the hold ends for every page.
     File.rm!(path)
 
     {:reply, {:ok, _view}, state} =
       TokenEconomizer.handle_call({:micro_skills, %{"projectId" => p}}, nil, state)
 
-    state = turn(state, p, "r3")
     assert projects_published() == [%{"projectId" => p, "held" => false}]
+
+    # Its next turn names it no more.
+    state = turn(state, p, "r3")
+    assert projects_published() == []
 
     # Learning in a project already listed is its own topic's alone.
     _state = turn(state, p, "r4")
