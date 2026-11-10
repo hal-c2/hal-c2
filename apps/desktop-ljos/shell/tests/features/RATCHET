@@ -2191,6 +2191,35 @@ space/project-files.feature: The user folds a folder from the keyboard
 space/project-files.feature: The user goes back to the Space's pages in one step
 space/project-files.feature: The user goes from a page to its file
 space/project-files.feature: The user runs the scan from the command palette
+space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the default shell]
+space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the minimal example shell]
+space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the terminal example shell]
+space/prompt.feature: A page's draft can be stashed and brought back
+space/prompt.feature: A page's draft is not a thread's
+space/prompt.feature: A refused ask keeps the user's words and attachments
+space/prompt.feature: A slash on a page's prompt picks the kind of block
+space/prompt.feature: An ask can be started from anywhere the page is [its keybinding]
+space/prompt.feature: An ask can be started from anywhere the page is [the command palette]
+space/prompt.feature: An ask can be started from anywhere the page is [the page's menu]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [a mention of "README.md"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [another model]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [approval for each action]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [high effort]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [planning]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the file "notes.pdf"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the image "sketch.png"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the project "docs"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the skill "review"]
+space/prompt.feature: An ask in another project takes the model the user last used there
+space/prompt.feature: Each page keeps its own draft
+space/prompt.feature: Plain words on a page's prompt write a block
+space/prompt.feature: Starting an ask keeps what the user had written
+space/prompt.feature: Taking @agent back out writes a block again
+space/prompt.feature: The page's prompt edits as the thread's prompt does [rich text]
+space/prompt.feature: The page's prompt edits as the thread's prompt does [vim keys]
+space/prompt.feature: The page's prompt stops its agent as a thread's prompt stops a turn
+space/prompt.feature: The prompt says where an ask would run before it is sent
+space/prompt.feature: Words to @agent on a page's prompt ask an agent
 terminal/composer-context.feature: A one-line selection names a single line
 terminal/composer-context.feature: Adding to chat is not offered where there is no draft to add to
 terminal/composer-context.feature: An excerpt whose text is gone is dropped when the message is sent
