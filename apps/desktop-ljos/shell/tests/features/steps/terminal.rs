@@ -22,7 +22,22 @@ use crate::{expect, fail};
 pub struct Terminal {
     pub summary: Value,
     pub history: String,
+    /// Counts its output; a snapshot carries the latest.
+    pub sequence: i64,
 }
+
+/// What an acking subscription has been sent and not acknowledged.
+#[derive(Default, Clone)]
+pub struct Window {
+    /// (sequence, UTF-8 bytes), oldest first.
+    pub pending: Vec<(i64, usize)>,
+    pub bytes: usize,
+    /// Output was held back because the window was full.
+    pub behind: bool,
+}
+
+/// The MC holds output back once this much is unacknowledged.
+pub const WINDOW_LIMIT: usize = 64 * 1024;
 
 /// The MC's terminal manager: terminals attach with the `terminal` shape and
 /// are listed by `terminals`; `terminal.*` calls are recorded and act on them
@@ -43,6 +58,16 @@ pub struct FakeTerminals {
     pub replies: HashMap<String, String>,
     /// The terminal the steps' right panel tab runs.
     pub panel_terminal: String,
+    /// The list stays silent about a terminal just opened.
+    pub quiet_open: bool,
+    /// A close's `remove` waits in `held_removes`, as if the list had not
+    /// got there yet.
+    pub hold_remove: bool,
+    pub held_removes: Vec<Value>,
+    /// Per acking `terminal` subscription.
+    pub windows: HashMap<i64, Window>,
+    /// Every `ack` frame, in order.
+    pub acks: Vec<Value>,
 }
 
 fn str_of<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -57,7 +82,7 @@ fn terminal_key(input: &Value) -> String {
     )
 }
 
-fn terminal_summary(thread_id: &str, terminal_id: &str, cwd: &str) -> Value {
+pub fn terminal_summary(thread_id: &str, terminal_id: &str, cwd: &str) -> Value {
     json!({
         "threadId": thread_id,
         "terminalId": terminal_id,
@@ -84,7 +109,7 @@ pub fn send_terminal(mc: &mut FakeMc, key: &str, event: &Value) {
 }
 
 /// To the latest `terminals` subscription.
-fn send_terminals(mc: &mut FakeMc, event: &Value) {
+pub fn send_terminals(mc: &mut FakeMc, event: &Value) {
     let Some(id) = mc.subscribers("terminals").last().copied() else {
         return;
     };
@@ -101,6 +126,7 @@ pub fn add_terminal(mc: &mut FakeMc, thread_id: &str, terminal_id: &str, label: 
         Terminal {
             summary: summary.clone(),
             history: String::new(),
+            sequence: 0,
         },
     );
     send_terminals(mc, &json!({"type": "upsert", "terminal": summary}));
@@ -108,13 +134,67 @@ pub fn add_terminal(mc: &mut FakeMc, thread_id: &str, terminal_id: &str, label: 
 
 pub fn print(mc: &mut FakeMc, thread_id: &str, terminal_id: &str, data: &str) {
     let key = format!("{thread_id}/{terminal_id}");
-    mc.part::<FakeTerminals>()
-        .terminals
-        .entry(key.clone())
-        .or_default()
-        .history
-        .push_str(data);
-    send_terminal(mc, &key, &json!({"type": "output", "data": data}));
+    let sequence = {
+        let terminal = mc
+            .part::<FakeTerminals>()
+            .terminals
+            .entry(key.clone())
+            .or_default();
+        terminal.history.push_str(data);
+        terminal.sequence += 1;
+        terminal.sequence
+    };
+    let event = json!({"type": "output", "data": data, "sequence": sequence});
+    for id in mc.subscribers("terminal") {
+        if terminal_key(&mc.shape_of(id)["input"]) != key {
+            continue;
+        }
+        if let Some(window) = mc.part::<FakeTerminals>().windows.get_mut(&id) {
+            if window.bytes >= WINDOW_LIMIT {
+                window.behind = true;
+                continue;
+            }
+            window.pending.push((sequence, data.len()));
+            window.bytes += data.len();
+        }
+        mc.send(&json!({"t": "terminal", "id": id, "event": event}));
+    }
+}
+
+/// The window of the acking subscription attached to "threadId/terminalId".
+pub fn terminal_window(mc: &FakeMc, key: &str) -> Option<Window> {
+    let windows = &mc.peek::<FakeTerminals>()?.windows;
+    mc.subscribers("terminal")
+        .into_iter()
+        .filter(|id| terminal_key(&mc.shape_of(*id)["input"]) == key)
+        .find_map(|id| windows.get(&id).cloned())
+}
+
+/// The terminal as it is now; a window restarts here, and counts its
+/// history.
+fn send_snapshot(mc: &mut FakeMc, id: i64, key: &str) {
+    let fake = mc.part::<FakeTerminals>();
+    let (snapshot, sequence) = {
+        let terminal = fake.terminals.entry(key.to_owned()).or_default();
+        let mut snapshot = terminal.summary.clone();
+        snapshot["history"] = json!(terminal.history);
+        snapshot["sequence"] = json!(terminal.sequence);
+        (snapshot, terminal.sequence)
+    };
+    if let Some(window) = fake.windows.get_mut(&id) {
+        // A snapshot starts the window over: to be acknowledged, but not
+        // counted.
+        *window = Window {
+            pending: vec![(sequence, 0)],
+            bytes: 0,
+            behind: false,
+        };
+    }
+    mc.send(&json!({
+        "t": "terminal",
+        "id": id,
+        "event": {"type": "snapshot", "snapshot": snapshot},
+    }));
 }
 
 pub fn close_terminal(mc: &mut FakeMc, thread_id: &str, terminal_id: &str) {
@@ -123,10 +203,21 @@ pub fn close_terminal(mc: &mut FakeMc, thread_id: &str, terminal_id: &str) {
         return;
     }
     send_terminal(mc, &key, &json!({"type": "closed"}));
-    send_terminals(
-        mc,
-        &json!({"type": "remove", "threadId": thread_id, "terminalId": terminal_id}),
-    );
+    // A new process counts from nothing, and owes nothing.
+    for id in mc.subscribers("terminal") {
+        if terminal_key(&mc.shape_of(id)["input"]) == key {
+            if let Some(window) = mc.part::<FakeTerminals>().windows.get_mut(&id) {
+                *window = Window::default();
+            }
+        }
+    }
+    let remove = json!({"type": "remove", "threadId": thread_id, "terminalId": terminal_id});
+    let fake = mc.part::<FakeTerminals>();
+    if fake.hold_remove {
+        fake.held_removes.push(remove);
+        return;
+    }
+    send_terminals(mc, &remove);
 }
 
 /// The `terminal` subscriptions still attached, by terminal key.
@@ -158,9 +249,12 @@ fn ensure_terminal(mc: &mut FakeMc, input: &Value) -> bool {
         Terminal {
             summary: summary.clone(),
             history: String::new(),
+            sequence: 0,
         },
     );
-    send_terminals(mc, &json!({"type": "upsert", "terminal": summary}));
+    if !fake.quiet_open {
+        send_terminals(mc, &json!({"type": "upsert", "terminal": summary}));
+    }
     true
 }
 
@@ -196,14 +290,42 @@ fn extension(mc: &mut FakeMc) {
             mc.send(&json!({"t": "error", "id": id, "reason": reason}));
             return Ok(());
         }
-        let terminal = &mc.part::<FakeTerminals>().terminals[&terminal_key(&input)];
-        let mut snapshot = terminal.summary.clone();
-        snapshot["history"] = json!(terminal.history);
-        mc.send(&json!({
-            "t": "terminal",
-            "id": id,
-            "event": {"type": "snapshot", "snapshot": snapshot},
-        }));
+        let acks = mc
+            .subscriptions
+            .last()
+            .and_then(|sub| sub.get("acks"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let fake = mc.part::<FakeTerminals>();
+        fake.windows.remove(&id);
+        if acks {
+            fake.windows.insert(id, Window::default());
+        }
+        send_snapshot(mc, id, &terminal_key(&input));
+        Ok(())
+    });
+    mc.on_frame("ack", |mc, frame| {
+        let fake = mc.part::<FakeTerminals>();
+        fake.acks.push(frame.clone());
+        let id = frame["id"].as_i64().unwrap_or(0);
+        let sequence = frame["sequence"].as_i64().unwrap_or(-1);
+        let Some(window) = fake.windows.get_mut(&id) else {
+            return Ok(());
+        };
+        let mut freed = 0;
+        window.pending.retain(|(sent, size)| {
+            if *sent > sequence {
+                return true;
+            }
+            freed += size;
+            false
+        });
+        window.bytes -= freed;
+        // Caught up: it reads the screen afresh rather than what it missed.
+        if window.behind && window.pending.is_empty() {
+            let key = terminal_key(&mc.shape_of(id)["input"]);
+            send_snapshot(mc, id, &key);
+        }
         Ok(())
     });
     mc.on_rpc("terminal.", |mc, rpc| {
@@ -348,6 +470,33 @@ pub fn terminal_call(
             && payload["threadId"] == thread_id
             && payload["terminalId"] == terminal_id)
             .then(|| payload.clone())
+    })
+}
+
+/// The latest `method` call the MC got for the terminal: its payload.
+pub fn last_terminal_call(
+    world: &World,
+    method: &str,
+    thread_id: &str,
+    terminal_id: &str,
+) -> Option<Value> {
+    let fake = world.mc.peek::<FakeTerminals>()?;
+    fake.calls.iter().rev().find_map(|call| {
+        let payload = &call["payload"];
+        (call["method"] == method
+            && payload["threadId"] == thread_id
+            && payload["terminalId"] == terminal_id)
+            .then(|| payload.clone())
+    })
+}
+
+/// How many `method` calls the MC got, for any terminal.
+pub fn terminal_calls_of(world: &World, method: &str) -> usize {
+    world.mc.peek::<FakeTerminals>().map_or(0, |f| {
+        f.calls
+            .iter()
+            .filter(|call| call["method"] == method)
+            .count()
     })
 }
 
@@ -838,9 +987,22 @@ pub fn register(steps: &mut Steps) {
                 let got = terminal_shape(w, &th2, &t2)
                     .map(|s| show(&s))
                     .unwrap_or_else(|| "nothing".to_owned());
+                let shapes: Vec<String> =
+                    w.mc.subscriptions
+                        .iter()
+                        .filter(|sub| sub["shape"]["type"] == "terminal")
+                        .map(|sub| show(&sub["shape"]))
+                        .collect();
                 format!(
-                    "{} to attach {} of {} in {}; got {got}",
-                    c[0], c[1], c[2], c[3]
+                    "{} to attach {} of {} in {}; got {got}; the drawer is {}; \
+                     terminal shapes: {}; shown thread {}",
+                    c[0],
+                    c[1],
+                    c[2],
+                    c[3],
+                    if drawer_open(w) { "open" } else { "closed" },
+                    shapes.join(" | "),
+                    shown_thread(w)
                 )
             },
         )

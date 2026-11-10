@@ -129,6 +129,15 @@ impl McHandle {
         });
     }
 
+    /// Says terminal subscription `id` has taken its output up to `sequence`.
+    pub fn send_ack(&self, connection: u64, id: u64, sequence: i64) {
+        self.send(Command::Ack {
+            connection,
+            id,
+            sequence,
+        });
+    }
+
     /// A client RPC, answered by an [`McEvent::Reply`] for `id`: "not
     /// connected" when the connection is not ready, "disconnected" when it
     /// drops before the MC answers.

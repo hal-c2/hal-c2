@@ -27,6 +27,11 @@ struct Seen {
     link: String,
     item: Option<ObjectId>,
     segments: i32,
+    // The code a diagram or a reply being written has.
+    code: String,
+    // The code block's colours: its fence, and the colours it had before.
+    fence: String,
+    colours: Vec<Option<ljos::prelude::Color>>,
 }
 
 fn name_of(engine: &Engine, item: ObjectId) -> String {
@@ -374,6 +379,95 @@ fn link_point(world: &mut World) -> Outcome<(f64, f64)> {
     Ok(point)
 }
 
+/// Code in a language, and a word it starts with that the language colours.
+fn sample(fence: &str) -> (&'static str, &'static str) {
+    match fence {
+        "py" => ("def refund(order):\n    return order.total", "def"),
+        "exs" => (
+            "defmodule Cart do\n  def total(cart), do: 0\nend",
+            "defmodule",
+        ),
+        "qml" => ("import QtQuick\n\nItem {\n  id: root\n}", "import"),
+        _ => (SOURCE, "const"),
+    }
+}
+
+const LANGUAGES: [(&str, &str); 4] = [
+    ("TypeScript", "ts"),
+    ("Python", "py"),
+    ("Elixir", "exs"),
+    ("QML", "qml"),
+];
+
+fn find_child(world: &World, scope: ObjectId, name: &str) -> Option<ObjectId> {
+    for child in world.engine().children(scope) {
+        if name_of(world.engine(), child) == name {
+            return Some(child);
+        }
+        if let Some(found) = find_child(world, child, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn highlighter_of(world: &World, message: ObjectId) -> Outcome<ObjectId> {
+    let code = one(world, message, "codeText")?;
+    match find_child(world, code, "codeHighlighter") {
+        Some(found) => Ok(found),
+        None => fail!("the code block has no highlighter"),
+    }
+}
+
+fn flag_of(world: &World, item: ObjectId, name: &str) -> bool {
+    world.engine().read_by_name(item, name) == Value::Bool(true)
+}
+
+/// The colour the highlighter gave a line's first character, or none where
+/// it gave none.
+fn line_colour(world: &World, code: ObjectId, line: usize) -> Option<ljos::prelude::Color> {
+    // The spans count bytes of the editor's own text, where a `<br/>` is a
+    // three-byte line separator.
+    let length = int_of(world, code, "length");
+    let Ok(Value::String(shown)) =
+        world
+            .engine()
+            .invoke_by_name(code, "getText", &[Value::Int(0), Value::Int(length)])
+    else {
+        return None;
+    };
+    let shown = shown.as_str();
+    let mut at = 0;
+    for _ in 0..line {
+        let (end, separator) = shown[at..]
+            .char_indices()
+            .find(|(_, c)| matches!(c, '\n' | '\u{2028}' | '\u{2029}'))?;
+        at += end + separator.len_utf8();
+    }
+    if at >= shown.len() {
+        return None;
+    }
+    ljos::item::highlights(world.engine(), code)?
+        .iter()
+        .find(|span| span.range.start == at && span.range.end > span.range.start)
+        .and_then(|span| span.color)
+}
+
+fn coloured_ranges(world: &World, code: ObjectId) -> usize {
+    ljos::item::highlights(world.engine(), code).map_or(0, |spans| spans.len())
+}
+
+/// The newest reply's code block once its highlighter has read what it will.
+fn read_code(world: &mut World) -> Outcome<ObjectId> {
+    let message = reply(world, 1)?;
+    let highlighter = highlighter_of(world, message)?;
+    world.wait_for("the code to be read", move |w| {
+        !flag_of(w, highlighter, "reading")
+    })?;
+    let message = reply(world, 1)?;
+    one(world, message, "codeText")
+}
+
 pub fn register(steps: &mut Steps) {
     // Formatting.
     steps.step(
@@ -426,6 +520,200 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+
+    // Code colours (CodeHighlighter), from the fence's language.
+    steps.step(
+        &format!("the agent's reply has a code block whose fence reads {Q}"),
+        |world, c, _| {
+            world.part::<Seen>().fence = c[0].clone();
+            answer(world, &format!("```{}\n{}\n```", c[0], sample(&c[0]).0))
+        },
+    );
+    steps.step("the user reads the reply", |world, _, _| {
+        reply(world, 1)?;
+        Ok(())
+    });
+    steps.step(
+        "the code block is shown coloured as (TypeScript|Python|Elixir|QML)",
+        |world, c, _| {
+            let fence = LANGUAGES
+                .iter()
+                .find(|(name, _)| *name == c[0])
+                .map_or("", |(_, fence)| *fence);
+            let seen_fence = world.part::<Seen>().fence.clone();
+            expect!(seen_fence == fence, "the fence reads \"{seen_fence}\"");
+            let code = read_code(world)?;
+            let message = reply(world, 1)?;
+            let highlighter = highlighter_of(world, message)?;
+            expect!(
+                flag_of(world, highlighter, "coloured"),
+                "the code is not coloured"
+            );
+            let shown = plain(world, code)?;
+            let keyword = sample(fence).1;
+            expect!(
+                shown.starts_with(keyword) && line_colour(world, code, 0).is_some(),
+                "\"{keyword}\" is not coloured in \"{shown}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step("the code block is shown as plain text", |world, _, _| {
+        let code = read_code(world)?;
+        let shown = plain(world, code)?;
+        expect!(shown == SOURCE, "the code reads \"{shown}\"");
+        let message = reply(world, 1)?;
+        let highlighter = highlighter_of(world, message)?;
+        let ranges = coloured_ranges(world, code);
+        expect!(
+            !flag_of(world, highlighter, "coloured") && ranges == 0,
+            "the code has {ranges} coloured runs"
+        );
+        Ok(())
+    });
+    steps.step(
+        "the agent is writing a code block whose fence reads \"ts\"",
+        |world, _, _| {
+            start_writing(
+                world,
+                "Totals:\n\n```ts\nconst a = 1;\nconst b = 2;\nconst c = 3;\n",
+            )
+        },
+    );
+    steps.step("its first three lines are coloured", |world, _, _| {
+        let message = reply(world, 2)?;
+        let code = one(world, message, "codeText")?;
+        world.wait_for_with(
+            move |w| {
+                line_colour(w, code, 0).is_some()
+                    && line_colour(w, code, 1).is_some()
+                    && line_colour(w, code, 2).is_some()
+            },
+            move |w| {
+                let spans: Vec<String> = ljos::item::highlights(w.engine(), code)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|span| format!("{:?}", span.range))
+                    .collect();
+                format!(
+                    "three coloured lines in \"{}\"; spans {}",
+                    plain(w, code).unwrap_or_default(),
+                    spans.join(" ")
+                )
+            },
+        )?;
+        let colours = (0..3).map(|line| line_colour(world, code, line)).collect();
+        let seen = world.part::<Seen>();
+        seen.item = Some(code);
+        seen.colours = colours;
+        Ok(())
+    });
+    steps.step("the agent adds a fourth line", |world, _, _| {
+        write(world, "const d = 4;")
+    });
+    steps.step(
+        "the first three lines stay coloured while the new line waits to be coloured",
+        |world, _, _| {
+            let code = world.part::<Seen>().item;
+            let Some(code) = code else {
+                fail!("the code block was drawn anew");
+            };
+            let message = reply(world, 2)?;
+            expect!(
+                one(world, message, "codeText")? == code,
+                "the code block was drawn anew"
+            );
+            world.wait_for_with(
+                move |w| plain(w, code).is_ok_and(|shown| shown.ends_with("const d = 4;")),
+                move |w| {
+                    format!(
+                        "the fourth line; the code reads \"{}\"",
+                        plain(w, code).unwrap_or_default()
+                    )
+                },
+            )?;
+            let message = reply(world, 2)?;
+            let highlighter = highlighter_of(world, message)?;
+            world.wait_for("the code to be read", move |w| {
+                !flag_of(w, highlighter, "reading")
+            })?;
+            let now: Vec<_> = (0..3).map(|line| line_colour(world, code, line)).collect();
+            expect!(
+                now == world.part::<Seen>().colours,
+                "the first three lines changed colour"
+            );
+            expect!(
+                line_colour(world, code, 3).is_none(),
+                "the line being written is coloured"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the block does not flash back to plain text",
+        |world, _, _| {
+            // Ljós colours as it paints, so there is no plain interval to spy:
+            // the block is still the coloured one its lines were read from.
+            let message = reply(world, 2)?;
+            let highlighter = highlighter_of(world, message)?;
+            expect!(
+                flag_of(world, highlighter, "coloured"),
+                "the block went plain"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user switches the app from light to dark",
+        |world, _, _| {
+            use hal_c2_shell::controllers::settings::Settings;
+            use hal_c2_shell::controllers::theme::{Mode, Themes};
+            let appearance = world.with::<Themes, _>(|t, _| t.appearance())?;
+            expect!(appearance == "light", "the app is drawn {appearance}");
+            let code = read_code(world)?;
+            let colour = line_colour(world, code, 0);
+            let seen = world.part::<Seen>();
+            seen.item = Some(code);
+            seen.colours = vec![colour];
+            let set = world.with::<Themes, _>(|t, e| {
+                t.set_mode(e, Mode::parse("dark").unwrap_or(Mode::Dark))
+            })?;
+            expect!(set, "{}", Settings::of(world.engine()).device_error());
+            world.wait_for("the app to be drawn dark", |w| {
+                w.with::<Themes, _>(|t, _| t.appearance() == "dark")
+                    .unwrap_or(false)
+            })
+        },
+    );
+    steps.step(
+        "the code block is coloured for the dark theme",
+        |world, _, _| {
+            let Some(code) = world.part::<Seen>().item else {
+                fail!("the code block was drawn anew");
+            };
+            let before = world.part::<Seen>().colours.first().copied().flatten();
+            world.wait_for_with(
+                move |w| line_colour(w, code, 0).is_some_and(|now| Some(now) != before),
+                move |w| {
+                    format!(
+                        "\"const\" in another colour than {before:?}; it is {:?}",
+                        line_colour(w, code, 0)
+                    )
+                },
+            )
+        },
+    );
+    steps.step("its code was not read again", |world, _, _| {
+        // Reading is synchronous with painting (code_highlighter.rs):
+        // nothing is ever being read in the background.
+        let message = reply(world, 1)?;
+        let highlighter = highlighter_of(world, message)?;
+        expect!(
+            !flag_of(world, highlighter, "reading"),
+            "the code is being read again"
+        );
+        Ok(())
+    });
 
     // Citing: the selection's Cite, and the action ThreadView sends for it.
     steps.step(
@@ -521,6 +809,58 @@ pub fn register(steps: &mut Steps) {
                 fail!("select: {error}");
             }
             world.pump()
+        },
+    );
+    steps.step(&format!("the reply's words read {Q}"), |world, c, _| {
+        let message = reply(world, 1)?;
+        let prose = one(world, message, "markdownProse")?;
+        let read = readable(&plain(world, prose)?);
+        expect!(read == c[0], "the reply reads \"{read}\"");
+        Ok(())
+    });
+    steps.step(
+        &format!("{Q} stays on one line however narrow the timeline is"),
+        |world, c, _| {
+            let brick = timeline_brick(world)?;
+            let Some(timeline) = brick.root(world) else {
+                fail!("the timeline brick has no root");
+            };
+            let wide = f64::from(int_of(world, timeline, "width"));
+            let mut wrapped = 0;
+            let mut width = wide;
+            while width >= 320.0 {
+                brick.write(world, timeline, "width", Value::from(width))?;
+                world.sync()?;
+                let message = reply(world, 1)?;
+                let prose = one(world, message, "markdownProse")?;
+                let all = plain(world, prose)?;
+                let Some((start, end)) = drawn_range(&all, &c[0]) else {
+                    fail!("\"{}\" is not shown in \"{all}\"", c[0]);
+                };
+                let rect_at = |world: &World, at: usize| -> Outcome<f64> {
+                    match world.engine().invoke_by_name(
+                        prose,
+                        "positionToRectangle",
+                        &[Value::Int(at as i32)],
+                    ) {
+                        Ok(Value::Rect(rect)) => Ok(rect.y),
+                        Ok(other) => fail!("positionToRectangle gave {other:?}"),
+                        Err(error) => fail!("positionToRectangle: {error}"),
+                    }
+                };
+                expect!(
+                    rect_at(world, start)? == rect_at(world, end - 1)?,
+                    "it splits across lines at {width} wide"
+                );
+                if int_of(world, prose, "lineCount") > 1 {
+                    wrapped += 1;
+                }
+                width -= 7.0;
+            }
+            brick.write(world, timeline, "width", Value::from(wide))?;
+            world.sync()?;
+            expect!(wrapped > 0, "the reply never wrapped");
+            Ok(())
         },
     );
     steps.step(
@@ -849,6 +1189,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the agent is writing a code block", |world, _, _| {
+        world.part::<Seen>().code = "def refund(order):\n    return order.total".to_owned();
         start_writing(
             world,
             "Checking the refund path:\n\n```py\ndef refund(order):\n    return order.total",
@@ -870,9 +1211,15 @@ pub fn register(steps: &mut Steps) {
             );
             let code = one(world, message, "codeText")?;
             let shown = plain(world, code)?;
+            let wanted = world.part::<Seen>().code.clone();
             expect!(
-                shown == "def refund(order):\n    return order.total",
+                flag_of(world, code, "visible") && shown == wanted,
                 "the code reads \"{shown}\""
+            );
+            // A diagram not finished yet is not drawn, nor asked for.
+            expect!(
+                super::mermaid::asked(world)? == 0,
+                "the MC was asked to draw a diagram being written"
             );
             world.part::<Seen>().item = Some(code);
             Ok(())
@@ -897,6 +1244,125 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+
+    steps.step(
+        "the agent is still writing a \"mermaid\" code block",
+        |world, _, _| {
+            world.part::<Seen>().code = super::mermaid::FLOWCHART.to_owned();
+            start_writing(
+                world,
+                &format!(
+                    "How an order is paid:\n\n```mermaid\n{}",
+                    super::mermaid::FLOWCHART
+                ),
+            )
+        },
+    );
+
+    // Mermaid diagrams (the mermaid steps answer the MC's part).
+    steps.step(
+        "the agent answers with a \"mermaid\" code block holding a flowchart( with an unclosed bracket)?",
+        |world, c, _| {
+            let code = if c[0].is_empty() {
+                super::mermaid::FLOWCHART
+            } else {
+                super::mermaid::BROKEN_FLOWCHART
+            };
+            world.part::<Seen>().code = code.to_owned();
+            answer(
+                world,
+                &format!("How an order is paid:\n\n```mermaid\n{code}\n```"),
+            )
+        },
+    );
+    steps.step(
+        "on the desktop and the phone the flowchart is drawn in place of the code block",
+        |world, _, _| {
+            let brick = timeline_brick(world)?;
+            let message = reply(world, 2)?;
+            world.wait_for_with(
+                move |w| super::mermaid::drawn(w, brick).len() == 1,
+                move |w| {
+                    let images: Vec<String> = super::mermaid::shown(w, brick, "mermaidImage")
+                        .into_iter()
+                        .map(|image| format!("{:?}", w.engine().read_by_name(image, "status")))
+                        .collect();
+                    format!(
+                        "the diagram to be drawn; the MC was asked {} times, images [{}]",
+                        w.mc.calls
+                            .iter()
+                            .filter(|rpc| rpc.method == "mermaid.render")
+                            .count(),
+                        images.join(", ")
+                    )
+                },
+            )?;
+            let code = one(world, message, "codeText")?;
+            expect!(
+                !flag_of(world, code, "visible"),
+                "the diagram's source shows beside it"
+            );
+            let asked = super::mermaid::asked(world)?;
+            expect!(asked == 1, "the MC was asked {asked} times");
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user can switch to the diagram's source and copy it",
+        |world, _, _| {
+            let brick = timeline_brick(world)?;
+            let message = reply(world, 2)?;
+            let toggle = one(world, message, "diagramSource")?;
+            click(world, toggle)?;
+            let code = one(world, message, "codeText")?;
+            world.wait_for("the source to be shown in place of the diagram", move |w| {
+                flag_of(w, code, "visible") && super::mermaid::drawn(w, brick).is_empty()
+            })?;
+            let wanted = world.part::<Seen>().code.clone();
+            let shown = plain(world, code)?;
+            expect!(shown == wanted, "the source reads \"{shown}\"");
+            world.set_clipboard("");
+            let copy = one(world, message, "copyCode")?;
+            click(world, copy)?;
+            world.wait_for_with(
+                move |w| w.clipboard() == wanted,
+                move |w| {
+                    format!(
+                        "the source to be copied; the clipboard has \"{}\"",
+                        w.clipboard()
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the diagram's source is shown as a code block",
+        |world, _, _| {
+            let brick = timeline_brick(world)?;
+            let message = reply(world, 2)?;
+            let code = one(world, message, "codeText")?;
+            world.wait_for("the MC to answer", move |w| {
+                w.mc.calls
+                    .iter()
+                    .filter(|rpc| rpc.method == "mermaid.render")
+                    .count()
+                    == 1
+                    && !brick.shows(w, "Drawing the diagram…").unwrap_or(false)
+            })?;
+            let wanted = world.part::<Seen>().code.clone();
+            let shown = plain(world, code)?;
+            expect!(
+                flag_of(world, code, "visible") && shown == wanted,
+                "the code block reads \"{shown}\""
+            );
+            let toggle = one(world, message, "diagramSource")?;
+            expect!(
+                !flag_of(world, toggle, "visible"),
+                "a diagram that was not drawn offers to show its source"
+            );
+            Ok(())
+        },
+    );
 
     // Alerts.
     steps.step(

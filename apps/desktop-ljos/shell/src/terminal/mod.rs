@@ -159,6 +159,12 @@ struct State {
     sized: bool,
     /// A left press is selecting, from this cell.
     selecting: Option<(u16, u16)>,
+    /// A selecting drag held past the top (-1) or bottom (1) edge scrolls
+    /// the history a row at a time, by generation as the blink does.
+    edge: i32,
+    edge_generation: u64,
+    /// Where the selecting drag last was.
+    drag_at: kurbo::Point,
     /// The button whose press was sent to the program as a mouse report.
     reported: Option<MouseButton>,
     /// The cell last reported to a program that asked for any motion.
@@ -170,6 +176,11 @@ struct State {
     preedit: String,
     last_click: Option<(Time, (u16, u16))>,
     clicks: u8,
+    /// The cursor is in the off half of a blink.
+    blink_off: bool,
+    /// The blink timer due, by generation: a newer one supersedes it.
+    blink_due: Option<u64>,
+    blink_generation: u64,
 }
 
 #[derive(QmlObject)]
@@ -215,6 +226,10 @@ pub struct Terminal {
     pub working_directory: Atom,
     #[qml(notify, readonly)]
     pub has_selection: bool,
+    /// Why the terminal engine could not start; empty while it runs. A new
+    /// Terminal tries again.
+    #[qml(notify, readonly)]
+    pub error: Atom,
     /// History and screen in rows: the view shows
     /// `[scrollOffset, scrollOffset + rows)` of `scrollTotal`.
     #[qml(notify, readonly)]
@@ -227,8 +242,8 @@ pub struct Terminal {
     /// to it rather than selecting (qml-ghostty's).
     #[qml(notify, readonly)]
     pub mouse_tracking: bool,
-    /// Whether the cursor may blink (qml-ghostty's). The cursor is drawn
-    /// steady for now (hal-c2/hal-c2#1193), so this is kept and read back.
+    /// Whether the cursor may blink (qml-ghostty's): it blinks while the
+    /// item has the keyboard and the program asked for a blinking cursor.
     #[qml(notify)]
     pub cursor_blink: bool,
     /// The toolkit's macOS keys (Cmd reported as Control, Control as Meta)
@@ -268,6 +283,7 @@ impl Default for Terminal {
             title: Atom::from(""),
             working_directory: Atom::from(""),
             has_selection: false,
+            error: Atom::from(""),
             scroll_total: 24.0,
             scroll_offset: 0.0,
             at_bottom: true,
@@ -417,24 +433,41 @@ impl Terminal {
 /// not a terminal or the terminal could not be made. `f` must not call back
 /// into the engine.
 fn vt_mut<R>(e: &Engine, me: ObjectId, f: impl FnOnce(&Vt, &mut State) -> R) -> Option<R> {
-    e.with_mut::<Terminal, _>(me, |t| {
-        if t.state.vt.is_none() {
-            let (w, h) = t.state.cell_px;
-            let size = Size::new(
-                t.columns.clamp(1, 1000) as u16,
-                t.rows.clamp(1, 1000) as u16,
-            )
-            .with_cell(w.max(1), h.max(1));
-            let limit = t.scrollback_limit.max(0) as usize;
-            t.state.vt = Vt::new(size, limit, t.state.theme.clone());
-        }
-        let vt = t.state.vt.take()?;
-        let out = f(&vt, &mut t.state);
-        t.state.vt = Some(vt);
-        Some(out)
-    })
-    .ok()
-    .flatten()
+    let mut failed = false;
+    let out = e
+        .with_mut::<Terminal, _>(me, |t| {
+            if t.state.vt.is_none() && !t.error.is_empty() {
+                return None;
+            }
+            if t.state.vt.is_none() {
+                let (w, h) = t.state.cell_px;
+                let size = Size::new(
+                    t.columns.clamp(1, 1000) as u16,
+                    t.rows.clamp(1, 1000) as u16,
+                )
+                .with_cell(w.max(1), h.max(1));
+                let limit = t.scrollback_limit.max(0) as usize;
+                t.state.vt = Vt::new(size, limit, t.state.theme.clone());
+                failed = t.state.vt.is_none();
+            }
+            let vt = t.state.vt.take()?;
+            let out = f(&vt, &mut t.state);
+            t.state.vt = Some(vt);
+            Some(out)
+        })
+        .ok()
+        .flatten();
+    if failed {
+        fail(e, me, "Could not create a terminal");
+    }
+    out
+}
+
+/// Gives up on the terminal engine of `me`, saying `why` in its `error`:
+/// it stops drawing and taking input until a new Terminal replaces it.
+pub fn fail(e: &Engine, me: ObjectId, why: &str) {
+    let _ = e.with_mut::<Terminal, _>(me, |t| t.state.vt = None);
+    put(e, me, Terminal::ERROR, Atom::from(why));
 }
 
 /// Sets a readonly property, notifying only when it changes.
@@ -661,6 +694,7 @@ fn look(e: &Engine, me: ObjectId, style: TextStyle, cell: (f64, f64)) -> Look {
         style,
         cell,
         focused: item::prop(e, me, Item::ACTIVE_FOCUS),
+        blink_off: false,
     }
 }
 
@@ -678,27 +712,78 @@ impl ItemPaint for Screen {
 fn read_paint(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
     let style = font_style(e, me);
     let cell = item::with_text_engine(|te| paint::cell_size(te, &style)).unwrap_or((0.0, 0.0));
-    let look = look(e, me, style, cell);
+    let mut look = look(e, me, style, cell);
     let background = look.background;
+    let may_blink = look.focused && item::prop(e, me, Terminal::CURSOR_BLINK);
     // The engine's store is borrowed in `vt_mut`, and the text engine must
     // be free for anything that reads properties: lay out last.
     let painted = e
         .with_mut::<Terminal, _>(me, |t| {
-            let vt = t.state.vt.as_mut()?;
+            let state = &mut t.state;
+            let vt = state.vt.as_mut()?;
             vt.grid.update(&vt.session).ok()?;
-            let preedit = &t.state.preedit;
-            item::with_text_engine(|te| {
+            let blinking = may_blink && vt.grid.cursor.blinking;
+            if !blinking {
+                state.blink_off = false;
+            }
+            look.blink_off = state.blink_off;
+            let timer = (blinking && state.blink_due.is_none()).then(|| {
+                state.blink_generation += 1;
+                state.blink_due = Some(state.blink_generation);
+                state.blink_generation
+            });
+            let preedit = &state.preedit;
+            let painted = item::with_text_engine(|te| {
                 let mut painted = paint::build(&vt.grid, &look, te);
                 paint::compose(&mut painted, &vt.grid, &look, te, preedit);
                 painted
-            })
+            })?;
+            Some((painted, timer))
         })
         .ok()
-        .flatten();
+        .flatten()
+        .map(|(painted, timer)| {
+            if let Some(generation) = timer {
+                blink_later(e, me, generation);
+            }
+            painted
+        });
     Rc::new(Screen(painted.unwrap_or_else(|| Painted {
         background,
         ..Default::default()
     })))
+}
+
+/// The cursor flash time `Qt.styleHints` gives, in milliseconds: a whole
+/// blink, on and off.
+pub fn cursor_flash_ms(e: &Engine) -> u64 {
+    let flash = ljos::style_hints(e).map_or(0, |hints| {
+        item::prop(e, hints, ljos::prelude::StyleHints::CURSOR_FLASH_TIME)
+    });
+    u64::try_from(flash).unwrap_or(0).max(200)
+}
+
+/// Flips the cursor's blink in half the cursor flash time, if
+/// timer `generation` is still the one due then. Painting again schedules
+/// the next half while the cursor may still blink.
+fn blink_later(e: &Engine, me: ObjectId, generation: u64) {
+    let half = cursor_flash_ms(e) / 2;
+    e.call_at(e.now() + Duration::from_millis(half), move |e| {
+        let flipped = e
+            .with_mut::<Terminal, _>(me, |t| {
+                let state = &mut t.state;
+                if state.blink_due != Some(generation) {
+                    return false;
+                }
+                state.blink_due = None;
+                state.blink_off = !state.blink_off;
+                true
+            })
+            .unwrap_or(false);
+        if flipped {
+            item::repaint(e, me);
+        }
+    });
 }
 
 // Keys.
@@ -976,7 +1061,64 @@ fn pointer_moved(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) 
             }
         });
         flush(e, me);
+        hold_at_edge(e, me, at);
     }
+}
+
+/// Starts or stops scrolling the history under a selecting drag, as the
+/// pointer goes past an edge of the grid or comes back.
+fn hold_at_edge(e: &Engine, me: ObjectId, at: kurbo::Point) {
+    let (_, _, pad) = metrics(e, me);
+    let height = e.read(me, Item::HEIGHT.index).to_number();
+    let edge = if at.y < pad {
+        -1
+    } else if at.y > height - pad {
+        1
+    } else {
+        0
+    };
+    let start = e
+        .with_mut::<Terminal, _>(me, |t| {
+            let state = &mut t.state;
+            state.drag_at = at;
+            if state.edge == edge {
+                return None;
+            }
+            state.edge = edge;
+            state.edge_generation += 1;
+            (edge != 0).then_some(state.edge_generation)
+        })
+        .ok()
+        .flatten();
+    if let Some(generation) = start {
+        edge_later(e, me, generation);
+    }
+}
+
+/// Scrolls a row toward the held edge and extends the selection there,
+/// while timer `generation` is still the one due.
+fn edge_later(e: &Engine, me: ObjectId, generation: u64) {
+    const EVERY: Duration = Duration::from_millis(50);
+    e.call_at(e.now() + EVERY, move |e| {
+        let held = e
+            .with::<Terminal, _>(me, |t| {
+                let state = &t.state;
+                (state.edge_generation == generation && state.selecting.is_some())
+                    .then_some((state.edge, state.drag_at))
+            })
+            .ok()
+            .flatten();
+        let Some((edge, at)) = held else {
+            return;
+        };
+        scroll(e, me, Scroll::Lines(edge as isize));
+        let cell = cell_at(e, me, at);
+        vt_mut(e, me, |vt, _| {
+            let _ = vt.session.select_extend(cell.0, cell.1);
+        });
+        flush(e, me);
+        edge_later(e, me, generation);
+    });
 }
 
 /// The pointer moved over the item with no button down: a program that asked
@@ -996,9 +1138,11 @@ fn hover_moved(e: &Engine, me: ObjectId, at: kurbo::Point) {
 }
 
 fn pointer_release(e: &Engine, me: ObjectId, ev: &PointerEvent, at: kurbo::Point) {
-    let Ok((reported, selecting)) =
-        e.with_mut::<Terminal, _>(me, |t| (t.state.reported.take(), t.state.selecting.take()))
-    else {
+    let Ok((reported, selecting)) = e.with_mut::<Terminal, _>(me, |t| {
+        t.state.edge = 0;
+        t.state.edge_generation += 1;
+        (t.state.reported.take(), t.state.selecting.take())
+    }) else {
         return;
     };
     if let Some(b) = reported {
@@ -1020,6 +1164,8 @@ fn pointer_cancel(e: &Engine, me: ObjectId) {
     let _ = e.with_mut::<Terminal, _>(me, |t| {
         t.state.selecting = None;
         t.state.reported = None;
+        t.state.edge = 0;
+        t.state.edge_generation += 1;
     });
 }
 

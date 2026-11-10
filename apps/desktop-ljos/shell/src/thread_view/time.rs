@@ -330,13 +330,18 @@ pub fn format_duration(ms: i64) -> String {
     if ms < 60_000 {
         return format!("{}s", (ms as f64 / 1000.0).round() as i64);
     }
-    let minutes = ms / 60_000;
-    let seconds = ((ms % 60_000) as f64 / 1000.0).round() as i64;
-    match seconds {
-        0 => format!("{minutes}m"),
-        60 => format!("{}m", minutes + 1),
-        _ => format!("{minutes}m {seconds}s"),
+    let total = (ms as f64 / 1000.0).round() as i64;
+    let mut parts = Vec::new();
+    if total >= 3600 {
+        parts.push(format!("{}h", total / 3600));
     }
+    if total % 3600 >= 60 {
+        parts.push(format!("{}m", total % 3600 / 60));
+    }
+    if total % 60 > 0 {
+        parts.push(format!("{}s", total % 60));
+    }
+    parts.join(" ")
 }
 
 #[cfg(test)]
@@ -441,6 +446,7 @@ mod tests {
         assert_eq!(format_duration(9_960), "10s");
         assert_eq!(format_duration(12_400), "12s");
         assert_eq!(format_duration(120_000), "2m");
+        assert_eq!(format_duration(3_605_000), "1h 5s");
         assert_eq!(format_duration(125_000), "2m 5s");
         assert_eq!(format_duration(179_700), "3m");
     }

@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use hal_c2_shell::bridge::Bridge;
+use hal_c2_shell::controller::{self, MAIN};
 use hal_c2_shell::controllers::alerts::{AlertController, Presenter, TOGGLE_MUTE};
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings::Settings;
@@ -114,6 +114,10 @@ struct FakeAlerts {
     current: String,
     /// The id of the last in-app alert.
     last_toast: String,
+    /// The ids of the windows asked to come to the front.
+    raised: Rc<RefCell<Vec<String>>>,
+    /// What the first window showed before the second was used.
+    first_shown: String,
 }
 
 fn fake(world: &mut World) -> &mut FakeAlerts {
@@ -174,17 +178,22 @@ pub fn click_notification(
 ) -> Outcome<bool> {
     alerts(world)?;
     if let Some(raised) = raised {
-        let raised = raised.clone();
-        let bridge = Bridge::of(world.engine()).object();
-        let _ = world.engine().connect_by_name(
-            bridge,
-            "windowCommandRequested",
-            move |engine, args| {
-                raised
-                    .borrow_mut()
-                    .push(engine.to_js_string(&args[0]).to_string());
-            },
-        );
+        // Each window records itself when it is asked to come to the front.
+        for id in controller::windows(world.engine()) {
+            let Some(bridge) = controller::window_bridge(world.engine(), &id) else {
+                continue;
+            };
+            let raised = raised.clone();
+            let _ = world.engine().connect_by_name(
+                bridge.object(),
+                "windowCommandRequested",
+                move |engine, args| {
+                    if engine.to_js_string(&args[0]).to_string() == "raise" {
+                        raised.borrow_mut().push(id.clone());
+                    }
+                },
+            );
+        }
     }
     let opened = world
         .with::<AlertController, _>(|controller, engine| controller.open_thread(engine, key))?;
@@ -834,10 +843,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the user clicks the older notification", |world, _, _| {
-        // The headless shell has one window, so which window comes to the
-        // front is not told apart: the click is made, and a raise asked of
-        // the window is recorded.
-        let raised = Rc::new(RefCell::new(Vec::new()));
+        let raised = fake(world).raised.clone();
         let first = fake(world)
             .platform
             .borrow()
@@ -848,15 +854,43 @@ pub fn register(steps: &mut Steps) {
         click_notification(world, &first, Some(&raised))?;
         Ok(())
     });
-    steps.step("the user last used a second window", |_, _, _| {
-        second_window()
+    steps.step("the user last used a second window", |world, _, _| {
+        // The headless opener shows nothing: the window is its controllers.
+        controller::set_window_opener(world.engine(), |_, _| {});
+        world.dispatch("window.new", json!({}))?;
+        world.pump()?;
+        let windows = controller::windows(world.engine());
+        expect!(windows.len() == 2, "{} windows are open", windows.len());
+        let Some(second) = controller::window_bridge(world.engine(), &windows[1]) else {
+            fail!("the second window is not open");
+        };
+        fake(world).first_shown = shown_in(world, &windows[0]);
+        second.set_front(world.engine());
+        Ok(())
     });
     steps.step(
         &format!("the second window shows {Q} and comes to the front"),
-        |_, _, _| second_window(),
+        |world, c, _| {
+            let windows = controller::windows(world.engine());
+            let Some(second) = windows.get(1).cloned() else {
+                fail!("there is no second window");
+            };
+            let thread = fake(world).threads.get(&c[0]).cloned().unwrap_or_default();
+            let wanted = key_of(world, &thread);
+            let shown = shown_in(world, &second);
+            expect!(shown == wanted, "the second window shows {shown}");
+            let raised = fake(world).raised.borrow().clone();
+            expect!(raised == [second], "raised: {}", raised.join(", "));
+            Ok(())
+        },
     );
-    steps.step("the first window stays where it was", |_, _, _| {
-        second_window()
+    steps.step("the first window stays where it was", |world, _, _| {
+        let shown = shown_in(world, MAIN);
+        expect!(
+            shown == fake(world).first_shown,
+            "the first window shows {shown}"
+        );
+        Ok(())
     });
     steps.step(
         &format!("only one system notification is shown for {Q}"),
@@ -909,8 +943,10 @@ pub fn register(steps: &mut Steps) {
     );
 }
 
-/// The headless shell keeps to one window (`set_window_opener` is not given
-/// one here), so what a second window shows can not be read.
-fn second_window() -> Outcome {
-    fail!("the headless shell has one window; a second one is not opened")
+/// The thread window `id` shows.
+fn shown_in(world: &World, id: &str) -> String {
+    controller::window_bridge(world.engine(), id)
+        .and_then(|bridge| bridge.published(world.engine(), "route"))
+        .map(|route| text(&route["threadKey"]))
+        .unwrap_or_default()
 }

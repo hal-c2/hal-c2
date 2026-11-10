@@ -933,11 +933,17 @@ fn an_image_is_asked_for_once_until_it_expires() {
     w.tl.set_attachment_url("image-1", "https://mc/a/1.png", Some(expires));
     assert_eq!(
         w.drain(),
-        vec![Out::DataChanged {
-            first: row,
-            last: row,
-            roles: vec![Role::Attachments],
-        }]
+        vec![
+            Out::AttachmentSigned {
+                id: "image-1".into(),
+                url: "https://mc/a/1.png".into(),
+            },
+            Out::DataChanged {
+                first: row,
+                last: row,
+                roles: vec![Role::Attachments],
+            },
+        ]
     );
     assert_eq!(
         w.role(row, Role::Attachments)[0]["url"],

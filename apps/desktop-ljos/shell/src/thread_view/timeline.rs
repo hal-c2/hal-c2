@@ -28,12 +28,14 @@ use std::sync::LazyLock;
 
 use chrono::{DateTime, Utc};
 use regex::Regex;
+use serde_json::json;
 
 use super::cache::{self, Cursor, ThreadCache};
 use super::command_label;
 use super::file_render::extension_of;
 use super::summary::{self, Obj, as_object, flag, object, text};
 use super::time::{self, Clock};
+use crate::composer_model;
 use crate::controllers::composer::text::data_size;
 use crate::json::Json;
 
@@ -50,7 +52,7 @@ pub const FLUSH_DELAY_MS: i32 = 500;
 /// kept for the composer (turnChanged), checkpoints for the diff panel
 /// (checkpointsChanged) and a reply's revert (checkpointOf), subagents for
 /// the Agents tab (agentsChanged); they draw no rows.
-pub const KINDS: [&str; 8] = [
+pub const KINDS: [&str; 9] = [
     "turn-item",
     "run",
     "run-attempt",
@@ -59,6 +61,7 @@ pub const KINDS: [&str; 8] = [
     "message",
     "checkpoint",
     "subagent",
+    "provider-thread",
 ];
 /// The kinds a window bounds (HalC2.Streams.View): the client holds those
 /// of the runs from its floor on. The rest are held whole.
@@ -139,10 +142,28 @@ pub enum Role {
     SentFiles,
     /// Whether an error row is a wait rather than a failure.
     Warning,
+    /// A long plan's first lines, until it is opened.
+    Preview,
+    /// What a marker or created-thread card offers ("Open chat").
+    Action,
+    /// "Inherited" or "Synthetic", for work not this thread's agent's.
+    Visibility,
+    /// Where inherited work came from ("From Cart work").
+    Source,
+    /// A handoff's ends: [{side, provider, model, tooltip}].
+    Handoff,
+    /// A subagent group's first members: [{title, status}].
+    Avatars,
+    /// How many members a group has past its avatars.
+    More,
+    /// A group's span, from first launch to last finish.
+    Span,
+    /// The scheduled task a message came from.
+    ScheduledTask,
 }
 
 impl Role {
-    pub const ALL: [Role; 27] = [
+    pub const ALL: [Role; 36] = [
         Role::Id,
         Role::Kind,
         Role::Author,
@@ -170,6 +191,15 @@ impl Role {
         Role::Attachments,
         Role::SentFiles,
         Role::Warning,
+        Role::Preview,
+        Role::Action,
+        Role::Visibility,
+        Role::Source,
+        Role::Handoff,
+        Role::Avatars,
+        Role::More,
+        Role::Span,
+        Role::ScheduledTask,
     ];
 
     pub fn name(self) -> &'static str {
@@ -201,6 +231,15 @@ impl Role {
             Role::Attachments => "attachments",
             Role::SentFiles => "sentFiles",
             Role::Warning => "warning",
+            Role::Preview => "preview",
+            Role::Action => "action",
+            Role::Visibility => "visibility",
+            Role::Source => "source",
+            Role::Handoff => "handoff",
+            Role::Avatars => "avatars",
+            Role::More => "more",
+            Role::Span => "span",
+            Role::ScheduledTask => "scheduledTask",
         }
     }
 
@@ -248,11 +287,19 @@ pub enum Out {
     AgentsChanged,
     /// After a snapshot, or a command or file change starting or settling.
     WorkspaceChanged,
+    /// After a snapshot, or events that touched provider threads.
+    ContextChanged,
     /// After the time format changed: stamps read differently.
     TimesChanged,
     EarlierChanged,
     /// An image on screen has no address yet (`load_attachment`).
     AttachmentWanted(String),
+    /// The MC signed an image's address (`set_attachment_url`), "" when it
+    /// had none: the large image viewer follows it.
+    AttachmentSigned {
+        id: String,
+        url: String,
+    },
     /// `load_earlier`: the runs before the window holding this many turn
     /// items are wanted.
     EarlierWanted(i64),
@@ -286,6 +333,9 @@ struct Row {
     /// A work group's: its turn is still running, so its latest call reads
     /// as the live "Ran git".
     live: bool,
+    /// A synthetic row's item (the fork's marker, a turn's created
+    /// resources): an item of no turn item of its own.
+    item: Option<Obj>,
 }
 
 /// An image's signed address; no `expires_at` while it is asked for.
@@ -300,6 +350,10 @@ type Entities = BTreeMap<String, BTreeMap<String, Obj>>;
 /// Names another thread of this one's environment by id; empty when it is
 /// not known.
 pub type ThreadTitles = Rc<dyn Fn(&str) -> String>;
+/// A thread's row by id; empty when it is not known.
+pub type ThreadRow = Rc<dyn Fn(&str) -> Obj>;
+/// The environment's providers (config entries).
+pub type Providers = Rc<dyn Fn() -> Vec<Obj>>;
 /// Where the thread works (its worktree, else its project's root); empty
 /// when it is not known.
 pub type WorkspaceRoot = Rc<dyn Fn() -> String>;
@@ -324,6 +378,14 @@ pub struct Timeline {
     /// Work groups the user toggled, by row id: open ones, or closed ones
     /// of a run stopped here (`Row::starts_open`).
     expanded_groups: HashSet<String>,
+    /// Subagent groups ("subagents:<providerTurnId>") the user opened.
+    open_subagent_groups: HashSet<String>,
+    /// A thread's row by id, from the store.
+    thread_row: Option<ThreadRow>,
+    /// The environment's providers, for a handoff's ends.
+    providers: Option<Providers>,
+    /// A project's title by id, for where a subagent works.
+    project_title: Option<ThreadTitles>,
     kept_open: HashSet<String>,
     attachment_urls: HashMap<String, AttachmentUrl>,
     working_since: Option<DateTime<Utc>>,
@@ -331,11 +393,14 @@ pub struct Timeline {
     checkpoints_touched: bool,
     agents_touched: bool,
     workspace_touched: bool,
+    context_touched: bool,
     /// The subagents the events being applied touch, each as it was before
     /// them.
     agent_models: HashMap<String, Obj>,
     clock: Clock,
     thread_titles: Option<ThreadTitles>,
+    /// `fork_shown` as last drawn.
+    fork_shown: String,
     workspace_root: Option<WorkspaceRoot>,
     timestamp_format: String,
     cursor: Cursor,
@@ -369,6 +434,28 @@ impl std::fmt::Debug for Timeline {
 }
 
 // --- Reading entities ---------------------------------------------------------------
+
+/// A token count as the web's composer wrote it: 940, 8.5k, 144k, 1.2m.
+/// Counts just under a million round up to a million, not "1000k".
+fn tokens(value: f64) -> String {
+    fn trimmed(v: f64) -> String {
+        let mut text = format!("{v:.1}");
+        if text.ends_with(".0") {
+            text.truncate(text.len() - 2);
+        }
+        text
+    }
+    if value < 1000.0 {
+        return format!("{}", value.round() as i64);
+    }
+    if value < 10000.0 {
+        return format!("{}k", trimmed(value / 1000.0));
+    }
+    if value < 999500.0 {
+        return format!("{}k", (value / 1000.0).round() as i64);
+    }
+    format!("{}m", trimmed(value / 1000000.0))
+}
 
 /// A number field, or 0 (QJsonValue::toDouble).
 fn number(obj: &Obj, field: &str) -> f64 {
@@ -409,6 +496,63 @@ fn settled(status: &str) -> bool {
     SETTLED.contains(&status)
 }
 
+/// The checkpoints that count as diff turns, in run order: ready ones of
+/// completed runs, as the MC counts getTurnDiff's turns (turn N is the Nth
+/// of these, so rewound and unfinished runs leave no gaps). A run the
+/// entities do not hold is not evidence against a checkpoint.
+fn diff_checkpoints<'a>(
+    checkpoints: &'a BTreeMap<String, Obj>,
+    runs: &BTreeMap<String, Obj>,
+) -> Vec<(&'a String, &'a Obj)> {
+    let mut counted: Vec<(&String, &Obj)> = checkpoints
+        .iter()
+        .filter(|(_, checkpoint)| {
+            is_number(checkpoint.get("appRunOrdinal"))
+                && text(checkpoint, "status") == "ready"
+                && runs
+                    .get(text(checkpoint, "runId"))
+                    .is_none_or(|run| text(run, "status") == "completed")
+        })
+        .collect();
+    counted.sort_by_key(|(_, checkpoint)| int(checkpoint, "appRunOrdinal"));
+    counted
+}
+
+/// A run's diff turn: its counted checkpoint's position, from 1, or 0.
+fn diff_turn_of(
+    checkpoints: &BTreeMap<String, Obj>,
+    runs: &BTreeMap<String, Obj>,
+    run_id: &str,
+) -> i64 {
+    for (index, (_, checkpoint)) in diff_checkpoints(checkpoints, runs).iter().enumerate() {
+        if text(checkpoint, "runId") == run_id {
+            return index as i64 + 1;
+        }
+    }
+    0
+}
+
+/// Held for the user and never started: still queued, or cancelled while held.
+fn held_never_started(run: &Obj) -> bool {
+    let status = text(run, "status");
+    (status == "queued" || status == "cancelled")
+        && run
+            .get("queueHeld")
+            .and_then(Json::as_bool)
+            .unwrap_or(false)
+}
+
+/// Whether a run ever started: not one still queued, held or not, nor one that
+/// ended with no start time (cancelled from the queue, its workspace never ready).
+fn ever_started(run: &Obj) -> bool {
+    let status = text(run, "status");
+    if status == "queued" || held_never_started(run) {
+        return false;
+    }
+    let ended_early = matches!(status, "cancelled" | "failed" | "interrupted");
+    !ended_early || run.get("startedAt").is_some_and(Json::is_string)
+}
+
 /// HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
 /// (alone) or replaces (with `s`/`a`). None when the entity is gone.
 pub fn patched(entity: Option<&Obj>, patch: &Obj) -> Option<Obj> {
@@ -432,6 +576,49 @@ pub fn patched(entity: Option<&Obj>, patch: &Obj) -> Option<Obj> {
         next.insert(field.clone(), Json::String(grown));
     }
     Some(next)
+}
+
+/// The task an older MC wrote into a scheduled message's id.
+fn legacy_task_id(item: &Obj) -> &str {
+    static ID: LazyLock<Regex> =
+        LazyLock::new(|| regex(r"scheduled-task-message:(.+):\d+:(?:scheduled|manual)$"));
+    ID.captures(text(item, "id"))
+        .and_then(|c| c.get(1))
+        .map_or("", |m| m.as_str())
+}
+
+/// The prefix an older MC put on a scheduled task's message in place of its
+/// id (client-runtime userMessage.ts LEGACY_AUTOMATION_PREFIX): its length,
+/// or 0.
+fn legacy_automation_prefix(item: &Obj) -> usize {
+    static PREFIX: LazyLock<Regex> =
+        LazyLock::new(|| regex(r"^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n"));
+    let Some(found) = PREFIX.find(text(item, "text")) else {
+        return 0;
+    };
+    if legacy_task_id(item).is_empty() && text(item, "createdBy") != "agent" {
+        0
+    } else {
+        found.end()
+    }
+}
+
+/// The scheduled task that sent a user message: its id, or the one an older
+/// MC wrote into the message's id.
+fn scheduled_task_of(item: &Obj) -> &str {
+    if !text(item, "scheduledTaskId").is_empty() {
+        text(item, "scheduledTaskId")
+    } else if legacy_automation_prefix(item) > 0 {
+        legacy_task_id(item)
+    } else {
+        ""
+    }
+}
+
+/// Whether a scheduled task sent this user message (the composer's recall
+/// skips it).
+fn sent_by_scheduled_task(item: &Obj) -> bool {
+    !text(item, "scheduledTaskId").is_empty() || legacy_automation_prefix(item) > 0
 }
 
 fn regex(pattern: &str) -> Regex {
@@ -665,11 +852,180 @@ pub fn plan_body(markdown: &str) -> String {
     lines.join("\n")
 }
 
+/// Whether a command's output is only its own text echoed back
+/// (commandDetailRepeatsCommand): equal to it, or a start of it cut off
+/// with "..." or "…".
+fn repeats_command(output: &str, commands: &[&str]) -> bool {
+    let shown = output.trim();
+    let cut = shown
+        .strip_suffix("...")
+        .or_else(|| shown.strip_suffix('…'))
+        .unwrap_or("");
+    commands.iter().any(|candidate| {
+        let command = candidate.trim();
+        !command.is_empty()
+            && (command == shown
+                || (!cut.is_empty() && command.len() > cut.len() && command.starts_with(cut)))
+    })
+}
+
+/// A web address the details may link to: http(s) only, "//host" read
+/// as https (resolveExternalWebLinkHref); empty for anything else.
+fn safe_web_address(address: &str) -> String {
+    if address.is_empty() {
+        return String::new();
+    }
+    let full = if address.starts_with("//") {
+        format!("https:{address}")
+    } else {
+        address.to_owned()
+    };
+    match url::Url::parse(&full) {
+        Ok(url)
+            if matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some_and(|h| !h.is_empty()) =>
+        {
+            url.to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+/// An image a call viewed that the thread's workspace can serve: relative
+/// to the workspace, with an image's extension; empty for one outside it
+/// or any other file.
+fn workspace_image(path: &str, root: &str) -> String {
+    const IMAGES: [&str; 8] = ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"];
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed.contains('\n') || trimmed.contains('\r') {
+        return String::new();
+    }
+    let extension = extension_of(trimmed).to_lowercase();
+    if !IMAGES.contains(&extension.as_str()) {
+        return String::new();
+    }
+    let relative = workspace_path(trimmed, root);
+    // A full path left as it was is outside the workspace; so is one
+    // climbing out of it.
+    if relative.starts_with('/') || relative.contains(":\\") || relative.starts_with('~') {
+        return String::new();
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for part in relative.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return String::new();
+                }
+            }
+            _ => parts.push(part),
+        }
+    }
+    parts.join("/")
+}
+
+/// One answer as its preview reads (getQuestionAnswerText): text, a
+/// list's items joined, an object's `answers`.
+fn answer_text(value: &Json) -> String {
+    match value {
+        Json::String(s) => s.clone(),
+        Json::Array(parts) => parts
+            .iter()
+            .map(answer_text)
+            .filter(|shown| !shown.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        Json::Object(o) => o.get("answers").map(answer_text).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+/// What the user answered a question with, on one line
+/// (getQuestionAnswerPreview): the answers, else the files sent, else
+/// the questions themselves.
+fn answer_preview(answer: &Obj) -> String {
+    let mut preview = as_object(answer.get("answers").unwrap_or(&Json::Null))
+        .values()
+        .map(answer_text)
+        .filter(|shown| !shown.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if preview.is_empty() {
+        preview = as_object(answer.get("attachmentsByQuestionId").unwrap_or(&Json::Null))
+            .values()
+            .filter_map(Json::as_array)
+            .flatten()
+            .map(|file| text(as_object(file), "name").to_owned())
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+    if preview.is_empty() {
+        preview = as_object(answer.get("questionTextById").unwrap_or(&Json::Null))
+            .values()
+            .map(|q| q.as_str().unwrap_or("").to_owned())
+            .collect::<Vec<_>>()
+            .join(" · ");
+    }
+    preview.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A long plan's first lines (desktop-qt's planPreview): empty when the
+/// whole plan fits.
+pub fn plan_preview(markdown: &str) -> String {
+    if markdown.len() <= 900 && markdown.matches('\n').count() < 20 {
+        return String::new();
+    }
+    const MAX_LINES: usize = 10;
+    let body = plan_body(markdown);
+    let body = body.trim_end();
+    static LINES: LazyLock<Regex> = LazyLock::new(|| regex(r"\r?\n"));
+    let mut preview: Vec<&str> = Vec::new();
+    let mut visible = 0;
+    let mut more = false;
+    for line in LINES.split(body) {
+        let line = line.trim_end();
+        let shown = !line.trim().is_empty();
+        if shown && visible >= MAX_LINES {
+            more = true;
+            break;
+        }
+        preview.push(line);
+        if shown {
+            visible += 1;
+        }
+    }
+    while preview.last().is_some_and(|line| line.trim().is_empty()) {
+        preview.pop();
+    }
+    if !more {
+        return String::new();
+    }
+    if preview.is_empty() {
+        return plan_title(markdown);
+    }
+    preview.push("");
+    preview.push("...");
+    preview.join("\n")
+}
+
 fn marker_title(item: &Obj) -> String {
     match text(item, "type") {
-        "fork" => "Conversation fork".into(),
+        // This thread's own start, or a fork made from it (V2LifecycleRow).
+        "fork" => {
+            if text(object(item, "source"), "type") == "run" {
+                "Forked from conversation".into()
+            } else {
+                "Conversation fork".into()
+            }
+        }
         "handoff" => "Context handoff".into(),
-        "compaction" => "Context compacted".into(),
+        "compaction" => match text(item, "status") {
+            "failed" => "Context compaction failed".into(),
+            "cancelled" | "interrupted" => "Context compaction stopped".into(),
+            "pending" | "running" | "waiting" => "Compacting context".into(),
+            _ => "Context compacted".into(),
+        },
         "thread_created" => "Created thread".into(),
         // A notification's work row is its summary alone.
         _ => match summary::notice_of(item) {
@@ -681,8 +1037,27 @@ fn marker_title(item: &Obj) -> String {
 
 fn marker_detail(item: &Obj) -> String {
     match text(item, "type") {
-        "fork" => format!("Continues in {}", text(item, "targetThreadId")),
         "thread_created" => text(item, "title").to_owned(),
+        "compaction" => {
+            // Its summary, else the tokens it went from and to.
+            if !text(item, "summary").is_empty() {
+                return text(item, "summary").to_owned();
+            }
+            let count = |field: &str| match item.get(field) {
+                Some(Json::Number(n)) => n.as_i64().map_or_else(|| "?".into(), |n| n.to_string()),
+                _ => "?".into(),
+            };
+            if !matches!(item.get("beforeTokenCount"), Some(Json::Number(_)))
+                && !matches!(item.get("afterTokenCount"), Some(Json::Number(_)))
+            {
+                return String::new();
+            }
+            format!(
+                "{} → {} tokens",
+                count("beforeTokenCount"),
+                count("afterTokenCount")
+            )
+        }
         // A worker's result, which the card under its title shows.
         _ => summary::notice_of(item)
             .filter(|notice| !notice.worker_thread_id.is_empty())
@@ -733,6 +1108,10 @@ impl Timeline {
             reshaped: HashSet::new(),
             expanded_folds: HashSet::new(),
             expanded_groups: HashSet::new(),
+            open_subagent_groups: HashSet::new(),
+            thread_row: None,
+            providers: None,
+            project_title: None,
             kept_open: HashSet::new(),
             attachment_urls: HashMap::new(),
             working_since: None,
@@ -740,9 +1119,11 @@ impl Timeline {
             checkpoints_touched: false,
             agents_touched: false,
             workspace_touched: false,
+            context_touched: false,
             agent_models: HashMap::new(),
             clock: Clock::default(),
             thread_titles: None,
+            fork_shown: String::new(),
             workspace_root: None,
             timestamp_format: "locale".into(),
             cursor: Cursor::default(),
@@ -766,6 +1147,101 @@ impl Timeline {
 
     pub fn thread_key(&self) -> &str {
         &self.thread_key
+    }
+
+    /// How full the thread's context window is, from the latest report
+    /// of its provider threads (desktop-qt's
+    /// TimelineModel::contextWindow): {usedTokens, maxTokens, percent,
+    /// percentLabel, reading, nearlyFull, processed, cost}; empty while
+    /// no provider has reported.
+    pub fn context_window(&self) -> Obj {
+        let mut usage: Option<&Obj> = None;
+        let mut latest = String::new();
+        for (id, thread) in self.entities("provider-thread") {
+            let Some(report) = thread.get("contextUsage").and_then(Json::as_object) else {
+                continue;
+            };
+            let Some(used) = report.get("usedTokens").and_then(Json::as_f64) else {
+                continue;
+            };
+            if used < 0.0 {
+                continue;
+            }
+            let at = format!("{}\u{0}{id}", text(thread, "updatedAt"));
+            if usage.is_some() && at < latest {
+                continue;
+            }
+            latest = at;
+            usage = Some(report);
+        }
+        let Some(usage) = usage else {
+            return Obj::new();
+        };
+        let used = number(usage, "usedTokens");
+        let max = number(usage, "maxTokens");
+        let percent = if max > 0.0 {
+            (used / max * 100.0).min(100.0)
+        } else {
+            -1.0
+        };
+        let percent_label = if percent >= 0.0 {
+            let mut label = if percent < 10.0 {
+                format!("{percent:.1}")
+            } else {
+                format!("{}", percent.round() as i64)
+            };
+            if label.ends_with(".0") {
+                label.truncate(label.len() - 2);
+            }
+            label.push('%');
+            label
+        } else {
+            String::new()
+        };
+        let processed = number(usage, "totalProcessedTokens");
+        let mut cost = String::new();
+        if let Some(spent) = usage.get("cost").and_then(Json::as_object)
+            && let Some(amount) = spent.get("amount").and_then(Json::as_f64)
+            && !text(spent, "currency").is_empty()
+        {
+            let tiny = amount.abs() > 0.0 && amount.abs() < 0.01;
+            cost = format!(
+                "{} {}",
+                text(spent, "currency"),
+                if tiny {
+                    format!("{amount:.4}")
+                } else {
+                    format!("{amount:.2}")
+                }
+            );
+        }
+        let mut window = Obj::new();
+        window.insert("usedTokens".into(), Json::from(used));
+        window.insert(
+            "maxTokens".into(),
+            Json::from(if max > 0.0 { max } else { 0.0 }),
+        );
+        window.insert("percent".into(), Json::from(percent));
+        window.insert("percentLabel".into(), Json::from(percent_label.as_str()));
+        window.insert(
+            "reading".into(),
+            Json::from(if percent >= 0.0 {
+                format!("{percent_label} · {}/{}", tokens(used), tokens(max))
+            } else {
+                format!("{} used", tokens(used))
+            }),
+        );
+        window.insert("nearlyFull".into(), Json::from(percent > 90.0));
+        window.insert(
+            "processed".into(),
+            Json::from(if processed > 0.0 {
+                tokens(processed)
+            } else {
+                String::new()
+            }),
+        );
+        window.insert("cost".into(), Json::from(cost.as_str()));
+        window
     }
 
     /// loading until the first snapshot lands, live, or unreachable (with
@@ -821,6 +1297,250 @@ impl Timeline {
     /// agent sent here.
     pub fn set_thread_titles(&mut self, titles: Option<ThreadTitles>) {
         self.thread_titles = titles;
+    }
+
+    /// A thread's row by id, for its source and where it was forked from;
+    /// a change of either redraws the rows. The closed inherited run
+    /// count clears with it.
+    pub fn set_thread_rows(&mut self, rows: Option<ThreadRow>) {
+        self.thread_row = rows;
+        self.fork_shown = self.fork_shown();
+        self.open_subagent_groups.clear();
+        let rows = self.project();
+        self.apply_rows(rows, &HashSet::new());
+        self.everything_changed(&HashSet::new());
+    }
+
+    /// Projects' titles by id, for where a subagent works.
+    pub fn set_project_titles(&mut self, titles: Option<ThreadTitles>) {
+        self.project_title = titles;
+    }
+
+    /// The environment's providers, for a handoff's ends.
+    pub fn set_providers(&mut self, providers: Option<Providers>) {
+        self.providers = providers;
+    }
+
+    fn thread_row_of(&self, thread_id: &str) -> Obj {
+        if thread_id.is_empty() {
+            return Obj::new();
+        }
+        self.thread_row
+            .as_ref()
+            .map(|row| row(thread_id))
+            .unwrap_or_default()
+    }
+
+    fn own_thread_id(&self) -> &str {
+        self.thread_key
+            .rsplit_once(':')
+            .map_or(self.thread_key.as_str(), |(_, id)| id)
+    }
+
+    /// The run this thread was forked from, as its row says; empty unless
+    /// it names a run.
+    fn fork_source(&self) -> Obj {
+        let row = self.thread_row_of(self.own_thread_id());
+        let from = object(&row, "forkedFrom");
+        if text(from, "type") == "run" {
+            from.clone()
+        } else {
+            Obj::new()
+        }
+    }
+
+    /// "From <title>" for inherited work: the source thread's title, or its
+    /// id when it has none.
+    fn forked_from(&self) -> String {
+        let source = self.fork_source();
+        let id = text(&source, "threadId");
+        let title = if id.is_empty() {
+            String::new()
+        } else {
+            self.thread_titles
+                .as_ref()
+                .map(|titles| titles(id))
+                .unwrap_or_default()
+        };
+        format!("From {}", if title.is_empty() { id } else { &title })
+    }
+
+    /// What the fork marker and inherited work show of where this thread
+    /// came from, to tell when a thread row change must redraw them.
+    fn fork_shown(&self) -> String {
+        let from = self.fork_source();
+        if from.is_empty() {
+            return String::new();
+        }
+        format!("{}\n{}", Json::Object(from), self.forked_from())
+    }
+
+    /// The store's thread rows changed: redraws the fork marker and
+    /// inherited work when where this thread came from did.
+    pub fn thread_rows_changed(&mut self) {
+        let shown = self.fork_shown();
+        if shown == self.fork_shown {
+            return;
+        }
+        self.fork_shown = shown;
+        let rows = self.project();
+        self.apply_rows(rows, &HashSet::new());
+        self.everything_changed(&HashSet::new());
+    }
+
+    /// The fork's run as a turn item: its items group under it, as a run's
+    /// do.
+    fn synthetic_fork_item(&self) -> Obj {
+        let source = self.fork_source();
+        let thread = self.own_thread_id().to_owned();
+        let created = text(&self.thread_row_of(&thread), "createdAt").to_owned();
+        let mut item = Obj::new();
+        item.insert("id".into(), format!("turn-item:fork:{thread}").into());
+        item.insert("type".into(), "fork".into());
+        item.insert("status".into(), "completed".into());
+        item.insert(
+            "source".into(),
+            json!({"type": "run", "threadId": text(&source, "threadId"),
+                   "runId": text(&source, "runId")}),
+        );
+        if !text(&source, "itemId").is_empty() {
+            item.insert(
+                "point".into(),
+                json!({"type": "turn_item", "itemId": text(&source, "itemId")}),
+            );
+        }
+        item.insert("targetThreadId".into(), thread.into());
+        item.insert("synthetic".into(), true.into());
+        item.insert("completedAt".into(), created.clone().into());
+        item.insert("updatedAt".into(), created.into());
+        item
+    }
+
+    /// The source runs this thread begins from: everything up to the run
+    /// it was forked from, which holds the items its own turn notionally
+    /// follows.
+    fn inherited_runs(&self) -> HashSet<String> {
+        let mut runs = HashSet::new();
+        let source = self.fork_source();
+        let source_run = text(&source, "runId");
+        if source_run.is_empty() {
+            return runs;
+        }
+        let ordinal = |run: &Obj| run.get("ordinal").and_then(Json::as_f64).unwrap_or(0.0);
+        let Some(point) = self.entities("run").get(source_run).map(ordinal) else {
+            return runs;
+        };
+        for (id, run) in self.entities("run") {
+            if ordinal(run) <= point {
+                runs.insert(id.clone());
+            }
+        }
+        runs
+    }
+
+    fn provider_instances(&self) -> Vec<composer_model::Instance> {
+        let providers: Vec<Json> = self
+            .providers
+            .as_ref()
+            .map(|providers| providers().into_iter().map(Json::Object).collect())
+            .unwrap_or_default();
+        composer_model::instances(&providers)
+    }
+
+    /// A provider instance's name, else its id.
+    fn provider_name(&self, instance_id: &str) -> String {
+        let known = self.provider_instances();
+        match composer_model::find(&known, instance_id) {
+            Some(instance) if !instance.display_name.is_empty() => instance.display_name.clone(),
+            _ => instance_id.to_owned(),
+        }
+    }
+
+    /// A model's name on an instance (or any instance that has it), else
+    /// its slug made readable.
+    fn model_name(&self, instance_id: &str, model: &str) -> String {
+        if model.is_empty() {
+            return String::new();
+        }
+        let known = self.provider_instances();
+        let instance = composer_model::find(&known, instance_id).or_else(|| {
+            known
+                .iter()
+                .rfind(|any| !composer_model::find_model(any, model).is_empty())
+        });
+        let name = instance
+            .map(|i| text(&composer_model::find_model(i, model), "name").to_owned())
+            .unwrap_or_default();
+        if name.is_empty() {
+            summary::subagent_model_name(model)
+        } else {
+            name
+        }
+    }
+
+    /// A handoff's ends (client-runtime handoff.ts resolveHandoffEndpoints):
+    /// the selections it came from, else the latest model each source
+    /// instance ran before it; then where it went.
+    fn handoff_ends(&self, item: &Obj) -> Vec<Json> {
+        let runs = self.entities("run");
+        let handoff_run = runs.get(text(item, "runId"));
+        let ordinal = |run: &Obj| run.get("ordinal").and_then(Json::as_f64).unwrap_or(0.0);
+        let before = handoff_run.map(ordinal).unwrap_or(0.0);
+        let run_instance = |run: &Obj| -> String {
+            match text(run, "providerInstanceId") {
+                "" => text(object(run, "modelSelection"), "instanceId").to_owned(),
+                instance => instance.to_owned(),
+            }
+        };
+        let end = |side: &str, instance: &str, model: &str| {
+            let provider = self.provider_name(instance);
+            let name = self.model_name(instance, model);
+            let tooltip = if name.is_empty() {
+                provider.clone()
+            } else {
+                format!("{provider} · {name}")
+            };
+            json!({"side": side, "provider": provider, "model": name, "tooltip": tooltip})
+        };
+        let mut ends = Vec::new();
+        let selections = array(item, "fromModelSelections");
+        if !selections.is_empty() {
+            for value in selections {
+                let selection = as_object(value);
+                ends.push(end(
+                    "from",
+                    text(selection, "instanceId"),
+                    text(selection, "model"),
+                ));
+            }
+        } else {
+            for value in array(item, "fromProviderInstanceIds") {
+                let instance = value.as_str().unwrap_or("");
+                let mut latest: Option<&Obj> = None;
+                for run in runs.values() {
+                    if run_instance(run) != instance
+                        || (handoff_run.is_some() && ordinal(run) >= before)
+                    {
+                        continue;
+                    }
+                    if latest.is_none_or(|l| ordinal(run) > ordinal(l)) {
+                        latest = Some(run);
+                    }
+                }
+                let model = latest.map_or("", |run| text(object(run, "modelSelection"), "model"));
+                ends.push(end("from", instance, model));
+            }
+        }
+        let to = text(item, "toProviderInstanceId");
+        let mut to_model = text(item, "toModel").to_owned();
+        if to_model.is_empty()
+            && let Some(run) = handoff_run
+            && run_instance(run) == to
+        {
+            to_model = text(object(run, "modelSelection"), "model").to_owned();
+        }
+        ends.push(end("to", to, &to_model));
+        ends
     }
 
     /// Where a changed file's label is read from.
@@ -1057,6 +1777,7 @@ impl Timeline {
             Out::CheckpointsChanged,
             Out::AgentsChanged,
             Out::WorkspaceChanged,
+            Out::ContextChanged,
         ]);
     }
 
@@ -1326,6 +2047,7 @@ impl Timeline {
         self.checkpoints_touched = false;
         self.agents_touched = false;
         self.workspace_touched = false;
+        self.context_touched = false;
         self.reshaped.clear();
         self.agent_models.clear();
         for event in events {
@@ -1379,6 +2101,9 @@ impl Timeline {
         }
         if self.workspace_touched {
             self.out.push(Out::WorkspaceChanged);
+        }
+        if self.context_touched {
+            self.out.push(Out::ContextChanged);
         }
         if structural {
             self.restructure(&changed);
@@ -1452,6 +2177,11 @@ impl Timeline {
         let current = self.entities.get(kind).and_then(|m| m.get(id)).cloned();
         let existed = current.is_some();
         let next = patched(current.as_ref(), patch);
+        if kind == "provider-thread" {
+            self.context_touched = true;
+            self.store(kind, id, next);
+            return false;
+        }
         if kind == "checkpoint" || kind == "subagent" {
             if kind == "subagent" {
                 self.agents_touched = true;
@@ -1521,9 +2251,9 @@ impl Timeline {
             self.workspace_touched = true;
         }
         let replaced = flag(patch, "d");
-        // A command starting, settling or going away; not its streamed
-        // output.
-        if is_command
+        // A command or a background tool starting, settling or going away;
+        // not its streamed output.
+        if (is_command || kind_of_item == "dynamic_tool")
             && (!existed
                 || next.is_none()
                 || replaced
@@ -1718,6 +2448,20 @@ impl Timeline {
             streaming: bool,
             boundary: Option<DateTime<Utc>>,
         }
+        // A reply a steer cut off mid-way: it stopped as interrupted in a
+        // run the MC marks with the steer that ended it (a stop, a crash or
+        // a restart of the MC leaves no mark). It is never the turn's
+        // answer; it folds on its own under "Cut off by a steer".
+        let steered: HashSet<&str> = runs
+            .iter()
+            .filter(|(_, r)| !text(r, "steeredByRunId").is_empty())
+            .map(|(id, _)| id.as_str())
+            .collect();
+        let cut_off = |it: &Obj| {
+            text(it, "type") == "assistant_message"
+                && text(it, "status") == "interrupted"
+                && steered.contains(text(it, "runId"))
+        };
         let mut shown: Vec<&Obj> = Vec::new();
         let mut turns: HashMap<String, Turn> = HashMap::new();
         let mut turn_order: Vec<String> = Vec::new();
@@ -1744,7 +2488,7 @@ impl Timeline {
                     .or_else(|| time::time_of(it.get("updatedAt"), self.clock.zone));
                 continue;
             }
-            if run_id.is_empty() {
+            if run_id.is_empty() || cut_off(it) {
                 continue;
             }
             let turn = turns.entry(run_id.to_owned()).or_insert_with(|| {
@@ -1853,11 +2597,48 @@ impl Timeline {
             }
         }
 
+        // Once a turn settles, the threads it created are listed after its
+        // last reply as cards in place of their markers.
+        let mut created: HashMap<String, Vec<String>> = HashMap::new();
+        for it in &shown {
+            let run_id = text(it, "runId");
+            let Some(turn) = turns.get(run_id) else {
+                continue;
+            };
+            if text(it, "type") != "thread_created"
+                || turn.terminal.is_empty()
+                || turn.streaming
+                || !settled(text(run(run_id), "status"))
+            {
+                continue;
+            }
+            created
+                .entry(run_id.to_owned())
+                .or_default()
+                .push(text(it, "id").to_owned());
+        }
+        // A fork's history ends at a marker of where it was forked from.
+        let inherited = self.inherited_runs();
+        let mut last_inherited: i64 = -1;
+        for (i, it) in shown.iter().enumerate() {
+            if inherited.contains(text(it, "runId")) {
+                last_inherited = i as i64;
+            }
+        }
+
         let mut rows = Vec::new();
         let mut i = 0;
         while i < shown.len() {
             let it = shown[i];
             let id = text(it, "id");
+            if i as i64 == last_inherited + 1 && last_inherited >= 0 {
+                rows.push(Row {
+                    id: "fork-marker".into(),
+                    kind: "marker",
+                    item: Some(self.synthetic_fork_item()),
+                    ..Row::default()
+                });
+            }
             if let Some(fold) = fold_at.get(id) {
                 rows.push(Row {
                     id: format!("fold:{}", fold.run_id),
@@ -1868,6 +2649,25 @@ impl Timeline {
                     at: fold.at,
                     ..Row::default()
                 });
+            }
+            if cut_off(it) {
+                let fold = format!("cut-off:{id}");
+                let open = self.expanded_folds.contains(&fold);
+                // The reply it folds is its item, so its run is read off it.
+                rows.push(Row {
+                    id: format!("fold:{fold}"),
+                    kind: "fold",
+                    items: vec![id.to_owned()],
+                    label: "Cut off by a steer".into(),
+                    hidden: 1,
+                    expanded: open,
+                    at: item_time(it, &self.clock),
+                    ..Row::default()
+                });
+                if !open {
+                    i += 1;
+                    continue;
+                }
             }
             let kind = classify(it);
             if folded.contains(id) || kind == Kind::Checkpoint {
@@ -1910,6 +2710,61 @@ impl Timeline {
                 i = next;
                 continue;
             }
+            // Subagents one turn started together are one group that opens
+            // to their rows; a lone one is its own row.
+            if kind == Kind::Subagent {
+                let turn_id = text(it, "providerTurnId");
+                let mut members: Vec<String> = Vec::new();
+                let mut next = i;
+                while next < shown.len() {
+                    let other = shown[next];
+                    let other_id = text(other, "id");
+                    if next > i && fold_at.contains_key(other_id) {
+                        break;
+                    }
+                    let other_kind = classify(other);
+                    if other_kind == Kind::Checkpoint {
+                        next += 1;
+                        continue;
+                    }
+                    if other_kind != Kind::Subagent
+                        || folded.contains(other_id)
+                        || text(other, "runId") != run_id
+                        || text(other, "providerTurnId") != turn_id
+                    {
+                        break;
+                    }
+                    members.push(other_id.to_owned());
+                    next += 1;
+                }
+                if members.len() > 1 {
+                    let group = format!("subagents:{id}");
+                    let open = self.open_subagent_groups.contains(&group);
+                    rows.push(Row {
+                        id: group,
+                        kind: "subagents",
+                        items: members.clone(),
+                        expanded: open,
+                        ..Row::default()
+                    });
+                    if open {
+                        for member in members {
+                            rows.push(Row {
+                                id: member.clone(),
+                                kind: "subagent",
+                                items: vec![member],
+                                ..Row::default()
+                            });
+                        }
+                    }
+                    i = next;
+                    continue;
+                }
+            }
+            if text(it, "type") == "thread_created" && created.contains_key(run_id) {
+                i += 1;
+                continue;
+            }
             let mut row = Row {
                 id: id.to_owned(),
                 kind: kind_name(kind),
@@ -1924,8 +2779,27 @@ impl Timeline {
                 row.checkpoint = turn.checkpoint.clone();
                 row.meta = !turn.streaming && settled(text(run(run_id), "status"));
             }
+            let meta = row.meta;
             rows.push(row);
             i += 1;
+            if meta {
+                for thread in created.get(run_id).cloned().unwrap_or_default() {
+                    rows.push(Row {
+                        id: format!("summary:{thread}"),
+                        kind: "resource",
+                        items: vec![thread],
+                        ..Row::default()
+                    });
+                }
+            }
+        }
+        if last_inherited == shown.len() as i64 - 1 && last_inherited >= 0 {
+            rows.push(Row {
+                id: "fork-marker".into(),
+                kind: "marker",
+                item: Some(self.synthetic_fork_item()),
+                ..Row::default()
+            });
         }
         rows
     }
@@ -2053,9 +2927,27 @@ impl Timeline {
             self.restructure(&HashSet::new());
             return;
         }
+        if row_id.starts_with("subagents:") {
+            if !self.open_subagent_groups.remove(row_id) {
+                self.open_subagent_groups.insert(row_id.to_owned());
+            }
+            self.restructure(&HashSet::new());
+            return;
+        }
         let Some(row) = self.index_of(row_id) else {
             return;
         };
+        if self.rows[row].kind == "plan" {
+            if !self.expanded_groups.remove(row_id) {
+                self.expanded_groups.insert(row_id.to_owned());
+            }
+            self.out.push(Out::DataChanged {
+                first: row,
+                last: row,
+                roles: vec![Role::Expanded],
+            });
+            return;
+        }
         if self.rows[row].kind != "work" {
             return;
         }
@@ -2131,20 +3023,17 @@ impl Timeline {
         let run_id = text(item, "runId");
         let runs = self.entities("run");
         let checkpoints = self.entities("checkpoint");
-        // The turn's number: its checkpoint's, else its place among the
-        // runs still shown.
-        let mut turn = 0;
-        for checkpoint in checkpoints.values() {
-            if text(checkpoint, "runId") == run_id {
-                turn = int(checkpoint, "appRunOrdinal");
-            }
-        }
+        // The turn's number: its checkpoint's diff turn, else its place among
+        // the runs that started and are still shown.
+        let mut turn = diff_turn_of(checkpoints, runs, run_id);
+        let ordinal = number(runs.get(run_id).unwrap_or(&NONE), "ordinal");
         if turn <= 0 {
-            let ordinal = number(runs.get(run_id).unwrap_or(&NONE), "ordinal");
             turn = runs
-                .values()
-                .filter(|other| {
-                    number(other, "ordinal") <= ordinal && text(other, "status") != "rolled_back"
+                .iter()
+                .filter(|(id, other)| {
+                    number(other, "ordinal") <= ordinal
+                        && text(other, "status") != "rolled_back"
+                        && (*id == run_id || ever_started(other))
                 })
                 .count() as i64;
         }
@@ -2155,21 +3044,34 @@ impl Timeline {
             "attachments".into(),
             Json::Array(array(item, "attachments").to_vec()),
         );
-        for (id, checkpoint) in checkpoints {
-            if text(checkpoint, "status") != "ready" || int(checkpoint, "appRunOrdinal") != turn - 1
-            {
-                continue;
-            }
-            // Before the first turn it is the thread's baseline, which has
-            // no turn.
-            if turn == 1
-                && (is_number(checkpoint.get("appRunOrdinal"))
-                    || text(checkpoint, "runId") != run_id)
-            {
-                continue;
+        // The checkpoint to rewind to: the last counted one before this run
+        // (a run number one less is not it when a rewound or unfinished run
+        // sits between).
+        for (id, checkpoint) in diff_checkpoints(checkpoints, runs) {
+            let counted_ordinal = runs.get(text(checkpoint, "runId")).map_or_else(
+                || number(checkpoint, "appRunOrdinal"),
+                |run| number(run, "ordinal"),
+            );
+            if counted_ordinal >= ordinal {
+                break;
             }
             point.insert("checkpointId".into(), Json::from(id.as_str()));
             point.insert("scopeId".into(), Json::from(text(checkpoint, "scopeId")));
+        }
+        if !point.contains_key("checkpointId") && turn == 1 {
+            for (id, checkpoint) in checkpoints {
+                if text(checkpoint, "status") != "ready" || int(checkpoint, "appRunOrdinal") != 0 {
+                    continue;
+                }
+                // Before the first turn it is the thread's baseline, which
+                // has no turn.
+                if is_number(checkpoint.get("appRunOrdinal")) || text(checkpoint, "runId") != run_id
+                {
+                    continue;
+                }
+                point.insert("checkpointId".into(), Json::from(id.as_str()));
+                point.insert("scopeId".into(), Json::from(text(checkpoint, "scopeId")));
+            }
         }
         point
     }
@@ -2190,18 +3092,14 @@ impl Timeline {
             if text(checkpoint, "runId") != run_id || text(checkpoint, "status") != "ready" {
                 continue;
             }
-            // The MC's turn number (the diff panel's), else the turn's
-            // number among the runs still shown.
-            let mut turn = int(checkpoint, "appRunOrdinal");
+            // The MC's turn number (the diff panel's). A ready checkpoint
+            // that does not count as a diff turn (its run never completed)
+            // has no point at all: its callers read turn 0 as "the shown or
+            // latest turn", so Revert and Open diff would act on a
+            // different turn.
+            let turn = diff_turn_of(self.entities("checkpoint"), self.entities("run"), run_id);
             if turn <= 0 {
-                let ordinal = int(run, "ordinal");
-                turn = self
-                    .entities("run")
-                    .values()
-                    .filter(|other| {
-                        int(other, "ordinal") <= ordinal && text(other, "status") != "rolled_back"
-                    })
-                    .count() as i64;
+                return Obj::new();
             }
             let mut point = Obj::new();
             point.insert("checkpointId".into(), Json::from(id.as_str()));
@@ -2231,17 +3129,51 @@ impl Timeline {
     /// The address the MC signed for an image and when it stops working;
     /// an empty one when the MC had none, so the next ask tries again.
     pub fn set_attachment_url(&mut self, id: &str, url: &str, expires_at: Option<DateTime<Utc>>) {
+        self.out.push(Out::AttachmentSigned {
+            id: id.to_owned(),
+            url: url.to_owned(),
+        });
         if url.is_empty() {
             self.attachment_urls.remove(id);
             return;
         }
-        self.attachment_urls.insert(
+        let was = self.attachment_urls.insert(
             id.to_owned(),
             AttachmentUrl {
                 url: url.to_owned(),
                 expires_at,
             },
         );
+        let icon = id.starts_with("native-app-icon:");
+        if icon || id.starts_with("workspace-file:") {
+            // An app's icon or an image a call viewed: the work groups with
+            // a call on screen that shows it, unless its address is the one
+            // they already show.
+            if was.is_some_and(|was| {
+                was.url == url && was.expires_at.is_some_and(|e| e > self.clock.now())
+            }) {
+                return;
+            }
+            let key = if icon { "iconId" } else { "imageId" };
+            let changed: Vec<usize> = (0..self.rows.len())
+                .filter(|&at| {
+                    self.rows[at].kind == "work"
+                        && self.data(at, Role::Entries).is_some_and(|entries| {
+                            entries
+                                .as_array()
+                                .is_some_and(|all| all.iter().any(|e| e[key] == id))
+                        })
+                })
+                .collect();
+            for at in changed {
+                self.out.push(Out::DataChanged {
+                    first: at,
+                    last: at,
+                    roles: vec![Role::Entries],
+                });
+            }
+            return;
+        }
         for (at, row) in self.rows.iter().enumerate() {
             if row.kind != "message" {
                 continue;
@@ -2321,7 +3253,7 @@ impl Timeline {
                 label = if command.is_empty() {
                     "Ran command".into()
                 } else {
-                    command
+                    command.clone()
                 };
                 if live {
                     // The running turn's latest command, named by its program
@@ -2342,6 +3274,10 @@ impl Timeline {
                     );
                 }
                 detail = text(item, "output").to_owned();
+                // An output that only echoes the command says nothing new.
+                if repeats_command(&detail, &[text(item, "input"), command.as_str()]) {
+                    detail.clear();
+                }
                 entry.insert("command".into(), Json::from(text(item, "input")));
                 if is_number(item.get("exitCode")) {
                     entry.insert("exitCode".into(), Json::from(int(item, "exitCode")));
@@ -2356,6 +3292,33 @@ impl Timeline {
                 label = workspace_path(text(item, "fileName"), &root);
                 entry.insert("path".into(), Json::from(text(item, "fileName")));
                 detail = format!("+{} -{}", int(item, "additions"), int(item, "deletions"));
+                // The turn's diff names it as the checkpoint does: relative
+                // to the project.
+                entry.insert("diffPath".into(), Json::from(label.as_str()));
+                if is_number(item.get("additions")) || is_number(item.get("deletions")) {
+                    entry.insert("additions".into(), Json::from(int(item, "additions")));
+                    entry.insert("deletions".into(), Json::from(int(item, "deletions")));
+                }
+                // What each change did, a rename with where the file came
+                // from.
+                let changes: Vec<Json> = array(item, "changes")
+                    .iter()
+                    .map(|change| {
+                        let change = as_object(change);
+                        let from = text(change, "oldPath");
+                        Json::from(format!(
+                            "{} {}{}",
+                            text(change, "operation"),
+                            if from.is_empty() {
+                                String::new()
+                            } else {
+                                format!("{} → ", workspace_path(from, &root))
+                            },
+                            workspace_path(text(change, "path"), &root)
+                        ))
+                    })
+                    .collect();
+                entry.insert("changes".into(), Json::Array(changes));
             }
             "file_search" => {
                 // What it looked for; a read's file (an ACP agent's `read`).
@@ -2366,6 +3329,28 @@ impl Timeline {
                 }
                 .into();
                 detail = text(item, "pattern").to_owned();
+                // Where each match is, as "path:line:column", with its line.
+                let root = self
+                    .workspace_root
+                    .as_ref()
+                    .map(|root| root())
+                    .unwrap_or_default();
+                let matches: Vec<Json> = array(item, "results")
+                    .iter()
+                    .map(|result| {
+                        let result = as_object(result);
+                        let mut location = workspace_path(text(result, "fileName"), &root);
+                        if is_number(result.get("line")) {
+                            location += &format!(":{}", int(result, "line"));
+                            if is_number(result.get("column")) {
+                                location += &format!(":{}", int(result, "column"));
+                            }
+                        }
+                        json!({"location": location,
+                               "preview": text(result, "preview").trim()})
+                    })
+                    .collect();
+                entry.insert("matches".into(), Json::Array(matches));
             }
             "web_search" => {
                 label = "Searched the web".into();
@@ -2374,6 +3359,25 @@ impl Timeline {
                     .map(|p| p.as_str().unwrap_or(""))
                     .collect::<Vec<_>>()
                     .join("\n");
+                // A result links to its page only at a web address; any other
+                // stays text.
+                let results: Vec<Json> = array(item, "results")
+                    .iter()
+                    .map(|result| {
+                        let result = as_object(result);
+                        let title = text(result, "title").trim();
+                        let address = text(result, "url").trim();
+                        let shown = if !title.is_empty() {
+                            title
+                        } else if !address.is_empty() {
+                            address
+                        } else {
+                            "Search result"
+                        };
+                        json!({"title": shown, "url": safe_web_address(address)})
+                    })
+                    .collect();
+                entry.insert("results".into(), Json::Array(results));
             }
             "dynamic_tool" => {
                 label = match item.get("toolName") {
@@ -2391,6 +3395,28 @@ impl Timeline {
                     }
                     Some(Json::String(input)) => detail = input.clone(),
                     _ => {}
+                }
+                // An image the agent looked at: shown only from the
+                // workspace, else its path.
+                let viewed = text(item, "viewedImagePath");
+                if !viewed.is_empty() {
+                    let root = self
+                        .workspace_root
+                        .as_ref()
+                        .map(|root| root())
+                        .unwrap_or_default();
+                    let image = workspace_image(viewed, &root);
+                    entry.insert("viewedPath".into(), Json::from(viewed));
+                    if !image.is_empty() {
+                        let id = format!("workspace-file:{image}");
+                        let url = self
+                            .attachment_urls
+                            .get(&id)
+                            .filter(|known| known.expires_at.is_some_and(|e| e > self.clock.now()))
+                            .map_or("", |known| known.url.as_str());
+                        entry.insert("imageUrl".into(), Json::from(url));
+                        entry.insert("imageId".into(), Json::from(id));
+                    }
                 }
             }
             "approval_request" | "user_input_request" => {
@@ -2411,6 +3437,10 @@ impl Timeline {
                         .collect::<Vec<_>>()
                         .join("\n")
                 };
+                // Answered: what the user said.
+                if !approval && let Some(Json::Object(answer)) = item.get("questionAnswer") {
+                    entry.insert("preview".into(), Json::from(answer_preview(answer)));
+                }
                 let request = self.entity("runtime-request", text(item, "requestId"));
                 if text(request, "decision") == "decline" {
                     entry.insert("statusLabel".into(), Json::from("Declined"));
@@ -2431,7 +3461,8 @@ impl Timeline {
                     .iter()
                     .map(|step| {
                         let step = as_object(step);
-                        format!("{}: {}", text(step, "status"), text(step, "text"))
+                        let done = text(step, "status") == "completed";
+                        format!("{}{}", if done { "✓ " } else { "○ " }, text(step, "text"))
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
@@ -2452,7 +3483,158 @@ impl Timeline {
         }
         entry.insert("label".into(), Json::from(label));
         entry.insert("detail".into(), Json::from(detail));
+        // Work HAL-C2 recorded rather than the agent, and where inherited
+        // work came from.
+        let inherited = self.inherited_runs().contains(text(item, "runId"));
+        let visibility = if item.get("synthetic").and_then(Json::as_bool) == Some(true) {
+            "Synthetic"
+        } else if inherited {
+            "Inherited"
+        } else {
+            ""
+        };
+        entry.insert("visibility".into(), Json::from(visibility));
+        let source = if inherited {
+            self.forked_from()
+        } else {
+            String::new()
+        };
+        entry.insert("source".into(), Json::from(source));
         Json::Object(entry)
+    }
+
+    /// Whether a subagent group is still going, so a span over it ticks.
+    pub fn spans_ticking(&self) -> bool {
+        for row in &self.rows {
+            if row.kind != "subagents" {
+                continue;
+            }
+            let members: Vec<&Obj> = row
+                .items
+                .iter()
+                .map(|id| {
+                    let launch = self.entity("turn-item", id);
+                    let entity = self.entity("subagent", text(launch, "subagentId"));
+                    if entity.is_empty() { launch } else { entity }
+                })
+                .collect();
+            if summary::group_span(&members).live {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn tick_spans(&mut self) {
+        for (row, shown) in self.rows.iter().enumerate() {
+            if shown.kind != "subagents" {
+                continue;
+            }
+            let members: Vec<&Obj> = shown
+                .items
+                .iter()
+                .map(|id| {
+                    let launch = self.entity("turn-item", id);
+                    let entity = self.entity("subagent", text(launch, "subagentId"));
+                    if entity.is_empty() { launch } else { entity }
+                })
+                .collect();
+            if summary::group_span(&members).live {
+                self.out.push(Out::DataChanged {
+                    first: row,
+                    last: row,
+                    roles: vec![Role::Span],
+                });
+            }
+        }
+    }
+
+    /// The card of a subagent the user opened, the same on either desktop
+    /// (SubagentCard, subagent-card.tsx): {} unless `row_id` names a
+    /// subagent. Read of its entity, which moves on after the turn item.
+    pub fn subagent_card(&self, row_id: &str) -> Obj {
+        let Some(at) = self.index_of(row_id) else {
+            return Obj::new();
+        };
+        let row = &self.rows[at];
+        if row.kind != "subagent" {
+            return Obj::new();
+        }
+        // The item with its subagent's fields over it (subagentOf).
+        let mut agent = self
+            .entity("turn-item", row.items.first().map_or("", String::as_str))
+            .clone();
+        let id = text(&agent, "subagentId").to_owned();
+        for (key, value) in self.entity("subagent", &id) {
+            if key != "id" && !value.is_null() {
+                agent.insert(key.clone(), value.clone());
+            }
+        }
+        let status = text(&agent, "status");
+        let mut card = Obj::new();
+        let model = text(&agent, "model").trim();
+        card.insert(
+            "model".into(),
+            Json::from(if model.is_empty() {
+                "Not reported".to_owned()
+            } else {
+                self.model_name(text(&agent, "providerInstanceId"), model)
+            }),
+        );
+        // How long it has worked, or worked.
+        let started = time::time_of(agent.get("startedAt"), self.clock.zone);
+        let completed = time::time_of(agent.get("completedAt"), self.clock.zone);
+        let until = match completed {
+            Some(done) if !summary::subagent_live(status) => done,
+            _ => self.clock.now(),
+        };
+        card.insert(
+            "elapsed".into(),
+            Json::from(started.map_or_else(String::new, |start| {
+                summary::format_elapsed((until - start).num_seconds())
+            })),
+        );
+        // Where it works, where that is not where its parent does.
+        let parent = self.thread_row_of(self.own_thread_id());
+        let child = self.thread_row_of(text(&agent, "childThreadId"));
+        let project = text(&child, "projectId");
+        card.insert(
+            "project".into(),
+            Json::from(match &self.project_title {
+                Some(title) if !project.is_empty() && project != text(&parent, "projectId") => {
+                    title(project)
+                }
+                _ => String::new(),
+            }),
+        );
+        let branch = text(&child, "branch");
+        let worktree = text(&child, "worktreePath");
+        let place = if !branch.is_empty() && branch != text(&parent, "branch") {
+            branch.to_owned()
+        } else if branch.is_empty()
+            && !worktree.is_empty()
+            && worktree != text(&parent, "worktreePath")
+        {
+            std::path::Path::new(worktree.trim_end_matches('/'))
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        card.insert("place".into(), Json::from(place));
+        // Its answer once it ended, else its latest word (subagentDetailPreview).
+        let preview = summary::subagent_detail(
+            summary::subagent_settled(status),
+            text(&agent, "progress"),
+            text(&agent, "result"),
+        );
+        let mut preview = preview.split_whitespace().collect::<Vec<_>>().join(" ");
+        if preview.chars().count() > 280 {
+            preview = format!("{}…", preview.chars().take(280).collect::<String>());
+        }
+        card.insert("preview".into(), Json::from(preview));
+        card
     }
 
     /// A row's role; None (undefined) where the row has none.
@@ -2518,8 +3700,26 @@ impl Timeline {
             };
         }
 
-        let item = self.entity("turn-item", row.items.first().map_or("", String::as_str));
+        let synthetic = Obj::new();
+        let item = match &row.item {
+            Some(item) => item,
+            None if row.items.is_empty() => &synthetic,
+            None => self.entity("turn-item", row.items.first().map_or("", String::as_str)),
+        };
         let kind = text(item, "type");
+        // A subagents group's members, as their turn items read now.
+        let members: Vec<&Obj> = if row.kind == "subagents" {
+            row.items
+                .iter()
+                .map(|id| {
+                    let launch = self.entity("turn-item", id);
+                    let entity = self.entity("subagent", text(launch, "subagentId"));
+                    if entity.is_empty() { launch } else { entity }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         // A subagent's row follows its entity, which moves on after the
         // turn item.
         let agent = if row.kind == "subagent" {
@@ -2552,7 +3752,7 @@ impl Timeline {
                 // was sent for itself anyone's message (notice_of).
                 if kind != "user_message" || row.kind != "message" {
                     Json::from("")
-                } else if !text(item, "scheduledTaskId").is_empty() {
+                } else if sent_by_scheduled_task(item) {
                     Json::from("Sent by automation")
                 } else if text(item, "createdBy") == "agent" {
                     let sender = text(item, "senderThreadId");
@@ -2572,8 +3772,23 @@ impl Timeline {
             Role::Thread => {
                 if row.kind == "subagent" {
                     Json::from(text(item, "childThreadId"))
+                } else if kind == "fork" && text(object(item, "source"), "type") == "run" {
+                    Json::from(text(object(item, "source"), "threadId"))
+                } else if kind == "thread_created" || kind == "fork" {
+                    Json::from(text(item, "targetThreadId"))
                 } else if kind == "user_message" && text(item, "createdBy") == "agent" {
-                    Json::from(text(item, "senderThreadId"))
+                    // Only a thread this environment knows opens.
+                    let sender = text(item, "senderThreadId");
+                    let known = !sender.is_empty()
+                        && self
+                            .thread_titles
+                            .as_ref()
+                            .is_some_and(|title_of| !title_of(sender).is_empty());
+                    Json::from(if known && legacy_automation_prefix(item) == 0 {
+                        sender
+                    } else {
+                        ""
+                    })
                 } else if row.kind == "marker" {
                     // A finished worker's notification opens the worker's thread.
                     Json::from(
@@ -2637,9 +3852,53 @@ impl Timeline {
                         title => title,
                     })
                 }
+                "subagents" => Json::from(if members.len() == 1 {
+                    "1 subagent".to_owned()
+                } else {
+                    format!("{} subagents", members.len())
+                }),
+                // A thread the turn created, as a card after its last reply.
+                "resource" if kind == "thread_created" => Json::from(match text(item, "title") {
+                    "" => "Created thread",
+                    title => title,
+                }),
+                "resource" => {
+                    let resources = array(item, "resources");
+                    Json::from(if resources.len() > 1 {
+                        format!("Seeded {} items", resources.len())
+                    } else {
+                        match array(item, "resources")
+                            .first()
+                            .map(|r| text(as_object(r), "kind"))
+                        {
+                            Some("page") => "Page".to_owned(),
+                            Some("file") => "File".to_owned(),
+                            _ => "Thread".to_owned(),
+                        }
+                    })
+                }
                 _ => return None,
             },
             Role::Text => match row.kind {
+                "subagents" => {
+                    let statuses: Vec<&str> = members.iter().map(|m| text(m, "status")).collect();
+                    Json::from(summary::summarize_statuses(&statuses))
+                }
+                "resource" => {
+                    let resources = array(item, "resources");
+                    if resources.is_empty() {
+                        Json::from(marker_detail(item))
+                    } else {
+                        Json::from(
+                            resources
+                                .iter()
+                                .filter(|r| !text(as_object(r), "summary").is_empty())
+                                .map(|r| text(as_object(r), "summary"))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        )
+                    }
+                }
                 "plan" => Json::from(plan_body(text(item, "markdown"))),
                 "marker" => Json::from(marker_detail(item)),
                 // The agent's own sentence stays in the conversation.
@@ -2664,9 +3923,99 @@ impl Timeline {
                         detail
                     })
                 }
+                _ if kind == "user_message" => {
+                    Json::from(&text(item, "text")[legacy_automation_prefix(item)..])
+                }
                 _ => Json::from(text(item, "text")),
             },
             Role::Warning => Json::from(row.kind == "error" && usage_limit),
+            Role::Preview => Json::from(if row.kind == "plan" {
+                plan_preview(text(item, "markdown"))
+            } else {
+                String::new()
+            }),
+            Role::Action => Json::from(if row.kind == "resource" && kind == "thread_created" {
+                "Open chat"
+            } else if kind == "fork" {
+                if text(object(item, "source"), "type") == "run" {
+                    "Open source conversation"
+                } else {
+                    "Open fork"
+                }
+            } else if kind == "thread_created" && !text(item, "targetThreadId").is_empty() {
+                "Open chat"
+            } else {
+                ""
+            }),
+            Role::Visibility => {
+                // Work HAL-C2 recorded rather than the agent, or a fork
+                // carried over from its source.
+                Json::from(
+                    if item.get("synthetic").and_then(Json::as_bool) == Some(true) {
+                        "Synthetic"
+                    } else if self.inherited_runs().contains(text(item, "runId")) {
+                        "Inherited"
+                    } else {
+                        ""
+                    },
+                )
+            }
+            Role::Source => Json::from(if self.inherited_runs().contains(text(item, "runId")) {
+                self.forked_from()
+            } else {
+                String::new()
+            }),
+            Role::Handoff => {
+                if kind != "handoff" {
+                    Json::Array(Vec::new())
+                } else {
+                    Json::Array(self.handoff_ends(item))
+                }
+            }
+            Role::Avatars => {
+                if row.kind != "subagents" {
+                    Json::Array(Vec::new())
+                } else {
+                    Json::Array(
+                        members
+                            .iter()
+                            .take(3)
+                            .map(|member| {
+                                json!({"title": summary::subagent_title(text(member, "title").trim()),
+                                       "status": text(member, "status")})
+                            })
+                            .collect(),
+                    )
+                }
+            }
+            Role::More => Json::from(if row.kind == "subagents" {
+                members.len().saturating_sub(3)
+            } else {
+                0
+            }),
+            Role::Span => {
+                if row.kind != "subagents" {
+                    Json::from("")
+                } else {
+                    let span = summary::group_span(&members);
+                    let end = if span.live {
+                        Some(self.clock.now())
+                    } else {
+                        span.end
+                    };
+                    Json::from(match (span.start, end) {
+                        (Some(start), Some(end)) if end >= start => {
+                            summary::format_elapsed((end - start).num_seconds())
+                        }
+                        _ => String::new(),
+                    })
+                }
+            }
+            Role::ScheduledTask => Json::from(if kind == "user_message" && row.kind == "message" {
+                scheduled_task_of(item)
+            } else {
+                ""
+            }),
             Role::Attachments => {
                 let mut images = Vec::new();
                 if kind == "user_message" {
@@ -2681,11 +4030,33 @@ impl Timeline {
                             .get(id)
                             .filter(|known| known.expires_at.is_some_and(|e| e > self.clock.now()))
                             .map_or("", |known| known.url.as_str());
-                        images.push(serde_json::json!({
+                        let mut image = serde_json::json!({
                             "id": id,
                             "name": text(attachment, "name"),
                             "url": url,
-                        }));
+                        });
+                        // A Snap Shot's capture: its tree as JSON, or its flat text.
+                        let source = as_object(attachment.get("source").unwrap_or(&Json::Null));
+                        let tree = source.get("accessibility").and_then(Json::as_object);
+                        let flat_tree = tree.is_some_and(|t| text(t, "format") == "flat-text");
+                        let access = match tree {
+                            Some(tree) if !tree.is_empty() && !flat_tree => Some((
+                                "json",
+                                serde_json::to_string_pretty(tree).unwrap_or_default(),
+                            )),
+                            _ => {
+                                let flat = match tree {
+                                    Some(tree) if flat_tree => text(tree, "text"),
+                                    _ => text(source, "accessibleText"),
+                                };
+                                (!flat.is_empty()).then(|| ("text", flat.to_owned()))
+                            }
+                        };
+                        if let Some((format, access_text)) = access {
+                            image["accessFormat"] = Json::from(format);
+                            image["accessText"] = Json::from(access_text);
+                        }
+                        images.push(image);
                     }
                 }
                 Json::Array(images)
@@ -2734,8 +4105,15 @@ impl Timeline {
                         .collect(),
                 )
             }
-            Role::Expanded
-            | Role::HiddenCount
+            Role::Expanded => {
+                return Some(Json::from(match row.kind {
+                    "subagents" => self.open_subagent_groups.contains(&row.id),
+                    // A long plan opens from its preview.
+                    "plan" => self.expanded_groups.contains(&row.id),
+                    _ => return None,
+                }));
+            }
+            Role::HiddenCount
             | Role::Entries
             | Role::Summary
             | Role::SummaryFailed

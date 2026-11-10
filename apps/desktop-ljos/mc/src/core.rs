@@ -70,6 +70,12 @@ pub(crate) enum Command {
     SetRetryDelays(Vec<Duration>),
     SetPingInterval(Duration),
     SetPongTimeout(Duration),
+    /// Says a terminal subscription has taken its output up to `sequence`.
+    Ack {
+        connection: u64,
+        id: u64,
+        sequence: i64,
+    },
 }
 
 /// A request on the MC's HTTP API whose answer goes straight to its owner.
@@ -342,6 +348,15 @@ impl Core {
             } => {
                 if self.is_connection(connection) {
                     self.send(&json!({"t": "more", "id": id, "items": items}));
+                }
+            }
+            Command::Ack {
+                connection,
+                id,
+                sequence,
+            } => {
+                if self.is_connection(connection) {
+                    self.send(&json!({"t": "ack", "id": id, "sequence": sequence}));
                 }
             }
             Command::Call {

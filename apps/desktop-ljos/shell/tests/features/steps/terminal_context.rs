@@ -153,6 +153,47 @@ fn no_context_link(message: &Value) -> bool {
     !text(&message["text"]).contains("hal-c2-context:")
 }
 
+/// Excerpts the store kept without their text, in a stashed draft reading
+/// `body` that the user restores.
+fn restored_draft(world: &mut World, body: &str, count: i64) -> Outcome {
+    let excerpts: Vec<Value> = (1..=count)
+        .map(|n| {
+            json!({"id": format!("c{n}"), "terminalId": "term-1", "terminalLabel": "Terminal 1",
+                   "lineStart": 3 + n, "lineEnd": 5 + n, "text": ""})
+        })
+        .collect();
+    let stashed = json!({"id": "s1", "createdAt": "2026-09-23T09:00:00.000Z",
+                         "text": body, "attachments": [], "terminalContexts": excerpts});
+    let data = world.home_dir().join("data");
+    std::fs::create_dir_all(&data).map_err(|e| crate::harness::Failure(e.to_string()))?;
+    let file = data.join("shell-composer.json");
+    std::fs::write(
+        &file,
+        json!({"targets": {}, "stash": [stashed]}).to_string(),
+    )
+    .map_err(|e| crate::harness::Failure(format!("cannot write {}: {e}", file.display())))?;
+    world.restart()?;
+    open_turn_thread(world)?;
+    world.dispatch("composer.stash.restore", json!({"id": "s1"}))?;
+    let wanted = count as usize;
+    world.wait_for_with(
+        |w| chips(w).len() == wanted && at(&composer_state(w), "text") == body,
+        |w| {
+            format!(
+                "the restored draft; the composer shows {}",
+                show(&composer_state(w))
+            )
+        },
+    )?;
+    let chips = chips(world);
+    expect!(
+        text(&chips[0]["text"]).is_empty(),
+        "{}",
+        show(&Value::Array(chips))
+    );
+    Ok(())
+}
+
 pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("{Q} shows a failing test on lines (\\d+) to (\\d+)"),
@@ -285,43 +326,41 @@ pub fn register(steps: &mut Steps) {
     // An excerpt the store kept without its text.
     steps.step(
         "a restored draft holds a terminal excerpt with no text left",
-        |world, _, _| {
-            let excerpt = json!({"id": "c1", "terminalId": "term-1", "terminalLabel": "Terminal 1",
-                                 "lineStart": 3, "lineEnd": 5, "text": ""});
-            let stashed = json!({"id": "s1", "createdAt": "2026-09-23T09:00:00.000Z",
-                                 "text": "why does this fail?", "attachments": [],
-                                 "terminalContexts": [excerpt]});
-            let data = world.home_dir().join("data");
-            std::fs::create_dir_all(&data).map_err(|e| crate::harness::Failure(e.to_string()))?;
-            let file = data.join("shell-composer.json");
-            std::fs::write(
-                &file,
-                json!({"targets": {}, "stash": [stashed]}).to_string(),
-            )
-            .map_err(|e| {
-                crate::harness::Failure(format!("cannot write {}: {e}", file.display()))
-            })?;
-            world.restart()?;
-            open_turn_thread(world)?;
-            world.dispatch("composer.stash.restore", json!({"id": "s1"}))?;
-            world.wait_for_with(
-                |w| chips(w).len() == 1 && at(&composer_state(w), "text") == "why does this fail?",
-                |w| {
-                    format!(
-                        "the restored draft; the composer shows {}",
-                        show(&composer_state(w))
-                    )
-                },
-            )?;
-            let chips = chips(world);
-            expect!(
-                text(&chips[0]["text"]).is_empty(),
-                "{}",
-                show(&Value::Array(chips))
-            );
-            Ok(())
+        |world, _, _| restored_draft(world, "why does this fail?", 1),
+    );
+    steps.step(
+        &format!(
+            "the draft reads {Q} and holds (one terminal excerpt|two terminal excerpts) whose text is gone"
+        ),
+        |world, c, _| {
+            let count = if c[1].starts_with("one") { 1 } else { 2 };
+            restored_draft(world, &c[0], count)
         },
     );
+    steps.step(
+        "the draft holds nothing but a terminal excerpt whose text is gone",
+        |world, _, _| restored_draft(world, "", 1),
+    );
+    steps.step("the message is sent without them", |world, _, _| {
+        let message = wait_for_message(world)?;
+        let sent = message.to_string();
+        expect!(
+            sent.contains("Why did this fail?") && !sent.contains("Terminal 1"),
+            "{sent}"
+        );
+        Ok(())
+    });
+    steps.step("nothing is sent and the draft is kept", |world, _, _| {
+        world.sync()?;
+        expect!(
+            last_message(world).is_none(),
+            "the MC has {}",
+            world.describe_commands()
+        );
+        let chips = chips(world);
+        expect!(chips.len() == 1, "{}", show(&Value::Array(chips)));
+        Ok(())
+    });
     steps.step("the user sends the message", |world, _, _| {
         let revision = world.next_edit;
         world.next_edit += 1;

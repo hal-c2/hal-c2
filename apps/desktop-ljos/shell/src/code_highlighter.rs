@@ -125,7 +125,7 @@ fn apply(engine: &Engine, obj: ObjectId) {
 }
 
 /// desktop-qt's `codereader::themeFor`: light from half lightness up.
-fn theme_for(background: Color) -> Theme {
+pub(crate) fn theme_for(background: Color) -> Theme {
     let [r, g, b, _] = background.to_rgba_f();
     let lightness = (r.max(g).max(b) + r.min(g).min(b)) / 2.0;
     if background.is_valid() && lightness >= 0.5 {
@@ -171,7 +171,10 @@ impl Reader {
             self.units = 0;
             self.spans.clear();
         }
-        let lines = text.rfind('\n').map_or(0, |at| at + 1);
+        // A rich text's `<br/>` reads as a line separator.
+        let lines = text.rfind(['\n', '\u{2028}', '\u{2029}']).map_or(0, |at| {
+            at + text[at..].chars().next().map_or(1, char::len_utf8)
+        });
         if lines > self.read.len() {
             let new = &text[self.read.len()..lines];
             let start = self.read.len();
@@ -203,7 +206,9 @@ fn shifted(mut span: HighlightSpan, by: usize) -> HighlightSpan {
 /// the start of `text`.
 fn read(syntax: &mut Syntax, text: &str, before: u32, theme: Theme) -> Vec<HighlightSpan> {
     let mut found: Vec<Span> = Vec::new();
-    syntax.feed(text, |span| {
+    // Separators are one UTF-16 unit, as `\n` is, so spans still count in `text`.
+    let fed = text.replace(['\u{2028}', '\u{2029}'], "\n");
+    syntax.feed(&fed, |span| {
         if span.theme == theme {
             found.push(span);
         }
@@ -285,6 +290,17 @@ mod tests {
         let words: Vec<&str> = spans.iter().map(|s| &text[s.range.clone()]).collect();
         assert!(words.contains(&"fn"), "{words:?}");
         assert!(words.contains(&"main"), "{words:?}");
+    }
+
+    #[test]
+    fn a_rich_texts_finished_lines_are_coloured_while_it_is_written() {
+        let mut reader = Reader::new(Syntax::for_language("ts").unwrap(), Theme::Dark, true);
+        let spans = reader.spans("const a = 1;\u{2028}const b = 2;\u{2028}const c");
+        assert!(spans.iter().any(|s| s.range.start == 0));
+        let second = "const a = 1;\u{2028}".len();
+        assert!(spans.iter().any(|s| s.range.start == second));
+        let last = "const a = 1;\u{2028}const b = 2;\u{2028}".len();
+        assert!(spans.iter().all(|s| s.range.start < last));
     }
 
     #[test]

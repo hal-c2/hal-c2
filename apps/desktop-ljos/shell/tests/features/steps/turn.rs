@@ -14,7 +14,9 @@ use serde_json::{Value, json};
 
 use crate::brick::{Brick, Shown};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
-use crate::steps::composer_brick::{composer_brick, composer_part_now};
+use crate::steps::composer_brick::{
+    composer_brick, composer_part, composer_part_now, type_in_composer,
+};
 use crate::steps::keybinding::condition_problem;
 use crate::steps::stream::{self, FakeStreams, PROJECT, THREAD};
 use crate::world::World;
@@ -24,6 +26,29 @@ const QUESTION: &str = "database";
 
 fn thread_key(world: &World) -> String {
     format!("{}:{THREAD}", world.mc.environment_id)
+}
+
+/// The question the composer's card shows, or empty while it shows none.
+fn question_shown_now(world: &World) -> String {
+    let Some(brick) = world.peek_part::<Shown>().and_then(|shown| shown.0) else {
+        return String::new();
+    };
+    match composer_part_now(world, "questionTitle") {
+        Some(title) if brick.flag(world, title, "visible") => brick.text_of(world, title, "text"),
+        _ => String::new(),
+    }
+}
+
+fn expect_question_shown(world: &mut World, wanted: &str) -> Outcome {
+    composer_brick(world)?;
+    let wanted = wanted.to_owned();
+    world.wait_for_with(
+        {
+            let wanted = wanted.clone();
+            move |w| question_shown_now(w) == wanted
+        },
+        move |w| format!("\"{wanted}\"; the card shows \"{}\"", question_shown_now(w)),
+    )
 }
 
 fn turn(world: &World) -> Json {
@@ -223,8 +248,36 @@ fn propose_plan(world: &mut World, settled: bool) -> Outcome {
     propose_plan_of(world, settled, "# Tax line\n\n- Add the line\n- Test it")
 }
 
+/// The plan the scenario proposed, for the step that sends it back.
+#[derive(Default)]
+struct ProposedPlan {
+    markdown: String,
+}
+
+fn proposed_turn_plan(world: &mut World) -> String {
+    let markdown = world.mc.part::<ProposedPlan>().markdown.clone();
+    if markdown.is_empty() {
+        "# Tax line\n\n- Add the line\n- Test it".into()
+    } else {
+        markdown
+    }
+}
+
+/// What an item on the TurnRequests brick says, or empty while it is not
+/// shown.
+fn said(world: &World, name: &str) -> String {
+    let Some(brick) = world.peek_part::<Shown>().and_then(|shown| shown.0) else {
+        return String::new();
+    };
+    match brick.find(world, name) {
+        Ok(Some(item)) if brick.flag(world, item, "visible") => brick.text_of(world, item, "text"),
+        _ => String::new(),
+    }
+}
+
 /// `propose_plan` with a plan of the given markdown.
 fn propose_plan_of(world: &mut World, settled: bool, markdown: &str) -> Outcome {
+    world.mc.part::<ProposedPlan>().markdown = markdown.to_owned();
     start_working(world)?;
     // Plans come from plan mode.
     update_row(world, json!({"interactionMode": "plan"}))?;
@@ -446,6 +499,244 @@ fn tells(world: &World, told: &str) -> bool {
         .peek_part::<Shown>()
         .and_then(|shown| shown.0)
         .is_some_and(|brick| brick.shows(world, told).unwrap_or(false))
+}
+
+/// The agent's task list the steps report.
+#[derive(Default)]
+struct Tasks {
+    steps: Vec<Value>,
+}
+
+fn task(text: &str, status: &str, seconds: Option<i64>) -> Value {
+    let mut step = json!({"id": text, "text": text, "status": status});
+    if let Some(seconds) = seconds {
+        step["durationMs"] = json!(seconds * 1000);
+    }
+    step
+}
+
+fn report_tasks(world: &mut World) -> Outcome {
+    let run = world.mc.part::<FakeStreams>().run.clone();
+    let steps = world.mc.part::<Tasks>().steps.clone();
+    stream::set(
+        world,
+        "plan",
+        "todo-1",
+        json!({"id": "todo-1", "kind": "todo_list", "status": "active",
+               "runId": run, "steps": steps}),
+    )
+}
+
+fn task_list(world: &mut World, texts: &[String]) -> Outcome {
+    start_working(world)?;
+    for text in texts {
+        world
+            .mc
+            .part::<Tasks>()
+            .steps
+            .push(task(text, "pending", None));
+    }
+    report_tasks(world)
+}
+
+fn open_tasks(world: &mut World) -> Outcome {
+    let brick = requests_brick(world)?;
+    world.wait_for_with(
+        move |w| {
+            brick
+                .find_visible(w, "tasksToggle")
+                .is_ok_and(|found| found.is_some())
+        },
+        |w| format!("the task summary; the turn is {}", show(&turn(w))),
+    )?;
+    brick.click(world, "tasksToggle")?;
+    world.wait_for("the task list to open", move |w| {
+        brick
+            .root(w)
+            .is_some_and(|root| brick.flag(w, root, "tasksOpen"))
+    })
+}
+
+fn steps_shown(world: &mut World) -> Outcome<Vec<ljos::prelude::ObjectId>> {
+    let brick = requests_brick(world)?;
+    fn walk(
+        world: &World,
+        item: ljos::prelude::ObjectId,
+        found: &mut Vec<ljos::prelude::ObjectId>,
+    ) {
+        let engine = world.engine();
+        if engine.read_by_name(item, "objectName") == ljos::prelude::Value::from("taskStep")
+            && engine.read_by_name(item, "visible") == ljos::prelude::Value::Bool(true)
+        {
+            found.push(item);
+        }
+        for child in engine.children(item) {
+            walk(world, child, found);
+        }
+    }
+    let mut found = Vec::new();
+    if let Some(root) = brick.root(world) {
+        walk(world, root, &mut found);
+    }
+    Ok(found)
+}
+
+fn register_tasks(steps: &mut Steps) {
+    steps.step("the agent's task list has the steps (.+)", |world, c, _| {
+        let texts: Vec<String> = c[0]
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect();
+        task_list(world, &texts)
+    });
+    steps.step(
+        &format!("{Q} is finished and {Q} is in progress"),
+        |world, c, _| {
+            for step in &mut world.mc.part::<Tasks>().steps {
+                if text(&step["text"]) == c[0] {
+                    step["status"] = json!("completed");
+                }
+                if text(&step["text"]) == c[1] {
+                    step["status"] = json!("running");
+                }
+            }
+            report_tasks(world)
+        },
+    );
+    steps.step(
+        &format!("the composer shows {Q} with the current step {Q} and (\\d+) of (\\d+) done"),
+        |world, c, _| {
+            let brick = requests_brick(world)?;
+            let progress = format!("{}/{}", c[2], c[3]);
+            world.wait_for_with(
+                {
+                    let (says, current) = (c[0].clone(), c[1].clone());
+                    move |w| {
+                        let card = brick.find(w, "tasks").ok().flatten();
+                        card.is_some_and(|item| brick.flag(w, item, "visible"))
+                            && brick.shows(w, &says).unwrap_or(false)
+                            && said(w, "tasksCurrent") == current
+                            && said(w, "tasksProgress") == progress
+                    }
+                },
+                |w| {
+                    format!(
+                        "the task summary reads \"{}\" {}; the turn is {}",
+                        said(w, "tasksCurrent"),
+                        said(w, "tasksProgress"),
+                        show(&turn(w))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        &format!("the agent finished {Q} in (\\d+) seconds and is working on {Q}"),
+        |world, c, _| {
+            start_working(world)?;
+            let seconds: i64 = c[1].parse().unwrap_or(0);
+            world
+                .mc
+                .part::<Tasks>()
+                .steps
+                .push(task(&c[0], "completed", Some(seconds)));
+            world
+                .mc
+                .part::<Tasks>()
+                .steps
+                .push(task(&c[2], "running", None));
+            report_tasks(world)
+        },
+    );
+    steps.step(&format!("{Q} has not started"), |world, c, _| {
+        world
+            .mc
+            .part::<Tasks>()
+            .steps
+            .push(task(&c[0], "pending", None));
+        report_tasks(world)
+    });
+    steps.step("the user opens the task summary", |world, _, _| {
+        open_tasks(world)
+    });
+    steps.step(
+        &format!("{Q} is listed as (completed|running|pending) with (?:{Q}|no time)"),
+        |world, c, _| {
+            let mut listed_names = Vec::new();
+            let brick = requests_brick(world)?;
+            for item in steps_shown(world)? {
+                let step = brick.text_of(world, item, "step");
+                let status = brick.text_of(world, item, "status");
+                let duration = brick.text_of(world, item, "duration");
+                if step == c[0] && status == c[1] && duration == c[2] {
+                    return Ok(());
+                }
+                listed_names.push(format!("{step} {status} \"{duration}\""));
+            }
+            fail!("the task list shows [{}]", listed_names.join(", "));
+        },
+    );
+    steps.step("the agent has reported no task list", |world, _, _| {
+        start_working(world)
+    });
+    steps.step(
+        "the agent's task list is open and (an approval comes in|the agent asks a question)",
+        |world, c, _| {
+            task_list(world, &["Add the tax line".into(), "Write tests".into()])?;
+            open_tasks(world)?;
+            if c[0] == "an approval comes in" {
+                approval(world, "command", "npm test", Vec::new(), "live")?;
+            } else {
+                let labels = ["Postgres", "SQLite"].map(String::from);
+                question(world, "Which database?", &labels, false, "live")?;
+            }
+            Ok(())
+        },
+    );
+    steps.step("the composer shows no task summary", |world, _, _| {
+        world.sync()?;
+        let brick = requests_brick(world)?;
+        let card = brick.find(world, "tasks")?;
+        expect!(
+            turn(world)["tasks"].is_null()
+                && !card.is_some_and(|item| brick.flag(world, item, "visible")),
+            "the composer shows tasks; the turn is {}",
+            show(&turn(world))
+        );
+        Ok(())
+    });
+    steps.step(
+        "the user opened the task summary in thread A",
+        |world, _, _| {
+            task_list(world, &["Add the tax line".into(), "Write tests".into()])?;
+            open_tasks(world)
+        },
+    );
+    steps.step(
+        "the task list is closed and only its summary is shown",
+        |world, _, _| {
+            let brick = requests_brick(world)?;
+            world.wait_for_with(
+                move |w| {
+                    brick
+                        .find_visible(w, "tasks")
+                        .is_ok_and(|found| found.is_some())
+                },
+                |w| format!("the task summary; the turn is {}", show(&turn(w))),
+            )?;
+            let shown_count = steps_shown(world)?.len();
+            let open = brick
+                .root(world)
+                .is_some_and(|root| brick.flag(world, root, "tasksOpen"));
+            expect!(
+                !open && shown_count == 0,
+                "the task list shows {shown_count} steps"
+            );
+            Ok(())
+        },
+    );
 }
 
 pub fn register(steps: &mut Steps) {
@@ -729,6 +1020,52 @@ pub fn register(steps: &mut Steps) {
         composer_brick(world).map(drop)
     });
     steps.step(
+        &format!("the agent asks {Q} and the user has typed {Q} without sending it"),
+        |world, c, _| {
+            start_working(world)?;
+            let labels = ["Postgres", "SQLite", "MySQL"].map(String::from);
+            question(world, &c[0], &labels, false, "live")?;
+            expect_question_shown(world, &c[0])?;
+            let brick = composer_brick(world)?;
+            let Some(field) = composer_part(world, &format!("questionAnswer-{QUESTION}"))? else {
+                fail!("the question takes no typed answer");
+            };
+            let (x, y) = brick.at(world, field, 0.5, 0.5)?;
+            world.click_at(x, y)?;
+            type_in_composer(world, &c[1])?;
+            let read = brick.text_of(world, field, "text");
+            expect!(read == c[1], "the answer reads \"{read}\"");
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user opens a new thread and comes back",
+        |world, _, _| {
+            world.start_new_thread(json!({}))?;
+            world.wait_for("the question to go with the thread", |w| {
+                question_shown_now(w).is_empty()
+            })?;
+            let key = thread_key(world);
+            stream::look(world, &key, true)
+        },
+    );
+    steps.step(
+        &format!("the answer still reads {Q} on the same question"),
+        |world, c, _| {
+            expect_question_shown(world, "Which database?")?;
+            let brick = composer_brick(world)?;
+            let Some(field) = composer_part(world, &format!("questionAnswer-{QUESTION}"))? else {
+                fail!("the question takes no typed answer");
+            };
+            let read = brick.text_of(world, field, "text");
+            expect!(
+                brick.flag(world, field, "visible") && read == c[0],
+                "the answer reads \"{read}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step(
         "the agent asks two long questions in place of the first",
         |world, _, _| {
             let request_id = text(&first(world, "questions")?["requestId"]);
@@ -925,6 +1262,190 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+    steps.step(
+        &format!("the user's message reads {Q} followed by the plan"),
+        |world, c, _| {
+            let message = last_message(world)?;
+            let expected = format!("{}\n{}", c[0], proposed_turn_plan(world).trim());
+            expect!(
+                text(&message["threadId"]) == THREAD && text(&message["text"]) == expected,
+                "the MC was sent {}",
+                show(&message)
+            );
+            Ok(())
+        },
+    );
+    steps.step("the thread leaves plan mode", |world, _, _| {
+        let mode = last_command(world, "thread.interaction-mode.set")?;
+        expect!(
+            text(&mode["interactionMode"]) == "default",
+            "the thread was set to {}",
+            show(&mode)
+        );
+        Ok(())
+    });
+
+    // The plan above the composer (ComposerPlanFollowUpBanner) and what
+    // sending does to it (ComposerPrimaryActions).
+    steps.step(&format!("the composer says {Q} with {Q}"), |world, c, _| {
+        requests_brick(world)?;
+        world.wait_for_with(
+            {
+                let (ready, heading) = (c[0].clone(), c[1].clone());
+                move |w| said(w, "planReady") == ready && said(w, "planHeading") == heading
+            },
+            |w| {
+                format!(
+                    "the composer says \"{}\" with \"{}\"",
+                    said(w, "planReady"),
+                    said(w, "planHeading")
+                )
+            },
+        )
+    });
+    steps.step(
+        &format!("a plan with no heading is announced as {Q} alone"),
+        |world, c, _| {
+            stream::set(
+                world,
+                "plan",
+                "plan-1",
+                json!({"markdown": "- Add the line\n- Test it"}),
+            )?;
+            requests_brick(world)?;
+            world.wait_for_with(
+                {
+                    let wanted = c[0].clone();
+                    move |w| said(w, "planReady") == wanted && said(w, "planHeading").is_empty()
+                },
+                |w| {
+                    format!(
+                        "the composer says \"{}\" with \"{}\"",
+                        said(w, "planReady"),
+                        said(w, "planHeading")
+                    )
+                },
+            )
+        },
+    );
+    fn offers(world: &mut World, action: &str, label: &str) -> Outcome {
+        let action = action.to_owned();
+        let label = label.to_owned();
+        requests_brick(world)?;
+        world.wait_for_with(
+            move |w| {
+                text(&w.state("composer")["planAction"]) == action
+                    && said(w, "planImplement") == label
+            },
+            |w| {
+                format!(
+                    "the composer offers \"{}\" ({})",
+                    said(w, "planImplement"),
+                    text(&w.state("composer")["planAction"])
+                )
+            },
+        )
+    }
+    steps.step(
+        "the composer offers to implement the plan(?: again)?",
+        |world, _, _| offers(world, "implement", "Implement"),
+    );
+    steps.step(
+        "the composer offers to refine the plan instead",
+        |world, _, _| offers(world, "refine", "Refine"),
+    );
+    steps.step("the user clears the composer", |world, _, _| {
+        type_into(world, "")?;
+        world.sync()
+    });
+
+    // Feedback the MC does not take.
+    steps.step("the environment refuses new messages", |world, _, _| {
+        world
+            .mc
+            .refusals
+            .insert("message.dispatch".into(), "Provider unavailable".into());
+        Ok(())
+    });
+    steps.step(
+        "the feedback is no longer shown as a sent message",
+        |world, _, _| {
+            let feedback = "split the migration into its own step";
+            world.wait_for("the send to settle", |w| {
+                w.state("composer")["isSendBusy"] != json!(true)
+            })?;
+            let rows = stream::read(world, |t| t.row_count())?;
+            for row in 0..rows {
+                expect!(
+                    text(&stream::role(world, row, "text")) != feedback,
+                    "the timeline shows the feedback; {}",
+                    stream::describe(world)
+                );
+            }
+            for queued in listed(world, "queue") {
+                expect!(
+                    text(&queued["text"]) != feedback,
+                    "the queue shows {}",
+                    show(&queued)
+                );
+            }
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the thread shows the reason, or {Q} when none is given"),
+        |world, c, _| {
+            // A question the MC would not dismiss: the reason it gave,
+            // under the fallback.
+            if c[0] == "Failed to dismiss the question." {
+                return world.wait_for_with(
+                    move |w| {
+                        toasts(w).iter().any(|toast| {
+                            text(&toast["title"]) == c[0]
+                                && text(&toast["description"])
+                                    == "The provider is still writing the question"
+                        })
+                    },
+                    |w| {
+                        format!(
+                            "the reason; the toasts are {}",
+                            show(&Json::from(toasts(w)))
+                        )
+                    },
+                );
+            }
+            let told = |world: &mut World, description: &str| -> Outcome {
+                let description = description.to_owned();
+                let wanted = description.clone();
+                world.wait_for_with(
+                    move |w| {
+                        toasts(w).iter().any(|toast| {
+                            text(&toast["title"]) == "Plan follow-up not sent"
+                                && text(&toast["description"]) == wanted
+                        })
+                    },
+                    move |w| {
+                        format!(
+                            "\"{description}\"; the toasts are {}",
+                            show(&w.state("toasts"))
+                        )
+                    },
+                )
+            };
+            told(world, "Provider unavailable")?;
+            // Again, with no reason given.
+            world
+                .mc
+                .refusals
+                .insert("message.dispatch".into(), String::new());
+            submit(world, "and keep the docs")?;
+            world.sync()?;
+            told(world, &c[0])
+        },
+    );
+
+    // The agent's task list above the composer (ComposerTasksBadge).
+    register_tasks(steps);
 
     // Follow-ups and the queue.
     steps.step(
@@ -1471,6 +1992,17 @@ pub fn register(steps: &mut Steps) {
 
 /// Picks `label` in the agent's pending question, as the question panel
 /// does.
+/// Types `typed` into the composer when it offers a plan, for the palette's
+/// "the user types" step (desktop-qt's `planFeedbackTypes`).
+pub fn plan_feedback_types(world: &mut World, typed: &str) -> Outcome<bool> {
+    if !world.client_ready() || turn(world)["plan"].is_null() {
+        return Ok(false);
+    }
+    type_into(world, typed)?;
+    world.sync()?;
+    Ok(true)
+}
+
 pub fn pick_answer(world: &mut World, label: &str) -> Outcome {
     answer(world, json!(label))
 }

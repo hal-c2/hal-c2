@@ -99,6 +99,8 @@ pub trait Mc {
     fn unsubscribe(&self, id: SubId);
     /// Asks a windowed stream for the turns before its window.
     fn more(&self, id: SubId, items: u32);
+    /// Says a terminal subscription has taken its output up to `sequence`.
+    fn ack(&self, _id: SubId, _sequence: i64) {}
     /// Runs `f` whenever the MC becomes ready or stops being so.
     fn on_ready_changed(&self, f: OnReady);
 
@@ -411,6 +413,10 @@ impl Mc for Connection {
 
     fn more(&self, id: SubId, items: u32) {
         self.client.more(id.0, items);
+    }
+
+    fn ack(&self, id: SubId, sequence: i64) {
+        self.client.ack(id.0, sequence);
     }
 
     fn on_ready_changed(&self, mut f: OnReady) {

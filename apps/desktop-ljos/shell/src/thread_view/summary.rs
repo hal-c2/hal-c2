@@ -1209,6 +1209,104 @@ pub fn subagent_settled(status: &str) -> bool {
     !matches!(status, "pending" | "running" | "waiting")
 }
 
+/// Whether a lifecycle status is still working (pending, running,
+/// waiting).
+pub fn subagent_live(status: &str) -> bool {
+    matches!(status, "pending" | "running" | "waiting")
+}
+
+/// A group's states counted in the order a reader scans them, what still
+/// works first and then the outcomes: "2 working · 1 done · 1 failed"
+/// (desktop-qt's subagents::summarizeStatuses).
+pub fn summarize_statuses(statuses: &[&str]) -> String {
+    let (mut working, mut done, mut failed, mut stopped, mut idle) = (0, 0, 0, 0, 0);
+    for status in statuses {
+        if subagent_live(status) {
+            working += 1;
+        } else if *status == "completed" {
+            done += 1;
+        } else if *status == "failed" {
+            failed += 1;
+        } else if *status == "idle" {
+            idle += 1;
+        } else {
+            stopped += 1;
+        }
+    }
+    let mut parts = Vec::new();
+    for (count, word) in [
+        (working, "working"),
+        (done, "done"),
+        (failed, "failed"),
+        (stopped, "stopped"),
+        (idle, "idle"),
+    ] {
+        if count > 0 {
+            parts.push(format!("{count} {word}"));
+        }
+    }
+    parts.join(" · ")
+}
+
+/// 12s, 3m 04s, 1h 02m (desktop-qt's subagents::formatElapsed).
+pub fn format_elapsed(total: i64) -> String {
+    let seconds = total.max(0);
+    let minutes = seconds / 60;
+    if minutes == 0 {
+        return format!("{seconds}s");
+    }
+    let hours = minutes / 60;
+    if hours == 0 {
+        return format!("{minutes}m {:02}s", seconds % 60);
+    }
+    format!("{hours}h {:02}m", minutes % 60)
+}
+
+/// One span for a group, from its first launch to its last finish: no
+/// `end` while a member works or a finished one has no end time, when
+/// the span is withheld (or runs to now while it works).
+pub struct Span {
+    pub start: Option<chrono::DateTime<chrono::Utc>>,
+    pub end: Option<chrono::DateTime<chrono::Utc>>,
+    pub live: bool,
+}
+
+fn time_of(object: &Obj, field: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = text(object, field);
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|at| at.with_timezone(&chrono::Utc))
+}
+
+/// `members` are `subagent` entities or turn items (status, startedAt,
+/// completedAt).
+pub fn group_span(members: &[&Obj]) -> Span {
+    let mut span = Span {
+        start: None,
+        end: None,
+        live: false,
+    };
+    let mut end = None;
+    let mut end_unknown = false;
+    for member in members {
+        if let Some(started) = time_of(member, "startedAt")
+            && span.start.is_none_or(|start| started < start)
+        {
+            span.start = Some(started);
+        }
+        match time_of(member, "completedAt") {
+            Some(completed) if end.is_none_or(|e| completed > e) => end = Some(completed),
+            Some(_) => {}
+            None => end_unknown = true,
+        }
+        span.live = span.live || subagent_live(text(member, "status"));
+    }
+    if !span.live && !end_unknown {
+        span.end = end;
+    }
+    span
+}
+
 /// What a subagent's row says it did: a settled one its result, else its
 /// last progress; a live one the reverse. The server's "Child task ended
 /// with status ..." placeholder is dropped, the status already says it.

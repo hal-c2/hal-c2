@@ -68,6 +68,24 @@ const MAX_WRITE: usize = 65536;
 /// their buffers (docs/internals/terminal-runtime.md); the MC keeps the
 /// full history. In UTF-16 units, as desktop-qt counts.
 const MAX_TRANSCRIPT: usize = 512 * 1024;
+// Acknowledging is cumulative, so output is acknowledged together: when this
+// much is unacknowledged, or else a moment after the last of it. The MC's
+// window is 64 KiB of UTF-8, so a steady stream keeps flowing; the moment's
+// timer means the tail is always acknowledged, which is all the MC waits
+// for, so a client cannot stall itself.
+const ACK_EVERY: usize = 16 * 1024;
+/// How long the tail of some output waits to be acknowledged.
+pub const DEFAULT_ACK_DELAY_MS: u64 = 50;
+
+thread_local! {
+    static ACK_DELAY_MS: Cell<u64> = const { Cell::new(DEFAULT_ACK_DELAY_MS) };
+}
+
+/// Changes how long the tail of some output waits to be acknowledged (tests
+/// change it).
+pub fn set_ack_delay(ms: u64) {
+    ACK_DELAY_MS.with(|d| d.set(ms));
+}
 
 type Hook = Rc<dyn Fn(&Engine)>;
 
@@ -201,6 +219,21 @@ fn utf16_prefix(text: &str, limit: usize) -> usize {
     text.len()
 }
 
+/// The last of `text` that keeps it to `limit` UTF-16 units, never
+/// splitting a character: one chunk or snapshot larger than the transcript
+/// keeps only its newest output.
+fn utf16_suffix(text: &str, limit: usize) -> &str {
+    let mut units = utf16_len(text);
+    let mut chars = text.char_indices();
+    while units > limit {
+        match chars.next() {
+            Some((_, c)) => units -= c.len_utf16(),
+            None => break,
+        }
+    }
+    chars.next().map_or("", |(at, _)| &text[at..])
+}
+
 /// QDir::cleanPath: no `.`, `..` resolved, no doubled or trailing `/`.
 fn clean_path(path: &str) -> String {
     let absolute = path.starts_with('/');
@@ -319,6 +352,21 @@ struct SessionState {
     wanted: Option<(i32, i32)>,
     sent: Option<(i32, i32)>,
     resizing: bool,
+    /// The latest sequence the terminal has taken and the MC has not heard
+    /// of.
+    unacked: Option<i64>,
+    unacked_size: usize,
+    /// Bumped to cancel the pending ack timer.
+    ack_timer: u64,
+    ack_pending: bool,
+    parked: bool,
+}
+
+impl SessionState {
+    fn stop_ack_timer(&mut self) {
+        self.ack_pending = false;
+        self.ack_timer += 1;
+    }
 }
 
 struct SessionInner {
@@ -403,6 +451,7 @@ impl Session {
             .object
             .set(engine.create_native(object, owner).ok());
         let weak = Rc::downgrade(&session.0);
+        let resumed = Rc::downgrade(&session.0);
         let subscription = mc.subscribe(
             json!({ "type": "terminal", "environment": place.environment_id, "input": input }),
             Box::new(move |engine, frame| {
@@ -410,7 +459,20 @@ impl Session {
                     Session(inner).on_frame(engine, frame);
                 }
             }),
-            None,
+            Some(Box::new(move || {
+                // A new socket's window starts with its snapshot: nothing
+                // read before counts.
+                if let Some(inner) = resumed.upgrade()
+                    && let Ok(mut state) = inner.state.try_borrow_mut()
+                {
+                    state.stop_ack_timer();
+                    state.unacked = None;
+                    state.unacked_size = 0;
+                }
+                let mut fields = Frame::new();
+                fields.insert("acks".into(), Json::Bool(true));
+                fields
+            })),
         );
         session.0.state.borrow_mut().subscription = Some(subscription);
         session
@@ -512,6 +574,18 @@ impl Session {
                 // Every (re)subscription starts with a snapshot: the screen
                 // starts over.
                 self.replace(engine, &text(event["snapshot"].get("history")));
+                // The MC counts a snapshot against its window; what came
+                // before it is over.
+                let ack = {
+                    let mut state = self.0.state.borrow_mut();
+                    state.stop_ack_timer();
+                    state.unacked = event["snapshot"]["sequence"].as_i64();
+                    state.unacked_size = 0;
+                    !state.parked
+                };
+                if ack {
+                    self.send_ack();
+                }
                 let first = {
                     let mut state = self.0.state.borrow_mut();
                     // Attached again: the next outage is a new one, and is said.
@@ -536,7 +610,13 @@ impl Session {
                     self.flush_resize(engine);
                 }
             }
-            "output" => self.append(engine, &text(event.get("data"))),
+            "output" => {
+                let data = text(event.get("data"));
+                self.append(engine, &data);
+                // After the signal: the Terminal writes it into its screen
+                // right there.
+                self.consumed(engine, event["sequence"].as_i64(), utf16_len(&data));
+            }
             "cleared" => self.replace(engine, ""),
             "exited" => {
                 self.note(engine, "process exited");
@@ -553,6 +633,83 @@ impl Session {
         }
     }
 
+    fn consumed(&self, engine: &Engine, sequence: Option<i64>, size: usize) {
+        let Some(sequence) = sequence.filter(|s| *s >= 0) else {
+            return;
+        };
+        let timer = {
+            let mut state = self.0.state.borrow_mut();
+            state.unacked = Some(sequence);
+            state.unacked_size += size;
+            if state.parked {
+                return;
+            }
+            if state.unacked_size >= ACK_EVERY {
+                None
+            } else if state.ack_pending {
+                // Restarted, as a single-shot timer is.
+                state.ack_timer += 1;
+                Some(state.ack_timer)
+            } else {
+                state.ack_pending = true;
+                state.ack_timer += 1;
+                Some(state.ack_timer)
+            }
+        };
+        let Some(generation) = timer else {
+            self.send_ack();
+            return;
+        };
+        let weak = Rc::downgrade(&self.0);
+        let delay = ACK_DELAY_MS.with(Cell::get);
+        engine.call_at(
+            engine.now() + std::time::Duration::from_millis(delay),
+            move |_| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let due = {
+                    let state = inner.state.borrow();
+                    state.ack_pending && state.ack_timer == generation
+                };
+                if due {
+                    Session(inner).send_ack();
+                }
+            },
+        );
+    }
+
+    fn send_ack(&self) {
+        let (subscription, sequence) = {
+            let mut state = self.0.state.borrow_mut();
+            state.stop_ack_timer();
+            state.unacked_size = 0;
+            (state.subscription, state.unacked.take())
+        };
+        if let (Some(id), Some(sequence)) = (subscription, sequence) {
+            self.0.mc.ack(id, sequence);
+        }
+    }
+
+    /// A parked session stops saying what it has read, so an unseen shell's
+    /// output stops coming once the MC's window for it is full: the shell
+    /// keeps running and the MC keeps its history. Coming back says how far
+    /// it got; if the MC held output back it then sends a snapshot.
+    pub fn set_parked(&self, parked: bool) {
+        {
+            let mut state = self.0.state.borrow_mut();
+            if state.parked == parked {
+                return;
+            }
+            state.parked = parked;
+            if parked {
+                state.stop_ack_timer();
+                return;
+            }
+        }
+        self.send_ack();
+    }
+
     fn append(&self, engine: &Engine, data: &str) {
         if data.is_empty() {
             return;
@@ -566,6 +723,13 @@ impl Session {
                     state.transcript_size -= utf16_len(&oldest);
                 }
             }
+            if state.transcript_size > MAX_TRANSCRIPT
+                && let Some(only) = state.transcript.pop_front()
+            {
+                let kept = utf16_suffix(&only, MAX_TRANSCRIPT).to_owned();
+                state.transcript_size = utf16_len(&kept);
+                state.transcript.push_back(kept);
+            }
         }
         if let Some(obj) = self.object() {
             let _ = TerminalSessionObject::emit_output(&Cx::new(engine, obj), Atom::new(data));
@@ -578,8 +742,9 @@ impl Session {
             state.transcript.clear();
             state.transcript_size = 0;
             if !history.is_empty() {
-                state.transcript.push_back(history.to_owned());
-                state.transcript_size = utf16_len(history);
+                let kept = utf16_suffix(history, MAX_TRANSCRIPT);
+                state.transcript.push_back(kept.to_owned());
+                state.transcript_size = utf16_len(kept);
             }
         }
         if let Some(obj) = self.object() {
@@ -1110,6 +1275,11 @@ struct ThreadUi {
     local: HashSet<String>,
     /// Closed here; ignored until the MC confirms.
     closing: HashSet<String>,
+    /// Closed here and the MC's `remove` not seen yet. Its list is ordered,
+    /// so whatever it says of the terminal until then is older than the
+    /// close; its reply to the close is not ordered with the list, so it does
+    /// not settle this.
+    gone: HashSet<String>,
     /// Read from the store and not yet checked against the MC's terminals:
     /// the drawer waits for the list rather than open on a terminal that is
     /// gone.
@@ -1570,6 +1740,7 @@ impl Terminals {
         let group = format!("group-{}", self.group_count);
         let ui = self.ui_mut();
         ui.local.insert(id.clone());
+        ui.gone.remove(&id);
         ui.groups.push(Group {
             id: group.clone(),
             terminals: vec![id.clone()],
@@ -1649,6 +1820,28 @@ impl Terminals {
     /// Runs a project script in the active terminal, or a new one when that
     /// one is busy. False without a place or such a script.
     pub fn run_script(&mut self, engine: &Engine, script_id: &str) -> bool {
+        let script = self
+            .place
+            .as_ref()
+            .and_then(|place| {
+                place
+                    .scripts
+                    .iter()
+                    .rev()
+                    .find(|s| s["id"].as_str() == Some(script_id))
+                    .cloned()
+            })
+            .unwrap_or_default();
+        self.run_command(
+            engine,
+            script["name"].as_str().unwrap_or_default(),
+            script["command"].as_str().unwrap_or_default(),
+        )
+    }
+
+    /// Runs a command line as `run_script` does; `name` names it in a
+    /// failure. False without a place or a line.
+    pub fn run_command(&mut self, engine: &Engine, name: &str, line: &str) -> bool {
         if !supported(engine) {
             toast(
                 engine,
@@ -1667,19 +1860,14 @@ impl Terminals {
             );
             return false;
         }
-        let Some(place) = self.place.clone().filter(|_| self.active) else {
-            return false;
-        };
-        let Some(script) = place
-            .scripts
-            .iter()
-            .rev()
-            .find(|s| s["id"].as_str() == Some(script_id))
-            .cloned()
+        let Some(place) = self
+            .place
+            .clone()
+            .filter(|_| self.active && !line.is_empty())
         else {
             return false;
         };
-        let name = script["name"].as_str().unwrap_or_default().to_owned();
+        let name = name.to_owned();
         let ids = self.terminal_ids();
         let active = self.active_terminal_id();
         let mut terminal_id = if !active.is_empty() {
@@ -1713,7 +1901,7 @@ impl Terminals {
             input.insert("cols".into(), columns.into());
             input.insert("rows".into(), rows.into());
         }
-        let command = format!("{}\r", script["command"].as_str().unwrap_or_default());
+        let command = format!("{line}\r");
         let thread_key = self.thread_key.clone();
         let mc = self.mc.clone();
         let environment_id = place.environment_id.clone();
@@ -2047,7 +2235,10 @@ impl Terminals {
                 .get_mut(&thread_key)
                 .and_then(|p| p.sessions.remove(id));
             tab.session = Some(match parked {
-                Some(session) => session,
+                Some(session) => {
+                    session.set_parked(false);
+                    session
+                }
                 None => self.open_session(engine, &place, id),
             });
             self.tabs.insert(engine, i, tab);
@@ -2162,6 +2353,9 @@ impl Terminals {
         if sessions.is_empty() {
             return;
         }
+        for session in sessions.values() {
+            session.set_parked(true);
+        }
         self.parked.insert(
             thread_key.to_owned(),
             Parked {
@@ -2218,6 +2412,9 @@ impl Terminals {
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
+            if t.ui.get(&key).is_some_and(|ui| ui.gone.contains(&id)) {
+                return;
+            }
             t.known.entry(key.clone()).or_default().insert(
                 id.clone(),
                 Summary {
@@ -2251,7 +2448,9 @@ impl Terminals {
                 let key = key_of(&event["threadId"]);
                 let id = event["terminalId"].as_str().unwrap_or_default();
                 self.known.entry(key.clone()).or_default().remove(id);
-                self.ui.entry(key).or_default().local.remove(id);
+                let ui = self.ui.entry(key).or_default();
+                ui.local.remove(id);
+                ui.gone.remove(id);
             }
             _ => return,
         }
@@ -2275,7 +2474,9 @@ impl Terminals {
             let ui = self.ui_mut();
             if drawer_ids(ui, &ids).is_empty() {
                 let id = self.next_terminal_id();
-                self.ui_mut().local.insert(id);
+                let ui = self.ui_mut();
+                ui.gone.remove(&id);
+                ui.local.insert(id);
             }
         }
         self.sync_tabs(engine);
@@ -2292,6 +2493,7 @@ impl Terminals {
         ui.restored = false;
         if !listed {
             ui.local.insert(terminal_id.to_owned());
+            ui.gone.remove(terminal_id);
         }
         match group_of_mut(ui, terminal_id) {
             Some(group) if group.panel => group.active = terminal_id.to_owned(),
@@ -2329,6 +2531,7 @@ impl Terminals {
             target = self.next_terminal_id();
             let ui = self.ui_mut();
             ui.local.insert(target.clone());
+            ui.gone.remove(&target);
             ui.active = target.clone();
         }
         let size = group_of(self.ui_mut(), &target).map(|g| g.terminals.len());
@@ -2364,6 +2567,7 @@ impl Terminals {
             });
         }
         ui.local.insert(id.clone());
+        ui.gone.remove(&id);
         let mut panel = false;
         if let Some(group) = group_of_mut(ui, &target) {
             let at = group
@@ -2393,6 +2597,7 @@ impl Terminals {
         let ui = self.ui_mut();
         ui.local.remove(terminal_id);
         ui.closing.insert(terminal_id.to_owned());
+        ui.gone.insert(terminal_id.to_owned());
         // Closing the active one activates the last one left in its group,
         // else the drawer's last one.
         let mut next = String::new();
@@ -2429,7 +2634,8 @@ impl Terminals {
                 "deleteHistory": true,
             }),
             Box::new(move |engine, result| {
-                if result.is_err() {
+                let failed = result.is_err();
+                if failed {
                     // The MC no longer has the session to close: ask the
                     // shell itself to leave.
                     mc.call(
@@ -2444,11 +2650,17 @@ impl Terminals {
                     );
                 }
                 me.run(engine, |t, engine| {
-                    t.ui.entry(thread_key.clone())
-                        .or_default()
-                        .closing
-                        .remove(&id);
-                    t.known.entry(thread_key.clone()).or_default().remove(&id);
+                    let ui = t.ui.entry(thread_key.clone()).or_default();
+                    ui.closing.remove(&id);
+                    // Once its `remove` has come, a listing is a terminal
+                    // opened since.
+                    let gone = ui.gone.contains(&id);
+                    if failed {
+                        ui.gone.remove(&id);
+                    }
+                    if gone || failed {
+                        t.known.entry(thread_key.clone()).or_default().remove(&id);
+                    }
                     if thread_key == t.thread_key {
                         t.sync_tabs(engine);
                         t.notify(engine);
@@ -2486,8 +2698,10 @@ impl Terminals {
             return;
         }
         if kind == "url" {
-            if url::Url::parse(text).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) {
-                self.bridge.open_external(engine, text);
+            if url::Url::parse(text).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+                && !self.bridge.try_open_external(engine, text)
+            {
+                toast(engine, "Unable to open link", text);
             }
             return;
         }
@@ -2534,6 +2748,9 @@ impl Terminals {
             .collect();
         if let Some(ui) = self.ui.get(&self.thread_key) {
             used.extend(ui.closing.iter().map(|id| terminal_number(id)));
+            // Its `remove` is still to come, and would take the new one with
+            // it.
+            used.extend(ui.gone.iter().map(|id| terminal_number(id)));
         }
         let mut next = 1;
         while used.contains(&next) {

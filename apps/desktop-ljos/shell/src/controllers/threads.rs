@@ -243,6 +243,9 @@ impl Controller for ThreadStore {
             }
         };
         store::on_changed(engine, hook(ThreadStore::retry));
+        // A fork's source (or its title) can change on the thread's row
+        // after its timeline opened.
+        store::on_changed(engine, hook(ThreadStore::rows_changed));
         // Threads shown from what was kept of another MC go with its thread
         // list; their copies stay in the cache for when the client is
         // opened there again.
@@ -697,6 +700,12 @@ impl ThreadStore {
     /// Follows the open threads that are not: ones the sidebar did not
     /// list yet, and unreachable ones whose MC is online again or whose
     /// connection is back.
+    fn rows_changed(&mut self, engine: &Engine) {
+        for followed in self.threads.values() {
+            TimelineModel::update(engine, followed.model, |t| t.thread_rows_changed());
+        }
+    }
+
     fn retry(&mut self, engine: &Engine) {
         self.forget_removed(engine);
         if !self.mc.is_ready() {
@@ -804,6 +813,47 @@ fn configure(engine: &Engine, model: ObjectId) {
                 .map(|p| text(p, "workspaceRoot"))
                 .unwrap_or_default()
         })));
+        // A thread's row by id, for its source and where it was forked from.
+        let by_id = held.clone();
+        let by_id_env = environment.clone();
+        t.set_thread_rows(Some(Rc::new(move |id: &str| {
+            let Some(store) = by_id.upgrade() else {
+                return Default::default();
+            };
+            let Ok(store) = store.try_borrow() else {
+                return Default::default();
+            };
+            store
+                .thread_row(&format!("{by_id_env}:{id}"))
+                .cloned()
+                .unwrap_or_default()
+        })));
+        // A project's title by id, for where a subagent works.
+        let by_project = held.clone();
+        let project_env = environment.clone();
+        t.set_project_titles(Some(Rc::new(move |id: &str| {
+            let Some(store) = by_project.upgrade() else {
+                return String::new();
+            };
+            let Ok(store) = store.try_borrow() else {
+                return String::new();
+            };
+            store
+                .project_row(&project_env, id)
+                .and_then(|row| row.get("title"))
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        })));
+        // The environment's providers, kept current with its config.
+        let providers = std::rc::Rc::new(std::cell::RefCell::new(
+            crate::controllers::workspace::providers_of(engine),
+        ));
+        let refresh = providers.clone();
+        crate::controllers::workspace::on_config_changed(engine, move |engine| {
+            *refresh.borrow_mut() = crate::controllers::workspace::providers_of(engine);
+        });
+        t.set_providers(Some(Rc::new(move || providers.borrow().clone())));
         // The other threads of its environment, by the titles the shell
         // lists.
         t.set_thread_titles(Some(Rc::new(move |id: &str| {
@@ -825,7 +875,18 @@ fn configure(engine: &Engine, model: ObjectId) {
 
 /// Asks the MC for an address for attachment `id` of the thread at `key`.
 fn sign_attachment(mc: &Rc<dyn Mc>, model: ObjectId, key: &str, id: &str) {
-    let resource = json!({"_tag": "attachment", "attachmentId": id, "disposition": "inline"});
+    // "workspace-file:<path>" is an image a tool call viewed in the
+    // thread's workspace; "native-app-icon:<app>" the icon of an app a call
+    // drove, the app as the call names it.
+    let resource = if let Some(path) = id.strip_prefix("workspace-file:") {
+        let thread = key.split_once(':').map_or("", |(_, thread)| thread);
+        json!({"_tag": "workspace-file", "threadId": thread, "path": path})
+    } else if let Some(app) = id.strip_prefix("native-app-icon:") {
+        let app: Json = serde_json::from_str(app).unwrap_or_else(|_| json!({}));
+        json!({"_tag": "native-app-icon", "app": app})
+    } else {
+        json!({"_tag": "attachment", "attachmentId": id, "disposition": "inline"})
+    };
     let origin = mc.origin();
     let id = id.to_owned();
     mc.call(

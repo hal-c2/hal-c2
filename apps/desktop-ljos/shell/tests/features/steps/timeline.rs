@@ -68,6 +68,66 @@ fn extension(mc: &mut crate::fake_mc::FakeMc) {
     });
 }
 
+/// The open thread's timeline as the Timeline brick draws it.
+fn plan_timeline_brick(world: &mut World) -> Outcome<crate::brick::Brick> {
+    if world.part::<crate::brick::Shown>().0.is_none() {
+        let brick = crate::brick::Brick::new(
+            world,
+            "import QtQuick\nimport HalC2.Bricks\nTimeline {}\n",
+            820.0,
+            1400.0,
+        )?;
+        world.part::<crate::brick::Shown>().0 = Some(brick);
+        let timeline = super::stream::timeline_object(world)?;
+        let Some(root) = brick.root(world) else {
+            fail!("the timeline brick has no root");
+        };
+        brick.write(world, root, "model", ljos::prelude::Value::Object(timeline))?;
+    }
+    crate::brick::shown(world)
+}
+
+/// What the plan card's expand button reads, or empty when it offers none.
+fn plan_expand_text(world: &mut World) -> Outcome<String> {
+    world.sync()?;
+    let brick = plan_timeline_brick(world)?;
+    Ok(match brick.find_visible(world, "planExpand")? {
+        Some(button) => brick.text_of(world, button, "text"),
+        None => String::new(),
+    })
+}
+
+/// What the shown plan card's expand button reads, for closures that
+/// hold `&World`.
+fn plan_expand_said(world: &World) -> String {
+    let Some(brick) = world
+        .peek_part::<crate::brick::Shown>()
+        .and_then(|shown| shown.0)
+    else {
+        return String::new();
+    };
+    match brick.find_visible(world, "planExpand") {
+        Ok(Some(button)) => brick.text_of(world, button, "text"),
+        _ => String::new(),
+    }
+}
+
+/// "Expand plan"/"Collapse plan" from the theme steps' "the user chooses".
+pub fn plan_card_chooses(world: &mut World, label: &str) -> Outcome<bool> {
+    if label != "Expand plan" && label != "Collapse plan" {
+        return Ok(false);
+    }
+    expect!(
+        plan_expand_text(world)? == label,
+        "the plan card offers \"{}\"",
+        plan_expand_text(world)?
+    );
+    let brick = plan_timeline_brick(world)?;
+    brick.click(world, "planExpand")?;
+    world.sync()?;
+    Ok(true)
+}
+
 /// Rows of a kind, newest last.
 pub fn rows_of(world: &World, kind: &str) -> Outcome<Vec<usize>> {
     let count = super::stream::row_count(world)?;
@@ -292,6 +352,9 @@ pub fn register(steps: &mut Steps) {
     // included (desktop-qt's CentreSteps).
     steps.step("the clipboard refuses the copy", |world, _, _| {
         world.set_clipboard_fails(true);
+        // The reason the plan menu's toast gives (CentreSteps.cpp).
+        world.part::<super::desktop_update::Reason>().0 =
+            "The clipboard could not be written.".to_owned();
         Ok(())
     });
 
@@ -746,7 +809,22 @@ pub fn register(steps: &mut Steps) {
             let fake = world.mc.part::<FakeStreams>();
             fake.thread = PEER_THREAD.into();
             fake.environment = PEER_ENVIRONMENT.into();
-            look(world, &format!("{PEER_ENVIRONMENT}:{PEER_THREAD}"), true)
+            look(world, &format!("{PEER_ENVIRONMENT}:{PEER_THREAD}"), false)?;
+            world.wait_for_with(
+                |w| status(w) == "live",
+                |w| {
+                    let shapes: Vec<String> =
+                        w.mc.subscriptions
+                            .iter()
+                            .map(|sub| sub["shape"].to_string())
+                            .collect();
+                    format!(
+                        "the thread to follow its MC; {}; subscribed to {}",
+                        describe(w),
+                        shapes.join(", ")
+                    )
+                },
+            )
         },
     );
     steps.step(&format!("the agent has answered {Q}"), |world, c, _| {
@@ -1126,6 +1204,73 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
+        &format!("the agent proposes a plan whose first heading is {Q} followed by a {Q} heading"),
+        |world, c, _| {
+            start_run(world, 0, "running")?;
+            add_item(
+                world,
+                "proposed_plan",
+                json!({"markdown": format!("# {}\n\n## {}\n\n- Add the line\n- Test it", c[0], c[1])}),
+            )?;
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the plan's text starts after the {Q} heading"),
+        |world, c, _| {
+            let body = text(&role(world, last_row_of(world, "plan")?, "text"));
+            expect!(
+                body.starts_with("- Add the line") && !body.contains(&c[0]),
+                "the plan's text reads \"{body}\""
+            );
+            Ok(())
+        },
+    );
+    // A long plan's preview on the Timeline brick (ProposedPlanCard).
+    steps.step(
+        "the plan card shows (its first 10 lines followed by an ellipsis|the whole plan and no way to collapse it)",
+        |world, c, _| {
+            let row = last_row_of(world, "plan")?;
+            let preview = text(&role(world, row, "preview"));
+            let body = text(&role(world, row, "text"));
+            let button = plan_expand_text(world)?;
+            if c[0].starts_with("the whole plan") {
+                expect!(
+                    preview.is_empty() && button.is_empty(),
+                    "the plan card shows \"{preview}\" and offers \"{button}\""
+                );
+                return Ok(());
+            }
+            let mut expected: Vec<String> =
+                body.split('\n').take(10).map(str::to_owned).collect();
+            expected.push(String::new());
+            expected.push("...".into());
+            expect!(
+                preview == expected.join("\n") && button == "Expand plan",
+                "the plan card shows \"{preview}\" and offers \"{button}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step("the whole plan is shown", |world, _, _| {
+        let row = last_row_of(world, "plan")?;
+        world.wait_for_with(
+            move |w| {
+                role(w, row, "expanded") == json!(true) && plan_expand_said(w) == "Collapse plan"
+            },
+            |w| format!("the plan card offers \"{}\"", plan_expand_said(w)),
+        )
+    });
+    steps.step("the plan returns to its preview", |world, _, _| {
+        let row = last_row_of(world, "plan")?;
+        world.wait_for_with(
+            move |w| {
+                role(w, row, "expanded") != json!(true) && plan_expand_said(w) == "Expand plan"
+            },
+            |w| format!("the plan card offers \"{}\"", plan_expand_said(w)),
+        )
+    });
+    steps.step(
         &format!("a plan without a heading is titled {Q}"),
         |world, c, _| {
             add_item(
@@ -1139,7 +1284,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
-    steps.step("the agent has a subagent that is (.+)", |world, c, _| {
+    steps.step("the agent has a subagent that is (running|waiting on a request|idle and resumable|completed|failed|cancelled)", |world, c, _| {
         let status = match c[0].as_str() {
             "running" => "running",
             "waiting on a request" => "waiting",

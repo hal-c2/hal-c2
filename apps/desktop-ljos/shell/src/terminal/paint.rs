@@ -68,6 +68,8 @@ pub struct Look {
     pub cell: (f64, f64),
     /// The item has the keyboard: the cursor is solid, else an outline.
     pub focused: bool,
+    /// The cursor is in the off half of a blink: it is not drawn.
+    pub blink_off: bool,
 }
 
 /// The size of a cell: the width of an "M" and the height of a line.
@@ -209,9 +211,12 @@ struct Caret {
     shape: CursorShape,
 }
 
-/// The cursor, steady: a solid block (or the program's bar or underline)
+/// The cursor, in the on half of a blink: a solid block (or the program's bar or underline)
 /// while the item has the keyboard, an outline while it hasn't.
 fn caret(grid: &Grid, look: &Look, fg: Color, bg: Color) -> Option<Caret> {
+    if look.blink_off {
+        return None;
+    }
     let (col, row) = grid.cursor.at?;
     let col = if grid.cursor.wide_tail {
         col.saturating_sub(1)

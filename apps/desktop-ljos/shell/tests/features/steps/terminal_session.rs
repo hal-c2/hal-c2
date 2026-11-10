@@ -18,8 +18,9 @@ use crate::brick::{self, Brick};
 use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
 use crate::steps::terminal::{
     active_terminal, add_action, attached, describe_rows, describe_terminal_calls,
-    drawer_available, drawer_open, ensure_project, ensure_thread, print, rows_in, show_thread,
-    shown_thread, tab_labels, terminal_attach, terminal_call, terminal_session, terminal_writes,
+    drawer_available, drawer_open, ensure_project, ensure_thread, last_terminal_call, print,
+    rows_in, show_thread, shown_thread, tab_labels, terminal_attach, terminal_call,
+    terminal_session, terminal_writes,
 };
 use crate::world::World;
 use crate::{expect, fail};
@@ -34,6 +35,10 @@ struct SessionWorld {
     attaches: usize,
     script_launch: Value,
     window_height: f64,
+    /// The window was made shorter than the terminal's kept height.
+    window_shrunk: bool,
+    /// The shell's rows before the window shrank.
+    resizes: i64,
 }
 
 const WORKTREE: &str = "/work/p1-wt";
@@ -97,6 +102,20 @@ fn drawer_brick(world: &mut World, height: f64) -> Outcome<Brick> {
         height,
     )?;
     brick::shown(world)
+}
+
+/// The rows the drawer's Terminal item shows.
+fn shell_rows(world: &World, brick: &Brick, terminal: ljos::ObjectId) -> i64 {
+    brick
+        .text_of(world, terminal, "rows")
+        .parse::<f64>()
+        .unwrap_or_default() as i64
+}
+
+/// The rows of the last resize the MC got for the shown thread's terminal.
+fn resized_rows(world: &World) -> Option<i64> {
+    last_terminal_call(world, "terminal.resize", &shown_thread(world), "term-1")
+        .and_then(|call| call["rows"].as_i64())
 }
 
 /// What the drawer's Terminal item draws.
@@ -305,13 +324,83 @@ pub fn register(steps: &mut Steps) {
         let brick = brick::shown(world)?;
         let drawer = brick.item(world, "drawer")?;
         let wanted: i32 = c[0].parse().unwrap_or_default();
+        // A shrunk window pulls the drawer in; the height kept is the user's.
+        let shrunk = world.mc.part::<SessionWorld>().window_shrunk;
         world.wait_for_with(
-            move |w| height_of(&brick, w, drawer) as i32 == wanted && drawer_height(w) == wanted,
+            move |w| {
+                height_of(&brick, w, drawer) as i32 == wanted
+                    && (shrunk || drawer_height(w) == wanted)
+            },
             move |w| {
                 format!(
                     "the drawer to be {wanted} tall; it is {} and the shell keeps {}",
                     height_of(&brick, w, drawer),
                     drawer_height(w)
+                )
+            },
+        )
+    });
+
+    steps.step(
+        "the terminal is showing (\\d+) pixels tall in a window (\\d+) pixels tall",
+        |world, c, _| {
+            open_drawer(world)?;
+            let tall: i32 = c[0].parse().unwrap_or_default();
+            let window: f64 = c[1].parse().unwrap_or_default();
+            world.dispatch("terminal.resize", json!({ "height": tall }))?;
+            world.wait_for("the terminal's height to be kept", move |w| {
+                drawer_height(w) == tall
+            })?;
+            world.mc.part::<SessionWorld>().window_height = window;
+            let brick = drawer_brick(world, window)?;
+            let drawer = brick.item(world, "drawer")?;
+            world.wait_for_with(
+                move |w| height_of(&brick, w, drawer) as i32 == tall,
+                move |w| format!("the drawer is {} tall", height_of(&brick, w, drawer)),
+            )?;
+            let terminal = brick.item(world, "HalC2Terminal")?;
+            let rows = shell_rows(world, &brick, terminal);
+            world.wait_for_with(
+                move |w| resized_rows(w) == Some(rows),
+                move |w| {
+                    format!(
+                        "the shell at {rows} rows; the MC got {}",
+                        describe_terminal_calls(w)
+                    )
+                },
+            )?;
+            world.mc.part::<SessionWorld>().resizes = rows;
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user shrinks the window to (\\d+) pixels tall",
+        |world, c, _| {
+            world.mc.part::<SessionWorld>().window_shrunk = true;
+            let height: f64 = c[0].parse().unwrap_or_default();
+            let brick = brick::shown(world)?;
+            let Some(root) = brick.root(world) else {
+                fail!("no brick is showing");
+            };
+            world.resize(900.0, height)?;
+            brick.write(world, root, "height", ljos::prelude::Value::from(height))?;
+            world.sync()
+        },
+    );
+    steps.step("the terminal's shell is resized to match", |world, _, _| {
+        let brick = brick::shown(world)?;
+        let terminal = brick.item(world, "HalC2Terminal")?;
+        let before = world.mc.part::<SessionWorld>().resizes;
+        world.wait_for_with(
+            move |w| {
+                let rows = shell_rows(w, &brick, terminal);
+                rows < before && resized_rows(w) == Some(rows)
+            },
+            move |w| {
+                format!(
+                    "the shell at {} rows; the MC got {}",
+                    shell_rows(w, &brick, terminal),
+                    describe_terminal_calls(w)
                 )
             },
         )

@@ -60,6 +60,11 @@ fn live(status: &str) -> bool {
     matches!(status, "pending" | "running" | "waiting")
 }
 
+/// A run still working: its tools are foreground work, not background.
+fn run_active(status: &str) -> bool {
+    matches!(status, "preparing" | "starting" | "running")
+}
+
 fn text<'a>(entity: &'a Obj, field: &str) -> &'a str {
     entity.get(field).and_then(Json::as_str).unwrap_or("")
 }
@@ -90,18 +95,19 @@ pub fn format_elapsed(total: i64) -> String {
     format!("{hours}h {:02}m", minutes % 60)
 }
 
-/// One row the tab wants: a subagent or a running command.
+/// One row the tab wants: a subagent, a running command, or background work.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Wanted {
     pub id: String,
-    /// subagent or command
+    /// subagent, command or background
     pub kind: &'static str,
     pub entity: Obj,
 }
 
 /// The rows a timeline's entities make, in the tab's order: the working
 /// subagents in spawn order, the running commands (not of a rolled-back
-/// run) in turn order, then the settled subagents, the latest to end first.
+/// run) in turn order, the background work in turn order, then the settled
+/// subagents, the latest to end first.
 pub fn wanted(
     subagents: &BTreeMap<String, Obj>,
     runs: &BTreeMap<String, Obj>,
@@ -134,14 +140,28 @@ pub fn wanted(
         .filter(|(_, run)| text(run, "status") == "rolled_back")
         .map(|(id, _)| id.as_str())
         .collect();
+    let active_runs: HashSet<&str> = runs
+        .iter()
+        .filter(|(_, run)| run_active(text(run, "status")))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    let shown =
+        |item: &Obj| live(text(item, "status")) && !rolled_back.contains(text(item, "runId"));
     let mut commands: Vec<Wanted> = items
         .iter()
-        .filter(|(_, item)| {
-            text(item, "type") == "command_execution"
-                && live(text(item, "status"))
-                && !rolled_back.contains(text(item, "runId"))
-        })
+        .filter(|(_, item)| text(item, "type") == "command_execution" && shown(item))
         .map(|(id, item)| row(id, "command", item))
+        .collect();
+    // A tool still working after its turn settled (a Claude monitor) is
+    // background work of its own kind, never a command.
+    let mut background: Vec<Wanted> = items
+        .iter()
+        .filter(|(_, item)| {
+            text(item, "type") == "dynamic_tool"
+                && shown(item)
+                && !active_runs.contains(text(item, "runId"))
+        })
+        .map(|(id, item)| row(id, "background", item))
         .collect();
     let ordinal = |w: &Wanted| {
         w.entity
@@ -149,12 +169,15 @@ pub fn wanted(
             .and_then(Json::as_f64)
             .unwrap_or(0.0)
     };
-    commands.sort_by(|a, b| {
+    let by_ordinal = |a: &Wanted, b: &Wanted| {
         ordinal(a)
             .total_cmp(&ordinal(b))
             .then_with(|| a.id.cmp(&b.id))
-    });
+    };
+    commands.sort_by(by_ordinal);
+    background.sort_by(by_ordinal);
     working.extend(commands);
+    working.extend(background);
     working.extend(settled);
     working
 }
@@ -186,7 +209,7 @@ struct Row {
 /// What the core tells its object besides its rows.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Note {
-    /// count and agentCount.
+    /// count, agentCount and liveAgentCount.
     Count,
     /// Start (true) or stop the once-a-second tick.
     Ticking(bool),
@@ -202,6 +225,8 @@ pub struct Agents {
     timestamp_format: Option<String>,
     rows: Vec<Row>,
     next_key: RowKey,
+    /// `live_agent_count` as last told.
+    live_agents: usize,
     active: bool,
     ticking: bool,
     /// The local midnight the end times are next redrawn at, while armed.
@@ -218,6 +243,7 @@ impl Agents {
             timestamp_format: None,
             rows: Vec::new(),
             next_key: 1,
+            live_agents: 0,
             active: false,
             ticking: false,
             next_day: None,
@@ -318,7 +344,9 @@ impl Agents {
                 roles: &[],
             });
         }
-        if counted {
+        let live_agents = self.live_agent_count();
+        if counted || live_agents != self.live_agents {
+            self.live_agents = live_agents;
             self.notes.push(Note::Count);
         }
     }
@@ -441,6 +469,14 @@ impl Agents {
         self.rows.iter().filter(|r| r.kind == "subagent").count()
     }
 
+    /// Subagents still working.
+    pub fn live_agent_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|r| r.kind == "subagent" && live(text(&r.entity, "status")))
+            .count()
+    }
+
     pub fn index_of(&self, id: &str) -> Option<usize> {
         self.rows.iter().position(|r| r.id == id)
     }
@@ -457,6 +493,14 @@ impl Agents {
             "agentId" => Json::from(row.id.as_str()),
             "kind" => Json::from(row.kind),
             "title" => {
+                if row.kind == "background" {
+                    let tool = text(entity, "toolName").trim();
+                    return Some(Json::from(if tool.is_empty() {
+                        "Background work"
+                    } else {
+                        tool
+                    }));
+                }
                 if !agent {
                     return Some(Json::from(text(entity, "input").trim()));
                 }
@@ -484,6 +528,22 @@ impl Agents {
                 Json::from(ended.map_or_else(String::new, |ended| {
                     format_elapsed((ended - started).num_seconds())
                 }))
+            }
+            "detail" if row.kind == "background" => {
+                let input = entity.get("input").and_then(Json::as_object);
+                let field = |name: &str| {
+                    input
+                        .and_then(|input| input.get(name))
+                        .and_then(Json::as_str)
+                        .unwrap_or("")
+                        .trim()
+                };
+                let description = field("description");
+                Json::from(if description.is_empty() {
+                    field("command")
+                } else {
+                    description
+                })
             }
             "detail" if agent => Json::from(subagent_detail(
                 !running,
@@ -589,6 +649,9 @@ pub struct AgentsModel {
     /// Subagents listed (commands aside).
     #[qml(readonly, notify)]
     agent_count: i32,
+    /// Subagents still working, for the agents-working banner.
+    #[qml(readonly, notify)]
+    live_agent_count: i32,
     #[qml(skip)]
     inner: Rc<Inner>,
 }
@@ -608,6 +671,7 @@ impl AgentsModel {
         let model = AgentsModel {
             count: 0,
             agent_count: 0,
+            live_agent_count: 0,
             inner: Rc::new(Inner {
                 rows: rows.clone(),
                 timeline: Cell::new(None),
@@ -775,10 +839,13 @@ fn stop(engine: &Engine, timer: ObjectId) {
 fn tell(engine: &Engine, obj: ObjectId, inner: &Inner, note: Note) {
     match note {
         Note::Count => {
-            let (count, agents) = inner.rows.read(|a| (a.count(), a.agent_count()));
+            let (count, agents, live) = inner
+                .rows
+                .read(|a| (a.count(), a.agent_count(), a.live_agent_count()));
             let result = engine
                 .set_internal(obj, AgentsModel::COUNT, int(count))
-                .and_then(|()| engine.set_internal(obj, AgentsModel::AGENT_COUNT, int(agents)));
+                .and_then(|()| engine.set_internal(obj, AgentsModel::AGENT_COUNT, int(agents)))
+                .and_then(|()| engine.set_internal(obj, AgentsModel::LIVE_AGENT_COUNT, int(live)));
             if let Err(e) = result {
                 warn(engine, &e);
             }

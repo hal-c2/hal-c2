@@ -116,7 +116,6 @@ struct Seen {
 pub type Locate = Rc<dyn Fn(&Engine, &str) -> String>;
 
 pub struct AlertController {
-    bridge: Bridge,
     mc: Rc<dyn Mc>,
     me: Me<Self>,
     presenter: Rc<dyn Presenter>,
@@ -153,7 +152,6 @@ impl Controller for AlertController {
         follow_store(engine, &init.me);
         let focused = follow_focus(engine, &init.me);
         AlertController {
-            bridge: init.bridge,
             mc: init.mc,
             me: init.me,
             presenter: Rc::new(Quiet),
@@ -334,10 +332,12 @@ impl AlertController {
         if !has_system_notifications(&self.mode) || !known {
             return false;
         }
+        // The window the user last acted in shows it, and comes to the
+        // front.
         if !open(engine, &key) {
             return false;
         }
-        self.bridge.window_command(engine, "raise");
+        Bridge::of(engine).window_command(engine, "raise");
         true
     }
 

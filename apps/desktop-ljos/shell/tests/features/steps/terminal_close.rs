@@ -11,18 +11,23 @@ use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::navigation::Navigation;
 use hal_c2_shell::controllers::terminals::Terminals;
+use ljos::item::Modifiers;
+use ljos::prelude::ObjectId;
 use serde_json::{Value, json};
 
-use crate::brick::Brick;
-use crate::expect;
+use crate::brick::{Brick, Shown, shown};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
+use crate::steps::settings::fake_config;
 use crate::steps::terminal::{
     FakeTerminals, active_terminal, add_action, add_terminal, attached, confirm_terminal_close,
     describe_rows, describe_terminal_calls, drawer_available, drawer_open, ensure_project,
-    ensure_thread, print, rows_in, send_terminal, shown_thread, tab_labels, terminal_attach,
-    terminal_call, terminal_session, terminal_writes, toast_shown,
+    ensure_thread, print, rows_in, send_terminal, send_terminals, shown_thread, tab_labels,
+    terminal_attach, terminal_call, terminal_session, terminal_summary, terminal_writes,
+    toast_shown,
 };
+use crate::steps::terminal_menu::{drawn_terminal, follow as follow_link};
 use crate::world::World;
+use crate::{expect, fail};
 
 #[derive(Default)]
 struct CloseWorld {
@@ -36,6 +41,8 @@ struct CloseWorld {
     last_chunk: String,
     /// The active group before the user closed a terminal.
     group_before: String,
+    /// The Terminal whose engine failed.
+    failed: Option<ObjectId>,
 }
 
 fn has_tab(world: &World, terminal_id: &str) -> bool {
@@ -213,7 +220,7 @@ fn register_tabs(steps: &mut Steps) {
         |world, _, _| open_terminals(world, 1),
     );
     steps.step(
-        "the MC refuses to open (?:another terminal|it again)",
+        "the MC refuses to open (?:another terminal|it again|the terminal)",
         |world, _, _| refuse_open(world),
     );
     steps.step(
@@ -274,8 +281,519 @@ fn register_tabs(steps: &mut Steps) {
     });
 }
 
+/// The drawer as the world's brick, drawn once per scenario.
+fn shown_drawer(world: &mut World) -> Outcome<Brick> {
+    if let Some(brick) = world.part::<Shown>().0 {
+        return Ok(brick);
+    }
+    let brick = drawer(world)?;
+    world.part::<Shown>().0 = Some(brick);
+    Ok(brick)
+}
+
+/// The visible items named `name`, in document order.
+pub(crate) fn visible_items(world: &World, brick: &Brick, name: &str) -> Outcome<Vec<ObjectId>> {
+    let mut items = Vec::new();
+    while let Some(item) = brick.find_visible_nth(world, name, items.len())? {
+        items.push(item);
+    }
+    Ok(items)
+}
+
+/// `item`'s box in window coordinates: left, top, right, bottom.
+fn scene_box(world: &World, brick: &Brick, item: ObjectId) -> Outcome<(f64, f64, f64, f64)> {
+    let (left, top) = brick.at(world, item, 0.0, 0.0)?;
+    let (right, bottom) = brick.at(world, item, 1.0, 1.0)?;
+    Ok((left, top, right, bottom))
+}
+
+const ACTIONS: [&str; 4] = [
+    "terminalSplit",
+    "terminalSplitVertical",
+    "terminalNew",
+    "terminalClose",
+];
+
+/// The terminal list's groups and rows, and the terminals the MC's late
+/// lists would bring back (terminal/tabs.feature).
+fn register_list(steps: &mut Steps) {
+    steps.step(
+        "the thread has one terminal on its own, a group of two side by side, and a stacked group of three",
+        |world, _, _| {
+            open_terminals(world, 1)?;
+            for (action, number) in [
+                ("terminal.new", 2),
+                ("terminal.split", 3),
+                ("terminal.new", 4),
+                ("terminal.splitVertical", 5),
+                ("terminal.splitVertical", 6),
+            ] {
+                let active = active_terminal(world);
+                world.dispatch(action, json!({"terminalId": active}))?;
+                let id = format!("term-{number}");
+                world.wait_for_with(move |w| active_terminal(w) == id, describe_rows)?;
+            }
+            world.sync()
+        },
+    );
+    steps.step("the user looks at the terminal list", |world, _, _| {
+        let brick = shown_drawer(world)?;
+        world.wait_for_with(
+            move |w| visible_items(w, &brick, "terminalGroupLabel").is_ok_and(|l| l.len() == 3),
+            move |w| {
+                format!(
+                    "three groups; {} show",
+                    visible_items(w, &brick, "terminalGroupLabel").map_or(0, |l| l.len())
+                )
+            },
+        )
+    });
+    steps.step(
+        &format!("the groups are labelled {Q}, {Q} and {Q}"),
+        |world, c, _| {
+            let brick = shown(world)?;
+            let labels = visible_items(world, &brick, "terminalGroupLabel")?;
+            expect!(labels.len() == 3, "{} groups show", labels.len());
+            for (n, label) in labels.iter().enumerate() {
+                let said = brick.text_of(world, *label, "text");
+                expect!(said.starts_with(&c[n]), "group {} says \"{said}\"", n + 1);
+            }
+            Ok(())
+        },
+    );
+    steps.step(
+        "each label shows how many terminals the group holds",
+        |world, _, _| {
+            let brick = shown(world)?;
+            for (n, label) in visible_items(world, &brick, "terminalGroupLabel")?
+                .iter()
+                .enumerate()
+            {
+                let said = brick.text_of(world, *label, "text");
+                expect!(
+                    said.contains(&format!("({})", n + 1)),
+                    "group {} says \"{said}\"",
+                    n + 1
+                );
+            }
+            Ok(())
+        },
+    );
+    steps.step(
+        "choosing a group's label makes that group's terminal active",
+        |world, _, _| {
+            let brick = shown(world)?;
+            let Some(single) = visible_items(world, &brick, "terminalGroupLabel")?
+                .first()
+                .copied()
+            else {
+                fail!("no group label shows");
+            };
+            let (x, y) = brick.at(world, single, 0.5, 0.5)?;
+            world.click_at(x, y)?;
+            expect_active(world, "1")
+        },
+    );
+
+    steps.step("the thread has one terminal", |world, _, _| {
+        open_terminals(world, 1)?;
+        shown_drawer(world).map(|_| ())
+    });
+    // Above the terminal's right half, never over its first line of output.
+    steps.step(
+        "the terminal offers split, new and close actions above its own corner",
+        |world, _, _| {
+            let brick = shown(world)?;
+            let Some(terminal) = visible_items(world, &brick, "HalC2Terminal")?.first().copied()
+            else {
+                fail!("no terminal shows");
+            };
+            let (left, top, right, _) = scene_box(world, &brick, terminal)?;
+            let middle = (left + right) / 2.0;
+            for name in ACTIONS {
+                let action = brick.item(world, name)?;
+                let (aleft, _, aright, abottom) = scene_box(world, &brick, action)?;
+                let centre = (aleft + aright) / 2.0;
+                expect!(
+                    brick.flag(world, action, "visible")
+                        && abottom <= top + 0.5
+                        && centre > middle
+                        && centre < right,
+                    "{name} spans {aleft}..{aright} down to {abottom}, over a terminal at {left},{top}..{right}"
+                );
+            }
+            Ok(())
+        },
+    );
+    steps.step("no terminal list is shown", |world, _, _| {
+        let brick = shown(world)?;
+        let list = brick.item(world, "terminalList")?;
+        expect!(!brick.flag(world, list, "visible"), "the list shows");
+        Ok(())
+    });
+    steps.step("the user opens a second terminal", |world, _, _| {
+        world.dispatch("terminal.new", json!({}))?;
+        world.wait_for_with(|w| active_terminal(w) == "term-2", describe_rows)?;
+        world.sync()
+    });
+    steps.step(
+        "the terminal list appears beside the terminals with the same actions",
+        |world, _, _| {
+            let brick = shown(world)?;
+            let list = brick.item(world, "terminalList")?;
+            world.wait_for("the terminal list", move |w| brick.flag(w, list, "visible"))?;
+            let Some(terminal) = visible_items(world, &brick, "HalC2Terminal")?
+                .first()
+                .copied()
+            else {
+                fail!("no terminal shows");
+            };
+            let (_, _, right, _) = scene_box(world, &brick, terminal)?;
+            let (list_left, _, _, _) = scene_box(world, &brick, list)?;
+            expect!(
+                right <= list_left + 0.5,
+                "the terminal runs to {right}, under the list from {list_left}"
+            );
+            for name in ACTIONS {
+                let action = brick.item(world, name)?;
+                expect!(brick.flag(world, action, "visible"), "{name} is hidden");
+            }
+            Ok(())
+        },
+    );
+
+    steps.step(
+        "the thread has two terminals side by side with the first active",
+        |world, _, _| {
+            open_terminals(world, 1)?;
+            world.dispatch("terminal.split", json!({"terminalId": "term-1"}))?;
+            expect_active(world, "2")?;
+            shown_drawer(world)?;
+            world.dispatch("terminal.select", json!({"terminalId": "term-1"}))?;
+            expect_active(world, "1")?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "the user clicks inside the second terminal",
+        |world, _, _| {
+            let brick = shown(world)?;
+            let cell = brick.item(world, "terminalCell-term-2")?;
+            let (x, y) = brick.at(world, cell, 0.5, 0.5)?;
+            world.click_at(x, y)?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "the second terminal is active and has the keyboard",
+        |world, _, _| {
+            expect_active(world, "2")?;
+            let brick = shown(world)?;
+            let cell = brick.item(world, "terminalCell-term-2")?;
+            let terminal_of = move |w: &World, id: &str| {
+                brick
+                    .find(w, &format!("terminalCell-{id}"))
+                    .ok()
+                    .flatten()
+                    .and_then(|c| brick.find_in(w, c, "HalC2Terminal").ok().flatten())
+            };
+            world.wait_for_with(
+                move |w| {
+                    brick
+                        .find_in(w, cell, "HalC2Terminal")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|t| brick.flag(w, t, "activeFocus"))
+                },
+                move |w| {
+                    let says = |id: &str| match terminal_of(w, id) {
+                        Some(t) => format!(
+                            "{id} focus {} activeFocus {}",
+                            brick.flag(w, t, "focus"),
+                            brick.flag(w, t, "activeFocus")
+                        ),
+                        None => format!("{id} has no terminal"),
+                    };
+                    let focused = brick
+                        .root(w)
+                        .and_then(|root| ljos::item::active_focus_item(w.engine(), root))
+                        .map_or("nothing".to_owned(), |item| {
+                            format!("{item:?} {}", brick.text_of(w, item, "objectName"))
+                        });
+                    format!(
+                        "the second terminal to have the keyboard; {}; {}; cell focus {}; \
+                         the keys go to {focused}",
+                        says("term-1"),
+                        says("term-2"),
+                        brick.flag(w, cell, "focus")
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "closing the active terminal now closes the second terminal",
+        |world, _, _| {
+            world.dispatch("terminal.close", json!({}))?;
+            confirm_terminal_close(world)?;
+            let thread_id = shown_thread(world);
+            world.wait_for_with(
+                move |w| terminal_call(w, "terminal.close", &thread_id, "term-2").is_some(),
+                |w| {
+                    format!(
+                        "the second terminal to close; the MC got {}",
+                        describe_terminal_calls(w)
+                    )
+                },
+            )?;
+            expect!(has_tab(world, "term-1"), "{}", describe_rows(world));
+            Ok(())
+        },
+    );
+
+    steps.step("the thread has terminals 1 and 2", |world, _, _| {
+        open_terminals(world, 2)?;
+        world.mc.part::<FakeTerminals>().hold_remove = true;
+        Ok(())
+    });
+    steps.step(
+        "the MC's list of terminals, sent before the close finished, still includes terminal 1",
+        |world, _, _| {
+            let thread_id = shown_thread(world);
+            expect!(
+                terminal_call(world, "terminal.close", &thread_id, "term-1").is_some(),
+                "{}",
+                describe_terminal_calls(world)
+            );
+            send_terminals(
+                &mut world.mc,
+                &json!({"type": "snapshot", "terminals": [
+                    terminal_summary(&thread_id, "term-1", "/work"),
+                    terminal_summary(&thread_id, "term-2", "/work"),
+                ]}),
+            );
+            world.sync()
+        },
+    );
+    steps.step(
+        "terminal 1 does not return to the terminal list",
+        |world, _, _| {
+            expect!(!has_tab(world, "term-1"), "{}", describe_rows(world));
+            let key = format!("{}/term-1", shown_thread(world));
+            expect!(!attached(&world.mc).contains(&key), "it attached again");
+            Ok(())
+        },
+    );
+    steps.step("terminal 1 is opened again later", |world, _, _| {
+        let held = {
+            let fake = world.mc.part::<FakeTerminals>();
+            fake.hold_remove = false;
+            std::mem::take(&mut fake.held_removes)
+        };
+        for remove in &held {
+            send_terminals(&mut world.mc, remove);
+        }
+        let thread_id = shown_thread(world);
+        add_terminal(&mut world.mc, &thread_id, "term-1", "", false);
+        world.sync()
+    });
+    steps.step(
+        "terminal 1 appears in the terminal list again",
+        |world, _, _| world.wait_for_with(|w| has_tab(w, "term-1"), describe_rows),
+    );
+
+    steps.step(
+        "the user opens a second terminal and the MC's list of terminals still shows only the first",
+        |world, _, _| {
+            open_terminals(world, 1)?;
+            let thread_id = shown_thread(world);
+            world.mc.part::<FakeTerminals>().quiet_open = true;
+            world.dispatch("terminal.split", json!({"terminalId": "term-1"}))?;
+            let id = thread_id.clone();
+            world.wait_for_with(
+                move |w| terminal_attach(w, &id, "term-2").is_some(),
+                describe_rows,
+            )?;
+            send_terminals(
+                &mut world.mc,
+                &json!({"type": "snapshot", "terminals": [
+                    terminal_summary(&thread_id, "term-1", "/work"),
+                ]}),
+            );
+            world.sync()
+        },
+    );
+    steps.step(
+        "the second terminal stays in the terminal list",
+        |world, _, _| {
+            expect!(has_tab(world, "term-2"), "{}", describe_rows(world));
+            Ok(())
+        },
+    );
+    steps.step(
+        "it stays in the split group it was opened in",
+        |world, _, _| {
+            let rows = rows_in(world, false);
+            expect!(
+                rows.len() == 2 && rows[0].group == rows[1].group && rows[1].span == 2,
+                "{}",
+                describe_rows(world)
+            );
+            Ok(())
+        },
+    );
+}
+
+/// A terminal that does not open, a link nothing opens, and an engine
+/// that does not start (terminal/errors.feature).
+fn register_failures(steps: &mut Steps) {
+    steps.step(
+        "the user's links open in the in-app browser",
+        |world, _, _| {
+            // The desktop has no in-app browser (docs/internals/desktop-qt.md):
+            // the setting another client chose changes nothing here.
+            fake_config(&mut world.mc)
+                .settings
+                .insert("browserLinkTarget".into(), json!("in-app"));
+            drawn_terminal(world).map(|_| ())
+        },
+    );
+    steps.step(
+        "neither the in-app browser nor the system browser can open an address",
+        |world, _, _| {
+            world.set_browser_fails(true);
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user follows a web address in the terminal",
+        |world, _, _| {
+            let address = "http://localhost:5173";
+            follow_link(
+                world,
+                &format!("Server ready at {address} (press h for help)"),
+                address,
+                Modifiers::CONTROL,
+            )
+        },
+    );
+
+    steps.step("the thread has no terminals", |world, _, _| {
+        ensure_project(world)?;
+        ensure_thread(world)?;
+        world.wait_for("the thread's terminal drawer", drawer_available)?;
+        expect!(rows_in(world, false).is_empty(), "{}", describe_rows(world));
+        Ok(())
+    });
+    steps.step(
+        "the drawer does not stay open with a dead terminal",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    !drawer_open(w)
+                        && rows_in(w, false).is_empty()
+                        && toast_shown(w, "Unable to open terminal")
+                },
+                describe_failure,
+            )
+        },
+    );
+    steps.step(
+        "the user shows the terminal again and the MC accepts",
+        |world, _, _| {
+            world.mc.part::<FakeTerminals>().refuse_open.clear();
+            world.dispatch("terminal.toggle", json!({}))?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "the terminal opens and the drawer shows it",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    drawer_open(w)
+                        && rows_in(w, false).len() == 1
+                        && w.mc
+                            .peek::<FakeTerminals>()
+                            .is_some_and(|f| f.terminals.len() == 1)
+                },
+                describe_rows,
+            )
+        },
+    );
+
+    steps.step(
+        "the terminal's rendering engine cannot start",
+        |world, _, _| {
+            ensure_project(world)?;
+            ensure_thread(world)?;
+            Ok(())
+        },
+    );
+    steps.step("the user opens a terminal", |world, _, _| {
+        let (_, terminal) = drawn_terminal(world)?;
+        world.mc.part::<CloseWorld>().failed = Some(terminal);
+        hal_c2_shell::terminal::fail(world.engine(), terminal, "Could not create a terminal");
+        world.sync()
+    });
+    steps.step(
+        &format!("the terminal says why, followed by {Q}"),
+        |world, c, _| {
+            let brick = shown(world)?;
+            let said = brick.item(world, "terminalEngineError")?;
+            let text = brick.text_of(world, said, "text");
+            expect!(
+                brick.flag(world, said, "visible")
+                    && text == format!("Could not create a terminal: {}", c[0]),
+                "the terminal says \"{text}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user closes the terminal and opens it again",
+        |world, _, _| {
+            world.dispatch("terminal.close", json!({}))?;
+            confirm_terminal_close(world)?;
+            let brick = shown(world)?;
+            let failed = world.mc.part::<CloseWorld>().failed;
+            world.wait_for("the failed engine to go", move |w| {
+                brick
+                    .find_visible(w, "HalC2Terminal")
+                    .ok()
+                    .flatten()
+                    .is_none()
+            })?;
+            world.dispatch("terminal.toggle", json!({}))?;
+            world.wait_for_with(
+                move |w| {
+                    brick
+                        .find_visible(w, "HalC2Terminal")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|t| Some(t) != failed)
+                },
+                describe_rows,
+            )
+        },
+    );
+    steps.step(
+        "the terminal tries to start the engine again",
+        |world, _, _| {
+            let brick = shown(world)?;
+            let showing = brick
+                .find_visible(world, "terminalEngineError")?
+                .is_some_and(|said| brick.flag(world, said, "visible"));
+            expect!(!showing, "the new Terminal still says it failed");
+            Ok(())
+        },
+    );
+}
+
 pub fn register(steps: &mut Steps) {
     register_tabs(steps);
+    register_list(steps);
+    register_failures(steps);
     steps.step(
         "the terminal \"Terminal (\\d+)\" is running",
         |world, c, _| {
@@ -621,7 +1139,12 @@ pub fn register(steps: &mut Steps) {
                 close.printed += chunk.chars().count();
                 print(&mut world.mc, &thread_id, "term-1", &chunk);
             }
-            world.sync()
+            // The MC sends past its unread window only as the client says
+            // what it read, so this waits for the last chunk to arrive.
+            let last = world.mc.part::<CloseWorld>().last_chunk.clone();
+            world.wait_for("the last of the output to arrive", move |w| {
+                terminal_session(w, "term-1").is_ok_and(|s| s.transcript().contains(&last))
+            })
         },
     );
     steps.step("the client keeps the newest 512 KiB", |world, _, _| {

@@ -137,6 +137,10 @@ pub struct TimelineModel {
     /// When the running turn started, ISO 8601; empty when none runs.
     #[qml(readonly, notify)]
     working_since: Atom,
+    /// How full the context window is (Timeline::context_window), as a
+    /// map; empty while no provider has reported.
+    #[qml(readonly, notify)]
+    context_window: Value,
     #[qml(readonly, notify)]
     has_earlier: bool,
     #[qml(readonly, notify)]
@@ -175,6 +179,7 @@ impl TimelineModel {
             problem: Atom::new(""),
             working: false,
             working_since: Atom::new(""),
+            context_window: Value::Undefined,
             has_earlier: false,
             loading_earlier: false,
             rows: RowsCell(rows.clone()),
@@ -183,7 +188,12 @@ impl TimelineModel {
         engine.set_object_model(obj, Some(rows.clone() as Rc<dyn ItemModel>))?;
         TimelineModel::update(engine, obj, |_| ());
         // What the core says only when it changes.
-        for out in [Out::StatusChanged, Out::WorkingChanged, Out::EarlierChanged] {
+        for out in [
+            Out::StatusChanged,
+            Out::WorkingChanged,
+            Out::EarlierChanged,
+            Out::ContextChanged,
+        ] {
             sync(engine, obj, &rows, &out);
         }
         Ok(obj)
@@ -320,13 +330,20 @@ fn tell(engine: &Engine, obj: ObjectId, rows: &Rows, out: &Out) {
         Out::AttachmentWanted(id) => {
             drop(TimelineModel::emit_attachment_wanted(&cx, Atom::new(id)))
         }
+        Out::AttachmentSigned { id, url } => drop(TimelineModel::emit_attachment_signed(
+            &cx,
+            Atom::new(id),
+            Atom::new(url),
+        )),
         Out::EarlierWanted(items) => drop(TimelineModel::emit_earlier_wanted(
             &cx,
             i32::try_from(*items).unwrap_or(i32::MAX),
         )),
-        Out::CountChanged | Out::StatusChanged | Out::WorkingChanged | Out::EarlierChanged => {
-            sync(engine, obj, rows, out)
-        }
+        Out::CountChanged
+        | Out::StatusChanged
+        | Out::WorkingChanged
+        | Out::EarlierChanged
+        | Out::ContextChanged => sync(engine, obj, rows, out),
     }
     let observers: Vec<Observer> = rows.observers.borrow().clone();
     for observe in observers {
@@ -365,6 +382,15 @@ fn sync(engine: &Engine, obj: ObjectId, rows: &Rows, out: &Out) {
                 .and_then(|()| {
                     engine.set_internal(obj, TimelineModel::WORKING_SINCE, Atom::new(&since))
                 })
+        }
+        Out::ContextChanged => {
+            let window = crate::json::Json::Object(core.context_window());
+            drop(core);
+            engine.set_internal(
+                obj,
+                TimelineModel::CONTEXT_WINDOW,
+                ljos::prelude::QmlValue::to_value(&window),
+            )
         }
         Out::EarlierChanged => {
             let (has, loading) = (core.has_earlier(), core.loading_earlier());
@@ -425,6 +451,9 @@ impl TimelineModel {
     fn earlier_changed();
     #[qml(signal)]
     fn attachment_wanted(id: Atom);
+    /// An image's signed address, "" when the MC had none.
+    #[qml(signal)]
+    fn attachment_signed(id: Atom, url: Atom);
     #[qml(signal)]
     fn earlier_wanted(items: i32);
 
@@ -481,18 +510,28 @@ impl TimelineModel {
         Json::Object(found.unwrap_or_default()).to_value()
     }
 
-    /// Puts a message's text on the clipboard; false when the row has none
-    /// or the clipboard refused it.
+    /// Puts a message's text on the clipboard: empty when it is on the
+    /// clipboard, else why not (desktop-qt's TimelineModel::copy).
     #[qml(invokable)]
-    fn copy(cx: &Cx, row_id: Atom) -> bool {
+    fn copy(cx: &Cx, row_id: Atom) -> Atom {
         let text = TimelineModel::read(cx.engine, cx.this, |t| t.copy_text(&row_id)).flatten();
         let Some(text) = text else {
-            return false;
+            return Atom::from("The message is no longer shown.");
         };
-        Platform::of(cx.engine)
+        match Platform::of(cx.engine)
             .clipboard()
             .set_text(ClipboardMode::Clipboard, &text)
-            .is_ok()
+        {
+            Ok(()) => Atom::from(""),
+            Err(_) => Atom::from("The clipboard could not be written."),
+        }
+    }
+
+    /// The card of a subagent the user opened.
+    #[qml(invokable)]
+    fn subagent_card(cx: &Cx, row_id: Atom) -> Value {
+        let card = TimelineModel::read(cx.engine, cx.this, |t| t.subagent_card(&row_id));
+        Json::Object(card.unwrap_or_default()).to_value()
     }
 
     /// An image on screen wants its address (attachmentWanted, once).

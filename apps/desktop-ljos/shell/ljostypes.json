@@ -4537,6 +4537,18 @@
               "notify": "workingSinceChanged"
             },
             {
+              "name": "contextWindow",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "contextWindowChanged"
+            },
+            {
               "name": "hasEarlier",
               "type": "bool",
               "kind": "value",
@@ -4722,7 +4734,17 @@
                   "type": "string"
                 }
               ],
-              "returnType": "bool"
+              "returnType": "string"
+            },
+            {
+              "name": "subagentCard",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
             },
             {
               "name": "loadAttachment",
@@ -4770,6 +4792,18 @@
               "constant": false,
               "group": false,
               "notify": "agentCountChanged"
+            },
+            {
+              "name": "liveAgentCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "liveAgentCountChanged"
             }
           ],
           "signals": [],

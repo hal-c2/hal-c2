@@ -180,6 +180,10 @@ impl Mc for WindowMc {
         self.inner.more(id, items);
     }
 
+    fn ack(&self, id: SubId, sequence: i64) {
+        self.inner.ack(id, sequence);
+    }
+
     fn on_ready_changed(&self, f: OnReady) {
         let Some(window) = self.window() else {
             self.inner.on_ready_changed(f);

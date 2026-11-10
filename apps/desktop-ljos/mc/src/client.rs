@@ -447,6 +447,21 @@ impl McClient {
         }
     }
 
+    /// Says terminal subscription `id` has taken its output up to
+    /// `sequence`, which opens the MC's window for more.
+    pub fn ack(&self, id: SubId, sequence: i64) {
+        let connection = {
+            let state = self.state();
+            if !state.subscriptions.contains_key(&id) {
+                return;
+            }
+            state.connection
+        };
+        if let Some(connection) = connection {
+            self.inner.handle.send_ack(connection, id, sequence);
+        }
+    }
+
     /// A client RPC run where `environment` is served. `reply` gets the result,
     /// or why it failed: the MC's error, or "not connected" / "disconnected"
     /// when the socket was not there to carry it.
