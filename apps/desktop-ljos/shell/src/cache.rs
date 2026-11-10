@@ -852,11 +852,11 @@ impl Worker {
         logged("thread", applied).is_some()
     }
 
-    fn read_thread(&self, key: &str) -> Thread {
+    fn read_thread(&mut self, key: &str) -> Thread {
         let Some(db) = &self.db else {
             return Thread::default();
         };
-        let read = (|| -> rusqlite::Result<Thread> {
+        let read = (|| -> rusqlite::Result<Option<Thread>> {
             let cursor = db
                 .query_row(
                     "SELECT handle, cursor, floor FROM threads WHERE key = ?1",
@@ -871,7 +871,7 @@ impl Worker {
                 )
                 .optional()?;
             let Some(cursor) = cursor else {
-                return Ok(Thread::default());
+                return Ok(Some(Thread::default()));
             };
             let _ = logged(
                 "UPDATE threads SET used",
@@ -884,17 +884,33 @@ impl Worker {
                 db.prepare("SELECT kind, id, run_ord, json FROM entities WHERE thread = ?1")?;
             let entities = rows
                 .query_map([key], |row| {
-                    Ok(Entity {
+                    let bytes = row.get::<_, Vec<u8>>(3)?;
+                    let Ok(fields) = serde_json::from_slice::<Map<String, Value>>(&bytes) else {
+                        return Ok(None);
+                    };
+                    Ok(Some(Entity {
                         kind: row.get(0)?,
                         id: row.get(1)?,
                         run: row.get(2)?,
-                        fields: object(&row.get::<_, Vec<u8>>(3)?),
-                    })
+                        fields,
+                    }))
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(Thread { cursor, entities })
+                .collect::<rusqlite::Result<Option<Vec<_>>>>()?;
+            Ok(entities.map(|entities| Thread { cursor, entities }))
         })();
-        logged("read thread", read).unwrap_or_default()
+        match logged("read thread", read) {
+            Some(Some(thread)) => thread,
+            // A copy with a row it cannot read is no copy: shown without that
+            // row and resumed from its cursor, the thread would never be sent
+            // it again. It goes, and the thread is loaded whole.
+            Some(None) => {
+                if !self.drop_thread(key) {
+                    self.lost.threads.insert(key.to_owned());
+                }
+                Thread::default()
+            }
+            None => Thread::default(),
+        }
     }
 
     fn apply_shell(&mut self, origin: &str, mcs: &[ShellMcUpdate]) -> bool {
