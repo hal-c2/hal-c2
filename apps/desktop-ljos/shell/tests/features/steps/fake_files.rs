@@ -251,7 +251,8 @@ fn extension(mc: &mut FakeMc) {
             for key in fake.files.keys() {
                 for path in with_folders(key) {
                     let name = path.rsplit('/').next().unwrap_or_default();
-                    if name.to_lowercase().contains(&query) {
+                    // The MC's rank: by name, else anywhere in the path.
+                    if path.to_lowercase().contains(&query) {
                         matches.insert(path);
                     }
                 }

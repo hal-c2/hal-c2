@@ -5,6 +5,7 @@
 use hal_c2_shell::controllers::navigation::Navigation;
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::workspace;
+use hal_c2_shell::store;
 use ljos::prelude::{ObjectId, Value as QmlValue};
 use serde_json::{Value, json};
 
@@ -15,7 +16,7 @@ use crate::steps::composer_brick::{
     settle_composer, type_in_composer,
 };
 use crate::steps::launch::{FakeLaunches, launch_calls};
-use crate::steps::settings::publish_providers;
+use crate::steps::settings::{fake_config, publish_providers, save_elsewhere};
 use crate::steps::stream::{FakeStreams, PEER, PEER_ENVIRONMENT, PROJECT, THREAD};
 use crate::steps::workspace::fake_git_repo;
 use crate::world::World;
@@ -620,6 +621,569 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+    workspace_choice(steps);
+}
+
+/// The worktree the scenario's new thread is to be in, when it is in one.
+#[derive(Default)]
+struct ChoiceDraft {
+    worktree: String,
+}
+
+/// A thread of the project that worked in `worktree`, `hour` o'clock its
+/// last use.
+fn have_worktree_thread(
+    world: &mut World,
+    project: &str,
+    id: &str,
+    branch: &str,
+    worktree: &str,
+    hour: u32,
+    archived_at: &str,
+) -> Outcome {
+    let mut row = json!({"id": id, "title": id, "projectId": project, "worktreePath": worktree,
+        "createdAt": "2026-09-23T07:00:00Z", "updatedAt": format!("2026-09-23T{hour:02}:00:00Z")});
+    if !branch.is_empty() {
+        row["branch"] = json!(branch);
+    }
+    if !archived_at.is_empty() {
+        row["archivedAt"] = json!(archived_at);
+    }
+    world.mc.threads.insert(id.to_owned(), row.clone());
+    world.mc.send_row(id, &row);
+    world.sync()
+}
+
+fn have_started_thread(world: &mut World, project: &str, worktree: &str) -> Outcome {
+    let mut row = json!({"id": "t-started", "title": "Tax line", "projectId": project,
+        "latestUserMessageAt": "2026-09-23T09:00:00Z",
+        "createdAt": "2026-09-23T09:00:00Z", "updatedAt": "2026-09-23T09:00:00Z"});
+    if !worktree.is_empty() {
+        row["worktreePath"] = json!(worktree);
+    }
+    world.mc.threads.insert("t-started".into(), row.clone());
+    world.mc.send_row("t-started", &row);
+    world.sync()
+}
+
+/// A new thread's draft, in `worktree` when there is one.
+fn open_choice_draft(world: &mut World, worktree: &str) -> Outcome {
+    new_thread(world)?;
+    if worktree.is_empty() {
+        return Ok(());
+    }
+    let draft = world.with::<Navigation, _>(|n, _| match n.route() {
+        hal_c2_shell::controllers::navigation::Route::Draft(id) => id.clone(),
+        _ => String::new(),
+    })?;
+    let engine = world.engine().clone();
+    let mut checkout = workspace::checkout(&engine, &draft);
+    checkout.env_mode = "worktree".into();
+    checkout.worktree_path = Some(worktree.to_owned());
+    workspace::set_checkout(&engine, &draft, checkout);
+    world.wait_for_with(
+        |w| workspace_state(w)["worktreePath"] == json!(worktree),
+        |w| {
+            format!(
+                "the draft in the worktree; the header shows {}",
+                show(&workspace_state(w))
+            )
+        },
+    )
+}
+
+fn open_choice(world: &mut World) -> Outcome {
+    let brick = composer_brick(world)?;
+    let picker = part(world, "envModePicker")?;
+    click(world, picker)?;
+    let popup = popup_of(&brick, world, picker)?;
+    world.wait_for("the workspace choice to open", |w| {
+        brick.flag(w, popup, "opened")
+    })
+}
+
+/// What the workspace choice lists, as on screen.
+fn choices(world: &mut World) -> Outcome<Vec<String>> {
+    let brick = composer_brick(world)?;
+    let picker = part(world, "envModePicker")?;
+    let count = int(&brick, world, picker, "count");
+    let mut labels = Vec::new();
+    for index in 0..count {
+        let label =
+            match world
+                .engine()
+                .invoke_by_name(picker, "textAt", &[QmlValue::Int(index as i32)])
+            {
+                Ok(QmlValue::String(s)) => s.to_string(),
+                Ok(other) => format!("{other:?}"),
+                Err(e) => fail!("textAt: {e:?}"),
+            };
+        labels.push(label);
+    }
+    Ok(labels)
+}
+
+fn open_base_picker(world: &mut World) -> Outcome {
+    let button = part(world, "branchButton")?;
+    click(world, button)?;
+    let brick = composer_brick(world)?;
+    world.wait_for("the branch picker to open", |w| {
+        brick
+            .find(w, "branchPicker")
+            .ok()
+            .flatten()
+            .is_some_and(|popup| brick.flag(w, popup, "opened"))
+    })?;
+    world.sync()
+}
+
+/// Codex and Claude ready to take a new thread's prompt.
+fn offer_codex_and_claude(world: &mut World) -> Outcome {
+    let listed = world.state("modelPicker")["instances"]
+        .as_array()
+        .is_some_and(|i| !i.is_empty());
+    if listed {
+        return Ok(());
+    }
+    publish_providers(
+        &mut world.mc,
+        vec![
+            provider("codex", "Codex", &["gpt-5", "gpt-5-codex"]),
+            provider("claudeAgent", "Claude", &["claude-opus", "claude-sonnet"]),
+        ],
+    );
+    world.sync()
+}
+
+/// The draft's own model, and Claude's beside it.
+fn choose_claude_too(world: &mut World) -> Outcome {
+    let picker = part(world, "modelPicker")?;
+    click(world, picker)?;
+    world.wait_for("the model picker to open", |w| {
+        composer_part_now(w, "modelPickerProvider:claudeAgent").is_some()
+    })?;
+    let brick = composer_brick(world)?;
+    let popup = popup_of(&brick, world, picker)?;
+    world.wait_for("the model picker to finish opening", |w| {
+        brick.flag(w, popup, "opened")
+    })?;
+    let claude = part(world, "modelPickerProvider:claudeAgent")?;
+    click(world, claude)?;
+    world.wait_for("Claude's models", |w| {
+        composer_part_now(w, "modelPickerMultiple:claudeAgent:claude-opus").is_some()
+    })?;
+    let opus = part(world, "modelPickerMultiple:claudeAgent:claude-opus")?;
+    click(world, opus)?;
+    world.wait_for_with(
+        |w| {
+            w.state("modelPicker")["multiple"]
+                .as_array()
+                .is_some_and(|m| m.len() == 2)
+        },
+        |w| {
+            format!(
+                "two models; the picker has {}",
+                show(&w.state("modelPicker")["multiple"])
+            )
+        },
+    )
+}
+
+fn origin_setting(world: &World) -> bool {
+    let engine = world.engine().clone();
+    Settings::of(&engine).setting(&engine, "newWorktreesStartFromOrigin") == Some(json!(true))
+}
+
+/// Turns the base picker's start-from-origin switch to `on` in a new
+/// thread's new worktree on main.
+fn switch_origin(world: &mut World, on: bool) -> Outcome {
+    new_thread(world)?;
+    pick(world, "envModePicker", 1)?;
+    open_base_picker(world)?;
+    let brick = composer_brick(world)?;
+    let toggle = part(world, "startFromOrigin")?;
+    expect!(
+        brick.flag(world, toggle, "checked") != on,
+        "the switch already reads {}",
+        if on { "on" } else { "off" }
+    );
+    click(world, toggle)?;
+    world.wait_for_with(
+        |w| workspace_state(w)["startFromOrigin"] == json!(on),
+        |w| {
+            format!(
+                "the switch to take; the header shows {}",
+                show(&workspace_state(w))
+            )
+        },
+    )?;
+    press_in_composer(world, "Escape")?;
+    world.wait_for("the branch picker to close", |w| {
+        brick
+            .find(w, "branchPicker")
+            .ok()
+            .flatten()
+            .is_none_or(|popup| !brick.flag(w, popup, "visible"))
+    })
+}
+
+fn launched_from_origin(world: &mut World, origin: bool) -> Outcome {
+    if launch_calls_len(world) == 0 {
+        confirm_branch(world, "main")?;
+        send_first_message(world)?;
+    }
+    let call = launch(world)?;
+    let strategy = &call["workspaceStrategy"];
+    expect!(
+        strategy["type"] == json!("worktree")
+            && (strategy["startFromOrigin"] == json!(true)) == origin,
+        "the launch works in {}",
+        show(strategy)
+    );
+    Ok(())
+}
+
+/// The workspace choice (source-control/worktrees-and-setup-scripts.feature).
+fn workspace_choice(steps: &mut Steps) {
+    steps.step(
+        &format!(
+            "the user is writing the first message of a new thread in {Q} in the project folder"
+        ),
+        |world, _, _| new_thread(world),
+    );
+    steps.step(
+        &format!(
+            "the user is writing the first message of a new thread in {Q} in an existing worktree"
+        ),
+        |world, c, _| {
+            let tax = "/work/shop-worktrees/tax";
+            have_worktree_thread(world, &c[0], "t-before", "feature/tax", tax, 10, "")?;
+            open_choice_draft(world, tax)
+        },
+    );
+    steps.step("the user opens the workspace choice", |world, _, _| {
+        open_choice(world)
+    });
+    steps.step(&format!("the choices are {Q} and {Q}"), |world, c, _| {
+        let shown = choices(world)?;
+        expect!(
+            shown == [c[0].clone(), c[1].clone()],
+            "the choices are {}",
+            shown.join(", ")
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("a thread in {Q} has started in the project folder"),
+        |world, c, _| have_started_thread(world, &c[0], ""),
+    );
+    steps.step(
+        &format!("a thread in {Q} has started in a worktree"),
+        |world, c, _| have_started_thread(world, &c[0], "/work/shop-worktrees/tax"),
+    );
+    steps.step("the user looks at the thread's workspace", |world, _, _| {
+        // A started thread's strip stays only with the setting that keeps it.
+        let engine = world.engine().clone();
+        Settings::of(&engine).set(&engine, "persistComposerContextStrip", json!(true));
+        let key = format!("{}:t-started", world.mc.environment_id);
+        let route = key.clone();
+        world.with::<Navigation, _>(|navigation, engine| {
+            navigation.open(
+                engine,
+                hal_c2_shell::controllers::navigation::Route::Thread(route),
+            )
+        })?;
+        world.wait_for_with(
+            |w| workspace_state(w)["threadKey"] == json!(key),
+            |w| format!("the thread; the header shows {}", show(&workspace_state(w))),
+        )?;
+        composer_brick(world)?;
+        Ok(())
+    });
+    steps.step(
+        &format!("it reads {Q} and cannot be changed"),
+        |world, c, _| {
+            world.sync()?;
+            let brick = composer_brick(world)?;
+            let locked = part(world, "envModeLocked")?;
+            let label = part(world, "envModeLockedLabel")?;
+            let picker = part(world, "envModePicker")?;
+            world.wait_for_with(
+                |w| {
+                    brick.flag(w, locked, "visible")
+                        && brick.text_of(w, label, "text") == c[0]
+                        && !brick.flag(w, picker, "visible")
+                        && workspace_state(w)["envModeChangeable"] != json!(true)
+                },
+                |w| {
+                    format!(
+                        "the lock; shown {}, label \"{}\", composer {}",
+                        brick.flag(w, locked, "visible"),
+                        brick.text_of(w, label, "text"),
+                        show(&w.state("composer")["showContextStrip"])
+                    )
+                },
+            )?;
+            // Asking anyway changes nothing.
+            let mode = text(&workspace_state(world)["envMode"]);
+            let other = if mode == "worktree" {
+                "local"
+            } else {
+                "worktree"
+            };
+            world.dispatch("workspace.envMode.set", json!({"mode": other}))?;
+            world.sync()?;
+            let state = workspace_state(world);
+            expect!(
+                state["envMode"] == json!(mode) && state["envModeLabel"] == json!(c[0]),
+                "the header shows {}",
+                show(&state)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user chose two models for a new thread in {Q}"),
+        |world, _, _| {
+            offer_codex_and_claude(world)?;
+            new_thread(world)?;
+            choose_claude_too(world)?;
+            press_in_composer(world, "Escape")?;
+            Ok(())
+        },
+    );
+    steps.step("the user looks at the workspace choice", |world, _, _| {
+        world.sync()
+    });
+    steps.step(
+        "it says each model starts in its own worktree",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            let locked = part(world, "envModeLocked")?;
+            let hint = brick.text_of(world, locked, "hint");
+            expect!(
+                hint == "Each model starts in its own worktree.",
+                "it says \"{hint}\""
+            );
+            expect!(
+                workspace_state(world)["envMode"] == json!("worktree"),
+                "the header shows {}",
+                show(&workspace_state(world))
+            );
+            Ok(())
+        },
+    );
+    let latest = "/work/shop-worktrees/latest";
+    steps.step(
+        &format!("the most recently used worktree of {Q} is on no branch"),
+        move |world, c, _| have_worktree_thread(world, &c[0], "t-latest", "", latest, 10, ""),
+    );
+    steps.step(
+        &format!(
+            "the most recently used worktree of {Q} is the worktree the new thread is already in"
+        ),
+        move |world, c, _| {
+            have_worktree_thread(world, &c[0], "t-latest", "feature/here", latest, 10, "")?;
+            world.mc.part::<ChoiceDraft>().worktree = latest.to_owned();
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the most recently used worktree of {Q} belongs only to an archived thread"),
+        move |world, c, _| {
+            have_worktree_thread(
+                world,
+                &c[0],
+                "t-latest",
+                "feature/gone",
+                latest,
+                10,
+                "2026-09-23T10:30:00Z",
+            )
+        },
+    );
+    steps.step(
+        &format!("the most recently used worktree of {Q} is on {Q}"),
+        move |world, c, _| have_worktree_thread(world, &c[0], "t-latest", &c[1], latest, 10, ""),
+    );
+    steps.step(
+        &format!("an older thread in {Q} used another worktree"),
+        |world, c, _| {
+            have_worktree_thread(
+                world,
+                &c[0],
+                "t-older",
+                "feature/older",
+                "/work/shop-worktrees/older",
+                8,
+                "",
+            )
+        },
+    );
+    steps.step(
+        &format!("no thread in {Q} has used a worktree"),
+        |world, _, _| world.sync(),
+    );
+    steps.step(
+        "the user opens the workspace choice of a new thread",
+        |world, _, _| {
+            let worktree = world.mc.part::<ChoiceDraft>().worktree.clone();
+            open_choice_draft(world, &worktree)?;
+            open_choice(world)
+        },
+    );
+    steps.step(&format!("it offers {Q}"), |world, c, _| {
+        let shown = choices(world)?;
+        expect!(
+            shown.len() == 3 && shown[2] == c[0],
+            "the choices are {}",
+            shown.join(", ")
+        );
+        Ok(())
+    });
+    steps.step(
+        "the other worktree is offered as the previous worktree",
+        |world, _, _| {
+            let shown = choices(world)?;
+            expect!(
+                shown.len() == 3 && shown[2] == "Previous worktree (feature/older)",
+                "the choices are {}",
+                shown.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the choices are the current checkout and a new worktree only",
+        |world, _, _| {
+            let shown = choices(world)?;
+            expect!(
+                shown == ["Current checkout", "New worktree"],
+                "the choices are {}",
+                shown.join(", ")
+            );
+            Ok(())
+        },
+    );
+
+    // The base picker's start from origin.
+    steps.step(
+        &format!("the user chose a new worktree for a new thread in {Q}"),
+        |world, _, _| {
+            new_thread(world)?;
+            pick(world, "envModePicker", 1)
+        },
+    );
+    steps.step("the user opens the base picker", |world, _, _| {
+        open_base_picker(world)
+    });
+    steps.step(
+        &format!("it offers {Q} with a switch for starting the worktree from origin"),
+        |world, c, _| {
+            let brick = composer_brick(world)?;
+            let row = part(world, "startFromOriginRow")?;
+            let toggle = part(world, "startFromOrigin")?;
+            expect!(
+                brick.flag(world, row, "visible") && brick.flag(world, toggle, "visible"),
+                "the switch is not offered"
+            );
+            expect!(
+                brick.shows(world, &c[0])?,
+                "the picker does not say \"{}\"",
+                c[0]
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "it explains this creates the worktree from the latest matching branch on origin instead of the local branch",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            let help = part(world, "startFromOriginHelp")?;
+            let said = brick.text_of(world, help, "text");
+            expect!(
+                said.contains("latest matching branch on origin")
+                    && said.contains("instead of your local branch"),
+                "it says \"{said}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("{Q} is (off|on) in the settings"),
+        |world, c, _| {
+            expect!(
+                c[0] == "Start new worktrees from origin",
+                "no such setting: {}",
+                c[0]
+            );
+            let on = c[1] == "on";
+            save_elsewhere(
+                &mut world.mc,
+                "newWorktreesStartFromOrigin",
+                json!(on),
+                false,
+            );
+            world.wait_for("the shell to take the setting", |w| origin_setting(w) == on)
+        },
+    );
+    steps.step(
+        &format!("the user turns on {Q} in a new thread's base picker"),
+        |world, _, _| switch_origin(world, true),
+    );
+    steps.step(
+        &format!("the user turns off {Q} in a new thread's base picker"),
+        |world, _, _| switch_origin(world, false),
+    );
+    steps.step(
+        "that thread's worktree starts from origin",
+        |world, _, _| launched_from_origin(world, true),
+    );
+    steps.step(
+        "that thread's worktree starts from the local branch",
+        |world, _, _| launched_from_origin(world, false),
+    );
+    steps.step(
+        "the project's default workspace is a new worktree",
+        |world, _, _| {
+            save_elsewhere(
+                &mut world.mc,
+                "defaultThreadEnvMode",
+                json!("worktree"),
+                false,
+            );
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the user opens a new thread in {Q}"),
+        |world, c, _| {
+            let key = world.project_key(&c[0]);
+            world.start_new_thread(json!({"projectKey": key}))?;
+            world.wait_for_with(
+                |w| workspace_state(w)["envMode"] == json!("worktree"),
+                |w| {
+                    format!(
+                        "the draft in a new worktree; the header shows {}",
+                        show(&workspace_state(w))
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the setting stays (off|on)", |world, c, _| {
+        world.sync()?;
+        let on = c[0] == "on";
+        let saved = fake_config(&mut world.mc)
+            .settings
+            .get("newWorktreesStartFromOrigin")
+            == Some(&json!(true));
+        expect!(
+            origin_setting(world) == on && saved == on,
+            "the setting changed"
+        );
+        Ok(())
+    });
 }
 
 fn launch_calls_len(world: &World) -> usize {
@@ -650,5 +1214,14 @@ pub fn connect_second_composer_environment(world: &mut World) -> Outcome<bool> {
             "scripts": [], "repositoryIdentity": identity}])],
     );
     world.sync()?;
+    world.wait_for_with(
+        |w| store::with(w.engine(), |s| !s.project_rows(PEER_ENVIRONMENT).is_empty()),
+        |w| {
+            format!(
+                "the second machine's project; the header shows {}",
+                show(&workspace_state(w))
+            )
+        },
+    )?;
     Ok(true)
 }

@@ -1252,6 +1252,104 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+
+    // Stashing what a draft carries (editors-and-keys.feature).
+    steps.step(
+        &format!("the user stashed {Q} with an image"),
+        |world, c, _| stash_with(world, &c[0], &["sketch.png"], &[]),
+    );
+    steps.step(
+        "the user stashed (two images|one image|one file|one image, one file) and no text",
+        |world, c, _| {
+            let mut images: Vec<&str> = Vec::new();
+            let mut files: Vec<&str> = Vec::new();
+            if c[0] == "two images" {
+                images = vec!["before.png", "after.png"];
+            }
+            if c[0].starts_with("one image") {
+                images = vec!["sketch.png"];
+            }
+            if c[0].ends_with("one file") {
+                files = vec!["schema.sql"];
+            }
+            stash_with(world, "", &images, &files)
+        },
+    );
+    steps.step("the app is restarted", |world, _, _| {
+        world.restart()?;
+        world.connect()?;
+        world.sync()
+    });
+    steps.step(
+        &format!("the stash lists {Q} with its image"),
+        |world, c, _| {
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                move |w| {
+                    let list = w.state("composerStash")["entries"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                    list.len() == 1 && list[0]["snippet"] == json!(wanted)
+                },
+                move |w| {
+                    format!(
+                        "the stash holds {}",
+                        show(&w.state("composerStash")["entries"])
+                    )
+                },
+            )?;
+            // Its image comes back with it.
+            let id = world.state("composerStash")["entries"][0]["id"].clone();
+            world.dispatch("composer.stash.restore", json!({"id": id}))?;
+            world.sync()?;
+            world.wait_for_with(
+                |w| carried(w) == ["sketch.png"],
+                |w| {
+                    format!(
+                        "the restored draft to carry sketch.png; it carries {}",
+                        carried_text(w)
+                    )
+                },
+            )?;
+            let typed = composer::draft(world.engine(), &thread_target(world));
+            expect!(typed == c[0], "the restored draft reads \"{typed}\"");
+            Ok(())
+        },
+    );
+}
+
+/// Stashes `text` with the images and files named, each kept or uploaded
+/// first.
+fn stash_with(world: &mut World, typed: &str, images: &[&str], files: &[&str]) -> Outcome {
+    world.dispatch(
+        "composer.text.set",
+        json!({"target": thread_target(world), "text": typed,
+               "cursor": typed.chars().count()}),
+    )?;
+    composer_brick(world)?;
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for name in images {
+        paths.push(image_file(world, name)?);
+    }
+    for name in files {
+        paths.push(plain_file(world, name)?);
+    }
+    choose(world, &paths)?;
+    let wanted: Vec<String> = images
+        .iter()
+        .chain(files)
+        .map(|name| name.to_string())
+        .collect();
+    world.wait_for_with(
+        move |w| carried(w) == wanted,
+        move |w| format!("the draft to carry them; it carries {}", carried_text(w)),
+    )?;
+    for name in files {
+        wait_for_upload(world, name, "")?;
+    }
+    world.dispatch("composer.stash", Value::Null)?;
+    world.sync()
 }
 
 /// "the conversation says X" while something is dragged over the

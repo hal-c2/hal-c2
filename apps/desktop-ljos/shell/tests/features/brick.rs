@@ -219,6 +219,27 @@ Item {
     function brickLineComment(file, line) {
         return brickLineCommentIn(brickProbe, file, line)
     }
+    function brickFocusedIn(item, prefix) {
+        if (!item) return false
+        if (item.activeFocus && String(item.objectName || "").indexOf(prefix) === 0) return true
+        var kids = item.data || item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            if (brickFocusedIn(kids[i], prefix)) return true
+        }
+        var content = item.contentData || []
+        for (var j = 0; j < content.length; j++) {
+            if (kids.indexOf(content[j]) >= 0) continue
+            if (brickFocusedIn(content[j], prefix)) return true
+        }
+        return false
+    }
+    function brickFocused(prefix) {
+        var trees = brickTrees()
+        for (var i = 0; i < trees.length; i++) {
+            if (brickFocusedIn(trees[i], prefix)) return true
+        }
+        return false
+    }
 %BODY%
 }
 "#;
@@ -385,6 +406,15 @@ impl Brick {
             Value::Object(item) => Some(item),
             _ => None,
         })
+    }
+
+    /// Whether keyboard focus sits on an item whose name starts with
+    /// `prefix` (the window's active focus item, searched in the trees).
+    pub fn focused_named(&self, world: &World, prefix: &str) -> Outcome<bool> {
+        Ok(matches!(
+            self.call(world, "brickFocused", &[Value::from(prefix)])?,
+            Value::Bool(true)
+        ))
     }
 
     /// Whether `item`, or a visible item under it, shows `text`.

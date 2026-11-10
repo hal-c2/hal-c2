@@ -27,6 +27,15 @@ use crate::json::Json;
 use crate::store;
 use crate::thread_view::summary::{Obj, as_object, text as field};
 
+/// Whether a scheduled task sent this user message: by its id, or as an older
+/// MC marked it, by a "[Triggered by schedule task: …]" prefix on a
+/// scheduled-task-message id.
+fn sent_by_scheduled_task(item: &Obj) -> bool {
+    !field(item, "scheduledTaskId").is_empty()
+        || (field(item, "text").starts_with("[Triggered by schedule task: ")
+            && field(item, "id").starts_with("scheduled-task-message:"))
+}
+
 static SLASH_MODE: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(r"(?i)^/(plan|default)\s*$").ok());
 static SLASH_USAGE_LIMITS: LazyLock<Option<Regex>> =
@@ -383,6 +392,15 @@ impl Composer {
         let entries: Vec<(String, String)> = self.read_timeline(engine, |t| {
             let mut entries: Vec<(String, String)> = Vec::new();
             for item in items_of(t.entities("turn-item"), "user_message") {
+                // Only what the user typed: not a scheduled task's, another
+                // agent's or the app's message.
+                let by = field(item, "createdBy");
+                if (!by.is_empty() && by != "user")
+                    || sent_by_scheduled_task(item)
+                    || !field(item, "senderThreadId").is_empty()
+                {
+                    continue;
+                }
                 let prompt = recallable(field(item, "text"));
                 if prompt.is_empty() {
                     continue;
@@ -478,15 +496,28 @@ impl Composer {
             attachments: kept.attachments,
             excerpts: kept.excerpts,
         };
-        let dropped = kept::write(engine, |d| {
+        let oldest = kept::write(engine, |d| {
             d.stash.insert(0, entry);
-            let over = d.stash.len() > MAX_STASH_ENTRIES;
-            if over {
-                d.stash.pop();
-            }
-            over
+            (d.stash.len() > MAX_STASH_ENTRIES)
+                .then(|| d.stash.pop())
+                .flatten()
         });
-        if dropped {
+        // A stash that cannot be written keeps nothing: the prompt stays in
+        // the composer.
+        if !kept::saved(engine) {
+            kept::write(engine, |d| {
+                d.stash.remove(0);
+                d.stash.extend(oldest);
+            });
+            toast_error(
+                engine,
+                "Could not stash this prompt",
+                "The stash could not be saved on this machine.",
+            );
+            self.publish(engine);
+            return true;
+        }
+        if oldest.is_some() {
             toast(
                 engine,
                 "warning",
@@ -1004,7 +1035,8 @@ impl Composer {
             return;
         }
         kept::edit_draft(engine, target, |kept| {
-            kept.interaction_mode = mode.to_owned()
+            kept.interaction_mode = mode.to_owned();
+            kept.carried = false;
         });
         kept::save(engine);
         self.publish(engine);
@@ -1073,6 +1105,7 @@ impl Composer {
         kept::edit_draft(engine, target, |kept| {
             kept.model_selection = Some(chosen);
             kept.multiple_models = None;
+            kept.carried = false;
         });
         kept::save(engine);
         self.publish(engine);
@@ -1113,6 +1146,7 @@ impl Composer {
                 "Multiple models need a new thread in a Git project. Each gets its own worktree.",
             );
             kept::edit_draft(engine, target, |kept| kept.multiple_models = None);
+            crate::controllers::workspace::refresh(engine);
             return self.select_model(engine, target, instance_id, chosen_model);
         }
         let selection = self.selection(engine, target);
@@ -1140,6 +1174,7 @@ impl Composer {
                     kept.model_selection = Some(first);
                 }
                 kept.multiple_models = None;
+                kept.carried = false;
             });
         } else {
             // Each model's thread starts in a worktree of its own.
@@ -1149,6 +1184,7 @@ impl Composer {
             }
             kept::edit_draft(engine, target, |kept| kept.multiple_models = Some(models));
         }
+        crate::controllers::workspace::refresh(engine);
         kept::save(engine);
         self.publish(engine);
         true
@@ -1206,7 +1242,7 @@ impl Composer {
     fn select_suggestion(&mut self, engine: &Engine, target: &str, id: &str) -> bool {
         let text = kept::draft(engine, target);
         let kept = kept::draft_of(engine, target);
-        let Some(trigger) = model::trigger(&text, kept.cursor) else {
+        let Some(trigger) = self.trigger_of(engine, target, &text, kept.cursor) else {
             return false;
         };
         if kept.dismissed {

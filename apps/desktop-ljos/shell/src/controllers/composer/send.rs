@@ -11,7 +11,7 @@ use serde_json::json;
 
 use super::attachments::{file_records, image_records};
 use super::kept::{self, Attachment, Excerpt, Send, Unsent};
-use super::text::{self, IMPLEMENT_PREFIX, launch_title, newest_user_message, prompt_problem};
+use super::text::{self, IMPLEMENT_PREFIX, launch_title, newest_user_message};
 use super::{
     Composer, back, later, now_iso, setting, string, thread_of, toast, toast_error, unanswered,
     uuid,
@@ -104,6 +104,58 @@ fn sticky_error(engine: &Engine, title: &str, description: &str, action: Action)
     });
 }
 
+/// Terminal excerpts whose text the store did not keep.
+fn expired(excerpts: &[Excerpt]) -> usize {
+    excerpts
+        .iter()
+        .filter(|e| e.citation.is_empty() && e.review.is_empty() && e.text.trim().is_empty())
+        .count()
+}
+
+/// A draft of nothing but expired excerpts is not sent: the user is told,
+/// and keeps it.
+fn stop_for_expired(engine: &Engine, text: &str, draft: &kept::Draft) -> bool {
+    let count = expired(&draft.excerpts);
+    if count == 0
+        || count != draft.excerpts.len()
+        || !text.trim().is_empty()
+        || !draft.attachments.is_empty()
+    {
+        return false;
+    }
+    let title = if count == 1 {
+        "Expired terminal context won't be sent"
+    } else {
+        "Expired terminal contexts won't be sent"
+    };
+    toast(
+        engine,
+        "warning",
+        title,
+        "Remove it or re-add it to include terminal output.",
+    );
+    true
+}
+
+/// Says the expired excerpts were left out of a message sent without them.
+fn warn_of_expired(engine: &Engine, excerpts: &[Excerpt]) {
+    let count = expired(excerpts);
+    if count == 0 {
+        return;
+    }
+    let title = if count == 1 {
+        "Expired terminal context omitted from message"
+    } else {
+        "Expired terminal contexts omitted from message"
+    };
+    toast(
+        engine,
+        "warning",
+        title,
+        "Re-add it if you want that terminal output included.",
+    );
+}
+
 fn object(value: Json) -> Obj {
     match value {
         Json::Object(map) => map,
@@ -191,10 +243,6 @@ impl Composer {
         if let Some(done) = self.submit_place(engine, &target, &text) {
             return done;
         }
-        if let Some(problem) = prompt_problem(&text) {
-            toast_error(engine, "Message not sent", &problem);
-            return true;
-        }
         let editing = kept::read(engine, |d| {
             d.queued_edit.as_ref().is_some_and(|e| e.thread == target)
         });
@@ -216,6 +264,9 @@ impl Composer {
         let has_extras = kept::draft_of(engine, &target).carries();
         let plan_follow_up = !has_extras && !self.turn_state(engine)["plan"].is_null();
         if text.trim().is_empty() && !has_extras && !plan_follow_up {
+            return true;
+        }
+        if stop_for_expired(engine, &text, &kept::draft_of(engine, &target)) {
             return true;
         }
         let running = thread_of(engine, &target).is_some_and(|t| t.active_run_id.is_some());
@@ -384,6 +435,7 @@ impl Composer {
                 (Vec::new(), Vec::new())
             }
         });
+        warn_of_expired(engine, &excerpts);
         text::with_excerpts(&mut message, &excerpts);
         commands.push(message);
         // Sending again is newer than what a restart left of the thread's
@@ -423,6 +475,7 @@ impl Composer {
                 excerpts,
                 prompt,
                 message_id,
+                plan_follow_up,
             });
             queue.len() == 1
         });
@@ -515,6 +568,7 @@ impl Composer {
                 self.publish(engine);
                 return;
             }
+            let plan_follow_up = unsent.first().is_some_and(|first| first.plan_follow_up);
             let mut prompts = Vec::new();
             let mut attachments = Vec::new();
             let mut excerpts = Vec::new();
@@ -530,7 +584,18 @@ impl Composer {
             // Only into an untouched draft: newer typing is the user's, and
             // the toast gives the prompt back once the draft is empty.
             if restored.is_empty() || kept::draft(engine, target).is_empty() {
-                toast_error(engine, "Failed to send message", &error.message);
+                // A plan's feedback says so, with a reason even when the MC
+                // gave none.
+                if plan_follow_up {
+                    let reason = if error.message.is_empty() {
+                        "Failed to send plan follow-up."
+                    } else {
+                        error.message.as_str()
+                    };
+                    toast_error(engine, "Plan follow-up not sent", reason);
+                } else {
+                    toast_error(engine, "Failed to send message", &error.message);
+                }
                 if !restored.is_empty() {
                     self.set_text_end(engine, target, &restored);
                 }
@@ -705,10 +770,25 @@ impl Composer {
         if text.trim().is_empty() && attachments.is_empty() && excerpts.is_empty() {
             return true;
         }
+        if stop_for_expired(engine, &text, &kept::draft_of(engine, draft_id)) {
+            return true;
+        }
         if self.launching.contains(draft_id) {
             return true;
         }
         let place = workspace::launch(engine, draft_id);
+        // A draft whose project is gone (its machine left, or the project
+        // went before the draft heard) keeps its prompt for another project.
+        let project = format!("{}:{}", place.environment_id, place.project_id);
+        if place.problem.is_empty() && store::with(engine, |s| s.project(&project).is_none()) {
+            toast(
+                engine,
+                "warning",
+                "Choose a project first",
+                "This draft no longer points to an available project.",
+            );
+            return true;
+        }
         if !place.problem.is_empty() {
             toast_error(engine, "Could not create thread", &place.problem);
             return true;
@@ -747,6 +827,7 @@ impl Composer {
             "text": trimmed,
             "attachments": [],
         }));
+        warn_of_expired(engine, &excerpts);
         text::with_excerpts(&mut initial, &excerpts);
         let mut input = object(json!({
             "commandId": uuid(),

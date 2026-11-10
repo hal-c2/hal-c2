@@ -25,9 +25,38 @@ fn a_slash_at_a_line_start_asks_for_a_command() {
     assert_eq!(at("/mo", 3), some("slash-command", "mo", 0, 3));
     assert_eq!(at("/", 1), some("slash-command", "", 0, 1));
     assert_eq!(at("first\n/plan", 11), some("slash-command", "plan", 6, 11));
-    // Not once the command has a space, nor mid-line.
+    // Spaces before the slash are part of it.
+    assert_eq!(
+        at("  /compact", 10),
+        some("slash-command", "compact", 0, 10)
+    );
+    // Not once the command has a space.
     assert_eq!(at("/model x", 8), None);
-    assert_eq!(at("see /model", 10), None);
+}
+
+#[test]
+fn a_slash_after_other_text_is_a_mid_line_command() {
+    let found = trigger("see /mo", 7).expect("a trigger");
+    assert_eq!(
+        (found.query.as_str(), found.start, found.mid_line),
+        ("mo", 4, true)
+    );
+    // A path has a second slash.
+    assert_eq!(at("run /tmp/build.sh", 17), None);
+}
+
+#[test]
+fn a_price_opens_no_skill_menu() {
+    let codex = codex();
+    assert!(opens_skill_menu(Some(&codex), "rev"));
+    assert!(opens_skill_menu(None, ""));
+    assert!(!opens_skill_menu(Some(&codex), "5"));
+    assert!(!opens_skill_menu(Some(&codex), "9.99"));
+    let numbered = instance(json!({
+        "instanceId": "codex", "driver": "codex", "enabled": true, "status": "ready",
+        "skills": [{"name": "5-whys", "enabled": true}],
+    }));
+    assert!(opens_skill_menu(Some(&numbered), "5"));
 }
 
 #[test]
@@ -108,6 +137,7 @@ fn slash(query: &str, start: usize) -> Trigger {
         query: query.into(),
         start,
         end: start + 1 + query.len(),
+        mid_line: false,
     }
 }
 

@@ -82,12 +82,36 @@ Item {
 }
 "#;
 
+/// Whether the scenario turned rich text editing on, so what the user
+/// types goes to the composer's editor rather than the palette.
+#[derive(Default)]
+struct RichTyping(bool);
+
+/// Types `typed` into the composer's editor when the scenario turned rich
+/// text editing on; false otherwise (palette.rs's "the user types").
+pub fn rich_text_types(world: &mut World, typed: &str) -> Outcome<bool> {
+    if !world.part::<RichTyping>().0 {
+        return Ok(false);
+    }
+    type_in_composer(world, typed)?;
+    settle_composer(world)?;
+    Ok(true)
+}
+
 /// What the last key press in the composer found there.
 #[derive(Default)]
 struct Pressed {
     text: String,
     commands: usize,
     cursor: i64,
+}
+
+/// A draft a step set up and a later step measures against.
+#[derive(Default)]
+struct SetUp {
+    text: String,
+    start: i64,
+    length: i64,
 }
 
 fn target(world: &World) -> String {
@@ -796,6 +820,634 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+    steps.step(&format!("{Q} is sent"), |world, c, _| {
+        let list = messages(world)?;
+        expect!(
+            list.len() == 1 && text(&list[0]["text"]) == c[0],
+            "the MC has {}",
+            world.describe_commands()
+        );
+        Ok(())
+    });
+    steps.step("the whole prompt is sent to the MC", |world, _, _| {
+        let sent = messages(world)?;
+        let first = sent.first().map_or(0, |m| text(&m["text"]).chars().count());
+        expect!(
+            sent.len() == 1 && text(&sent[0]["text"]) == "x".repeat(120_010),
+            "the MC has {} messages, the first {first} characters long",
+            sent.len()
+        );
+        Ok(())
+    });
+    steps.step(
+        "the window is narrowed to the width of a phone",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            world.resize(390.0, 700.0)?;
+            if let Some(root) = brick.root(world) {
+                brick.write(world, root, "width", QmlValue::from(390.0))?;
+                brick.write(world, root, "height", QmlValue::from(700.0))?;
+            }
+            let item = composer_item(world)?;
+            world.wait_for("the composer to narrow", |w| {
+                number(&brick, w, item, "width") <= 390
+            })
+        },
+    );
+
+    // More of recalling sent prompts, and what is never recalled.
+    steps.step(
+        &format!("the user sent {Q} in this thread"),
+        |world, c, _| {
+            sent(world, &[&c[0]])?;
+            composer_brick(world)?;
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user sent {Q}, then {Q} and then {Q} in this thread"),
+        |world, c, _| sent(world, &[&c[0], &c[1], &c[2]]),
+    );
+    steps.step(&format!("the user then sent {Q}"), |world, c, _| {
+        sent(world, &[&c[0]])
+    });
+    steps.step(&format!("a scheduled task then sent {Q}"), |world, c, _| {
+        let run = stream::start_run(world, 60, "completed")?;
+        stream::set(
+            world,
+            "turn-item",
+            &format!("message:{run}"),
+            json!({"text": c[0], "scheduledTaskId": "task-nightly"}),
+        )
+    });
+    steps.step(
+        &format!("the user sent {Q} with (Ultrathink turned on|a comment on a file|a terminal excerpt added at the end|a preview annotation)"),
+        |world, c, _| {
+            // How each extra reaches the MC: in the text after the words typed.
+            let full = match c[1].as_str() {
+                "Ultrathink turned on" => format!("Ultrathink:\n{}", c[0]),
+                "a comment on a file" => format!(
+                    "{}\n\n[cart.ts:12](hal-c2-context://v1/review-comment/comment-1)",
+                    c[0]
+                ),
+                "a terminal excerpt added at the end" => format!(
+                    "{}\n\n[Terminal 1 lines 3-9](hal-c2-context://v1/terminal/excerpt-1)",
+                    c[0]
+                ),
+                _ => format!(
+                    "{} [Preview: Checkout button](hal-c2-context://v1/preview-annotation/note-1)",
+                    c[0]
+                ),
+            };
+            sent(world, &[&full])
+        },
+    );
+    steps.step(
+        &format!("the user sent {Q} and then (an image with no text|the request to implement a proposed plan)"),
+        |world, c, _| {
+            let second = if c[1].starts_with("an image") {
+                String::new()
+            } else {
+                "PLEASE IMPLEMENT THIS PLAN:\n# Tax line\n\nAdd it.".to_owned()
+            };
+            sent(world, &[&c[0], &second])
+        },
+    );
+    // An older MC or a T3 import: the task is in the item's id and the
+    // text's prefix, and the sender is "user".
+    steps.step(
+        &format!(
+            "the user sent {Q} and then a scheduled task's message an older MC marked by its id"
+        ),
+        |world, c, _| {
+            sent(world, &[&c[0]])?;
+            let run = stream::start_run(world, 60, "completed")?;
+            stream::set(
+                world,
+                "turn-item",
+                &format!("message:{run}"),
+                json!({"text": ""}),
+            )?;
+            stream::set(
+                world,
+                "turn-item",
+                "scheduled-task-message:task-nightly:1:scheduled",
+                json!({
+                    "type": "user_message", "runId": run, "createdBy": "user",
+                    "text": "[Triggered by schedule task: Nightly]\n\nRun the nightly check",
+                }),
+            )
+        },
+    );
+    steps.step("the user recalls the previous prompt", |world, _, _| {
+        composer_brick(world)?;
+        press_in_composer(world, "Up")?;
+        Ok(())
+    });
+    steps.step(
+        &format!("the user recalled {Q}(?: in thread A)?"),
+        |world, c, _| {
+            composer_brick(world)?;
+            for _ in 0..8 {
+                if editor_text(world)? == c[0] {
+                    break;
+                }
+                press_in_composer(world, "Up")?;
+            }
+            let editor = editor_text(world)?;
+            expect!(editor == c[0], "Up recalled \"{editor}\"");
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user changes the draft to {Q}"),
+        |world, c, _| write(world, &c[0], c[0].chars().count() as i64),
+    );
+    steps.step(
+        "the user presses (Up|Down) on the (?:first|last) line of the composer",
+        |world, c, _| {
+            composer_brick(world)?;
+            press_in_composer(world, &c[0])?;
+            Ok(())
+        },
+    );
+    steps.step(
+        "the caret moves to the start of the draft",
+        |world, _, _| {
+            let at = cursor(world)?;
+            expect!(at == 0, "the caret is at {at}");
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user recalled a prompt long enough to wrap onto three lines",
+        |world, _, _| {
+            let (brick, input) = editor(world)?;
+            // Words until the editor wraps them onto a third line.
+            let mut prompt = "totals".to_owned();
+            for _ in 1..1000 {
+                brick.write(world, input, "text", QmlValue::from(prompt.as_str()))?;
+                world.sync()?;
+                if number(&brick, world, input, "lineCount") >= 3 {
+                    break;
+                }
+                prompt += " totals";
+            }
+            brick.write(world, input, "text", QmlValue::from(""))?;
+            settle_composer(world)?;
+            sent(world, &[&prompt])?;
+            press_in_composer(world, "Up")?;
+            let wanted = prompt.clone();
+            world.wait_for_with(
+                move |w| {
+                    shown_editor_text(w) == wanted && number(&brick, w, input, "lineCount") == 3
+                },
+                move |w| {
+                    format!(
+                        "the editor reads \"{}\" on {} lines",
+                        shown_editor_text(w),
+                        number(&brick, w, input, "lineCount")
+                    )
+                },
+            )?;
+            world.part::<SetUp>().text = prompt;
+            Ok(())
+        },
+    );
+    steps.step("the caret is on the last line", |world, _, _| {
+        let at = editor_text(world)?.chars().count() as i64;
+        world.part::<Pressed>().cursor = at;
+        set_cursor(world, at)
+    });
+    steps.step("the caret moves up one line", |world, _, _| {
+        let (_brick, input) = editor(world)?;
+        let caret_y = |world: &World, at: i64| -> Outcome<f64> {
+            let rect = invoke(
+                world,
+                input,
+                "positionToRectangle",
+                &[QmlValue::Int(at as i32)],
+            )?;
+            Ok(match rect {
+                QmlValue::Rect(r) => r.y,
+                other => {
+                    let _ = other;
+                    f64::NAN
+                }
+            })
+        };
+        let pressed_at = world.part::<Pressed>().cursor;
+        let was = caret_y(world, pressed_at)?;
+        let now_at = cursor(world)?;
+        let now = caret_y(world, now_at)?;
+        let top = caret_y(world, 0)?;
+        expect!(
+            now < was && now > top,
+            "the caret went from y {was} to {now}"
+        );
+        Ok(())
+    });
+    steps.step("the draft still reads that prompt", |world, _, _| {
+        settle_composer(world)?;
+        let prompt = world.part::<SetUp>().text.clone();
+        let draft = draft(world, &target(world));
+        expect!(
+            draft == prompt,
+            "the draft reads \"{}\"",
+            editor_text(world)?
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the user sent {Q} in thread A and {Q} in thread B"),
+        |world, c, _| {
+            sent(world, &[&c[0]])?;
+            other_thread(world)?;
+            // Thread B's own stream, while the user is still in thread A.
+            let was = std::mem::replace(
+                &mut world.mc.part::<stream::FakeStreams>().thread,
+                "thread-2".into(),
+            );
+            let at = stream::iso(world.now() - chrono::Duration::seconds(60));
+            let done = (|| -> Outcome {
+                stream::set(
+                    world,
+                    "run",
+                    "run-b",
+                    json!({"id": "run-b", "ordinal": 1, "status": "completed",
+                           "requestedAt": at, "startedAt": at}),
+                )?;
+                stream::set(
+                    world,
+                    "turn-item",
+                    "message:run-b",
+                    json!({"id": "message:run-b", "type": "user_message", "runId": "run-b",
+                           "ordinal": 2, "status": "completed", "text": c[1], "updatedAt": at}),
+                )
+            })();
+            world.mc.part::<stream::FakeStreams>().thread = was;
+            done
+        },
+    );
+    steps.step(
+        "the user opens thread B and recalls the previous prompt",
+        |world, _, _| {
+            let key = other_thread(world)?;
+            look(world, &key)?;
+            world.sync()?;
+            settle_composer(world)?;
+            press_in_composer(world, "Up")?;
+            Ok(())
+        },
+    );
+
+    // Keys the composer does not send with.
+    steps.step(
+        "the user presses Enter (to accept a word from their input method|and holds it so the key repeats)",
+        |world, c, _| {
+            composer_brick(world)?;
+            if c[0].starts_with("to accept") {
+                // The input method is still composing the word Enter accepts.
+                world.preedit("ね")?;
+                press_in_composer(world, "Enter")?;
+            } else {
+                // Only the repeats: the first press has been and gone.
+                for _ in 0..3 {
+                    let mut repeat = KeyEvent::press(key::RETURN).with_text("\r");
+                    repeat.auto_repeat = true;
+                    world.key(&repeat)?;
+                }
+                world.key(&KeyEvent::release(key::RETURN).with_text("\r"))?;
+                world.sync()?;
+            }
+            Ok(())
+        },
+    );
+
+    // Lists: a new line in an item starts the next one.
+    steps.step(
+        &format!("the draft's last line (?:reads|is) {Q}(?: with the caret at its end)?"),
+        |world, c, _| write(world, &c[0], c[0].chars().count() as i64),
+    );
+    steps.step(
+        "the draft's last line is a bullet indented by two spaces",
+        |world, _, _| write(world, "- milk\n  - oat", 14),
+    );
+    steps.step(
+        "the draft's last line is a bullet with nothing after it",
+        |world, _, _| write(world, "- milk\n- ", 9),
+    );
+    steps.step("a list item holds a file reference", |world, _, _| {
+        let typed = "- read [cart.ts](src/cart.ts) first";
+        write(world, typed, typed.chars().count() as i64)
+    });
+    steps.step(
+        &format!("the draft reads {Q} with the caret before {Q}"),
+        |world, c, _| {
+            let at = c[0]
+                .find(c[1].as_str())
+                .map_or(-1, |byte| c[0][..byte].chars().count() as i64);
+            write(world, &c[0], at)
+        },
+    );
+    steps.step("the user (?:adds|starts) a new line", |world, _, _| {
+        expect!(
+            press_in_composer(world, "Shift+Enter")?,
+            "the composer did not take Shift+Enter"
+        );
+        Ok(())
+    });
+    steps.step(
+        "the user adds a new line with the caret inside the reference label",
+        |world, _, _| {
+            // After "[cart", inside the label.
+            let typed = editor_text(world)?;
+            let at = typed
+                .find("[cart")
+                .map_or(-1, |byte| typed[..byte].chars().count() as i64 + 5);
+            set_cursor(world, at)?;
+            expect!(
+                press_in_composer(world, "Shift+Enter")?,
+                "the composer did not take Shift+Enter"
+            );
+            Ok(())
+        },
+    );
+    let lines = |world: &mut World| -> Outcome<Vec<String>> {
+        settle_composer(world)?;
+        Ok(editor_text(world)?.split('\n').map(str::to_owned).collect())
+    };
+    steps.step(
+        &format!("the new line starts with {Q}"),
+        move |world, c, _| {
+            let now = lines(world)?;
+            let typed = editor_text(world)?;
+            expect!(
+                now.len() == 2
+                    && now.last().map(String::as_str) == Some(&format!("{} ", c[0]))
+                    && cursor(world)? == typed.chars().count() as i64,
+                "the draft reads \"{typed}\" with the caret at {}",
+                cursor(world)?
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the new line is a bullet indented by two spaces",
+        move |world, _, _| {
+            expect!(
+                lines(world)?.last().map(String::as_str) == Some("  - "),
+                "the draft reads \"{}\"",
+                editor_text(world)?
+            );
+            Ok(())
+        },
+    );
+    steps.step("that line is no longer a bullet", move |world, _, _| {
+        expect!(
+            lines(world)?.last().is_some_and(|line| line.is_empty()),
+            "the draft reads \"{}\"",
+            editor_text(world)?
+        );
+        Ok(())
+    });
+    steps.step("no new bullet is started", move |world, _, _| {
+        expect!(
+            lines(world)? == ["- milk", ""],
+            "the draft reads \"{}\"",
+            editor_text(world)?
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the draft reads {Q} and then {Q} on the next line"),
+        move |world, c, _| {
+            expect!(
+                lines(world)? == [c[0].clone(), c[1].clone()],
+                "the draft reads \"{}\"",
+                editor_text(world)?
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the file reference is whole on one of the two lines",
+        move |world, _, _| {
+            let now = lines(world)?;
+            expect!(
+                now.len() == 2
+                    && (now[0].contains("[cart.ts](src/cart.ts)")
+                        || now[1].contains("[cart.ts](src/cart.ts)")),
+                "the draft reads \"{}\"",
+                editor_text(world)?
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the line {Q} is kept and a new line starts below it"),
+        move |world, c, _| {
+            expect!(
+                lines(world)? == [c[0].clone(), String::new()],
+                "the draft reads \"{}\"",
+                editor_text(world)?
+            );
+            Ok(())
+        },
+    );
+    steps.step("no suggestion list is open", |world, _, _| {
+        let brick = composer_brick(world)?;
+        let item = composer_item(world)?;
+        expect!(
+            !brick.flag(world, item, "suggesting"),
+            "a suggestion list is open"
+        );
+        Ok(())
+    });
+    steps.step("that line is indented by two spaces", |world, _, _| {
+        settle_composer(world)?;
+        let was = world.part::<Pressed>().text.clone();
+        let typed = editor_text(world)?;
+        expect!(typed == format!("  {was}"), "the draft reads \"{typed}\"");
+        Ok(())
+    });
+
+    // Typing over a selection, and with an input method.
+    steps.step("the user types (\\S)", |world, c, _| {
+        type_in_composer(world, &c[0])?;
+        settle_composer(world)
+    });
+    // The wrapped word is unquoted: one of the marks is a quote.
+    steps.step("the draft reads hello (\\S+)", |world, c, _| {
+        settle_composer(world)?;
+        let expected = format!("hello {}", c[0]);
+        let typed = editor_text(world)?;
+        expect!(typed == expected, "the draft reads \"{typed}\"");
+        Ok(())
+    });
+    steps.step(&format!("{Q} is still selected"), |world, c, _| {
+        let (brick, input) = editor(world)?;
+        let selected = brick.text_of(world, input, "selectedText");
+        expect!(selected == c[0], "the selection is \"{selected}\"");
+        Ok(())
+    });
+    steps.step(
+        "the draft's selection covers (a file reference|text shown in bold)",
+        |world, c, _| {
+            let reference = c[0] == "a file reference";
+            let typed = if reference {
+                "see [cart.ts](src/cart.ts) now"
+            } else {
+                "see **bold** now"
+            };
+            let selected = if reference {
+                "[cart.ts](src/cart.ts)"
+            } else {
+                "bold"
+            };
+            write(world, typed, typed.chars().count() as i64)?;
+            let start = typed
+                .find(selected)
+                .map_or(-1, |byte| typed[..byte].chars().count() as i64);
+            let length = selected.chars().count() as i64;
+            let (_brick, input) = editor(world)?;
+            invoke(
+                world,
+                input,
+                "select",
+                &[
+                    QmlValue::Int(start as i32),
+                    QmlValue::Int((start + length) as i32),
+                ],
+            )?;
+            world.pump()?;
+            *world.part::<SetUp>() = SetUp {
+                text: typed.to_owned(),
+                start,
+                length,
+            };
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the selection is replaced by {Q}"),
+        |world, c, _| {
+            settle_composer(world)?;
+            let (kept, start, length) = {
+                let kept = world.part::<SetUp>();
+                (kept.text.clone(), kept.start, kept.length)
+            };
+            let mut expected: Vec<char> = kept.chars().collect();
+            expected.splice(start as usize..(start + length) as usize, c[0].chars());
+            let expected: String = expected.into_iter().collect();
+            let typed = editor_text(world)?;
+            expect!(typed == expected, "the draft reads \"{typed}\"");
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user types Compose, then (\\S), then (\\S)",
+        |world, c, _| {
+            let composed = match format!("{}{}", c[0], c[1]).as_str() {
+                "\"o" => "ö",
+                "\"a" => "ä",
+                "'e" => "é",
+                _ => fail!("no Compose sequence for {}{}", c[0], c[1]),
+            };
+            let at = editor_text(world)?.chars().count() as i64;
+            set_cursor(world, at)?;
+            // Compose shows the mark it is composing, then commits the letter.
+            world.preedit(&c[0])?;
+            world.type_text(composed)?;
+            settle_composer(world)
+        },
+    );
+
+    // Rich text.
+    steps.step("rich text editing is (on|off)", |world, c, _| {
+        set_setting(world, "composerRichTextEnabled", json!(c[0] == "on"))?;
+        world.part::<RichTyping>().0 = c[0] == "on";
+        composer_brick(world)?;
+        Ok(())
+    });
+    steps.step("nothing in it is italic", |world, _, _| {
+        let (_brick, input) = editor(world)?;
+        let spans = ljos::item::highlights(world.engine(), input).unwrap_or_default();
+        let typed = editor_text(world)?;
+        for span in spans.iter() {
+            expect!(
+                !span.italic,
+                "\"{}\" is italic",
+                typed.get(span.range.clone()).unwrap_or_default()
+            );
+        }
+        Ok(())
+    });
+    steps.step(
+        &format!("the draft reads {Q} with a file reference"),
+        |world, c, _| {
+            let typed = format!("{} [cart.ts](src/cart.ts) ", c[0]);
+            write(world, &typed, typed.chars().count() as i64)?;
+            world.part::<SetUp>().text = typed;
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user turns rich text editing on and then off again",
+        |world, _, _| {
+            for on in [true, false] {
+                set_setting(world, "composerRichTextEnabled", json!(on))?;
+                world.sync()?;
+                settle_composer(world)?;
+            }
+            Ok(())
+        },
+    );
+    steps.step(
+        "the draft reads the same text with the same file reference",
+        |world, _, _| {
+            settle_composer(world)?;
+            let kept = world.part::<SetUp>().text.clone();
+            let draft = draft(world, &target(world));
+            let typed = editor_text(world)?;
+            expect!(
+                typed == kept && draft == kept,
+                "the editor reads \"{typed}\", the draft \"{draft}\""
+            );
+            Ok(())
+        },
+    );
+
+    // Undo.
+    steps.step("the user typed, pasted, then typed more", |world, _, _| {
+        composer_brick(world)?;
+        type_in_composer(world, "fix ")?;
+        world.set_clipboard("the tax line");
+        expect!(
+            press_in_composer(world, "Ctrl+V")?,
+            "the composer did not take Ctrl+V"
+        );
+        type_in_composer(world, " today")?;
+        let typed = editor_text(world)?;
+        expect!(
+            typed == "fix the tax line today",
+            "the editor reads \"{typed}\""
+        );
+        Ok(())
+    });
+    steps.step("the user undoes once", |world, _, _| {
+        expect!(
+            press_in_composer(world, "Ctrl+Z")?,
+            "the composer did not take Ctrl+Z"
+        );
+        Ok(())
+    });
+    steps.step("only the last action is undone", |world, _, _| {
+        settle_composer(world)?;
+        let typed = editor_text(world)?;
+        expect!(typed == "fix the tax line", "the editor reads \"{typed}\"");
+        Ok(())
+    });
 }
 
 /// The composer brick, when a step put it on screen.
@@ -803,6 +1455,11 @@ fn composer_shown(world: &World) -> Option<Brick> {
     let brick = world.peek_part::<Shown>()?.0?;
     let root = brick.root(world)?;
     (brick.text_of(world, root, "objectName") == "composerBrick").then_some(brick)
+}
+
+/// The composer brick for a wait's condition: none until a step showed it.
+pub fn composer_brick_now(world: &World) -> Option<Brick> {
+    composer_shown(world)
 }
 
 /// Whether a step already put the composer on screen.

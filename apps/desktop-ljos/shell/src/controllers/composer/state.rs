@@ -70,6 +70,7 @@ impl Composer {
             "approvals": [],
             "questions": [],
             "plan": null,
+            "tasks": null,
             "queue": [],
             "waiting": [],
             "queueHeld": false,
@@ -217,14 +218,78 @@ impl Composer {
                     });
                 }
             }
+            // The running turn's task list (ChatView's
+            // activeComposerTasksProgress): the step in progress, else the
+            // next pending one, else the last; how many are done; and each
+            // step with its status and how long it took. Not shown while an
+            // approval or a question waits above the composer.
+            let mut tasks = Json::Null;
+            let active_run = thread.as_ref().and_then(|t| t.active_run_id.as_deref());
+            if let Some(run_id) = active_run
+                && approvals.is_empty()
+                && questions.is_empty()
+            {
+                let mut list: Option<&Obj> = None;
+                for candidate in t.entities("plan").values() {
+                    if field(candidate, "kind") == "todo_list"
+                        && field(candidate, "runId") == run_id
+                        && field(candidate, "status") != "superseded"
+                    {
+                        list = Some(candidate);
+                    }
+                }
+                let steps: Vec<Json> = list
+                    .and_then(|list| list.get("steps"))
+                    .and_then(Json::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if !steps.is_empty() {
+                    let mut shown = Vec::new();
+                    let (mut current, mut next, mut completed) = (String::new(), String::new(), 0);
+                    for value in &steps {
+                        let step = as_object(value);
+                        let step_text = field(step, "text");
+                        let status = field(step, "status");
+                        if status == "completed" {
+                            completed += 1;
+                        }
+                        if status == "running" && current.is_empty() {
+                            current = step_text.to_owned();
+                        }
+                        if status == "pending" && next.is_empty() {
+                            next = step_text.to_owned();
+                        }
+                        let duration = match step.get("durationMs").and_then(Json::as_f64) {
+                            Some(ms) => crate::thread_view::time::format_duration(ms as i64),
+                            None if status == "running" => "now".to_owned(),
+                            None => String::new(),
+                        };
+                        shown.push(
+                            json!({"text": step_text, "status": status, "duration": duration}),
+                        );
+                    }
+                    if current.is_empty() {
+                        current = next;
+                    }
+                    if current.is_empty() {
+                        current = steps
+                            .last()
+                            .map(|last| field(as_object(last), "text").to_owned())
+                            .unwrap_or_default();
+                    }
+                    tasks = json!({"current": current, "completed": completed,
+                                   "total": steps.len(), "steps": shown});
+                }
+            }
             let messages = t.entities("message");
             let queued = model::queued(runs.values(), |id| messages.get(id));
-            (approvals, questions, plan, queued)
+            (approvals, questions, plan, tasks, queued)
         });
-        if let Some((approvals, questions, plan, queued)) = read {
+        if let Some((approvals, questions, plan, tasks, queued)) = read {
             state["approvals"] = Json::Array(approvals);
             state["questions"] = Json::Array(questions);
             state["plan"] = plan;
+            state["tasks"] = tasks;
             // Held with nothing listed shows no card, so it offers no resume
             // either. A queued run comes with its message in the one
             // transaction that queues it (the MC's `queue_run`), so a run
@@ -275,7 +340,7 @@ impl Composer {
         let trigger = if kept.dismissed {
             None
         } else {
-            model::trigger(&text, cursor).and_then(|t| self.page_trigger(&target, &text, t))
+            self.trigger_of(engine, &target, &text, cursor)
         };
         let suggestions: Vec<Json> = self
             .suggestions(engine, &target, trigger.as_ref())
@@ -293,15 +358,24 @@ impl Composer {
         if let Some(trigger) = &trigger
             && suggestions.is_empty()
         {
-            // A path search says nothing until it has answered. A bare `@`
-            // is not searched, so it says so at once, as the web's menu did.
-            let waiting = trigger.kind == "path"
-                && !trigger.query.is_empty()
-                && (self.paths.target != target
-                    || self.paths.query != trigger.query
-                    || !self.paths.done);
+            // A path search says it is searching until it has answered,
+            // and that it could not search when it cannot or failed. A bare
+            // `@` is not searched, so it says nothing matches at once, as
+            // the web's menu did.
+            let searched = trigger.kind == "path" && !trigger.query.is_empty();
+            let answered =
+                self.paths.target == target && self.paths.query == trigger.query && self.paths.done;
             let empty = model::empty_text(&trigger.kind);
-            if !waiting && !empty.is_empty() {
+            let unavailable = if answered {
+                self.paths.failed
+            } else {
+                !self.can_search_paths(engine, &target)
+            };
+            if searched && unavailable {
+                empty_text = json!(model::PATH_SEARCH_UNAVAILABLE);
+            } else if searched && !answered {
+                empty_text = json!(model::PATH_SEARCHING);
+            } else if !empty.is_empty() {
                 empty_text = json!(empty);
             }
         }
@@ -351,6 +425,13 @@ impl Composer {
                 .unwrap_or(false);
         let plan_offered = !turn["plan"].is_null();
         let show_plan_follow_up = plan_offered && !kept.carries();
+        let plan_action = if !show_plan_follow_up {
+            ""
+        } else if text.trim().is_empty() {
+            "implement"
+        } else {
+            "refine"
+        };
         let mut environment_id = thread
             .as_ref()
             .map(|t| t.environment_id.clone())
@@ -456,6 +537,9 @@ impl Composer {
             "pendingApprovalCount": approvals,
             "pendingUserInputCount": questions,
             "showPlanFollowUpPrompt": show_plan_follow_up,
+            // What sending does to the offered plan (ComposerPrimaryActions):
+            // "implement" with nothing typed, "refine" with feedback, else empty.
+            "planAction": plan_action,
             "selectedInstanceId": or_null(selected_instance),
             "selectedModel": or_null(selected_model),
             "options": options,
@@ -548,6 +632,28 @@ impl Composer {
         })
     }
 
+    /// The trigger at the draft's caret: a price is no skill, and a slash
+    /// word in a sentence that starts no name is prose, so Enter sends it.
+    pub(super) fn trigger_of(
+        &self,
+        engine: &Engine,
+        target: &str,
+        text: &str,
+        cursor: i64,
+    ) -> Option<Trigger> {
+        let trigger = model::trigger(text, cursor)?;
+        if trigger.kind == "skill" {
+            let selection = self.selection(engine, target);
+            if !model::opens_skill_menu(self.instance_of(&selection), &trigger.query) {
+                return None;
+            }
+        }
+        if trigger.mid_line && self.suggestions(engine, target, Some(&trigger)).is_empty() {
+            return None;
+        }
+        self.page_trigger(target, text, trigger)
+    }
+
     pub(super) fn suggestions(
         &self,
         engine: &Engine,
@@ -577,15 +683,58 @@ impl Composer {
         }
     }
 
+    /// Where `target`'s @ words are searched: the route's own checkout, or
+    /// the root of the project a page's ask runs in; empty when it is
+    /// neither.
+    fn search_place(&self, engine: &Engine, target: &str) -> (String, String) {
+        if let Some(place) = self.page_search_place(engine, target) {
+            return place;
+        }
+        match workspace::place(engine) {
+            Some(place) if self.target(engine) == target => {
+                (place.environment_id.clone(), place.cwd().to_owned())
+            }
+            _ => (String::new(), String::new()),
+        }
+    }
+
+    /// Whether that place is known and its environment reachable.
+    fn can_search_paths(&self, engine: &Engine, target: &str) -> bool {
+        let (environment, cwd) = self.search_place(engine, target);
+        !cwd.is_empty() && store::with(engine, |s| s.environment_online(&environment))
+    }
+
+    /// A search the environment took down with it (unanswered, or failed)
+    /// is forgotten, as is one of a checkout the route has left, so the same
+    /// word is asked again once it can be.
+    pub(super) fn refresh_path_search(&mut self, engine: &Engine) {
+        let target = self.target(engine);
+        if target.is_empty() {
+            return;
+        }
+        let paths_target = self.paths.target.clone();
+        let mut stale = (!self.paths.done || self.paths.failed)
+            && !self.can_search_paths(engine, &paths_target);
+        if self.paths.target == target && self.can_search_paths(engine, &target) {
+            let (environment, cwd) = self.search_place(engine, &target);
+            stale = stale || self.paths.environment_id != environment || self.paths.cwd != cwd;
+        }
+        if stale && !self.paths.query.is_empty() {
+            self.paths = PathSearch {
+                request: self.paths.request + 1,
+                ..PathSearch::default()
+            };
+        }
+        self.search_paths(engine, &target);
+    }
+
     /// The @ menu asks the MC's workspace search (the Files tab's) for the
     /// route's checkout; the answer counts only while it is still the
     /// question.
     pub(super) fn search_paths(&mut self, engine: &Engine, target: &str) {
         let text = kept::draft(engine, target);
         let cursor = kept::read(engine, |d| d.drafts.get(target).map_or(0, |k| k.cursor));
-        let Some(trigger) =
-            model::trigger(&text, cursor).and_then(|t| self.page_trigger(target, &text, t))
-        else {
+        let Some(trigger) = self.trigger_of(engine, target, &text, cursor) else {
             return;
         };
         if trigger.kind != "path" || trigger.query.is_empty() {
@@ -594,22 +743,17 @@ impl Composer {
         if self.paths.target == target && self.paths.query == trigger.query {
             return;
         }
-        // A page's @ words are searched in the root of the project its ask
-        // runs in, anything else's in the route's checkout.
-        let (environment, cwd) = match self.page_search_place(engine, target) {
-            Some(place) => place,
-            None => match workspace::place(engine) {
-                Some(place) => (place.environment_id.clone(), place.cwd().to_owned()),
-                None => return,
-            },
-        };
-        if cwd.is_empty() || !store::with(engine, |s| s.environment_online(&environment)) {
+        if !self.can_search_paths(engine, target) {
             return;
         }
+        let (environment, cwd) = self.search_place(engine, target);
         self.paths = PathSearch {
             target: target.to_owned(),
             query: trigger.query.clone(),
+            environment_id: environment.clone(),
+            cwd: cwd.clone(),
             done: false,
+            failed: false,
             entries: Vec::new(),
             request: self.paths.request + 1,
         };
@@ -623,6 +767,7 @@ impl Composer {
                     return;
                 }
                 c.paths.done = true;
+                c.paths.failed = result.is_err();
                 if let Ok(found) = result {
                     for entry in found["entries"].as_array().into_iter().flatten() {
                         let path = entry["path"].as_str().unwrap_or_default();

@@ -39,6 +39,7 @@ use serde_json::json;
 use crate::bridge::Bridge;
 use crate::commands::{Choice, Commands};
 use crate::controller::{self, Controller, Init, Me};
+use crate::controllers::composer::Composer;
 use crate::controllers::menus::{Item, Menus};
 use crate::controllers::navigation::{self, Navigation, Route};
 use crate::controllers::sidebar::{self, Sidebar};
@@ -101,7 +102,7 @@ impl Draft {
 }
 
 type Hook = Rc<dyn Fn(&Engine)>;
-type StartedHook = Rc<dyn Fn(&Engine, &str)>;
+type StartedHook = Rc<dyn Fn(&Engine, &str, &str)>;
 
 #[derive(Default)]
 struct Kept {
@@ -109,6 +110,9 @@ struct Kept {
     path: RefCell<Option<PathBuf>>,
     changed: RefCell<Vec<Hook>>,
     started: RefCell<Vec<StartedHook>>,
+    /// The thread or draft a window last showed: what a new thread carries
+    /// from when none is shown (the phone starts threads from home).
+    last_shown: RefCell<String>,
 }
 
 fn kept(engine: &Engine) -> Rc<Kept> {
@@ -155,10 +159,10 @@ pub fn on_changed(engine: &Engine, f: impl Fn(&Engine) + 'static) {
     kept(engine).changed.borrow_mut().push(Rc::new(f));
 }
 
-/// Runs `f` with the draft's id once no controller is running whenever a
-/// thread is asked for in a project, whether its draft is new or the one
-/// from before.
-pub fn on_started(engine: &Engine, f: impl Fn(&Engine, &str) + 'static) {
+/// Runs `f` with the draft's id, and what a new thread carries from (empty
+/// for none), once no controller is running whenever a thread is asked for
+/// in a project, whether its draft is new or the one from before.
+pub fn on_started(engine: &Engine, f: impl Fn(&Engine, &str, &str) + 'static) {
     kept(engine).started.borrow_mut().push(Rc::new(f));
 }
 
@@ -208,14 +212,41 @@ fn leave(engine: &Engine, from: &Route, to: Route) {
 /// Opens the project's draft, creating it the first time; returns its id,
 /// or nothing when a new draft could not be kept (its file is not writable).
 pub fn start(engine: &Engine, environment_id: &str, project_id: &str) -> Option<String> {
+    start_carrying(engine, environment_id, project_id, false)
+}
+
+/// Whether any window's composer is still making the draft into a thread.
+fn launching(engine: &Engine, id: &str) -> bool {
+    let any = std::cell::Cell::new(false);
+    controller::each_window(engine, |engine| {
+        let here = controller::with::<Composer, _>(engine, |c, _| c.launching(id)).unwrap_or(false);
+        any.set(any.get() || here);
+    });
+    any.get()
+}
+
+/// As [`start`]; with `carry` the draft takes the model and mode of the
+/// thread or draft the window shows, else the last one it showed.
+pub fn start_carrying(
+    engine: &Engine,
+    environment_id: &str,
+    project_id: &str,
+    carry: bool,
+) -> Option<String> {
     let kept = kept(engine);
-    let found = kept
+    // The project's draft, unless it is being sent: a new thread then is a
+    // new draft, and the sent one still becomes its thread.
+    let candidates: Vec<String> = kept
         .drafts
         .borrow()
         .iter()
+        .filter(|d| d.environment_id == environment_id && d.project_id == project_id)
+        .map(|d| d.id.clone())
+        .collect();
+    let found = candidates
+        .into_iter()
         .rev()
-        .find(|d| d.environment_id == environment_id && d.project_id == project_id)
-        .map(|d| d.id.clone());
+        .find(|id| !launching(engine, id));
     let id = match found {
         Some(id) => id,
         None => {
@@ -241,13 +272,32 @@ pub fn start(engine: &Engine, environment_id: &str, project_id: &str) -> Option<
             id
         }
     };
+    let from = if carry {
+        match navigation::shown(engine) {
+            Route::Thread(key) => key,
+            Route::Draft(draft) => draft,
+            _ => kept.last_shown.borrow().clone(),
+        }
+    } else {
+        String::new()
+    };
     open(engine, Route::Draft(id.clone()));
     let hooks = kept.started.borrow().clone();
     for hook in hooks {
-        let id = id.clone();
-        Bridge::of(engine).defer(engine, move |engine| hook(engine, &id));
+        let (id, from) = (id.clone(), from.clone());
+        Bridge::of(engine).defer(engine, move |engine| hook(engine, &id, &from));
     }
     Some(id)
+}
+
+/// Remembers the thread or draft the window shows, for [`start_carrying`].
+fn note_shown(engine: &Engine) {
+    let shown = match navigation::shown(engine) {
+        Route::Thread(key) => key,
+        Route::Draft(id) => id,
+        _ => return,
+    };
+    *kept(engine).last_shown.borrow_mut() = shown;
 }
 
 /// The thread or draft the window shows: its environment and project.
@@ -277,7 +327,7 @@ fn default_group(engine: &Engine) -> Option<ProjectGroup> {
 
 /// Opens the draft of the logical project `group`: on the member the window
 /// shows, else its representative.
-pub fn start_in(engine: &Engine, group: &ProjectGroup) {
+pub fn start_in(engine: &Engine, group: &ProjectGroup, carry: bool) {
     let summary = |key: &str| {
         group
             .summary
@@ -294,7 +344,7 @@ pub fn start_in(engine: &Engine, group: &ProjectGroup) {
     {
         (environment_id, project_id) = shown;
     }
-    if start(engine, &environment_id, &project_id).is_none() {
+    if start_carrying(engine, &environment_id, &project_id, carry).is_none() {
         controller::with::<Toasts, _>(engine, |t, e| {
             t.error(
                 e,
@@ -412,7 +462,7 @@ pub fn move_to(engine: &Engine, from: &str, project_key: &str) {
     else {
         return;
     };
-    start_in(engine, &group);
+    start_in(engine, &group, false);
     let Route::Draft(to) = navigation::shown(engine) else {
         return;
     };
@@ -508,7 +558,10 @@ impl Controller for DraftController {
         };
         self.bridge.watch(engine, "route", {
             let f = present_and_land.clone();
-            move |engine, _| f(engine)
+            move |engine, _| {
+                note_shown(engine);
+                f(engine)
+            }
         });
         // The sidebar's groups and scope.
         self.bridge.watch(engine, "sidebar", move |engine, _| {
@@ -635,7 +688,7 @@ pub fn start_new(engine: &Engine, requested: &str) {
         };
         group
     };
-    start_in(engine, &group);
+    start_in(engine, &group, true);
 }
 
 fn display_name(group: &ProjectGroup) -> String {
@@ -667,7 +720,7 @@ fn add_commands(engine: &Engine) {
     let new_local = "chat.newLocal";
     commands.add(engine, new_local, &command_label(new_local), |engine| {
         if let Some(group) = default_group(engine) {
-            start_in(engine, &group);
+            start_in(engine, &group, true);
         }
     });
     commands.set_listed(engine, new_local, false);
@@ -679,7 +732,7 @@ fn add_commands(engine: &Engine) {
             let key = group.key.clone();
             let mut choice = Choice::new(&group.key, &display_name(&group), move |engine| {
                 if let Some(chosen) = sidebar::group(engine, &key) {
-                    start_in(engine, &chosen);
+                    start_in(engine, &chosen, true);
                 }
             });
             choice.description = workspace_root(&group);

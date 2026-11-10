@@ -210,6 +210,14 @@ pub(super) fn attach_image(
 /// The most of a file a viewer reads.
 const PREVIEW_BYTES: u64 = 1024 * 1024;
 
+/// Keeps what was read of a picked file for the MC, as the viewer shows it.
+fn captured(engine: &Engine, id: &str, bytes: &[u8]) {
+    let head = bytes.len().min(PREVIEW_BYTES as usize);
+    with_attachment(engine, id, |attachment| {
+        attachment.captured = bytes[..head].to_vec();
+    });
+}
+
 /// A kept attachment for a viewer: {id, name, mimeType, url (an image's
 /// data URL), text (a file's, when it reads as text)}.
 pub(super) fn preview(engine: &Engine, id: &str) -> Option<Json> {
@@ -223,8 +231,12 @@ pub(super) fn preview(engine: &Engine, id: &str) -> Option<Json> {
         shown["url"] = json!(attachment.data_url);
         return Some(shown);
     }
-    let bytes = if attachment.path.is_empty() {
+    // What was pasted or captured; a draft restored from disk has only the
+    // file where it was picked from.
+    let bytes = if !attachment.content.is_empty() {
         attachment.content
+    } else if !attachment.captured.is_empty() {
+        attachment.captured
     } else {
         let mut head = Vec::new();
         if let Ok(file) = std::fs::File::open(&attachment.path) {
@@ -234,6 +246,10 @@ pub(super) fn preview(engine: &Engine, id: &str) -> Option<Json> {
     };
     if !bytes.is_empty() && !bytes.contains(&0) {
         shown["text"] = json!(String::from_utf8_lossy(&bytes));
+    }
+    // Where the picked file is: a player or a document view reads it there.
+    if !attachment.path.is_empty() {
+        shown["path"] = json!(attachment.path);
     }
     Some(shown)
 }
@@ -483,7 +499,10 @@ impl Composer {
                         return;
                     }
                     match read.ok().flatten() {
-                        Some(bytes) => c.upload_bytes(file, bytes),
+                        Some(bytes) => {
+                            captured(engine, &file.id, &bytes);
+                            c.upload_bytes(file, bytes)
+                        }
                         None => {
                             let why = format!("{} could not be read.", file.name);
                             c.upload_failed(engine, &file.id, &why);
@@ -496,7 +515,10 @@ impl Composer {
             // The pool is full: read here, once.
             self.reading.remove(id);
             match std::fs::read(&path) {
-                Ok(bytes) => self.upload_bytes(file, bytes),
+                Ok(bytes) => {
+                    captured(engine, id, &bytes);
+                    self.upload_bytes(file, bytes)
+                }
                 Err(_) => {
                     let why = format!("{} could not be read.", file.name);
                     self.upload_failed(engine, id, &why);
@@ -695,6 +717,7 @@ impl Composer {
             "endIndex": text::number(&comment["endIndex"]) as i64,
             "rangeLabel": string(comment, "rangeLabel"),
             "diff": left(&string(comment, "diff"), 32000),
+            "fenceLanguage": or("fenceLanguage", &fence_language(&file_path)),
         });
         kept::edit_draft(engine, &target, |kept| {
             kept.excerpts.push(Excerpt {
@@ -744,6 +767,18 @@ fn with_attachment<R>(
             .find(|a| a.id == id)
             .map(f)
     })
+}
+
+/// The quoted lines' language, by the file's extension ("src/cart.ts" ->
+/// "ts"), as reviewCommentContext's inferReviewCommentFenceLanguage has it.
+fn fence_language(file_path: &str) -> String {
+    let path = file_path.replace('\\', "/");
+    let name = path.rsplit('/').next().unwrap_or("").to_lowercase();
+    match name.rfind('.') {
+        Some(dot) if dot > 0 && dot < name.len() - 1 => name[dot + 1..].to_owned(),
+        _ if name.len() > 1 && name.starts_with('.') => name[1..].to_owned(),
+        _ => "text".to_owned(),
+    }
 }
 
 #[cfg(test)]

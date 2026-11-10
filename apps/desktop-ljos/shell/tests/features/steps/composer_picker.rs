@@ -69,6 +69,22 @@ fn picker_open(world: &mut World) -> Outcome<bool> {
     Ok(brick.flag(world, popup, "opened"))
 }
 
+/// A model with efforts keeps the model control open on them; one
+/// without closes it.
+fn closed_or_on_efforts(world: &mut World) -> Outcome {
+    let (brick, item) = picker(world)?;
+    let popup = popup_of(&brick, world, item)?;
+    world.wait_for_with(
+        |w| {
+            !brick.flag(w, popup, "opened")
+                || brick
+                    .focused_named(w, "modelControlEffort:")
+                    .unwrap_or(false)
+        },
+        |_| "the picker to close or move to the model's efforts".to_owned(),
+    )
+}
+
 fn picker_visible(world: &mut World) -> Outcome<bool> {
     let (brick, item) = picker(world)?;
     let popup = popup_of(&brick, world, item)?;
@@ -402,8 +418,10 @@ fn search(world: &mut World, query: &str) -> Outcome {
 /// The toolbar control a shortcut opens: its command and its object name.
 fn control_of(name: &str) -> Outcome<(&'static str, &'static str)> {
     Ok(match name {
-        "effort picker" => ("composer.effort", "effortPicker"),
-        "access mode picker" => ("composer.mode", "runtimeModePicker"),
+        // The effort is the model control's.
+        "effort picker" => ("composer.effort", "modelPicker"),
+        // A new thread names its permissions in the context strip.
+        "access mode picker" => ("composer.mode", "contextPermissions"),
         "host picker" => ("composer.host", "hostPicker"),
         "workspace picker" => ("composer.workspace", "envModePicker"),
         "branch picker" => ("composer.branch", "branchPicker"),
@@ -519,6 +537,10 @@ pub fn register(steps: &mut Steps) {
             !brick.flag(w, popup, "visible")
         })
     });
+    steps.step(
+        "the model picker closes, or stays open on the model's efforts",
+        |world, _, _| closed_or_on_efforts(world),
+    );
 
     // Looking through the models.
     steps.step(
@@ -867,6 +889,201 @@ pub fn register(steps: &mut Steps) {
             |_| format!("the {} to open", c[0]),
         )
     });
+
+    // A narrow composer: the chips that do not fit fold into its overflow
+    // chip's menu (composerOverflow) instead of wrapping the toolbar.
+    steps.step(
+        "the composer offers its plan and access controls",
+        |world, _, _| {
+            open_turn_thread(world)?;
+            publish_providers(
+                &mut world.mc,
+                vec![provider(
+                    "codex",
+                    "Codex",
+                    vec![model("gpt-5.4", "GPT-5.4")],
+                )],
+            );
+            // Permissions other than the default, which the toolbar names.
+            update_thread(
+                world,
+                json!({"modelSelection": {"instanceId": "codex", "model": "gpt-5.4"},
+                       "runtimeMode": "approval-required"}),
+            )?;
+            let engine = world.engine().clone();
+            let written =
+                Settings::of(&engine).write_device(&engine, "planModeEnabled", json!(true));
+            expect!(written, "plan mode could not be turned on");
+            let brick = composer_brick(world)?;
+            let plan = part(world, "planToggle")?;
+            let access = part(world, "runtimeModePicker")?;
+            world.wait_for_with(
+                |w| brick.flag(w, plan, "visible") && brick.flag(w, access, "visible"),
+                |w| {
+                    format!(
+                        "plan and access on the toolbar; the composer shows {}",
+                        show(&composer(w))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the composer is too narrow to show all its controls",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            let (_, height) = brick.size(world);
+            world.resize(380.0, height)?;
+            if let Some(root) = brick.root(world) {
+                brick.write(world, root, "width", QmlValue::from(380.0))?;
+                brick.write(world, root, "height", QmlValue::from(height))?;
+            }
+            let overflow = part(world, "composerOverflow")?;
+            world.wait_for("the composer to fold a control", |w| {
+                brick.flag(w, overflow, "visible")
+            })
+        },
+    );
+    steps.step("its toolbar is still one line", |world, _, _| {
+        let brick = composer_brick(world)?;
+        let toolbar = part(world, "toolbar")?;
+        let mut line = shown_chips(&brick, world)?;
+        line.push(part(world, "modelPicker")?);
+        let send = part(world, "primaryAction")?;
+        line.push(send);
+        let (_, middle) = brick.at(world, toolbar, 0.0, 0.5)?;
+        let (right, _) = brick.at(world, send, 0.0, 0.5)?;
+        for item in line {
+            let (x, y) = brick.at(world, item, 1.0, 0.5)?;
+            let name = brick.text_of(world, item, "objectName");
+            expect!((y - middle).abs() < 1.0, "{name} is off the toolbar's line");
+            if item != send {
+                expect!(x <= right, "{name} runs under Send");
+            }
+        }
+        Ok(())
+    });
+    steps.step(
+        "plan is offered in its menu of further controls",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            let plan = part(world, "planToggle")?;
+            let shown = shown_chips(&brick, world)?;
+            expect!(!shown.contains(&plan), "plan is still on the toolbar");
+            let overflow = part(world, "composerOverflow")?;
+            click(world, overflow)?;
+            world.wait_for_with(
+                |w| overflow_rows(&brick, w).iter().any(|r| r == OVERFLOW_PLAN),
+                |w| {
+                    format!(
+                        "plan in the menu; it offers {}",
+                        overflow_rows(&brick, w).join(", ")
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the model can still be chosen beside it", |world, _, _| {
+        let brick = composer_brick(world)?;
+        let picker = part(world, "modelPicker")?;
+        expect!(
+            brick.flag(world, picker, "visible") && brick.flag(world, picker, "enabled"),
+            "the model picker is not on the toolbar"
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the user chooses {Q} in that menu"),
+        |world, c, _| {
+            expect!(c[0] == "Plan", "the menu has no {} for this step", c[0]);
+            let brick = composer_brick(world)?;
+            world.wait_for_with(
+                |w| overflow_rows(&brick, w).iter().any(|r| r == OVERFLOW_PLAN),
+                |w| {
+                    format!(
+                        "Plan in the menu; it offers {}",
+                        overflow_rows(&brick, w).join(", ")
+                    )
+                },
+            )?;
+            let item = part(world, OVERFLOW_PLAN)?;
+            let label = brick.text_of(world, item, "text");
+            expect!(label == c[0], "the row reads {label}");
+            click(world, item)
+        },
+    );
+
+    // Send stands out only with something to send.
+    steps.step("the send control cannot be used", |world, _, _| {
+        let brick = composer_brick(world)?;
+        let action = part(world, "primaryAction")?;
+        world.wait_for("Send to be off", |w| {
+            !brick.flag(w, action, "enabled") && !brick.flag(w, action, "sendable")
+        })
+    });
+    steps.step(
+        "the send control can be used and is the composer's accent",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            let action = part(world, "primaryAction")?;
+            world.wait_for("Send to be on", |w| {
+                brick.flag(w, action, "enabled") && brick.flag(w, action, "sendable")
+            })?;
+            let fill = match brick.read(world, action, "background") {
+                QmlValue::Object(background) => brick.read(world, background, "color"),
+                other => fail!("Send has no background: {other:?}"),
+            };
+            let accent = brick.read(world, action, "accent");
+            expect!(fill == accent, "Send is filled {fill:?}, not {accent:?}");
+            Ok(())
+        },
+    );
+}
+
+/// The overflow menu's row for the plan toggle.
+const OVERFLOW_PLAN: &str = "composerOverflow:planToggle";
+
+/// The toolbar's chips on screen, by name.
+fn shown_chips(brick: &Brick, world: &mut World) -> Outcome<Vec<ObjectId>> {
+    let chips = part(world, "toolbarChips")?;
+    let children = world.engine().children(chips);
+    Ok(children
+        .into_iter()
+        .filter(|&chip| {
+            brick.flag(world, chip, "visible")
+                && !brick.text_of(world, chip, "objectName").is_empty()
+        })
+        .collect())
+}
+
+/// The overflow menu's rows by name, a submenu's by its own.
+fn overflow_rows(brick: &Brick, world: &World) -> Vec<String> {
+    let QmlValue::Object(menu) = brick
+        .find(world, "composer")
+        .ok()
+        .flatten()
+        .map_or(QmlValue::Null, |composer| {
+            brick.read(world, composer, "overflowMenu")
+        })
+    else {
+        return Vec::new();
+    };
+    let engine = world.engine();
+    let count = match engine.read_by_name(menu, "count") {
+        QmlValue::Int(n) => n,
+        _ => 0,
+    };
+    (0..count)
+        .map(
+            |i| match engine.invoke_by_name(menu, "itemAt", &[QmlValue::Int(i)]) {
+                Ok(QmlValue::Object(row)) => match engine.read_by_name(row, "subMenu") {
+                    QmlValue::Object(sub) => brick.text_of(world, sub, "objectName"),
+                    _ => brick.text_of(world, row, "objectName"),
+                },
+                _ => String::new(),
+            },
+        )
+        .collect()
 }
 
 /// Whether the picker's own scenario is on screen: it lists (or lacks) the

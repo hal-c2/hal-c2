@@ -341,7 +341,7 @@ impl Controller for ProjectActions {
         // be the project's untouched one from before hal-c2.json or the
         // setting changed.
         let me = self.me.clone();
-        drafts::on_started(engine, move |engine, draft_id| {
+        drafts::on_started(engine, move |engine, draft_id, _from| {
             let draft_id = draft_id.to_owned();
             me.run(engine, move |c, engine| {
                 // One it already placed is the user's to move from then on.
@@ -597,9 +597,35 @@ impl ProjectActions {
         if placed || mode.is_empty() || mode == checkout.env_mode {
             return;
         }
+        if mode == "worktree" {
+            checkout.start_from_origin =
+                self.starts_worktrees_from_origin(engine, &place.environment_id);
+        }
         checkout.env_mode = mode;
         self.applied.insert(draft_id.clone());
         workspace::set_checkout(engine, &draft_id, checkout);
+    }
+
+    /// Whether `environment_id` starts new worktrees from origin: its saved
+    /// setting, or the shell's while it has not reported one.
+    pub fn starts_worktrees_from_origin(&self, engine: &Engine, environment_id: &str) -> bool {
+        let key = "newWorktreesStartFromOrigin";
+        let shell = Settings::of(engine);
+        match self.settings.settings(environment_id) {
+            Some(settings) => settings
+                .get(key)
+                .and_then(Json::as_bool)
+                .unwrap_or_else(|| {
+                    shell
+                        .default_of(key)
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                }),
+            None => shell
+                .setting(engine, key)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        }
     }
 
     /// The key bound to the action, as the newest binding says it, or "".

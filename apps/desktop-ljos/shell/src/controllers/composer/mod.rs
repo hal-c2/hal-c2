@@ -91,7 +91,10 @@ use crate::thread_view::timeline_model::TimelineModel;
 struct PathSearch {
     target: String,
     query: String,
+    environment_id: String,
+    cwd: String,
     done: bool,
+    failed: bool,
     entries: Vec<(String, bool)>,
     request: u64,
 }
@@ -181,6 +184,28 @@ fn back(
 ) -> Reply {
     let me = me.clone();
     Box::new(move |engine, result| later(&me, engine, move |c, e| f(c, e, result)))
+}
+
+/// The project's own default model: the device's override, else the
+/// project's. Empty for none.
+fn project_selection(engine: &Engine, environment_id: &str, project_id: &str) -> Obj {
+    if project_id.is_empty() {
+        return Obj::new();
+    }
+    let own = Settings::of(engine)
+        .value(&format!(
+            "projectSettingsOverrides.{project_id}.defaultModelSelection"
+        ))
+        .map(|v| as_object(&v).clone())
+        .unwrap_or_default();
+    if !own.is_empty() {
+        return own;
+    }
+    store::with(engine, |s| {
+        s.project_row(environment_id, project_id)
+            .map(|row| as_object(row.get("defaultModelSelection").unwrap_or(&Json::Null)).clone())
+            .unwrap_or_default()
+    })
 }
 
 /// A hook that runs `f` on the composer, deferred as [`later`].
@@ -283,6 +308,14 @@ impl Controller for Composer {
         threads::on_active_changed(engine, hook(&self.me, Composer::follow));
         // A draft opened, renewed or promoted.
         drafts::on_changed(engine, hook(&self.me, Composer::publish));
+        // A new thread carries the model and mode it was started from.
+        drafts::on_started(engine, {
+            let me = self.me.clone();
+            move |engine, id, from| {
+                let (id, from) = (id.to_owned(), from.to_owned());
+                later(&me, engine, move |c, e| c.carry_into(e, &id, &from));
+            }
+        });
         // The row says whether a turn runs, which decides follow-ups and
         // the plan.
         store::on_changed(
@@ -291,6 +324,16 @@ impl Controller for Composer {
                 c.carry_drafts(e);
                 c.reconcile_unsent(e);
                 c.settle_runtime_modes(e);
+                c.refresh_path_search(e);
+                c.publish(e);
+            }),
+        );
+        // The route's checkout arrived or moved, so an @ word can now be
+        // searched.
+        workspace::on_place_changed(
+            engine,
+            hook(&self.me, |c, e| {
+                c.refresh_path_search(e);
                 c.publish(e);
             }),
         );
@@ -331,6 +374,12 @@ impl Controller for Composer {
 }
 
 impl Composer {
+    /// Whether the draft `draft_id`'s first message is still being made
+    /// into a thread.
+    pub fn launching(&self, draft_id: &str) -> bool {
+        self.launching.contains(draft_id)
+    }
+
     /// The thread or draft the window's composer writes to; empty with
     /// neither open (or the thread not listed).
     fn target(&self, engine: &Engine) -> String {
@@ -427,11 +476,18 @@ impl Composer {
         self.bridge.publish(engine, "composer", composer);
         self.bridge.publish(engine, "modelPicker", picker);
         self.bridge.publish(engine, "composerStash", stash);
-        // The sidebar lists the draft by what it holds.
-        if !self.draft_id.is_empty() {
-            let id = self.draft_id.clone();
+        // Every window lists the draft by what it holds, and marks a
+        // thread's row while its composer holds something unsent.
+        let edited = if self.draft_id.is_empty() {
+            self.thread.clone()
+        } else {
+            self.draft_id.clone()
+        };
+        if !edited.is_empty() {
             Bridge::of(engine).defer(engine, move |engine| {
-                controller::with::<Sidebar, _>(engine, |s, e| s.draft_edited(e, &id));
+                controller::each_window(engine, |engine| {
+                    controller::with::<Sidebar, _>(engine, |s, e| s.draft_edited(e, &edited));
+                });
             });
         }
     }
@@ -467,6 +523,30 @@ impl Composer {
         self.publish(engine);
     }
 
+    /// Empties the thread's composer of its text, attachments and excerpts,
+    /// in every window (the sidebar's `thread.draft.discard`); its model and
+    /// modes stay.
+    pub fn discard_draft(&mut self, engine: &Engine, target: &str) {
+        let kept_one = kept::read(engine, |d| d.drafts.contains_key(target));
+        if !kept_one || thread_of(engine, target).is_none() {
+            return;
+        }
+        kept::edit_draft(engine, target, |kept| {
+            kept.attachments.clear();
+            kept.excerpts.clear();
+        });
+        self.set_text(engine, target, "", 0, &Json::Null);
+        // The attachments went too, which the text alone does not save;
+        // other windows' composers and every sidebar see the empty draft.
+        kept::save(engine);
+        let target = target.to_owned();
+        Bridge::of(engine).defer(engine, move |engine| {
+            controller::each_window(engine, |engine| {
+                controller::with::<Sidebar, _>(engine, |s, e| s.draft_edited(e, &target));
+            });
+        });
+    }
+
     /// The text cleared or replaced by the shell, the caret at its end.
     fn set_text_end(&mut self, engine: &Engine, target: &str, text: &str) {
         let end = model::utf16_len(text) as i64;
@@ -487,26 +567,7 @@ impl Composer {
         let Some(draft) = drafts::draft(engine, key) else {
             return Obj::new();
         };
-        let settings = Settings::of(engine);
-        let value = |path: &str| {
-            settings
-                .value(path)
-                .map(|v| as_object(&v).clone())
-                .unwrap_or_default()
-        };
-        let mut selection = value(&format!(
-            "projectSettingsOverrides.{}.defaultModelSelection",
-            draft.project_id
-        ));
-        if selection.is_empty() {
-            selection = store::with(engine, |s| {
-                s.project_row(&draft.environment_id, &draft.project_id)
-                    .map(|row| {
-                        as_object(row.get("defaultModelSelection").unwrap_or(&Json::Null)).clone()
-                    })
-                    .unwrap_or_default()
-            });
-        }
+        let mut selection = project_selection(engine, &draft.environment_id, &draft.project_id);
         if selection.is_empty() {
             selection = as_object(&setting(engine, "defaultModelSelection")).clone();
         }
@@ -604,6 +665,54 @@ impl Composer {
             }
         }
         "full-access".into()
+    }
+
+    /// A new thread (`drafts::start_carrying` names `from` only then)
+    /// opened on a draft with nothing of its own (just created, never
+    /// written or picked in, or holding only what an earlier new thread
+    /// carried) takes the mode as picked there or as the thread has it,
+    /// and the model the same way unless the project has a default model
+    /// of its own. A draft the user has started on keeps what it has.
+    fn carry_into(&mut self, engine: &Engine, draft_id: &str, from: &str) {
+        if from.is_empty() || from == draft_id {
+            return;
+        }
+        let Some(started) = drafts::draft(engine, draft_id) else {
+            return;
+        };
+        let before = kept::draft_of(engine, draft_id);
+        let picked = !before.carried
+            && (before.model_selection.is_some() || !before.interaction_mode.is_empty());
+        if !started.text.is_empty()
+            || picked
+            || before.multiple_models.is_some()
+            || before.carries()
+        {
+            return;
+        }
+        let mut draft = before.clone();
+        // The mode the composer showed there.
+        draft.interaction_mode = self.interaction_mode_of(engine, from);
+        draft.model_selection = None;
+        if project_selection(engine, &started.environment_id, &started.project_id).is_empty() {
+            let model = kept::draft_of(engine, from)
+                .model_selection
+                .or_else(|| thread_of(engine, from).map(|t| t.model_selection))
+                .unwrap_or_default();
+            if !model.is_empty() {
+                draft.model_selection = Some(model);
+            }
+        }
+        draft.carried = true;
+        if draft.interaction_mode == before.interaction_mode
+            && draft.model_selection == before.model_selection
+            && before.carried
+        {
+            return;
+        }
+        kept::edit_draft(engine, draft_id, |kept| *kept = draft);
+        kept::save(engine);
+        self.publish(engine);
     }
 
     /// The mode a send uses: plan only while plan mode is on.

@@ -21,8 +21,6 @@ pub const PROVIDER_GONE: &str =
     "Provider process is gone — interrupt or restart the run to respond.";
 /// How many prompts the stash keeps.
 pub const MAX_STASH_ENTRIES: usize = 20;
-/// packages/contracts/src/chatAttachment.ts PROVIDER_SEND_TURN_MAX_INPUT_CHARS.
-pub const MAX_PROMPT_CHARS: usize = 120_000;
 /// What Claude's ultrathink choice puts at the start of a prompt.
 pub const ULTRATHINK_PREFIX: &str = "Ultrathink:\n";
 /// packages/contracts/src/assistantCitations.ts: the longest quote or
@@ -211,35 +209,6 @@ pub fn citation_link(citation: &Obj) -> String {
     )
 }
 
-/// `n` with en-US thousands grouping: 120,000.
-fn grouped(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Why a prompt cannot be sent for its length, else None.
-pub fn prompt_problem(text: &str) -> Option<String> {
-    let length = utf16_len(text.trim());
-    let excess = length.checked_sub(MAX_PROMPT_CHARS).filter(|e| *e > 0)?;
-    Some(format!(
-        "Prompt is {} {} over the {}-character limit. Shorten or split it before sending.",
-        grouped(excess),
-        if excess == 1 {
-            "character"
-        } else {
-            "characters"
-        },
-        grouped(MAX_PROMPT_CHARS)
-    ))
-}
-
 /// The chip's and the record's name for a note: "src/cart.ts L10-12".
 pub fn review_label(file_path: &str, first: i64, last: i64) -> String {
     if first == last {
@@ -352,7 +321,8 @@ pub fn with_excerpts(message: &mut Obj, excerpts: &[Excerpt]) {
 
 /// What the stash menu shows of an entry: its text (a quote reads as its
 /// text and comment, assistantCitationsToPlainText) on one line, cut to 90;
-/// "(empty)" or "(N images)" with none.
+/// "(empty)" with none, else what it holds instead: "(N images)",
+/// "(N files)", or "(N attachments)" for both.
 pub fn stash_snippet(entry: &StashEntry) -> String {
     let mut snippet = entry.text.clone();
     for excerpt in &entry.excerpts {
@@ -374,10 +344,17 @@ pub fn stash_snippet(entry: &StashEntry) -> String {
     if !snippet.is_empty() {
         return snippet;
     }
-    match entry.attachments.len() {
+    let all = entry.attachments.len();
+    let files = entry.attachments.iter().filter(|a| a.file).count();
+    let kind = match files {
+        0 => "image",
+        _ if files == all => "file",
+        _ => "attachment",
+    };
+    match all {
         0 => "(empty)".into(),
-        1 => "(1 image)".into(),
-        n => format!("({n} images)"),
+        1 => format!("(1 {kind})"),
+        n => format!("({n} {kind}s)"),
     }
 }
 
@@ -529,20 +506,6 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_over_the_limit_says_by_how_much() {
-        assert_eq!(prompt_problem(&"a".repeat(MAX_PROMPT_CHARS)), None);
-        assert_eq!(
-            prompt_problem(&"a".repeat(MAX_PROMPT_CHARS + 1)).unwrap(),
-            "Prompt is 1 character over the 120,000-character limit. Shorten or split it before sending."
-        );
-        assert!(
-            prompt_problem(&format!("  {}  ", "a".repeat(MAX_PROMPT_CHARS + 1234)))
-                .unwrap()
-                .starts_with("Prompt is 1,234 characters over")
-        );
-    }
-
-    #[test]
     fn a_review_label_names_the_lines() {
         assert_eq!(review_label("src/a.ts", 4, 4), "src/a.ts L4");
         assert_eq!(review_label("src/a.ts", 4, 9), "src/a.ts L4-9");
@@ -638,6 +601,10 @@ mod tests {
         assert_eq!(stash_snippet(&entry), "(1 image)");
         entry.attachments.push(Attachment::default());
         assert_eq!(stash_snippet(&entry), "(2 images)");
+        entry.attachments[0].file = true;
+        assert_eq!(stash_snippet(&entry), "(2 attachments)");
+        entry.attachments.truncate(1);
+        assert_eq!(stash_snippet(&entry), "(1 file)");
     }
 
     #[test]

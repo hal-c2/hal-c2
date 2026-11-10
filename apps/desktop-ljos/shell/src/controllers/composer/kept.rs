@@ -34,6 +34,10 @@ pub struct Attachment {
     /// Where a file's bytes are: a path on this machine, or a pasted text.
     pub path: String,
     pub content: Vec<u8>,
+    /// A picked file's first megabyte as it was read for the MC, which the
+    /// viewer shows rather than the file as it is now. Not kept with the
+    /// draft.
+    pub captured: Vec<u8>,
     pub pasted_text: bool,
     /// A file's upload: "uploading", "failed" (why, in `error`), or empty
     /// once the MC has it as `remote_id` on `environment_id`.
@@ -88,6 +92,9 @@ pub struct Draft {
     pub model_selection: Option<Obj>,
     pub runtime_mode: String,
     pub interaction_mode: String,
+    /// The model and mode came with a new thread from the thread it was
+    /// started on, not from a pick here; the next new thread replaces them.
+    pub carried: bool,
     /// A new thread's prompt goes to each of these instead: one thread per
     /// model, each in its own worktree.
     pub multiple_models: Option<Vec<Obj>>,
@@ -130,6 +137,8 @@ pub struct Send {
     /// The text to give back if the send fails; empty for none.
     pub prompt: String,
     pub message_id: String,
+    /// Feedback on (or implementing) the offered plan: a refusal says so.
+    pub plan_follow_up: bool,
 }
 
 /// A prompt on its way to the MC, kept with the drafts until the MC answers
@@ -325,6 +334,16 @@ pub fn attachments(engine: &Engine, target: &str) -> Vec<Json> {
                 })
             })
             .collect()
+    })
+}
+
+/// Whether `target`'s draft holds a file (not only images): files went
+/// to the machine the draft is on.
+pub fn holds_files(engine: &Engine, target: &str) -> bool {
+    read(engine, |d| {
+        d.drafts
+            .get(target)
+            .is_some_and(|k| k.attachments.iter().any(|a| a.file))
     })
 }
 
@@ -531,6 +550,7 @@ pub fn load(engine: &Engine, path: Option<PathBuf>) {
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
+            kept.carried = entry["carried"].as_bool().unwrap_or(false);
         }
         let mut unsent_images = Map::new();
         if let Some(images) = &images {
@@ -613,6 +633,12 @@ fn images_json(lists: &BTreeMap<&str, &[Attachment]>) -> Map<String, Json> {
 /// short would lose every thread's draft. The images go apart, rewritten
 /// only when they change.
 pub fn save(engine: &Engine) {
+    saved(engine);
+}
+
+/// [`save`], saying whether what is kept was written (true with nowhere to
+/// write it).
+pub fn saved(engine: &Engine) -> bool {
     let written = read(engine, |d| {
         let path = d.path.clone()?;
         let mut targets = Map::new();
@@ -634,6 +660,9 @@ pub fn save(engine: &Engine) {
             }
             if !kept.interaction_mode.is_empty() {
                 entry.insert("interactionMode".into(), json!(kept.interaction_mode));
+            }
+            if kept.carried {
+                entry.insert("carried".into(), json!(true));
             }
             if !entry.is_empty() {
                 targets.insert(key.clone(), Json::Object(entry));
@@ -710,11 +739,13 @@ pub fn save(engine: &Engine) {
         Some((path, stored, images))
     });
     let Some((path, stored, images)) = written else {
-        return;
+        return true;
     };
-    let _ = drafts::write_atomically(&path, stored.to_string().as_bytes());
+    if drafts::write_atomically(&path, stored.to_string().as_bytes()).is_err() {
+        return false;
+    }
     let Some((joined, kept)) = images else {
-        return;
+        return true;
     };
     let images_path = images_path(&path);
     let empty =
@@ -728,6 +759,7 @@ pub fn save(engine: &Engine) {
     if done {
         write(engine, |d| d.images = joined);
     }
+    true
 }
 
 /// A kept attachment of any draft, or of a question's answer, by id.

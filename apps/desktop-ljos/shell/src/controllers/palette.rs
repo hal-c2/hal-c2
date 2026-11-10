@@ -1473,7 +1473,7 @@ impl Palette {
                 });
                 match latest {
                     Some((_, key)) => navigate(Route::Thread(key)),
-                    None => drafts::start_in(engine, &group),
+                    None => drafts::start_in(engine, &group, false),
                 }
                 true
             }

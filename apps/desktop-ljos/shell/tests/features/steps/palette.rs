@@ -686,6 +686,10 @@ pub fn register(steps: &mut Steps) {
 
     // Searching.
     steps.step(&format!("the user types {Q}"), |world, c, _| {
+        // Rich text in the composer (ComposerBrickSteps).
+        if !is_open(world) && super::composer_brick::rich_text_types(world, &c[0])? {
+            return Ok(());
+        }
         open(world)?;
         let typed = prop(world, "query")? + &c[0];
         set_query(world, &typed)

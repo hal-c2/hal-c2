@@ -867,7 +867,9 @@ pub fn slice(text: &str, start: usize, end: usize) -> &str {
 }
 
 /// What the text before the caret asks for: "path" (@), "skill" ($),
-/// "slash-command" (/ at a line start) or "pull-request" (#).
+/// "slash-command" (/) or "pull-request" (#). A slash after other text on
+/// its line is `mid_line`: it offers only what its word is the start of a
+/// name of.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Trigger {
     pub kind: String,
@@ -875,6 +877,7 @@ pub struct Trigger {
     /// The span it covers, in UTF-16 units.
     pub start: usize,
     pub end: usize,
+    pub mid_line: bool,
 }
 
 fn is_space(c: char) -> bool {
@@ -882,7 +885,10 @@ fn is_space(c: char) -> bool {
 }
 
 pub fn trigger(text: &str, cursor: i64) -> Option<Trigger> {
-    static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/(\S*)$").unwrap());
+    // Spaces before a line's slash still make it the line's command, and
+    // choosing one replaces them too.
+    static COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*/(\S*)$").unwrap());
+    static MID_COMMAND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^/([^\s/]*)$").unwrap());
     static PULL_REQUEST: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$").unwrap());
     let cursor = cursor.clamp(0, utf16_len(text) as i64) as usize;
@@ -891,14 +897,13 @@ pub fn trigger(text: &str, cursor: i64) -> Option<Trigger> {
     let line_start = before.rfind('\n').map_or(0, |i| i + 1);
     let line_prefix = &before[line_start..];
     let at = |byte: usize| utf16_len(&text[..byte]);
-    if line_prefix.starts_with('/')
-        && let Some(found) = COMMAND.captures(line_prefix)
-    {
+    if let Some(found) = COMMAND.captures(line_prefix) {
         return Some(Trigger {
             kind: "slash-command".into(),
             query: found[1].to_owned(),
             start: at(line_start),
             end: cursor,
+            mid_line: false,
         });
     }
     let token_start = before
@@ -913,6 +918,7 @@ pub fn trigger(text: &str, cursor: i64) -> Option<Trigger> {
             query: query.to_owned(),
             start: at(token_start),
             end: cursor,
+            mid_line: false,
         })
     };
     if let Some(m) = PULL_REQUEST.captures(token) {
@@ -924,8 +930,32 @@ pub fn trigger(text: &str, cursor: i64) -> Option<Trigger> {
             found("skill", chars.as_str())
         }
         Some('@') => found("path", chars.as_str()),
-        _ => None,
+        // A slash after other text searches the composer's commands and
+        // skills (slash_items leaves the provider's out there, and matches
+        // names by prefix only); a path has a second slash.
+        _ => MID_COMMAND.captures(token).map(|m| Trigger {
+            kind: "slash-command".into(),
+            query: m[1].to_owned(),
+            start: at(token_start),
+            end: cursor,
+            mid_line: true,
+        }),
     }
+}
+
+/// Whether a currency sign followed by `query` is a skill rather than a
+/// price: a query led by a digit only when one of the instance's skills
+/// starts so.
+pub fn opens_skill_menu(instance: Option<&Instance>, query: &str) -> bool {
+    if !query.chars().next().is_some_and(char::is_numeric) {
+        return true;
+    }
+    let query = query.to_lowercase();
+    instance.is_some_and(|instance| {
+        invocable_skills(&instance.skills)
+            .iter()
+            .any(|skill| text(skill, "name").to_lowercase().starts_with(&query))
+    })
 }
 
 /// A suggestion: `composer.suggestions` shows {id, kind, label,
@@ -1167,6 +1197,26 @@ pub fn slash_items(
     let provider = instance.map(|i| i.driver.as_str()).unwrap_or("");
     let mut scored = Vec::new();
     for item in items {
+        // Mid-sentence, "/thread" or "/tmp" is prose until it starts a name:
+        // a fuzzy or description match would let Enter take a command the
+        // user never picked instead of sending.
+        if trigger.mid_line {
+            let wanted = match (item.skill, query.strip_prefix("skill:")) {
+                (Some(_), Some(rest)) => rest,
+                _ => query.as_str(),
+            };
+            // The menu labels skills "/skill:<name>", so typing toward that
+            // label names every skill once it is three letters in: "/s"
+            // ending a sentence is prose, not the start of a label.
+            let named = item.name.to_lowercase().starts_with(wanted)
+                || item.skill.is_some_and(|skill| {
+                    skill_label(skill).to_lowercase().starts_with(wanted)
+                        || (query.chars().count() >= 3 && "skill:".starts_with(query.as_str()))
+                });
+            if !named {
+                continue;
+            }
+        }
         let score = if let Some(skill) = item.skill {
             if query == "skill" {
                 Some(0)
@@ -1316,6 +1366,12 @@ pub fn path_link(path: &str) -> String {
 }
 
 /// The text the empty menu shows for the trigger.
+/// What the @ menu says when its search could not run, which is not "no
+/// match".
+pub const PATH_SEARCH_UNAVAILABLE: &str = "Can't search files right now.";
+/// What the @ menu says while its search has not answered.
+pub const PATH_SEARCHING: &str = "Searching workspace files...";
+
 pub fn empty_text(kind: &str) -> &'static str {
     match kind {
         "skill" => "No skills found. Try / to browse provider commands.",

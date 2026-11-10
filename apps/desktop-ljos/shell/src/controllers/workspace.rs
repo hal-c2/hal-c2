@@ -89,6 +89,9 @@ pub struct Checkout {
     /// "Run on" another machine's checkout; empty keeps the draft's own.
     pub environment_id: String,
     pub project_id: String,
+    /// The user picked the machine, their own included: balancing leaves
+    /// the thread there (Launch::tied).
+    pub manual: bool,
 }
 
 impl Default for Checkout {
@@ -100,6 +103,7 @@ impl Default for Checkout {
             worktree_path: None,
             environment_id: String::new(),
             project_id: String::new(),
+            manual: false,
         }
     }
 }
@@ -238,6 +242,20 @@ pub fn environment_config(engine: &Engine) -> Map<String, Json> {
     }
 }
 
+/// The route's environment's provider entries.
+pub fn providers_of(engine: &Engine) -> Vec<Map<String, Json>> {
+    environment_config(engine)
+        .get("providers")
+        .and_then(Json::as_array)
+        .map(|providers| {
+            providers
+                .iter()
+                .filter_map(|p| p.as_object().cloned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// A draft's checkout as the user left it (defaults for one never touched).
 pub fn checkout(engine: &Engine, draft_id: &str) -> Checkout {
     shared(engine)
@@ -261,6 +279,19 @@ pub fn set_checkout(engine: &Engine, draft_id: &str, checkout: Checkout) {
 /// The draft is gone (sent or discarded).
 pub fn forget_draft(engine: &Engine, draft_id: &str) {
     shared(engine).checkouts.borrow_mut().remove(draft_id);
+}
+
+/// Several models chosen for the route's draft: each starts in a worktree
+/// of its own, so there is no workspace left to choose.
+fn each_model_gets_worktree(engine: &Engine) -> bool {
+    place(engine).is_some_and(|here| {
+        !here.draft_id.is_empty()
+            && crate::controllers::composer::kept::read(engine, |d| {
+                d.drafts
+                    .get(&here.draft_id)
+                    .is_some_and(|k| k.multiple_models.is_some())
+            })
+    })
 }
 
 /// Resolves the route again (a draft moved, say), once no controller is
@@ -301,6 +332,92 @@ pub fn open_in_editor(engine: &Engine, editor_id: &str, path: &str, reveal: bool
 
 /// What the user is told when a file cannot be opened on this machine.
 pub const FILES_ELSEWHERE: &str = "The files are on another machine and can't be opened here yet.";
+
+/// What showing a file in its folder is called on the machine that does it.
+fn reveal_label(environment: &Map<String, Json>) -> &'static str {
+    let platform = environment.get("platform");
+    let os = platform
+        .and_then(|p| p.get("os"))
+        .and_then(Json::as_str)
+        .unwrap_or_default();
+    let wsl = platform
+        .and_then(|p| p.get("wsl"))
+        .and_then(Json::as_bool)
+        .unwrap_or(false);
+    match os {
+        "darwin" => "Reveal in Finder",
+        "win32" => "Reveal in File Explorer",
+        _ if wsl => "Reveal in File Explorer",
+        "linux" => "Reveal in Files",
+        _ => "Reveal in file manager",
+    }
+}
+
+/// The editors that open a folder over SSH from a deep link, and the
+/// commands that say one is installed (REMOTE_CAPABLE_EDITOR_IDS in
+/// packages/contracts).
+const SSH_EDITORS: &[(&str, &[&str])] = &[
+    ("cursor", &["cursor"]),
+    ("vscode", &["code"]),
+    ("vscode-insiders", &["code-insiders"]),
+    ("vscodium", &["codium"]),
+    ("zed", &["zed", "zeditor"]),
+];
+
+/// `buildRemoteOpenUrl` in packages/contracts. A Windows path is `/C:/...`
+/// in a vscode-remote URI; Zed resolves a rooted path on the system drive.
+pub fn ssh_open_url(editor: &str, host: &str, absolute_path: &str) -> Option<String> {
+    SSH_EDITORS.iter().find(|(id, _)| *id == editor)?;
+    let mut path = absolute_path.replace('\\', "/");
+    if !path.starts_with('/') {
+        path.insert(0, '/');
+    }
+    let zed = editor == "zed";
+    if zed && path.len() >= 4 && path[..4].eq_ignore_ascii_case("/C:/") {
+        path.replace_range(..3, "");
+    }
+    let segments: Vec<String> = path.split('/').map(percent_encode).collect();
+    let host = percent_encode(host);
+    let prefix = if zed {
+        format!("://ssh/{host}")
+    } else {
+        format!("://vscode-remote/ssh-remote+{host}")
+    };
+    Some(format!("{editor}{prefix}{}", segments.join("/")))
+}
+
+/// Every byte but RFC 3986's unreserved ones, as `QUrl::toPercentEncoding`.
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// The SSH editors installed on this computer. No MC can say that for it. A
+/// desktop launch can miss PATH entries, so finding none leaves VS Code,
+/// whose link the operating system answers or refuses.
+fn installed_ssh_editors(path: &std::ffi::OsStr) -> Vec<String> {
+    let dirs: Vec<std::path::PathBuf> = std::env::split_paths(path).collect();
+    let mut found: Vec<String> = SSH_EDITORS
+        .iter()
+        .filter(|(_, commands)| {
+            commands
+                .iter()
+                .any(|command| dirs.iter().any(|dir| dir.join(command).is_file()))
+        })
+        .map(|(id, _)| (*id).to_owned())
+        .collect();
+    if found.is_empty() {
+        found.push("vscode".into());
+    }
+    found
+}
 
 /// Where a file of an environment is on this machine: `path`, and the MC on
 /// this machine that starts apps there (`launcher`), or why there is none
@@ -473,7 +590,8 @@ pub fn launch(engine: &Engine, draft_id: &str) -> Launch {
     } else {
         draft.project_id
     };
-    launch.tied = moved || checkout.branch.is_some() || checkout.worktree_path.is_some();
+    launch.tied =
+        moved || checkout.manual || checkout.branch.is_some() || checkout.worktree_path.is_some();
     // The checkout's status is known only for the draft the window shows.
     let shown = shared
         .place
@@ -649,6 +767,8 @@ pub struct Workspace {
     rename_request_id: i64,
     /// A thread asked to rename before it was shown.
     rename_wanted: String,
+    /// The SSH editors found on PATH, looked for again only when it changes.
+    ssh_editors: RefCell<Option<(std::ffi::OsString, Vec<String>)>>,
 }
 
 impl Drop for Workspace {
@@ -687,6 +807,7 @@ impl Controller for Workspace {
             last_script: HashMap::new(),
             rename_request_id: 0,
             rename_wanted: String::new(),
+            ssh_editors: RefCell::new(None),
         }
     }
 
@@ -771,6 +892,13 @@ impl Controller for Workspace {
             "workspace.openInEditor" => self.open_folder(engine, &arg("editorId")),
             "workspace.openFile" => self.open_file_in_editor(engine, &arg("path")),
             "workspace.runScript" => self.run_script(engine, &here, &arg("scriptId")),
+            // A command from a reply: run, but not remembered as a script.
+            "workspace.runCommand" => {
+                let command = arg("command").trim().to_owned();
+                controller::with::<Terminals, _>(engine, |t, engine| {
+                    t.run_command(engine, "Chat code block", &command)
+                });
+            }
             "workspace.branch.search" => {
                 self.query = arg("query");
                 self.load_refs(engine);
@@ -810,13 +938,18 @@ impl Controller for Workspace {
                     // this project.
                     key = self
                         .environment_choices(engine)
+                        .0
                         .iter()
                         .find(|c| c["environmentId"].as_str() == Some(environment_id.as_str()))
                         .and_then(|c| c["key"].as_str())
                         .unwrap_or_default()
                         .to_owned();
                 }
-                self.set_environment(engine, &key);
+                if key == "auto" {
+                    self.auto_balance(engine);
+                } else {
+                    self.set_environment(engine, &key);
+                }
             }
             _ => {}
         }
@@ -1283,19 +1416,97 @@ impl Workspace {
     fn env_mode_changeable(&self, engine: &Engine) -> bool {
         match place(engine) {
             None => false,
-            Some(here) if !here.draft_id.is_empty() => true,
+            Some(here) if !here.draft_id.is_empty() => !each_model_gets_worktree(engine),
             Some(here) => !self.locked(engine) && here.worktree_path.is_empty(),
         }
     }
 
-    /// This machine's: a thread elsewhere opens in an editor here.
-    fn editors(&self, engine: &Engine) -> Vec<Json> {
-        let config = local_config(engine);
-        let available = config
-            .get("availableEditors")
+    /// Whether the route's environment and the MC the shell is connected to
+    /// are both on another machine: its files open here only over SSH.
+    fn far_from_here(&self, engine: &Engine) -> bool {
+        place(engine).is_some_and(|here| {
+            !this_machine::hosts(engine, &here.environment_id)
+                && !this_machine::hosts(engine, &self.mc.environment())
+        })
+    }
+
+    /// The SSH name that environment advertises as most reachable. Empty: no
+    /// route.
+    fn ssh_host(&self, engine: &Engine) -> String {
+        environment_config(engine)
+            .get("remoteOpenTargets")
             .and_then(Json::as_array)
-            .cloned()
-            .unwrap_or_default();
+            .and_then(|targets| targets.first())
+            .and_then(|target| target.get("host"))
+            .and_then(Json::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn place_label(&self, engine: &Engine) -> String {
+        let Some(here) = place(engine) else {
+            return String::new();
+        };
+        let label = text(
+            &store::with(engine, |s| s.environment(&here.environment_id)),
+            "label",
+        );
+        if label.is_empty() {
+            here.environment_id
+        } else {
+            label
+        }
+    }
+
+    fn ssh_note(&self, engine: &Engine) -> String {
+        let host = self.ssh_host(engine);
+        if self.far_from_here(engine) && !host.is_empty() {
+            format!(
+                "Opens over SSH at {host}. Needs your key on {}",
+                self.place_label(engine)
+            )
+        } else {
+            String::new()
+        }
+    }
+
+    fn no_ssh_route(&self, engine: &Engine) -> String {
+        if self.far_from_here(engine) && self.ssh_host(engine).is_empty() {
+            format!("No SSH route to {}", self.place_label(engine))
+        } else {
+            String::new()
+        }
+    }
+
+    fn ssh_editors(&self) -> Vec<String> {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut cached = self.ssh_editors.borrow_mut();
+        match cached.as_ref() {
+            Some((seen, editors)) if *seen == path => editors.clone(),
+            _ => {
+                let editors = installed_ssh_editors(&path);
+                *cached = Some((path, editors.clone()));
+                editors
+            }
+        }
+    }
+
+    /// This machine's: a thread elsewhere opens in an editor here, from the
+    /// folder its own MC keeps for a member, else over SSH.
+    fn editors(&self, engine: &Engine) -> Vec<Json> {
+        let far = self.far_from_here(engine);
+        if far && self.ssh_host(engine).is_empty() {
+            return Vec::new();
+        }
+        let available: Vec<Json> = if far {
+            self.ssh_editors().into_iter().map(Json::from).collect()
+        } else {
+            local_config(engine)
+                .get("availableEditors")
+                .and_then(Json::as_array)
+                .cloned()
+                .unwrap_or_default()
+        };
         EDITORS
             .iter()
             .filter(|(id, _)| available.iter().any(|a| a.as_str() == Some(id)))
@@ -1320,9 +1531,9 @@ impl Workspace {
     /// BranchToolbar.logic's environment options: this project's checkout on
     /// each machine (projects sharing its repository), the MC's own first. A
     /// draft may also move to any project on a machine without a checkout.
-    fn environment_choices(&self, engine: &Engine) -> Vec<Json> {
+    fn environment_choices(&self, engine: &Engine) -> (Vec<Json>, bool) {
         let Some(here) = place(engine) else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let own = self.mc.environment();
         let canonical = |row: &Map<String, Json>| {
@@ -1389,17 +1600,91 @@ impl Workspace {
                 .cmp(&a.primary)
                 .then_with(|| sidebar_model::locale_compare(&a.label, &b.label))
         });
-        checkouts
-            .into_iter()
-            .chain(elsewhere)
-            .map(|c| {
-                json!({
-                    "environmentId": c.environment_id,
-                    "key": c.key,
-                    "label": c.label,
-                })
+        let several = checkouts.len() + elsewhere.len() > 1;
+        // A started thread stays on its machine: that is the one choice it
+        // has (upstream #19900).
+        if here.draft_id.is_empty() {
+            checkouts.retain(|c| c.environment_id == here.environment_id);
+            elsewhere.clear();
+        }
+        let balanced = self.auto_balanced(engine, &here);
+        let current = format!("{}:{}", here.environment_id, here.project_id);
+        let mut result: Vec<Json> = Vec::new();
+        if self.auto_balance_offered(engine, &here) {
+            result.push(json!({
+                "environmentId": "",
+                "key": "auto",
+                "label": "Auto balance",
+                "current": balanced,
+            }));
+        }
+        result.extend(checkouts.into_iter().chain(elsewhere).map(|c| {
+            json!({
+                "environmentId": c.environment_id,
+                "current": !balanced && c.key == current,
+                "key": c.key,
+                "label": c.label,
             })
-            .collect()
+        }));
+        (result, several)
+    }
+
+    fn auto_balance_offered(&self, engine: &Engine, here: &Place) -> bool {
+        if here.draft_id.is_empty() {
+            return false;
+        }
+        let mut machines = store::with(engine, |s| s.environments());
+        machines.sort();
+        machines.dedup();
+        if machines.len() < 2 {
+            return false;
+        }
+        Settings::of(engine).settings().get("loadBalancingEnabled") == Some(&Json::Bool(true))
+    }
+
+    fn auto_balanced(&self, engine: &Engine, here: &Place) -> bool {
+        if !self.auto_balance_offered(engine, here) {
+            return false;
+        }
+        if crate::controllers::composer::kept::holds_files(engine, &here.draft_id) {
+            return false;
+        }
+        let checkout = checkout(engine, &here.draft_id);
+        checkout.environment_id.is_empty()
+            && !checkout.manual
+            && checkout.branch.is_none()
+            && checkout.worktree_path.is_none()
+    }
+
+    /// useDraftEnvironmentRouting onAutoEnvironment: refused while files
+    /// are attached, since they went to the machine the draft is on.
+    fn auto_balance(&mut self, engine: &Engine) {
+        let Some(here) = place(engine).filter(|p| !p.draft_id.is_empty()) else {
+            return;
+        };
+        if crate::controllers::composer::kept::holds_files(engine, &here.draft_id) {
+            controller::with::<Toasts, _>(engine, |t, engine| {
+                t.show(
+                    engine,
+                    "warning",
+                    "Keep attachments on this machine",
+                    "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+                    None,
+                    DEFAULT_TIMEOUT_MS,
+                );
+            });
+            return;
+        }
+        if !self.auto_balance_offered(engine, &here) {
+            return;
+        }
+        self.update_checkout(engine, |c| {
+            c.environment_id.clear();
+            c.project_id.clear();
+            c.manual = false;
+            c.branch = None;
+            c.worktree_path = None;
+        });
     }
 
     fn build(&self, engine: &Engine) -> Json {
@@ -1438,6 +1723,13 @@ impl Workspace {
         };
         if self.optimistic_branch.is_some() {
             branch.clone_from(&self.optimistic_branch);
+        }
+        // A place in a Git checkout: a worktree always is, a folder until
+        // its status says otherwise.
+        let repository =
+            !here.worktree_path.is_empty() || git.as_ref().is_none_or(|g| is_repo(&g.local));
+        if !repository {
+            branch = None;
         }
 
         let mut can_open_pull_request = false;
@@ -1507,16 +1799,32 @@ impl Workspace {
             })
             .collect();
 
-        let env_mode_label = match (
-            changeable,
-            mode == "worktree",
-            here.worktree_path.is_empty(),
-        ) {
-            (true, true, _) => "New worktree",
-            (true, false, _) => "Current checkout",
-            (false, _, true) => "Local checkout",
-            (false, _, false) => "Worktree",
+        let current_workspace = if here.worktree_path.is_empty() {
+            "Current checkout"
+        } else {
+            "Current worktree"
         };
+        let each_model = each_model_gets_worktree(engine);
+        let env_mode_label = if each_model {
+            "New worktree"
+        } else {
+            match (
+                changeable,
+                mode == "worktree",
+                here.worktree_path.is_empty(),
+            ) {
+                (true, true, _) => "New worktree",
+                (true, false, _) => current_workspace,
+                (false, true, true) => "New worktree",
+                (false, _, true) => "Local checkout",
+                (false, _, false) => "Worktree",
+            }
+        };
+        let (machines, several_machines) = self.environment_choices(engine);
+        // BranchToolbar.logic shouldShowEnvironmentIndicator: the project
+        // is on several machines, or on one that is not this one.
+        let environment_shown =
+            several_machines || !this_machine::hosts(engine, &here.environment_id);
         let offline = !store::with(engine, |s| s.environment_online(&here.environment_id));
         json!({
             "threadKey": here.thread_key(),
@@ -1526,6 +1834,8 @@ impl Workspace {
             "isDraft": draft,
             "envMode": mode,
             "envModeLabel": env_mode_label,
+            "currentWorkspaceLabel": current_workspace,
+            "envModeHint": if each_model { "Each model starts in its own worktree." } else { "" },
             "envModeChangeable": changeable,
             "startFromOrigin": checkout.start_from_origin,
             "branch": branch,
@@ -1534,20 +1844,24 @@ impl Workspace {
             "canOpenPullRequest": can_open_pull_request,
             "preferredEditorId": nullable(&self.preferred_editor(engine, &editors)),
             "editors": editors,
+            "openOverSsh": self.ssh_note(engine),
+            "noSshRoute": self.no_ssh_route(engine),
+            "revealLabel": reveal_label(&store::with(engine, |s| s.environment(&here.environment_id))),
             "scripts": here.scripts,
             "preferredScriptId": if known { Json::from(last_script) } else { Json::Null },
-            "environments": self.environment_choices(engine),
+            "environments": machines,
+            "environmentShown": environment_shown,
             "activeEnvironmentId": here.environment_id,
             // The MC serving it is out of reach (a cluster member asleep).
             "offline": offline,
-            "environmentChangeable": draft,
+            "environmentChangeable": draft && machines.len() > 1,
             "renameRequestId": self.rename_request_id,
             "branchQuery": self.query,
             "branches": branches,
             "branchesTotal": self.refs_total.max(self.refs.len() as i64),
             "branchesLoading": self.refs_loading,
             "branchSwitchPending": self.switching,
-            "branchChangeable": !here.cwd().is_empty(),
+            "branchChangeable": !here.cwd().is_empty() && repository,
             "previousWorktree": previous,
         })
     }
@@ -1557,6 +1871,9 @@ impl Workspace {
     /// that the draft does not already point at.
     fn previous_worktree(&self, engine: &Engine) -> Option<PreviousWorktree> {
         let here = place(engine).filter(|p| !p.draft_id.is_empty())?;
+        if each_model_gets_worktree(engine) {
+            return None;
+        }
         store::with(engine, |s| {
             let mut latest: Option<(i64, PreviousWorktree)> = None;
             for thread in s.threads() {
@@ -1675,6 +1992,15 @@ impl Workspace {
         if path.is_empty() {
             return false;
         }
+        let far = self.far_from_here(engine);
+        let host = self.ssh_host(engine);
+        // A file manager has no SSH route, and without a route nothing can open it.
+        if far && (reveal || host.is_empty()) {
+            controller::with::<Toasts, _>(engine, |t, engine| {
+                t.error(engine, FILES_ELSEWHERE, "");
+            });
+            return true;
+        }
         let available = self.editors(engine);
         let editor = if reveal {
             "file-manager".to_owned()
@@ -1693,15 +2019,25 @@ impl Workspace {
         if !reveal {
             Settings::of(engine).write_device(engine, LAST_EDITOR, editor.clone().into());
         }
-        open_here(
-            engine,
-            &here.environment_id,
-            path,
-            &editor,
-            reveal,
-            "Failed to open in editor.",
-            None,
-        );
+        if far {
+            let opened = ssh_open_url(&editor, &host, path)
+                .is_some_and(|url| ljos::prelude::Platform::of(engine).open_url().open(&url));
+            if !opened {
+                controller::with::<Toasts, _>(engine, |t, engine| {
+                    t.error(engine, "Failed to open in editor.", "");
+                });
+            }
+        } else {
+            open_here(
+                engine,
+                &here.environment_id,
+                path,
+                &editor,
+                reveal,
+                "Failed to open in editor.",
+                None,
+            );
+        }
         self.publish(engine);
         true
     }
@@ -1752,17 +2088,36 @@ impl Workspace {
     }
 
     fn set_env_mode(&mut self, engine: &Engine, mode: &str) {
-        if !self.env_mode_changeable(engine) || (mode != "local" && mode != "worktree") {
+        // The composer asks for a worktree as it chooses a second model, and
+        // its action arrives once that choice has locked the workspace: the
+        // one mode several models take is still let through.
+        let changeable = self.env_mode_changeable(engine)
+            || (mode == "worktree" && each_model_gets_worktree(engine));
+        if !changeable || (mode != "local" && mode != "worktree") {
             return;
         }
         let Some(here) = place(engine) else {
             return;
         };
         if !here.draft_id.is_empty() {
+            // Choosing a new worktree starts with the setting's word on
+            // origin; the base picker's switch changes it for this thread
+            // alone.
+            let from_origin =
+                controller::with::<crate::controllers::project_actions::ProjectActions, _>(
+                    engine,
+                    |c, engine| c.starts_worktrees_from_origin(engine, &here.environment_id),
+                )
+                .unwrap_or(false);
             self.update_checkout(engine, |c| {
+                let was_new = c.env_mode == "worktree" && c.worktree_path.is_none();
                 c.env_mode = mode.to_owned();
-                if mode == "worktree" {
-                    c.worktree_path = None;
+                if mode != "worktree" {
+                    return;
+                }
+                c.worktree_path = None;
+                if !was_new {
+                    c.start_from_origin = from_origin;
                 }
             });
             return;
@@ -1786,12 +2141,20 @@ impl Workspace {
             s.project_row(environment_id, project_id)
                 .is_some_and(|r| !r.is_empty())
         });
-        if !known || (environment_id == here.environment_id && project_id == here.project_id) {
+        if !known {
+            return;
+        }
+        if environment_id == here.environment_id && project_id == here.project_id {
+            // Its own machine, picked over Auto balance: the thread stays there.
+            if !checkout(engine, &here.draft_id).manual {
+                self.update_checkout(engine, |c| c.manual = true);
+            }
             return;
         }
         self.update_checkout(engine, |c| {
             c.environment_id = environment_id.to_owned();
             c.project_id = project_id.to_owned();
+            c.manual = true;
             c.branch = None;
             c.worktree_path = None;
         });
