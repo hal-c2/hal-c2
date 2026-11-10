@@ -1233,6 +1233,7 @@ settings/connections.feature: Other machines are added from the Cluster settings
 settings/connections.feature: Revoking a connected client signs it out
 settings/connections.feature: Revoking a pairing link stops it from pairing
 settings/connections.feature: Revoking every other client keeps the current one
+settings/connections.feature: Switching an environment off keeps it saved
 settings/connections.feature: Tailscale that cannot publish the machine leaves no pairing link
 settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a narrow window, whole, smaller]
 settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a wide window, whole, at its full size]
@@ -1493,6 +1494,7 @@ settings/scopes-and-inheritance.feature: Saving on some environments but not oth
 settings/scopes-and-inheritance.feature: The environment view lists and clears project overrides
 settings/scopes-and-inheritance.feature: The inheritance chain shows which layer wins
 settings/scopes-and-inheritance.feature: The page states the project and environment being edited
+settings/search-and-navigation.feature: A command with no default key opens the keybindings section
 settings/search-and-navigation.feature: A search result inside a folded section opens the fold
 settings/search-and-navigation.feature: A setting is found by the words people use for it [battery saver, Background activity]
 settings/search-and-navigation.feature: A setting is found by the words people use for it [binary path, Providers]
@@ -1500,22 +1502,42 @@ settings/search-and-navigation.feature: A setting is found by the words people u
 settings/search-and-navigation.feature: A setting is found by the words people use for it [multiline, Send shortcut]
 settings/search-and-navigation.feature: A setting is found by the words people use for it [new line, Send shortcut]
 settings/search-and-navigation.feature: A setting is found by the words people use for it [pull request template, Follow change request templates]
+settings/search-and-navigation.feature: A setting no chosen environment supports says what it needs ["laptop" can settle threads, Auto-settle merged threads requires a supporting environment. Choose one to continue.]
+settings/search-and-navigation.feature: A setting no chosen environment supports says what it needs [no environment can settle threads, Auto-settle merged threads requires a supporting environment. Connect or update an environment to continue.]
+settings/search-and-navigation.feature: A setting on an environment that went offline is offered where it can be set
+settings/search-and-navigation.feature: A setting only some environments support is offered for those
+settings/search-and-navigation.feature: A setting that belongs to another scope asks the user to choose that scope
+settings/search-and-navigation.feature: A setting that only appears when another is on opens at that toggle
 settings/search-and-navigation.feature: A theme that cannot be restored rolls back
 settings/search-and-navigation.feature: Back with nowhere to return to lands on a new thread
 settings/search-and-navigation.feature: Cancelling the restore changes nothing
 settings/search-and-navigation.feature: Choosing a section opens it
 settings/search-and-navigation.feature: Confirming the restore resets the listed settings
 settings/search-and-navigation.feature: Device-only sections do not ask where settings apply
+settings/search-and-navigation.feature: Environment settings are found without a primary environment
 settings/search-and-navigation.feature: Escape clears the search
+settings/search-and-navigation.feature: Escape leaves settings when nothing else takes it
+settings/search-and-navigation.feature: Every word of the search must match
+settings/search-and-navigation.feature: Keyboard commands are found by name, id or default key [sidebar.toggle]
+settings/search-and-navigation.feature: Keyboard commands are found by name, id or default key [toggle sidebar]
+settings/search-and-navigation.feature: Keyboard commands rank after other settings
 settings/search-and-navigation.feature: Leaving settings returns to where the user was
 settings/search-and-navigation.feature: Moving between sections is one step back
 settings/search-and-navigation.feature: Moving between sections keeps the chosen scope
 settings/search-and-navigation.feature: Nothing matches the search
 settings/search-and-navigation.feature: Opening a search result goes to that setting
 settings/search-and-navigation.feature: Opening the same result again scrolls back to it
+settings/search-and-navigation.feature: Restoring defaults gives agents browser access back and says so
+settings/search-and-navigation.feature: Restoring defaults is unavailable while every setting is at its default
 settings/search-and-navigation.feature: Restoring defaults lists what will change and asks first
 settings/search-and-navigation.feature: Results are ranked by how well the title matches [mod+b, Sidebar: Toggle]
 settings/search-and-navigation.feature: Results are ranked by how well the title matches [model, Default model]
+settings/search-and-navigation.feature: Search ignores case, extra spaces and accents
+settings/search-and-navigation.feature: Search results show each setting with its section
+settings/search-and-navigation.feature: Settings that depend on what this machine can do are only found when it can [no connected environment has provider settings, health check, Provider health check interval]
+settings/search-and-navigation.feature: Settings that depend on what this machine can do are only found when it can [no connected environment has provider settings, usage providers, Usage providers]
+settings/search-and-navigation.feature: Settings that do not apply here are not found [the user is editing all projects, project, Project overview]
+settings/search-and-navigation.feature: Tab from the settings search reaches the current section
 settings/search-and-navigation.feature: The keyboard moves through sections
 settings/search-and-navigation.feature: The page names where the user is [diagnostics, Diagnostics]
 settings/search-and-navigation.feature: The page names where the user is [the Appearance section, Appearance]
@@ -1524,7 +1546,9 @@ settings/search-and-navigation.feature: The page names where the user is [the Cl
 settings/search-and-navigation.feature: The page names where the user is [the Keybindings section, Keybindings]
 settings/search-and-navigation.feature: The page names where the user is [the Providers section, Providers]
 settings/search-and-navigation.feature: The page names where the user is [the open source licenses page, Open source licenses]
+settings/search-and-navigation.feature: The project section appears only while editing a project
 settings/search-and-navigation.feature: The slash key starts a settings search
+settings/search-and-navigation.feature: Thread confirmations are listed in the order of the page
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a modifier with no key on Linux, Linux shortcuts need a letter, number or function key]
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a shortcut HAL-C2 already uses, it collides with a HAL-C2 keybinding]
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a shortcut the system reserves, the system reserves it]
@@ -1562,12 +1586,126 @@ settings/source-control.feature: Revealing a signed-in account
 settings/source-control.feature: The environment could not be scanned
 settings/source-control.feature: The panel lists each tool with its state
 settings/storage.feature: A machine too old for storage cleanup asks to be updated
+settings/storage.feature: Blanking the temporary files folder goes back to the default
 settings/storage.feature: Settings for several machines show mixed values
+settings/storage.feature: The rule for idle threads' temporary files reads seven days until changed
+settings/storage.feature: The user chooses the folder for temporary files
+settings/updates.feature: A build that cannot update itself says why [automatic updates were turned off for this run, Automatic updates are disabled by the HAL_C2_DISABLE_AUTO_UPDATE setting.]
+settings/updates.feature: A build that cannot update itself says why [no update source is configured, Automatic updates are not available because no update feed is configured.]
+settings/updates.feature: A build that cannot update itself says why [the app on Linux is not the AppImage build, Automatic updates on Linux require running the AppImage build.]
+settings/updates.feature: A build that cannot update itself says why [the app runs from a development or unpacked build, Automatic updates are only available in packaged production builds.]
+settings/updates.feature: A build that cannot update itself says why [the update source is not https, Automatic updates are not available because the update feed is not https.]
+settings/updates.feature: A changed set of environment updates is offered again
+settings/updates.feature: A confirmation that joined an install hears when it fails
+settings/updates.feature: A copy that fails says so
+settings/updates.feature: A disabled provider is not offered an update
+settings/updates.feature: A dismissed update notice stays dismissed for that version
+settings/updates.feature: A download is checked against its published digest [do not match, refuses]
+settings/updates.feature: A download is checked against its published digest [match, accepts]
+settings/updates.feature: A downloaded update links its release notes
+settings/updates.feature: A downloaded update stays ready when a later check does not find it again [fails]
+settings/updates.feature: A downloaded update stays ready when a later check does not find it again [finds nothing newer]
+settings/updates.feature: A failed download can be retried
+settings/updates.feature: A failed install brings the MC back and says so
+settings/updates.feature: A failed install the MC could not hear reaches it once it is back
+settings/updates.feature: A failed provider update notice stays until it is dismissed
+settings/updates.feature: A failed server update says why and leaves the server where it was
+settings/updates.feature: A failed track change says so and keeps the current track
+settings/updates.feature: A failed update with no reason names the provider
+settings/updates.feature: A finished provider update notice goes away by itself
+settings/updates.feature: A late answer replaces a timed out update
+settings/updates.feature: A newer release of a dismissed provider is offered again
+settings/updates.feature: A nightly update lists what changed
+settings/updates.feature: A prepared update that is not confirmed in five minutes is dropped
+settings/updates.feature: A provider installed more than one way is not updated in one click
+settings/updates.feature: A provider that cannot be updated from here is offered only its settings
+settings/updates.feature: A provider that is still out of date after its update says so
+settings/updates.feature: A provider update on an environment that is not connected says so
+settings/updates.feature: A provider update that never answers is given up on after six minutes
+settings/updates.feature: A provider whose latest release is not usable is not offered [known to be broken with this app]
+settings/updates.feature: A provider whose latest release is not usable is not offered [not supported by this app]
+settings/updates.feature: A provider with several instances gets one offer
+settings/updates.feature: A release from the other track is not offered
+settings/updates.feature: A release with nothing to list is left out of the release notes
+settings/updates.feature: A request replaces a prepared update its MC never confirmed
+settings/updates.feature: A requested update gives up after three failed downloads
+settings/updates.feature: A requested update looks again before saying the app is current
+settings/updates.feature: A requested update that cannot start says why [automatic updates are disabled on this machine, Automatic updates are disabled on this machine.]
+settings/updates.feature: A requested update that cannot start says why [the downloaded update is gone before it is ready, The desktop app lost the downloaded update.]
+settings/updates.feature: A server behind the app offers an update in the conversation
+settings/updates.feature: A server run by a desktop app this client cannot update points to that machine
+settings/updates.feature: A server run by another machine's desktop app asks before that app relaunches
+settings/updates.feature: A stable update shows no release notes popover
+settings/updates.feature: A successful update names the version it reconnected on
+settings/updates.feature: A track the user never chose follows the installed build [nightly build, Nightly]
+settings/updates.feature: A track the user never chose follows the installed build [stable release, Stable]
+settings/updates.feature: An Intel build on an Apple Silicon Mac warns the user
+settings/updates.feature: An MC that connects after an update was found hears about it
+settings/updates.feature: An update step that fails says so [the user checks for updates, Could not check for updates]
+settings/updates.feature: An update step that fails says so [the user downloads the update, Could not download update]
+settings/updates.feature: An update step that fails says so [the user restarts to install, Could not install update]
 settings/updates.feature: At launch a closed update offer stays closed for that version
 settings/updates.feature: At launch an offered update that is refused says why
 settings/updates.feature: At launch an outdated provider is offered its update
 settings/updates.feature: At launch the offered update runs and reports it finished
 settings/updates.feature: At launch the update offer leads to the provider settings
+settings/updates.feature: Checking for updates from the application menu says when it did not work [the check fails with "Network unreachable", Update check failed, Network unreachable]
+settings/updates.feature: Checking for updates from the application menu says when it did not work [the check fails with no reason, Update check failed, An unknown error occurred. Please try again later.]
+settings/updates.feature: Checking for updates from the application menu says when it did not work [this build cannot update itself, Updates unavailable, the reason this build cannot update itself]
+settings/updates.feature: Checking for updates from the application menu says when the app is current
+settings/updates.feature: Checking for updates in a build without updates and no reason for it says so
+settings/updates.feature: Confirming an update joins an install that is already running
+settings/updates.feature: Copying the update command says what to run and where
+settings/updates.feature: Download progress is reported in steps of ten percent
+settings/updates.feature: Each environment's update row shows how its update went [fails with "npm is not installed", npm is not installed]
+settings/updates.feature: Each environment's update row shows how its update went [finishes, Updated]
+settings/updates.feature: Each environment's update row shows how its update went [is running, Updating…]
+settings/updates.feature: Each environment's update row shows how its update went [leaves the provider still outdated, Codex still appears outdated. Review provider settings for details.]
+settings/updates.feature: Leaving the nightly track may install an older version
+settings/updates.feature: No update check starts while an update is downloading
+settings/updates.feature: Only a download the app can verify is offered [is https with a sha256 digest, offered]
+settings/updates.feature: Only a download the app can verify is offered [is https with no digest, not offered]
+settings/updates.feature: Only a download the app can verify is offered [is plain http with a sha256 digest, not offered]
+settings/updates.feature: Only releases of the followed track appear in the release notes
+settings/updates.feature: Provider updates on several machines report each machine
+settings/updates.feature: Provider updates that finished before the app connected are not announced
+settings/updates.feature: Release notes are shown as plain short lines
+settings/updates.feature: Release notes leave out the boilerplate of a GitHub release
+settings/updates.feature: Release notes link to the rest on GitHub [5, 5, 0, View release on GitHub]
+settings/updates.feature: Release notes link to the rest on GitHub [5, 5, 4, 4 older releases on GitHub]
+settings/updates.feature: Release notes link to the rest on GitHub [5, 6, 0, 1 more change on GitHub]
+settings/updates.feature: Release notes link to the rest on GitHub [5, 8, 0, 3 more changes on GitHub]
+settings/updates.feature: Release notes that cannot be opened say so
+settings/updates.feature: Restarting to install an update warns that running tasks stop
+settings/updates.feature: Several outdated providers are offered together at launch
+settings/updates.feature: The Intel build warning says what to do next [an update is available to download, to download the update to switch to the native build]
+settings/updates.feature: The Intel build warning says what to do next [an update was downloaded, to restart to install the native build]
+settings/updates.feature: The Intel build warning says what to do next [no update is available, the next app update will replace it with the native one]
+settings/updates.feature: The desktop app downloads an update and installs it on restart
+settings/updates.feature: The desktop app looks for updates by itself
+settings/updates.feature: The provider update notice opens the provider settings
+settings/updates.feature: The sidebar shows how a provider update is going [Codex and Claude are being updated, Updating 2 providers]
+settings/updates.feature: The sidebar shows how a provider update is going [Codex and Claude were updated, 2 providers updated]
+settings/updates.feature: The sidebar shows how a provider update is going [Codex is being updated, Updating Codex]
+settings/updates.feature: The sidebar shows how a provider update is going [Codex was updated but is still out of date, Codex still needs an update]
+settings/updates.feature: The sidebar shows how a provider update is going [Codex was updated to 0.52.0, Codex updated: v0.52.0]
+settings/updates.feature: The sidebar shows how a provider update is going [the update of Codex to 0.52.0 failed, Codex v0.52.0 update failed]
+settings/updates.feature: The sidebar shows how a provider update is going [the updates of two providers failed, 2 provider updates failed]
+settings/updates.feature: The sidebar's update button says where the update stands [the app is checking for an update, Checking for updates…]
+settings/updates.feature: The sidebar's update button says where the update stands [the app is up to date, Check for updates]
+settings/updates.feature: The sidebar's update button says where the update stands [the download of v1.4.0 failed, Download failed for v1.4.0. Click to retry.]
+settings/updates.feature: The sidebar's update button says where the update stands [the install of v1.4.0 failed, Install failed for v1.4.0. Click to retry.]
+settings/updates.feature: The sidebar's update button says where the update stands [update v1.4.0 is available, Update v1.4.0 ready to download]
+settings/updates.feature: The sidebar's update button says where the update stands [update v1.4.0 is downloading at 42 percent, Downloading update (42%)]
+settings/updates.feature: The sidebar's update button says where the update stands [update v1.4.0 was downloaded, Update v1.4.0 downloaded. Click to restart and install.]
+settings/updates.feature: The update notice waits for a WSL backend that is still starting
+settings/updates.feature: The update track cannot change while an update step is running
+settings/updates.feature: The user copies the update command instead
+settings/updates.feature: The user switches update track [Nightly]
+settings/updates.feature: The user switches update track [Stable]
+settings/updates.feature: Updating a server run by a desktop app says the app relaunched
+settings/updates.feature: Updating every machine confirms desktop hosts first
+settings/updates.feature: Windows and WSL are offered their updates separately
 settings/usage-limit-sources.feature: A hub cannot be added without a URL and key
 settings/usage-limit-sources.feature: A hub that cannot be read is named in limits
 settings/usage-limit-sources.feature: A hub's accounts are pooled into limits
