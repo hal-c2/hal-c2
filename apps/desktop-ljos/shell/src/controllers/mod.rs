@@ -46,6 +46,7 @@ pub mod sidebar;
 pub mod slack_settings;
 pub mod snap_shot;
 pub mod source_control_settings;
+pub mod space;
 pub mod stage;
 pub mod storage_settings;
 pub mod terminals;
@@ -198,6 +199,7 @@ pub fn registrations() -> Vec<Registration> {
             "sourceControlSettings",
             &["sourceControlSettings"],
             Scope::Window,
+        Registration::new::<space::Space>("space", &["space"], Scope::Window),
         ),
         Registration::new::<stage::Stage>("stage", &["stage"], Scope::Window),
         Registration::new::<storage_settings::StorageSettings>(

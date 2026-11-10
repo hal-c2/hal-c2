@@ -85,6 +85,8 @@ pub fn register(engine: &Engine) {
     terminal::register(engine);
     engine.register_singleton::<controllers::settings::SettingsObject>(MODULE, v);
     engine.register_singleton::<controllers::keybindings::KeybindingsObject>(MODULE, v);
+    engine.register_singleton::<controllers::space::SpacesObject>(MODULE, v);
+    controllers::space::register(engine);
     engine.register_singleton::<controllers::mc_plugin::McPluginsObject>(MODULE, v);
     engine.register_singleton::<controllers::threads::ThreadsObject>(MODULE, v);
     engine.register_singleton::<controllers::panel::PanelObject>(MODULE, v);

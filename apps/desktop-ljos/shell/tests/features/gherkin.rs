@@ -136,8 +136,34 @@ pub fn parse(file: &str, text: &str) -> Vec<Scenario> {
         }
     };
 
+    // A doc string (`"""`) reaches its step as a table of one cell: the lines
+    // between the marks, less the opening mark's indent.
+    let mut doc: Option<(usize, Vec<String>)> = None;
     for (index, raw) in text.split('\n').enumerate() {
         let line = raw.trim();
+        if let Some((indent, lines)) = doc.as_mut() {
+            if line != "\"\"\"" {
+                let cut = raw.len() - raw.trim_start().len();
+                lines.push(raw[cut.min(*indent)..].trim_end().to_owned());
+                continue;
+            }
+            let said = std::mem::take(lines).join("\n");
+            doc = None;
+            let steps = match into {
+                Into::FeatureBackground => Some(&mut feature_background),
+                Into::RuleBackground => Some(&mut rule_background),
+                Into::Scenario => current.as_mut().map(|c| &mut c.steps),
+                Into::Nowhere => None,
+            };
+            if let Some(step) = steps.and_then(|s| s.last_mut()) {
+                step.table.push(vec![said]);
+            }
+            continue;
+        }
+        if line == "\"\"\"" {
+            doc = Some((raw.len() - raw.trim_start().len(), Vec::new()));
+            continue;
+        }
         if line.is_empty() || line.starts_with('#') {
             continue;
         }

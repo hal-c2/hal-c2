@@ -2731,6 +2731,509 @@
           ]
         },
         {
+          "name": "Spaces",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "spaces",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "pages",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "trash",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "blocks",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "comments",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "history",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "decks",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "deckTrash",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "slides",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "images",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "imageTrash",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "projects",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "spaceId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "spaceIdChanged"
+            },
+            {
+              "name": "spaceName",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "spaceNameChanged"
+            },
+            {
+              "name": "pageId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pageIdChanged"
+            },
+            {
+              "name": "fileSpaceId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fileSpaceIdChanged"
+            },
+            {
+              "name": "page",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pageChanged"
+            },
+            {
+              "name": "agent",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "agentChanged"
+            },
+            {
+              "name": "deckId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "deckIdChanged"
+            },
+            {
+              "name": "deck",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "deckChanged"
+            },
+            {
+              "name": "presenting",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "presentingChanged"
+            },
+            {
+              "name": "slide",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "slideChanged"
+            },
+            {
+              "name": "slideNumber",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "slideNumberChanged"
+            },
+            {
+              "name": "slideCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "slideCountChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "viewers",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "viewersChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "SpaceRows",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "indexOf",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "get",
+              "parameters": [
+                {
+                  "name": "row",
+                  "type": "int"
+                }
+              ],
+              "returnType": "var"
+            }
+          ]
+        },
+        {
+          "name": "SpaceHistory",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "shown",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "shownChanged"
+            },
+            {
+              "name": "pageId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pageIdChanged"
+            },
+            {
+              "name": "versions",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "blocks",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "loading",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "loadingChanged"
+            },
+            {
+              "name": "failed",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "failedChanged"
+            },
+            {
+              "name": "hasMore",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "hasMoreChanged"
+            },
+            {
+              "name": "reading",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "readingChanged"
+            },
+            {
+              "name": "version",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "versionChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "changed",
+              "parameters": []
+            }
+          ],
+          "methods": []
+        },
+        {
           "name": "McPlugins",
           "since": "1.0",
           "base": "QtObject",
