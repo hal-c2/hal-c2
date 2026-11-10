@@ -193,25 +193,86 @@ composer/editors-and-keys.feature: Up and Down only recall from the first and la
 composer/editors-and-keys.feature: Up at the oldest prompt moves the caret instead
 composer/editors-and-keys.feature: Vim keys can be turned on from settings
 composer/model-and-mode.feature: A branch that does not exist is created when chosen
+composer/model-and-mode.feature: A composer that falls back to another account keeps the effort picked for the model
+composer/model-and-mode.feature: A composer with no usable provider says so in place of the model [none of the providers can be set up, No provider available]
+composer/model-and-mode.feature: A composer with no usable provider says so in place of the model [one of the providers can be set up, Open provider settings]
+composer/model-and-mode.feature: A custom model named like a Codex alias stays the model the user picked
+composer/model-and-mode.feature: A draft follows a model change made on another client
+composer/model-and-mode.feature: A fallback account takes no options that were not picked for what it shows ["Claude Team", with high effort of its own, "Claude Team" at its own high effort]
+composer/model-and-mode.feature: A fallback account takes no options that were not picked for what it shows [only a Codex account, the Codex model at its default effort]
+composer/model-and-mode.feature: A fallback keeps the effort of a model saved under an alias
+composer/model-and-mode.feature: A favourite older model is listed outside the folded section
+composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+a, the permissions]
+composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+e, the current effort]
+composer/model-and-mode.feature: A machine is named the way its owner would know it [another one, server, Rack, server]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, , , This device]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, laptop, Work Mac, laptop]
 composer/model-and-mode.feature: A model that cannot be used says why and cannot be chosen
+composer/model-and-mode.feature: A model the provider has just added is marked as new
 composer/model-and-mode.feature: A new thread can run on a machine that has other projects
+composer/model-and-mode.feature: A new thread says which permissions its first message uses
+composer/model-and-mode.feature: A project that is not a Git repository starts its thread in its folder
+composer/model-and-mode.feature: A prompt that says ultrathink in its own words fixes the effort
+composer/model-and-mode.feature: A provider that cannot be used says why in the model picker [failed its check with "codex not found", Codex Work — Unavailable. codex not found]
+composer/model-and-mode.feature: A provider that cannot be used says why in the model picker [has not finished its check, Codex Work — Not ready.]
+composer/model-and-mode.feature: A provider that cannot be used says why in the model picker [is turned off in settings, Codex Work — Disabled in settings.]
+composer/model-and-mode.feature: A provider that cannot be used says why in the model picker [reports the warning "Signed out", Codex Work — Limited. Signed out]
+composer/model-and-mode.feature: A provider that needs setting up offers its setup from the model picker
+composer/model-and-mode.feature: A provider's older models are shown in place from the end of the list
+composer/model-and-mode.feature: A saved model its provider no longer lists is kept and marked unavailable
 composer/model-and-mode.feature: A search that matches no model says so
+composer/model-and-mode.feature: A second instance with no draft model of its own uses its own default
+composer/model-and-mode.feature: A short name the model manifest gives wins over the worked-out one
 composer/model-and-mode.feature: A started thread can move to another provider
+composer/model-and-mode.feature: A started thread names its machine without offering others
+composer/model-and-mode.feature: A thread still preparing its worktree says "New worktree" until checkout finishes
+composer/model-and-mode.feature: A thread whose saved permissions its provider no longer offers is shown as Supervised
+composer/model-and-mode.feature: An agent's own options do not crowd the model control
+composer/model-and-mode.feature: An effort outside the model's levels steps from the model's default
 composer/model-and-mode.feature: At the default chat width the machine, workspace and branch each have their own control
+composer/model-and-mode.feature: Auto balance is refused while the draft has attachments
+composer/model-and-mode.feature: Checkouts of one repository are one project in the new-thread picker
+composer/model-and-mode.feature: Choosing another effort takes Ultrathink off the prompt
+composer/model-and-mode.feature: Confirming input-method text in the model search keeps the picker open
+composer/model-and-mode.feature: Each model keeps the options the user last gave it
+composer/model-and-mode.feature: Every saved custom model is offered
 composer/model-and-mode.feature: Favourite models are listed first and can be unfavourited
 composer/model-and-mode.feature: Models are grouped by provider
 composer/model-and-mode.feature: Models from unavailable providers cannot be chosen
 composer/model-and-mode.feature: New threads start with the default permissions
 composer/model-and-mode.feature: New worktree mode needs a base branch before sending
+composer/model-and-mode.feature: One control chooses the model and then its effort
+composer/model-and-mode.feature: Only the permissions the provider supports are offered
+composer/model-and-mode.feature: Planning and building are toggled on the desktop only when plan mode is on
+composer/model-and-mode.feature: Search results keep the provider's newest-first order
+composer/model-and-mode.feature: Searching the models finds a provider's older models too
 composer/model-and-mode.feature: Searching the models matches provider and model names [claude, sonnet, gpt-5-codex]
 composer/model-and-mode.feature: Searching the models matches provider and model names [codex, gpt-5-codex, opus]
 composer/model-and-mode.feature: Searching the models matches provider and model names [opus, opus, gpt-5-codex]
+composer/model-and-mode.feature: Stepping the effort does nothing while the composer is taken [an approval is waiting for the user]
+composer/model-and-mode.feature: Stepping the effort does nothing while the composer is taken [no provider is available]
+composer/model-and-mode.feature: Stepping the effort does nothing while the composer is taken [the agent's question is waiting for an answer]
+composer/model-and-mode.feature: Stepping the effort does nothing while the composer is taken [the user is editing a queued message]
+composer/model-and-mode.feature: Stepping the effort does nothing while the composer is taken [the user is holding the step key down after one step]
+composer/model-and-mode.feature: Stepping the effort does nothing while the prompt says ultrathink in its own words
+composer/model-and-mode.feature: Stepping the effort leaves Ultrathink from above the top level [down, high]
+composer/model-and-mode.feature: Stepping the effort leaves Ultrathink from above the top level [up, medium]
 composer/model-and-mode.feature: The chosen model is shown with its provider
+composer/model-and-mode.feature: The composer names the model's effort as the user chose to see it [Extra High, Bars, four bars]
+composer/model-and-mode.feature: The composer names the model's effort as the user chose to see it [Extra High, Word, "Extra High"]
+composer/model-and-mode.feature: The composer names the model's effort as the user chose to see it [Low, Bars, one bar]
+composer/model-and-mode.feature: The composer names the model's effort as the user chose to see it [Max, Bars, "Max"]
+composer/model-and-mode.feature: The composer names the permissions only when they differ from the default
 composer/model-and-mode.feature: The last model used with each provider is remembered
 composer/model-and-mode.feature: The machine is left out when it is the only one and it is this one
+composer/model-and-mode.feature: The model button shows the name the user would say [Claude, Claude Opus 5.5, Opus 5.5]
+composer/model-and-mode.feature: The model button shows the name the user would say [Codex, GPT-5.5, GPT-5.5]
+composer/model-and-mode.feature: The model button shows the name the user would say [OpenCode, NVIDIA: Nemotron 3 Super, Nemotron 3 Super]
+composer/model-and-mode.feature: The model cannot be changed while a message is on its way
+composer/model-and-mode.feature: The model control stays open until the user leaves it
+composer/model-and-mode.feature: The model picker opens on the favourites when there are any
 composer/model-and-mode.feature: The model picker shortcut opens and closes the model picker
+composer/model-and-mode.feature: The model picker waits for the provider list before it can be used
 composer/model-and-mode.feature: The only connected machine is still shown when it is a remote one
 composer/model-and-mode.feature: The user chooses a model with the keyboard
 composer/model-and-mode.feature: The user chooses to work in the current checkout or a new worktree
@@ -226,7 +287,13 @@ composer/model-and-mode.feature: The user sets what the agent may do without ask
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Auto]
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Full access]
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Supervised]
+composer/model-and-mode.feature: The user steps the effort from the keyboard without leaving the prompt [high, up, low]
+composer/model-and-mode.feature: The user steps the effort from the keyboard without leaving the prompt [low, down, high]
+composer/model-and-mode.feature: The user steps the effort from the keyboard without leaving the prompt [medium, down, low]
+composer/model-and-mode.feature: The user steps the effort from the keyboard without leaving the prompt [medium, up, high]
 composer/model-and-mode.feature: The user switches the model for the next turn
+composer/model-and-mode.feature: The user takes a new thread off Auto balance
+composer/model-and-mode.feature: Ultrathink is typed, not picked
 composer/model-and-mode.feature: Unavailable providers stay listed with the reason
 composer/qt-scenarios.feature: A disabled model shows its reason and cannot be chosen
 composer/qt-scenarios.feature: A jump shortcut chooses the numbered model
@@ -253,32 +320,72 @@ composer/qt-scenarios.feature: With a turn running and no draft, the primary act
 composer/qt-shell-backlog.feature: Snap Shot settings record the shortcut and show support
 composer/qt-shell-backlog.feature: The global Snap Shot shortcut attaches a screen region
 composer/question-answers.feature: A failed answer keeps what the user wrote
+composer/question-answers.feature: A number key picks the option in that place
 composer/question-answers.feature: A proposed plan is implemented from the composer
+composer/question-answers.feature: A question asked during a turn still lets the user stop the turn
 composer/question-answers.feature: A question can be dismissed without an answer
+composer/question-answers.feature: A question that allows several answers waits for the user to move on
+composer/question-answers.feature: A question that could not be dismissed stays and says why
 composer/question-answers.feature: A question with only fixed choices takes no attachments
+composer/question-answers.feature: An answer is not sent while its files are still uploading or failed
 composer/question-answers.feature: Files can be attached to a typed answer and stay with that question
+composer/question-answers.feature: Files cannot be removed from an answer that is on its way
+composer/question-answers.feature: Moving by hand right after a pick is not moved again [goes back to a question already shown, Which database?]
+composer/question-answers.feature: Moving by hand right after a pick is not moved again [presses Next, Which cache?]
+composer/question-answers.feature: Picking an option of a single-choice question moves on to the next question
+composer/question-answers.feature: Questions asked while the composer is open are shown above its editor
+composer/question-answers.feature: Several questions are stepped through and answered together
+composer/question-answers.feature: The first question still unanswered is the one shown
+composer/question-answers.feature: The question is folded away on the desktop to read the conversation
 composer/queue-and-steer.feature: A held queue is resumed from the composer
 composer/queue-and-steer.feature: A held queue says its messages are safe
 composer/queue-and-steer.feature: A held queue that only waits on the provider can be resumed
+composer/queue-and-steer.feature: A queued message being edited is marked in the queue
 composer/queue-and-steer.feature: A queued message can steer the running turn
+composer/queue-and-steer.feature: A queued message cannot be edited while a question is open
+composer/queue-and-steer.feature: A queued message is listed before the MC confirms it
+composer/queue-and-steer.feature: A queued message offers to send it now, edit it or remove it
+composer/queue-and-steer.feature: A queued message on a stopped thread is offered to send now
+composer/queue-and-steer.feature: A queued message that quotes the agent shows the quoted words
+composer/queue-and-steer.feature: A queued message's attachments are listed and open full size
 composer/queue-and-steer.feature: A removal the MC refuses is reported
 composer/queue-and-steer.feature: A resume that the MC refuses is reported
 composer/queue-and-steer.feature: A resume warning dismissed and shown again is one fresh warning
 composer/queue-and-steer.feature: A resume while reconnecting is refused with a warning
+composer/queue-and-steer.feature: A running turn with nothing to send offers only Stop
+composer/queue-and-steer.feature: A save that finishes after a newer edit began leaves the newer edit alone
+composer/queue-and-steer.feature: A second save of a queued message waits for the first
 composer/queue-and-steer.feature: A shortcut bound to stop interrupts the running turn
 composer/queue-and-steer.feature: A steer the MC refuses is reported
+composer/queue-and-steer.feature: An edit open when a question arrives comes back after the answer
 composer/queue-and-steer.feature: An edit the MC refuses stays in the composer
 composer/queue-and-steer.feature: An edit whose message starts running is dropped when the draft had text
 composer/queue-and-steer.feature: An edit whose message starts running is kept when the draft was empty
+composer/queue-and-steer.feature: An edit whose message starts while its thread is closed ends then
+composer/queue-and-steer.feature: An unchanged edit whose message starts running closes quietly
+composer/queue-and-steer.feature: Deleting a thread ends its queued edit
+composer/queue-and-steer.feature: Editing a queued message can drop its attachments
 composer/queue-and-steer.feature: Editing the last queued message from the composer and cancelling restores the prior draft
+composer/queue-and-steer.feature: Leaving the thread keeps the edit
+composer/queue-and-steer.feature: One queue action at a time
 composer/queue-and-steer.feature: Queued messages are listed in the order they run
 composer/queue-and-steer.feature: Removing a queued message cancels its run
 composer/queue-and-steer.feature: Saving an edited queued message changes it and gives the draft back
+composer/queue-and-steer.feature: Sending with Mod+Enter during a turn follows the follow-up setting [queue, Mod+Enter, is queued]
+composer/queue-and-steer.feature: Sending with Mod+Enter during a turn follows the follow-up setting [queue, Mod+Shift+Enter, steers the running turn]
+composer/queue-and-steer.feature: Sending with Mod+Enter during a turn follows the follow-up setting [steer, Mod+Enter, steers the running turn]
+composer/queue-and-steer.feature: Sending with Mod+Enter during a turn follows the follow-up setting [steer, Mod+Shift+Enter, is queued]
 composer/queue-and-steer.feature: Stopping the running turn from an empty composer
 composer/queue-and-steer.feature: The follow-up setting decides what sending during a turn does [queue, sends the opposite way, tweak, steers the running turn]
 composer/queue-and-steer.feature: The follow-up setting decides what sending during a turn does [queue, sends, tweak, is queued]
 composer/queue-and-steer.feature: The follow-up setting decides what sending during a turn does [steer, sends the opposite way, tweak, is queued]
 composer/queue-and-steer.feature: The follow-up setting decides what sending during a turn does [steer, sends, tweak, steers the running turn]
+composer/queue-and-steer.feature: The queue can be folded away and says how much it holds
+composer/queue-and-steer.feature: The send control says what sending will do [a turn is running and the follow-up behaviour is "queue", Queue message]
+composer/queue-and-steer.feature: The send control says what sending will do [a turn is running and the follow-up behaviour is "steer", Steer message]
+composer/queue-and-steer.feature: The send control says what sending will do [the running turn has finished, Submit message]
+composer/queue-and-steer.feature: The send control says what sending will do [the user is editing a queued message, Update queued message]
+composer/queue-and-steer.feature: The steer shortcut sends the first queued message now on a stopped thread
 composer/queue-and-steer.feature: What the MC queued for the agent itself waits under what it stands for [a delegated task's result stored before results were notifications, Tax tests finished]
 composer/queue-and-steer.feature: What the MC queued for the agent itself waits under what it stands for [a delegated task's result, Tax tests finished]
 composer/queue-and-steer.feature: What the MC queued for the agent itself waits under what it stands for [the agent's own wake-up, Background activity updated]
@@ -655,6 +762,10 @@ files/search.feature: The search is cleared when the user switches project
 mc/orchestration/queue-and-steering.feature: A usage limit keeps the queue as it was
 mc/orchestration/runs.feature: A failed turn keeps the output it had already produced
 mc/orchestration/runs.feature: A provider retry is recorded as a retry
+mc/platform/openshell.feature: Settings says how to install OpenShell where it can run
+mc/platform/openshell.feature: Settings says review sandboxes can run once the MC has a gateway
+mc/platform/openshell.feature: Settings says when the MC could not answer, and can ask again
+mc/platform/openshell.feature: Settings shows whether review sandboxes can run, and what to fix
 mc/platform/storage-layout.feature: The desktop app's control socket lives in the runtime directory [XDG_RUNTIME_DIR is "/run/user/1000", /run/user/1000/hal-c2]
 mc/platform/websocket-protocol.feature: A client refuses a server speaking an unknown protocol
 mc/platform/websocket-protocol.feature: A client skips an event type it does not know
@@ -1211,6 +1322,7 @@ planning/planner.feature: The user picks the planner's Slack channel in its sett
 planning/planner.feature: What the user changes while the settings save is kept
 plugins/keymaps.feature: Resetting keybindings removes every override
 plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes
+plugins/plugin-contributions.feature: A disabled package can be checked to compile without enabling it
 plugins/plugin-contributions.feature: A failed plugin can be restarted from its settings
 plugins/plugin-contributions.feature: A page that could not be fetched is asked for again once its environment is back
 plugins/plugin-contributions.feature: A page whose UI part fails to load shows the error in its tab
@@ -1226,6 +1338,7 @@ plugins/plugin-contributions.feature: A plugin thread shows the plugin's header 
 plugins/plugin-contributions.feature: A plugin thread shows the plugin's mark in the thread list
 plugins/plugin-contributions.feature: A plugin without its own settings page gets one from its declared settings
 plugins/plugin-contributions.feature: A plugin's own settings page replaces the generated one
+plugins/plugin-contributions.feature: A running plugin is not checked from the plugin list
 plugins/plugin-contributions.feature: A setting whose JSON does not parse cannot be saved
 plugins/plugin-contributions.feature: A thread the plugin keeps out of the list is not in the thread list
 plugins/plugin-contributions.feature: A thread the plugin kept out of the list is listed once the plugin is not running
@@ -1249,8 +1362,12 @@ plugins/plugin-contributions.feature: The same plugin on two environments is one
 plugins/plugin-contributions.feature: The settings of a plugin that did not load say why
 plugins/plugin-contributions.feature: There are no tabs while no plugin adds a page
 plugins/plugin-contributions.feature: UI parts that watch the same topic share it
+plugins/turn-hooks.feature: A notice folded behind later tool calls still offers Stop
+plugins/turn-hooks.feature: A notice's Stop stops only the turn it is in
+plugins/turn-hooks.feature: A plugin's notice offers Stop while its turn works
 plugins/ui-plugins.feature: A disabled plugin stays disabled after a restart
 plugins/ui-plugins.feature: A plugin URL that cannot be reached is reported
+plugins/ui-plugins.feature: A plugin shows times in the time format the user chose
 plugins/ui-plugins.feature: A slot a surface does not have is skipped quietly
 plugins/ui-plugins.feature: Plugin errors are visible to the user
 preview/automation.feature: A dev-server port wins over an address given with it
