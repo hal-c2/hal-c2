@@ -571,6 +571,14 @@ impl Previews {
         }
     }
 
+    /// Opens a page the shell itself names (a file the viewer hands over):
+    /// through a tab of the thread shown, as `open_address` opens one.
+    pub fn open_page(&mut self, url: &str) {
+        let to = self.shown_for();
+        let named = self.port_named(url, &self.rows);
+        self.open_through_tab(url, to, named);
+    }
+
     /// Opens `address` in the browser, for the thread shown: through the
     /// connected MC's forward when it is a dev server on the thread's
     /// machine, another MC's.

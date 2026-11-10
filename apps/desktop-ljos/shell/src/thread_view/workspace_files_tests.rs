@@ -821,6 +821,23 @@ fn ticking_a_task_writes_the_file() {
     let mut files = files_in("/w");
     opened(&mut files, "todo.md", "- [ ] a\n- [x] b\n");
     files.toggle_task(0);
+    // The tick waits on a read: the file may have changed underneath.
+    let read = files
+        .take_effects()
+        .into_iter()
+        .find_map(|e| match e {
+            Effect::Call {
+                method: "projects.readFile",
+                then,
+                ..
+            } => Some(then),
+            _ => None,
+        })
+        .expect("a read");
+    files.answer(
+        read,
+        Ok(json!({"contents": "- [ ] a\n- [x] b\n", "byteLength": 18, "truncated": false})),
+    );
     let effects = files.take_effects();
     assert!(effects.contains(&Effect::Lines("- [x] a\n- [x] b\n".into())));
     let write = effects
@@ -883,4 +900,28 @@ fn entries_are_read_from_a_listing() {
         ]
     );
     assert!(entries_of(&json!({})).is_empty());
+}
+
+// --- Writes when the viewer goes away ---
+
+// A window closing or the app quitting waits on `writing`: it counts the
+// closing write sent while another was under way, until both are answered
+// (desktop-qt's WorkspaceFiles::writing).
+#[test]
+fn writing_lasts_until_every_write_sent_is_answered() {
+    let mut files = files_in("/w");
+    editing(&mut files, "a.txt", "a\n");
+    assert!(!files.writing());
+    files.edit("a1\n");
+    files.save_due();
+    let (_, _, first) = call(&mut files);
+    assert!(files.writing());
+    files.edit("a12\n");
+    files.finish_writes();
+    let (_, payload, closing) = call(&mut files);
+    assert_eq!(payload["contents"], "a12\n");
+    files.answer(first, Ok(json!({})));
+    assert!(files.writing(), "the closing write is still on its way");
+    files.answer(closing, Ok(json!({})));
+    assert!(!files.writing());
 }

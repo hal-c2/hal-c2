@@ -29,6 +29,38 @@ fn describe_media(world: &World) -> String {
         text_prop(world, "fileProblem"),
         text_prop(world, "mediaUrl"),
         image_state(world)
+    ) + &media_record(world)
+}
+
+/// What the fake served and what the engine said of media it could not open.
+fn media_record(world: &World) -> String {
+    let Some(fake) = world.mc.peek::<super::fake_files::FakeFiles>() else {
+        return String::new();
+    };
+    let downloads = fake.downloads();
+    let warned: Vec<String> = world
+        .engine()
+        .log_snapshot()
+        .into_iter()
+        .filter(|entry| entry.level >= ljos::prelude::LogLevel::Warning)
+        .map(|entry| entry.message)
+        .collect();
+    let player = world
+        .peek_part::<brick::Shown>()
+        .and_then(|shown| shown.0)
+        .and_then(|brick| match brick.find(world, "mediaPlayerView") {
+            Ok(Some(player)) => Some(format!(
+                "a player of {} (loaded {}, visible {})",
+                brick.text_of(world, player, "source"),
+                brick.flag(world, player, "loaded"),
+                brick.flag(world, player, "visible")
+            )),
+            _ => None,
+        })
+        .unwrap_or_else(|| "no player".into());
+    format!(
+        "; {player}; served {:?}, still to fail {:?}; the engine said {:?}",
+        downloads.downloaded, downloads.load_fails_once, warned
     )
 }
 
@@ -88,6 +120,29 @@ fn loaded_image(world: &mut World) -> Outcome<ObjectId> {
     }
 }
 
+/// The panel's player or document view, once it shows.
+fn shown_media(world: &mut World, object_name: &str) -> Outcome<ObjectId> {
+    let brick = show_panel(world)?;
+    let shown = move |w: &World| -> Option<ObjectId> {
+        let media = brick.find(w, object_name).ok()??;
+        brick.flag(w, media, "visible").then_some(media)
+    };
+    world.wait_for_with(
+        |w| shown(w).is_some(),
+        |w| format!("{object_name}; {}", describe_media(w)),
+    )?;
+    match shown(world) {
+        Some(media) => Ok(media),
+        None => fail!("{object_name} went away"),
+    }
+}
+
+fn url_is_media(world: &World, item: ObjectId, name: &str) -> bool {
+    let source = world.engine().read_by_name(item, name);
+    let url = text_prop(world, "mediaUrl");
+    matches!(&source, Value::String(s) | Value::Url(s) if s.as_str() == url)
+}
+
 /// Every `assets.createUrl` for a workspace's file.
 fn signings(world: &mut World) -> Outcome<Vec<crate::fake_mc::Rpc>> {
     world.sync()?;
@@ -113,20 +168,48 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the file is previewed as (an image|a video|audio|a document|a web page)",
         |world, c, _| {
-            if c[0] != "an image" {
-                fail!("the desktop does not preview {} yet", c[0]);
-            }
             let path = open_path(world);
-            let image = loaded_image(world)?;
+            if c[0] == "a web page" {
+                let brick = show_panel(world)?;
+                world.wait_for_with(
+                    |w| {
+                        super::files_workspace::flag_prop(w, "rendered")
+                            && matches!(brick.find(w, "fileOpenPreview"),
+                                Ok(Some(item)) if brick.flag(w, item, "visible"))
+                    },
+                    describe_media,
+                )?;
+                return Ok(());
+            }
+            if c[0] == "a document" {
+                let brick = show_panel(world)?;
+                let document = shown_media(world, "documentView")?;
+                world.wait_for_with(
+                    |w| brick.text_of(w, document, "pageCount") != "0",
+                    describe_media,
+                )?;
+            } else if c[0] == "an image" {
+                let image = loaded_image(world)?;
+                expect!(source_is_media(world, image), "{}", describe_media(world));
+            } else {
+                let brick = show_panel(world)?;
+                let player = shown_media(world, "mediaPlayerView")?;
+                expect!(
+                    url_is_media(world, player, "source")
+                        && brick.flag(world, player, "video") == (c[0] == "a video"),
+                    "{}",
+                    describe_media(world)
+                );
+                world.wait_for_with(
+                    |w| brick.flag(w, player, "loaded"),
+                    |w| format!("the media to load; {}", describe_media(w)),
+                )?;
+            }
             let downloaded = fake_files(&mut world.mc)
                 .downloads()
                 .downloaded
                 .contains(&path);
-            expect!(
-                source_is_media(world, image) && downloaded,
-                "{}",
-                describe_media(world)
-            );
+            expect!(downloaded, "{}", describe_media(world));
             expect!(
                 !drawn(world, "fileLines")? && !drawn(world, "fileEdit")?,
                 "the file shows as text too"
@@ -147,7 +230,10 @@ pub fn register(steps: &mut Steps) {
             .downloads()
             .load_fails_once
             .insert(c[0].clone());
-        Ok(())
+        // The player is made in the panel that stays: one shown later would
+        // drop the first one, and its failure with it, before a slow load
+        // fails, then load the file again.
+        show_panel(world).map(|_| ())
     });
     steps.step(
         "the user is told the (image|video|audio|document) could not be loaded",
@@ -193,7 +279,21 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+    steps.step("the audio plays", |world, _, _| {
+        let brick = show_panel(world)?;
+        let player = shown_media(world, "mediaPlayerView")?;
+        world.wait_for_with(|w| brick.flag(w, player, "loaded"), describe_media)?;
+        expect!(
+            world.engine().invoke_by_name(player, "toggle", &[]).is_ok(),
+            "the player cannot be toggled"
+        );
+        world.wait_for_with(|w| brick.flag(w, player, "playing"), describe_media)
+    });
     steps.step("the image is shown", |world, _, _| {
+        // Or an image a tool call viewed (TimelineDetailsSteps.cpp).
+        if super::timeline_details::expect_viewed_image(world)? {
+            return Ok(());
+        }
         let image = loaded_image(world)?;
         expect!(source_is_media(world, image), "{}", describe_media(world));
         Ok(())

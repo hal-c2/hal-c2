@@ -666,6 +666,12 @@ fn nullable(value: &str) -> Json {
     }
 }
 
+/// Whether the place is in a Git checkout: a worktree always is, a folder
+/// until its status says otherwise.
+fn repository(engine: &Engine, here: &Place) -> bool {
+    !here.worktree_path.is_empty() || git(engine).as_ref().is_none_or(|g| is_repo(&g.local))
+}
+
 fn is_repo(local: &Map<String, Json>) -> bool {
     local.get("isRepo").and_then(Json::as_bool).unwrap_or(true)
 }
@@ -1396,6 +1402,11 @@ impl Workspace {
         let Some(here) = place(engine) else {
             return "local".into();
         };
+        // A plain folder has no worktree to make, whatever the draft asked
+        // for (upstream #21404).
+        if !repository(engine, &here) {
+            return "local".into();
+        }
         if !here.draft_id.is_empty() {
             if !here.worktree_path.is_empty() {
                 return "local".into();
@@ -1403,6 +1414,12 @@ impl Workspace {
             return checkout(engine, &here.draft_id).env_mode;
         }
         if !here.worktree_path.is_empty() {
+            return "worktree".into();
+        }
+        // The MC holds a run "preparing" only while it checks out the
+        // thread's new worktree, whose path the row gets once it is done
+        // (upstream #13590).
+        if text(&self.thread_row(engine), "status") == "preparing" {
             return "worktree".into();
         }
         if !self.locked(engine)
@@ -1416,6 +1433,7 @@ impl Workspace {
     fn env_mode_changeable(&self, engine: &Engine) -> bool {
         match place(engine) {
             None => false,
+            Some(here) if !repository(engine, &here) => false,
             Some(here) if !here.draft_id.is_empty() => !each_model_gets_worktree(engine),
             Some(here) => !self.locked(engine) && here.worktree_path.is_empty(),
         }
@@ -1726,9 +1744,7 @@ impl Workspace {
         }
         // A place in a Git checkout: a worktree always is, a folder until
         // its status says otherwise.
-        let repository =
-            !here.worktree_path.is_empty() || git.as_ref().is_none_or(|g| is_repo(&g.local));
-        if !repository {
+        if !repository(engine, &here) {
             branch = None;
         }
 
@@ -1861,7 +1877,7 @@ impl Workspace {
             "branchesTotal": self.refs_total.max(self.refs.len() as i64),
             "branchesLoading": self.refs_loading,
             "branchSwitchPending": self.switching,
-            "branchChangeable": !here.cwd().is_empty() && repository,
+            "branchChangeable": !here.cwd().is_empty() && repository(engine, &here),
             "previousWorktree": previous,
         })
     }

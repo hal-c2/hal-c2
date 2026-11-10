@@ -170,9 +170,29 @@ pub fn set_config(world: &mut World, fields: Json) -> Outcome {
 /// packages/contracts EDITORS: the id of the editor the scenario names.
 pub fn editor_id(label: &str) -> Outcome<&'static str> {
     match label {
-        "VS Code" => Ok("vscode"),
-        "Zed" => Ok("zed"),
+        "Default Editor" => Ok("default"),
         "Cursor" => Ok("cursor"),
+        "Trae" => Ok("trae"),
+        "Kiro" => Ok("kiro"),
+        "VS Code" => Ok("vscode"),
+        "VS Code Insiders" => Ok("vscode-insiders"),
+        "VSCodium" => Ok("vscodium"),
+        "Zed" => Ok("zed"),
+        "Sublime Text" => Ok("sublime"),
+        "Antigravity" => Ok("antigravity"),
+        "IntelliJ IDEA" => Ok("idea"),
+        "Aqua" => Ok("aqua"),
+        "CLion" => Ok("clion"),
+        "DataGrip" => Ok("datagrip"),
+        "DataSpell" => Ok("dataspell"),
+        "GoLand" => Ok("goland"),
+        "PhpStorm" => Ok("phpstorm"),
+        "PyCharm" => Ok("pycharm"),
+        "Rider" => Ok("rider"),
+        "RubyMine" => Ok("rubymine"),
+        "RustRover" => Ok("rustrover"),
+        "WebStorm" => Ok("webstorm"),
+        "File Manager" => Ok("file-manager"),
         _ => fail!("{label} is not an editor these steps know"),
     }
 }
@@ -210,7 +230,7 @@ pub fn show_panel(world: &mut World) -> Outcome<Brick> {
 }
 
 /// The entry named `entry` of the menu `menu_name` the panel keeps.
-fn menu_entry(
+pub fn menu_entry(
     world: &World,
     brick: Brick,
     menu_name: &str,

@@ -1125,7 +1125,13 @@ pub fn register(steps: &mut Steps) {
         open_panel(world)?;
         send(world, "enable", json!({"on": true}))?;
         record_ctrl_shift_2(world)?;
-        send(world, "setup.done", Value::Null)?;
+        // A compositor's own config holds it; the user says it is there.
+        let done = if field(world, "shortcut.managed") == true {
+            "config.complete"
+        } else {
+            "setup.done"
+        };
+        send(world, done, Value::Null)?;
         expect!(
             field(world, "wizard").is_null(),
             "setup to finish; Snap Shot is {}",

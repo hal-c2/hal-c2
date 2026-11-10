@@ -211,8 +211,8 @@ fn the_invokables_answer_from_the_rows() {
     );
     assert_eq!(text(e, call(e, f.model, "workingLabel", &[])), "");
     assert_eq!(
-        call(e, f.model, "copy", &[Value::from("reply-1")]),
-        Value::Bool(true)
+        text(e, call(e, f.model, "copy", &[Value::from("reply-1")])),
+        ""
     );
     assert_eq!(
         Platform::of(e)
@@ -222,8 +222,8 @@ fn the_invokables_answer_from_the_rows() {
         Some("Done")
     );
     assert_eq!(
-        call(e, f.model, "copy", &[Value::from("nope")]),
-        Value::Bool(false)
+        text(e, call(e, f.model, "copy", &[Value::from("nope")])),
+        "The message is no longer shown."
     );
 }
 

@@ -16,7 +16,7 @@ use serde_json::{Value as Json, json};
 use super::fake_files::{fake_files, sign_file};
 use super::settings::{fake_config, publish_themes};
 use crate::brick::{self, Brick};
-use crate::fake_mc::FakeMc;
+use crate::fake_mc::{FakeMc, Rpc};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
 use crate::{expect, fail};
@@ -26,6 +26,9 @@ struct FakeIdentity {
     scopes: Vec<String>,
     /// The project the scenario's pickers are for.
     project: String,
+    /// When the MC signs an icon's link: later than the scenarios' time
+    /// once an hour has passed.
+    at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Default for FakeIdentity {
@@ -33,6 +36,7 @@ impl Default for FakeIdentity {
         FakeIdentity {
             scopes: vec!["orchestration:read".into(), "orchestration:operate".into()],
             project: String::new(),
+            at: None,
         }
     }
 }
@@ -497,32 +501,47 @@ fn canvas(world: &mut World) -> Outcome<Value> {
     Ok(brick.read(world, item, "color"))
 }
 
+/// `assets.createUrl` for a project's favicon, a workspace's file
+/// (FakeFiles') or an attachment (the timeline's). A domain that
+/// registers its own handler later hands what it does not sign to here.
+pub fn create_url(mc: &mut FakeMc, rpc: &Rpc) -> Outcome {
+    let resource = &rpc.payload["resource"];
+    if text(&resource["_tag"]) != "project-favicon" {
+        // A workspace's file is FakeFiles'; an attachment timeline's.
+        if !sign_file(mc, rpc) {
+            mc.pass_on(rpc)?;
+        }
+        return Ok(());
+    }
+    let path = text(&resource["path"]);
+    let served = !path.is_empty() && fake_files(mc).files.contains_key(&path);
+    let file = if served {
+        format!("v1-{}", path.rsplit('/').next().unwrap_or_default())
+    } else {
+        "project-favicon-missing".to_owned()
+    };
+    // Signed later, a later address: "token-60m" an hour in.
+    let now = super::stream::now();
+    let at = mc.part::<FakeIdentity>().at.unwrap_or(now);
+    let token = if at == now {
+        "token".to_owned()
+    } else {
+        format!("token-{}m", (at - now).num_minutes())
+    };
+    let expires = at + chrono::Duration::seconds(3600);
+    mc.reply(
+        rpc,
+        json!({"relativeUrl": format!("/api/assets/{token}/{file}"),
+               "expiresAt": expires.timestamp_millis() as f64}),
+    );
+    Ok(())
+}
+
 pub fn register(steps: &mut Steps) {
     steps.extension(|mc| {
         // A favicon the project has or the user picked, else the MC's "none"
         // (apps/server-ex attachments.ex).
-        mc.on_rpc("assets.createUrl", |mc, rpc| {
-            let resource = &rpc.payload["resource"];
-            if text(&resource["_tag"]) != "project-favicon" {
-                // A workspace's file is FakeFiles'; an attachment timeline's.
-                if !sign_file(mc, rpc) {
-                    mc.pass_on(rpc)?;
-                }
-                return Ok(());
-            }
-            let path = text(&resource["path"]);
-            let served = !path.is_empty() && fake_files(mc).files.contains_key(&path);
-            let token = if served {
-                format!("v1-{}", path.rsplit('/').next().unwrap_or_default())
-            } else {
-                "project-favicon-missing".to_owned()
-            };
-            mc.reply(
-                rpc,
-                json!({"relativeUrl": format!("/api/assets/token/{token}"), "expiresAt": 1790000000000.0}),
-            );
-            Ok(())
-        });
+        mc.on_rpc("assets.createUrl", create_url);
         mc.on_raw("/api/auth/session", |mc, stream, head| {
             serve_session(mc, stream, head);
             Ok(())
@@ -584,6 +603,28 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("{Q} shows (.+) everywhere it is listed"),
         |world, c, _| expect_shown(world, &c[0], &c[1]),
+    );
+    steps.step("an hour passes", |world, _, _| {
+        let later = world.now() + chrono::Duration::seconds(3600);
+        world.mc.part::<FakeIdentity>().at = Some(later);
+        world.set_time(later);
+        Ok(())
+    });
+    steps.step(
+        &format!("{Q} shows the image file {Q} from a new address"),
+        |world, c, _| {
+            let name = c[1].rsplit('/').next().unwrap_or_default().to_owned();
+            let wanted = format!("{}/api/assets/token-60m/v1-{name}", world.mc.origin());
+            let url = wanted.clone();
+            wait_for_icon(world, &c[0], move |icon| icon["url"] == json!(url))?;
+            let shown = drawn(world, &c[0])?;
+            expect!(
+                shown == format!("image {wanted}"),
+                "{} is drawn as \"{shown}\"",
+                c[0]
+            );
+            Ok(())
+        },
     );
     steps.step(
         &format!("the user resets the icon of {Q}"),

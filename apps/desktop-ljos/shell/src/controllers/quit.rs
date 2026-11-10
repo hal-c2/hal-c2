@@ -38,6 +38,9 @@ pub const RELEASE_GRACE: Duration = Duration::from_millis(600);
 /// A released hold's hint stays as long as a hold takes.
 pub const HINT_LINGER: Duration = Duration::from_millis(1200);
 pub const QUIT: &str = "app.quit";
+/// How long quitting waits for the MC to answer the writes it sent
+/// (desktop-qt's `NativeShell::quitWriteWaitMs`).
+pub const QUIT_WRITE_WAIT: Duration = Duration::from_millis(3000);
 
 /// What `confirmQuit` asks of the shortcut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,7 +164,9 @@ impl QuitController {
             for hook in &hooks {
                 hook(engine);
             }
-            engine.request_quit();
+            // Edits waiting to be written go first, as long as the MC
+            // answers in time.
+            controller::finish_writes(engine, QUIT_WRITE_WAIT, Engine::request_quit);
         });
     }
 

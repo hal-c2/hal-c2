@@ -35,13 +35,16 @@ use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
+use std::time::Duration;
 
 use ljos::prelude::{Application, Engine, ObjectId, QtObject, Value};
 
 use crate::bridge::Bridge;
 use crate::commands::Commands;
+use crate::controllers::panel::RightPanel;
 use crate::json::Json;
 use crate::mc::Mc;
+use crate::thread_view::workspace_files::WorkspaceFiles;
 use crate::window_mc::WindowMc;
 
 pub trait Controller: 'static {
@@ -250,6 +253,9 @@ struct Host {
     shared: RefCell<Vec<Entry>>,
     /// The open windows, oldest first.
     windows: RefCell<Vec<Rc<Window>>>,
+    /// Closed windows kept until their Files viewer's writes are answered
+    /// (desktop-qt's `m_closingWindows`).
+    closing: RefCell<Vec<Rc<Window>>>,
     mc: RefCell<Option<Rc<dyn Mc>>>,
     /// The shared controllers' MC, also what [`mc`] gives.
     shared_mc: RefCell<Option<Rc<dyn Mc>>>,
@@ -269,11 +275,14 @@ impl Host {
 
     /// The window of `bridge`.
     fn window_of(&self, bridge: Bridge) -> Option<Rc<Window>> {
-        self.windows
-            .borrow()
-            .iter()
-            .find(|w| w.bridge == bridge)
-            .cloned()
+        let find = |windows: &RefCell<Vec<Rc<Window>>>| {
+            windows
+                .borrow()
+                .iter()
+                .find(|w| w.bridge == bridge)
+                .cloned()
+        };
+        find(&self.windows).or_else(|| find(&self.closing))
     }
 
     fn shared_runs(&self) -> Vec<Rc<RefCell<dyn Controller>>> {
@@ -570,6 +579,44 @@ fn close_now(engine: &Engine, id: &str) {
         windows.remove(at)
     };
     save_windows(&host);
+    host.closing.borrow_mut().push(window.clone());
+    // Its Files viewer writes what waits; the window goes once that is
+    // answered, saving its state until then (desktop-qt's closeWindow).
+    if let Some(files) = files_of(engine, &window) {
+        WorkspaceFiles::finish_writes(engine, files);
+        if WorkspaceFiles::writing(engine, files) {
+            let kept = Rc::downgrade(&window);
+            WorkspaceFiles::on_writes_finished(engine, files, move |engine| {
+                let Some(window) = kept.upgrade() else {
+                    return;
+                };
+                Bridge::of(engine).defer(engine, move |engine| tear_down(engine, &window));
+            });
+            return;
+        }
+    }
+    tear_down(engine, &window);
+}
+
+/// The Files viewer of `window`, closing or not.
+fn files_of(engine: &Engine, window: &Window) -> Option<ObjectId> {
+    window.bridge.act(engine, || {
+        with::<RightPanel, _>(engine, |panel, _| panel.files()).flatten()
+    })
+}
+
+/// Lets go of closed `window`: its controllers, what they followed and its
+/// files. Once only.
+fn tear_down(engine: &Engine, window: &Rc<Window>) {
+    let host = Host::of(engine);
+    {
+        let mut closing = host.closing.borrow_mut();
+        let Some(at) = closing.iter().position(|w| Rc::ptr_eq(w, window)) else {
+            return;
+        };
+        closing.remove(at);
+    }
+    let id = window.id.as_str();
     let bridge = window.bridge;
     // As the window, so what they do on the way out stays in it.
     bridge.act(engine, || {
@@ -596,6 +643,65 @@ fn close_now(engine: &Engine, id: &str) {
             let _ = std::fs::remove_dir_all(window_dir(dir, id));
         }
     }
+}
+
+/// The windows closed but kept until their writes are answered.
+pub fn closing_windows(engine: &Engine) -> Vec<String> {
+    Host::of(engine)
+        .closing
+        .borrow()
+        .iter()
+        .map(|w| w.id.clone())
+        .collect()
+}
+
+/// Has every window's Files viewer, the closing ones' too, write what
+/// waits, then runs `then` once all are answered or `wait` passes on the
+/// engine's clock, whichever comes first: quitting does not wait for ever
+/// for an MC that does not answer (desktop-qt's NativeShell::finishWrites,
+/// a nested event loop there; a deferred `then` here).
+pub fn finish_writes(engine: &Engine, wait: Duration, then: impl FnOnce(&Engine) + 'static) {
+    let host = Host::of(engine);
+    let windows: Vec<Rc<Window>> = host
+        .windows
+        .borrow()
+        .iter()
+        .chain(host.closing.borrow().iter())
+        .cloned()
+        .collect();
+    let viewers: Vec<ObjectId> = windows.iter().filter_map(|w| files_of(engine, w)).collect();
+    for &files in &viewers {
+        WorkspaceFiles::finish_writes(engine, files);
+    }
+    let writing = |engine: &Engine, viewers: &[ObjectId]| {
+        viewers
+            .iter()
+            .any(|&files| WorkspaceFiles::writing(engine, files))
+    };
+    if !writing(engine, &viewers) {
+        then(engine);
+        return;
+    }
+    type Then = Rc<RefCell<Option<Box<dyn FnOnce(&Engine)>>>>;
+    let then: Then = Rc::new(RefCell::new(Some(Box::new(then))));
+    let viewers: Rc<[ObjectId]> = viewers.into();
+    for &files in viewers.iter() {
+        let then = then.clone();
+        let all = viewers.clone();
+        WorkspaceFiles::on_writes_finished(engine, files, move |engine| {
+            if writing(engine, &all) {
+                return;
+            }
+            if let Some(then) = then.borrow_mut().take() {
+                then(engine);
+            }
+        });
+    }
+    let _ = engine.call_at(engine.now() + wait, move |engine| {
+        if let Some(then) = then.borrow_mut().take() {
+            then(engine);
+        }
+    });
 }
 
 /// Makes `root` what window `id` shows: closing it closes the window

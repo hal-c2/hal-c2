@@ -67,22 +67,137 @@ pub const SAVE_DELAY_MS: i32 = 500;
 
 // --- TextLinesModel -------------------------------------------------------
 
-/// A file's text as a list of offsets into one string.
-#[derive(Debug, Default)]
+/// The most of a text that is read for its colours, in UTF-16 units as Qt
+/// counts them; past it, code stays plain (desktop-qt's
+/// `codereader::kMaxChars`).
+const MAX_UNITS: usize = 512 * 1024;
+
+/// A file's text as a list of offsets into one string, coloured by its
+/// language (desktop-qt's TextLinesModel over codereader): a row's
+/// `styled` is its line as StyledText for the theme `background` picks,
+/// cut at `column_limit` characters; empty while the line is plain. The
+/// text is read here, at once, for both themes, so a theme switch reads
+/// nothing again.
+#[derive(Debug)]
 pub struct Lines {
     text: String,
     /// (offset, length) in bytes.
     spans: Vec<(usize, usize)>,
+    /// (offset, length) in UTF-16 units, as the colour runs count.
+    units: Vec<(u32, u32)>,
     longest: usize,
     changes: Vec<RowChange>,
+    /// The file's path, whose name picks its syntax.
+    path: String,
+    /// What reading the text made, light (0) and dark (1); none while it
+    /// is plain.
+    runs: Option<[Vec<hal_c2_syntax::Span>; 2]>,
+    /// Which colouring `styled` reads: 0 light, 1 dark.
+    theme: usize,
+    /// The most of a line `styled` holds; past it, "…".
+    column_limit: i32,
+}
+
+impl Default for Lines {
+    fn default() -> Lines {
+        Lines {
+            text: String::new(),
+            spans: Vec::new(),
+            units: Vec::new(),
+            longest: 0,
+            changes: Vec::new(),
+            path: String::new(),
+            runs: None,
+            // An invalid background takes the dark colouring, as Qt's.
+            theme: 1,
+            column_limit: 2000,
+        }
+    }
 }
 
 impl Lines {
     pub fn set_text(&mut self, text: &str) {
+        self.set_text_at(text, "");
+    }
+
+    /// `path` is the file's, whose name picks its syntax; none leaves it
+    /// plain.
+    pub fn set_text_at(&mut self, text: &str, path: &str) {
+        // The same file again (written back as it was) keeps its colours.
+        let same = path == self.path && text == self.text;
         self.text = text.to_owned();
+        self.path = path.to_owned();
         (self.spans, self.longest) = file_render::line_spans(text);
+        self.units = unit_spans(text, &self.spans);
+        if !same {
+            self.runs = read_runs(text, path);
+        }
         let keys = (0..self.spans.len()).map(|r| r as RowKey).collect();
         self.changes.push(RowChange::Reset(keys));
+    }
+
+    /// Whether the lines show coloured now.
+    pub fn coloured(&self) -> bool {
+        self.runs
+            .as_ref()
+            .is_some_and(|runs| !runs[self.theme].is_empty())
+    }
+
+    /// Picks the colouring for `theme` (0 light, 1 dark): `styled` alone
+    /// changes, with nothing read again.
+    pub fn set_theme(&mut self, theme: usize) {
+        if theme == self.theme {
+            return;
+        }
+        self.theme = theme;
+        if self.runs.is_some() {
+            self.restyle();
+        }
+    }
+
+    pub fn set_column_limit(&mut self, limit: i32) {
+        if limit == self.column_limit {
+            return;
+        }
+        self.column_limit = limit;
+        if self.runs.is_some() {
+            self.restyle();
+        }
+    }
+
+    fn restyle(&mut self) {
+        if !self.spans.is_empty() {
+            self.changes.push(RowChange::Changed {
+                first: 0,
+                count: self.spans.len(),
+                roles: &["styled"],
+            });
+        }
+    }
+
+    /// Row `row` as its `styled` role reads.
+    pub fn styled(&self, row: usize) -> String {
+        if row >= self.spans.len() || !self.coloured() {
+            return String::new();
+        }
+        let Some(runs) = &self.runs else {
+            return String::new();
+        };
+        let (offset, length) = self.units[row];
+        // Cut as the viewer cuts a plain line, so no colour reaches past
+        // the cut.
+        let limit = u32::try_from(self.column_limit).unwrap_or(0);
+        let cut = length > limit;
+        let mut out = styled_line(
+            self.line(row),
+            offset,
+            if cut { limit } else { length },
+            &runs[self.theme],
+        );
+        if cut {
+            out.push('…');
+        }
+        out
     }
 
     pub fn count(&self) -> usize {
@@ -101,9 +216,133 @@ impl Lines {
     }
 }
 
+/// Each byte span's (offset, length) in UTF-16 units from the start of
+/// `text`.
+fn unit_spans(text: &str, spans: &[(usize, usize)]) -> Vec<(u32, u32)> {
+    // The unit offset of each char boundary, asked for in order.
+    let mut units = Vec::with_capacity(spans.len());
+    let mut chars = text.char_indices().peekable();
+    let mut at_units = 0u32;
+    let mut at_byte = 0usize;
+    let mut unit_at = |byte: usize, chars: &mut std::iter::Peekable<std::str::CharIndices>| {
+        while at_byte < byte {
+            match chars.next() {
+                Some((_, c)) => {
+                    at_byte += c.len_utf8();
+                    at_units += c.len_utf16() as u32;
+                }
+                None => break,
+            }
+        }
+        at_units
+    };
+    for &(offset, length) in spans {
+        let from = unit_at(offset, &mut chars);
+        let to = unit_at(offset + length, &mut chars);
+        units.push((from, to - from));
+    }
+    units
+}
+
+/// What reading `text` as the file `path` makes, light (0) and dark (1);
+/// none when it stays plain: no name to know it by, nothing in it, or past
+/// the most that is read.
+fn read_runs(text: &str, path: &str) -> Option<[Vec<hal_c2_syntax::Span>; 2]> {
+    if path.is_empty() || text.is_empty() || text.encode_utf16().count() > MAX_UNITS {
+        return None;
+    }
+    let mut syntax = hal_c2_syntax::Highlighter::for_path(path)?;
+    let mut runs: [Vec<hal_c2_syntax::Span>; 2] = [Vec::new(), Vec::new()];
+    syntax.feed(text, |span| runs[span.theme as usize].push(span));
+    Some(runs)
+}
+
+fn escape_into(out: &mut String, text: &str) {
+    for c in text.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            // StyledText runs spaces together and drops tabs; these keep
+            // them as plain text draws them.
+            ' ' => out.push_str("&nbsp;"),
+            '\t' => out.push_str("&#9;"),
+            c => out.push(c),
+        }
+    }
+}
+
+/// `length` UTF-16 units of `line` (which starts `from` units into its
+/// text) as StyledText, coloured by `runs` (desktop-qt's
+/// `codereader::styled`).
+fn styled_line(line: &str, from: u32, length: u32, runs: &[hal_c2_syntax::Span]) -> String {
+    // The byte offset of each unit boundary of the line.
+    let mut boundaries: Vec<(u32, usize)> = Vec::new();
+    let mut units = 0u32;
+    for (byte, c) in line.char_indices() {
+        boundaries.push((units, byte));
+        units += c.len_utf16() as u32;
+    }
+    boundaries.push((units, line.len()));
+    let byte_at = |unit: u32| -> usize {
+        boundaries
+            .binary_search_by_key(&unit, |&(u, _)| u)
+            .map_or(line.len(), |i| boundaries[i].1)
+    };
+    let slice = |start: u32, end: u32| -> &str {
+        let (start, end) = (byte_at(start), byte_at(end));
+        line.get(start..end).unwrap_or("")
+    };
+    let mut out = String::with_capacity(line.len() * 2);
+    let to = from + length;
+    let mut at = from;
+    // The runs are in order; the first that ends past `from`.
+    let first = runs.partition_point(|run| run.start + run.len <= from);
+    for run in &runs[first..] {
+        if run.start >= to {
+            break;
+        }
+        let start = run.start.max(at);
+        let end = (run.start + run.len).min(to);
+        if end <= start {
+            continue;
+        }
+        escape_into(&mut out, slice(at - from, start - from));
+        let [a, r, g, b] = run.color.to_be_bytes();
+        if a == 0xFF {
+            out.push_str(&format!("<font color=\"#{r:02x}{g:02x}{b:02x}\">"));
+        } else {
+            out.push_str(&format!("<font color=\"#{a:02x}{r:02x}{g:02x}{b:02x}\">"));
+        }
+        if run.bold {
+            out.push_str("<b>");
+        }
+        if run.italic {
+            out.push_str("<i>");
+        }
+        if run.underline {
+            out.push_str("<u>");
+        }
+        escape_into(&mut out, slice(start - from, end - from));
+        if run.underline {
+            out.push_str("</u>");
+        }
+        if run.italic {
+            out.push_str("</i>");
+        }
+        if run.bold {
+            out.push_str("</b>");
+        }
+        out.push_str("</font>");
+        at = end;
+    }
+    escape_into(&mut out, slice(at - from, to - from));
+    out
+}
+
 impl RowSource for Lines {
     fn roles(&self) -> &'static [&'static str] {
-        &["text", "number"]
+        &["text", "number", "styled"]
     }
 
     fn row_count(&self) -> usize {
@@ -121,6 +360,7 @@ impl RowSource for Lines {
         match role {
             "text" => Value::from(self.line(row)),
             "number" => Value::Int(int(row + 1)),
+            "styled" => Value::from(self.styled(row).as_str()),
             _ => Value::Undefined,
         }
     }
@@ -139,6 +379,18 @@ pub struct TextLinesModel {
     /// The longest line, in characters.
     #[qml(readonly, notify)]
     max_columns: i32,
+    /// What the lines are drawn on: a light one takes the light colouring.
+    #[qml(notify)]
+    background: ljos::prelude::Color,
+    /// The most of a line `styled` holds; past it, "…".
+    #[qml(notify)]
+    column_limit: i32,
+    /// Whether the lines show coloured now.
+    #[qml(notify, readonly)]
+    coloured: bool,
+    /// Always false: the text is read as it is set.
+    #[qml(constant, readonly)]
+    reading: bool,
     #[qml(skip)]
     rows: Rc<ListRows<Lines>>,
 }
@@ -150,25 +402,65 @@ impl TextLinesModel {
         let model = TextLinesModel {
             count: 0,
             max_columns: 0,
+            background: ljos::prelude::Color::INVALID,
+            column_limit: 2000,
+            coloured: false,
+            reading: false,
             rows: rows.clone(),
         };
         let obj = engine.create_native(model, owner)?;
         rows.attach(engine, obj)?;
+        // What QML writes picks the colouring and the cut.
+        engine.connect_by_name(obj, "backgroundChanged", move |engine, _| {
+            if let Ok(background) = engine.get(obj, TextLinesModel::BACKGROUND) {
+                TextLinesModel::set_background(engine, obj, background);
+            }
+        })?;
+        engine.connect_by_name(obj, "columnLimitChanged", move |engine, _| {
+            if let Ok(limit) = engine.get(obj, TextLinesModel::COLUMN_LIMIT) {
+                TextLinesModel::set_column_limit(engine, obj, limit);
+            }
+        })?;
         Ok(obj)
     }
 
-    /// Shows `text` as its lines.
-    pub fn set_text(engine: &Engine, obj: ObjectId, text: &str) {
+    fn set_background(engine: &Engine, obj: ObjectId, background: ljos::prelude::Color) {
         let Ok(rows) = engine.with::<TextLinesModel, _>(obj, |m| m.rows.clone()) else {
             return;
         };
-        let (count, columns) = rows.update(engine, |l| {
-            l.set_text(text);
-            (l.count(), l.max_columns())
+        let theme = crate::code_highlighter::theme_for(background) as usize;
+        let coloured = rows.update(engine, |l| {
+            l.set_theme(theme);
+            l.coloured()
+        });
+        let _ = engine.set_internal(obj, TextLinesModel::COLOURED, coloured);
+    }
+
+    fn set_column_limit(engine: &Engine, obj: ObjectId, limit: i32) {
+        let Ok(rows) = engine.with::<TextLinesModel, _>(obj, |m| m.rows.clone()) else {
+            return;
+        };
+        rows.update(engine, |l| l.set_column_limit(limit));
+    }
+
+    /// Shows `text` as its lines; `path` is the file's, whose name picks
+    /// its syntax.
+    pub fn set_text(engine: &Engine, obj: ObjectId, text: &str) {
+        TextLinesModel::set_text_at(engine, obj, text, "");
+    }
+
+    pub fn set_text_at(engine: &Engine, obj: ObjectId, text: &str, path: &str) {
+        let Ok(rows) = engine.with::<TextLinesModel, _>(obj, |m| m.rows.clone()) else {
+            return;
+        };
+        let (count, columns, coloured) = rows.update(engine, |l| {
+            l.set_text_at(text, path);
+            (l.count(), l.max_columns(), l.coloured())
         });
         let result = engine
             .set_internal(obj, TextLinesModel::COUNT, int(count))
-            .and_then(|()| engine.set_internal(obj, TextLinesModel::MAX_COLUMNS, int(columns)));
+            .and_then(|()| engine.set_internal(obj, TextLinesModel::MAX_COLUMNS, int(columns)))
+            .and_then(|()| engine.set_internal(obj, TextLinesModel::COLOURED, coloured));
         if let Err(e) = result {
             warn(engine, &e);
         }
@@ -200,10 +492,17 @@ impl TextLinesModel {
 pub enum Then {
     Search(u32),
     Read(u32),
+    /// A following read of the open file, from revision `revision`.
+    Refresh {
+        request: u32,
+        revision: u32,
+    },
     /// The folder the path trail lists, for the listing `request`.
     Trail(u32),
     /// A media file's URL, for the file read `request`.
     Sign(u32),
+    /// The open file's URL for the preview browser.
+    Preview,
     Write {
         path: String,
         root: String,
@@ -223,6 +522,9 @@ pub enum Effect {
         payload: Json,
         then: Then,
     },
+    /// Fetch a signed document's bytes to a local file Qt PDF can open,
+    /// for the file read `request`.
+    DownloadDocument { relative: String, request: u32 },
     /// Start (again) or stop the search's pause.
     SearchTimer(bool),
     /// Start (again) or stop the wait before an edit is written.
@@ -247,6 +549,10 @@ pub enum Sig {
     },
     /// The browser is to open this URL, the open media file's.
     MediaOpened(String),
+    /// The preview browser is to show this URL, the open file's.
+    PreviewReady(String),
+    /// The environment would not serve the open file to the preview.
+    PreviewRefused(String),
 }
 
 /// The properties, as the core has them. The text and what it renders as
@@ -265,6 +571,7 @@ pub struct Facts {
     pub file_empty: bool,
     pub media_kind: &'static str,
     pub media_url: String,
+    pub media_document: String,
     pub reveal_line: i32,
     pub wrap: bool,
     pub text_version: u32,
@@ -273,6 +580,7 @@ pub struct Facts {
     pub rendered: bool,
     pub editable: bool,
     pub read_only_reason: &'static str,
+    pub outside_project: bool,
     pub editing: bool,
     pub unsaved: bool,
     pub save_problem: String,
@@ -297,12 +605,18 @@ pub struct Files {
     search_problem: String,
     open_path: String,
     open_line: i32,
+    /// Opened at a line: the source shows, whatever the kind is usually
+    /// read as, until the user picks a view.
+    line_source: bool,
     file_request: u32,
     file_status: &'static str,
     file_problem: String,
     truncated_notice: String,
     reveal_line: i32,
     media_url: String,
+    /// The local copy of a document, as a file URL; Qt PDF opens local
+    /// files alone.
+    media_document: String,
     /// When the MC stops serving `media_url`, a minute early (epoch ms).
     media_expires_ms: i64,
     /// The signing whose URL `open_media` waits for; else 0.
@@ -327,7 +641,20 @@ pub struct Files {
     /// An edit waits to be written; a write is on its way.
     pending: bool,
     saving: bool,
+    /// Writes sent and not yet answered, a closing one among them.
+    writes_out: usize,
     revision: u32,
+    /// The workspace changed while the user's text or a read was on its
+    /// way: the file is read again once that settles.
+    reread_later: bool,
+    /// A read of the open file waits for its writes to land first.
+    read_after_writes: bool,
+    /// Task ticks waiting on the read that says the file did not change
+    /// underneath.
+    waiting_ticks: Vec<usize>,
+    /// The newest change names the open media file: its preview is read
+    /// again, where another file's change leaves it alone.
+    media_rewritten: bool,
     save_problem: String,
     wrap: Option<bool>,
     default_wrap: bool,
@@ -399,12 +726,14 @@ impl Files {
             search_problem: String::new(),
             open_path: String::new(),
             open_line: 0,
+            line_source: false,
             file_request: 0,
             file_status: "none",
             file_problem: String::new(),
             truncated_notice: String::new(),
             reveal_line: 0,
             media_url: String::new(),
+            media_document: String::new(),
             media_expires_ms: 0,
             open_on_sign: 0,
             host_writes_refused_on: String::new(),
@@ -421,7 +750,12 @@ impl Files {
             editing: false,
             pending: false,
             saving: false,
+            writes_out: 0,
             revision: 0,
+            reread_later: false,
+            read_after_writes: false,
+            waiting_ticks: Vec::new(),
+            media_rewritten: false,
             save_problem: String::new(),
             wrap: None,
             default_wrap: false,
@@ -508,6 +842,7 @@ impl Files {
                 && self.lines == 0,
             media_kind: self.media_kind(),
             media_url: self.media_url.clone(),
+            media_document: self.media_document.clone(),
             reveal_line: self.reveal_line,
             wrap: self.wrap(),
             text_version: self.text_version,
@@ -516,6 +851,7 @@ impl Files {
             rendered: self.rendered(),
             editable: self.editable(),
             read_only_reason: self.read_only_reason(),
+            outside_project: host_path(&self.open_path),
             editing: self.editing,
             unsaved: self.pending,
             save_problem: self.save_problem.clone(),
@@ -622,7 +958,10 @@ impl Files {
 
     pub fn rendered(&self) -> bool {
         let kind = self.render_kind();
-        !kind.is_empty() && !self.editing && !self.source_kinds.iter().any(|k| k == kind)
+        !kind.is_empty()
+            && !self.editing
+            && !self.line_source
+            && !self.source_kinds.iter().any(|k| k == kind)
     }
 
     /// What the rendered view draws: Markdown (a CSV file's as a table, task
@@ -634,6 +973,7 @@ impl Files {
                 file_render::markdown_table(&self.text, if tsv { '\t' } else { ',' })
             }
             "markdown" => file_render::with_task_links(&self.text),
+            "mermaid" => file_render::mermaid_block(&self.text),
             _ => self.text.clone(),
         }
     }
@@ -641,7 +981,11 @@ impl Files {
     pub fn set_rendered(&mut self, rendered: bool) {
         let kind = self.render_kind();
         let source = self.source_kinds.iter().any(|k| k == kind);
+        let left_line = std::mem::take(&mut self.line_source);
         if kind.is_empty() || rendered == !source {
+            if left_line {
+                self.signals.push(Sig::Rendered);
+            }
             return;
         }
         if rendered {
@@ -714,13 +1058,12 @@ impl Files {
             && (self.media_url.is_empty() || self.now_ms >= self.media_expires_ms)
     }
 
-    /// Asks the environment for the open media file's URL.
-    fn sign_media(&mut self, request: u32) {
-        // A path in the workspace is the thread's file; a full path is served
-        // only as a media file. With no thread, the workspace folder names
-        // itself. The path is the thread's machine's, so a Windows one counts
-        // here too.
-        let resource = if self.thread.is_empty() {
+    /// The open file as an `assets.createUrl` resource: a path in the
+    /// workspace is the thread's file; a full path is served only as a
+    /// media file. With no thread, the workspace folder names itself. The
+    /// path is the thread's machine's, so a Windows one counts here too.
+    fn file_resource(&self) -> Json {
+        if self.thread.is_empty() {
             json!({"_tag": "draft-workspace-file", "cwd": self.root, "path": self.open_path})
         } else {
             let tag = if full_path(&self.open_path) {
@@ -729,12 +1072,31 @@ impl Files {
                 "workspace-file"
             };
             json!({"_tag": tag, "threadId": self.thread, "path": self.open_path})
-        };
+        }
+    }
+
+    /// Asks the environment for the open media file's URL.
+    fn sign_media(&mut self, request: u32) {
         self.effects.push(Effect::Call {
             environment: self.environment.clone(),
             method: "assets.createUrl",
-            payload: json!({"resource": resource}),
+            payload: json!({"resource": self.file_resource()}),
             then: Then::Sign(request),
+        });
+    }
+
+    /// Asks the environment to serve the open file to the preview browser
+    /// (`Sig::PreviewReady`), or says why it would not
+    /// (`Sig::PreviewRefused`).
+    pub fn open_in_preview(&mut self) {
+        if self.open_path.is_empty() {
+            return;
+        }
+        self.effects.push(Effect::Call {
+            environment: self.environment.clone(),
+            method: "assets.createUrl",
+            payload: json!({"resource": self.file_resource()}),
+            then: Then::Preview,
         });
     }
 
@@ -750,6 +1112,32 @@ impl Files {
         }
         self.reload_file();
         self.open_on_sign = self.file_request;
+    }
+
+    fn media_ready(&mut self, request: u32) {
+        self.file_status = "ready";
+        if std::mem::take(&mut self.open_on_sign) == request {
+            self.signals.push(Sig::MediaOpened(self.media_url.clone()));
+        }
+    }
+
+    /// The signed document's bytes were fetched and kept at `document` (a
+    /// file URL), or not at all (`None`); for the file read `request`.
+    pub fn document_ready(&mut self, request: u32, document: Option<String>) {
+        if request != self.file_request {
+            return;
+        }
+        match document {
+            Some(document) => {
+                self.media_document = document;
+                self.media_ready(request);
+            }
+            None => {
+                self.file_status = "ready";
+                let url = self.media_url.clone();
+                self.media_failed(&url);
+            }
+        }
     }
 
     /// The viewer could not load `url`: the file says so until read again.
@@ -797,6 +1185,9 @@ impl Files {
 
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
+        if active && self.stale {
+            self.follow_open_file();
+        }
         // The preview loads again when the tab shows, so needs a URL that
         // works.
         if active && self.file_status == "ready" && self.media_expired() {
@@ -820,11 +1211,19 @@ impl Files {
     /// checkpoint lands, at once while the tab shows, else when it next
     /// does.
     pub fn follow(&mut self, mutation: String) -> Followed {
+        self.follow_named(mutation, false)
+    }
+
+    /// As [`Files::follow`], with whether the newest change names the open
+    /// file: only that reads a media file's preview again.
+    pub fn follow_named(&mut self, mutation: String, newest_names_open: bool) -> Followed {
         if mutation == self.mutation {
             return Followed::Nothing;
         }
         self.mutation = mutation;
+        self.media_rewritten = self.media_rewritten || newest_names_open;
         if self.active {
+            self.follow_open_file();
             Followed::Refresh
         } else {
             self.stale = true;
@@ -909,6 +1308,10 @@ impl Files {
             }
         }
         self.open_line = line;
+        // A line is in the source, whatever the kind is usually read as.
+        if std::mem::replace(&mut self.line_source, line > 0) != (line > 0) {
+            self.signals.push(Sig::Rendered);
+        }
         if path == self.open_path && self.file_status == "ready" && !self.media_expired() {
             // Already here: just go to the line.
             self.reveal_line = self.clamped(line);
@@ -934,23 +1337,122 @@ impl Files {
             return;
         }
         self.save(true);
+        self.waiting_ticks.clear();
         self.file_request += 1;
         self.file_status = "loading";
         self.file_problem.clear();
         self.truncated_notice.clear();
         self.truncated = false;
         self.media_url.clear();
+        self.media_document.clear();
+        self.media_rewritten = false;
+        self.reread_later = false;
+        self.read_after_writes = false;
         self.signals.push(Sig::Rendered);
         if !self.media_kind().is_empty() {
             self.sign_media(self.file_request);
             return;
         }
+        // A read now would show the text from before the writes still to
+        // land.
+        if self.saving {
+            self.read_after_writes = true;
+            return;
+        }
+        self.read_open_file();
+    }
+
+    /// What a read of the file says of how much of it came.
+    fn note_truncation(&mut self, file: &Json) {
+        self.truncated = file
+            .get("truncated")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
+        if self.truncated {
+            let bytes = file.get("byteLength").and_then(Json::as_f64).unwrap_or(0.0);
+            self.truncated_notice = format!(
+                "Preview limited to the first 1 MB of a {} byte file.",
+                file_render::grouped(bytes as i64)
+            );
+        } else {
+            self.truncated_notice.clear();
+        }
+    }
+
+    /// The read a reload held for its writes, once none is on its way.
+    fn read_after_writes_if_waiting(&mut self) {
+        if !self.saving && std::mem::take(&mut self.read_after_writes) {
+            self.read_open_file();
+        }
+    }
+
+    fn read_open_file(&mut self) {
         self.effects.push(Effect::Call {
             environment: self.environment.clone(),
             method: "projects.readFile",
             payload: json!({"cwd": self.root, "relativePath": self.open_path}),
             then: Then::Read(self.file_request),
         });
+    }
+
+    /// Reads the open file as the workspace has it now, for the ticks
+    /// waiting and the agent's changes; the user's text is kept.
+    fn refresh_file(&mut self) {
+        // The read waiting on the writes will show what is there.
+        if self.read_after_writes {
+            return;
+        }
+        self.file_request += 1;
+        let request = self.file_request;
+        let revision = self.revision;
+        self.reread_later = false;
+        self.effects.push(Effect::Call {
+            environment: self.environment.clone(),
+            method: "projects.readFile",
+            payload: json!({"cwd": self.root, "relativePath": self.open_path}),
+            then: Then::Refresh { request, revision },
+        });
+    }
+
+    fn reread_if_due(&mut self) {
+        if self.reread_later
+            && !self.pending
+            && !self.saving
+            && !self.editing
+            && self.file_status == "ready"
+            && self.media_kind().is_empty()
+        {
+            self.refresh_file();
+        }
+    }
+
+    fn follow_open_file(&mut self) {
+        if self.open_path.is_empty() {
+            return;
+        }
+        if !self.media_kind().is_empty() {
+            if std::mem::take(&mut self.media_rewritten) {
+                self.reload_file();
+            }
+            return;
+        }
+        // A path that could not be read may be a file now (a folder the
+        // agent replaced).
+        if self.file_status != "ready" {
+            if self.file_status == "error" {
+                self.reload_file();
+            } else if self.file_status == "loading" {
+                // The read under way may be from before this change.
+                self.reread_later = true;
+            }
+            return;
+        }
+        // The user's own text stays: the file is read once it is written.
+        if self.pending || self.saving || self.editing {
+            self.reread_later = true;
+            return;
+        }
+        self.refresh_file();
     }
 
     pub fn close_file(&mut self) {
@@ -960,6 +1462,8 @@ impl Files {
             self.signals.push(Sig::Rendered);
         }
         self.file_request += 1;
+        self.waiting_ticks.clear();
+        self.read_after_writes = false;
         let had = !self.open_path.is_empty() || self.file_status != "none";
         self.clear_trail();
         self.open_path.clear();
@@ -970,6 +1474,7 @@ impl Files {
         self.truncated_notice.clear();
         self.truncated = false;
         self.media_url.clear();
+        self.media_document.clear();
         self.set_text("");
         self.save_problem.clear();
         if had {
@@ -999,6 +1504,7 @@ impl Files {
             self.save(false);
         }
         self.signals.push(Sig::Rendered);
+        self.reread_if_due();
     }
 
     /// The open file's text as the user changed it.
@@ -1009,6 +1515,9 @@ impl Files {
         self.text = contents.to_owned();
         self.text_version += 1;
         self.revision += 1;
+        // A waiting tick counted the boxes of the text that was just
+        // replaced.
+        self.waiting_ticks.clear();
         self.pending = true;
         self.save_problem.clear();
         self.effects.push(Effect::SaveTimer(true));
@@ -1019,6 +1528,17 @@ impl Files {
         if !self.editable() || self.render_kind() != "markdown" {
             return;
         }
+        // The file may have changed underneath what the user is looking
+        // at, unless what they see is their own edit not written yet.
+        if self.pending || self.saving {
+            self.apply_task(index);
+        } else {
+            self.waiting_ticks.push(index);
+            self.refresh_file();
+        }
+    }
+
+    fn apply_task(&mut self, index: usize) {
         let Some(next) = file_render::toggled(&self.text, index) else {
             return;
         };
@@ -1053,6 +1573,7 @@ impl Files {
         if closing {
             self.pending = false;
         }
+        self.writes_out += 1;
         self.effects.push(Effect::Call {
             environment: self.environment.clone(),
             method: "projects.writeFile",
@@ -1072,7 +1593,18 @@ impl Files {
         });
     }
 
-    /// The edit waited long enough.
+    /// Whether a write is on its way, unanswered (desktop-qt's `writing()`).
+    pub fn writing(&self) -> bool {
+        self.writes_out > 0
+    }
+
+    /// Writes what waits, now: the window is closing, or the app is
+    /// quitting. [`WorkspaceFiles::on_writes_finished`] says when every
+    /// write is answered.
+    pub fn finish_writes(&mut self) {
+        self.save(true);
+    }
+
     pub fn save_due(&mut self) {
         self.save(false);
     }
@@ -1117,8 +1649,14 @@ impl Files {
                 }
                 match result {
                     Err(e) => {
+                        // The file changed since this read began: it may
+                        // be readable now.
+                        if self.reread_later {
+                            self.reload_file();
+                            return;
+                        }
                         self.file_status = "error";
-                        self.file_problem = defaulted(&e.message, "Unable to read this file.");
+                        self.file_problem = read_problem(&e);
                         self.set_text("");
                         self.signals.push(Sig::Rendered);
                     }
@@ -1126,23 +1664,77 @@ impl Files {
                         let contents = file.get("contents").and_then(Json::as_str).unwrap_or("");
                         self.set_text(contents);
                         self.file_status = "ready";
-                        self.truncated = file
-                            .get("truncated")
-                            .and_then(Json::as_bool)
-                            .unwrap_or(false);
-                        if self.truncated {
-                            let bytes =
-                                file.get("byteLength").and_then(Json::as_f64).unwrap_or(0.0);
-                            self.truncated_notice = format!(
-                                "Preview limited to the first 1 MB of a {} byte file.",
-                                file_render::grouped(bytes as i64)
-                            );
-                        }
+                        self.note_truncation(&file);
                         self.signals.push(Sig::Rendered);
                         self.reveal_line = self.clamped(self.open_line);
                         self.signals.push(Sig::RevealRequested);
+                        self.reread_if_due();
                     }
                 }
+            }
+            Then::Refresh { request, revision } => {
+                if request != self.file_request {
+                    return;
+                }
+                // Read before the user's edit, so older than what they see.
+                if revision != self.revision || self.pending || self.saving || self.editing {
+                    self.reread_later = true;
+                    self.reread_if_due();
+                    return;
+                }
+                // Every tick waited on this read; older ones lost theirs to it.
+                let ticks = std::mem::take(&mut self.waiting_ticks);
+                match result {
+                    Err(e) => {
+                        self.file_status = "error";
+                        self.file_problem = read_problem(&e);
+                        self.truncated = false;
+                        self.truncated_notice.clear();
+                        self.set_text("");
+                        self.signals.push(Sig::Rendered);
+                    }
+                    Ok(file) => {
+                        let contents = file.get("contents").and_then(Json::as_str).unwrap_or("");
+                        let notice = self.truncated_notice.clone();
+                        self.note_truncation(&file);
+                        if contents != self.text {
+                            // A task ticked against other text is not
+                            // ticked: the user sees what is there now.
+                            self.set_text(contents);
+                            self.signals.push(Sig::Rendered);
+                        } else {
+                            if notice != self.truncated_notice {
+                                self.signals.push(Sig::Rendered);
+                            }
+                            // Saving what a cut-off read shows would drop
+                            // the rest of the file.
+                            if !self.truncated {
+                                for task in ticks {
+                                    self.apply_task(task);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Then::Preview => {
+                let relative = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|r| r.get("relativeUrl"))
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                if result.is_err() || relative.is_empty() {
+                    let message = result.err().map(|e| e.message).unwrap_or_default();
+                    self.signals.push(Sig::PreviewRefused(defaulted(
+                        &message,
+                        "The environment did not serve the file.",
+                    )));
+                    return;
+                }
+                let url = resolved(&self.origin, &relative);
+                self.signals.push(Sig::PreviewReady(url));
             }
             Then::Sign(request) => {
                 if request != self.file_request {
@@ -1171,10 +1763,14 @@ impl Files {
                     .and_then(Json::as_f64)
                     .unwrap_or(0.0);
                 self.media_expires_ms = expires as i64 - 60_000;
-                self.file_status = "ready";
-                if std::mem::take(&mut self.open_on_sign) == request {
-                    self.signals.push(Sig::MediaOpened(self.media_url.clone()));
+                if self.media_kind() == "pdf" {
+                    // Qt PDF opens local files alone: fetch the document
+                    // first, and only then is the file ready.
+                    self.effects
+                        .push(Effect::DownloadDocument { relative, request });
+                    return;
                 }
+                self.media_ready(request);
             }
             Then::Write {
                 path,
@@ -1184,6 +1780,7 @@ impl Files {
                 request,
                 closing,
             } => {
+                self.writes_out = self.writes_out.saturating_sub(1);
                 // A session without terminal access may not write outside the
                 // workspace (Rpc.required_scope/2).
                 let host_refused = result.as_ref().err().is_some_and(|e| {
@@ -1214,6 +1811,7 @@ impl Files {
                     || root != self.root
                     || request != self.file_request
                 {
+                    self.read_after_writes_if_waiting();
                     return;
                 }
                 self.saving = false;
@@ -1227,6 +1825,7 @@ impl Files {
                         self.signals.push(Sig::Rendered);
                     }
                     // Else the edit stays, to be written with the next one.
+                    self.read_after_writes_if_waiting();
                     return;
                 }
                 self.save_problem.clear();
@@ -1238,8 +1837,24 @@ impl Files {
                 } else {
                     self.effects.push(Effect::SaveTimer(true));
                 }
+                self.reread_if_due();
+                self.read_after_writes_if_waiting();
             }
         }
+    }
+}
+
+/// Why a read failed, worded for the viewer: a file that is not text says
+/// so itself, whatever the MC's words were.
+fn read_problem(error: &McError) -> String {
+    match error.detail.get("failure").and_then(Json::as_str) {
+        Some("binary_file") => {
+            "This file contains binary data and cannot be shown as text.".to_owned()
+        }
+        Some("not_utf8") => {
+            "This file is not UTF-8 text. Open it in another app to view its contents.".to_owned()
+        }
+        _ => defaulted(&error.message, "Unable to read this file."),
     }
 }
 
@@ -1264,7 +1879,7 @@ fn full_path(path: &str) -> bool {
 }
 
 /// `relative` against the MC's `origin`; as it is when either is not a URL.
-fn resolved(origin: &str, relative: &str) -> String {
+pub fn resolved(origin: &str, relative: &str) -> String {
     url::Url::parse(origin)
         .and_then(|o| o.join(relative))
         .map_or_else(|_| relative.to_owned(), String::from)
@@ -1289,11 +1904,15 @@ pub const CSV_ROWS: usize = CSV_ROW_LIMIT;
 
 type SaveFailedHook = Rc<dyn Fn(&Engine, &str, &str)>;
 type KindsHook = Rc<dyn Fn(&Engine)>;
+type PreviewHook = Rc<dyn Fn(&Engine, &str)>;
 
 #[derive(Default)]
 struct Hooks {
     save_failed: Vec<SaveFailedHook>,
+    writes_finished: Vec<KindsHook>,
     source_kinds: Vec<KindsHook>,
+    preview_ready: Vec<PreviewHook>,
+    preview_refused: Vec<PreviewHook>,
 }
 
 /// The newest listing asked for of each folder: any other answer is stale.
@@ -1317,6 +1936,8 @@ struct Inner {
     timeline: Cell<Option<ObjectId>>,
     connections: RefCell<Vec<ConnectionId>>,
     hooks: RefCell<Hooks>,
+    /// The temp file holding a fetched document, removed when replaced.
+    media_document_file: RefCell<Option<std::path::PathBuf>>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -1368,6 +1989,9 @@ pub struct WorkspaceFiles {
     /// Where the preview loads a media file from, once signed; else "".
     #[qml(readonly, notify)]
     media_url: Atom,
+    /// The local copy of a document, as a file URL, once fetched; else "".
+    #[qml(readonly, notify)]
+    media_document: Atom,
     /// The line the viewer was asked to show (1-based, within the file), or 0.
     #[qml(readonly, notify)]
     reveal_line: i32,
@@ -1391,6 +2015,10 @@ pub struct WorkspaceFiles {
     /// Why the file cannot be edited, or "".
     #[qml(readonly, notify)]
     read_only_reason: Atom,
+    /// The open file is outside the project, opened by its full path; it
+    /// has no place in the project's tree.
+    #[qml(readonly, notify)]
+    outside_project: bool,
     /// QML writes it.
     #[qml(notify)]
     editing: bool,
@@ -1455,6 +2083,7 @@ impl WorkspaceFiles {
             timeline: Cell::new(None),
             connections: RefCell::default(),
             hooks: RefCell::default(),
+            media_document_file: RefCell::default(),
         });
         let atom = |s: &str| Atom::new(s);
         let files = WorkspaceFiles {
@@ -1472,6 +2101,7 @@ impl WorkspaceFiles {
             file_empty: facts.file_empty,
             media_kind: atom(facts.media_kind),
             media_url: atom(&facts.media_url),
+            media_document: atom(&facts.media_document),
             reveal_line: facts.reveal_line,
             wrap: facts.wrap,
             text: atom(""),
@@ -1480,6 +2110,7 @@ impl WorkspaceFiles {
             rendered_text: atom(""),
             editable: facts.editable,
             read_only_reason: atom(facts.read_only_reason),
+            outside_project: facts.outside_project,
             editing: facts.editing,
             unsaved: facts.unsaved,
             save_problem: atom(&facts.save_problem),
@@ -1659,6 +2290,22 @@ impl WorkspaceFiles {
         }
     }
 
+    /// Runs `f(engine, url)` when the environment serves the open file to
+    /// the preview browser.
+    pub fn on_preview_ready(engine: &Engine, obj: ObjectId, f: impl Fn(&Engine, &str) + 'static) {
+        if let Some(inner) = inner_of(engine, obj) {
+            inner.hooks.borrow_mut().preview_ready.push(Rc::new(f));
+        }
+    }
+
+    /// Runs `f(engine, reason)` when the environment would not serve the
+    /// open file to the preview browser.
+    pub fn on_preview_refused(engine: &Engine, obj: ObjectId, f: impl Fn(&Engine, &str) + 'static) {
+        if let Some(inner) = inner_of(engine, obj) {
+            inner.hooks.borrow_mut().preview_refused.push(Rc::new(f));
+        }
+    }
+
     /// Runs `f(engine, path, problem)` when the MC would not write `path`.
     pub fn on_save_failed(
         engine: &Engine,
@@ -1667,6 +2314,25 @@ impl WorkspaceFiles {
     ) {
         if let Some(inner) = inner_of(engine, obj) {
             inner.hooks.borrow_mut().save_failed.push(Rc::new(f));
+        }
+    }
+
+    /// Writes what waits, now (desktop-qt's `finishWrites`): its window is
+    /// closing, or the app quitting.
+    pub fn finish_writes(engine: &Engine, obj: ObjectId) {
+        WorkspaceFiles::update(engine, obj, Files::finish_writes);
+    }
+
+    /// Whether a write of `obj` is on its way, unanswered.
+    pub fn writing(engine: &Engine, obj: ObjectId) -> bool {
+        WorkspaceFiles::read(engine, obj, Files::writing).unwrap_or(false)
+    }
+
+    /// `f` runs each time the last write on its way is answered
+    /// (desktop-qt's `writesFinished`).
+    pub fn on_writes_finished(engine: &Engine, obj: ObjectId, f: impl Fn(&Engine) + 'static) {
+        if let Some(inner) = inner_of(engine, obj) {
+            inner.hooks.borrow_mut().writes_finished.push(Rc::new(f));
         }
     }
 
@@ -1706,11 +2372,13 @@ impl WorkspaceFiles {
         let inner = inner_of(engine, obj)?;
         let origin = inner.mc.origin().unwrap_or_default();
         let now = crate::controllers::sidebar::now_ms(engine);
-        let (result, before, after, strings, effects, signals) = {
+        let (result, before, after, strings, effects, signals, finished) = {
             let mut core = inner.core.borrow_mut();
             core.set_context(&origin, now);
             let before = core.facts();
+            let was_writing = core.writing();
             let result = f(&mut core);
+            let finished = was_writing && !core.writing();
             let after = core.facts();
             let moved = after.text_version != before.text_version
                 || after.render_kind != before.render_kind
@@ -1723,6 +2391,7 @@ impl WorkspaceFiles {
                 strings,
                 core.take_effects(),
                 core.take_signals(),
+                finished,
             )
         };
         // The lines first: a view told the file is ready finds them.
@@ -1736,6 +2405,7 @@ impl WorkspaceFiles {
         let cx = Cx::new(engine, obj);
         let mut hooks: Vec<KindsHook> = Vec::new();
         let mut failures: Vec<(SaveFailedHook, String, String)> = Vec::new();
+        let mut previews: Vec<(PreviewHook, String)> = Vec::new();
         let mut rendered = false;
         for signal in &signals {
             match signal {
@@ -1749,6 +2419,24 @@ impl WorkspaceFiles {
                 Sig::SourceKinds => {
                     warned(engine, WorkspaceFiles::emit_source_kinds_changed(&cx));
                     hooks.extend(inner.hooks.borrow().source_kinds.iter().cloned());
+                }
+                Sig::PreviewReady(url) => {
+                    warned(
+                        engine,
+                        WorkspaceFiles::emit_preview_ready(&cx, Atom::new(url)),
+                    );
+                    for hook in inner.hooks.borrow().preview_ready.iter() {
+                        previews.push((hook.clone(), url.clone()));
+                    }
+                }
+                Sig::PreviewRefused(reason) => {
+                    warned(
+                        engine,
+                        WorkspaceFiles::emit_preview_refused(&cx, Atom::new(reason)),
+                    );
+                    for hook in inner.hooks.borrow().preview_refused.iter() {
+                        previews.push((hook.clone(), reason.clone()));
+                    }
                 }
                 Sig::Rendered => rendered = true,
                 Sig::SaveFailed { path, problem } => {
@@ -1772,8 +2460,17 @@ impl WorkspaceFiles {
         for (hook, path, problem) in failures {
             hook(engine, &path, &problem);
         }
+        for (hook, url) in previews {
+            hook(engine, &url);
+        }
         for effect in others {
             run(engine, obj, &inner, effect);
+        }
+        if finished {
+            let hooks = inner.hooks.borrow().writes_finished.clone();
+            for hook in hooks {
+                hook(engine);
+            }
         }
         Some(result)
     }
@@ -1836,6 +2533,11 @@ fn write(
     set!(search_truncated, SEARCH_TRUNCATED, after.search_truncated);
     set!(search_problem, SEARCH_PROBLEM, atom(&after.search_problem));
     set!(open_path, OPEN_PATH, atom(&after.open_path));
+    // Each write notifies at once, and a viewer made when the file is ready
+    // reads its media then: the media first.
+    set!(media_kind, MEDIA_KIND, atom(after.media_kind));
+    set!(media_url, MEDIA_URL, atom(&after.media_url));
+    set!(media_document, MEDIA_DOCUMENT, atom(&after.media_document));
     set!(file_status, FILE_STATUS, atom(after.file_status));
     set!(file_problem, FILE_PROBLEM, atom(&after.file_problem));
     set!(
@@ -1844,8 +2546,6 @@ fn write(
         atom(&after.truncated_notice)
     );
     set!(file_empty, FILE_EMPTY, after.file_empty);
-    set!(media_kind, MEDIA_KIND, atom(after.media_kind));
-    set!(media_url, MEDIA_URL, atom(&after.media_url));
     set!(reveal_line, REVEAL_LINE, after.reveal_line);
     set!(wrap, WRAP, after.wrap);
     set!(render_kind, RENDER_KIND, atom(after.render_kind));
@@ -1855,6 +2555,7 @@ fn write(
         READ_ONLY_REASON,
         atom(after.read_only_reason)
     );
+    set!(outside_project, OUTSIDE_PROJECT, after.outside_project);
     set!(unsaved, UNSAVED, after.unsaved);
     set!(save_problem, SAVE_PROBLEM, atom(&after.save_problem));
     set!(trail_folder, TRAIL_FOLDER, atom(&after.trail_folder));
@@ -1888,6 +2589,29 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
                 WorkspaceFiles::update(engine, obj, |f| f.answer(then, result));
             }),
         ),
+        Effect::DownloadDocument { relative, request } => {
+            inner.mc.download(
+                &relative,
+                Box::new(move |engine, result| {
+                    let kept = result.ok().and_then(|bytes| {
+                        let inner = inner_of(engine, obj)?;
+                        static NEXT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let path = std::env::temp_dir()
+                            .join(format!("hal-c2-{}-{n}.pdf", std::process::id()));
+                        std::fs::write(&path, &bytes).ok()?;
+                        if let Some(old) = inner.media_document_file.replace(Some(path.clone()))
+                            && old != path
+                        {
+                            let _ = std::fs::remove_file(old);
+                        }
+                        Some(format!("file://{}", path.display()))
+                    });
+                    WorkspaceFiles::update(engine, obj, |f| f.document_ready(request, kept));
+                }),
+            );
+        }
         Effect::SearchTimer(start) => restart(
             engine,
             obj,
@@ -1908,7 +2632,8 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
         ),
         Effect::Lines(text) => {
             if let Some(lines) = inner.lines.get() {
-                TextLinesModel::set_text(engine, lines, &text);
+                let path = inner.core.borrow().open_path().to_owned();
+                TextLinesModel::set_text_at(engine, lines, &text, &path);
             }
         }
         Effect::SetSearch(matches) => {
@@ -2072,6 +2797,45 @@ pub fn mutation_of(engine: &Engine, timeline: ObjectId) -> String {
 
 /// The workspace may have changed: lists the tree again, or notes it for
 /// when the tab shows.
+/// Whether the newest file change of `timeline` names `path`.
+fn newest_change_names(engine: &Engine, timeline: ObjectId, path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    TimelineModel::read(engine, timeline, |t| {
+        let mut newest: Option<&serde_json::Map<String, Json>> = None;
+        let mut ordinal = -1_i64;
+        for entity in t.entities("turn-item").values() {
+            if entity.get("type").and_then(Json::as_str) != Some("file_change") {
+                continue;
+            }
+            let at = entity
+                .get("ordinal")
+                .and_then(Json::as_f64)
+                .map_or(0, |n| n as i64);
+            if at > ordinal {
+                ordinal = at;
+                newest = Some(entity);
+            }
+        }
+        let Some(newest) = newest else {
+            return false;
+        };
+        if newest.get("fileName").and_then(Json::as_str) == Some(path) {
+            return true;
+        }
+        newest
+            .get("changes")
+            .and_then(Json::as_array)
+            .is_some_and(|changes| {
+                changes
+                    .iter()
+                    .any(|change| change.get("path").and_then(Json::as_str) == Some(path))
+            })
+    })
+    .unwrap_or(false)
+}
+
 fn follow(engine: &Engine, obj: ObjectId) {
     let Some(inner) = inner_of(engine, obj) else {
         return;
@@ -2080,7 +2844,9 @@ fn follow(engine: &Engine, obj: ObjectId) {
         return;
     };
     let now = mutation_of(engine, timeline);
-    let followed = WorkspaceFiles::update(engine, obj, |f| f.follow(now));
+    let open = inner.core.borrow().open_path().to_owned();
+    let named = newest_change_names(engine, timeline, &open);
+    let followed = WorkspaceFiles::update(engine, obj, |f| f.follow_named(now, named));
     if followed == Some(Followed::Refresh)
         && let Some(tree) = inner.tree.get()
     {
@@ -2131,6 +2897,12 @@ impl WorkspaceFiles {
     /// The browser is to open `url`, the open media file's (`openMedia`).
     #[qml(signal)]
     fn media_opened(url: Atom);
+    /// The preview browser is to show `url`, the open file's.
+    #[qml(signal)]
+    fn preview_ready(url: Atom);
+    /// The environment would not serve the open file to the preview.
+    #[qml(signal)]
+    fn preview_refused(reason: Atom);
 
     /// The viewer could not load `url`: the file shows why until reloaded,
     /// which signs a new URL.
@@ -2144,6 +2916,12 @@ impl WorkspaceFiles {
     #[qml(invokable)]
     fn open_media(cx: &Cx) {
         WorkspaceFiles::update(cx.engine, cx.this, Files::open_media);
+    }
+
+    /// Asks the environment to serve the open file to the preview browser.
+    #[qml(invokable)]
+    fn open_in_preview(cx: &Cx) {
+        WorkspaceFiles::update(cx.engine, cx.this, Files::open_in_preview);
     }
 
     /// Opens a file in the viewer, at `line` when above 0, and reveals it

@@ -29,6 +29,8 @@ pub struct Repo {
     pub branches: Vec<String>,
     pub current: String,
     pub default_branch: String,
+    /// "origin/main", listed after the local branches.
+    pub remotes: Vec<String>,
 }
 
 /// The MC's checkouts, by folder: `vcs` status frames, `vcs.listRefs` (the
@@ -65,7 +67,9 @@ fn send_status(mc: &mut FakeMc, cwd: &str) {
     }
 }
 
-fn ordered_refs(repo: &Repo, query: &str) -> Vec<Value> {
+/// Without `matching_remotes`, a remote branch with a local one of its name
+/// is left out, as the MC does.
+fn ordered_refs(repo: &Repo, query: &str, matching_remotes: bool) -> Vec<Value> {
     let mut names: Vec<&String> = Vec::new();
     if repo.branches.contains(&repo.current) {
         names.push(&repo.current);
@@ -78,14 +82,25 @@ fn ordered_refs(repo: &Repo, query: &str) -> Vec<Value> {
             names.push(branch);
         }
     }
-    names
+    let matches =
+        |name: &str| query.is_empty() || name.to_lowercase().contains(&query.to_lowercase());
+    let mut refs: Vec<Value> = names
         .into_iter()
-        .filter(|name| query.is_empty() || name.to_lowercase().contains(&query.to_lowercase()))
+        .filter(|name| matches(name))
         .map(|name| {
             json!({"name": name, "current": *name == repo.current,
                    "isDefault": *name == repo.default_branch, "isRemote": false})
         })
-        .collect()
+        .collect();
+    for name in &repo.remotes {
+        let (remote, branch) = name.split_once('/').unwrap_or((name, ""));
+        if (!matching_remotes && repo.branches.iter().any(|b| b == branch)) || !matches(name) {
+            continue;
+        }
+        refs.push(json!({"name": name, "current": false, "isDefault": false,
+                         "isRemote": true, "remoteName": remote}));
+    }
+    refs
 }
 
 /// The orchestration projection of `thread.metadata.update` on the MC's rows.
@@ -136,7 +151,8 @@ fn extension(mc: &mut FakeMc) {
             .get(&text(&rpc.payload["cwd"]))
             .cloned()
             .unwrap_or_default();
-        let all = ordered_refs(&repo, &text(&rpc.payload["query"]));
+        let matching = rpc.payload["includeMatchingRemoteRefs"].as_bool() == Some(true);
+        let all = ordered_refs(&repo, &text(&rpc.payload["query"]), matching);
         let limit = rpc.payload["limit"].as_i64().unwrap_or(100);
         let cursor = rpc.payload["cursor"].as_i64().unwrap_or(0);
         mc.part::<FakeGit>().ref_pages.push(cursor);
@@ -247,6 +263,7 @@ fn git_repo(world: &mut World, project: &str, branches: &[&str], current: &str, 
             branches: branches.iter().map(|b| (*b).to_owned()).collect(),
             current: current.to_owned(),
             default_branch: default.to_owned(),
+            remotes: Vec::new(),
         },
     );
 }
@@ -366,7 +383,7 @@ fn current_repo(world: &mut World) -> Repo {
 }
 
 /// The editors the MC's `config` lists, announced again to the shell.
-fn set_editors(world: &mut World, editors: Value) -> Outcome {
+pub fn set_editors(world: &mut World, editors: Value) -> Outcome {
     let fake = super::settings::fake_config(&mut world.mc);
     fake.config.insert("availableEditors".into(), editors);
     let mut config = fake.config.clone();
@@ -408,7 +425,9 @@ fn expect_editor_call(world: &mut World, editor: &str, cwd: &str) -> Outcome {
     let calls = world.mc.part::<FakeGit>().editor_calls.clone();
     let last = calls.last();
     expect!(
-        last.is_some_and(|c| c["editor"] == editor && c["cwd"] == cwd),
+        // A file the scenario names by its project path opens at its full path.
+        last.is_some_and(|c| c["editor"] == editor
+            && (c["cwd"] == cwd || text(&c["cwd"]).ends_with(&format!("/{cwd}")))),
         "the MC was asked {}",
         last.map(show).unwrap_or_else(|| "nothing".into())
     );
@@ -490,9 +509,27 @@ pub fn fake_git_repo(
             branches: branches.iter().map(|b| (*b).to_owned()).collect(),
             current: current.to_owned(),
             default_branch: default_branch.to_owned(),
+            remotes: Vec::new(),
         },
     );
     send_status(&mut world.mc, cwd);
+}
+
+/// Adds local branches and remote ones ("origin/release") to the checkout
+/// at `cwd`.
+pub fn fake_git_branches(world: &mut World, cwd: &str, branches: &[&str], remotes: &[&str]) {
+    let repo = world
+        .mc
+        .part::<FakeGit>()
+        .repos
+        .entry(cwd.to_owned())
+        .or_default();
+    for branch in branches {
+        if !repo.branches.iter().any(|b| b == branch) {
+            repo.branches.push((*branch).to_owned());
+        }
+    }
+    repo.remotes.extend(remotes.iter().map(|r| (*r).to_owned()));
 }
 
 fn project_row(project: &str) -> Value {
@@ -797,6 +834,9 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| search(world, &c[0]),
     );
     steps.step(&format!("only {Q} is listed"), |world, c, _| {
+        if let Some(step) = world.on_settings_page.get("onlyListed").cloned() {
+            return step(world, c);
+        }
         // The archive page lists the same words as the branch list. Its
         // list comes in after it opens, so it is waited for.
         if world.state("archivedThreads")["open"].as_bool() == Some(true) {

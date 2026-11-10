@@ -45,6 +45,18 @@ fn files(engine: &Engine) -> Option<ObjectId> {
     controller::with::<RightPanel, _>(engine, |p, _| p.files()).flatten()
 }
 
+/// The panel's previews, if it has them.
+fn previews(engine: &Engine) -> Option<ObjectId> {
+    use ljos::prelude::Value;
+    let panel = engine
+        .singleton::<crate::controllers::panel::PanelObject>()
+        .ok()?;
+    match engine.read_by_name(panel, "previews") {
+        Value::Object(previews) => Some(previews),
+        _ => None,
+    }
+}
+
 /// The checkout the files are in: the Files tab's, which keeps the last
 /// thread's checkout away from a thread.
 fn root(engine: &Engine) -> String {
@@ -188,6 +200,16 @@ impl Controller for FileActions {
         WorkspaceFiles::on_save_failed(engine, files, |engine, path, problem| {
             error(engine, &format!("Could not save {path}"), problem);
         });
+        WorkspaceFiles::on_preview_ready(engine, files, |engine, url| {
+            if let Some(previews) = previews(engine) {
+                crate::thread_view::previews::ThreadPreviews::update(engine, previews, |p| {
+                    p.open_page(url)
+                });
+            }
+        });
+        WorkspaceFiles::on_preview_refused(engine, files, |engine, reason| {
+            error(engine, "Could not open the file in the browser", reason);
+        });
         let commands = Commands::of(engine);
         commands.add(engine, COPY_CONTENTS, "Copy file contents", copy_contents);
         commands.set_terms(COPY_CONTENTS, &["clipboard", "text", "file"]);
@@ -265,6 +287,15 @@ impl Controller for FileActions {
                     });
                 } else {
                     error(engine, "Failed to copy mention", "");
+                }
+            }
+            "files.copyPath" => {
+                if self.bridge.copy_to_clipboard(engine, path) {
+                    controller::with::<Toasts, _>(engine, |t, e| {
+                        t.show(e, "success", "Path copied", path, None, DEFAULT_TIMEOUT_MS);
+                    });
+                } else {
+                    error(engine, "Failed to copy path", "");
                 }
             }
             COPY_CONTENTS => copy_contents(engine),

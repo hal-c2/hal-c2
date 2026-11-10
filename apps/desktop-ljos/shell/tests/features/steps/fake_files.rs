@@ -31,6 +31,11 @@ pub struct FakeFiles {
     pub gone_folders: HashSet<String>,
     pub partial_folders: HashSet<String>,
     pub read_fails_once: HashSet<String>,
+    /// Files the MC will not read as text, by their failure kind
+    /// (`binary_file`, `not_utf8`).
+    pub unreadable: HashMap<String, String>,
+    /// Why no address can be signed, while it reads anything.
+    pub unsignable: String,
     /// What the signed addresses serve ([`FakeFiles::downloads`]).
     downloads: Arc<Mutex<Downloads>>,
     /// The name searches (projects.searchEntries) the MC has received.
@@ -55,6 +60,8 @@ impl Default for FakeFiles {
             gone_folders: HashSet::new(),
             partial_folders: HashSet::new(),
             read_fails_once: HashSet::new(),
+            unreadable: HashMap::new(),
+            unsignable: String::new(),
             downloads: Arc::default(),
             searches: 0,
             truncated: HashMap::new(),
@@ -78,9 +85,24 @@ pub struct Downloads {
 }
 
 impl FakeFiles {
+    /// Each signed address's token and the path it serves.
+    pub fn signed_paths(&self) -> Vec<(String, String)> {
+        self.downloads()
+            .signed
+            .iter()
+            .map(|(token, (path, _))| (token.clone(), path.clone()))
+            .collect()
+    }
+
     pub fn downloads(&self) -> MutexGuard<'_, Downloads> {
         self.downloads.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// What the fake's file at `path` holds, read without the MC in hand.
+pub fn contents_of(mc: &FakeMc, path: &str) -> Option<String> {
+    mc.peek::<FakeFiles>()
+        .and_then(|fake| fake.files.get(path).cloned())
 }
 
 pub fn fake_files(mc: &mut FakeMc) -> &mut FakeFiles {
@@ -106,11 +128,19 @@ pub fn sign_file(mc: &mut FakeMc, rpc: &Rpc) -> bool {
     }
     let path = resource["path"].as_str().unwrap_or_default().to_owned();
     let fake = fake_files(mc);
+    if !fake.unsignable.is_empty() {
+        let why = fake.unsignable.clone();
+        mc.refuse(rpc, &why);
+        return true;
+    }
     if !fake.files.contains_key(&path) && !fake.outside.contains_key(&path) {
         mc.refuse(rpc, "Workspace file was not found.");
         return true;
     }
-    let body = if is_image(&path) {
+    let media = media_fixture(&path);
+    let body = if !media.is_empty() {
+        media
+    } else if is_image(&path) {
         png()
     } else {
         fake.files
@@ -131,6 +161,57 @@ pub fn sign_file(mc: &mut FakeMc, rpc: &Rpc) -> bool {
         json!({"relativeUrl": format!("/api/assets/{token}/{name}"), "expiresAt": (now + 3600 * 1000) as f64}),
     );
     true
+}
+
+/// Real, tiny media for the scenarios: what a player or a PDF reader opens
+/// has to be the thing itself. Empty for any other file (desktop-qt's
+/// MediaFixtures.h).
+pub(super) fn media_fixture(path: &str) -> Vec<u8> {
+    if path.ends_with(".mp4") {
+        // One second of a 16x16 picture, from ffmpeg's lavfi "color" source.
+        use base64::Engine;
+        return base64::engine::general_purpose::STANDARD
+            .decode("AAAAHGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAAA2dtb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAD6AABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACknRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAEAAAABAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAA+gAAAAAAAEAAAAAAgptZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAACgAAAAoAFXEAAAAAAAtaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAFZpZGVvSGFuZGxlcgAAAAG1bWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAABdXN0YmwAAADpc3RzZAAAAAAAAAABAAAA2W1wNHYAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAEAAQAEgAAABIAAAAAAAAAAESTGF2YzYzLjEuMTAxIG1wZWc0AAAAAAAAAAAAAAAAAAAY//8AAABfZXNkcwAAAAADgICATgABAASAgIBAIBEAAAAAAw1AAAABgAWAgIAuAAABsAEAAAG1iRMAAAEAAAABIADEjYgALQCEAhRjAAABskxhdmM2My4xLjEwMQaAgIABAgAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAw1AAAABgAAAABhzdHRzAAAAAAAAAAEAAAAFAAAIAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAAFAAAAAQAAAChzdHN6AAAAAAAAAAAAAAAFAAAAFAAAAAcAAAAHAAAABwAAAAcAAAAUc3RjbwAAAAAAAAABAAADkwAAAGF1ZHRhAAAAWW1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALGlsc3QAAAAkqXRvbwAAABxkYXRhAAAAAQAAAABMYXZmNjMuMS4xMDEAAAAIZnJlZQAAADhtZGF0AAABswAQBwAAAbYRgUYXG2GYI78AAAG2U8CNAAABtlWAjQAAAbZXwI0AAAG2WYCN")
+            .unwrap_or_default();
+    }
+    if path.ends_with(".mp3") {
+        // A second of silence as WAV: what a player reads by its bytes, not
+        // its name.
+        const RATE: u32 = 8000;
+        let mut wav = b"RIFF".to_vec();
+        let mut number = |wav: &mut Vec<u8>, value: u32, size: usize| {
+            for byte in 0..size {
+                wav.push(((value >> (8 * byte)) & 0xFF) as u8);
+            }
+        };
+        number(&mut wav, 36 + RATE, 4);
+        wav.extend_from_slice(b"WAVEfmt ");
+        number(&mut wav, 16, 4);
+        number(&mut wav, 1, 2);
+        number(&mut wav, 1, 2);
+        number(&mut wav, RATE, 4);
+        number(&mut wav, RATE, 4);
+        number(&mut wav, 1, 2);
+        number(&mut wav, 8, 2);
+        wav.extend_from_slice(b"data");
+        number(&mut wav, RATE, 4);
+        wav.resize(wav.len() + RATE as usize, 0x80);
+        return wav;
+    }
+    if path.ends_with(".pdf") {
+        // Two blank pages. No cross-reference table: PDF readers rebuild one.
+        return concat!(
+            "%PDF-1.4\n",
+            "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n",
+            "2 0 obj<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2>>endobj\n",
+            "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\n",
+            "4 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\n",
+            "trailer<</Root 1 0 R>>\n%%EOF\n"
+        )
+        .as_bytes()
+        .to_vec();
+    }
+    Vec::new()
 }
 
 /// A 4x3 PNG, what an image file holds.
@@ -250,7 +331,6 @@ fn extension(mc: &mut FakeMc) {
             let mut matches = BTreeSet::new();
             for key in fake.files.keys() {
                 for path in with_folders(key) {
-                    let name = path.rsplit('/').next().unwrap_or_default();
                     // The MC's rank: by name, else anywhere in the path.
                     if path.to_lowercase().contains(&query) {
                         matches.insert(path);
@@ -326,6 +406,14 @@ fn extension(mc: &mut FakeMc) {
             .unwrap_or_default()
             .to_owned();
         let fake = fake_files(mc);
+        if let Some(kind) = fake.unreadable.get(&path).cloned() {
+            mc.refuse_with(
+                rpc,
+                &format!("'{path}' is not a text file."),
+                json!({"failure": kind}),
+            );
+            return Ok(());
+        }
         let known = fake.files.contains_key(&path) || fake.outside.contains_key(&path);
         if fake.read_fails_once.remove(&path) || !known {
             mc.refuse(rpc, &format!("Could not read {path}."));
@@ -343,10 +431,14 @@ fn extension(mc: &mut FakeMc) {
             .copied()
             .unwrap_or(contents.len() as i64);
         let truncated = fake.truncated.contains_key(&path);
-        mc.reply(
-            rpc,
-            json!({"contents": contents, "byteLength": size as f64, "truncated": truncated}),
-        );
+        let answer =
+            json!({"contents": contents, "byteLength": size as f64, "truncated": truncated});
+        if mc.holding("read") {
+            let rpc = rpc.clone();
+            mc.defer(move |mc| mc.reply(&rpc, answer));
+        } else {
+            mc.reply(rpc, answer);
+        }
         Ok(())
     });
     // The folders in the typed path's parent whose names start with its last

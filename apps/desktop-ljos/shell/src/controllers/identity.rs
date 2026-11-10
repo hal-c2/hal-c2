@@ -45,6 +45,14 @@ use crate::store;
 use crate::thread_view::workspace_files::{self, SEARCH_LIMIT};
 
 const PROJECT_ICONS: &str = "projectIcons";
+
+// A favicon URL is asked for again this long before it runs out, and counts
+// as good for at least FAVICON_AT_LEAST_MS, so a clock behind the MC's
+// cannot ask in a loop. One the MC could not sign is asked for again after
+// FAVICON_RETRY_MS.
+const FAVICON_MARGIN_MS: i64 = 60_000;
+const FAVICON_AT_LEAST_MS: i64 = 5 * 60_000;
+const FAVICON_RETRY_MS: i64 = 30_000;
 const PICKER: &str = "projectIconPicker";
 const ENVIRONMENT_ICONS: &str = "environmentIcons";
 
@@ -131,6 +139,9 @@ struct Picker {
 struct Favicon {
     asked: String,
     url: String,
+    asking: bool,
+    /// When the MC stops serving `url`, in ms; 0 for never or unknown.
+    expires_at: i64,
 }
 
 /// What runs once the session's scopes are known.
@@ -143,6 +154,10 @@ pub struct Identity {
     settings: EnvironmentSettings,
     active: bool,
     favicons: HashMap<String, Favicon>,
+    /// Bumped on each arming, so only the latest renewal timer runs, and
+    /// when that one is due.
+    renewal: u64,
+    renewal_due: Option<i64>,
     project_icons: Option<Json>,
     picker: Option<Picker>,
     /// Each environment's `environment` descriptor from its config.
@@ -162,6 +177,8 @@ impl Controller for Identity {
             mc: init.mc,
             active: false,
             favicons: HashMap::new(),
+            renewal: 0,
+            renewal_due: None,
             project_icons: None,
             picker: None,
             descriptors: HashMap::new(),
@@ -280,6 +297,12 @@ impl Identity {
                 })
                 .collect()
         });
+        let now = crate::controllers::sidebar::now_ms(engine);
+        let online_environments: Vec<String> = environments
+            .iter()
+            .filter(|(_, online, _)| *online)
+            .map(|(id, _, _)| id.clone())
+            .collect();
         let mut icons = serde_json::Map::new();
         let mut asks = Vec::new();
         for (environment_id, online, rows) in environments {
@@ -297,20 +320,29 @@ impl Identity {
                     // MC serves one.
                     let favicon_path = text(&row, "faviconPath");
                     let asked = format!("{}\n{favicon_path}", text(&row, "workspaceRoot"));
-                    let stale = self.favicons.get(&key).is_none_or(|f| f.asked != asked);
-                    if stale && online {
-                        self.favicons.insert(
-                            key.clone(),
-                            Favicon {
+                    let moved = self.favicons.get(&key).is_none_or(|f| f.asked != asked);
+                    let due = !moved
+                        && self.favicons.get(&key).is_some_and(|f| {
+                            !f.asking && f.expires_at > 0 && f.expires_at - FAVICON_MARGIN_MS <= now
+                        });
+                    if (moved || due) && online {
+                        let favicon = self.favicons.entry(key.clone()).or_default();
+                        if moved {
+                            *favicon = Favicon {
                                 asked: asked.clone(),
-                                url: String::new(),
-                            },
-                        );
+                                ..Favicon::default()
+                            };
+                        }
+                        favicon.asking = true;
                         asks.push((key.clone(), asked, row.clone()));
                     }
                     if let Some(favicon) = self.favicons.get(&key).filter(|f| !f.url.is_empty()) {
+                        // The automatic monogram stays along, in its colour,
+                        // for while the image loads or if it cannot.
                         icon = json!({
                             "kind": "image", "url": favicon.url, "path": favicon_path,
+                            "text": icon.get("text").cloned().unwrap_or(Json::Null),
+                            "tint": icon.get("tint").cloned().unwrap_or(Json::Null),
                             "automatic": favicon_path.is_empty(),
                         });
                     }
@@ -322,6 +354,7 @@ impl Identity {
         for (key, asked, row) in asks {
             self.request_favicon(&key, asked, &row);
         }
+        self.arm_favicon_renewal(engine, now, &online_environments);
         let icons = Json::Object(icons);
         if self.project_icons.as_ref() == Some(&icons) {
             return;
@@ -358,31 +391,79 @@ impl Identity {
         asked: &str,
         result: Result<Json, McError>,
     ) {
-        if self.favicons.get(key).is_none_or(|f| f.asked != asked) {
+        let now = crate::controllers::sidebar::now_ms(engine);
+        let origin = self.mc.origin();
+        let Some(favicon) = self.favicons.get_mut(key).filter(|f| f.asked == asked) else {
             return;
-        }
-        let relative = result
-            .ok()
-            .and_then(|r| {
-                r.get("relativeUrl")
-                    .and_then(Json::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_default();
-        // The MC names a project without a favicon this way: the monogram stays.
-        if relative.is_empty() || relative.ends_with("project-favicon-missing") {
-            return;
-        }
-        let url = self
-            .mc
-            .origin()
-            .and_then(|o| url::Url::parse(&o).ok())
-            .and_then(|o| o.join(&relative).ok())
-            .map_or(relative, |u| u.to_string());
-        if let Some(favicon) = self.favicons.get_mut(key) {
-            favicon.url = url;
+        };
+        favicon.asking = false;
+        let answer = result.ok().unwrap_or(Json::Null);
+        let relative = text(&answer, "relativeUrl").to_owned();
+        if relative.is_empty() {
+            // A URL being renewed is asked for again soon; a first one is not.
+            if favicon.expires_at > 0 {
+                favicon.expires_at = now + FAVICON_MARGIN_MS + FAVICON_RETRY_MS;
+            }
+        } else if relative.ends_with("project-favicon-missing") {
+            // The MC names a project without a favicon this way: the
+            // monogram shows.
+            *favicon = Favicon {
+                asked: asked.to_owned(),
+                ..Favicon::default()
+            };
+        } else {
+            let expires_at = answer
+                .get("expiresAt")
+                .and_then(Json::as_f64)
+                .unwrap_or(0.0) as i64;
+            favicon.url = origin
+                .and_then(|o| url::Url::parse(&o).ok())
+                .and_then(|o| o.join(&relative).ok())
+                .map_or(relative, |u| u.to_string());
+            favicon.expires_at = if expires_at > 0 {
+                expires_at.max(now + FAVICON_AT_LEAST_MS)
+            } else {
+                0
+            };
         }
         self.refresh_projects(engine);
+    }
+
+    /// Asks for every favicon URL about to run out again. Its timer runs on
+    /// the engine's clock; a test that moves the wall clock calls this.
+    pub fn renew_favicons(&mut self, engine: &Engine) {
+        self.refresh_projects(engine);
+    }
+
+    fn arm_favicon_renewal(&mut self, engine: &Engine, now: i64, online: &[String]) {
+        let due = self
+            .favicons
+            .iter()
+            .filter(|(key, f)| {
+                f.expires_at > 0 && !f.asking && online.iter().any(|id| id == split_key(key).0)
+            })
+            .map(|(_, f)| f.expires_at)
+            .min();
+        if due == self.renewal_due {
+            return;
+        }
+        self.renewal += 1;
+        self.renewal_due = due;
+        let Some(due) = due else { return };
+        let wait = (due - FAVICON_MARGIN_MS - now).max(0) as u64;
+        let renewal = self.renewal;
+        let me = self.me.clone();
+        engine.call_at(
+            engine.now() + std::time::Duration::from_millis(wait),
+            move |engine| {
+                me.run(engine, move |c, engine| {
+                    if c.renewal == renewal {
+                        c.renewal_due = None;
+                        c.renew_favicons(engine);
+                    }
+                });
+            },
+        );
     }
 
     fn publish_picker(&self, engine: &Engine) {

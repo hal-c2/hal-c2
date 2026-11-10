@@ -439,6 +439,9 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("the user chooses {Q} as the machine the thread runs on"),
         |world, c, _| {
+            if c[0] == "Auto balance" {
+                return crate::steps::composer_machine::pick_auto_balance(world);
+            }
             let listed = environments(world);
             let choice = listed.iter().position(|e| e["label"] == json!(c[0]));
             expect!(

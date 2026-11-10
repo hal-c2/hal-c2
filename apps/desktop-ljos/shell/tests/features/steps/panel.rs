@@ -760,6 +760,58 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    // The earlier turns' checkpoints list the files they changed; the last one lists none.
+    steps.step(
+        "turn (\\d+) only answered a question after turns that changed files",
+        |world, c, _| {
+            let last: i32 = c[0].parse().unwrap_or(0);
+            for turn in 1..last {
+                let file = json!({"path": format!("src/turn{turn}.ts"), "kind": "added",
+                                  "additions": 2, "deletions": 0});
+                set(
+                    world,
+                    "checkpoint",
+                    &format!("cp-{turn}"),
+                    json!({"files": [file]}),
+                )?;
+            }
+            finish_turn(world, last, String::new())
+        },
+    );
+    steps.step("the diff shows all changes", |world, _, _| {
+        let latest = read_diff(world, |d| d.latest_turn())?;
+        let files = turn_files(1, latest - 1);
+        expect_diff_of(world, &as_strs(&files))?;
+        let selection = read_diff(world, |d| d.selection())?;
+        expect!(selection == 0, "the picker shows selection {selection}");
+        let asked = world.mc.part::<FakeDiffs>().asked.last().cloned();
+        expect!(
+            asked.is_some_and(|a| a["method"] == "orchestration.getFullThreadDiff"),
+            "all changes were not asked of the whole thread"
+        );
+        Ok(())
+    });
+    steps.step("the user picks the latest turn", |world, _, _| {
+        update_diff(world, |d| d.select(-1))?;
+        wait_for_diff(world)
+    });
+    steps.step("the user is told there are no changes", |world, _, _| {
+        wait_for_diff(world)?;
+        let (status, message) =
+            read_diff(world, |d| (d.status().to_owned(), d.message().to_owned()))?;
+        expect!(
+            status == "empty" && message == "No net changes in this selection.",
+            "{}",
+            describe_diff(world)
+        );
+        let (selection, shown, latest) =
+            read_diff(world, |d| (d.selection(), d.shown_turn(), d.latest_turn()))?;
+        expect!(
+            selection == -1 && shown == latest,
+            "the picker shows selection {selection}"
+        );
+        Ok(())
+    });
     // A turn's diff from its reply (timeline/tool-calls.feature).
     steps.step("a turn changed two files", |world, _, _| {
         two_turns(world, &["src/cart.ts", "src/checkout.ts"])
@@ -1188,6 +1240,12 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user is told the folder could not be loaded",
         |world, _, _| {
+            // The path trail's folder, when that is what was opened.
+            if text_prop(world, "trailStatus") == "error" {
+                let problem = text_prop(world, "trailProblem");
+                expect!(problem.starts_with("Could not list"), "{problem}");
+                return Ok(());
+            }
             for (kind, problem, _) in tree_rows(world)? {
                 if kind == "error" && problem.starts_with("Could not list") {
                     return Ok(());
@@ -1202,6 +1260,20 @@ pub fn register(steps: &mut Steps) {
         if world.state("desktopUpdate")["state"]["errorContext"] == "download" {
             world.dispatch("desktopUpdate.press", serde_json::json!({}))?;
             return world.sync();
+        }
+        if text_prop(world, "trailStatus") == "error" {
+            let brick = brick::shown(world)?;
+            let Some(retry) =
+                super::files_viewer::menu_entry(world, brick, "filePathSiblings", "filePathRetry")
+            else {
+                fail!("the path trail offers no retry");
+            };
+            if let Err(error) = world.engine().emit_by_name(retry, "triggered", &[]) {
+                fail!("triggered: {error}");
+            }
+            return world.wait_for("the folder to be listed", |w| {
+                text_prop(w, "trailStatus") == "ready"
+            });
         }
         if text_prop(world, "fileStatus") == "error" {
             update_files(world, |f| f.reload_file())?;

@@ -9,6 +9,7 @@ pub mod agents;
 pub mod alert;
 pub mod appearance_rows;
 pub mod archived_threads;
+pub mod attachment_viewer;
 pub mod centre;
 pub mod checkpoint_edit;
 pub mod clone;
@@ -32,6 +33,7 @@ pub mod diagnostics;
 pub mod draft;
 pub mod environment;
 pub mod fake_files;
+pub mod file_colour;
 pub mod file_search;
 pub mod files_actions;
 pub mod files_explorer;
@@ -197,6 +199,8 @@ pub fn register(steps: &mut Steps) {
     files_explorer::register(steps);
     files_folder::register(steps);
     files_identity::register(steps);
+    attachment_viewer::register(steps);
+    file_colour::register(steps);
     files_media::register(steps);
     files_viewer::register(steps);
     git::register(steps);
@@ -310,6 +314,7 @@ pub fn register(steps: &mut Steps) {
     thread_worktree_setup::register(steps);
     timeline::register(steps);
     timeline_activity::register(steps);
+    timeline_details::register(steps);
     toast::register(steps);
     turn::register(steps);
     usage::register(steps);
@@ -318,4 +323,3 @@ pub fn register(steps: &mut Steps) {
     window::register(steps);
     workspace::register(steps);
 }
-    timeline_details::register(steps);

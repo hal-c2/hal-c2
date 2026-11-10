@@ -476,6 +476,11 @@ impl World {
             c.set_clock(move || time);
             c.expire(engine);
         });
+        // The favicon renewal timer runs on the engine's clock; time jumps here.
+        let _ = controller::with::<hal_c2_shell::controllers::identity::Identity, _>(
+            &engine,
+            |c, engine| c.renew_favicons(engine),
+        );
     }
 
     /// The desktop quits and starts again: a new shell, the same files.
@@ -977,6 +982,25 @@ impl World {
             return Err(Failure("the app is not running".into()));
         };
         let event = ljos::item::WheelEvent::pixels(x, y, 0.0, dy, shell.window.now());
+        let taken = shell.window.wheel(&event);
+        self.pump()?;
+        Ok(taken)
+    }
+
+    /// The user turns the mouse wheel `notches` over (x, y) with
+    /// `modifiers` held (a pinch reads as the wheel with Control held).
+    pub fn wheel_with(
+        &mut self,
+        x: f64,
+        y: f64,
+        notches: f64,
+        modifiers: ljos::item::Modifiers,
+    ) -> Outcome<bool> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let event = ljos::item::WheelEvent::notches(x, y, 0.0, notches, shell.window.now())
+            .with_modifiers(modifiers);
         let taken = shell.window.wheel(&event);
         self.pump()?;
         Ok(taken)
