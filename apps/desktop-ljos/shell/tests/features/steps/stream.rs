@@ -74,6 +74,8 @@ pub struct FakeStreams {
     /// While set, a `sub` to a stream waits for its answer in `waiting`:
     /// the thread loads slowly.
     pub slow: bool,
+    /// How long the MC takes to load a thread, in ms: it is busy meanwhile.
+    pub load_ms: u64,
     pub waiting: Vec<(i64, Value, Value)>,
     /// Environments that are down: a stream on one is refused.
     pub offline: HashSet<String>,
@@ -100,6 +102,7 @@ impl Default for FakeStreams {
             sent: Vec::new(),
             cut_catch_up: false,
             slow: false,
+            load_ms: 0,
             waiting: Vec::new(),
             offline: HashSet::new(),
             thread: String::new(),
@@ -693,6 +696,16 @@ fn extension(mc: &mut FakeMc) {
         }
         if fake.slow {
             fake.waiting.push((id, shape.clone(), sub));
+            return Ok(());
+        }
+        if fake.load_ms > 0 {
+            let ms = fake.load_ms;
+            let shape = shape.clone();
+            mc.busy(ms, move |mc| {
+                if mc.subscribers("stream").contains(&id) {
+                    answer(mc, id, &shape, &sub);
+                }
+            });
             return Ok(());
         }
         answer(mc, id, shape, &sub);

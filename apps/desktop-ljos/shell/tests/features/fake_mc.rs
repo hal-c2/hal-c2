@@ -208,9 +208,21 @@ pub struct FakeMc {
     /// snapshot (`local`, `remote`) the workspace's `vcs` shape sends for them.
     pub checkouts: HashMap<String, Checkout>,
     pub capabilities: Value,
+    /// An environment's descriptor as the scenario states it, by
+    /// environment id; its `capabilities` merge over the MC's own.
+    pub descriptor_fields: HashMap<String, Value>,
     pub hold_snapshot: bool,
+    /// How long the MC takes to build the thread list, in ms: it is busy
+    /// meanwhile ([`FakeMc::busy`]).
+    pub build_ms: u64,
     /// False: the MC has stopped answering, its socket still open.
     pub answer_pings: bool,
+    /// Sends nothing on the socket it holds, as an MC that died without
+    /// closing it; the next socket it takes is heard again.
+    pub silent: bool,
+    /// Says hello on each socket it takes; one that does not never finishes
+    /// introducing itself.
+    pub say_hello: bool,
     /// The cluster's other members, in the order they joined, and the MC
     /// serving each environment.
     pub members: Vec<String>,
@@ -222,6 +234,8 @@ pub struct FakeMc {
     pub peer_platforms: HashMap<String, Value>,
     /// Members whose MC is down: their rows stay, and requests for them fail.
     pub offline: HashSet<String>,
+    /// Members the cluster has stopped trying to reach (`trying` false).
+    pub given_up: HashSet<String>,
     /// Each member's rows, by environment then id: [id, kind, row].
     pub peer_rows: HashMap<String, BTreeMap<String, Value>>,
 
@@ -242,6 +256,10 @@ pub struct FakeMc {
     http: HashMap<String, HttpHandler>,
     raw: Vec<(String, RawHandler)>,
     holds: HashSet<String>,
+    /// What busy() is still working on: when it is done, on which socket.
+    busy: Vec<(std::time::Instant, Option<u64>, Held)>,
+    /// Pings that came while busy, answered once it is done.
+    held_pongs: usize,
     held: Vec<Held>,
     parts: HashMap<TypeId, Box<dyn Any>>,
     failure: Option<Failure>,
@@ -289,6 +307,7 @@ impl FakeMc {
             refusals: HashMap::new(),
             effects: Vec::new(),
             checkouts: HashMap::new(),
+            descriptor_fields: HashMap::new(),
             capabilities: json!({
                 "threadSettlement": true,
                 "threadSnooze": true,
@@ -303,12 +322,16 @@ impl FakeMc {
                 "threadPullRequestLinking": true,
             }),
             hold_snapshot: false,
+            build_ms: 0,
             answer_pings: true,
+            silent: false,
+            say_hello: true,
             members: Vec::new(),
             peers: HashMap::new(),
             peer_labels: HashMap::new(),
             peer_platforms: HashMap::new(),
             offline: HashSet::new(),
+            given_up: HashSet::new(),
             peer_rows: HashMap::new(),
             port,
             io,
@@ -327,6 +350,8 @@ impl FakeMc {
             raw: Vec::new(),
             holds: HashSet::new(),
             held: Vec::new(),
+            busy: Vec::new(),
+            held_pongs: 0,
             parts: HashMap::new(),
             failure: None,
         };
@@ -338,7 +363,17 @@ impl FakeMc {
                 .and_then(|s| s.get("have"))
                 .cloned()
                 .unwrap_or(Value::Null);
-            if !mc.hold_snapshot {
+            if mc.hold_snapshot {
+                return Ok(());
+            }
+            if mc.build_ms > 0 {
+                let ms = mc.build_ms;
+                mc.busy(ms, move |mc| {
+                    if mc.shell_subscription == id {
+                        mc.send_snapshot();
+                    }
+                });
+            } else {
                 mc.send_snapshot();
             }
             Ok(())
@@ -445,7 +480,9 @@ impl FakeMc {
     }
 
     pub fn send(&self, frame: &Value) {
-        let Some(socket) = self.socket else { return };
+        let Some(socket) = self.socket.filter(|_| !self.silent) else {
+            return;
+        };
         if let Some(control) = self
             .io
             .sockets
@@ -521,6 +558,34 @@ impl FakeMc {
 
     pub fn defer(&mut self, answer: impl FnOnce(&mut FakeMc) + 'static) {
         self.held.push(Box::new(answer));
+    }
+
+    /// The MC is busy for `ms`, as one building a large answer is: then runs
+    /// `then`, unless the connection it was busy for has gone, and answers
+    /// the pings that came meanwhile (once nothing else keeps it busy).
+    pub fn busy(&mut self, ms: u64, then: impl FnOnce(&mut FakeMc) + 'static) {
+        let at = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+        self.busy.push((at, self.socket, Box::new(then)));
+    }
+
+    // Runs what busy() finished by now; true when anything was.
+    fn finish_busy(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let mut any = false;
+        while let Some(i) = self.busy.iter().position(|(at, _, _)| *at <= now) {
+            any = true;
+            let (_, socket, then) = self.busy.remove(i);
+            if socket.is_none() || socket != self.socket {
+                continue;
+            }
+            then(self);
+            if self.busy.is_empty() {
+                for _ in 0..std::mem::take(&mut self.held_pongs) {
+                    self.send(&json!({"t": "pong"}));
+                }
+            }
+        }
+        any
     }
 
     pub fn answer_held(&mut self) {
@@ -654,16 +719,42 @@ impl FakeMc {
             let peer = self.peers.get(&environment).cloned().unwrap_or_default();
             let online = !self.offline.contains(&environment);
             let descriptor = self.peer_environment(&environment);
-            mcs.push(self.shell_mc(&peer, online, descriptor, &mut rows));
+            let mut mc = self.shell_mc(&peer, online, descriptor, &mut rows);
+            mc["trying"] = json!(!self.given_up.contains(&environment));
+            mcs.push(mc);
         }
         let frame = json!({"t": "shell", "id": self.shell_subscription, "mcs": mcs, "rows": rows});
         self.shell_frames.push(frame.clone());
         self.send(&frame);
     }
 
+    /// An environment's id, the MC's capabilities and its descriptorFields.
+    fn describe(&self, environment: &str) -> Value {
+        let mut descriptor = json!({"environmentId": environment});
+        let fields = self
+            .descriptor_fields
+            .get(environment)
+            .cloned()
+            .unwrap_or(Value::Null);
+        let mut merged = self.capabilities.clone();
+        if let (Some(merged), Some(added)) =
+            (merged.as_object_mut(), fields["capabilities"].as_object())
+        {
+            for (key, value) in added {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+        if let Some(object) = fields.as_object() {
+            for (key, value) in object {
+                descriptor[key] = value.clone();
+            }
+        }
+        descriptor["capabilities"] = merged;
+        descriptor
+    }
+
     fn own_environment(&self) -> Value {
-        let mut own =
-            json!({"environmentId": self.environment_id, "capabilities": self.capabilities});
+        let mut own = self.describe(&self.environment_id.clone());
         if !self.label.is_empty() {
             own["label"] = json!(self.label);
         }
@@ -687,8 +778,7 @@ impl FakeMc {
     }
 
     fn peer_environment(&self, environment: &str) -> Value {
-        let mut descriptor =
-            json!({"environmentId": environment, "capabilities": self.capabilities});
+        let mut descriptor = self.describe(environment);
         if let Some(label) = self.peer_labels.get(environment) {
             descriptor["label"] = json!(label);
         }
@@ -797,15 +887,42 @@ impl FakeMc {
     pub fn set_online(&mut self, environment: &str, online: bool) {
         if online {
             self.offline.remove(environment);
+            self.given_up.remove(environment);
         } else {
             self.offline.insert(environment.to_owned());
         }
         if self.socket.is_none() || self.shell_subscription < 0 {
             return;
         }
-        let peer = self.peers.get(environment).cloned().unwrap_or_default();
+        // This MC's own environment is named by this MC.
+        let peer = if environment == self.environment_id {
+            self.name.clone()
+        } else {
+            self.peers.get(environment).cloned().unwrap_or_default()
+        };
+        let trying = !self.given_up.contains(environment);
         self.send(
-            &json!({"t": "shell.mc", "id": self.shell_subscription, "mc": peer, "online": online}),
+            &json!({"t": "shell.mc", "id": self.shell_subscription, "mc": peer,
+                          "online": online, "trying": trying}),
+        );
+    }
+
+    /// The cluster stops trying to reach a member that is down, or starts
+    /// again (`shell.mc` with `trying`).
+    pub fn set_trying(&mut self, environment: &str, trying: bool) {
+        if trying {
+            self.given_up.remove(environment);
+        } else {
+            self.given_up.insert(environment.to_owned());
+        }
+        if self.socket.is_none() || self.shell_subscription < 0 {
+            return;
+        }
+        let peer = self.peers.get(environment).cloned().unwrap_or_default();
+        let online = !self.offline.contains(environment);
+        self.send(
+            &json!({"t": "shell.mc", "id": self.shell_subscription, "mc": peer,
+                          "online": online, "trying": trying}),
         );
     }
 
@@ -816,6 +933,7 @@ impl FakeMc {
         self.told.remove(&peer);
         self.members.retain(|m| m != environment);
         self.offline.remove(environment);
+        self.given_up.remove(environment);
         self.peer_rows.remove(environment);
         if self.socket.is_none() || self.shell_subscription < 0 {
             return;
@@ -913,14 +1031,19 @@ impl FakeMc {
                 }
             }
         }
-        any
+        any | self.finish_busy()
     }
 
     fn accept(&mut self, socket: u64, url: String) {
         self.connections.push(url);
+        self.held_pongs = 0;
+        self.silent = false;
         self.socket = Some(socket);
         self.shell_subscription = -1;
         self.live.clear();
+        if !self.say_hello {
+            return;
+        }
         self.send(&json!({"t": "hello", "protocol": 3, "mc": self.name, "environment": self.environment_id}));
     }
 
@@ -964,7 +1087,10 @@ impl FakeMc {
         } else if let Some(read) = self.frames.get(&kind).cloned() {
             read(self, &message)
         } else if kind == "ping" {
-            if self.answer_pings {
+            if !self.answer_pings {
+            } else if !self.busy.is_empty() {
+                self.held_pongs += 1;
+            } else {
                 self.send(&json!({"t": "pong"}));
             }
             Ok(())
@@ -1182,9 +1308,12 @@ async fn connection(mut stream: TcpStream, port: u16, io: Arc<Io>) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
+    // The longest prefix wins, so `/api/auth/session/renew` can be answered
+    // apart from `/api/auth/session`.
     if let Some(prefix) = prefixes
         .into_iter()
-        .find(|p| target.starts_with(p.as_str()))
+        .filter(|p| target.starts_with(p.as_str()))
+        .max_by_key(String::len)
     {
         if let Ok(stream) = stream.into_std() {
             let _ = stream.set_nonblocking(false);
