@@ -11,7 +11,8 @@ defmodule HalC2.OpenShell.Broker do
   revokes the token and closes the sandbox (`HalC2.OpenShell.Review.close/2`), after
   the answer has gone out.
 
-  It listens on its own port, started with the first review (`listen/0`). Where the
+  It listens on its own port, started with the first review (`listen/0`), on loopback
+  on rootless Podman and on every interface on Docker. Where it listens and where the
   sandbox reaches it is `config :hal_c2, :openshell_broker` (`host`, `ips`, `bind`,
   `port`), defaulting to the container runtime's name for this machine.
   """
@@ -31,7 +32,8 @@ defmodule HalC2.OpenShell.Broker do
   """
   def listen do
     config = Application.get_env(:hal_c2, :openshell_broker, [])
-    {:ok, ip} = :inet.parse_address(String.to_charlist(Keyword.get(config, :bind, "0.0.0.0")))
+    bind = Keyword.get_lazy(config, :bind, &default_bind/0)
+    {:ok, ip} = :inet.parse_address(String.to_charlist(bind))
 
     with {:ok, pid} <-
            Bandit.start_link(
@@ -74,6 +76,18 @@ defmodule HalC2.OpenShell.Broker do
     case HalC2.OpenShell.state() do
       %{"driver" => "docker"} -> {"host.docker.internal", "host.docker.internal"}
       _ -> {"host.containers.internal", "host.containers.internal."}
+    end
+  end
+
+  # Where the broker listens. On rootless Podman a sandbox's requests reach it through
+  # its proxy, which connects from loopback, so it listens there alone. On Docker
+  # Desktop (a Mac) the host-gateway alias is answered from the VM and arrives on a
+  # non-loopback interface, so it listens on every one; Docker on Linux is not narrowed
+  # until a live run shows where its sandboxes connect from.
+  defp default_bind do
+    case HalC2.OpenShell.state() do
+      %{"driver" => "docker"} -> "0.0.0.0"
+      _ -> "127.0.0.1"
     end
   end
 
