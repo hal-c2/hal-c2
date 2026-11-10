@@ -1396,7 +1396,9 @@ defmodule HalC2.Steps.Providers.Claude do
       )
     )
 
-    context = World.send_turn(context, @thread, "wait for me")
+    # On the fakes the first turn started (`send_turn/3` would start the MC's MCP server
+    # too, a new launch that ends the monitor with the CLI that runs it).
+    context = World.post_message(context, @thread, "wait for me")
     World.await_running(context, @thread)
     context
   end
@@ -5284,10 +5286,21 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
-  # Claude creates task `id` and saves it where it keeps the session's task list.
+  # Claude creates task `id` and saves it where it keeps the session's task list. In the
+  # thread's first session: the runtime learns the session when Claude says it started
+  # one (which sets the provider thread's native session), and frames sent before that
+  # would overtake it.
   defp task_created(context, id, subject) do
+    session =
+      World.await_value(context, @thread, fn state ->
+        state
+        |> StreamState.list("provider-thread")
+        |> Enum.find_value(&get_in(&1, ["nativeThreadRef", "nativeId"]))
+      end)
+
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
-    dir = Path.join([context.claude_home, "tasks", :sys.get_state(pid).session_id])
+    assert :sys.get_state(pid).session_id == session
+    dir = Path.join([context.claude_home, "tasks", session])
     File.mkdir_p!(dir)
 
     task = %{"id" => id, "subject" => subject, "description" => "", "status" => "pending"}
@@ -5362,15 +5375,15 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # The fake makes these task calls itself, after it says which session it is in: frames
+  # the test sent the runtime could overtake that, and a runtime started by the restart
+  # knows its session only from it.
   step "Claude's task list has three tasks", context do
     context =
       context
       |> task_instance(%{})
-      |> running_turn()
-      |> task_created("1", "Inspect")
-      |> task_created("2", "Fix")
-      |> task_created("3", "Test")
-      |> claude_ends_turn()
+      |> World.launch_on(@thread, "claudeAgent", "create tasks: Inspect, Fix, Test")
+      |> Map.put(:thread, @thread)
 
     World.await_runs(context, @thread, ["completed"])
     assert [{_, "Inspect", _}, {_, "Fix", _}, {_, "Test", _}] = task_steps(context)
@@ -5378,19 +5391,9 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "Claude adds a fourth task", context do
-    context = World.post_message(context, @thread, "wait for the fourth task")
-    World.await_running(context, @thread)
-
-    World.await_provider_log(
-      context,
-      "claude",
-      &(get_in(&1, ["in", "message", "content"]) == "wait for the fourth task")
-    )
-
+    context = World.post_message(context, @thread, "create tasks: Deploy")
+    World.await_runs(context, @thread, ["completed", "completed"])
     context
-    |> task_created("4", "Deploy")
-    |> claude_ends_turn()
-    |> tap(&World.await_runs(&1, @thread, ["completed", "completed"]))
   end
 
   step "the task list shows all four tasks", context do

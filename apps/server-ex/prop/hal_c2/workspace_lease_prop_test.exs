@@ -3,7 +3,8 @@ defmodule HalC2.WorkspaceLeasePropTest do
   `HalC2.WorkspaceLease` against a model of who holds which folder. Clients (each a
   process inside `with_lease/2`, as a terminal starting or a storage sweep removing a
   worktree is) ask for nested folders, one of them reached through a symbolic link,
-  then let go or crash. No two holders' folders ever overlap, a client waits only
+  then let go or crash, and for a repository's turns (`HalC2.Vcs`), keyed by the same
+  path as one of the folders yet held apart from all of them. No two holders' folders ever overlap, a client waits only
   while a holder or an earlier waiter overlaps its folder, and a waiter is let in, in
   the order it asked, once nothing ahead of it overlaps.
 
@@ -20,8 +21,9 @@ defmodule HalC2.WorkspaceLeasePropTest do
   @moduletag timeout: :infinity
 
   @clients [:c1, :c2, :c3, :c4]
-  # "link" is a symbolic link to "a", so it is the same folder.
-  @folders [:root, :a, :ab, :c, :link]
+  # "link" is a symbolic link to "a", so it is the same folder. "repo" is the turns of
+  # a repository whose git folder is "a": it overlaps only itself.
+  @folders [:root, :a, :ab, :c, :link, :repo]
 
   property "holders never overlap and overlapping waiters go in order",
     numtests: HalC2.Prop.numtests(1000),
@@ -125,6 +127,7 @@ defmodule HalC2.WorkspaceLeasePropTest do
 
   # The folders as the tree they are on disk, "link" being "a": each with the
   # folders that hold it.
+  defp overlap?(a, b) when :repo in [a, b], do: a == b
   defp overlap?(a, b), do: same(a) in up(b) or same(b) in up(a)
   defp same(:link), do: :a
   defp same(folder), do: folder
@@ -139,7 +142,7 @@ defmodule HalC2.WorkspaceLeasePropTest do
   def postcondition(state, call, {seen, held}) do
     expected = next_state(state, nil, call)
     real = Enum.map(Map.values(expected.held), &real/1)
-    indexed = Enum.with_index(held)
+    indexed = held |> Enum.filter(&is_binary/1) |> Enum.with_index()
 
     overlapping =
       for {a, i} <- indexed,
@@ -148,9 +151,11 @@ defmodule HalC2.WorkspaceLeasePropTest do
           String.starts_with?(a <> "/", b <> "/"),
           do: {a, b}
 
-    seen == :ok and Enum.sort(held) == Enum.sort(real) and overlapping == []
+    seen == :ok and Enum.sort(held) == Enum.sort(real) and overlapping == [] and
+      Enum.count(held, &(&1 == real(:repo))) <= 1
   end
 
+  defp real(:repo), do: {:repository, real(:a)}
   defp real(:root), do: Process.get(:dir)
   defp real(:link), do: real(:a)
   defp real(:a), do: Path.join(Process.get(:dir), "a")

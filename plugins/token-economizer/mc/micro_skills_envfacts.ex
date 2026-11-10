@@ -6,10 +6,11 @@
 # tokeneconomizer/plugin/fold.py (a turn folded once, keyed by its run id)
 # (microsoft/TokenEconomizer@cb42207e3e09). Changed: a pure struct the plugin
 # keeps per project and saves as JSON, fed a turn's calls instead of a
-# transcript path; the paid distiller is not ported yet, so the composed stage
-# is only this layer -- a later proposer adds its candidates through
-# `add_candidate/2` and the same lifecycle. A person may drop a fact (it is
-# then not learned again) and restore it, which upstream had no way to do.
+# transcript path; the paid distiller (`MicroSkills.Distiller`) adds its
+# candidates through `add_candidate/2` and the same lifecycle, and its facts
+# are staged after these, under their own header, only when the micro-skills
+# are on. A person may drop a fact (it is then not learned again) and restore
+# it, which upstream had no way to do.
 
 defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
   @moduledoc """
@@ -45,6 +46,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
   @max_facts 4
   @max_tokens 150
   @header "# environment facts learned from earlier sessions in this repository"
+  @manual_header "# repo operating manual — learned from earlier sessions in this repository"
   # FormRepair: consecutive contradicted turns before one counts.
   @contradict_streak 2
   # Run ids remembered as folded, so a turn is never counted twice.
@@ -75,7 +77,13 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
             # Ids a person dropped: not learned again until restored.
             dropped: MapSet.new(),
             # The run ids of the turns folded, newest first.
-            folded: []
+            folded: [],
+            # Whether the proposer's facts are staged (the micro-skills are on).
+            proposing: false,
+            # The proposer's bookkeeping (`MicroSkills.Distiller`), nil before its first turn.
+            proposer: nil,
+            # Why the saved file could not be read: nothing is learned or staged until it can.
+            held: nil
 
   @doc "The header of the staged block."
   def header, do: @header
@@ -85,7 +93,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
   def new(opts \\ []) do
     %__MODULE__{
       max_facts: cap(Keyword.get(opts, :max_facts), @max_facts),
-      max_tokens: cap(Keyword.get(opts, :max_tokens), @max_tokens)
+      max_tokens: cap(Keyword.get(opts, :max_tokens), @max_tokens),
+      proposing: Keyword.get(opts, :proposing, false) == true
     }
   end
 
@@ -134,10 +143,19 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
   end
 
   defp render_text([]), do: ""
+  defp render_text(chosen), do: Enum.join(block_lines(chosen), "\n") <> "\n"
 
-  defp render_text(chosen) do
-    lines = [@header | Enum.map(merged_lines(chosen), &"- #{&1}")]
-    Enum.join(lines, "\n") <> "\n"
+  # The environment facts under their header, then the proposer's under the
+  # manual's: two layers, as upstream stages them.
+  defp block_lines(chosen) do
+    {manual, env} = Enum.split_with(chosen, &(&1.family == "proposer"))
+
+    env_lines = if env == [], do: [], else: [@header | Enum.map(merged_lines(env), &"- #{&1}")]
+
+    manual_lines =
+      if manual == [], do: [], else: [@manual_header | Enum.map(manual, &"- #{claim(&1)}")]
+
+    env_lines ++ manual_lines
   end
 
   @doc "The ids of the facts the last `render/1` chose: what the next conversation is given."
@@ -158,8 +176,9 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
     }
   end
 
-  @doc "The claims that would be staged now, one string each (no header)."
-  def injectable_claims(%__MODULE__{} = state), do: Enum.map(select(state), &claim/1)
+  @doc "The environment facts' claims that would be staged now, one string each (no header)."
+  def injectable_claims(%__MODULE__{} = state),
+    do: state |> select() |> Enum.reject(&(&1.family == "proposer")) |> Enum.map(&claim/1)
 
   defp select(%__MODULE__{} = state) do
     prio = %{
@@ -175,7 +194,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
       state.facts
       |> Map.values()
       |> Enum.filter(fn fact ->
-        Lifecycle.injectable?(fact.life) and claim(fact) != "" and lint_ok?(claim(fact))
+        (state.proposing or fact.family != "proposer") and Lifecycle.injectable?(fact.life) and
+          claim(fact) != "" and lint_ok?(claim(fact))
       end)
       |> Enum.sort_by(fn fact ->
         {Map.get(prio, fact.family, 9),
@@ -190,10 +210,7 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
         length(trial) > state.max_facts ->
           {:halt, chosen}
 
-        String.length(
-          @header <> "\n" <> Enum.join(Enum.map(merged_lines(trial), &"- #{&1}"), "\n")
-        ) >
-            state.max_tokens * 4 ->
+        String.length(Enum.join(block_lines(trial), "\n")) > state.max_tokens * 4 ->
           {:cont, chosen}
 
         true ->
@@ -342,7 +359,10 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
     end
   end
 
-  # A fact another proposer authored states its own claim.
+  # A fact the proposer authored is staged as its injection line.
+  def claim(%Fact{family: "proposer"} = fact),
+    do: fact.params["injection"] || fact.params["claim"] || ""
+
   def claim(%Fact{} = fact), do: fact.params["claim"] || ""
 
   defp best(%Fact{} = fact, key) do
@@ -437,7 +457,9 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
         |> Map.values()
         |> Enum.sort_by(& &1.id)
         |> Enum.map(fn fact ->
-          %{
+          fact
+          |> source()
+          |> Map.merge(%{
             "id" => fact.id,
             "family" => fact.family,
             "claim" => claim(fact),
@@ -451,11 +473,24 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
               "exercised" => fact.life.fire_den,
               "firingRate" => Lifecycle.firing_rate(fact.life)
             }
-          }
+          })
         end),
-      "dropped" => state.dropped |> MapSet.to_list() |> Enum.sort()
+      "dropped" => state.dropped |> MapSet.to_list() |> Enum.sort(),
+      "held" => state.held,
+      "extractors" =>
+        if(state.proposer, do: state.proposer.extractors |> Map.keys() |> Enum.sort(), else: [])
     }
   end
+
+  # Where a fact came from, and for a proposed one the detector that checks it.
+  defp source(%Fact{family: "proposer"} = fact),
+    do: %{
+      "source" => "proposer",
+      "detector" => fact.params["detector"] || %{},
+      "rev" => fact.params["rev"] || 1
+    }
+
+  defp source(_fact), do: %{"source" => "envfacts"}
 
   # An arg repair keeps the one example its claim shows, the shortest label it
   # rewrote, and how often that one came back; every label it ever saw would
@@ -1155,6 +1190,16 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
       "dropped" => state.dropped |> MapSet.to_list() |> Enum.sort(),
       "folded" => state.folded
     }
+    |> then(fn saved ->
+      if state.proposer,
+        do:
+          Map.put(
+            saved,
+            "proposer",
+            HalC2Plugins.TokenEconomizer.MicroSkills.Distiller.dump(state.proposer)
+          ),
+        else: saved
+    end)
   end
 
   @doc "A state read back from `dump/1`; reloading changes nothing it would stage."
@@ -1185,7 +1230,8 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts do
       | now: saved["now"] || 0,
         facts: facts,
         dropped: MapSet.new(saved["dropped"] || []),
-        folded: saved["folded"] || []
+        folded: saved["folded"] || [],
+        proposer: HalC2Plugins.TokenEconomizer.MicroSkills.Distiller.load(saved["proposer"])
     }
   end
 

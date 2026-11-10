@@ -1265,12 +1265,25 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     case HalC2.Claude.Skills.dispatch(turn.text, skills) do
       nil ->
-        text =
-          turn.text
-          |> Provider.prompt(turn.launch.prompt_effort)
-          |> HalC2.Attachments.prompt_text(attachments)
+        text = Provider.prompt(turn.text, turn.launch.prompt_effort)
 
-        if images == [], do: text, else: [%{"type" => "text", "text" => text}] ++ image_blocks
+        cond do
+          # Claude runs a command only from the last block, as typed: what came with
+          # it (where its files are, its images) goes ahead of it.
+          attachments != [] and String.starts_with?(String.trim_leading(text), "/") ->
+            notes = HalC2.Attachments.prompt_text("", attachments)
+
+            ([if(notes != "", do: %{"type" => "text", "text" => notes})] ++
+               image_blocks ++ [%{"type" => "text", "text" => text}])
+            |> Enum.reject(&is_nil/1)
+
+          images == [] ->
+            HalC2.Attachments.prompt_text(text, attachments)
+
+          true ->
+            [%{"type" => "text", "text" => HalC2.Attachments.prompt_text(text, attachments)}] ++
+              image_blocks
+        end
 
       {leading, command} ->
         leading =
@@ -3632,6 +3645,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp subagent_block(sub, %{"type" => "tool_use", "id" => tool_id, "name" => name} = block, _key) do
     {kind, fields} = tool_kind(name, block["input"] || %{}, block["presentation"])
+    # Its own name for the tool, for plugins that hear turns, as on the turn's own calls.
+    fields = Map.put(fields, "providerToolName", name)
     sub = NativeSubagent.item(sub, tool_id, @item_types[kind], "running", fields)
     Map.put(sub, :tools, Map.put(Map.get(sub, :tools, %{}), tool_id, kind))
   end

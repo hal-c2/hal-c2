@@ -129,6 +129,10 @@ jobs:
       - name: Compile
         run: mix compile --warnings-as-errors
 
+      # Waits in code a hot update changes, against credo/waits_baseline.exs.
+      - name: Credo
+        run: mix credo
+
       - name: Compile the property tests
         run: mix compile
         env:
@@ -233,8 +237,11 @@ jobs:
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
   # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
   # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
-  # They run the real code on sampled cases and take a quarter of an hour, split by file
-  # so one failed property re-runs a part of that. New files join a partition on their own.
+  # They run the real code on sampled cases and take half an hour, split by file so one
+  # failed property re-runs a part of that. New files join a partition on their own.
+  # ExUnit deals the files to partitions round-robin by name, blind to their cost, so the
+  # planner's, about eight minutes alone, runs in a shard of its own: the partition that
+  # drew it with the next heaviest files ran into the job's limit (#1487's merge group).
   mc_props:
     name: MC properties
     needs: [changes, mc_check]
@@ -245,7 +252,7 @@ jobs:
       # In the queue one failure decides the entry; on a pull request, see them all.
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        partition: [1, 2, 3]
+        shard: [1, 2, 3, planner]
     env:
       MIX_ENV: prop
     defaults:
@@ -268,9 +275,14 @@ jobs:
         run: cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
 
       - name: Property tests
-        run: mix prop --partitions 3
+        run: |
+          if [ "$SHARD" = planner ]; then
+            mix prop prop/hal_c2/planner_prop_test.exs
+          else
+            MIX_TEST_PARTITION="$SHARD" mix prop --partitions 3 --exclude module:HalC2.PlannerPropTest
+          fi
         env:
-          MIX_TEST_PARTITION: ${{ matrix.partition }}
+          SHARD: ${{ matrix.shard }}
 
 
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.

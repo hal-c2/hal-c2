@@ -8,6 +8,9 @@ defmodule HalC2.WorkspaceLease do
   Two folders overlap when one holds the other. A caller waits while a holder or an
   earlier waiter overlaps its folder, so waiters on one folder go in the order they
   asked. A holder or waiter that dies lets go.
+
+  `{:repository, git_dir}` is held apart from every folder: changes to one repository
+  that must not interleave take their turns on it (`HalC2.Vcs`).
   """
 
   use GenServer
@@ -39,6 +42,8 @@ defmodule HalC2.WorkspaceLease do
   def held, do: GenServer.call(__MODULE__, :held)
 
   # Real paths, so a folder reached through a link is the folder it links to.
+  defp key({:repository, _} = repository), do: repository
+
   defp key(path) do
     path = Path.expand(path)
     with({:ok, real} <- HalC2.Paths.real(path), do: real, else: (_ -> path))
@@ -100,7 +105,8 @@ defmodule HalC2.WorkspaceLease do
       not Enum.any?(waiting, &overlap?(&1.path, path))
   end
 
-  defp overlap?(a, b), do: within?(a, b) or within?(b, a)
+  defp overlap?(a, b) when is_binary(a) and is_binary(b), do: within?(a, b) or within?(b, a)
+  defp overlap?(a, b), do: a == b
 
   defp within?(path, root), do: path == root or String.starts_with?(path, root <> "/")
 end

@@ -401,6 +401,13 @@ for line in sys.stdin:
     record("user", text)
     # What the fake does is the user's message, not the history handed over before it.
     full, text = text, text.rsplit("</conversation_history>\n\n", 1)[-1]
+    # Claude runs a command only from the last block of a message in blocks: a command
+    # in an earlier block, or ahead of an image, is words. The fake's other triggers
+    # read the whole message.
+    command = text
+    if isinstance(content, list) and content:
+        last = content[-1]
+        command = last.get("text", "") if isinstance(last, dict) and last.get("type") == "text" else ""
     # FAKE_CLAUDE_REJECT_RESUME_FILE: once that file exists the provider refuses the server's
     # automatic resume with a 429 naming no reset.
     if os.path.exists(os.environ.get("FAKE_CLAUDE_REJECT_RESUME_FILE", "")) and text == "Continue where you left off.":
@@ -408,7 +415,7 @@ for line in sys.stdin:
         continue
     # "/compact": Claude summarises the conversation (compact_boundary) and answers with
     # a result that echoes the message's uuid, as Claude Code 2.1.285 does.
-    if text == "/compact":
+    if command == "/compact":
         lifecycle("started")
         send({"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": f"compact-{turn}",
               "compact_metadata": {"trigger": "manual", "pre_tokens": 27445, "post_tokens": 1192}})
@@ -424,10 +431,10 @@ for line in sys.stdin:
     # task-agent-N) and ends the turn while it runs, deferring the check. "/goal" alone
     # says the goal's state, "/goal clear" clears it. Like Claude Code, it reads "/goal
     # pause" as a goal named "pause".
-    if text == "/goal" or text.startswith("/goal "):
+    if command == "/goal" or command.startswith("/goal "):
         synthetic = lambda said: send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"goal-uuid-{turn}",
                                        "message": {"id": f"m{turn}goal", "model": "<synthetic>", "role": "assistant", "content": [{"type": "text", "text": said}]}})
-        objective = text[len("/goal"):].strip()
+        objective = command[len("/goal"):].strip()
         if objective in ("", "clear"):
             said = ("No goal set" if goal is None else (f"Goal cleared: {goal}" if objective else f"Goal active: {goal} (not yet evaluated)"))
             if objective:
@@ -546,6 +553,24 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}k", "role": "assistant", "content": [{"type": "text", "text": "It grew"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "It grew", "session_id": session})
         continue
+    # "create tasks: A, B": Claude's task tools create one task per subject, numbered on
+    # from those the session keeps in $CLAUDE_CONFIG_DIR/tasks/<session id>/, each saved
+    # there before Claude reports it, and the turn ends.
+    if text.startswith("create tasks: "):
+        folder = os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "tasks", session)
+        os.makedirs(folder, exist_ok=True)
+        kept = [int(name[:-5]) for name in os.listdir(folder) if re.fullmatch(r"\d+\.json", name)]
+        for number, subject in enumerate(text[len("create tasks: "):].split(", "), max(kept, default=0) + 1):
+            task_id, call = str(number), f"task-create-{turn}-{number}"
+            with open(os.path.join(folder, f"{task_id}.json"), "w") as f:
+                json.dump({"id": task_id, "subject": subject, "description": "", "status": "pending"}, f)
+            send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}c{number}", "role": "assistant", "content": [
+                {"type": "tool_use", "id": call, "name": "TaskCreate", "input": {"subject": subject}}]}})
+            send({"type": "user", "session_id": session, "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": call, "content": "Task tool finished.", "is_error": False}]},
+                  "tool_use_result": {"task": {"id": task_id, "subject": subject}}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "Tasks created", "session_id": session})
+        continue
     # "start a monitor": the Monitor tool watches a command (task task-mon-N) and the
     # turn ends while it runs. "start a monitor and hold the turn" holds the turn's
     # answer until the test has marked the monitor as awaited (the gate file
@@ -584,9 +609,11 @@ for line in sys.stdin:
         continue
     # "subagent works on: TASK": a subagent (tool use agent-N) runs TASK in the turn,
     # its own messages under its tool call: partial text, then text, a Bash call and a
-    # task list, their results, and its answer "The tests pass".
+    # task list, their results, and its answer "The tests pass". A TASK "... using NAME"
+    # has it call the tool NAME in place of the task list.
     if text.startswith("subagent works on: "):
         agent, task = f"agent-{turn}", text[len("subagent works on: "):]
+        listing = task.split(" using ", 1)[1] if " using " in task else "TodoWrite"
         side = lambda msg: send({**msg, "session_id": session, "parent_tool_use_id": agent})
         send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
             "description": "Helper", "prompt": task, "subagent_type": "general-purpose"}}]}})
@@ -599,7 +626,7 @@ for line in sys.stdin:
         side({"type": "assistant", "uuid": f"sub-uuid-{turn}a", "message": {"id": f"s{turn}a", "role": "assistant", "content": [
             {"type": "text", "text": "Running the tests"},
             {"type": "tool_use", "id": f"sub-bash-{turn}", "name": "Bash", "input": {"command": "mix test"}},
-            {"type": "tool_use", "id": f"sub-todo-{turn}", "name": "TodoWrite", "input": {"todos": [{"content": "Run the tests", "status": "in_progress", "activeForm": "Running"}]}}]}})
+            {"type": "tool_use", "id": f"sub-todo-{turn}", "name": listing, "input": {"todos": [{"content": "Run the tests", "status": "in_progress", "activeForm": "Running"}]}}]}})
         side({"type": "user", "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": f"sub-bash-{turn}", "content": "12 tests, 0 failures", "is_error": False},
             {"type": "tool_result", "tool_use_id": f"sub-todo-{turn}", "content": "Todos updated", "is_error": False}]}})

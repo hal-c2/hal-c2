@@ -1,6 +1,7 @@
 defmodule HalC2.Orchestration.NativeSubagentTest do
   # The stream-level settle for an end no runtime reports (a deleted thread):
-  # the still-running work in its provider subagents' child threads ends too.
+  # the still-running work in its provider subagents' child threads ends too. And
+  # what plugins that hear turns hear of a subagent's work as it ends.
   use ExUnit.Case, async: false
 
   alias HalC2.Orchestration.{NativeSubagent, TurnWriter}
@@ -13,6 +14,122 @@ defmodule HalC2.Orchestration.NativeSubagentTest do
     start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
     start_supervised!(HalC2.Streams)
     :ok
+  end
+
+  test "a tool call still running when its subagent ends is heard once, ended, as the parent turn's" do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+    {:ok, _} =
+      Registry.register(HalC2.Plugins.Hooks, {:observe, "listener"}, %{
+        id: "listener",
+        dropped: :counters.new(1, [])
+      })
+
+    {:ok, _} = HalC2.Streams.commit("p", :thread, [{"thread", "p", %{"s" => %{"id" => "p"}}}])
+
+    ids = %{
+      thread: "p",
+      run: "r1",
+      root_node: "node:root:r1",
+      provider_thread: "pt",
+      driver: "claudeAgent"
+    }
+
+    sub = NativeSubagent.start(ids, "agent-1", %{"prompt" => "Schedule it"})
+    assert_received {:observe, %{"itemType" => "subagent"}}
+
+    sub =
+      NativeSubagent.item(sub, "tool-1", "dynamic_tool", "running", %{
+        "providerToolName" => "CronCreate"
+      })
+
+    refute_received {:observe, %{"tool" => "CronCreate"}}
+
+    NativeSubagent.finish(sub, "interrupted", nil)
+
+    assert_received {:observe,
+                     %{
+                       "type" => "turn.item",
+                       "tool" => "CronCreate",
+                       "status" => "interrupted",
+                       "threadId" => "p",
+                       "runId" => "r1",
+                       "subagent" => true
+                     }}
+
+    refute_received {:observe, %{"tool" => "CronCreate"}}
+  end
+
+  test "a subagent's call is heard with its parent thread's project, though its handle predates the project and run" do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+    {:ok, _} =
+      Registry.register(HalC2.Plugins.Hooks, {:observe, "listener"}, %{
+        id: "listener",
+        dropped: :counters.new(1, [])
+      })
+
+    {:ok, _} =
+      HalC2.Streams.commit("p", :thread, [
+        {"thread", "p", %{"s" => %{"id" => "p", "projectId" => "proj"}}}
+      ])
+
+    ids = %{
+      thread: "p",
+      run: "r1",
+      root_node: "node:root:r1",
+      provider_thread: "pt",
+      driver: "claudeAgent"
+    }
+
+    # The handle as an MC from before kept it, carried over by an upgrade in place.
+    sub =
+      NativeSubagent.start(ids, "agent-1", %{"prompt" => "Schedule it"})
+      |> Map.drop([:run, :project])
+
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", %{
+      "providerToolName" => "CronCreate"
+    })
+
+    assert_received {:observe,
+                     %{
+                       "tool" => "CronCreate",
+                       "threadId" => "p",
+                       "runId" => nil,
+                       "projectId" => "proj",
+                       "subagent" => true
+                     }}
+  end
+
+  test "a call its subagent's end cut short is not heard again when the provider reports its end late" do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Plugins.Hooks})
+
+    {:ok, _} =
+      Registry.register(HalC2.Plugins.Hooks, {:observe, "listener"}, %{
+        id: "listener",
+        dropped: :counters.new(1, [])
+      })
+
+    {:ok, _} = HalC2.Streams.commit("p", :thread, [{"thread", "p", %{"s" => %{"id" => "p"}}}])
+
+    ids = %{
+      thread: "p",
+      run: "r1",
+      root_node: "node:root:r1",
+      provider_thread: "pt",
+      driver: "codex"
+    }
+
+    sub = NativeSubagent.start(ids, "agent-1", %{"prompt" => "Schedule it"})
+    tool = %{"providerToolName" => "CronCreate"}
+    sub = NativeSubagent.item(sub, "tool-1", "dynamic_tool", "running", tool)
+    NativeSubagent.finish(sub, "interrupted", nil)
+    assert_received {:observe, %{"tool" => "CronCreate", "status" => "interrupted"}}
+
+    # Codex keeps the finished subagent and still routes the call's completion to it.
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", tool)
+    NativeSubagent.item(sub, "tool-1", "dynamic_tool", "completed", tool)
+    refute_received {:observe, %{"tool" => "CronCreate"}}
   end
 
   test "settle_children ends a child thread's running work and leaves finished work" do

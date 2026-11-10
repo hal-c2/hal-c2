@@ -137,7 +137,9 @@ environment a gateway of its own with `install`, or run a second gateway for it.
 
 ## When status reports a problem
 
-`status` prints a code with each problem and what to do about it:
+`status` prints a code with each problem and what to do about it. **Settings →
+Review sandboxes**, on any client connected to the MC, shows the same answer, so you
+can see whether reviews can run in a sandbox there without a shell on its machine.
 
 | Code                                                                                                                                          | What to do                                                                                                 |
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |

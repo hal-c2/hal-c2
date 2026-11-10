@@ -1,5 +1,5 @@
 for file <-
-      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge token_economizer),
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_distiller micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge tool_prune_evidence token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerMicroSkillsPropTest do
@@ -1255,5 +1255,431 @@ defmodule HalC2.TokenEconomizerHistorySeedPropTest do
       )
 
     for n <- 1..rem(step, 3)//1, do: %{sample | "turns" => 100 + step * 10 + n}
+  end
+end
+
+defmodule HalC2.TokenEconomizerProposerPropTest do
+  @moduledoc """
+  The paid proposer's laws (`plugins/token-economizer/mc/micro_skills_distiller.ex`),
+  over one project's turns, the model's replies (facts and extractors, well or badly
+  made, citing turns in the window or long gone), drops, restores, renders with the
+  proposer on or off, and restarts, in any order. Whatever the order:
+
+    * a fact enters only from a reply, never from a turn, and only when its
+      detector confirms it on at least `Distiller.min_cite/0` distinct turns it
+      cites that are still in the window;
+    * a reply admits at most `Distiller.max_cands/0` facts, and what it does not
+      admit or revise is left exactly as it was;
+    * a proposed fact may be revised only in its contradiction condition: its
+      revision counts up by one and what it earned is kept;
+    * a dropped id is never admitted, however often the model proposes it, until
+      restored;
+    * extractors are append-only and at most `Distiller.max_extractors/0`;
+    * the window holds at most `Distiller.window_size/0` turns, and a turn folds once;
+    * a proposal is due exactly when the window holds a turn and `every` turns have
+      passed since the last, so a model is never asked twice in fewer;
+    * with the proposer off its facts are kept but never staged;
+    * saving and loading changes nothing.
+
+  The model call around these, off the plugin's process, and what the plugin does
+  with an answer that fails or never comes, are
+  `features/plugins/token-economizer-micro-skills.feature`.
+  """
+  use ExUnit.Case, async: true
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.{Distiller, EnvFacts}
+
+  @ids ~w(build-first tests-as-module lint-here)
+  @manual "# repo operating manual"
+
+  property "the proposer admits only what its detector grounds, in any order",
+    numtests: HalC2.Prop.numtests(200) do
+    forall cmds <- more_commands(4, commands(__MODULE__, initial_state())) do
+      Process.put(:skills, EnvFacts.new(proposing: true))
+      {history, state, result} = run_commands(__MODULE__, cmds)
+
+      (result == :ok)
+      |> when_fail(
+        IO.puts("""
+        History: #{inspect(history, pretty: true, limit: 60)}
+        State: #{inspect(state, pretty: true)}
+        Result: #{inspect(result, pretty: true)}
+        """)
+      )
+      |> aggregate(command_names(cmds))
+    end
+  end
+
+  # The model: the cadence only -- turns folded, the turn of the last proposal, and
+  # the reused runs folded. What a reply admits is checked against the state before it.
+  def initial_state, do: %{turns: 0, last: -1, folded: MapSet.new()}
+
+  def command(_state) do
+    frequency([
+      {8,
+       {:call, __MODULE__, :turn,
+        [
+          elements([:build_test, :build_test, :test_only, :pytest_broken, :regen, :none]),
+          elements([:fresh, :fresh, "run-a", "run-b"])
+        ]}},
+      {5, {:call, __MODULE__, :propose, [integer(1, 4), reply()]}},
+      {1, {:call, __MODULE__, :drop, [elements(@ids)]}},
+      {1, {:call, __MODULE__, :restore, [elements(@ids)]}},
+      {2, {:call, __MODULE__, :render, [boolean()]}},
+      {2, {:call, __MODULE__, :restart, []}}
+    ])
+  end
+
+  defp reply do
+    frequency([
+      {1, :garbage},
+      {6,
+       {resize(5, list(fact_spec())),
+        resize(2, list({elements(~w(built regen bad-name)), elements([:ok, :bad])}))}}
+    ])
+  end
+
+  defp fact_spec do
+    {elements(@ids),
+     elements([:build, :build, :build_contra, :module, :tests_pred, :built_feature, :bad]),
+     resize(4, list(oneof([integer(0, 9), :gone]))), elements([:ok, :ok, :ok, :lint])}
+  end
+
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :turn, [_kind, run]}) do
+    if run != :fresh and MapSet.member?(state.folded, run) do
+      state
+    else
+      folded = if run == :fresh, do: state.folded, else: MapSet.put(state.folded, run)
+      %{state | folded: folded, turns: state.turns + 1}
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :propose, [every, _reply]}),
+    do: if(due?(state, every), do: %{state | last: state.turns}, else: state)
+
+  def next_state(state, _result, _call), do: state
+
+  defp due?(state, every), do: state.turns > 0 and state.turns - state.last >= every
+
+  # --- the commands at work ---------------------------------------------------------------------
+
+  def turn(kind, run) do
+    before = Process.get(:skills)
+    iid = if run == :fresh, do: "run-#{System.unique_integer([:positive])}", else: run
+    calls = calls(kind)
+
+    after_turn =
+      before |> Distiller.fold(calls, iid) |> EnvFacts.update_turn(calls, iid)
+
+    Process.put(:skills, after_turn)
+    %{before: before, after: after_turn, reused: run != :fresh and iid in before.folded}
+  end
+
+  # Asks when due, as the plugin does, and admits the reply against the window as
+  # it is then. The reply's citations are read against that window: 0 is the newest
+  # turn in it, and a position past it (or `:gone`) names a turn long gone.
+  def propose(every, reply) do
+    before = Process.get(:skills)
+    due = Distiller.due?(before, every)
+
+    if due do
+      raw = raw(reply, before)
+      asked = Distiller.proposed(before)
+      {after_admit, outcomes} = Distiller.admit(asked, raw)
+      Process.put(:skills, after_admit)
+
+      %{
+        before: before,
+        asked: asked,
+        after: after_admit,
+        due: true,
+        raw: raw,
+        outcomes: outcomes
+      }
+    else
+      %{before: before, after: before, due: false, outcomes: []}
+    end
+  end
+
+  def drop(id) do
+    before = Process.get(:skills)
+
+    after_drop =
+      case EnvFacts.drop(before, id) do
+        {:ok, skills} -> skills
+        {:error, _} -> before
+      end
+
+    Process.put(:skills, after_drop)
+    %{before: before, after: after_drop}
+  end
+
+  def restore(id) do
+    before = Process.get(:skills)
+
+    after_restore =
+      case EnvFacts.restore(before, id) do
+        {:ok, skills} -> skills
+        {:error, _} -> before
+      end
+
+    Process.put(:skills, after_restore)
+    %{before: before, after: after_restore}
+  end
+
+  # What would be staged with the proposer on or off; rendering marks what was
+  # staged, so the state is left as it was.
+  def render(proposing) do
+    skills = Process.get(:skills)
+    {text, _} = EnvFacts.render(%{skills | proposing: proposing})
+    %{skills: skills, text: text, proposing: proposing}
+  end
+
+  def restart do
+    before = Process.get(:skills)
+
+    loaded =
+      before
+      |> EnvFacts.dump()
+      |> JSON.encode!()
+      |> JSON.decode!()
+      |> EnvFacts.load(proposing: true)
+
+    Process.put(:skills, loaded)
+    %{before: before, after: loaded}
+  end
+
+  defp bash(command, output, code \\ 0), do: {"Bash", %{"command" => command}, output, code}
+  defp edit(path), do: {"Edit", %{"file_path" => path}, "ok", nil}
+
+  defp calls(:build_test),
+    do: [edit("src/m.go"), bash("make build", "built"), bash("make test", "ok  ./... 0.01s")]
+
+  defp calls(:test_only),
+    do: [bash("make test", "make: *** No rule to make target 'build'.  Stop.", 2)]
+
+  defp calls(:pytest_broken),
+    do: [
+      edit("pkg/a.py"),
+      bash("pytest -q", "bash: pytest: command not found", 127),
+      bash("python -m pytest -q", "4 passed in 0.01s")
+    ]
+
+  defp calls(:regen), do: [bash("./scripts/regen-protos.sh --all", "done")]
+  defp calls(:none), do: []
+
+  @detectors %{
+    build: %{"scope" => "make test", "confirm" => "make build"},
+    build_contra: %{
+      "scope" => "make test",
+      "confirm" => "make build",
+      "contradict" => "No rule to make target"
+    },
+    module: %{"scope" => "pytest", "confirm" => "python -m pytest"},
+    tests_pred: %{"scope" => "ran_tests", "confirm" => "passed", "fired" => "ran_tests"},
+    built_feature: %{"scope" => "built", "confirm" => "make build"},
+    bad: %{"scope" => "make test", "confirm" => "make (build"}
+  }
+
+  defp raw(:garbage, _skills), do: "claude payload"
+
+  defp raw({facts, extractors}, skills) do
+    window = skills.proposer.window |> Enum.map(& &1["iid"]) |> Enum.reverse()
+
+    facts =
+      for {id, detector, cites, line} <- facts do
+        %{
+          "id" => id,
+          "claim" => "#{id} holds here",
+          "injection" =>
+            if(line == :lint,
+              do: "Skip the tests once `make build` passes.",
+              else: "In this repository, #{id}."
+            ),
+          "detector" => @detectors[detector],
+          "cite" =>
+            Enum.map(cites, fn
+              :gone -> "gone"
+              k -> Enum.at(window, k) || "gone-#{k}"
+            end)
+        }
+      end
+
+    extractors =
+      for {name, pattern} <- extractors do
+        %{
+          "name" => name,
+          "kind" => "out_regex",
+          "pattern" => if(pattern == :ok, do: "^built$", else: "(built")
+        }
+      end
+
+    JSON.encode!(%{"facts" => facts, "extractors" => extractors})
+  end
+
+  # --- the laws -------------------------------------------------------------------------------------
+
+  def postcondition(state, {:call, _, :turn, [_kind, _run]}, %{before: before, after: skills} = r) do
+    after_state =
+      if r.reused, do: state, else: next_state(state, nil, {:call, nil, :turn, [nil, :fresh]})
+
+    # A turn folded twice changes nothing; a turn never brings a proposed fact in,
+    # nor changes what one says.
+    (not r.reused or skills == before) and
+      skills.proposer.turns == after_state.turns and
+      MapSet.equal?(proposed_ids(skills), proposed_ids(before)) and
+      Enum.all?(proposed_ids(skills), &(skills.facts[&1].params == before.facts[&1].params)) and
+      lawful?(skills)
+  end
+
+  def postcondition(state, {:call, _, :propose, [every, reply]}, %{due: due} = r) do
+    due == due?(state, every) and
+      if due do
+        admitted?(r, reply) and r.after.proposer.last_propose == r.after.proposer.turns and
+          not Distiller.due?(r.after, every) and lawful?(r.after)
+      else
+        r.after == r.before
+      end
+  end
+
+  def postcondition(_state, {:call, _, :drop, [id]}, %{before: before, after: skills}) do
+    lawful?(skills) and
+      (not Map.has_key?(before.facts, id) or
+         (not Map.has_key?(skills.facts, id) and MapSet.member?(skills.dropped, id)))
+  end
+
+  def postcondition(_state, {:call, _, :restore, [id]}, %{after: skills}),
+    do: lawful?(skills) and not MapSet.member?(skills.dropped, id)
+
+  def postcondition(_state, {:call, _, :render, _}, %{proposing: false} = r) do
+    proposed = Enum.map(proposed_ids(r.skills), &r.skills.facts[&1].params["injection"])
+
+    not String.contains?(r.text, @manual) and
+      Enum.all?(proposed, &(not String.contains?(r.text, &1)))
+  end
+
+  def postcondition(_state, {:call, _, :render, _}, %{text: text}),
+    do: text == "" or String.length(text) <= 150 * 4 + 1
+
+  def postcondition(_state, {:call, _, :restart, _}, %{before: before, after: skills}) do
+    EnvFacts.dump(skills) == EnvFacts.dump(before) and
+      Distiller.due?(skills, 1) == Distiller.due?(before, 1) and lawful?(skills)
+  end
+
+  # What a reply did, item by item, against the state it was read in.
+  defp admitted?(r, reply) do
+    asked = r.asked
+    skills = r.after
+    facts = r.outcomes |> Enum.filter(&match?({:fact, _, _}, &1))
+    specs = r.raw |> Distiller.parse_payload() |> elem(1)
+    changed = for {:fact, id, reason} <- facts, reason in ~w(admitted revised), do: id
+
+    # One outcome per fact asked, in order, up to the cap; a reply may name an id twice.
+    read = Enum.take(specs, Distiller.max_cands())
+    count_ok = length(facts) == length(read)
+    garbage_ok = reply != :garbage or r.outcomes == []
+
+    admitted_ok =
+      facts
+      |> Enum.zip(read)
+      |> Enum.reduce_while(MapSet.new(), fn {outcome, spec}, earlier ->
+        if lawful_outcome?(outcome, spec, asked, skills, earlier) do
+          {:cont,
+           if(match?({:fact, _, "admitted"}, outcome),
+             do: MapSet.put(earlier, spec["id"]),
+             else: earlier
+           )}
+        else
+          {:halt, false}
+        end
+      end)
+      |> Kernel.!=(false)
+
+    # What was not admitted or revised is exactly as it was.
+    rest_ok =
+      MapSet.equal?(
+        MapSet.new(Map.keys(skills.facts)),
+        MapSet.union(MapSet.new(Map.keys(asked.facts)), MapSet.new(changed))
+      ) and
+        Enum.all?(asked.facts, fn {id, fact} -> id in changed or skills.facts[id] == fact end)
+
+    extractors_ok =
+      Enum.all?(asked.proposer.extractors, fn {name, spec} ->
+        skills.proposer.extractors[name] == spec
+      end)
+
+    count_ok and garbage_ok and admitted_ok and rest_ok and extractors_ok and
+      skills.dropped == asked.dropped
+  end
+
+  # Each admitted fact was new, not dropped, and grounded on two distinct turns still
+  # in the window that its own detector confirms; a revision keeps the fact's life
+  # and changes only its contradict condition.
+  defp lawful_outcome?({:fact, id, "admitted"}, spec, asked, skills, earlier) do
+    id == spec["id"] and not Map.has_key?(asked.facts, id) and
+      not MapSet.member?(earlier, id) and not MapSet.member?(asked.dropped, id) and
+      grounded(skills, spec) >= Distiller.min_cite() and
+      skills.facts[id].family == Distiller.family()
+  end
+
+  # A fact admitted earlier in the same reply has no state of its own to compare against.
+  defp lawful_outcome?({:fact, id, "revised"}, spec, asked, skills, earlier) do
+    now = skills.facts[id]
+
+    case asked.facts[id] do
+      nil ->
+        id == spec["id"] and MapSet.member?(earlier, id) and now.params["rev"] >= 2
+
+      was ->
+        id == spec["id"] and was.family == Distiller.family() and now.life == was.life and
+          now.params["rev"] > was.params["rev"] and
+          Map.delete(now.params["detector"], "contradict") ==
+            Map.delete(was.params["detector"], "contradict") and
+          Map.drop(now.params, ~w(detector rev)) == Map.drop(was.params, ~w(detector rev))
+    end
+  end
+
+  defp lawful_outcome?({:fact, id, "dropped"}, _spec, asked, skills, _earlier),
+    do: MapSet.member?(asked.dropped, id) and not Map.has_key?(skills.facts, id)
+
+  defp lawful_outcome?({:fact, _id, _refused}, _spec, _asked, _skills, _earlier), do: true
+
+  # The cited turns, still in the window, the detector confirms on: read with the
+  # window as admitted against (its features include extractors the reply added).
+  defp grounded(skills, spec) do
+    detector =
+      for {key, value} <- spec["detector"],
+          is_binary(value) and value != "",
+          into: %{},
+          do: {key, value}
+
+    cited = MapSet.new(spec["cite"] || [])
+
+    skills.proposer.window
+    |> Enum.filter(&MapSet.member?(cited, &1["iid"]))
+    |> Enum.count(&(Distiller.verdict(detector, &1) |> elem(0) == "confirm"))
+  end
+
+  defp proposed_ids(skills),
+    do: for({id, fact} <- skills.facts, Distiller.fact?(fact), into: MapSet.new(), do: id)
+
+  # What holds after every command: no dropped id among the facts, the window and the
+  # extractors within their caps.
+  # The proposer is made by the first turn folded, so before it there is none.
+  defp lawful?(skills) do
+    MapSet.disjoint?(skills.dropped, MapSet.new(Map.keys(skills.facts))) and
+      case skills.proposer do
+        nil ->
+          true
+
+        proposer ->
+          length(proposer.window) <= Distiller.window_size() and
+            length(proposer.window) == min(proposer.turns, Distiller.window_size()) and
+            map_size(proposer.extractors) <= Distiller.max_extractors()
+      end
   end
 end

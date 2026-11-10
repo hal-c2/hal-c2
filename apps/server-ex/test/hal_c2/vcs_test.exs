@@ -214,6 +214,44 @@ defmodule HalC2.VcsTest do
     assert {:ok, "feature/cart"} = Vcs.rename_branch(repo, "hal-c2-fix-cart", "feature/cart")
   end
 
+  # `:global`'s lock let waiters retry after random sleeps of up to 8 s, in any order: a
+  # dozen threads launched at once in one repository left one waiting past a scenario's
+  # patience before its worktree was made.
+  test "renames waiting on one repository take their turns in the order they asked",
+       %{repo: repo} do
+    lease = start_supervised!(HalC2.WorkspaceLease)
+    test = self()
+    for n <- 0..4, do: git!(repo, ["branch", "temp-#{n}"])
+    :erlang.trace(lease, true, [:receive])
+
+    rename = fn n, on_name ->
+      spawn(fn ->
+        send(test, {:renamed, n, Vcs.rename_branch(repo, "temp-#{n}", "fix-#{n}", on_name)})
+      end)
+    end
+
+    # The first holds the turn until told to go on.
+    first =
+      rename.(0, fn _ ->
+        send(test, :holding)
+        receive do: (:go -> :ok)
+      end)
+
+    assert_receive :holding
+
+    for n <- 1..4 do
+      pid = rename.(n, fn _ -> send(test, {:turn, n}) end)
+      assert_receive {:trace, ^lease, :receive, {:"$gen_call", {^pid, _}, {:acquire, _}}}
+    end
+
+    :erlang.trace(lease, false, [:receive])
+    send(first, :go)
+
+    turns = for _ <- 1..4, do: receive(do: ({:turn, n} -> n))
+    assert turns == [1, 2, 3, 4]
+    for n <- 0..4, do: assert_receive({:renamed, ^n, {:ok, _}})
+  end
+
   test "watchers get a snapshot, then only what changed", %{repo: repo} do
     assert %{"_tag" => "snapshot", "local" => %{"hasWorkingTreeChanges" => false}} =
              HalC2.Vcs.Watch.subscribe(repo, self())
