@@ -137,6 +137,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
         "the sweep of turns whose end was lost, which touches only the loop guard's turns: " <>
           @guard,
       "HalC2Plugins.TokenEconomizer state :active?" => @guard,
+      "HalC2Plugins.TokenEconomizer state :clock" =>
+        "the time a conversation's shaping checks its deadline against; an answer past it changes nothing the model follows (prop/hal_c2/token_economizer_tool_prune_plugin_prop_test.exs)",
       "HalC2Plugins.TokenEconomizer state :ended" => @guard,
       "HalC2Plugins.TokenEconomizer state :sweep" => @guard,
       "HalC2Plugins.TokenEconomizer state :trackers" => @guard,

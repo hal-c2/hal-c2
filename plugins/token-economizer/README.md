@@ -36,13 +36,13 @@ API: copy the folder into an MC's `plugins` folder to install it.
 - `mc/`: the MC part. `token_economizer.ex` is the plugin's process: it hears turns,
   keeps each one's guard, runs the judge's jobs, delivers redirects and notices,
   folds each finished turn into its project's micro-skills, and states them and
-  shapes each new conversation for tool pruning as it starts. The `loop_guard_*.ex` files are the guard itself, pure and
-  ported from upstream: what a call means (`state`, `shell_edits`), when a turn
-  looks stuck (`rules`), a turn's guard (`turn`), what a project learned
-  (`envelope`) and the judge (`judge`). The `micro_skills_*.ex` files are the
-  micro-skills, also pure: what a turn shows about its environment (`observe`),
-  a fact's formation and retirement (`lifecycle`), the facts themselves
-  (`envfacts`), the facts a model proposes, held to the turns they cite
+  shapes each new conversation for tool pruning as it starts. The `loop_guard_*.ex`
+  files are the guard itself, pure and ported from upstream: what a call means
+  (`state`, `shell_edits`), when a turn looks stuck (`rules`), a turn's guard
+  (`turn`), what a project learned (`envelope`) and the judge (`judge`). The
+  `micro_skills_*.ex` files are the micro-skills, also pure: what a turn shows
+  about its environment (`observe`), a fact's formation and retirement
+  (`lifecycle`), the facts themselves (`envfacts`), the facts a model proposes, held to the turns they cite
   (`distiller`), and the first fold from a project's earlier threads
   (`history`), which the process reads a page at a time in a task of its own.
   The plugin calls `microSkills`, `microSkills.drop` and `microSkills.restore`
@@ -76,10 +76,10 @@ person applies or restores its tools by hand or changes the mode.
 From `apps/server-ex`:
 
 - the MC scenarios: `mise exec -- mix features plugins/token-economizer-loop-guard.feature plugins/token-economizer-micro-skills.feature plugins/token-economizer-history-import.feature plugins/token-economizer-tool-prune.feature`;
-- upstream's tests, ported, and the fold from history's: `mise exec -- mix test test/hal_c2/token_economizer_loop_guard_test.exs test/hal_c2/token_economizer_micro_skills_test.exs test/hal_c2/token_economizer_distiller_test.exs test/hal_c2/token_economizer_history_test.exs test/hal_c2/token_economizer_tool_prune_test.exs test/hal_c2/token_economizer_tool_prune_history_test.exs`;
+- upstream's tests, ported, and the fold from history's: `mise exec -- mix test test/hal_c2/token_economizer_loop_guard_test.exs test/hal_c2/token_economizer_micro_skills_test.exs test/hal_c2/token_economizer_distiller_test.exs test/hal_c2/token_economizer_history_test.exs test/hal_c2/token_economizer_tool_prune_test.exs test/hal_c2/token_economizer_tool_prune_history_test.exs test/hal_c2/token_economizer_held_project_test.exs`;
 - a state machine of one turn's guard, and of tool pruning's evidence: `mise exec -- mix prop prop/hal_c2/token_economizer_prop_test.exs prop/hal_c2/token_economizer_tool_prune_prop_test.exs`;
-- state machines of the micro-skills' lifecycle laws, the proposer's admission
-  and the fold from history: `mise exec -- mix prop prop/hal_c2/token_economizer_micro_skills_prop_test.exs`;
+- state machines of the micro-skills' lifecycle laws, the proposer's admission,
+  the fold from history and a held project: `mise exec -- mix prop prop/hal_c2/token_economizer_micro_skills_prop_test.exs`;
 - a Maude model of the plugin hearing a thread's turns, with a feed that may miss
   events, late or lost verdicts and redirects delivered late or refused:
   `mise exec -- mix proof proof/hal_c2/token_economizer_loop_guard_proof_test.exs`;

@@ -5,7 +5,7 @@ defmodule HalC2.Subprocess.Sandboxed do
   local port. `HalC2.Subprocess.start/2` starts one when given `:sandbox`:
 
       %{conn: conn, name: sandbox, workdir: dir, environment: %{}, timeout_seconds: s,
-        output_limit: bytes, on_limit: fun}
+        output_limit: bytes, on_limit: {m, f, a}}
 
   The program gets only `environment`, never the MC's or the project's. The reader is
   the stream's owner: it frames stdout into `{:subprocess_lines, reader, lines}` and
@@ -50,7 +50,7 @@ defmodule HalC2.Subprocess.Sandboxed do
     status = :atomics.new(1, signed: true)
     :atomics.put(status, 1, @running)
     limit = Map.get(sandbox, :output_limit, @output_limit)
-    on_limit = Map.get(sandbox, :on_limit, fn -> :ok end)
+    on_limit = Map.get(sandbox, :on_limit, {Function, :identity, [:ok]})
 
     opts = [
       workdir: Map.get(sandbox, :workdir, ""),
@@ -61,7 +61,10 @@ defmodule HalC2.Subprocess.Sandboxed do
     # The reader starts the stream itself: the gateway calls leave processes linked
     # to their caller, and an owner that traps exits must not hear them end.
     exec = {sandbox.conn, sandbox.name, argv, opts}
-    reader = spawn_link(__MODULE__, :reader_init, [owner, {ref, status}, limit, on_limit, exec])
+
+    reader =
+      HalC2.Pump.spawn_link(__MODULE__, {:init, owner, {ref, status}, limit, on_limit, exec})
+
     monitor = Process.monitor(reader)
 
     receive do
@@ -162,19 +165,22 @@ defmodule HalC2.Subprocess.Sandboxed do
     end
   end
 
+  # The reader runs on `HalC2.Pump`, which waits for it, so a hot code update loads
+  # this module however long it has waited.
   @doc false
-  def reader_init(owner, {ref, status}, limit, on_limit, {conn, name, argv, opts}) do
+  def step({:init, owner, {ref, status}, limit, on_limit, {conn, name, argv, opts}}, :start) do
     # A monitor, not the link: an owner that exits normally leaves a linked reader up.
     monitor = Process.monitor(owner)
 
     case Client.exec(conn, name, argv, Keyword.put(opts, :owner, self())) do
       {:error, reason} ->
         send(owner, {ref, {:failed, reason}})
+        {:done, :ok}
 
       {:ok, exec} ->
         send(owner, {ref, {:started, exec}})
 
-        __MODULE__.reader_loop(%{
+        advance(%{
           owner: owner,
           monitor: monitor,
           ref: ref,
@@ -193,52 +199,59 @@ defmodule HalC2.Subprocess.Sandboxed do
     end
   end
 
-  @doc false
-  def reader_loop(%{ended: true, waiting: false, lines: []} = s) do
+  def step(s, {:message, :ack}), do: advance(%{s | waiting: false})
+
+  # Its exec, which it owns, stops with it, cancelling the command.
+  def step(%{monitor: monitor}, {:message, {:DOWN, monitor, :process, _, _}}), do: {:done, :ok}
+
+  def step(%{exec: exec} = s, {:message, {:openshell_exec, exec, {:stdout, data}}}) do
+    s = count(s, data)
+
+    if s.ended do
+      advance(s)
+    else
+      {lines, rest} = Subprocess.split_lines(s.partial, data)
+      held = s.held + length(lines)
+      s = %{s | lines: Enum.reverse(lines, s.lines), held: held, partial: rest}
+      advance(if held > s.held_limit, do: limited(s), else: s)
+    end
+  end
+
+  def step(%{exec: exec} = s, {:message, {:openshell_exec, exec, {:stderr, data}}}),
+    do: advance(count(s, data))
+
+  def step(%{exec: exec} = s, {:message, {:openshell_exec, exec, {:exit, code}}}),
+    do: advance(exit_with(s, code))
+
+  def step(%{exec: exec} = s, {:message, {:openshell_exec, exec, {:error, _reason}}}),
+    do: advance(exit_with(s, 255))
+
+  # Another monitor's or exec's: not this reader's to act on.
+  def step(s, {:message, _other}), do: advance(s)
+
+  @waits %{ack: true, DOWN: true, openshell_exec: true}
+
+  defp advance(%{ended: true, waiting: false, lines: []} = s) do
     if is_binary(s.partial) and s.partial != "",
       do: send(s.owner, {:subprocess_lines, self(), [s.partial]})
 
     send(s.owner, {:subprocess_eof, self()})
+    {:done, :ok}
   end
 
   # `lines` is kept newest first while the owner has not acknowledged, so a long run
   # of short lines costs one reverse per batch rather than an append per chunk.
-  def reader_loop(%{waiting: false, lines: [_ | _]} = s) do
+  defp advance(%{waiting: false, lines: [_ | _]} = s) do
     send(s.owner, {:subprocess_lines, self(), Enum.reverse(s.lines)})
-    __MODULE__.reader_loop(%{s | lines: [], held: 0, waiting: true})
+    advance(%{s | lines: [], held: 0, waiting: true})
   end
 
-  def reader_loop(%{exec: exec, monitor: monitor} = s) do
-    receive do
-      :ack ->
-        __MODULE__.reader_loop(%{s | waiting: false})
+  defp advance(s), do: {:receive, @waits, :infinity, s}
 
-      # Its exec, which it owns, stops with it, cancelling the command.
-      {:DOWN, ^monitor, :process, _, _} ->
-        :ok
-
-      {:openshell_exec, ^exec, {:stdout, data}} ->
-        s = count(s, data)
-
-        if s.ended do
-          __MODULE__.reader_loop(s)
-        else
-          {lines, rest} = Subprocess.split_lines(s.partial, data)
-          held = s.held + length(lines)
-          s = %{s | lines: Enum.reverse(lines, s.lines), held: held, partial: rest}
-          __MODULE__.reader_loop(if held > s.held_limit, do: limited(s), else: s)
-        end
-
-      {:openshell_exec, ^exec, {:stderr, data}} ->
-        __MODULE__.reader_loop(count(s, data))
-
-      {:openshell_exec, ^exec, {:exit, code}} ->
-        __MODULE__.reader_loop(exit_with(s, code))
-
-      {:openshell_exec, ^exec, {:error, _reason}} ->
-        __MODULE__.reader_loop(exit_with(s, 255))
-    end
-  end
+  # A reader started before the Pump loops here until its next message, then moves
+  # to the Pump. Drop it once no running MC predates it.
+  @doc false
+  def reader_loop(s), do: HalC2.Pump.resume(__MODULE__, advance(s))
 
   defp count(%{ended: true} = s, _data), do: s
 
@@ -250,9 +263,13 @@ defmodule HalC2.Subprocess.Sandboxed do
 
   defp limited(s) do
     Exec.cancel(s.exec)
-    s.on_limit.()
+    run_on_limit(s.on_limit)
     exit_with(%{s | partial: "", lines: [], held: 0}, 137)
   end
+
+  # `{m, f, a}`. A fun, as a reader started before that took, runs too.
+  defp run_on_limit({m, f, a}), do: apply(m, f, a)
+  defp run_on_limit(fun) when is_function(fun, 0), do: fun.()
 
   defp exit_with(%{ended: true} = s, _code), do: s
 

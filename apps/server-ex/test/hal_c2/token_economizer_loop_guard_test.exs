@@ -3,7 +3,7 @@
 # tests/test_config_integer_thresholds.py (microsoft/TokenEconomizer@cb42207e3e09).
 
 for file <-
-      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history micro_skills_distiller tool_prune_evidence token_economizer),
+      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_distiller micro_skills_history tool_prune_evidence token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerLoopGuardTest do
@@ -2242,6 +2242,47 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert entry["projectId"] == project
       assert entry["dropped"] == [@pytest]
       refute_received {:"$gen_cast", {:publish, "token-economizer", "microSkills", _}}
+    end
+
+    test "a finished turn reads and publishes its own project alone" do
+      other = "seam-other-#{System.unique_integer([:positive])}"
+      on_exit(fn -> File.rm(TokenEconomizer.micro_skills_path(other)) end)
+      path = TokenEconomizer.micro_skills_path(other)
+      File.mkdir_p!(Path.dirname(path))
+
+      File.write!(
+        path,
+        JSON.encode!(Map.put(EnvFacts.dump(EnvFacts.new()), "projectId", other))
+      )
+
+      # The test stands in for the plugin host, which publishes what it is cast.
+      Process.register(self(), HalC2.Plugins)
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> ran_tests("t", "claude-work")
+
+      # No other project's file was listed or read, and no other topic was sent.
+      assert state.known_skills == nil
+      assert Map.keys(state.skills) == ["seam"]
+      assert micro_topics() == ["microSkills:seam"]
+
+      # The whole listing, asked for, still finds the project saved on disk.
+      {:reply, {:ok, view}, _state} =
+        TokenEconomizer.handle_call({:micro_skills, nil}, nil, state)
+
+      ids = Enum.map(view["projects"], & &1["projectId"])
+      assert "seam" in ids and other in ids
+    end
+
+    defp micro_topics do
+      receive do
+        {:"$gen_cast", {:publish, "token-economizer", "microSkills" <> _ = topic, _}} ->
+          [topic | micro_topics()]
+
+        {:"$gen_cast", {:publish, "token-economizer", _topic, _}} ->
+          micro_topics()
+      after
+        0 -> []
+      end
     end
 
     test "what a conversation was staged outlives a restart, and an unreadable file is none" do

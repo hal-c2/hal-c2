@@ -1,5 +1,5 @@
 for file <-
-      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_distiller tool_prune_evidence token_economizer),
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_distiller micro_skills_history loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge tool_prune_evidence token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerPluginPropTest do
@@ -43,7 +43,10 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
     holds and the one it may be blocked delivering;
   - a turn a sweep closes, its end lost and maybe its last calls with it, teaches the
     micro-skills nothing from what was heard of it: they read the ended run back whole,
-    which with no thread here to read is nothing.
+    which with no thread here to read is nothing;
+  - a turn's fold reads and lists no project but its own: which projects have
+    micro-skills saved is read from disk only when the whole listing is asked for, and
+    that listing names every project the process has learned for.
 
   `prop/hal_c2/token_economizer_prop_test.exs` runs one turn's guard;
   `proof/hal_c2/token_economizer_loop_guard_proof_test.exs` explores the turns, the
@@ -176,7 +179,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   # `open`: thread => %{run, partial, kinds}, the turns under way the plugin heard start
   # while on, `swept` counting the sweeps that found its run ended. `missing`: the events
   # still to hear that the feed had waiting when it said it missed some; the turns they
-  # belong to are partial. `lost`: the runs that ended with their end lost.
+  # belong to are partial. `lost`: the runs that ended with their end lost. `listed`: the
+  # whole micro-skills listing was asked for since the process started.
   def initial_state(budget \\ 1),
     do: %{
       budget: budget,
@@ -185,7 +189,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       runs: 0,
       open: %{},
       missing: 0,
-      lost: MapSet.new()
+      lost: MapSet.new(),
+      listed: false
     }
 
   def command(state) do
@@ -231,7 +236,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
           elements(~w(off envfacts)),
           state.budget
         ]}},
-      {1, {:call, __MODULE__, :restart, [state.mode, state.micro, state.budget, integer(0, 3)]}}
+      {1, {:call, __MODULE__, :restart, [state.mode, state.micro, state.budget, integer(0, 3)]}},
+      {1, {:call, __MODULE__, :listing, []}}
       | lose
     ])
   end
@@ -323,7 +329,9 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
   # one more: it watches no turn, and each of those may have been sent before ones it
   # missed.
   def next_state(state, _result, {:call, _, :restart, [_, _, _, held]}),
-    do: %{state | open: %{}, missing: held + 1}
+    do: %{state | open: %{}, missing: held + 1, listed: false}
+
+  def next_state(state, _result, {:call, _, :listing, []}), do: %{state | listed: true}
 
   def next_state(state, _result, _call), do: state
 
@@ -377,7 +385,9 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         end),
       teaches: teaches?(state, name, args, seen.taught),
       held: not Map.get(seen, :held_delivered, false),
-      swept_whole: not Map.get(seen, :folded, false)
+      swept_whole: not Map.get(seen, :folded, false),
+      own_project: after_.listed or seen.known_skills == nil,
+      listing: Enum.all?(seen.skills, &(&1 in Map.get(seen, :listed, seen.skills)))
     ]
 
     case for {law, false} <- laws, do: law do
@@ -451,6 +461,14 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
       )
 
     settle(plugin, false)
+  end
+
+  # The whole micro-skills listing, as a person's client asks for it.
+  def listing do
+    {:reply, {:ok, view}, plugin} =
+      TokenEconomizer.handle_call({:micro_skills, nil}, nil, Process.get(:plugin))
+
+    plugin |> settle(false) |> Map.put(:listed, Enum.map(view["projects"], & &1["projectId"]))
   end
 
   # The process goes down with its tasks and starts again in mode `mode`, while a feed
@@ -657,6 +675,8 @@ defmodule HalC2.TokenEconomizerPluginPropTest do
         ),
       offered: for({t, %{guard: %{abort_delivered: true}}} <- plugin.turns, do: t),
       acts: Enum.frequencies_by(plugin.recent, &{&1["threadId"], &1["runId"], &1["action"]}),
+      known_skills: plugin.known_skills,
+      skills: Map.keys(plugin.skills),
       taught: taught
     }
   end

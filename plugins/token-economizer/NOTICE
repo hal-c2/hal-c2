@@ -32,12 +32,10 @@ file in mc/ names the upstream files it was ported from and what it changed. In 
   a directory per call, so a `cd` inside one command still shapes its forms
   but a directory an earlier call left the shell in is not known. A person
   may drop a fact so it is never learned again, and restore it, which
-  upstream had no way to do.
-- The distiller asks the MC's text generation model, off the plugin's
-  process, and holds each proposed fact to its detector on the turns it
-  cites before the lifecycle above takes it. The first fold from history
-  reads the project's earlier threads from the MC's own store, not upstream's
-  foreign session logs.
+  upstream had no way to do. The paid distiller that proposes facts beyond
+  the environment's is not part of this port yet; `microSkills=on` does the
+  same as `envfacts` until it lands, and its candidates will go through the
+  lifecycle this port already has.
 - Tool pruning keeps upstream's evidence rule and protected sets, Codex's
   capability packages (two demotions per session at most, three times the
   evidence for image/media) and its modes (auto after a quiet spell, propose,

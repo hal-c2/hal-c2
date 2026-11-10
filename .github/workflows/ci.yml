@@ -129,6 +129,10 @@ jobs:
       - name: Compile
         run: mix compile --warnings-as-errors
 
+      # Waits in code a hot update changes, against credo/waits_baseline.exs.
+      - name: Credo
+        run: mix credo
+
       - name: Compile the property tests
         run: mix compile
         env:
@@ -208,9 +212,12 @@ jobs:
 
       # The tests that mount another machine's folder skip without it (HalC2.MachineFiles).
       # Regex content search needs ripgrep, which the runner image lacks (HalC2.Workspace).
+      - name: Install fuse3 and ripgrep
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+
       - name: Build the machine-files helper
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3 ripgrep
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       # The orphan reaper kills through it, and with `kill` without it (HalC2.Subprocess.Orphans).
@@ -233,8 +240,11 @@ jobs:
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
   # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
   # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
-  # They run the real code on sampled cases and take a quarter of an hour, split by file
-  # so one failed property re-runs a part of that. New files join a partition on their own.
+  # They run the real code on sampled cases and take half an hour, split by file so one
+  # failed property re-runs a part of that. New files join a partition on their own.
+  # ExUnit deals the files to partitions round-robin by name, blind to their cost, so the
+  # planner's, about eight minutes alone, runs in a shard of its own: the partition that
+  # drew it with the next heaviest files ran into the job's limit (#1487's merge group).
   mc_props:
     name: MC properties
     needs: [changes, mc_check]
@@ -245,7 +255,7 @@ jobs:
       # In the queue one failure decides the entry; on a pull request, see them all.
       fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
-        partition: [1, 2, 3]
+        shard: [1, 2, 3, planner]
     env:
       MIX_ENV: prop
     defaults:
@@ -259,18 +269,26 @@ jobs:
       - name: Setup the MC
         uses: ./.github/actions/setup-mc
 
+      - name: Install fuse3
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3'
+
       - name: Build the machine-files helper
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       - name: Build the pid-kill helper
         run: cargo build --locked --release --manifest-path ../../native/pid-kill/Cargo.toml
 
       - name: Property tests
-        run: mix prop --partitions 3
+        run: |
+          if [ "$SHARD" = planner ]; then
+            mix prop prop/hal_c2/planner_prop_test.exs
+          else
+            MIX_TEST_PARTITION="$SHARD" mix prop --partitions 3 --exclude module:HalC2.PlannerPropTest
+          fi
         env:
-          MIX_TEST_PARTITION: ${{ matrix.partition }}
+          SHARD: ${{ matrix.shard }}
 
 
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
@@ -360,14 +378,19 @@ jobs:
       # The terminal scenarios open zsh, which the runner image lacks.
       - name: Install zsh
         if: contains(matrix.dirs, 'terminal')
-        run: sudo apt-get update && sudo apt-get install -y zsh
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh zsh'
 
       # Files on another machine mount them with FUSE; they skip without the helper.
       # Regex content search needs ripgrep, which the runner image lacks.
+      - name: Install fuse3 and ripgrep
+        if: contains(matrix.dirs, 'files')
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+
       - name: Build the machine-files helper
         if: contains(matrix.dirs, 'files')
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3 ripgrep
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       # space/diagrams.feature draws with the real helper.

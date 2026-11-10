@@ -171,6 +171,7 @@ set(hal_c2_bricks_qml_files
     IntegrationsSettings.qml
     SettingsScopeSentence.qml
     StorageSettings.qml
+    SandboxSettings.qml
     ProjectSettings.qml
     DevicePanel.qml
     DeviceToolsPanel.qml

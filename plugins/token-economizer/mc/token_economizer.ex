@@ -34,8 +34,22 @@ defmodule HalC2Plugins.TokenEconomizer do
   first message of a new provider conversation (`shape_run/2`), never into
   one under way. The `microSkills` call lists a project's facts with the
   evidence behind them; `microSkills.drop` drops one for good (it is not
-  learned again) and `microSkills.restore` lets it be learned again. The
-  `microSkills` topic carries the same listing, published as facts change.
+  learned again) and `microSkills.restore` lets it be learned again. Each
+  project's entry in that listing is published on its own topic,
+  `microSkills:<project id>`, when what it shows changes; the mode is the
+  `microSkills` setting's, which the call reports and no topic repeats.
+
+  With the micro-skills `on`, a paid proposer (`MicroSkills.Distiller`) also
+  reads a compact digest of a project's recent turns every
+  `microSkillsProposeEvery` turns and asks the user's text generation model
+  for repository facts, each with a detector the plugin checks on later turns.
+  The call is a task of the plugin's that sends its answer back
+  (`{:proposed, project id, result}`); one that fails is not retried until the
+  next proposal is due. Its spend is counted beside the judge's in the status.
+
+  A project whose micro-skills file cannot be read is held: nothing is
+  learned, staged or proposed for it, and its listing says why, until the file
+  reads again. It is never silently started afresh.
 
   With the history import on (`historyImport`, off until turned on), the first
   turn to start in a project with nothing folded yet folds the project's
@@ -49,18 +63,6 @@ defmodule HalC2Plugins.TokenEconomizer do
   that had already learned is never imported into. `microSkills.forget`
   forgets what a project learned, the import's envelope samples with it, and
   runs the import again when it is on.
-
-  With the micro-skills `on`, a paid proposer (`MicroSkills.Distiller`) also
-  reads a compact digest of a project's recent turns every
-  `microSkillsProposeEvery` turns and asks the user's text generation model
-  for repository facts, each with a detector the plugin checks on later turns.
-  The call is a task of the plugin's that sends its answer back
-  (`{:proposed, project id, result}`); one that fails is not retried until the
-  next proposal is due. Its spend is counted beside the judge's in the status.
-
-  A project whose micro-skills file cannot be read is held: nothing is
-  learned, staged or proposed for it, and its listing says why, until the file
-  reads again. It is never silently started afresh.
 
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
@@ -104,9 +106,6 @@ defmodule HalC2Plugins.TokenEconomizer do
   # How far back a read of a thread's history pages to find a segment's runs.
   @history_pages 20
   @topic "loopGuard"
-  @skills_topic "microSkills"
-  # How long a conversation's start waits for its shape (facts, denied tools), at most.
-  @shape_run_ms 250
   @prune_topic "toolPrune"
   # The tool-pruning numbers a person may set, `{setting, least}`: whole numbers all.
   @prune_numbers %{
@@ -115,6 +114,9 @@ defmodule HalC2Plugins.TokenEconomizer do
     "toolPruneSessions" => 1,
     "toolPruneQuietMinutes" => 0
   }
+  @skills_topic "microSkills"
+  # How long a conversation's start waits for the facts, at most.
+  @shape_run_ms 250
   @recent 20
   # How often the plugin asks the MC which of its turns' runs are still under way.
   @sweep_ms 60_000
@@ -219,6 +221,15 @@ defmodule HalC2Plugins.TokenEconomizer do
   @impl HalC2.Plugins.Extension
   def call("status", _input, _context), do: {:ok, GenServer.call(__MODULE__, :status)}
 
+  def call("toolPrune", input, _context),
+    do: GenServer.call(__MODULE__, {:toolprune, :state, input || %{}})
+
+  def call("toolPruneApply", input, _context),
+    do: GenServer.call(__MODULE__, {:toolprune, :apply, input || %{}})
+
+  def call("toolPruneRestore", input, _context),
+    do: GenServer.call(__MODULE__, {:toolprune, :restore, input || %{}})
+
   def call("microSkills", input, _context),
     do: GenServer.call(__MODULE__, {:micro_skills, input})
 
@@ -230,15 +241,6 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   def call("microSkills.forget", input, _context),
     do: GenServer.call(__MODULE__, {:micro_skill_forget, input})
-
-  def call("toolPrune", input, _context),
-    do: GenServer.call(__MODULE__, {:toolprune, :state, input || %{}})
-
-  def call("toolPruneApply", input, _context),
-    do: GenServer.call(__MODULE__, {:toolprune, :apply, input || %{}})
-
-  def call("toolPruneRestore", input, _context),
-    do: GenServer.call(__MODULE__, {:toolprune, :restore, input || %{}})
 
   def call(method, _input, _context), do: {:error, "Unknown method #{method}."}
 
@@ -283,26 +285,6 @@ defmodule HalC2Plugins.TokenEconomizer do
        missing: Host.feed_backlog(@id),
        # {project id, provider} => tracker
        trackers: %{},
-       # project id => micro-skills state, loaded on first use
-       skills: %{},
-       # The projects with micro-skills of their own, read from disk once
-       # (nil until then) and added to as facts are saved.
-       known_skills: nil,
-       # project id => the shape of its entry last published, turn counts
-       # aside: a project's topic is republished only when what a person would
-       # see in it changes.
-       published_skills: %{},
-       # {thread id, provider instance} => the fact ids staged for that
-       # conversation, oldest first in staged_order and capped, so it cannot
-       # grow for good. Kept on disk too: a conversation staged before the MC
-       # restarted is resumed, not staged again, and still counts its facts.
-       staged: staged,
-       staged_order: staged_order,
-       # project id => its first fold from history (`MicroSkills.History`), loaded
-       # with its micro-skills and saved with them; the one read under way, at most:
-       # %{pid, project, fold, step, what}.
-       folds: %{},
-       reading: nil,
        # {project id, provider} => tool pruning's evidence, loaded on first use
        prunes: %{},
        # thread id => %{project, loaded, used, runs, active}, the conversation
@@ -330,6 +312,26 @@ defmodule HalC2Plugins.TokenEconomizer do
        strays: read_strays(),
        # {project id, provider} => the timer that folds its idle conversations
        prune_timers: %{},
+       # project id => micro-skills state, loaded on first use
+       skills: %{},
+       # The projects with micro-skills of their own, read from disk once
+       # (nil until then) and added to as facts are saved.
+       known_skills: nil,
+       # project id => the shape of its entry last published, turn counts
+       # aside: a project's topic is republished only when what a person would
+       # see in it changes.
+       published_skills: %{},
+       # {thread id, provider instance} => the fact ids staged for that
+       # conversation, oldest first in staged_order and capped, so it cannot
+       # grow for good. Kept on disk too: a conversation staged before the MC
+       # restarted is resumed, not staged again, and still counts its facts.
+       staged: staged,
+       staged_order: staged_order,
+       # project id => its first fold from history (`MicroSkills.History`), loaded
+       # with its micro-skills and saved with them; the one read under way, at most:
+       # %{pid, project, fold, step, what}.
+       folds: %{},
+       reading: nil,
        stats: %{
          "turns" => 0,
          "nudges" => 0,
@@ -345,6 +347,9 @@ defmodule HalC2Plugins.TokenEconomizer do
        # Whether a run is under way, as the MC says (`Host.run_active?/3`); the runs of
        # turns the last sweep found ended, as {thread id, run id}; the next sweep's timer.
        active?: &Host.run_active?(@id, &1, &2),
+       # The time, in ms, a conversation's shaping checks its deadline against
+       # (`shape_run/2` sets the deadline on the same clock).
+       clock: fn -> System.monotonic_time(:millisecond) end,
        ended: MapSet.new(),
        sweep: arm(nil)
      }}
@@ -392,11 +397,6 @@ defmodule HalC2Plugins.TokenEconomizer do
           end)
     }
 
-    state =
-      if prune_cfg(state)["mode"] != mode,
-        do: release_unreadable(state, unreadable(state)),
-        else: state
-
     # A proposal under way is one no one would read once the proposer is off.
     state =
       if micro_mode(state) == "on",
@@ -417,6 +417,11 @@ defmodule HalC2Plugins.TokenEconomizer do
       else
         state
       end
+
+    state =
+      if prune_cfg(state)["mode"] != mode,
+        do: release_unreadable(state, unreadable(state)),
+        else: state
 
     # Off, the guard reads no judge job; it hears the turns only while the micro-skills
     # learn from them. A delivery under way runs on: its steer may already have been
@@ -474,12 +479,20 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   def handle_call({:shape_run, run, deadline}, _from, state) do
     {facts, ids, state} = shape(state, run, deadline)
+    shaped = state.shaped
     {denied, state} = shape_prune(state, run)
 
-    reply =
-      case Map.merge(facts || %{}, denied || %{}) do
-        reply when reply == %{} -> nil
-        reply -> reply
+    # Tool pruning can read the thread's history back first, which may carry the
+    # ask past its deadline: the answer then never reaches the conversation, so it
+    # is staged no facts and keeps the loaded set it had; what the read learned stays.
+    {reply, ids, state} =
+      if in_time?(state, deadline) do
+        case Map.merge(facts || %{}, denied || %{}) do
+          reply when reply == %{} -> {nil, ids, state}
+          reply -> {reply, ids, state}
+        end
+      else
+        {nil, nil, %{state | shaped: shaped}}
       end
 
     # Staged per conversation, not per thread: a thread carried on by another
@@ -521,15 +534,14 @@ defmodule HalC2Plugins.TokenEconomizer do
   # The facts a run is given, and their ids; nil ids when it is given none:
   # learning off, no project, or past its deadline.
   defp shape(state, run, deadline) do
-    if micro_on?(state) and is_binary(run["projectId"]) and
-         System.monotonic_time(:millisecond) <= deadline do
+    if micro_on?(state) and is_binary(run["projectId"]) and in_time?(state, deadline) do
       {skills, state} = skills_for(state, run["projectId"])
       {text, skills} = EnvFacts.render(skills)
       state = put_in(state.skills[run["projectId"]], skills)
 
       # The render itself can cross the deadline (a project's first load):
       # past it the answer is discarded, so nothing was given.
-      if System.monotonic_time(:millisecond) <= deadline,
+      if in_time?(state, deadline),
         do:
           {if(text == "", do: nil, else: %{"context" => text}), EnvFacts.injected_ids(skills),
            state},
@@ -538,6 +550,8 @@ defmodule HalC2Plugins.TokenEconomizer do
       {nil, nil, state}
     end
   end
+
+  defp in_time?(state, deadline), do: state.clock.() <= deadline
 
   @impl GenServer
   def handle_continue(:save_staged, state) do
@@ -688,7 +702,7 @@ defmodule HalC2Plugins.TokenEconomizer do
         _ -> state
       end
 
-    {:noreply, state |> fold_history(project_id, fold_id, step, result) |> pump()}
+    {:noreply, state |> fold_read(project_id, fold_id, step, result) |> pump()}
   end
 
   # A read that went down without an answer could not read what it was given.
@@ -697,7 +711,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     {:noreply,
      %{state | reading: nil}
-     |> fold_history(r.project, r.fold, r.step, {:error, r.what, inspect(reason)})
+     |> fold_read(r.project, r.fold, r.step, {:error, r.what, inspect(reason)})
      |> pump()}
   end
 
@@ -915,8 +929,11 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   # The projects a `toolPrune` call names, loading a named one's file if need be: one
   # with no evidence held or kept is none, so a call naming a project that never ran
-  # (or a mistyped one) neither holds an empty entry nor saves a file for it. Without a
-  # project the state call lists all held; apply and restore need one (`prune_call/3`).
+  # (or a mistyped one) neither holds an empty entry nor saves a file for it. A project
+  # named without a provider is each pruning provider's, held or on file, so after a
+  # restart its tools that are off can be seen and restored before its next
+  # conversation loads them. Without a project the state call lists all held; apply and
+  # restore need one (`prune_call/3`).
   defp prune_targets(state, %{"projectId" => project_id, "provider" => provider})
        when is_binary(project_id) and is_binary(provider) do
     project = {project_id, provider}
@@ -931,8 +948,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  defp prune_targets(state, %{"projectId" => project_id}) when is_binary(project_id) do
-    {:ok, for({id, _} = project <- Map.keys(state.prunes), id == project_id, do: project), state}
+  defp prune_targets(state, %{"projectId" => project_id} = input) when is_binary(project_id) do
+    Enum.reduce(@prune_providers, {:ok, [], state}, fn provider, {:ok, targets, state} ->
+      {:ok, found, state} = prune_targets(state, Map.put(input, "provider", provider))
+      {:ok, targets ++ found, state}
+    end)
   end
 
   defp prune_targets(state, _input), do: {:ok, Map.keys(state.prunes), state}
@@ -1056,6 +1076,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       conv ->
         run = event["runId"]
+        # turn.finished's `"ordinal"` is the run's place in the thread, the one a
+        # watermark keeps; a turn.item's is the item's place in its run, never read here.
         state = ended_unresolved(state, thread_id, run, event["ordinal"])
 
         state =
@@ -1342,7 +1364,9 @@ defmodule HalC2Plugins.TokenEconomizer do
   # dropped among them, and the tools whose uses their items need not show
   # (`Prune.unrecorded/2`). Still partial when the history cannot be read, or does not
   # have one of the segment's runs yet (one still running as a quiet project folds it):
-  # the uses dropped from it are read back at the thread's next turn.
+  # the uses dropped from it are read back at the thread's next turn. A run that ended
+  # and was rolled back is never in the history, so its segment stays partial here too,
+  # and folds unresolved: `recover_uses/5` settles it at the next shape. Slower, and safe.
   defp heard(conv, prune, unit, before) do
     with {:ok, history} <- history_back(conv.thread, before, conv.runs),
          read = MapSet.new(history, & &1["runId"]),
@@ -2320,9 +2344,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  # The projects with micro-skills of their own: from disk once, then as
-  # state remembers them (a save adds its project), so no turn ever re-reads
-  # every project's file to build the listing.
+  # The projects with micro-skills of their own: from disk the first time the
+  # whole listing is asked for, then as state remembers them (a save adds its
+  # project). A turn only touches its own project's file: before that first
+  # listing, `know_skill/2` leaves the set unread, since the scan will find the
+  # saved file and `state.skills` holds the project either way.
   defp known_skills(state) do
     case state.known_skills do
       nil ->
@@ -2334,10 +2360,10 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
-  defp know_skill(state, project_id) do
-    {known, state} = known_skills(state)
-    %{state | known_skills: MapSet.put(known, project_id)}
-  end
+  defp know_skill(%{known_skills: nil} = state, _project_id), do: state
+
+  defp know_skill(%{known_skills: known} = state, project_id),
+    do: %{state | known_skills: MapSet.put(known, project_id)}
 
   # The projects with micro-skills files of their own, beside those loaded.
   defp saved_project_ids do
@@ -2699,7 +2725,7 @@ defmodule HalC2Plugins.TokenEconomizer do
   # Applies a read to the fold that asked it, if it still awaits it: one
   # forgotten, moved past, or answered with learning off is not applied, and
   # read again when it is next.
-  defp fold_history(state, project_id, fold_id, step, result) do
+  defp fold_read(state, project_id, fold_id, step, result) do
     fold = state.folds[project_id]
 
     if micro_on?(state) and History.running?(fold) and fold["id"] == fold_id and
