@@ -24,21 +24,77 @@ composer/attachments.feature: The user checks what text a Snap Shot captured [wi
 composer/attachments.feature: The user checks what text a Snap Shot captured [with the window's accessibility text, the captured text]
 composer/attachments.feature: The user checks what text a Snap Shot captured [without accessibility data, that the app did not provide accessibility data]
 composer/context-references.feature: A bare @ opens the menu and says nothing matches
+composer/context-references.feature: A bare currency sign or a skill name starting with a digit opens the skill menu [$1password]
+composer/context-references.feature: A bare currency sign or a skill name starting with a digit opens the skill menu [$2fa]
+composer/context-references.feature: A bare currency sign or a skill name starting with a digit opens the skill menu [$]
+composer/context-references.feature: A path typed in the composer does not open the slash menu
+composer/context-references.feature: A provider command is put into the draft ready for its arguments
+composer/context-references.feature: A provider command named like a skill that is offered is not listed twice
 composer/context-references.feature: A quoted response is sent with its comment
 composer/context-references.feature: A removed terminal excerpt is not sent
 composer/context-references.feature: A send the MC rejects gives its terminal excerpt back
+composer/context-references.feature: A skill is found by its description as well as its name
+composer/context-references.feature: A skill offered among the slash commands is named as a skill
+composer/context-references.feature: A skill without a display name is named from its id [lint-fix, Lint Fix]
+composer/context-references.feature: A skill without a display name is named from its id [pdf_reader, Pdf Reader]
+composer/context-references.feature: A skill without a display name is named from its id [plugin:review, Plugin Review]
+composer/context-references.feature: A slash after leading spaces is still the start of the message
+composer/context-references.feature: A slash typed after other text keeps its menu open while it heads for a name [Please use /]
+composer/context-references.feature: A slash typed after other text keeps its menu open while it heads for a name [Please use /mo]
+composer/context-references.feature: A slash typed after other text keeps its menu open while it heads for a name [Please use /ski]
+composer/context-references.feature: A slash typed after other text keeps its menu open while it heads for a name [Please use /skill:re]
+composer/context-references.feature: A slash typed after other text keeps its menu open while it heads for a name [Please use /skill]
+composer/context-references.feature: A slash typed after other text searches skills
+composer/context-references.feature: A slash typed after other text that starts no name is sent as typed [fix /this]
+composer/context-references.feature: A slash typed after other text that starts no name is sent as typed [look in /tmp]
+composer/context-references.feature: A slash typed after other text that starts no name is sent as typed [summarise /thread]
+composer/context-references.feature: A slash typed after other text that starts no name is sent as typed [that'll go great /s]
 composer/context-references.feature: A stashed quote is listed by its text
+composer/context-references.feature: A suggestion list that is still looking says what it is looking for [@cart, files, Searching workspace files...]
+composer/context-references.feature: A suggestion list with nothing to offer says why [$zzz, no skill matches, No skills found. Try / to browse provider commands.]
+composer/context-references.feature: A suggestion list with nothing to offer says why [/zzz, no command matches, No matching command.]
+composer/context-references.feature: A suggestion list with nothing to offer says why [@zzz, no file or folder matches, No matching files or folders.]
 composer/context-references.feature: A terminal excerpt can be sent on its own
 composer/context-references.feature: A terminal excerpt is sent as a reference with its text
+composer/context-references.feature: A trigger character offers matching suggestions [$rev, skills matching "rev"]
+composer/context-references.feature: A trigger character offers matching suggestions [/mo, commands matching "mo"]
+composer/context-references.feature: A trigger character offers matching suggestions [@src/co, files and folders matching "src/co"]
+composer/context-references.feature: Any currency sign opens the skills [$rev]
+composer/context-references.feature: Any currency sign opens the skills [£rev]
+composer/context-references.feature: Any currency sign opens the skills [€rev]
+composer/context-references.feature: Choosing a built-in command acts at once and leaves no text behind [/default, planning, the thread switches back to building]
+composer/context-references.feature: Choosing a built-in command acts at once and leaves no text behind [/model, building, the user is asked to choose a model]
+composer/context-references.feature: Choosing a built-in command acts at once and leaves no text behind [/plan, building, the thread switches to planning]
+composer/context-references.feature: Choosing a file suggestion puts the file into the draft
+composer/context-references.feature: Closing the suggestions leaves the caret where the user was typing
+composer/context-references.feature: Dismissing suggestions does not send the message
+composer/context-references.feature: Each skill is offered once, and only if the user may run it
+composer/context-references.feature: Enter or Tab takes the highlighted suggestion [Enter]
+composer/context-references.feature: Enter or Tab takes the highlighted suggestion [Tab]
+composer/context-references.feature: Equally good matches list built-in commands, then provider commands, then skills
 composer/context-references.feature: Part of an assistant response can be quoted with a comment
+composer/context-references.feature: Provider commands only apply at the start of a message [/compact, the provider command "compact" is offered]
+composer/context-references.feature: Provider commands only apply at the start of a message [please /compact, no provider command is offered]
+composer/context-references.feature: Provider commands only apply at the start of a message [please /model, the built-in model command is offered]
+composer/context-references.feature: Suggestions are ordered by how closely their name matches
+composer/context-references.feature: The @ menu says it cannot search while the environment is away, and answers when it returns
+composer/context-references.feature: The suggestion list is walked with the arrow keys and wraps at its ends
+composer/context-references.feature: Typing a price does not open the skill menu [It costs $5]
+composer/context-references.feature: Typing a price does not open the skill menu [about €20]
+composer/context-references.feature: Typing a price does not open the skill menu [budget $9.99]
+composer/context-references.feature: Typing a price does not open the skill menu [raise $10k]
+composer/context-references.feature: Typing a price does not open the skill menu [£1,000 a month]
 composer/drafting-and-sending.feature: A background prompt starts a thread without leaving the composer
 composer/drafting-and-sending.feature: A background prompt that fails can be restored
+composer/drafting-and-sending.feature: A message over 120,000 characters is sent whole
+composer/drafting-and-sending.feature: A narrow composer folds its controls into one menu instead of wrapping
 composer/drafting-and-sending.feature: A new thread's first message leaves the composer as it is sent
 composer/drafting-and-sending.feature: A new thread's prompt that failed to start survives a restart
 composer/drafting-and-sending.feature: A send the MC rejects restores the draft
 composer/drafting-and-sending.feature: Each thread keeps its own draft
 composer/drafting-and-sending.feature: Enter sends the message
 composer/drafting-and-sending.feature: One prompt starts a thread for each chosen model
+composer/drafting-and-sending.feature: Send stands out only when there is something to send
 composer/drafting-and-sending.feature: Sending while disconnected keeps the draft
 composer/drafting-and-sending.feature: Shift+Enter starts a new line instead of sending
 composer/drafting-and-sending.feature: Switching threads before the draft syncs does not leak text into the new thread
@@ -52,35 +108,98 @@ composer/drafting-and-sending.feature: The send shortcut setting decides what En
 composer/drafting-and-sending.feature: The send shortcut setting decides what Enter does [Mod+Enter, "hello", Mod+Enter, the message is sent]
 composer/drafting-and-sending.feature: The thread says a message is sending until its MC takes it
 composer/drafting-and-sending.feature: mod+alt+Enter starts a new thread in the background
+composer/editors-and-keys.feature: A modifier held with Up or Down recalls nothing [Alt+Up]
+composer/editors-and-keys.feature: A modifier held with Up or Down recalls nothing [Cmd+Up]
+composer/editors-and-keys.feature: A modifier held with Up or Down recalls nothing [Ctrl+Up]
+composer/editors-and-keys.feature: A modifier held with Up or Down recalls nothing [Shift+Up]
+composer/editors-and-keys.feature: A nested list item keeps its indentation on the next line
+composer/editors-and-keys.feature: A new line in a list item drops the spaces after the caret
 composer/editors-and-keys.feature: A prompt cannot be stashed while its files are uploading
+composer/editors-and-keys.feature: A prompt that cannot be kept in the stash stays in the composer
+composer/editors-and-keys.feature: A recalled prompt is the words the user typed and nothing else [Ultrathink turned on]
+composer/editors-and-keys.feature: A recalled prompt is the words the user typed and nothing else [a comment on a file]
+composer/editors-and-keys.feature: A recalled prompt is the words the user typed and nothing else [a preview annotation]
+composer/editors-and-keys.feature: A recalled prompt is the words the user typed and nothing else [a terminal excerpt added at the end]
+composer/editors-and-keys.feature: A reference in a list item is never split
 composer/editors-and-keys.feature: A restored prompt joins what the draft already holds
 composer/editors-and-keys.feature: A stashed prompt can be deleted
+composer/editors-and-keys.feature: A stashed prompt is listed by what it holds ["fix the build", fix the build]
+composer/editors-and-keys.feature: A stashed prompt is listed by what it holds [a prompt of 200 characters, its first 90 characters and "…"]
+composer/editors-and-keys.feature: A stashed prompt is listed by what it holds [one file and no text, (1 file)]
+composer/editors-and-keys.feature: A stashed prompt is listed by what it holds [one image and no text, (1 image)]
+composer/editors-and-keys.feature: A stashed prompt is listed by what it holds [one image, one file and no text, (2 attachments)]
+composer/editors-and-keys.feature: A stashed prompt is listed by what it holds [two images and no text, (2 images)]
+composer/editors-and-keys.feature: Composing an accented letter adds no quotes
 composer/editors-and-keys.feature: Copied text is pasted where the draft is selected [mod+v]
 composer/editors-and-keys.feature: Copied text is pasted where the draft is selected [shift+insert]
+composer/editors-and-keys.feature: Down in a draft the user typed recalls nothing
+composer/editors-and-keys.feature: Each thread recalls only its own prompts
 composer/editors-and-keys.feature: Earlier prompts are recalled in an empty composer
+composer/editors-and-keys.feature: Editing a recalled prompt makes it an ordinary draft
+composer/editors-and-keys.feature: Enter after a number with no space keeps it
+composer/editors-and-keys.feature: Enter does not send while it is doing something else [and holds it so the key repeats]
+composer/editors-and-keys.feature: Enter does not send while it is doing something else [to accept a word from their input method]
+composer/editors-and-keys.feature: Enter in a list starts the next item [* milk, *]
+composer/editors-and-keys.feature: Enter in a list starts the next item [- [x] milk, - [ ]]
+composer/editors-and-keys.feature: Enter in a list starts the next item [- milk, -]
+composer/editors-and-keys.feature: Enter in a list starts the next item [1. milk, 2.]
+composer/editors-and-keys.feature: Enter in a list starts the next item [12. milk, 13.]
+composer/editors-and-keys.feature: Enter in a list starts the next item [3) milk, 4)]
 composer/editors-and-keys.feature: Enter in normal mode does not send
+composer/editors-and-keys.feature: Enter in the middle of a list item splits it in two
+composer/editors-and-keys.feature: Enter on an empty list item leaves the list
+composer/editors-and-keys.feature: Enter sends in a narrow window
 composer/editors-and-keys.feature: Escape enters normal mode when Vim keys are on
 composer/editors-and-keys.feature: Inserted text replaces the selection without sending
+composer/editors-and-keys.feature: Messages the user did not type are not recalled [a scheduled task's message an older MC marked by its id]
+composer/editors-and-keys.feature: Messages the user did not type are not recalled [an image with no text]
+composer/editors-and-keys.feature: Messages the user did not type are not recalled [the request to implement a proposed plan]
+composer/editors-and-keys.feature: Moving forward past the newest prompt empties the composer
 composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [$, the cursor moves to the end of the line]
 composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [A, the user inserts at the end of the line]
 composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [w, the cursor moves to "world"]
 composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [x, the draft reads "ello world"]
+composer/editors-and-keys.feature: One undo undoes one action
+composer/editors-and-keys.feature: Recalling earlier prompts skips messages the user did not type
 composer/editors-and-keys.feature: Select All in the draft's right-click menu selects the whole draft
+composer/editors-and-keys.feature: Stashed prompts are still there after a restart
 composer/editors-and-keys.feature: Stashing a prompt clears the composer and it can be restored
 composer/editors-and-keys.feature: Stashing an empty draft brings back the only stashed prompt
+composer/editors-and-keys.feature: Stashing an empty draft opens the stash when several prompts are stashed
 composer/editors-and-keys.feature: Switching threads returns Vim keys to insert mode
+composer/editors-and-keys.feature: Tab indents the list item the caret is in
 composer/editors-and-keys.feature: Text meant for another thread is not inserted
 composer/editors-and-keys.feature: The Menu key opens the draft's right-click menu
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Copy, fix the old totals, old]
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Cut, fix the  totals, old]
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Paste, fix the cart totals, cart]
+composer/editors-and-keys.feature: The same prompt sent twice in a row is recalled once
 composer/editors-and-keys.feature: The stash keeps the 20 newest prompts
 composer/editors-and-keys.feature: Turning rich text off keeps the draft as plain Markdown
+composer/editors-and-keys.feature: Turning rich text on or off keeps the draft
+composer/editors-and-keys.feature: Typed underscores stay as they are
+composer/editors-and-keys.feature: Typing an opening mark over a reference or styled text replaces it [a file reference]
+composer/editors-and-keys.feature: Typing an opening mark over a reference or styled text replaces it [text shown in bold]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [", "world"]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [', 'world']
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [(, (world)]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [*, *world*]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [<, <world>]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [[, [world]]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [_, _world_]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [`, `world`]
+composer/editors-and-keys.feature: Typing an opening mark over a selection wraps it [{, {world}]
+composer/editors-and-keys.feature: Up and Down only recall from the first and last line as shown
+composer/editors-and-keys.feature: Up at the oldest prompt moves the caret instead
 composer/editors-and-keys.feature: Vim keys can be turned on from settings
 composer/model-and-mode.feature: A branch that does not exist is created when chosen
+composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, , , This device]
+composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, laptop, Work Mac, laptop]
 composer/model-and-mode.feature: A model that cannot be used says why and cannot be chosen
 composer/model-and-mode.feature: A new thread can run on a machine that has other projects
+composer/model-and-mode.feature: A search that matches no model says so
 composer/model-and-mode.feature: A started thread can move to another provider
+composer/model-and-mode.feature: At the default chat width the machine, workspace and branch each have their own control
 composer/model-and-mode.feature: Favourite models are listed first and can be unfavourited
 composer/model-and-mode.feature: Models are grouped by provider
 composer/model-and-mode.feature: Models from unavailable providers cannot be chosen
@@ -91,11 +210,14 @@ composer/model-and-mode.feature: Searching the models matches provider and model
 composer/model-and-mode.feature: Searching the models matches provider and model names [opus, opus, gpt-5-codex]
 composer/model-and-mode.feature: The chosen model is shown with its provider
 composer/model-and-mode.feature: The last model used with each provider is remembered
+composer/model-and-mode.feature: The machine is left out when it is the only one and it is this one
 composer/model-and-mode.feature: The model picker shortcut opens and closes the model picker
+composer/model-and-mode.feature: The only connected machine is still shown when it is a remote one
 composer/model-and-mode.feature: The user chooses a model with the keyboard
 composer/model-and-mode.feature: The user chooses to work in the current checkout or a new worktree
 composer/model-and-mode.feature: The user chooses which environment runs a new thread
 composer/model-and-mode.feature: The user jumps to a model by its number
+composer/model-and-mode.feature: The user lets a new thread's machine be picked automatically
 composer/model-and-mode.feature: The user moves between providers with the keyboard
 composer/model-and-mode.feature: The user sets the reasoning effort for the next turn [high]
 composer/model-and-mode.feature: The user sets the reasoning effort for the next turn [low]
@@ -1990,99 +2112,6 @@ space/images.feature: A page says when its image was deleted for good
 space/images.feature: A placed image is fetched only when the page is open
 space/images.feature: A trashed image leaves the Space's images and waits in the trash
 space/images.feature: An image in the trash cannot be placed
-space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the default shell]
-space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the minimal example shell]
-space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the terminal example shell]
-space/prompt.feature: A page's draft can be stashed and brought back
-space/prompt.feature: A page's draft is not a thread's
-space/prompt.feature: A refused ask keeps the user's words and attachments
-space/prompt.feature: A slash on a page's prompt picks the kind of block
-space/prompt.feature: An ask can be started from anywhere the page is [the command palette]
-space/prompt.feature: An ask can be started from anywhere the page is [the page's menu]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [a mention of "README.md"]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [another model]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [approval for each action]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [high effort]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [planning]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [the file "notes.pdf"]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [the image "sketch.png"]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [the project "docs"]
-space/prompt.feature: An ask from a page's prompt takes what the user chose [the skill "review"]
-space/prompt.feature: An ask in another project takes the model the user last used there
-space/prompt.feature: Each page keeps its own draft
-space/prompt.feature: Plain words on a page's prompt write a block
-space/prompt.feature: Starting an ask keeps what the user had written
-space/prompt.feature: Taking @agent back out writes a block again
-space/prompt.feature: The page's prompt edits as the thread's prompt does [rich text]
-space/prompt.feature: The page's prompt edits as the thread's prompt does [vim keys]
-space/prompt.feature: The page's prompt stops its agent as a thread's prompt stops a turn
-space/prompt.feature: The prompt says where an ask would run before it is sent
-space/prompt.feature: Words to @agent on a page's prompt ask an agent
-space/self-updating-pages.feature: A failed run leaves the page as it was and says so
-space/self-updating-pages.feature: The generated part cannot be edited by hand
-space/self-updating-pages.feature: The user changes the instruction and the cadence
-space/self-updating-pages.feature: The user has a page update itself at a time of day
-space/self-updating-pages.feature: The user has a page update itself every few hours
-space/self-updating-pages.feature: The user pauses a page's updates
-space/self-updating-pages.feature: The user removes the update and keeps what it wrote
-space/self-updating-pages.feature: The user resumes a page's updates
-space/self-updating-pages.feature: The user runs a page's update now
-space/sites.feature: A link only this machine can open says so
-space/sites.feature: A page in the trash cannot be published
-space/sites.feature: Every client watching the Space sees the page published
-space/sites.feature: Publishing again updates the site and keeps the link
-space/sites.feature: Restoring a page from the trash does not publish it again
-space/sites.feature: The page shows when its site is behind
-space/sites.feature: The user copies the link of a published page
-space/sites.feature: The user publishes a page and sees that it is published
-space/sites.feature: The user publishes over Tailscale
-space/sites.feature: The user unpublishes a page and the link stops working
-space/sites.feature: Trashing a page takes its site down
-space/slides.feature: A Space with a deck cannot be deleted
-space/slides.feature: A Space with a deck in the trash cannot be deleted
-space/slides.feature: A client watching the Space sees a new deck
-space/slides.feature: A client watching the Space sees a slide edit as it lands
-space/slides.feature: A deck can lose its last slide and gain another
-space/slides.feature: A deck from a page has a slide for each section
-space/slides.feature: A deck from a page is a copy
-space/slides.feature: A deck needs a title
-space/slides.feature: A deck with no slides cannot be presented
-space/slides.feature: A page in the trash makes no deck
-space/slides.feature: A page with no headings makes one slide
-space/slides.feature: A slide goes in between two others
-space/slides.feature: A slide moved by another client keeps the presenter on it
-space/slides.feature: A title being written reaches its deck after the Space changes
-space/slides.feature: A trashed deck cannot be edited
-space/slides.feature: A trashed deck leaves the Space and waits in the trash
-space/slides.feature: An edit from another client shows while presenting
-space/slides.feature: Decks and their slides survive a restart
-space/slides.feature: Only a trashed deck can be deleted for good
-space/slides.feature: Presenting starts at the first slide
-space/slides.feature: Stepping stops at either end
-space/slides.feature: The presenter closes when the deck goes to the trash
-space/slides.feature: The slide on show is deleted by another client
-space/slides.feature: The user adds a slide at the end
-space/slides.feature: The user deletes a deck from the trash for good
-space/slides.feature: The user deletes a slide
-space/slides.feature: The user edits a slide's title and body
-space/slides.feature: The user leaves the presenter
-space/slides.feature: The user makes a deck from nothing
-space/slides.feature: The user moves a slide
-space/slides.feature: The user renames a deck
-space/slides.feature: The user restores a deck from the trash
-space/slides.feature: The user steps through the slides and back
-space/visualize.feature: A chart comes back with its page from the trash
-space/visualize.feature: A chart is a line when that is what was asked for
-space/visualize.feature: A chart whose numbers do not match its labels is not drawn
-space/visualize.feature: A client watching the Space sees the chart land
-space/visualize.feature: A failed second ask keeps the chart
-space/visualize.feature: A request the MC's data cannot answer draws nothing
-space/visualize.feature: Asking again replaces the chart where it is
-space/visualize.feature: Reading a chart needs no provider
-space/visualize.feature: The user deletes a chart
-space/visualize.feature: The user sees the numbers behind a chart
-space/visualize.feature: The user visualises data on a page
-space/visualize.feature: Without a provider nothing is drawn
 space/images.feature: No image is made without a provider that can generate one
 space/images.feature: Only a trashed image can be deleted for good
 space/images.feature: The Space's images can be browsed
@@ -2243,6 +2272,71 @@ space/prompt.feature: The page's prompt edits as the thread's prompt does [vim k
 space/prompt.feature: The page's prompt stops its agent as a thread's prompt stops a turn
 space/prompt.feature: The prompt says where an ask would run before it is sent
 space/prompt.feature: Words to @agent on a page's prompt ask an agent
+space/self-updating-pages.feature: A failed run leaves the page as it was and says so
+space/self-updating-pages.feature: The generated part cannot be edited by hand
+space/self-updating-pages.feature: The user changes the instruction and the cadence
+space/self-updating-pages.feature: The user has a page update itself at a time of day
+space/self-updating-pages.feature: The user has a page update itself every few hours
+space/self-updating-pages.feature: The user pauses a page's updates
+space/self-updating-pages.feature: The user removes the update and keeps what it wrote
+space/self-updating-pages.feature: The user resumes a page's updates
+space/self-updating-pages.feature: The user runs a page's update now
+space/sites.feature: A link only this machine can open says so
+space/sites.feature: A page in the trash cannot be published
+space/sites.feature: Every client watching the Space sees the page published
+space/sites.feature: Publishing again updates the site and keeps the link
+space/sites.feature: Restoring a page from the trash does not publish it again
+space/sites.feature: The page shows when its site is behind
+space/sites.feature: The user copies the link of a published page
+space/sites.feature: The user publishes a page and sees that it is published
+space/sites.feature: The user publishes over Tailscale
+space/sites.feature: The user unpublishes a page and the link stops working
+space/sites.feature: Trashing a page takes its site down
+space/slides.feature: A Space with a deck cannot be deleted
+space/slides.feature: A Space with a deck in the trash cannot be deleted
+space/slides.feature: A client watching the Space sees a new deck
+space/slides.feature: A client watching the Space sees a slide edit as it lands
+space/slides.feature: A deck can lose its last slide and gain another
+space/slides.feature: A deck from a page has a slide for each section
+space/slides.feature: A deck from a page is a copy
+space/slides.feature: A deck needs a title
+space/slides.feature: A deck with no slides cannot be presented
+space/slides.feature: A page in the trash makes no deck
+space/slides.feature: A page with no headings makes one slide
+space/slides.feature: A slide goes in between two others
+space/slides.feature: A slide moved by another client keeps the presenter on it
+space/slides.feature: A title being written reaches its deck after the Space changes
+space/slides.feature: A trashed deck cannot be edited
+space/slides.feature: A trashed deck leaves the Space and waits in the trash
+space/slides.feature: An edit from another client shows while presenting
+space/slides.feature: Decks and their slides survive a restart
+space/slides.feature: Only a trashed deck can be deleted for good
+space/slides.feature: Presenting starts at the first slide
+space/slides.feature: Stepping stops at either end
+space/slides.feature: The presenter closes when the deck goes to the trash
+space/slides.feature: The slide on show is deleted by another client
+space/slides.feature: The user adds a slide at the end
+space/slides.feature: The user deletes a deck from the trash for good
+space/slides.feature: The user deletes a slide
+space/slides.feature: The user edits a slide's title and body
+space/slides.feature: The user leaves the presenter
+space/slides.feature: The user makes a deck from nothing
+space/slides.feature: The user moves a slide
+space/slides.feature: The user renames a deck
+space/slides.feature: The user restores a deck from the trash
+space/slides.feature: The user steps through the slides and back
+space/visualize.feature: A chart comes back with its page from the trash
+space/visualize.feature: A chart is a line when that is what was asked for
+space/visualize.feature: A chart whose numbers do not match its labels is not drawn
+space/visualize.feature: A client watching the Space sees the chart land
+space/visualize.feature: A failed second ask keeps the chart
+space/visualize.feature: A request the MC's data cannot answer draws nothing
+space/visualize.feature: Asking again replaces the chart where it is
+space/visualize.feature: Reading a chart needs no provider
+space/visualize.feature: The user deletes a chart
+space/visualize.feature: The user sees the numbers behind a chart
+space/visualize.feature: The user visualises data on a page
+space/visualize.feature: Without a provider nothing is drawn
 terminal/composer-context.feature: A one-line selection names a single line
 terminal/composer-context.feature: Adding to chat is not offered where there is no draft to add to
 terminal/composer-context.feature: An excerpt whose text is gone is dropped when the message is sent
