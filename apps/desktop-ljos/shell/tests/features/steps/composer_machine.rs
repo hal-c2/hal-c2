@@ -9,6 +9,7 @@ use hal_c2_shell::commands::Commands;
 use hal_c2_shell::controllers::composer::kept;
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::workspace;
+use ljos::item::{KeyEvent, key};
 use ljos::prelude::{ObjectId, Value as QmlValue, file_url};
 use serde_json::{Value, json};
 
@@ -90,7 +91,7 @@ fn two_machines(world: &mut World, own: &str, other: &str) -> Outcome {
     world.mc.join(&format!("mc-{other}"), other);
     share_project(&mut world.mc, PROJECT);
     let row = world.mc.projects.get(PROJECT).cloned().unwrap_or(json!({}));
-    world.mc.send_row(PROJECT, &row);
+    world.mc.send_row_of(PROJECT, &row, "project");
     world.sync()
 }
 
@@ -145,9 +146,16 @@ fn pick_machine(world: &mut World, index: i64) -> Outcome {
     let brick = composer_brick(world)?;
     let picker = host_picker(world)?;
     let popup = popup_of(&brick, world, picker)?;
-    world.wait_for("the machine choice to be closed", |w| {
-        !brick.flag(w, popup, "visible")
-    })?;
+    world.wait_for_with(
+        move |w| !brick.flag(w, popup, "visible"),
+        move |w| {
+            format!(
+                "the machine choice to be closed; it is opened {}, the picker reads \"{}\"",
+                brick.flag(w, popup, "opened"),
+                brick.text_of(w, picker, "displayText")
+            )
+        },
+    )?;
     expect!(
         brick.flag(world, picker, "visible") && brick.flag(world, picker, "enabled"),
         "the machine choice cannot be opened; the header shows {}",
@@ -167,7 +175,9 @@ fn pick_machine(world: &mut World, index: i64) -> Outcome {
     }
     let at = number(&brick, world, picker, "highlightedIndex") as i64;
     expect!(at == index, "the machine choice offers no entry {index}");
+    // The combo box picks the row as Return comes back up.
     brick.press(world, "enter")?;
+    world.key(&KeyEvent::release(key::RETURN).with_text("\r"))?;
     world.sync()
 }
 
@@ -200,6 +210,12 @@ fn choose_auto_balance(world: &mut World) -> Outcome {
             )
         },
     )
+}
+
+/// Picks "Auto balance" in the machine choice; a draft with files refuses it.
+pub(crate) fn pick_auto_balance(world: &mut World) -> Outcome {
+    let index = choice_of(world, "Auto balance")?;
+    pick_machine(world, index)
 }
 
 fn send_first_message(world: &mut World) -> Outcome {
@@ -523,11 +539,8 @@ pub fn register(steps: &mut Steps) {
     );
     // The draft is open already; a draft with files refuses the choice.
     steps.step(
-        "the user chooses \"Auto balance\" as the machine (?:a new|the) thread runs on",
-        |world, _, _| {
-            let index = choice_of(world, "Auto balance")?;
-            pick_machine(world, index)
-        },
+        "the user chooses \"Auto balance\" as the machine a new thread runs on",
+        |world, _, _| pick_auto_balance(world),
     );
     steps.step(
         "the thread starts on the machine with the most room when the first message is sent",
@@ -631,7 +644,7 @@ pub fn register(steps: &mut Steps) {
             // cluster's name for it is the one it has.
             expect!(
                 c[2].is_empty() || !c[1].trim().is_empty() && c[1] != "local",
-                "desktop-ljos keeps no name the user saved for a machine"
+                "desktop-ljos keeps no name the user saved for a machine (hal-c2/hal-c2#1515)"
             );
             let id = if own {
                 two_machines(world, &c[1], OTHER)?;
@@ -643,7 +656,7 @@ pub fn register(steps: &mut Steps) {
                 world.mc.join(&format!("mc-{OTHER}"), OTHER);
                 share_project(&mut world.mc, PROJECT);
                 let row = world.mc.projects.get(PROJECT).cloned().unwrap_or(json!({}));
-                world.mc.send_row(PROJECT, &row);
+                world.mc.send_row_of(PROJECT, &row, "project");
                 world.sync()?;
                 OTHER.to_owned()
             };
@@ -683,7 +696,11 @@ pub fn register(steps: &mut Steps) {
                     Err(_) => text(&choice["label"]).to_owned(),
                 };
             let _ = &brick;
-            expect!(label == c[0], "the machine reads \"{label}\"");
+            expect!(
+                label == c[0],
+                "the machine reads \"{label}\"; the choice offers {}",
+                show(&Value::Array(offered.clone()))
+            );
             return Ok(());
         }
         fail!("the machine choice offers {}", show(&Value::Array(offered)))

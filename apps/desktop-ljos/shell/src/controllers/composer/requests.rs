@@ -8,7 +8,7 @@ use ljos::prelude::Engine;
 use regex::Regex;
 use serde_json::json;
 
-use super::kept::{self, QueuedEdit, StashEntry};
+use super::kept::{self, StashEntry};
 use super::state::options_of;
 use super::text::{
     self, MAX_CITATION_LENGTH, MAX_STASH_ENTRIES, ULTRATHINK_PREFIX, items_of, left, recallable,
@@ -166,6 +166,12 @@ impl Composer {
                     self.publish(engine);
                 }
             }
+            "composer.effort.step" => {
+                if !target.is_empty() {
+                    let direction = payload.get("direction").and_then(Json::as_i64).unwrap_or(0);
+                    self.step_effort(engine, &target, direction);
+                }
+            }
             "composer.option.set" => {
                 if !target.is_empty() {
                     self.set_option(
@@ -227,7 +233,12 @@ impl Composer {
                     .unwrap_or(!self.stash_open);
                 self.set_stash_open(engine, open);
             }
-            "composer.interrupt" => return self.interrupt(engine),
+            "composer.interrupt" => {
+                // A notice's Stop names its run, and stops nothing once that
+                // run is no longer the thread's.
+                let only = payload.get("runId").and_then(Json::as_str).unwrap_or("");
+                return self.interrupt(engine, only);
+            }
             "composer.submit" => return self.submit(engine, payload),
             "composer.attach" => {
                 if target.is_empty() {
@@ -258,6 +269,21 @@ impl Composer {
                 );
             }
             "composer.attachment.remove" | "composer.question.attachment.remove" => {
+                // One the queued message being edited carries comes off it.
+                let off_sent = action == "composer.attachment.remove"
+                    && kept::write(engine, |d| {
+                        let Some(edit) = d.queued_edits.get_mut(&target) else {
+                            return false;
+                        };
+                        let before = edit.sent.len();
+                        edit.sent.retain(|a| a["id"].as_str() != Some(id.as_str()));
+                        edit.sent_changed |= edit.sent.len() != before;
+                        edit.sent.len() != before
+                    });
+                if off_sent {
+                    self.publish(engine);
+                    return true;
+                }
                 let Some(found) = find_attachment(engine, &id) else {
                     return true;
                 };
@@ -355,11 +381,8 @@ impl Composer {
                 return self.edit_queued(engine, &target, &string(payload, "runId"));
             }
             "composer.queue.edit.cancel" => {
-                let editing = kept::read(engine, |d| {
-                    d.queued_edit.as_ref().is_some_and(|e| e.thread == target)
-                });
-                if editing {
-                    self.end_queued_edit(engine, false);
+                if kept::read(engine, |d| d.queued_edits.contains_key(&target)) {
+                    self.end_queued_edit(engine, &target, false);
                 }
             }
             "composer.queue.resume" => return self.resume_queue(engine),
@@ -614,42 +637,6 @@ impl Composer {
         true
     }
 
-    /// Removes a queued message, or makes it steer the running turn.
-    fn queue_command(&mut self, engine: &Engine, kind: &str, run_id: &str) -> bool {
-        let Some(thread) = thread_of(engine, &self.thread) else {
-            return true;
-        };
-        if run_id.is_empty() {
-            return true;
-        }
-        let cancel = kind == "queued-run.cancel";
-        let mut command = json!({"type": kind, "threadId": thread.id});
-        if cancel {
-            command["runId"] = json!(run_id);
-        } else {
-            let Some(active) = &thread.active_run_id else {
-                return true;
-            };
-            command["queuedRunId"] = json!(run_id);
-            command["targetRunId"] = json!(active);
-        }
-        let failure = if cancel {
-            "Failed to remove the queued message."
-        } else {
-            "Failed to steer with the queued message."
-        };
-        self.mc.dispatch_command(
-            &thread.environment_id,
-            command,
-            back(&self.me, move |_, engine, result| {
-                if let Err(error) = result {
-                    toast_error(engine, failure, &error.message);
-                }
-            }),
-        );
-        true
-    }
-
     /// Lets the MC start a queue it holds (after a restart or a usage
     /// limit). One request at a time per thread across every window, and
     /// only for a queue still held: a click on a stale card, after another
@@ -721,157 +708,6 @@ impl Composer {
         self.publish(engine);
         publish_everywhere(engine);
         true
-    }
-
-    /// The composer edits a queued message (the last without `run_id`); the
-    /// thread's draft waits aside until the edit ends.
-    fn edit_queued(&mut self, engine: &Engine, target: &str, run_id: &str) -> bool {
-        let saving = kept::read(engine, |d| d.queued_edit.as_ref().is_some_and(|e| e.saving));
-        if target.is_empty() || !self.draft_id.is_empty() || saving {
-            return true;
-        }
-        let turn = self.turn_state(engine);
-        let queue = turn["queue"].as_array().cloned().unwrap_or_default();
-        let Some(last) = queue.last() else {
-            return true;
-        };
-        let run_id = if run_id.is_empty() {
-            last["runId"].as_str().unwrap_or_default().to_owned()
-        } else {
-            run_id.to_owned()
-        };
-        let Some(entry) = queue.iter().find(|item| item["runId"] == run_id.as_str()) else {
-            return true;
-        };
-        let text = entry["text"].as_str().unwrap_or_default().to_owned();
-        let saved = kept::draft(engine, target);
-        let saved_cursor = kept::read(engine, |d| d.drafts.get(target).map_or(0, |k| k.cursor));
-        kept::write(engine, |d| {
-            // Moving to another queued message keeps the draft set aside for
-            // the first.
-            let edit = match d.queued_edit.take() {
-                Some(edit) if edit.thread == target => edit,
-                _ => QueuedEdit {
-                    thread: target.to_owned(),
-                    saved,
-                    saved_cursor,
-                    ..QueuedEdit::default()
-                },
-            };
-            d.queued_edit = Some(QueuedEdit {
-                run_id,
-                original: text.clone(),
-                ..edit
-            });
-        });
-        self.set_text_end(engine, target, &text);
-        true
-    }
-
-    pub(super) fn save_queued_edit(&mut self, engine: &Engine, target: &str, text: &str) -> bool {
-        let Some(thread) = thread_of(engine, target) else {
-            return true;
-        };
-        let run_id = kept::write(engine, |d| {
-            let edit = d.queued_edit.as_mut()?;
-            if edit.saving || text.trim().is_empty() {
-                return None;
-            }
-            edit.saving = true;
-            Some(edit.run_id.clone())
-        });
-        let Some(run_id) = run_id else {
-            return true;
-        };
-        let command = json!({
-            "type": "queued-run.edit",
-            "threadId": thread.id,
-            "runId": run_id,
-            "text": text.trim(),
-        });
-        self.mc.dispatch_command(
-            &thread.environment_id,
-            command,
-            back(&self.me, move |c, engine, result| {
-                let current = kept::write(engine, |d| match d.queued_edit.as_mut() {
-                    Some(edit) if edit.run_id == run_id => {
-                        edit.saving = false;
-                        true
-                    }
-                    _ => false,
-                });
-                if !current {
-                    return;
-                }
-                if let Err(error) = result {
-                    toast_error(
-                        engine,
-                        "Could not save the edited queued message.",
-                        &error.message,
-                    );
-                    c.publish(engine);
-                    return;
-                }
-                c.end_queued_edit(engine, false);
-            }),
-        );
-        self.publish(engine);
-        true
-    }
-
-    /// The edit ends: the thread's draft comes back, unless `keep` leaves
-    /// the edit as the draft.
-    pub(super) fn end_queued_edit(&mut self, engine: &Engine, keep: bool) {
-        let Some(edit) = kept::write(engine, |d| d.queued_edit.take()) else {
-            return;
-        };
-        if keep {
-            kept::save(engine);
-            self.publish(engine);
-            return;
-        }
-        self.set_text(
-            engine,
-            &edit.thread,
-            &edit.saved,
-            edit.saved_cursor,
-            &Json::Null,
-        );
-    }
-
-    /// The message being edited left the queue (it ran, or another device
-    /// removed it): the edit ends, kept if it is all the draft holds.
-    pub(super) fn recover_queued_edit(&mut self, engine: &Engine, turn: &Json) {
-        let Some(edit) = kept::read(engine, |d| d.queued_edit.clone()) else {
-            return;
-        };
-        if edit.saving || edit.thread != self.thread || self.timeline.is_none() {
-            return;
-        }
-        let queued = turn["queue"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|item| item["runId"] == edit.run_id.as_str());
-        if queued {
-            return;
-        }
-        let dirty = kept::draft(engine, &edit.thread) != edit.original;
-        let keep = dirty && edit.saved.trim().is_empty();
-        self.end_queued_edit(engine, keep);
-        if !dirty {
-            return;
-        }
-        toast(
-            engine,
-            if keep { "info" } else { "warning" },
-            "Queued message is no longer queued",
-            if keep {
-                "Your unsaved edit was kept in the composer."
-            } else {
-                "Your unsaved edit was discarded."
-            },
-        );
     }
 
     /// A standalone "/plan" or "/default" only switches the mode.
@@ -1049,6 +885,12 @@ impl Composer {
             return;
         }
         kept::write(engine, |d| {
+            if let Some(options) = selection.get("options") {
+                d.model_options.insert(
+                    format!("{instance_id}\n{}", field(selection, "model")),
+                    options.clone(),
+                );
+            }
             if d.last_instance == instance_id && d.last_models.get(instance_id) == Some(selection) {
                 return;
             }
@@ -1092,21 +934,35 @@ impl Composer {
                 return false;
             }
         }
-        let current = self.selection(engine, target);
         let mut chosen = Obj::new();
         chosen.insert("instanceId".into(), json!(instance_id));
         chosen.insert("model".into(), json!(chosen_model));
-        // Options belong to the provider they were set on.
-        if field(&current, "instanceId") == instance_id
-            && let Some(options) = current.get("options")
-        {
-            chosen.insert("options".into(), options.clone());
+        // Options belong to the model they were picked with: this model's
+        // own come back. Nothing given to it on this device: the options the
+        // thread (or the project's default, for a draft) already holds for
+        // this model, or the ones the composer shows for it now, stay with it.
+        if let Some(options) = kept::model_options(engine, instance_id, chosen_model) {
+            chosen.insert("options".into(), options);
+        } else {
+            for held in [
+                self.selection(engine, target),
+                self.base_selection(engine, target),
+            ] {
+                if field(&held, "instanceId") == instance_id
+                    && field(&held, "model") == chosen_model
+                    && let Some(options) = held.get("options")
+                {
+                    chosen.insert("options".into(), options.clone());
+                    break;
+                }
+            }
         }
         kept::edit_draft(engine, target, |kept| {
             kept.model_selection = Some(chosen);
             kept.multiple_models = None;
             kept.carried = false;
         });
+        self.forget_taken_picks(engine);
         kept::save(engine);
         self.publish(engine);
         true
@@ -1190,6 +1046,60 @@ impl Composer {
         true
     }
 
+    /// The effort one level up or down, as the picker would set it, without
+    /// opening it (composer.increaseEffort / decreaseEffort). It stands down
+    /// while something else owns the composer: an approval or question
+    /// waiting, a queued message being edited, or the prompt's own ultrathink.
+    fn step_effort(&mut self, engine: &Engine, target: &str, direction: i64) -> bool {
+        let chosen = self.selection(engine, target);
+        let Some(instance) = self.instance_of(&chosen) else {
+            return false;
+        };
+        if !instance.ready() {
+            return false;
+        }
+        if kept::read(engine, |d| d.queued_edits.contains_key(target)) {
+            return false;
+        }
+        if target == self.thread {
+            let turn = self.turn_state(engine);
+            let waiting = |key: &str| turn[key].as_array().is_some_and(|list| !list.is_empty());
+            if waiting("approvals") || waiting("questions") {
+                return false;
+            }
+        }
+        let descriptors = model::descriptors(
+            &model::find_model(instance, field(&chosen, "model")),
+            &options_of(&chosen),
+            self.plan_mode_on(engine, Some(instance)),
+        );
+        let Some(effort) = model::effort_index(&descriptors) else {
+            return false;
+        };
+        let mut descriptor = as_object(&descriptors[effort]).clone();
+        let text = kept::draft(engine, target);
+        let injected = descriptor
+            .get("promptInjectedValues")
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !injected.is_empty() && model::ultrathink_in_words(&text) {
+            return false;
+        }
+        // The step starts from the effort shown: Ultrathink while the prompt
+        // carries its prefix, though the saved level is underneath.
+        if let Some(first) = injected.first()
+            && text.trim().starts_with(ULTRATHINK_PREFIX.trim())
+        {
+            descriptor.insert("currentValue".into(), first.clone());
+        }
+        let Some(next) = model::stepped_choice(&descriptor, direction) else {
+            return false;
+        };
+        let id = field(&descriptor, "id").to_owned();
+        self.set_option(engine, target, &id, &Json::String(next))
+    }
+
     /// A choice the provider takes from the prompt (Claude's ultrathink) is
     /// put there instead; any other choice takes it out.
     fn set_option(&mut self, engine: &Engine, target: &str, id: &str, value: &Json) -> bool {
@@ -1230,8 +1140,22 @@ impl Composer {
         let Some(options) = model::apply_option(&descriptors, id, value) else {
             return false;
         };
+        kept::write(engine, |d| {
+            d.model_options.insert(
+                format!(
+                    "{}\n{}",
+                    field(&chosen, "instanceId"),
+                    field(&chosen, "model")
+                ),
+                Json::Array(options.clone()),
+            );
+        });
         chosen.insert("options".into(), Json::Array(options));
-        kept::edit_draft(engine, target, |kept| kept.model_selection = Some(chosen));
+        kept::edit_draft(engine, target, |kept| {
+            kept.model_selection = Some(chosen);
+            kept.carried = false;
+        });
+        self.forget_taken_picks(engine);
         kept::save(engine);
         self.publish(engine);
         true

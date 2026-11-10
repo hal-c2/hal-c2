@@ -209,6 +209,36 @@ pub fn citation_link(citation: &Obj) -> String {
     )
 }
 
+/// A message as a list shows it: each quote of the agent's reply
+/// ([`citation_link`]) as its words, and its comment after them.
+pub fn quoted_plainly(message: &str) -> String {
+    static LINK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\[Assistant quote\]\((?:hal-c2|t3)-citation://v1/[^\s)?]+\?([^\s)]+)\)")
+            .unwrap()
+    });
+    if !message.contains("-citation://v1/") {
+        return message.to_owned();
+    }
+    let shown = LINK.replace_all(message, |link: &regex::Captures| {
+        let (mut quote, mut comment) = (String::new(), String::new());
+        for (key, value) in url::form_urlencoded::parse(link[1].as_bytes()) {
+            match &*key {
+                "text" => quote = value.into_owned(),
+                "comment" => comment = value.into_owned(),
+                _ => {}
+            }
+        }
+        if quote.is_empty() {
+            link[0].to_owned()
+        } else if comment.is_empty() {
+            quote
+        } else {
+            format!("{quote} Comment: {comment}")
+        }
+    });
+    shown.trim().to_owned()
+}
+
 /// The chip's and the record's name for a note: "src/cart.ts L10-12".
 pub fn review_label(file_path: &str, first: i64, last: i64) -> String {
     if first == last {
@@ -563,6 +593,17 @@ mod tests {
         assert_eq!(records[1]["kind"], "review-comment");
         assert_eq!(records[1]["diff"], "+x");
         assert_eq!(message["context"]["version"], 1);
+    }
+
+    #[test]
+    fn a_quote_reads_as_its_words() {
+        assert_eq!(
+            quoted_plainly(
+                "see [Assistant quote](hal-c2-citation://v1/e/t/m?text=a+b%26c&start=0&comment=why)"
+            ),
+            "see a b&c Comment: why"
+        );
+        assert_eq!(quoted_plainly("plain"), "plain");
     }
 
     #[test]

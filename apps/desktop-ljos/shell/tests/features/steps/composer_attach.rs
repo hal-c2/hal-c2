@@ -447,6 +447,29 @@ fn type_answer(world: &mut World, typed: &str) -> Outcome {
     Ok(())
 }
 
+/// What the answer's file picker hands the question.
+fn attach_to_answer(world: &mut World, name: &str) -> Outcome {
+    let Some(requests) = composer_part(world, "turnRequests")? else {
+        fail!("the composer shows no turnRequests");
+    };
+    let file = plain_file(world, name)?;
+    let urls = QmlValue::List(std::sync::Arc::new(vec![QmlValue::from(
+        file_url(&file).as_str(),
+    )]));
+    world
+        .engine()
+        .invoke_by_name(requests, "attachTo", &[QmlValue::from("database"), urls])
+        .map_err(|e| Failure(format!("attachTo: {e:?}")))?;
+    world.wait_for_with(
+        |w| answer_files(w).len() == 1,
+        |w| {
+            format!(
+                "{name} to be attached; the answer carries {}",
+                show(&Value::Array(answer_files(w)))
+            )
+        },
+    )
+}
 fn submit(world: &mut World) -> Outcome {
     let brick = composer_brick(world)?;
     let button = match composer_part(world, "questionSubmit")? {
@@ -1107,6 +1130,103 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("submits the answer", |world, _, _| submit(world));
+    steps.step(
+        &format!("the answer to {Q} has a file that has not finished uploading"),
+        |world, _, _| {
+            world.mc.hold("uploads");
+            type_answer(world, "use this schema")?;
+            attach_to_answer(world, "schema.sql")?;
+            let files = answer_files(world);
+            expect!(
+                files[0]["status"] == json!("uploading"),
+                "the answer carries {}",
+                show(&Value::Array(files))
+            );
+            Ok(())
+        },
+    );
+    steps.step("the user submits the answers", |world, _, _| submit(world));
+    steps.step(
+        "the question stays open with what the user wrote",
+        |world, _, _| {
+            let sent = commands_of(world, "runtime-request.respond")?;
+            expect!(
+                sent.is_empty(),
+                "the answer was sent: {}",
+                world.describe_commands()
+            );
+            let field = answer_field(world)?;
+            let brick = composer_brick(world)?;
+            let read = brick.text_of(world, field, "text");
+            let files = answer_files(world);
+            expect!(
+                read == "use this schema" && files.len() == 1,
+                "the answer reads \"{read}\" with {}",
+                show(&Value::Array(files))
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user typed {Q} and attached {Q}"),
+        |world, c, _| {
+            type_answer(world, &c[0])?;
+            attach_to_answer(world, &c[1])?;
+            world.wait_for_with(
+                |w| {
+                    answer_files(w)
+                        .first()
+                        .is_some_and(|file| text(&file["status"]).is_empty())
+                },
+                |w| {
+                    format!(
+                        "{} to upload; the answer carries {}",
+                        c[1],
+                        show(&Value::Array(answer_files(w)))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the user submits the answer and the agent has not taken it yet",
+        |world, _, _| {
+            world.mc.hold("answers");
+            submit(world)?;
+            world.wait_for("the answer to be on its way", |w| {
+                w.mc.commands
+                    .iter()
+                    .any(|command| command["type"] == json!("runtime-request.respond"))
+            })
+        },
+    );
+    steps.step(
+        &format!("{Q} cannot be removed from the answer"),
+        |world, c, _| {
+            let item = chip(world, &c[0])?;
+            expect!(visible(world, item)?, "the answer does not show {}", c[0]);
+            click(world, item)?;
+            world.sync()?;
+            let files = answer_files(world);
+            expect!(
+                files.len() == 1,
+                "the answer carries {}",
+                show(&Value::Array(files))
+            );
+            Ok(())
+        },
+    );
+    steps.step("the question cannot be dismissed", |world, _, _| {
+        let dismiss = composer_part(world, "questionDismiss")?;
+        let brick = composer_brick(world)?;
+        let enabled = dismiss.is_none_or(|item| brick.flag(world, item, "enabled"));
+        expect!(
+            dismiss.is_some() && !enabled,
+            "the question can still be dismissed"
+        );
+        world.mc.drop_held();
+        Ok(())
+    });
     steps.step(
         &format!("the agent receives {Q} with {Q}"),
         |world, c, _| {

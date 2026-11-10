@@ -59,6 +59,9 @@ struct FakeMcPlugins {
     parts: HashMap<String, FakePluginPart>,
     /// The page a scenario keeps an eye on, to tell a reload from an update.
     page: Option<ObjectId>,
+    /// What `plugins.compile` finds, by plugin; a check passes when none is
+    /// set.
+    checks: HashMap<String, Json>,
 }
 
 fn environment_of(mc: &FakeMc, environment: &str) -> String {
@@ -338,7 +341,24 @@ fn extension(mc: &mut FakeMc) {
                 );
             }
             "plugins.enable" | "plugins.restart" => {
-                changed(mc, &|entry| entry["status"] = json!("running"))
+                let enabling = rpc.method == "plugins.enable";
+                changed(mc, &|entry| {
+                    entry["status"] = json!("running");
+                    if enabling {
+                        entry["compileCheck"] = Json::Null;
+                    }
+                })
+            }
+            "plugins.compile" => {
+                let fake = mc.part::<FakeMcPlugins>();
+                let check = fake.checks.get(&id).cloned().unwrap_or_else(|| {
+                    json!({"ok": true, "error": null, "diagnostics": [],
+                           "checkedAt": "2026-10-29T12:00:00Z"})
+                });
+                fake.plugins.get_mut(&environment).expect("listed")[index]["compileCheck"] =
+                    check.clone();
+                mc.reply(rpc, check);
+                push(mc, &environment);
             }
             "plugins.disable" => changed(mc, &|entry| entry["status"] = json!("disabled")),
             "plugins.saveSettings" => {
@@ -387,7 +407,9 @@ fn code_review() -> Json {
         "error": null,
         "lastError": null,
         "revision": "1",
+        "source": "package",
         "runsCode": true,
+        "compileCheck": null,
         "permissions": [
             {"id": "pullRequests:write", "label": "Comment on pull requests",
              "reason": "It posts the reviews it writes.", "granted": true},
@@ -1705,6 +1727,89 @@ pub fn register(steps: &mut Steps) {
             expect!(
                 restart.is_some_and(|restart| !brick.flag(world, restart, "visible")),
                 "the card offers a restart"
+            );
+            Ok(())
+        },
+    );
+
+    // Checking that a package's code compiles.
+    steps.step(
+        &format!("the code of {Q} does not compile at line (\\d+) of {Q} because {Q}"),
+        |world, c, _| {
+            let error = format!("{}:{}: {}", c[2], c[1], c[3]);
+            let line: i64 = c[1].parse().unwrap_or(0);
+            fake(world).checks.insert(
+                c[0].clone(),
+                json!({"ok": false, "error": error,
+                       "diagnostics": [{"file": c[2], "line": line, "message": c[3],
+                                        "severity": "error"}],
+                       "checkedAt": "2026-10-29T12:00:00Z"}),
+            );
+            Ok(())
+        },
+    );
+    steps.step(&format!("the code of {Q} is fixed"), |world, c, _| {
+        fake(world).checks.remove(&c[0]);
+        Ok(())
+    });
+    steps.step(
+        &format!("the user checks that {Q} compiles"),
+        |world, c, _| {
+            let list = show_plugin_list(world)?;
+            let brick = shell(world)?;
+            let button = |w: &World| {
+                card(w, &brick, list, &c[0])
+                    .and_then(|card| brick.find_under(w, card, "mcPluginCompile").ok().flatten())
+                    .filter(|button| {
+                        brick.flag(w, *button, "visible") && brick.flag(w, *button, "enabled")
+                    })
+            };
+            world.wait_for_with(
+                |w| button(w).is_some(),
+                |w| format!("the card to offer a check; {}", describe(w)),
+            )?;
+            let before = calls_of(world, "plugins.compile").len();
+            let target = button(world).expect("offered");
+            click_item(world, target)?;
+            world.wait_for("the check to be asked for", |w| {
+                calls_of(w, "plugins.compile").len() > before
+            })
+        },
+    );
+    steps.step(
+        &format!("the card of {Q} says of its code {Q}"),
+        |world, c, _| {
+            let list = show_plugin_list(world)?;
+            let brick = shell(world)?;
+            let says = |w: &World| {
+                card(w, &brick, list, &c[0])
+                    .and_then(|card| {
+                        brick
+                            .find_under(w, card, "mcPluginCompileResult")
+                            .ok()
+                            .flatten()
+                    })
+                    .filter(|result| brick.flag(w, *result, "visible"))
+                    .map(|result| brick.text_of(w, result, "text"))
+                    .unwrap_or_default()
+            };
+            world.wait_for_with(
+                |w| says(w) == c[1],
+                |w| format!("the card says \"{}\" of its code", says(w)),
+            )
+        },
+    );
+    steps.step(
+        &format!("the card of {Q} offers no compile check"),
+        |world, c, _| {
+            let list = show_plugin_list(world)?;
+            let brick = shell(world)?;
+            world.wait_for_with(|w| card(w, &brick, list, &c[0]).is_some(), describe)?;
+            let card = card(world, &brick, list, &c[0]).expect("listed");
+            let check = brick.find_under(world, card, "mcPluginCompile")?;
+            expect!(
+                check.is_some_and(|check| !brick.flag(world, check, "visible")),
+                "a running plugin's card offers a compile check"
             );
             Ok(())
         },

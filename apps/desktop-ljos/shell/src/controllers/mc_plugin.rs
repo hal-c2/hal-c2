@@ -17,7 +17,9 @@
 //!
 //! Actions: `mcPlugins.enable {environment, id}` (asks for the permissions
 //! the plugin wants first, and enables it only with them), `.disable`,
-//! `.restart`, `.rescan {environment}`; what the MC refuses is toasted.
+//! `.restart`, `.rescan {environment}`, `.compile` (compiles a package's MC
+//! code without enabling it; its entry is `checking` meanwhile); what the MC
+//! refuses is toasted.
 //!
 //! UI parts reach their MC part through the `McPlugins` singleton:
 //! `call(environment, id, method, input)` answers with `answered(request,
@@ -437,6 +439,8 @@ pub struct McPlugin {
     pages: Vec<Json>,
     /// Page key → the url its tab shows.
     page_urls: HashMap<String, String>,
+    /// "<environment>/<id>" of the packages whose code is being checked.
+    checking: HashSet<String>,
 }
 
 impl Controller for McPlugin {
@@ -460,6 +464,7 @@ impl Controller for McPlugin {
             files: HashMap::new(),
             pages: Vec::new(),
             page_urls: HashMap::new(),
+            checking: HashSet::new(),
         }
     }
 
@@ -509,6 +514,7 @@ impl Controller for McPlugin {
                 input,
                 "The plugin could not be restarted",
             ),
+            "mcPlugins.compile" => self.compile(engine, environment, id),
             _ => return false,
         }
         true
@@ -830,6 +836,8 @@ impl McPlugin {
                     "settingsPageUrl".into(),
                     url(text(contributes(entry), "settingsPage")).into(),
                 );
+                let key = format!("{environment}/{}", text(entry, "id"));
+                shown.insert("checking".into(), self.checking.contains(&key).into());
                 shown_plugins.push(Json::Object(shown));
                 if !running(entry) {
                     continue;
@@ -1016,6 +1024,38 @@ impl McPlugin {
     }
 
     /// Calls `method`; what the MC refuses is toasted as `failed`.
+    /// Compiles a package's MC code without enabling it. A check that ran
+    /// answers with what it found, which the `plugins` shape also brings.
+    fn compile(&mut self, engine: &Engine, environment: &str, id: &str) {
+        let key = format!("{environment}/{id}");
+        if !self.checking.insert(key.clone()) {
+            return;
+        }
+        self.publish(engine);
+        let (me, bridge) = (self.me.clone(), self.bridge);
+        self.mc.call(
+            environment,
+            "plugins.compile",
+            json!({"id": id}),
+            Box::new(move |engine, result| {
+                me.run(engine, |c, engine| {
+                    c.checking.remove(&key);
+                    c.publish(engine);
+                });
+                let Err(error) = result else { return };
+                bridge.defer(engine, move |engine| {
+                    controller::with::<Toasts, _>(engine, |toasts, engine| {
+                        toasts.error(
+                            engine,
+                            "The plugin's code could not be checked",
+                            &error.message,
+                        );
+                    });
+                });
+            }),
+        );
+    }
+
     fn request(&self, environment: &str, method: &str, input: Json, failed: &'static str) {
         let bridge = self.bridge;
         self.mc.call(

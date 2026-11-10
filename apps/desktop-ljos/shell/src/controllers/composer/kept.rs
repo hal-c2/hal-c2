@@ -173,16 +173,36 @@ pub struct Unsent {
     pub launch: Obj,
 }
 
-/// The queued message the route thread's composer is editing, and the
-/// thread's draft set aside for it.
+/// The queued message a thread's composer is editing, and the thread's
+/// draft set aside for it.
 #[derive(Clone, Debug, Default)]
 pub struct QueuedEdit {
     pub thread: String,
     pub run_id: String,
+    pub message_id: String,
     pub original: String,
+    /// The message's attachments still on it, as the MC holds them, and
+    /// whether any were taken off.
+    pub sent: Vec<Json>,
+    pub sent_changed: bool,
     pub saved: String,
     pub saved_cursor: i64,
+    pub saved_attachments: Vec<Attachment>,
+    /// Added images the MC has stored for the message, by draft id: a save
+    /// the MC refused reuses them rather than storing them again.
+    pub stored: HashMap<String, Json>,
     pub saving: bool,
+    /// A save made while one is on its way, sent once it is answered.
+    pub next: Option<String>,
+}
+
+/// The options last given to `model` on `instance` here.
+pub fn model_options(engine: &Engine, instance: &str, model: &str) -> Option<Json> {
+    read(engine, |d| {
+        d.model_options
+            .get(&format!("{instance}\n{model}"))
+            .cloned()
+    })
 }
 
 #[derive(Default)]
@@ -194,6 +214,9 @@ pub struct Data {
     /// last sent with: a new thread starts from them.
     pub last_models: HashMap<String, Obj>,
     pub last_instance: String,
+    /// The options last given to each model on this device, by
+    /// "instance\nmodel": options belong to the model they were picked with.
+    pub model_options: HashMap<String, Json>,
     /// In the order they were sent.
     pub unsent: Vec<Unsent>,
     /// Each target's send the MC answered last, which its stream may not
@@ -202,7 +225,7 @@ pub struct Data {
     /// Each thread's sends, the one in flight first: a thread sends one at a
     /// time, in the order the user sent them.
     pub queues: HashMap<String, VecDeque<Send>>,
-    pub queued_edit: Option<QueuedEdit>,
+    pub queued_edits: HashMap<String, QueuedEdit>,
     /// Files added to a question's answer, by request then question; not
     /// kept across a restart.
     pub answer_files: HashMap<String, BTreeMap<String, Vec<Attachment>>>,
@@ -533,6 +556,14 @@ pub fn load(engine: &Engine, path: Option<PathBuf>) {
             d.last_models
                 .insert(instance.clone(), as_object(model).clone());
         }
+        for (key, options) in stored
+            .get("modelOptions")
+            .and_then(Json::as_object)
+            .into_iter()
+            .flatten()
+        {
+            d.model_options.insert(key.clone(), options.clone());
+        }
         for (key, entry) in stored
             .get("targets")
             .and_then(Json::as_object)
@@ -644,10 +675,10 @@ pub fn saved(engine: &Engine) -> bool {
         let mut targets = Map::new();
         for (key, kept) in &d.drafts {
             // An edited queued message is not the thread's draft.
-            let text = match &d.queued_edit {
-                Some(edit) if edit.thread == *key => &edit.saved,
-                _ => &kept.text,
-            };
+            let text = d
+                .queued_edits
+                .get(key)
+                .map_or(&kept.text, |edit| &edit.saved);
             let mut entry = Map::new();
             if !text.is_empty() {
                 entry.insert("text".into(), json!(text));
@@ -720,6 +751,14 @@ pub fn saved(engine: &Engine) -> bool {
                 .map(|(k, v)| (k.clone(), Json::Object(v.clone())))
                 .collect();
             stored["lastModels"] = Json::Object(models);
+        }
+        if !d.model_options.is_empty() {
+            let options: Map<String, Json> = d
+                .model_options
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            stored["modelOptions"] = Json::Object(options);
         }
         let images: BTreeMap<&str, &[Attachment]> = d
             .drafts

@@ -176,7 +176,7 @@ fn stored(result: &Json, files: &[Json]) -> Json {
 impl Composer {
     /// Stops the route thread's turn: its run, else the run it waits on or
     /// whose background tasks still run.
-    pub(super) fn interrupt(&mut self, engine: &Engine) -> bool {
+    pub(super) fn interrupt(&mut self, engine: &Engine, only: &str) -> bool {
         let open = if self.draft_id.is_empty() {
             self.thread.clone()
         } else {
@@ -192,7 +192,7 @@ impl Composer {
         {
             run_id = thread.latest_run_id.clone();
         }
-        let Some(run_id) = run_id else {
+        let Some(run_id) = run_id.filter(|run| only.is_empty() || run == only) else {
             return true;
         };
         // The turn the user stops here stays open once it settles.
@@ -201,7 +201,9 @@ impl Composer {
         }
         self.mc.dispatch_command(
             &thread.environment_id,
-            json!({"type": "run.interrupt", "threadId": thread.id, "runId": run_id}),
+            // The user's Stop also stops what the thread delegated.
+            json!({"type": "run.interrupt", "threadId": thread.id, "runId": run_id,
+                   "stopDelegated": true}),
             back(&self.me, |_, engine, result| {
                 if let Err(error) = result {
                     toast_error(
@@ -243,9 +245,7 @@ impl Composer {
         if let Some(done) = self.submit_place(engine, &target, &text) {
             return done;
         }
-        let editing = kept::read(engine, |d| {
-            d.queued_edit.as_ref().is_some_and(|e| e.thread == target)
-        });
+        let editing = kept::read(engine, |d| d.queued_edits.contains_key(&target));
         if editing {
             return self.save_queued_edit(engine, &target, &text);
         }
@@ -332,13 +332,24 @@ impl Composer {
 
         let created_at = now_iso(engine);
         // Only a mode the user changed is set; a thread the MC has no mode
-        // for keeps the MC's default.
-        let runtime_mode = kept::read(engine, |d| {
+        // for keeps the MC's default. A saved mode the provider no longer
+        // offers is set to the mode the composer shows instead, so the turn
+        // runs as read.
+        let mut runtime_mode = kept::read(engine, |d| {
             d.drafts
                 .get(target)
                 .map(|k| k.runtime_mode.clone())
                 .unwrap_or_default()
         });
+        let offered = self.instance_of(&self.selection(engine, target));
+        if !runtime_mode.is_empty() {
+            runtime_mode = model::shown_runtime_mode(offered, &runtime_mode);
+        } else if !thread.runtime_mode.is_empty() {
+            let shown = model::shown_runtime_mode(offered, &thread.runtime_mode);
+            if shown != thread.runtime_mode {
+                runtime_mode = shown;
+            }
+        }
         let mut interaction_mode = self.interaction_mode_of(engine, target);
         if plan_follow_up {
             interaction_mode = if implement { "default" } else { "plan" }.into();

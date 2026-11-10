@@ -12,7 +12,7 @@ use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::steps::composer_picker;
 use crate::steps::keybinding::{describe_key_press, key_ran, set_key_focus};
 use crate::steps::settings::publish_providers;
-use crate::steps::stream::{PROJECT, THREAD, look_at_thread};
+use crate::steps::stream::{PROJECT, THREAD, look, look_at_thread};
 use crate::steps::turn::open_turn_thread;
 use crate::world::World;
 use crate::{expect, fail};
@@ -212,6 +212,20 @@ fn runtime_modes(world: &World) -> Value {
     composer(world)["runtimeModes"].clone()
 }
 
+/// The effort option's id: the composer's first select, as desktop-qt's
+/// ModelSteps reads it.
+fn effort_id(world: &World) -> String {
+    world.state("composer")["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|option| option["type"] == json!("select"))
+        .map_or_else(
+            || "reasoningEffort".to_owned(),
+            |option| text(&option["id"]),
+        )
+}
+
 pub fn register(steps: &mut Steps) {
     // The MC's providers.
     steps.step("a project with an open thread on Codex", |world, _, _| {
@@ -360,10 +374,15 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user sets the effort to (low|medium|high)",
         |world, c, _| {
-            world.dispatch(
-                "composer.option.set",
-                json!({"id": "reasoningEffort", "value": c[0]}),
-            )
+            // The model's effort by the id it gives it (Claude's "effort").
+            let options = world.state("composer")["options"].clone();
+            let id = options
+                .as_array()
+                .and_then(|options| options.iter().find(|o| o["effort"] == json!(true)))
+                .and_then(|effort| effort["id"].as_str())
+                .unwrap_or("reasoningEffort")
+                .to_owned();
+            world.dispatch("composer.option.set", json!({"id": id, "value": c[0]}))
         },
     );
     steps.step("the user sets the permissions to (.+)", |world, c, _| {
@@ -387,6 +406,31 @@ pub fn register(steps: &mut Steps) {
                 "composer.model.favorite.toggle",
                 json!({"instanceId": instance, "model": c[0]}),
             )
+        },
+    );
+    steps.step(
+        &format!("Codex lists the legacy model {Q} and the user marked it as a favourite"),
+        |world, c, _| {
+            let legacy = json!({"slug": c[0], "name": c[0], "isLegacy": true,
+                                "capabilities": {"optionDescriptors": [effort()]}});
+            let mut codex = provider(
+                "codex",
+                "codex",
+                "Codex",
+                &["gpt-5", "gpt-5-codex"],
+                json!({}),
+            );
+            if let Some(models) = codex["models"].as_array_mut() {
+                models.push(legacy);
+            }
+            add(world, codex)?;
+            world.mc.part::<Catalogue>().favourite = c[0].clone();
+            world.dispatch(
+                "composer.model.favorite.toggle",
+                json!({"instanceId": "codex", "model": c[0]}),
+            )?;
+            let slug = c[0].clone();
+            world.wait_for("the favourite to be marked", |w| favourite(w, &slug))
         },
     );
     steps.step("the user removes it from the favourites", |world, _, _| {
@@ -543,7 +587,7 @@ pub fn register(steps: &mut Steps) {
             let found = selection["options"].as_array().is_some_and(|options| {
                 options
                     .iter()
-                    .any(|o| o["id"] == json!("reasoningEffort") && o["value"] == json!(c[0]))
+                    .any(|o| o["id"] == json!(effort_id(world)) && o["value"] == json!(c[0]))
             });
             expect!(found, "the message runs with {}", show(&selection));
             Ok(())
@@ -596,6 +640,101 @@ pub fn register(steps: &mut Steps) {
         publish_providers(&mut world.mc, codex_and_claude());
         world.sync()
     });
+
+    // A draft's pick gives way once the thread runs it (ComposerDraftFollowsSteps.cpp).
+    let other_thread = |world: &mut World| -> Outcome<String> {
+        let id = "thread-2";
+        if !world.mc.threads.contains_key(id) {
+            let row = json!({"id": id, "title": "Other", "projectId": PROJECT,
+                             "createdAt": "2026-09-23T09:00:00Z", "updatedAt": "2026-09-23T09:00:00Z",
+                             "modelSelection": {"instanceId": "codex", "model": "gpt-5"}});
+            world.mc.threads.insert(id.into(), row.clone());
+            world.mc.send_row(id, &row);
+            world.sync()?;
+        }
+        Ok(format!("{}:{id}", world.mc.environment_id))
+    };
+    let set_model = |world: &mut World, instance_id: &str, model: &str| -> Outcome {
+        update_thread(
+            world,
+            json!({"modelSelection": {"instanceId": instance_id, "model": model}}),
+        )
+    };
+    let expect_on = |world: &mut World, instance_id: &str, model: &str| -> Outcome {
+        let (instance_id, model) = (instance_id.to_owned(), model.to_owned());
+        world.wait_for_with(
+            move |w| {
+                composer(w)["selectedInstanceId"] == json!(instance_id)
+                    && composer(w)["selectedModel"] == json!(model)
+            },
+            move |w| {
+                format!(
+                    "the draft on a model of an instance; it is on {} of {}",
+                    text(&composer(w)["selectedModel"]),
+                    text(&composer(w)["selectedInstanceId"])
+                )
+            },
+        )
+    };
+    let pick = |world: &mut World, model: &str| -> Outcome {
+        world.dispatch(
+            "composer.model.select",
+            json!({"instanceId": "codex", "model": model}),
+        )?;
+        let wanted = model.to_owned();
+        world.wait_for_with(
+            move |w| composer(w)["selectedModel"] == json!(wanted),
+            move |w| {
+                format!(
+                    "the draft on a model; it is on {}",
+                    text(&composer(w)["selectedModel"])
+                )
+            },
+        )
+    };
+    steps.step(
+        &format!("the user picked {Q} in the draft of a thread on this client"),
+        move |world, c, _| {
+            // Another thread's draft holds a pick its thread has not taken.
+            let other = other_thread(world)?;
+            look(world, &other, false)?;
+            pick(world, "gpt-5-codex")?;
+            look(
+                world,
+                &format!("{}:{THREAD}", world.mc.environment_id),
+                true,
+            )?;
+            // This thread's pick, sent: the MC records the model the turn ran on.
+            set_model(world, "codex", "gpt-5-codex")?;
+            expect_on(world, "codex", "gpt-5-codex")?;
+            pick(world, &c[0])?;
+            set_model(world, "codex", &c[0])
+        },
+    );
+    steps.step(
+        &format!("then changed the thread to {Q} on another client"),
+        move |world, c, _| set_model(world, "claudeAgent", &c[0]),
+    );
+    steps.step("the user returns to the thread here", move |world, _, _| {
+        let other = other_thread(world)?;
+        look(world, &other, false)?;
+        look(
+            world,
+            &format!("{}:{THREAD}", world.mc.environment_id),
+            true,
+        )
+    });
+    steps.step(&format!("the draft is on {Q}"), move |world, c, _| {
+        expect_on(world, "claudeAgent", &c[0])
+    });
+    steps.step(
+        "an unsent pick in another thread's draft is kept",
+        move |world, _, _| {
+            let other = other_thread(world)?;
+            look(world, &other, false)?;
+            expect_on(world, "codex", "gpt-5-codex")
+        },
+    );
 
     picker_steps(steps);
 }
@@ -715,6 +854,7 @@ fn picker_steps(steps: &mut Steps) {
                 terminal: false,
                 composer: false,
                 editable: true,
+                preview: false,
             },
         )
     });
@@ -758,6 +898,7 @@ fn picker_steps(steps: &mut Steps) {
                 terminal: false,
                 composer: true,
                 editable: true,
+                preview: false,
             },
         )
     });

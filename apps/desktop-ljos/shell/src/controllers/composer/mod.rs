@@ -53,6 +53,7 @@ pub mod text;
 mod attachments;
 mod images;
 mod page;
+mod queued;
 mod requests;
 mod send;
 mod state;
@@ -147,6 +148,8 @@ pub struct Composer {
     /// The newest generation handed to the pool.
     generation: u64,
     stash_open: bool,
+    /// Whether the target held files when last published.
+    held_files: bool,
     catalogue: Vec<Instance>,
     paths: PathSearch,
     recall: Option<Recall>,
@@ -157,6 +160,8 @@ pub struct Composer {
     /// This window's "Not connected: queue not resumed" toast, while it may
     /// still show.
     not_connected_toast: String,
+    /// The threads whose queue action the MC has not answered.
+    queue_busy: HashSet<String>,
     /// The Space page whose prompt this is, while no thread or draft is
     /// open; the project its ask runs in (the MC's), whether it was asked,
     /// and whether the page's agent works. The projects picked, by page key.
@@ -282,12 +287,14 @@ impl Controller for Composer {
             reading: HashMap::new(),
             generation: 0,
             stash_open: false,
+            held_files: false,
             catalogue: Vec::new(),
             paths: PathSearch::default(),
             recall: None,
             usage_limits: HashMap::new(),
             setting_mode: HashMap::new(),
             not_connected_toast: String::new(),
+            queue_busy: HashSet::new(),
             page_id: String::new(),
             page_project: String::new(),
             page_project_asked: false,
@@ -322,6 +329,7 @@ impl Controller for Composer {
             engine,
             hook(&self.me, |c, e| {
                 c.carry_drafts(e);
+                c.forget_taken_picks(e);
                 c.reconcile_unsent(e);
                 c.settle_runtime_modes(e);
                 c.refresh_path_search(e);
@@ -414,11 +422,6 @@ impl Composer {
         };
         self.draft_id = draft_id;
         self.follow_place(engine, !self.thread.is_empty());
-        // Leaving the thread leaves its edit, as cancelling would.
-        let editing = kept::read(engine, |d| d.queued_edit.as_ref().map(|e| e.thread.clone()));
-        if editing.is_some_and(|t| t != self.thread) {
-            self.end_queued_edit(engine, false);
-        }
         let timeline = if thread.is_empty() {
             None
         } else {
@@ -432,14 +435,19 @@ impl Composer {
                 let me = self.me.clone();
                 TimelineModel::observe(engine, obj, move |engine, out| {
                     let f: fn(&mut Composer, &Engine) = match out {
-                        Out::TurnChanged => Composer::publish,
+                        Out::TurnChanged | Out::AttachmentSigned { .. } => Composer::publish,
                         // A thread's messages are known once its stream is live.
                         Out::StatusChanged => Composer::reconcile_unsent,
                         _ => return,
                     };
+                    let turn = matches!(out, Out::TurnChanged | Out::StatusChanged);
                     later(&me, engine, move |c, e| {
                         if c.timeline == Some(obj) {
                             f(c, e);
+                        } else if turn {
+                            // An edit outlives leaving its thread: it ends
+                            // when its message leaves the queue all the same.
+                            c.recover_queued_edits(e);
                         }
                     });
                 });
@@ -462,12 +470,11 @@ impl Composer {
             return;
         }
         let turn = self.turn_state(engine);
-        if kept::read(engine, |d| d.queued_edit.is_some()) {
-            self.recover_queued_edit(engine, &turn);
-            // Ending the edit published everything already.
-            if kept::read(engine, |d| d.queued_edit.is_none()) {
-                return;
-            }
+        // Ending an edit publishes everything already.
+        let edits = kept::read(engine, |d| d.queued_edits.len());
+        self.recover_queued_edits(engine);
+        if kept::read(engine, |d| d.queued_edits.len()) != edits {
+            return;
         }
         let composer = self.composer_state(engine, &turn);
         let picker = self.picker_state(engine);
@@ -476,6 +483,13 @@ impl Composer {
         self.bridge.publish(engine, "composer", composer);
         self.bridge.publish(engine, "modelPicker", picker);
         self.bridge.publish(engine, "composerStash", stash);
+        // A file ties the draft to its machine, so the machine picker stops
+        // reading "Auto balance" (workspace's auto_balanced).
+        let files = !self.draft_id.is_empty() && kept::holds_files(engine, &self.draft_id);
+        if files != self.held_files {
+            self.held_files = files;
+            workspace::refresh(engine);
+        }
         // Every window lists the draft by what it holds, and marks a
         // thread's row while its composer holds something unsent.
         let edited = if self.draft_id.is_empty() {
@@ -569,7 +583,10 @@ impl Composer {
         };
         let mut selection = project_selection(engine, &draft.environment_id, &draft.project_id);
         if selection.is_empty() {
-            selection = as_object(&setting(engine, "defaultModelSelection")).clone();
+            selection = Settings::of(engine)
+                .value("defaultModelSelection")
+                .map(|v| as_object(&v).clone())
+                .unwrap_or_default();
         }
         if selection.is_empty() {
             let last = kept::read(engine, |d| {
@@ -599,21 +616,70 @@ impl Composer {
             d.drafts.get(target).and_then(|k| k.model_selection.clone())
         })
         .unwrap_or_else(|| self.base_selection(engine, target));
-        if field(&chosen, "instanceId").is_empty() {
+        let remembered = |chosen: &mut Obj, instance: &str, model: &str| {
+            if let Some(options) = kept::model_options(engine, instance, model) {
+                chosen.insert("options".into(), options);
+            }
+        };
+        let first_ready = || {
             let Some(ready) = self.catalogue.iter().find(|i| i.ready()) else {
                 return Obj::new();
             };
-            return json!({"instanceId": ready.instance_id, "model": model::default_model(ready)})
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
+            let own = model::default_model(ready);
+            let mut next = Obj::new();
+            next.insert("instanceId".into(), json!(ready.instance_id));
+            next.insert("model".into(), json!(own));
+            remembered(&mut next, &ready.instance_id, &own);
+            next
+        };
+        let instance_id = field(&chosen, "instanceId").to_owned();
+        if instance_id.is_empty() {
+            return first_ready();
         }
-        if field(&chosen, "model").is_empty()
-            && let Some(instance) = self.instance_of(&chosen)
+        let chosen_model = field(&chosen, "model").to_owned();
+        let is_thread = thread_of(engine, target).is_some();
+        let instance = self.instance_of(&chosen);
+        if let Some(instance) = instance
+            && instance.ready()
         {
-            chosen.insert("model".into(), json!(model::default_model(instance)));
+            if chosen_model.is_empty() {
+                chosen.insert("model".into(), json!(model::default_model(instance)));
+            } else if !is_thread && model::find_model(instance, &chosen_model).is_empty() {
+                // A draft still naming the model picked on another instance,
+                // whose own catalogue has no such model: this instance's
+                // default, with the options last given to it here.
+                let own = model::default_model(instance);
+                chosen.insert("model".into(), json!(own));
+                chosen.remove("options");
+                remembered(&mut chosen, &instance_id, &own);
+            }
+            return chosen;
         }
-        chosen
+        // The chosen account cannot run a turn: another account of the same
+        // driver that lists the model takes over, with the options last
+        // given to the model there, or the ones picked for it here when it
+        // has none of its own.
+        if let Some(instance) = instance {
+            for candidate in &self.catalogue {
+                if !candidate.ready()
+                    || candidate.driver != instance.driver
+                    || candidate.instance_id == instance_id
+                {
+                    continue;
+                }
+                let slug = model::fallback_model_slug(candidate, &chosen_model);
+                if slug.is_empty() {
+                    continue;
+                }
+                chosen.insert("instanceId".into(), json!(candidate.instance_id));
+                chosen.insert("model".into(), json!(slug));
+                remembered(&mut chosen, &candidate.instance_id, &slug);
+                return chosen;
+            }
+        }
+        // A thread keeps its own provider and model, unavailable as they may
+        // be; a draft starts on the first provider that can run instead.
+        if is_thread { chosen } else { first_ready() }
     }
 
     fn plan_mode_on(&self, engine: &Engine, instance: Option<&Instance>) -> bool {
@@ -662,6 +728,30 @@ impl Composer {
                 {
                     return mode.to_owned();
                 }
+            }
+        }
+        "full-access".into()
+    }
+
+    /// The permissions a new thread of the target's project starts in: the
+    /// composer names a thread's own only when they differ from these.
+    fn default_runtime_mode_of(&self, engine: &Engine, target: &str) -> String {
+        if let Some(mode) = self.page_runtime_mode(engine, target) {
+            return mode;
+        }
+        let project = thread_of(engine, target)
+            .map(|thread| thread.project_id)
+            .or_else(|| drafts::draft(engine, target).map(|draft| draft.project_id))
+            .unwrap_or_default();
+        let settings = Settings::of(engine);
+        for path in [
+            format!("projectSettingsOverrides.{project}.defaultRuntimeMode"),
+            "defaultRuntimeMode".to_owned(),
+        ] {
+            if let Some(mode) = settings.value(&path).as_ref().and_then(Json::as_str)
+                && !mode.is_empty()
+            {
+                return mode.to_owned();
             }
         }
         "full-access".into()
@@ -743,6 +833,34 @@ impl Composer {
             .cloned()
             .unwrap_or_default();
         self.catalogue = model::instances(&providers);
+    }
+
+    /// A model picked in a started thread's draft that the thread now runs
+    /// is the thread's again, so a change made on another client shows
+    /// here; a pick the thread has not taken stays (upstream #20886).
+    pub(super) fn forget_taken_picks(&mut self, engine: &Engine) {
+        let picks: Vec<(String, Obj)> = kept::read(engine, |d| {
+            d.drafts
+                .iter()
+                .filter(|(_, k)| k.multiple_models.is_none())
+                .filter_map(|(key, k)| Some((key.clone(), k.model_selection.clone()?)))
+                .collect()
+        });
+        let taken: Vec<String> = picks
+            .into_iter()
+            .filter(|(key, pick)| {
+                thread_of(engine, key)
+                    .is_some_and(|t| model::pick_matches_thread(pick, &t.model_selection))
+            })
+            .map(|(key, _)| key)
+            .collect();
+        if taken.is_empty() {
+            return;
+        }
+        for key in &taken {
+            kept::edit_draft(engine, key, |k| k.model_selection = None);
+        }
+        kept::save(engine);
     }
 
     /// A thread that moved to another machine has a new key: what was

@@ -1165,7 +1165,8 @@ impl FakeMc {
                 mc.reply(&rpc, json!({"sequence": sequence}));
             }
         };
-        if self.holding("answers") {
+        let held = format!("answers:{thread}");
+        if self.holding("answers") || self.holding(&held) {
             self.defer(answer);
         } else {
             answer(self);

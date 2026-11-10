@@ -275,7 +275,9 @@ fn queued_runs_wait_for_their_message() {
     let later = queued([&run], |id| (id == "message:a").then_some(&message));
     assert_eq!(
         later.queue,
-        [json!({"runId": "run-a", "text": "also update docs"})]
+        [
+            json!({"runId": "run-a", "messageId": "message:a", "text": "also update docs", "attachments": []})
+        ]
     );
     assert!(later.shown_held());
 }
@@ -346,8 +348,8 @@ fn queued_runs_go_by_position_and_notices_wait_apart() {
     assert_eq!(
         q.queue,
         [
-            json!({"runId": "a", "text": "A"}),
-            json!({"runId": "b", "text": "B"})
+            json!({"runId": "a", "messageId": "ma", "text": "A", "attachments": []}),
+            json!({"runId": "b", "messageId": "mb", "text": "B", "attachments": []})
         ]
     );
     assert_eq!(q.waiting.len(), 1);
@@ -491,4 +493,28 @@ fn a_started_thread_on_a_strict_provider_cannot_change_model() {
     assert!(block_reason(&list, "c", "a", "c", "b").is_some());
     assert!(block_reason(&list, "c", "a", "c", "a").is_none());
     assert!(block_reason(&list, "c", "a", "d", "b").is_none());
+}
+
+#[test]
+fn a_pick_matches_the_thread_running_it() {
+    let obj = |v: Json| as_object(&v).clone();
+    let pick = obj(json!({"instanceId": "codex", "model": "gpt-5",
+                          "options": [{"id": "fastMode", "value": false}]}));
+    assert!(pick_matches_thread(
+        &pick,
+        &obj(json!({"instanceId": "codex", "model": "gpt-5"}))
+    ));
+    assert!(!pick_matches_thread(
+        &pick,
+        &obj(json!({"instanceId": "codex", "model": "gpt-5-codex"}))
+    ));
+    assert!(!pick_matches_thread(
+        &pick,
+        &obj(json!({"instanceId": "codex", "model": "gpt-5",
+                    "options": [{"id": "effort", "value": "high"}]}))
+    ));
+    assert!(!pick_matches_thread(
+        &obj(json!({"instanceId": "codex"})),
+        &obj(json!({"instanceId": "codex"}))
+    ));
 }

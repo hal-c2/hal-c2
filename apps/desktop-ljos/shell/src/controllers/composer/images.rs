@@ -172,6 +172,7 @@ impl Composer {
             | "composer.project.set"
             | "composer.model.multiple.toggle"
             | "composer.option.set"
+            | "composer.effort.step"
             | "composer.runtimeMode.set"
             | "composer.interactionMode.set"
             | "composer.stash"

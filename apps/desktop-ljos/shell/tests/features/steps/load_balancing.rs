@@ -325,6 +325,13 @@ fn send_first_message(world: &mut World) -> Outcome {
 /// shared project, after asking the MC about the user's pick (or without
 /// asking, for a draft tied to its machine); the window then shows it there.
 fn starts_on(world: &mut World, machine: &str) -> Outcome {
+    // A machine named by its label is this MC's own environment.
+    let own = world.mc.environment_id.clone();
+    let machine = if machine == world.mc.label {
+        own.as_str()
+    } else {
+        machine
+    };
     world.wait_for("a launch; the MC got none", |w| {
         w.mc.peek::<FakeLaunches>()
             .is_some_and(|launches| !launches.calls.is_empty())

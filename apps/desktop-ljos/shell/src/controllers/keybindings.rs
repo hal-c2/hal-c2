@@ -65,6 +65,13 @@ use crate::keybindings::{self as keymap, Binding, Context, When, qt};
 /// The appearance toggle's command, which the theme registers: held down, it
 /// does not repeat.
 pub const APPEARANCE_CYCLE: &str = "appearance.cycle";
+/// Commands that cycle through states (the appearance, the effort), which a
+/// held key must not repeat.
+const CYCLING: [&str; 3] = [
+    APPEARANCE_CYCLE,
+    "composer.increaseEffort",
+    "composer.decreaseEffort",
+];
 
 /// What still runs while the command palette is open: the palette's own
 /// modes and theme commands, and what belongs to the window.
@@ -701,7 +708,8 @@ impl Keymap {
                 "sequence": sequence,
                 // Held down, a toggle that cycles must not spin through its
                 // states.
-                "autoRepeat": chrome != APPEARANCE_CYCLE,
+                "autoRepeat": !CYCLING.contains(&chrome.as_str())
+                    && !CYCLING.contains(&composer.as_str()),
                 "chrome": native(&chrome),
                 "composer": native(&composer),
                 "editable": native(&editable),
@@ -1288,6 +1296,20 @@ impl Keymap {
             "composer.stash",
             Box::new(|engine| bricks(engine, "composer.stash.key", Json::Null)),
         );
+        // The effort one level up or down without opening its picker;
+        // unbound until the user gives them keys.
+        for (command, direction) in [
+            ("composer.increaseEffort", 1),
+            ("composer.decreaseEffort", -1),
+        ] {
+            add(
+                command,
+                Box::new(move |engine| {
+                    let payload = json!({"direction": direction});
+                    Bridge::of(engine).dispatch(engine, "composer.effort.step", payload);
+                }),
+            );
+        }
         // The composer brick opens its own pickers.
         add(
             "modelPicker.toggle",

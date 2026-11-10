@@ -40,6 +40,7 @@ pub mod pull_request_list;
 pub mod pull_request_thread;
 pub mod quit;
 pub mod rewind;
+pub mod sandbox_settings;
 pub mod scheduled_tasks;
 pub mod server_updates;
 pub mod settings;
@@ -181,6 +182,11 @@ pub fn registrations() -> Vec<Registration> {
         ),
         Registration::new::<quit::QuitController>("quit", &["quitHint"], Scope::Shared),
         Registration::new::<rewind::Rewind>("rewind", &["rewind"], Scope::Window),
+        Registration::new::<sandbox_settings::SandboxSettings>(
+            "sandboxSettings",
+            &["sandboxSettings"],
+            Scope::Window,
+        ),
         Registration::new::<scheduled_tasks::ScheduledTasks>(
             "scheduledTasks",
             &["scheduledTasks"],

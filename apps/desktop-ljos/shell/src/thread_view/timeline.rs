@@ -160,10 +160,12 @@ pub enum Role {
     Span,
     /// The scheduled task a message came from.
     ScheduledTask,
+    /// The run a work group's plugin notice offers to stop, folded or not.
+    StopRun,
 }
 
 impl Role {
-    pub const ALL: [Role; 36] = [
+    pub const ALL: [Role; 37] = [
         Role::Id,
         Role::Kind,
         Role::Author,
@@ -200,6 +202,7 @@ impl Role {
         Role::More,
         Role::Span,
         Role::ScheduledTask,
+        Role::StopRun,
     ];
 
     pub fn name(self) -> &'static str {
@@ -240,6 +243,7 @@ impl Role {
             Role::More => "more",
             Role::Span => "span",
             Role::ScheduledTask => "scheduledTask",
+            Role::StopRun => "stopRun",
         }
     }
 
@@ -3126,6 +3130,14 @@ impl Timeline {
         self.out.push(Out::AttachmentWanted(id.to_owned()));
     }
 
+    /// The address the MC signed for an image, while one is known.
+    pub fn attachment_address(&self, id: &str) -> Option<&str> {
+        self.attachment_urls
+            .get(id)
+            .map(|known| known.url.as_str())
+            .filter(|url| !url.is_empty())
+    }
+
     /// The address the MC signed for an image and when it stops working;
     /// an empty one when the MC had none, so the next ask tries again.
     pub fn set_attachment_url(&mut self, id: &str, url: &str, expires_at: Option<DateTime<Utc>>) {
@@ -3208,6 +3220,17 @@ impl Timeline {
     /// One tool call of a work group (apps/tui/src/orchestrationV2Adapter.ts
     /// itemSummary); `live`, the running turn's latest, which a command
     /// names by its program ("Ran git").
+    /// Whether `item` is a plugin's notice offering to stop its run, while
+    /// that run works.
+    fn offers_stop(&self, item: &Obj) -> bool {
+        text(item, "type") == "system_notice"
+            && item
+                .get("actions")
+                .and_then(Json::as_array)
+                .is_some_and(|actions| actions.iter().any(|a| a == "interrupt"))
+            && RUNNING.contains(&text(self.entity("run", text(item, "runId")), "status"))
+    }
+
     fn entry(&self, item: &Obj, live: bool) -> Json {
         let kind = text(item, "type");
         let status = text(item, "status");
@@ -3475,7 +3498,18 @@ impl Timeline {
                 label = "Run interrupted".into();
                 detail = text(item, "message").to_owned();
             }
-            "system_notice" => label = text(item, "message").to_owned(),
+            "system_notice" => {
+                label = text(item, "message").to_owned();
+                // A plugin's titled notice keeps its message as the detail
+                // (Host.notice).
+                if !title.is_empty() && title != label {
+                    detail = label.clone();
+                }
+                // Stop names the notice's run (the composer's interrupt).
+                if self.offers_stop(item) {
+                    entry.insert("interrupt".into(), Json::from(text(item, "runId")));
+                }
+            }
             _ => label = kind.to_owned(),
         }
         if !title.is_empty() && kind != "reasoning" {
@@ -3665,6 +3699,15 @@ impl Timeline {
             return match role {
                 Role::Expanded => Some(Json::from(expanded)),
                 Role::HiddenCount => Some(Json::from(row.items.len().saturating_sub(shown))),
+                // Every call counts, not only those on screen: a folded
+                // notice keeps its Stop.
+                Role::StopRun => Some(Json::from(
+                    row.items
+                        .iter()
+                        .map(|id| self.entity("turn-item", id))
+                        .find(|item| self.offers_stop(item))
+                        .map_or("", |item| text(item, "runId")),
+                )),
                 Role::Entries => {
                     let first = if expanded {
                         0
@@ -4011,6 +4054,8 @@ impl Timeline {
                     })
                 }
             }
+            // Only a work group offers to stop a run.
+            Role::StopRun => Json::from(""),
             Role::ScheduledTask => Json::from(if kind == "user_message" && row.kind == "message" {
                 scheduled_task_of(item)
             } else {

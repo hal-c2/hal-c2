@@ -15,12 +15,15 @@ use serde_json::{Value, json};
 use crate::brick::{Brick, Shown};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::steps::composer_brick::{
-    composer_brick, composer_part, composer_part_now, type_in_composer,
+    composer_brick, composer_brick_shown, composer_part, composer_part_now, type_in_composer,
 };
 use crate::steps::keybinding::condition_problem;
 use crate::steps::stream::{self, FakeStreams, PROJECT, THREAD};
 use crate::world::World;
 use crate::{expect, fail};
+
+mod questions;
+mod queue;
 
 const QUESTION: &str = "database";
 
@@ -740,6 +743,8 @@ fn register_tasks(steps: &mut Steps) {
 }
 
 pub fn register(steps: &mut Steps) {
+    questions::register(steps);
+    queue::register(steps);
     // Threads.
     steps.step(
         &format!("the user is looking at a thread in {Q} whose agent is working"),
@@ -863,6 +868,10 @@ pub fn register(steps: &mut Steps) {
     // Shared with other domains' messages: why the pending approval cannot
     // be answered, a toast, or what a settings page shows instead.
     steps.step(&format!("the user is told {Q}"), |world, c, _| {
+        // A question's hints are on its card above the composer.
+        if !composer_brick_shown(world) && !listed(world, "questions").is_empty() {
+            composer_brick(world)?;
+        }
         let told = c[0].clone();
         let problem = condition_problem(world);
         let shown = told.clone();
@@ -1794,7 +1803,7 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| type_into(world, &c[0]),
     );
     steps.step(
-        "the user switches to thread B and back to thread A",
+        "the user switch(?:es|ed) to thread B and back to thread A",
         |world, _, _| {
             let thread_b = thread_b(world)?;
             stream::look(world, &thread_b, true)?;
@@ -2003,7 +2012,20 @@ pub fn plan_feedback_types(world: &mut World, typed: &str) -> Outcome<bool> {
     Ok(true)
 }
 
+/// Whether the question card asks `text` (alert.rs's `"…" is shown`).
+pub fn question_shown(world: &mut World, text: &str) -> Outcome<bool> {
+    questions::question_shown(world, text)
+}
+
 pub fn pick_answer(world: &mut World, label: &str) -> Outcome {
+    // Several questions, or several answers to one, are picked on the card
+    // one at a time, as the user does.
+    let asked = first(world, "questions")?["questions"].clone();
+    let asked = asked.as_array().cloned().unwrap_or_default();
+    if asked.len() > 1 || asked.iter().any(|q| q["multiSelect"] == json!(true)) {
+        questions::settle_question(world)?;
+        return questions::click_part(world, &format!("questionOption-{label}"));
+    }
     answer(world, json!(label))
 }
 

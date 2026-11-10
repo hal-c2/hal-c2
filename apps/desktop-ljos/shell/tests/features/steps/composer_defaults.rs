@@ -249,7 +249,7 @@ pub fn register(steps: &mut Steps) {
 
     // Default permissions (Settings → Project defaults; the MC keeps them).
     steps.step(
-        "the default permissions for new threads are (.+)",
+        "the default permissions (?:for new threads )?are (.+)",
         |world, c, _| {
             let engine = world.engine().clone();
             world.wait_for("the shell to read the settings", |_| {
@@ -287,6 +287,7 @@ pub fn register(steps: &mut Steps) {
         );
         world.sync()
     });
+    register_fallbacks(steps);
     steps.step(
         "a project that overrides the default uses its own permissions",
         |world, _, _| {
@@ -311,6 +312,297 @@ pub fn register(steps: &mut Steps) {
     );
 }
 
+fn effort_choices() -> Value {
+    json!({"id": "reasoningEffort", "label": "Effort", "type": "select",
+           "options": [{"id": "low", "label": "Low", "isDefault": true},
+                       {"id": "high", "label": "High"},
+                       {"id": "xhigh", "label": "Extra High"}],
+           "currentValue": "low"})
+}
+
+fn account_model(slug: &str, name: &str, extra: Value) -> Value {
+    let mut model = json!({"slug": slug, "name": name,
+                           "capabilities": {"optionDescriptors": [effort_choices()]}});
+    if let (Some(model), Some(extra)) = (model.as_object_mut(), extra.as_object()) {
+        for (key, value) in extra {
+            model.insert(key.clone(), value.clone());
+        }
+    }
+    model
+}
+
+fn account(id: &str, driver: &str, name: &str, models: Value) -> Value {
+    json!({"instanceId": id, "driver": driver, "displayName": name, "enabled": true,
+           "installed": true, "status": "ready", "models": models})
+}
+
+fn account_id(name: &str) -> String {
+    name.to_lowercase().replace(' ', "_")
+}
+
+fn add_account(world: &mut World, entry: Value) -> Outcome {
+    let mut list = providers(world);
+    list.push(entry);
+    publish_providers(&mut world.mc, list);
+    world.sync()
+}
+
+fn effort_of(world: &World) -> String {
+    composer(world)["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|option| option["id"] == json!("reasoningEffort"))
+        .map(|option| text(&option["value"]))
+        .unwrap_or_default()
+}
+
+fn turn_off(world: &mut World, name: &str) -> Outcome {
+    change_provider(world, &account_id(name), |entry| {
+        entry["enabled"] = json!(false)
+    })
+}
+
+fn submit_and_launch(world: &mut World, words: &str) -> Outcome<Value> {
+    world.dispatch(
+        "composer.submit",
+        json!({"text": words, "intent": "foreground"}),
+    )?;
+    world.wait_for("the thread to launch", |w| !launch_calls_empty(w))?;
+    Ok(launch_calls(world).pop().unwrap_or(Value::Null))
+}
+
+fn wait_composer(
+    world: &mut World,
+    what: String,
+    shows: impl Fn(&World) -> bool + 'static,
+) -> Outcome {
+    world.wait_for_with(shows, move |w| {
+        format!("{what}; the composer shows {}", show(&composer(w)))
+    })
+}
+
+/// A provider account that cannot run falls back to another of its driver;
+/// a draft switched to an instance whose catalogue lacks its model.
+fn register_fallbacks(steps: &mut Steps) {
+    steps.step(
+        &format!("new threads default to Claude Opus at extra high effort on the account {Q}"),
+        |world, c, _| {
+            let opus = || json!([account_model("opus", "Claude Opus", json!({}))]);
+            add_account(
+                world,
+                account(&account_id(&c[0]), "claudeAgent", &c[0], opus()),
+            )?;
+            add_account(
+                world,
+                account("claude_team", "claudeAgent", "Claude Team", opus()),
+            )?;
+            // The project's default for new threads (a carried model gives way to it).
+            let mut row = world.mc.projects.get(PROJECT).cloned().unwrap_or(json!({}));
+            row["defaultModelSelection"] = json!({"instanceId": account_id(&c[0]), "model": "opus",
+                "options": [{"id": "reasoningEffort", "value": "xhigh"}]});
+            world.mc.projects.insert(PROJECT.into(), row.clone());
+            let name = world.mc.name.clone();
+            world
+                .mc
+                .send_rows(&name, vec![json!([PROJECT, "project", row])]);
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("{Q} is turned off and the account {Q} is ready"),
+        |world, c, _| turn_off(world, &c[0]),
+    );
+    steps.step(
+        &format!("{Q} is turned off and {Q}, with high effort of its own is ready"),
+        |world, c, _| {
+            // The fallback account's own effort for the model, from when it was used.
+            world.dispatch(
+                "composer.model.select",
+                json!({"instanceId": account_id(&c[1]), "model": "opus"}),
+            )?;
+            world.dispatch(
+                "composer.option.set",
+                json!({"id": "reasoningEffort", "value": "high"}),
+            )?;
+            world.wait_for("the fallback account's own effort to be set", |w| {
+                effort_of(w) == "high"
+            })?;
+            turn_off(world, &c[0])
+        },
+    );
+    steps.step(
+        &format!("{Q} is turned off and only a Codex account is ready"),
+        |world, c, _| {
+            turn_off(world, &c[0])?;
+            turn_off(world, "Claude Team")?;
+            change_provider(world, "claudeAgent", |entry| {
+                entry["enabled"] = json!(false)
+            })
+        },
+    );
+    steps.step(
+        &format!("the composer shows Claude Opus at extra high effort on {Q}"),
+        |world, c, _| {
+            let id = account_id(&c[0]);
+            wait_composer(world, format!("Opus at extra high on {}", c[0]), move |w| {
+                let shown = composer(w);
+                shown["target"] == json!(w.draft_id)
+                    && shown["selectedInstanceId"] == json!(id)
+                    && shown["selectedModel"] == json!("opus")
+                    && effort_of(w) == "xhigh"
+            })
+        },
+    );
+    steps.step(
+        "the first turn is sent at extra high effort",
+        |world, _, _| {
+            let launched = submit_and_launch(world, "first turn")?;
+            let sent = launched["modelSelection"]["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|o| o["id"] == json!("reasoningEffort") && o["value"] == json!("xhigh"));
+            expect!(sent, "the launch is {}", show(&launched));
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the composer shows {Q} at its own high effort"),
+        |world, c, _| {
+            let id = account_id(&c[0]);
+            wait_composer(world, format!("{} at high", c[0]), move |w| {
+                let shown = composer(w);
+                shown["target"] == json!(w.draft_id)
+                    && shown["selectedInstanceId"] == json!(id)
+                    && effort_of(w) == "high"
+            })
+        },
+    );
+    steps.step(
+        "the composer shows the Codex model at its default effort",
+        |world, _, _| {
+            wait_composer(world, "the Codex model".into(), |w| {
+                let shown = composer(w);
+                shown["target"] == json!(w.draft_id)
+                    && shown["selectedInstanceId"] == json!("codex")
+                    && shown["selectedModel"] == json!("gpt-5")
+            })?;
+            // Codex's effort defaults to medium in this catalogue.
+            let effort = effort_of(world);
+            expect!(effort == "medium", "the effort is {effort}");
+            Ok(())
+        },
+    );
+
+    // A thread saved under a model's alias, on an account that is now off.
+    steps.step(
+        &format!("a thread saved on the account {Q} with the model {Q} at high effort"),
+        |world, c, _| {
+            let builtin = account_model("gpt-5.4", "GPT-5.4", json!({"aliases": ["5.4"]}));
+            let custom = account_model("my-5.4", "5.4", json!({"isCustom": true}));
+            add_account(
+                world,
+                account(
+                    &account_id(&c[0]),
+                    "codex",
+                    &c[0],
+                    json!([builtin.clone(), custom]),
+                ),
+            )?;
+            add_account(
+                world,
+                account("codex_work", "codex", "Codex Work", json!([builtin])),
+            )?;
+            update_thread(
+                world,
+                json!({"modelSelection": {"instanceId": account_id(&c[0]), "model": c[1],
+                    "options": [{"id": "reasoningEffort", "value": "high"}]}}),
+            )
+        },
+    );
+    steps.step(
+        &format!("the composer shows {Q} on {Q} at high effort"),
+        |world, c, _| {
+            let (model, id) = (c[0].clone(), account_id(&c[1]));
+            wait_composer(world, format!("{} on {} at high", c[0], c[1]), move |w| {
+                let shown = composer(w);
+                shown["selectedInstanceId"] == json!(id)
+                    && shown["selectedModel"] == json!(model)
+                    && effort_of(w) == "high"
+            })
+        },
+    );
+    steps.step(
+        &format!("a custom model named {Q} on {Q} is not taken for {Q}"),
+        |world, c, _| {
+            let model = composer(world)["selectedModel"].clone();
+            expect!(
+                model == json!(c[2]) && model != json!("my-5.4"),
+                "the composer is on {}",
+                text(&model)
+            );
+            Ok(())
+        },
+    );
+
+    steps.step(
+        &format!("the draft picked {Q} on the default OpenCode instance"),
+        |world, c, _| {
+            let picked = json!([account_model("kimi-k3.1-pro", &c[0], json!({}))]);
+            add_account(world, account("opencode", "opencode", "OpenCode", picked))?;
+            let own = account_model("kimi-default", "Kimi Default", json!({"isDefault": true}));
+            add_account(world, account("kimi", "opencode", "Kimi", json!([own])))?;
+            save_elsewhere(
+                &mut world.mc,
+                "defaultModelSelection",
+                json!({"instanceId": "opencode", "model": "kimi-k3.1-pro"}),
+                false,
+            );
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!(
+            "the user switches the draft to a second OpenCode instance {Q} without picking a model"
+        ),
+        |world, c, _| {
+            save_elsewhere(
+                &mut world.mc,
+                "defaultModelSelection",
+                json!({"instanceId": account_id(&c[0]), "model": "kimi-k3.1-pro"}),
+                false,
+            );
+            new_thread(world)
+        },
+    );
+    steps.step(
+        &format!("the composer shows {Q}'s own default model with its effort choices"),
+        |world, c, _| {
+            wait_composer(world, format!("{}'s default", c[0]), |w| {
+                let shown = composer(w);
+                shown["selectedInstanceId"] == json!("kimi")
+                    && shown["selectedModel"] == json!("kimi-default")
+                    && !effort_of(w).is_empty()
+            })
+        },
+    );
+    steps.step(
+        &format!("sending asks {Q} only for a model in its own catalog"),
+        |world, _, _| {
+            let launched = submit_and_launch(world, "hello")?;
+            let selection = &launched["modelSelection"];
+            expect!(
+                selection["instanceId"] == json!("kimi")
+                    && selection["model"] == json!("kimi-default"),
+                "the launch asks for {}",
+                show(selection)
+            );
+            Ok(())
+        },
+    );
+}
+
 fn launch_calls_empty(world: &World) -> bool {
     world
         .mc
@@ -329,12 +621,8 @@ pub fn composer_message_received(world: &mut World, wanted: &str) -> Outcome<boo
     if message.is_null() {
         return Ok(false);
     }
-    // "Ultrathink:" leads the prompt on a line of its own.
     let sent = text(&message["text"]);
     let simplified = sent.split_whitespace().collect::<Vec<_>>().join(" ");
-    expect!(
-        simplified == wanted && sent.starts_with("Ultrathink:\n"),
-        "the agent received \"{sent}\""
-    );
+    expect!(simplified == wanted, "the agent received \"{sent}\"");
     Ok(true)
 }

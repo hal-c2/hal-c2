@@ -343,6 +343,8 @@ static COMMANDS: LazyLock<Vec<String>> = LazyLock::new(|| {
         "composer.sendBackground",
         "composer.host",
         "composer.effort",
+        "composer.increaseEffort",
+        "composer.decreaseEffort",
         "composer.mode",
         "composer.workspace",
         "composer.previousWorktree",

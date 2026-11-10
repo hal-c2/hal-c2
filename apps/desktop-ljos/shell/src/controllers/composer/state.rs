@@ -75,11 +75,44 @@ impl Composer {
             "waiting": [],
             "queueHeld": false,
             "queueResuming": kept::read(engine, |d| d.resuming.contains(&self.thread)),
+            // A queue action waits for the MC's answer before another can
+            // be taken.
+            "queueBusy": self.queue_busy.contains(&self.thread),
+            "queueEditBlocked": "",
         });
         let (Some(_), Some(obj)) = (&thread, self.timeline) else {
             return state;
         };
         let answer_files = kept::read(engine, |d| d.answer_files.clone());
+        // A follow-up on its way to the MC, with what it carries.
+        let on_the_way: Vec<(Obj, Vec<Json>)> = kept::read(engine, |d| {
+            d.queues
+                .get(&self.thread)
+                .into_iter()
+                .flatten()
+                .flat_map(|send| {
+                    let attachments: Vec<Json> = send
+                        .attachments
+                        .iter()
+                        .map(|a| {
+                            json!({"id": a.id, "name": a.name, "mimeType": a.mime_type,
+                                   "kind": if a.file { "file" } else { "image" }})
+                        })
+                        .collect();
+                    send.commands
+                        .iter()
+                        .filter(|command| {
+                            field(command, "type") == "message.dispatch"
+                                && field(
+                                    as_object(command.get("dispatchMode").unwrap_or(&Json::Null)),
+                                    "type",
+                                ) == "queue_after_active"
+                        })
+                        .map(move |command| (command.clone(), attachments.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        });
         let read = crate::thread_view::timeline_model::TimelineModel::read(engine, obj, |t| {
             let items = t.entities("turn-item");
             let requests = t.entities("runtime-request");
@@ -283,9 +316,42 @@ impl Composer {
             }
             let messages = t.entities("message");
             let queued = model::queued(runs.values(), |id| messages.get(id));
-            (approvals, questions, plan, tasks, queued)
+            // Listed at the end as being saved, with nothing to do to it
+            // until the MC has it.
+            let pending: Vec<Json> = on_the_way
+                .iter()
+                .filter(|(command, _)| !messages.contains_key(field(command, "messageId")))
+                .map(|(command, attachments)| {
+                    let words = field(command, "text");
+                    json!({"runId": "", "messageId": field(command, "messageId"),
+                           "text": words, "shown": text::quoted_plainly(words),
+                           "attachments": attachments, "pending": true})
+                })
+                .collect();
+            (approvals, questions, plan, tasks, queued, pending)
         });
-        if let Some((approvals, questions, plan, tasks, queued)) = read {
+        if let Some((approvals, questions, plan, tasks, mut queued, pending)) = read {
+            // Why the queued messages cannot be edited now, empty when they
+            // can.
+            state["queueEditBlocked"] = json!(if questions.is_empty() {
+                ""
+            } else {
+                "Answer the question to edit queued messages"
+            });
+            for entry in &mut queued.queue {
+                let words = entry["text"].as_str().unwrap_or_default().to_owned();
+                entry["shown"] = json!(text::quoted_plainly(&words));
+                entry["pending"] = json!(false);
+                if let Some(attachments) = entry["attachments"].as_array_mut() {
+                    for attachment in attachments {
+                        if attachment["kind"] == "image" {
+                            let id = attachment["id"].as_str().unwrap_or_default().to_owned();
+                            attachment["url"] = json!(self.sent_address(engine, &id));
+                        }
+                    }
+                }
+            }
+            queued.queue.extend(pending);
             state["approvals"] = Json::Array(approvals);
             state["questions"] = Json::Array(questions);
             state["plan"] = plan;
@@ -333,7 +399,9 @@ impl Composer {
         let chosen = self.selection(engine, &target);
         // Thumbnails first: they update the previews the instance borrow
         // would hold.
-        let attachments = self.shown_with_previews(engine, &kept.attachments);
+        // The queued message being edited lists what it carries first.
+        let mut attachments = self.shown_sent(engine, &target);
+        attachments.extend(self.shown_with_previews(engine, &kept.attachments));
         let instance = self.instance_of(&chosen);
         let plan_on = self.plan_mode_on(engine, instance);
 
@@ -477,15 +545,43 @@ impl Composer {
             })
             .unwrap_or_default();
         let mut options = model::shell_options(&described);
-        // An effort the prompt asks for (Ultrathink) is the one shown.
-        if instance.is_some() && text.trim().starts_with(text::ULTRATHINK_PREFIX.trim()) {
-            for (option, descriptor) in options.iter_mut().zip(&described) {
-                if let Some(first) = descriptor["promptInjectedValues"]
-                    .as_array()
-                    .and_then(|v| v.first())
-                {
-                    option["value"] = first.clone();
-                }
+        // An effort the prompt asks for (Ultrathink) is only typed: the
+        // choices leave it out unless the prompt asks for it, when it is the
+        // one shown. Asked for in the prompt's own words, it cannot be
+        // changed until they go.
+        let in_words = model::ultrathink_in_words(&text);
+        let asked = text.trim().starts_with(text::ULTRATHINK_PREFIX.trim()) || in_words;
+        for (option, descriptor) in options.iter_mut().zip(&described) {
+            let injected = descriptor["promptInjectedValues"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let Some(first) = injected.first().cloned() else {
+                continue;
+            };
+            if asked {
+                option["value"] = first.clone();
+            }
+            if let Some(choices) = option["choices"].as_array_mut() {
+                choices.retain(|choice| {
+                    !injected.contains(&choice["id"]) || (asked && choice["id"] == first)
+                });
+            }
+            if in_words {
+                option["lockedReason"] = json!(
+                    "Your prompt contains \"ultrathink\" in the text. Remove it to change this option."
+                );
+            }
+        }
+        // The effort is marked, with its bars for the composer to draw when
+        // Appearance asks for them.
+        if let Some(at) = model::effort_index(&described)
+            && let Some(option) = options.get_mut(at)
+        {
+            option["effort"] = json!(true);
+            let current = option["value"].as_str().unwrap_or_default().to_owned();
+            if let Some(bars) = model::effort_bars(as_object(&described[at]), &current) {
+                option["bars"] = bars;
             }
         }
         let follow_up = if setting(engine, "followUpBehavior").as_str() == Some("queue") {
@@ -495,10 +591,7 @@ impl Composer {
         };
         let send_shortcut = setting(engine, "sendShortcut");
         let editing = kept::read(engine, |d| {
-            d.queued_edit
-                .as_ref()
-                .filter(|edit| edit.thread == target)
-                .map(|edit| edit.run_id.clone())
+            d.queued_edits.get(&target).map(|edit| edit.run_id.clone())
         });
         let sending = kept::read(engine, |d| d.queues.contains_key(&target));
         let mut state = json!({
@@ -524,6 +617,7 @@ impl Composer {
             "sendDisabledReason": disabled_reason,
             "isRunning": is_running,
             "followUpBehavior": follow_up,
+            "effortDisplay": if setting(engine, "effortDisplay").as_str() == Some("bars") { "bars" } else { "label" },
             "enterIntents": model::enter_intents(
                 &keymap.bindings(),
                 keymap.mac(),
@@ -543,7 +637,8 @@ impl Composer {
             "selectedInstanceId": or_null(selected_instance),
             "selectedModel": or_null(selected_model),
             "options": options,
-            "runtimeMode": self.runtime_mode_of(engine, &target),
+            "runtimeMode": model::shown_runtime_mode(instance, &self.runtime_mode_of(engine, &target)),
+            "defaultRuntimeMode": model::shown_runtime_mode(instance, &self.default_runtime_mode_of(engine, &target)),
             "runtimeModes": model::runtime_modes(instance),
             "interactionMode": self.interaction_mode_of(engine, &target),
             "showInteractionModeToggle": plan_on,
@@ -596,8 +691,16 @@ impl Composer {
                 field(&current, "model"),
             )),
         };
+        let images = self.on_images();
+        let stand_in = model::no_provider_stand_in(&self.catalogue);
         json!({
             "instances": instances,
+            "locked": !images && thread.as_ref().is_some_and(|t| t.runtime.is_some()),
+            // What stands where the model would be when no provider can run
+            // a turn.
+            "noProvider": if images || stand_in.is_empty() { Json::Null } else { json!(stand_in) },
+            // Image models are not starred.
+            "favorites": !images,
             // A new thread may go to several models: [{instanceId, model}]
             // once more than one is chosen.
             "supportsMultiple": !self.draft_id.is_empty() && target == self.draft_id,

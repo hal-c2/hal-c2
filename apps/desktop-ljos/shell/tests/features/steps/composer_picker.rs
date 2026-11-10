@@ -1038,6 +1038,141 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    // Send is Stop while a turn runs with nothing to send.
+    steps.step(
+        "the send control is replaced by a control that stops the turn",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            let action = part(world, "primaryAction")?;
+            world.wait_for("the composer to offer Stop", |w| {
+                brick.flag(w, action, "stopMode") && brick.flag(w, action, "enabled")
+            })?;
+            let glyph = part(world, "stopGlyph")?;
+            expect!(
+                brick.flag(world, glyph, "visible"),
+                "Stop does not show its square"
+            );
+            Ok(())
+        },
+    );
+    steps.step("the send control is back", |world, _, _| {
+        let brick = composer_brick(world)?;
+        let action = part(world, "primaryAction")?;
+        world.wait_for("the composer to offer Send again", |w| {
+            !brick.flag(w, action, "stopMode") && brick.flag(w, action, "sendable")
+        })
+    });
+    // What a screen reader calls it: its Accessible.name, the brick's name.
+    steps.step(&format!("the send control is named {Q}"), |world, c, _| {
+        let brick = composer_brick(world)?;
+        let action = part(world, "primaryAction")?;
+        let wanted = c[0].clone();
+        world.wait_for_with(
+            move |w| brick.text_of(w, action, "name") == wanted,
+            move |w| {
+                format!(
+                    "the send control to be named it; it is named \"{}\"",
+                    brick.text_of(w, action, "name")
+                )
+            },
+        )
+    });
+    steps.step("the running turn has finished", |world, _, _| {
+        stream::settle_run(world, "completed", 30)?;
+        let Some(row) = world.mc.threads.get_mut(THREAD) else {
+            fail!("there is no thread {THREAD}");
+        };
+        row["activeRunId"] = Value::Null;
+        let row = row.clone();
+        world.mc.send_row(THREAD, &row);
+        world.sync()
+    });
+    steps.step("the user opens the model's options", |world, _, _| {
+        open_picker(world)
+    });
+    // The effort a prompt's ultrathink holds.
+    steps.step(
+        &format!("the effort reads {Q} and cannot be changed"),
+        |world, c, _| {
+            let brick = composer_brick(world)?;
+            let shown = part(world, "modelPickerEffort")?;
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                move |w| brick.text_of(w, shown, "text") == wanted,
+                move |w| {
+                    format!(
+                        "the effort to read it; it reads {}",
+                        brick.text_of(w, shown, "text")
+                    )
+                },
+            )?;
+            open_picker(world)?;
+            let effort = effort_option(world);
+            let mut rows = Vec::new();
+            for choice in effort["choices"].as_array().into_iter().flatten() {
+                let name = format!("modelControlEffort:{}", text(&choice["id"]));
+                if let Some(row) = composer_part(world, &name)?
+                    && brick.flag(world, row, "visible")
+                {
+                    rows.push(row);
+                }
+            }
+            expect!(!rows.is_empty(), "the model control lists no efforts");
+            let enabled = rows
+                .iter()
+                .filter(|&&row| brick.flag(world, row, "enabled"))
+                .count();
+            expect!(
+                enabled == 0,
+                "{enabled} of the effort's {} rows can be chosen",
+                rows.len()
+            );
+            // Not by the controller either.
+            world.dispatch(
+                "composer.option.set",
+                json!({"id": effort["id"].clone(), "value": "high"}),
+            )?;
+            world.sync()?;
+            let now = brick.text_of(world, shown, "text");
+            expect!(now == c[0], "the effort changed to {now}");
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user is told \"(Your prompt contains .+)\"",
+        |world, c, _| {
+            open_picker(world)?;
+            let brick = composer_brick(world)?;
+            let Some(note) = composer_part(world, "modelControlEffortNote")? else {
+                fail!("the model control has no note on its effort");
+            };
+            let said = brick.text_of(world, note, "text");
+            expect!(said == c[0], "the model control says \"{said}\"");
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("a turn is running and the follow-up behaviour is {Q}"),
+        |world, c, _| {
+            let engine = world.engine().clone();
+            Settings::of(&engine).write_device(&engine, "followUpBehavior", json!(c[0]));
+            world.pump()
+        },
+    );
+    register_more(steps);
+}
+
+/// The composer's effort: its first choice option.
+fn effort_option(world: &World) -> Value {
+    world.state("composer")["options"]
+        .as_array()
+        .and_then(|options| {
+            options
+                .iter()
+                .find(|o| o["type"] == json!("select"))
+                .cloned()
+        })
+        .unwrap_or(Value::Null)
 }
 
 /// The overflow menu's row for the plan toggle.
@@ -1143,4 +1278,605 @@ pub fn model_picker_shown_open(world: &mut World) -> Outcome<bool> {
         "the search does not have the keyboard"
     );
     Ok(true)
+}
+
+/// How tall the picker was before its older models unfolded.
+#[derive(Default)]
+struct PickerHeight(f64);
+
+/// What the efforts read when each model was offered again.
+#[derive(Default)]
+struct Offered {
+    sonnet: String,
+}
+
+fn number_of(brick: &Brick, world: &World, item: ObjectId, name: &str) -> f64 {
+    brick.text_of(world, item, name).parse().unwrap_or(-1.0)
+}
+
+/// The names in quotes in `text`.
+fn quoted_list(text: &str) -> Vec<String> {
+    text.split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn effort_now(world: &World) -> String {
+    composer(world)["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|option| option["id"] == json!("reasoningEffort"))
+        .map(|option| text(&option["value"]))
+        .unwrap_or_default()
+}
+
+fn pick_at(world: &mut World, instance_id: &str, model: &str, effort: &str) -> Outcome {
+    world.dispatch(
+        "composer.model.select",
+        json!({"instanceId": instance_id, "model": model}),
+    )?;
+    world.dispatch(
+        "composer.option.set",
+        json!({"id": "reasoningEffort", "value": effort}),
+    )?;
+    world.wait_for_with(
+        |w| effort_now(w) == effort,
+        |w| format!("{effort} to be set; the effort is {}", effort_now(w)),
+    )
+}
+
+fn select(world: &mut World, instance_id: &str, model: &str) -> Outcome {
+    world.dispatch(
+        "composer.model.select",
+        json!({"instanceId": instance_id, "model": model}),
+    )?;
+    world.wait_for_with(
+        |w| composer(w)["selectedModel"] == json!(model),
+        |w| {
+            format!(
+                "the switch to {model}; the composer shows {}",
+                show(&composer(w))
+            )
+        },
+    )
+}
+
+fn wait_listed(world: &mut World, what: &str, holds: impl Fn(&[String]) -> bool) -> Outcome {
+    let (brick, item) = picker(world)?;
+    world.wait_for_with(
+        |w| holds(&listed_in(&brick, w, item)),
+        |w| {
+            format!(
+                "{what}; the picker lists {}",
+                show(&Value::Array(rows_of(&brick, w, item)))
+            )
+        },
+    )
+}
+
+fn with_model(entry: &mut Value, model: Value) {
+    let mut models = entry["models"].as_array().cloned().unwrap_or_default();
+    models.push(model);
+    entry["models"] = Value::Array(models);
+}
+
+fn register_more(steps: &mut Steps) {
+    // Search order, older models, new marks and the setup offer.
+    steps.step("Claude lists (.+) in that order", |world, c, _| {
+        let models: Vec<Value> = quoted_list(&c[0])
+            .iter()
+            .map(|name| model(&name.to_lowercase().replace(' ', "-"), name))
+            .collect();
+        change_provider(world, "claudeAgent", |entry| {
+            entry["models"] = json!(models)
+        })
+    });
+    steps.step("the models are listed as (.+)", |world, c, _| {
+        let expected = quoted_list(&c[0]);
+        let what = expected.join(", ");
+        wait_listed(world, &what, |names| names == expected.as_slice())
+    });
+    steps.step(
+        "a shorter name is not listed ahead of a newer model",
+        |world, _, _| {
+            let names = listed(world)?;
+            let at = |name: &str| names.iter().position(|n| n == name);
+            expect!(
+                at("Opus 5.5").is_some() && at("Opus 5") > at("Opus 5.5"),
+                "the picker lists {}",
+                names.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step("the user looks through (\\w+)'s models", |world, c, _| {
+        open_picker(world)?;
+        let rail = part(world, &format!("modelPickerProvider:{}", driver_of(&c[0])))?;
+        click(world, rail)
+    });
+    steps.step(
+        &format!("Codex lists the legacy model {Q}"),
+        |world, c, _| {
+            let mut legacy = model(&c[0], &c[0]);
+            legacy["isLegacy"] = json!(true);
+            change_provider(world, "codex", |entry| with_model(entry, legacy.clone()))
+        },
+    );
+    // Codex's own list, two current models then three older ones, with the
+    // picker's height and the "Show more" row it ends on.
+    steps.step(
+        "Codex lists two current models and three it calls legacy",
+        |world, _, _| {
+            // The thread's own model stays current, so the picker opens with
+            // the older models folded.
+            let chosen = composer(world);
+            let first = if chosen["selectedInstanceId"] == json!("codex") {
+                text(&chosen["selectedModel"])
+            } else {
+                "gpt-6".to_owned()
+            };
+            let mut models = vec![model(&first, "GPT-6"), model("gpt-6-mini", "GPT-6 Mini")];
+            for slug in ["gpt-4.1", "gpt-4o", "o3"] {
+                let mut legacy = model(slug, &slug.to_uppercase());
+                legacy["isLegacy"] = json!(true);
+                models.push(legacy);
+            }
+            change_provider(world, "codex", |entry| entry["models"] = json!(models))
+        },
+    );
+    steps.step(
+        &format!("the user chooses {Q} at the end of Codex's models"),
+        |world, c, _| {
+            open_picker(world)?;
+            let rail = part(world, "modelPickerProvider:codex")?;
+            click(world, rail)?;
+            wait_listed(
+                world,
+                "Codex's two current models and then a row",
+                |names| names == ["GPT-6", "GPT-6 Mini", ""],
+            )?;
+            let (brick, item) = picker(world)?;
+            let rows = rows_of(&brick, world, item);
+            let last = rows.last().cloned().unwrap_or(Value::Null);
+            expect!(
+                last["kind"] == json!("legacy"),
+                "Codex's list ends on {}",
+                show(&last)
+            );
+            let more = part(world, "modelPickerLegacy:codex")?;
+            let reads = brick.text_of(world, more, "text");
+            expect!(reads == c[0], "the row reads {reads}, not {}", c[0]);
+            let popup = popup_of(&brick, world, item)?;
+            let height = number_of(&brick, world, popup, "height");
+            world.part::<PickerHeight>().0 = height;
+            click(world, more)
+        },
+    );
+    steps.step(
+        &format!("the three older models are listed in place and the row reads {Q}"),
+        |world, c, _| {
+            wait_listed(world, "the older models above the row", |names| {
+                names == ["GPT-6", "GPT-6 Mini", "GPT-4.1", "GPT-4O", "O3", ""]
+            })?;
+            let (brick, _) = picker(world)?;
+            let less = part(world, "modelPickerLegacy:codex")?;
+            let reads = brick.text_of(world, less, "text");
+            expect!(reads == c[0], "the row reads {reads}, not {}", c[0]);
+            expect!(picker_open(world)?, "the picker closed");
+            Ok(())
+        },
+    );
+    steps.step("the list scrolls inside the picker", |world, _, _| {
+        let before = world.part::<PickerHeight>().0;
+        let (brick, item) = picker(world)?;
+        let popup = popup_of(&brick, world, item)?;
+        let after = number_of(&brick, world, popup, "height");
+        expect!(
+            before > 0.0 && (before - after).abs() < 0.5,
+            "the picker was {before} tall and is {after}"
+        );
+        // The row's list: the first ancestor that flicks.
+        let mut at = part(world, "modelPickerLegacy:codex")?;
+        let list = loop {
+            let QmlValue::Object(parent) = brick.read(world, at, "parent") else {
+                fail!("the rows are not in a list");
+            };
+            if matches!(brick.read(world, parent, "interactive"), QmlValue::Bool(_))
+                && matches!(
+                    brick.read(world, parent, "contentY"),
+                    QmlValue::Real(_) | QmlValue::Int(_)
+                )
+            {
+                break parent;
+            }
+            at = parent;
+        };
+        expect!(
+            brick.flag(world, list, "clip") && brick.flag(world, list, "interactive"),
+            "the list does not scroll in place"
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("{Q} is listed without choosing {Q}"),
+        |world, c, _| {
+            let name = c[0].clone();
+            wait_listed(world, &format!("{name} to be listed"), |names| {
+                names.contains(&name)
+            })
+        },
+    );
+    steps.step(
+        &format!("{Q} is listed above Codex's current models without choosing {Q}"),
+        |world, c, _| {
+            let names = listed(world)?;
+            expect!(
+                names.first() == Some(&c[0]),
+                "the picker lists {}",
+                names.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("{Q} is back among the older models behind {Q}"),
+        |world, c, _| {
+            let (brick, item) = picker(world)?;
+            let name = c[0].clone();
+            world.wait_for_with(
+                |w| {
+                    let rows = rows_of(&brick, w, item);
+                    rows.iter().any(|row| row["kind"] == json!("legacy"))
+                        && !rows.iter().any(|row| row_name(row) == name)
+                },
+                |w| {
+                    format!(
+                        "{} behind the older models; the picker lists {}",
+                        c[0],
+                        listed_in(&brick, w, item).join(", ")
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        &format!("Codex reports {Q} as a new model"),
+        |world, c, _| {
+            let mut fresh = model(&c[0], &c[0]);
+            fresh["badge"] = json!("new");
+            change_provider(world, "codex", |entry| with_model(entry, fresh.clone()))
+        },
+    );
+    steps.step(&format!("{Q} is marked as new"), |world, c, _| {
+        let (brick, item) = picker(world)?;
+        let marked = rows_of(&brick, world, item)
+            .iter()
+            .filter(|row| row["model"]["slug"] == json!(c[0]))
+            .last()
+            .is_some_and(|row| row["model"]["isNew"] == json!(true));
+        let row = part(world, &format!("modelPickerRow:codex:{}", c[0]))?;
+        expect!(
+            marked && brick.flag(world, row, "visible"),
+            "{} is not marked as new",
+            c[0]
+        );
+        Ok(())
+    });
+
+    // The picker opens on the favourites, or on a started thread's provider.
+    steps.step(
+        &format!("the user has marked {Q} as a favourite"),
+        |world, c, _| {
+            let instance_id = instances(world)
+                .iter()
+                .filter(|entry| {
+                    entry["models"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|m| m["slug"] == json!(c[0]))
+                })
+                .map(|entry| text(&entry["instanceId"]))
+                .last();
+            let Some(instance_id) = instance_id else {
+                fail!("no provider lists {}", c[0]);
+            };
+            world.dispatch(
+                "composer.model.favorite.toggle",
+                json!({"instanceId": instance_id, "model": c[0]}),
+            )?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "the favourites are listed first, each under its own provider's name",
+        |world, _, _| {
+            let (brick, item) = picker(world)?;
+            let view = brick.text_of(world, item, "view");
+            expect!(view == "favorites", "the picker opens on {view}");
+            let shown = rows_of(&brick, world, item);
+            expect!(
+                !shown.is_empty()
+                    && shown.iter().all(|row| {
+                        row["model"]["isFavorite"] == json!(true)
+                            && !text(&row["instance"]["displayName"]).is_empty()
+                    }),
+                "the favourites list {}",
+                listed_in(&brick, world, item).join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "in a thread that has already run a turn the picker opens on the thread's provider",
+        |world, _, _| {
+            let (_, item) = picker(world)?;
+            world
+                .engine()
+                .invoke_by_name(item, "close", &[])
+                .map_err(|e| crate::harness::Failure(format!("close: {e:?}")))?;
+            world.pump()?;
+            update_thread(
+                world,
+                json!({"latestRunId": "run-0",
+                       "runtime": {"status": "ready", "updatedAt": "2026-09-23T09:30:00Z"}}),
+            )?;
+            open_picker(world)?;
+            let (brick, item) = picker(world)?;
+            let view = brick.text_of(world, item, "view");
+            let wanted = text(&composer(world)["selectedInstanceId"]);
+            expect!(view == wanted, "the picker opens on {view}, not {wanted}");
+            Ok(())
+        },
+    );
+
+    // Each model keeps the options it was last given.
+    steps.step(
+        &format!("the user set {Q} to high effort and {Q} to low effort"),
+        |world, c, _| {
+            let models = json!([model(&c[0], &c[0]), model(&c[1], &c[1])]);
+            change_provider(world, "claudeAgent", |entry| {
+                entry["models"] = models.clone()
+            })?;
+            pick_at(world, "claudeAgent", &c[0], "high")?;
+            pick_at(world, "claudeAgent", &c[1], "low")
+        },
+    );
+    steps.step(
+        &format!("the user switches from {Q} to {Q} and back"),
+        |world, c, _| {
+            world.dispatch(
+                "composer.model.select",
+                json!({"instanceId": "claudeAgent", "model": c[0]}),
+            )?;
+            select(world, "claudeAgent", &c[1])?;
+            world.part::<Offered>().sonnet = effort_now(world);
+            select(world, "claudeAgent", &c[0])
+        },
+    );
+    steps.step(
+        &format!("{Q} was offered with low effort and {Q} is back at high effort"),
+        |world, _, _| {
+            let sonnet = world.part::<Offered>().sonnet.clone();
+            expect!(sonnet == "low", "sonnet was offered {sonnet}");
+            let now = effort_now(world);
+            expect!(now == "high", "opus is back at {now}");
+            Ok(())
+        },
+    );
+
+    // A custom model whose slug is also a built-in's alias stays itself.
+    steps.step(
+        &format!("the Codex account {Q} has the custom model {Q}"),
+        |world, c, _| {
+            shell_thread(world)?;
+            let mut custom = model(&c[1], &c[1]);
+            custom["isCustom"] = json!(true);
+            let mut list = providers(world);
+            list.push(provider("codex_proxy", &c[0], vec![custom]));
+            offer(world, list)
+        },
+    );
+    steps.step(
+        &format!("the user picks {Q} on {Q} at high effort and sends a message"),
+        |world, c, _| {
+            pick_at(world, "codex_proxy", &c[0], "high")?;
+            world.dispatch(
+                "composer.submit",
+                json!({"text": "through the proxy", "intent": "foreground"}),
+            )?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!(
+            "the turn runs on the custom model {Q}, not on a built-in model it is an alias of"
+        ),
+        |world, c, _| {
+            world.sync()?;
+            // The thread's turn runs on what its switch (or its message) named.
+            let selection = world
+                .mc
+                .commands
+                .iter()
+                .rev()
+                .find(|command| {
+                    (command["type"] == json!("provider.switch")
+                        || command["type"] == json!("message.dispatch"))
+                        && command.get("modelSelection").is_some()
+                })
+                .map(|command| command["modelSelection"].clone())
+                .unwrap_or(Value::Null);
+            expect!(
+                selection["instanceId"] == json!("codex_proxy")
+                    && selection["model"] == json!(c[0]),
+                "the turn ran on {}; the MC has {}",
+                show(&selection),
+                world.describe_commands()
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("picking {Q} again offers high effort"),
+        |world, c, _| {
+            world.dispatch(
+                "composer.model.select",
+                json!({"instanceId": "codex", "model": "gpt-5"}),
+            )?;
+            world.dispatch(
+                "composer.model.select",
+                json!({"instanceId": "codex_proxy", "model": c[0]}),
+            )?;
+            world.wait_for_with(
+                |w| effort_now(w) == "high",
+                |w| format!("high again; the composer offers {}", effort_now(w)),
+            )
+        },
+    );
+
+    // The name the model button says.
+    steps.step(
+        &format!("the model manifest names {Q} {Q} for short"),
+        |world, c, _| {
+            let mut named = model("claude-opus-5.5", &c[0]);
+            named["shortName"] = json!(c[1]);
+            change_provider(world, "claudeAgent", |entry| {
+                entry["models"] = json!([named])
+            })?;
+            open_picker(world)
+        },
+    );
+    steps.step(
+        &format!("the user chooses the (\\w+) model {Q}"),
+        |world, c, _| {
+            let instance_id = driver_of(&c[0]);
+            let mut slug = String::new();
+            for ch in c[1].to_lowercase().chars() {
+                if ch.is_ascii_alphanumeric() {
+                    slug.push(ch);
+                } else if !slug.ends_with('-') {
+                    slug.push('-');
+                }
+            }
+            let offered = providers(world)
+                .iter()
+                .any(|entry| entry["instanceId"] == json!(instance_id));
+            if offered {
+                let models = json!([model(&slug, &c[1])]);
+                change_provider(world, &instance_id, |entry| {
+                    entry["models"] = models.clone()
+                })?;
+            } else {
+                let mut list = providers(world);
+                list.push(provider(&instance_id, &c[0], vec![model(&slug, &c[1])]));
+                offer(world, list)?;
+            }
+            select(world, &instance_id, &slug)?;
+            composer_brick(world)?;
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the full name {Q} is shown in its tooltip and in the model picker"),
+        |world, c, _| {
+            let (brick, item) = picker(world)?;
+            let full = brick.text_of(world, item, "triggerFullTitle");
+            expect!(full == c[0], "the tooltip names \"{full}\"");
+            open_picker(world)?;
+            let names = listed(world)?;
+            expect!(
+                names.contains(&c[0]),
+                "the picker lists {}",
+                names.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(&format!("the model button reads {Q}"), |world, c, _| {
+        let (brick, item) = picker(world)?;
+        let wanted = c[0].clone();
+        world.wait_for_with(
+            |w| brick.text_of(w, item, "triggerTitle") == wanted,
+            |w| {
+                format!(
+                    "the button to read \"{}\"; it reads \"{}\"",
+                    c[0],
+                    brick.text_of(w, item, "triggerTitle")
+                )
+            },
+        )?;
+        let title = part(world, "modelPickerTitle")?;
+        let reads = brick.text_of(world, title, "text");
+        expect!(reads == c[0], "the button reads \"{reads}\"");
+        Ok(())
+    });
+
+    // A provider that needs setting up.
+    steps.step(
+        "Cursor is not installed and HAL-C2 can install it",
+        |world, _, _| {
+            let mut list = providers(world);
+            let mut cursor = provider("cursor", "Cursor", vec![model("cursor-auto", "Auto")]);
+            cursor["installed"] = json!(false);
+            cursor["status"] = json!("error");
+            cursor["message"] = json!("Cursor CLI is not installed.");
+            cursor["setup"] = json!({"canInstall": true, "canAuthenticate": false});
+            list.push(cursor);
+            offer(world, list)
+        },
+    );
+    steps.step(
+        &format!("the picker says why Cursor cannot be used and offers {Q}"),
+        |world, c, _| {
+            let brick = composer_brick(world)?;
+            let reason = part(world, "modelPickerSetupReason")?;
+            let setup = part(world, "modelPickerSetup")?;
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                |w| {
+                    brick.flag(w, reason, "visible")
+                        && brick.flag(w, setup, "visible")
+                        && brick.text_of(w, setup, "text") == wanted
+                },
+                |w| {
+                    format!(
+                        "the setup offer; the picker says \"{}\"",
+                        brick.text_of(w, reason, "text")
+                    )
+                },
+            )?;
+            let said = brick.text_of(world, reason, "text");
+            expect!(
+                said.contains("Cursor CLI is not installed."),
+                "the picker says \"{said}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the picker closes and the setup for Cursor opens",
+        |world, _, _| {
+            let (brick, item) = picker(world)?;
+            let popup = popup_of(&brick, world, item)?;
+            world.wait_for("the picker to close", |w| !brick.flag(w, popup, "visible"))?;
+            world.wait_for_with(
+                |w| {
+                    let route = w.state("route");
+                    route["kind"] == json!("settings")
+                        && route["section"]
+                            == json!(hal_c2_shell::controllers::navigation::PROVIDERS_SECTION)
+                },
+                |w| {
+                    format!(
+                        "the Providers settings to open; the window shows {}",
+                        show(&w.state("route"))
+                    )
+                },
+            )
+        },
+    );
 }

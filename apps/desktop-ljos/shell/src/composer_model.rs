@@ -35,6 +35,8 @@ pub struct Instance {
     pub enabled: bool,
     pub is_default: bool,
     pub available: bool,
+    /// setup.canInstall or setup.canAuthenticate.
+    pub can_set_up: bool,
     pub requires_new_thread_for_model_change: bool,
     pub show_interaction_mode_toggle: bool,
     /// supportedRuntimeModes; empty: all.
@@ -164,6 +166,25 @@ fn model_matches(model: &Obj, value: &str) -> bool {
             .any(|alias| alias.as_str() == Some(value))
 }
 
+/// The draft's pick is what the thread runs: the same model of the same
+/// instance with the same options, a fast mode that is off counting as unset.
+pub fn pick_matches_thread(pick: &Obj, thread: &Obj) -> bool {
+    let options = |selection: &Obj| -> HashMap<String, Json> {
+        array(selection, "options")
+            .iter()
+            .filter_map(|entry| {
+                let id = entry["id"].as_str()?.to_owned();
+                let value = entry["value"].clone();
+                (!(id == "fastMode" && value == json!(false))).then_some((id, value))
+            })
+            .collect()
+    };
+    !text(pick, "model").is_empty()
+        && pick.get("instanceId") == thread.get("instanceId")
+        && pick.get("model") == thread.get("model")
+        && options(pick) == options(thread)
+}
+
 const ANTIGRAVITY_DEFAULT: &str = "antigravity-default";
 
 fn keeps_unlisted_model(driver: &str) -> bool {
@@ -171,6 +192,22 @@ fn keeps_unlisted_model(driver: &str) -> bool {
 }
 
 /// The instances, grouped by driver in first-seen order, defaults first.
+/// What stands where the model would be when no provider can run a turn: a
+/// key the QML words, "open-provider-settings" when one can be set up,
+/// "no-provider-available" otherwise; empty while one can run a turn.
+pub fn no_provider_stand_in(list: &[Instance]) -> &'static str {
+    // No providers reported yet is not "none can run a turn": the composer
+    // still shows the thread's model while it waits.
+    if list.is_empty() || list.iter().any(Instance::ready) {
+        return "";
+    }
+    if list.iter().any(|instance| instance.can_set_up) {
+        "open-provider-settings"
+    } else {
+        "no-provider-available"
+    }
+}
+
 pub fn instances(providers: &[Json]) -> Vec<Instance> {
     static HEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("^#[0-9a-fA-F]{6}$").unwrap());
     let mut list = Vec::new();
@@ -195,6 +232,10 @@ pub fn instances(providers: &[Json]) -> Vec<Instance> {
             enabled: flag(provider, "enabled"),
             is_default: instance_id == driver,
             available: text(provider, "availability") != "unavailable",
+            can_set_up: {
+                let setup = object(provider, "setup");
+                flag(setup, "canInstall") || flag(setup, "canAuthenticate")
+            },
             requires_new_thread_for_model_change: flag(provider, "requiresNewThreadForModelChange"),
             show_interaction_mode_toggle: provider.get("showInteractionModeToggle")
                 != Some(&Json::Bool(false)),
@@ -239,6 +280,29 @@ pub fn find_model(instance: &Instance, model: &str) -> Obj {
         .find(|m| text(m, "slug") == model)
         .or_else(|| models().find(|m| model_matches(m, model)))
         .cloned()
+        .unwrap_or_default()
+}
+
+/// The model another account of the same provider runs for `model`: the
+/// same slug, else a built-in named so or aliased so (a custom model of the
+/// same name is the user's own, not this one); empty when it has none.
+pub fn fallback_model_slug(instance: &Instance, model: &str) -> String {
+    if model.is_empty() {
+        return String::new();
+    }
+    let models = || instance.models.iter().map(as_object);
+    if models().any(|m| text(m, "slug") == model) {
+        return model.to_owned();
+    }
+    models()
+        .filter(|m| !flag(m, "isCustom"))
+        .find(|m| {
+            text(m, "name").to_lowercase() == model.to_lowercase()
+                || array(m, "aliases")
+                    .iter()
+                    .any(|alias| alias.as_str() == Some(model))
+        })
+        .map(|m| text(m, "slug").to_owned())
         .unwrap_or_default()
 }
 
@@ -500,6 +564,9 @@ pub fn picker_instances(
                     "isNew": text(model, "badge") == "new",
                     "isLegacy": flag(model, "isLegacy"),
                     "isUnavailable": flag(model, "isUnavailable"),
+                    // Whether choosing it leaves an effort to pick in the
+                    // model control.
+                    "hasEffort": effort_index(&array(object(model, "capabilities"), "optionDescriptors")).is_some(),
                     "disabledReason": disabled_reason,
                 })
             })
@@ -518,6 +585,7 @@ pub fn picker_instances(
             "initials": initials_of(&instance.display_name),
             "showBadge": show_badge(instance, &visible),
             "status": instance.status,
+            "canSetUp": instance.can_set_up,
             "isAvailable": instance.ready() || !shown.is_empty(),
             "unavailableReason": reason,
             "models": shown,
@@ -647,7 +715,14 @@ pub fn shell_options(descriptors: &[Json]) -> Vec<Json> {
                 array(descriptor, "options")
                     .iter()
                     .map(as_object)
-                    .map(|c| json!({"id": text(c, "id"), "label": text(c, "label")}))
+                    .map(|c| {
+                        json!({
+                            "id": text(c, "id"),
+                            "label": text(c, "label"),
+                            "isDefault": c.get("isDefault").and_then(Json::as_bool).unwrap_or(false),
+                            "description": text(c, "description"),
+                        })
+                    })
                     .collect()
             } else {
                 Vec::new()
@@ -661,6 +736,143 @@ pub fn shell_options(descriptors: &[Json]) -> Vec<Json> {
             })
         })
         .collect()
+}
+
+/// Whether `descriptor` is the model's reasoning effort.
+fn is_reasoning(descriptor: &Obj) -> bool {
+    text(descriptor, "type") == "select"
+        && (["effort", "reasoningEffort", "reasoning"].contains(&text(descriptor, "id"))
+            || text(descriptor, "role") == "reasoning")
+}
+
+/// The descriptor the effort steps through: the reasoning choice, else the
+/// first choice.
+pub fn effort_index(descriptors: &[Json]) -> Option<usize> {
+    let selects = || {
+        descriptors
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| text(as_object(d), "type") == "select")
+    };
+    selects()
+        .find(|(_, d)| is_reasoning(as_object(d)))
+        .or_else(|| selects().next())
+        .map(|(i, _)| i)
+}
+
+/// The bars the composer draws for the reasoning effort `current`: one a
+/// level, filled up to it. Ultracode, Max and what the prompt carries keep
+/// their names (`special`) and fill every bar. Nothing when `descriptor` is
+/// not the reasoning effort or its levels do not fit the glyph.
+pub fn effort_bars(descriptor: &Obj, current: &str) -> Option<Json> {
+    // More bars than this no longer fit the glyph's height in whole pixels.
+    const MAX_BARS: usize = 7;
+    if !is_reasoning(descriptor) || current.is_empty() {
+        return None;
+    }
+    let mut special = vec!["ultracode".to_owned(), "max".to_owned()];
+    special.extend(
+        array(descriptor, "promptInjectedValues")
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned)),
+    );
+    let mut levels = Vec::new();
+    let mut label = current.to_owned();
+    for value in array(descriptor, "options") {
+        let choice = as_object(&value);
+        let id = text(choice, "id");
+        if id == current && !text(choice, "label").is_empty() {
+            label = text(choice, "label").to_owned();
+        }
+        if !special.iter().any(|s| s == id) {
+            levels.push(id.to_owned());
+        }
+    }
+    if levels.len() < 2 || levels.len() > MAX_BARS {
+        return None;
+    }
+    let starts_at_off = ["off", "none"].contains(&levels[0].as_str());
+    let count = if starts_at_off {
+        levels.len() - 1
+    } else {
+        levels.len()
+    };
+    if special.iter().any(|s| s == current) {
+        return Some(json!({"count": count, "filled": count, "special": label}));
+    }
+    let at = levels.iter().position(|l| l == current)?;
+    let filled = if starts_at_off { at } else { at + 1 };
+    Some(json!({"count": count, "filled": filled, "special": ""}))
+}
+
+/// The choice one level up (`direction` > 0) or down from the current one,
+/// wrapping; never a value the prompt carries (Ultrathink). A current value
+/// the model does not list steps from its default.
+pub fn stepped_choice(descriptor: &Obj, direction: i64) -> Option<String> {
+    if text(descriptor, "type") != "select" || direction == 0 {
+        return None;
+    }
+    let injected = array(descriptor, "promptInjectedValues");
+    let mut choices = Vec::new();
+    let mut fallback = None;
+    for value in array(descriptor, "options") {
+        let choice = as_object(&value);
+        let id = text(choice, "id");
+        if id.is_empty() || injected.iter().any(|v| v.as_str() == Some(id)) {
+            continue;
+        }
+        if fallback.is_none() && choice.get("isDefault").and_then(Json::as_bool) == Some(true) {
+            fallback = Some(id.to_owned());
+        }
+        choices.push(id.to_owned());
+    }
+    let count = choices.len();
+    if count < 2 {
+        return None;
+    }
+    let ends = || {
+        if direction > 0 {
+            choices[0].clone()
+        } else {
+            choices[count - 1].clone()
+        }
+    };
+    let current = descriptor
+        .get("currentValue")
+        .cloned()
+        .unwrap_or(Json::Null);
+    // From the prompt's own effort, above the top level: up wraps to the
+    // lowest, down comes to the highest.
+    let mut at = choices
+        .iter()
+        .position(|c| current.as_str() == Some(c.as_str()));
+    if at.is_none() && injected.contains(&current) {
+        return Some(ends());
+    }
+    if at.is_none() {
+        at = fallback.and_then(|f| choices.iter().position(|c| *c == f));
+    }
+    let Some(at) = at else {
+        return Some(ends());
+    };
+    let next = if direction > 0 {
+        (at + 1) % count
+    } else {
+        (at + count - 1) % count
+    };
+    Some(choices[next].clone())
+}
+
+/// Whether `text` asks for ultrathink in its own words, past the
+/// "Ultrathink:" prefix the picker writes.
+pub fn ultrathink_in_words(text: &str) -> bool {
+    static PREFIX: LazyLock<Option<Regex>> =
+        LazyLock::new(|| Regex::new(r"^\s*Ultrathink:\s*").ok());
+    static WORD: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"(?i)\bultrathink\b").ok());
+    let (Some(prefix), Some(word)) = (PREFIX.as_ref(), WORD.as_ref()) else {
+        return false;
+    };
+    word.is_match(&prefix.replace(text, ""))
 }
 
 /// The selections to keep after the user sets option `id`; nothing when the
@@ -688,6 +900,25 @@ pub fn apply_option(descriptors: &[Json], id: &str, value: &Json) -> Option<Vec<
         next.push(Json::Object(descriptor));
     }
     applied.then(|| selections_of(&next))
+}
+
+/// The permissions the composer shows for `saved`: a mode the provider no
+/// longer offers reads as Supervised, else as the first it offers.
+pub fn shown_runtime_mode(instance: Option<&Instance>, saved: &str) -> String {
+    let offered = runtime_modes(instance);
+    let values: Vec<&str> = offered
+        .iter()
+        .filter_map(|mode| mode["value"].as_str())
+        .collect();
+    if values.contains(&saved) {
+        return saved.to_owned();
+    }
+    if values.contains(&"approval-required") {
+        return "approval-required".to_owned();
+    }
+    values
+        .first()
+        .map_or_else(|| saved.to_owned(), |first| (*first).to_owned())
 }
 
 /// `composer.runtimeModes`: [{value, label, description}].
@@ -793,7 +1024,19 @@ pub fn enter_intents(
             .filter(|(on, _)| *on)
             .map(|(_, name)| *name)
             .collect();
-            let command = command_for(bindings, mac, &context, "enter", ctrl, meta, alt, shift);
+            let mut command = command_for(bindings, mac, &context, "enter", ctrl, meta, alt, shift);
+            if needs_modifier && (ctrl || meta) && !alt {
+                // When sending takes the modifier, mod+Enter sends the way the
+                // follow-up setting says and mod+Shift+Enter the other, over
+                // any window binding of it (the composer gives that back
+                // while empty).
+                let plain = command_for(bindings, mac, &context, "enter", ctrl, meta, alt, false);
+                if plain == "composer.sendAlternate"
+                    && (!shift || !command.starts_with("composer."))
+                {
+                    command = if shift { plain } else { String::new() };
+                }
+            }
             let intent = if command == "composer.sendAlternate" && running {
                 "alternate"
             } else if command == "composer.sendBackground" && draft {
@@ -1534,9 +1777,23 @@ pub fn queued<'a>(
             }));
             continue;
         }
-        queued
-            .queue
-            .push(json!({"runId": run_id, "text": text(message, "text")}));
+        // What the message carries, as the queue lists it.
+        let attachments: Vec<Json> = message
+            .get("attachments")
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Json::as_object)
+            .map(|a| {
+                json!({"id": text(a, "id"), "name": text(a, "name"),
+                       "mimeType": text(a, "mimeType"),
+                       "kind": if text(a, "type") == "image" { "image" } else { "file" }})
+            })
+            .collect();
+        queued.queue.push(
+            json!({"runId": run_id, "messageId": text(run, "userMessageId"),
+                                 "text": text(message, "text"), "attachments": attachments}),
+        );
     }
     queued
 }

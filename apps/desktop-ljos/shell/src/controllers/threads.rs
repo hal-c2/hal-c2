@@ -358,6 +358,8 @@ impl ThreadStore {
             .and_then(|v| v.as_str().map(str::to_owned))
             .filter(|f| !f.is_empty())
             .unwrap_or_else(|| "locale".into());
+        // Stored before the notify: a binding it wakes formats with it.
+        *shared(engine).timestamp_format.borrow_mut() = format.clone();
         if let Ok(obj) = Bridge::of(engine).singleton::<ThreadsObject>(engine)
             && let Err(e) = engine.set_internal(
                 obj,
@@ -367,7 +369,6 @@ impl ThreadStore {
         {
             engine.log(ljos::prelude::LogLevel::Warning, "Threads", e.to_string());
         }
-        *shared(engine).timestamp_format.borrow_mut() = format;
         for followed in self.threads.values() {
             configure(engine, followed.model);
         }

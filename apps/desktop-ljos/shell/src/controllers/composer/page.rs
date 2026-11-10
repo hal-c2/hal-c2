@@ -205,7 +205,10 @@ impl Composer {
             });
         }
         if selection.is_empty() {
-            selection = as_object(&setting(engine, "defaultModelSelection")).clone();
+            selection = Settings::of(engine)
+                .value("defaultModelSelection")
+                .map(|v| as_object(&v).clone())
+                .unwrap_or_default();
         }
         if selection.is_empty() && !project.is_empty() {
             let mut latest = String::new();

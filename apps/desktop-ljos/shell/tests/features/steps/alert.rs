@@ -668,6 +668,9 @@ pub fn register(steps: &mut Steps) {
         if let Some(page) = world.on_settings_page.get("isShown").cloned() {
             return page(world, c);
         }
+        if crate::steps::turn::question_shown(world, &c[0])? {
+            return Ok(());
+        }
         let thread = tracked(world, &c[0])?;
         let key = key_of(world, &thread);
         let shown = thread_key(world);
