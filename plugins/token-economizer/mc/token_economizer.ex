@@ -37,7 +37,11 @@ defmodule HalC2Plugins.TokenEconomizer do
   learned again) and `microSkills.restore` lets it be learned again. Each
   project's entry in that listing is published on its own topic,
   `microSkills:<project id>`, when what it shows changes; the mode is the
-  `microSkills` setting's, which the call reports and no topic repeats.
+  `microSkills` setting's, which the call reports and no topic repeats. A
+  project published for the first time since the plugin started, or one whose
+  hold began or ended, is also named on `microSkillsProjects`
+  (`%{"projectId", "held"}`), so a page listing the projects knows to list them
+  again; the listing itself stays the call's.
 
   With the micro-skills `on`, a paid proposer (`MicroSkills.Distiller`) also
   reads a compact digest of a project's recent turns every
@@ -1876,10 +1880,11 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       # A fold from history under way folds this turn after it, read back
       # whole then, unless it read it already. A held project (its file does
-      # not read) learns nothing until it does.
+      # not read) learns nothing until it does, though its entry is published
+      # once, so a page sees it held.
       cond do
         skills.held != nil ->
-          loaded
+          publish_skills(loaded, project_id)
 
         History.running?(fold) ->
           if turn.run in skills.folded,
@@ -2397,7 +2402,7 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     {projects, state} =
       Enum.map_reduce(ids, state, fn project_id, state ->
-        {_skills, state} = skills_for(state, project_id)
+        state = looked_at(state, project_id)
         {entry(state, project_id), state}
       end)
 
@@ -2405,28 +2410,56 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   defp micro_skills_view(state, project_id) do
-    {_skills, state} = skills_for(state, project_id)
+    state = looked_at(state, project_id)
 
     {%{"mode" => micro_mode(state), "projects" => [entry(state, project_id)]}, state}
   end
 
+  # Looking reads a held project's file again; a project published since the
+  # plugin started publishes what that changed, so every page sees its hold end.
+  defp looked_at(state, project_id) do
+    {_skills, state} = skills_for(state, project_id)
+
+    if Map.has_key?(state.published_skills, project_id),
+      do: publish_skills(state, project_id),
+      else: state
+  end
+
+  # A held project's entry also names its file, so a person can repair or remove it.
   defp entry(state, project_id) do
+    view = EnvFacts.view(state.skills[project_id])
+    file = if view["held"], do: %{"file" => micro_skills_path(project_id)}, else: %{}
+
     %{"projectId" => project_id, "history" => History.view(state.folds[project_id])}
-    |> Map.merge(EnvFacts.view(state.skills[project_id]))
+    |> Map.merge(view)
+    |> Map.merge(file)
   end
 
   # Publishes a project's entry on its own topic, `microSkills:<project id>`,
   # when what a person would see in it changed: a turn that taught nothing new
   # only moves a turn count. One project's turn never rebuilds or resends the
-  # others'; the whole listing is the `microSkills` call's.
+  # others'; the whole listing is the `microSkills` call's, and
+  # `microSkillsProjects` only says which project to list again.
   defp publish_skills(state, project_id) do
     entry = entry(state, project_id)
     shape = Map.delete(entry, "turns")
+    published = state.published_skills[project_id]
 
-    if state.published_skills[project_id] == shape do
+    if published == shape do
       state
     else
       Host.publish(@id, "#{@skills_topic}:#{project_id}", entry)
+
+      held = shape["held"] != nil
+      was_held = published != nil and published["held"] != nil
+
+      if published == nil or was_held != held,
+        do:
+          Host.publish(@id, "#{@skills_topic}Projects", %{
+            "projectId" => project_id,
+            "held" => held
+          })
+
       put_in(state.published_skills[project_id], shape)
     end
   end

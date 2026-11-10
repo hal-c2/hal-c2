@@ -93,6 +93,96 @@ defmodule HalC2.TokenEconomizerHeldProjectTest do
     assert File.read!(path) == @garbled
   end
 
+  test "a held project's entry names its file, and reads again once the file is repaired",
+       %{project: p, path: path} do
+    {:ok, state} = TokenEconomizer.init(%{"microSkills" => "envfacts"})
+
+    assert {:reply, {:ok, %{"projects" => [held]}}, state} =
+             TokenEconomizer.handle_call({:micro_skills, %{"projectId" => p}}, nil, state)
+
+    assert held["held"] =~ "not valid JSON"
+    assert held["file"] == path
+
+    File.rm!(path)
+
+    assert {:reply, {:ok, %{"projects" => [entry]}}, _state} =
+             TokenEconomizer.handle_call({:micro_skills, %{"projectId" => p}}, nil, state)
+
+    assert entry["held"] == nil
+    refute Map.has_key?(entry, "file")
+  end
+
+  test "a project is named on microSkillsProjects as it first shows and as its hold ends",
+       %{project: p, path: path} do
+    # The test stands in for the plugin host, which publishes what it is cast.
+    Process.register(self(), HalC2.Plugins)
+    {:ok, state} = TokenEconomizer.init(%{"microSkills" => "envfacts"})
+
+    state = turn(state, p, "r1")
+    assert projects_published() == [%{"projectId" => p, "held" => true}]
+
+    # Another turn of the held project changes nothing the listing shows.
+    state = turn(state, p, "r2")
+    assert projects_published() == []
+
+    # Repaired and asked for by name (a page's Read again), the hold ends for every page.
+    File.rm!(path)
+
+    {:reply, {:ok, _view}, state} =
+      TokenEconomizer.handle_call({:micro_skills, %{"projectId" => p}}, nil, state)
+
+    assert projects_published() == [%{"projectId" => p, "held" => false}]
+
+    # Its next turn names it no more.
+    state = turn(state, p, "r3")
+    assert projects_published() == []
+
+    # Learning in a project already listed is its own topic's alone.
+    _state = turn(state, p, "r4")
+    assert projects_published() == []
+  end
+
+  defp turn(state, p, run) do
+    state
+    |> observe(%{
+      "type" => "turn.started",
+      "threadId" => "a",
+      "runId" => run,
+      "projectId" => p,
+      "provider" => "claudeAgent",
+      "newConversation" => true
+    })
+    |> observe(%{
+      "type" => "turn.item",
+      "threadId" => "a",
+      "runId" => run,
+      "itemType" => "command_execution",
+      "status" => "completed",
+      "input" => "pytest -q",
+      "output" => "bash: pytest: command not found",
+      "exitCode" => 127
+    })
+    |> observe(%{
+      "type" => "turn.finished",
+      "threadId" => "a",
+      "runId" => run,
+      "ordinal" => 1,
+      "status" => "completed"
+    })
+  end
+
+  defp projects_published do
+    receive do
+      {:"$gen_cast", {:publish, "token-economizer", "microSkillsProjects", value}} ->
+        [value | projects_published()]
+
+      {:"$gen_cast", {:publish, "token-economizer", _topic, _value}} ->
+        projects_published()
+    after
+      0 -> []
+    end
+  end
+
   defp observe(state, event) do
     {:reply, :ok, state} = TokenEconomizer.handle_call({:observe, event}, nil, state)
     state

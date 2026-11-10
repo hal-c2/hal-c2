@@ -177,5 +177,10 @@
       "default": 3,
       "description": "How many of a project's turns pass between the model's proposals, when micro-skills ask a model."
     }
-  ]
+  ],
+  "contributes": {
+    "pages": [
+      { "id": "token-economizer", "title": "TokenEconomizer", "qml": "ui/TokenEconomizerPage.qml" }
+    ]
+  }
 }

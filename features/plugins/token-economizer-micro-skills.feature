@@ -1,11 +1,12 @@
 # Sources:
-#   plugins/token-economizer/mc/token_economizer.ex (micro-skills: hears turns, stages facts, microSkills call and topic)
+#   plugins/token-economizer/mc/token_economizer.ex (micro-skills: hears turns, stages facts, microSkills call and topics)
 #   plugins/token-economizer/mc/micro_skills_envfacts.ex, micro_skills_observe.ex (what a turn teaches)
 #   plugins/token-economizer/mc/micro_skills_lifecycle.ex (a fact's formation, retirement and firing gate)
 #   plugins/token-economizer/mc/micro_skills_distiller.ex (the facts a model proposes, held to the turns they cite)
 #   plugins/token-economizer/plugin.json (microSkills, microSkillsMaxFacts, microSkillsMaxTokens, microSkillsProposeEvery, runs:shape, textGeneration)
 #   apps/server-ex/test/steps/plugins/token_economizer_micro_skills_steps.exs, apps/server-ex/test/support/fake_claude.py ("repair the test command", "run the tests the working way"), apps/server-ex/test/support/fake_text_cli.py (the model)
 #   microsoft/TokenEconomizer@cb42207e3e09 tokeneconomizer/microskills/{envfacts,observe,lifecycle,stage,distiller}.py (what this ports)
+#   plugins/token-economizer/ui/TokenEconomizerPage.qml, apps/desktop-qt/tests/native/features/TokenEconomizerSteps.cpp (the plugin's page)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port)
 
 @plugin-token-economizer
@@ -168,7 +169,7 @@ Feature: TokenEconomizer's micro-skills
     Given micro-skills ask the model for facts every 4 turns
     And the project's saved micro-skills are not valid JSON
     When Claude repairs the test command in 4 turns in the thread "Learning"
-    Then TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON
+    Then TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON and naming it
     And the project's saved micro-skills are as they were
     And the model was asked for facts 0 times
     And the person cannot drop a fact on the project, being told it is held
@@ -178,7 +179,7 @@ Feature: TokenEconomizer's micro-skills
     When the person sets the turns between the model's proposals to 0
     Then the settings are refused, naming the turns between proposals
 
-  @desktop @mobile @tui @backlog
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The person sees a project's learned facts and drops one from the plugin's page
     Given TokenEconomizer has learned a fact on a project
     When the person opens TokenEconomizer's page
@@ -186,3 +187,19 @@ Feature: TokenEconomizer's micro-skills
     When the person drops the fact there
     Then a new conversation in that project is not told the fact
     And the page lists it as dropped, with a way to restore it
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  Scenario: A project that learns its first fact while the plugin's page is open shows up there
+    Given the person opens TokenEconomizer's page
+    And the page says nothing is learned yet
+    When TokenEconomizer has learned a fact on a project
+    Then the fact is listed with how many turns confirmed it and how often it fires
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  Scenario: The plugin's page shows a held project with why and where, and reads it again once repaired
+    Given TokenEconomizer holds a project's micro-skills, its saved file not being valid JSON
+    When the person opens TokenEconomizer's page
+    Then the page shows the project as held, saying why and naming its file
+    And the page offers no way to drop or forget there
+    When the person repairs the file and reads it again from the page
+    Then the fact is listed with how many turns confirmed it and how often it fires
