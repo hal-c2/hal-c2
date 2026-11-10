@@ -39,7 +39,8 @@ defmodule HalC2.OpenShell.Policy do
   # disk, and refuses a mount over it; the review neither reads nor writes it.
   @writable [{"/review", 2_147_483_648}, {"/tmp", 536_870_912}]
   # What 0.1.7's supervisor adds to every policy once the sandbox is up, so a process
-  # runs at all; asked for here, so the policy read back is the one asked for.
+  # runs at all. Not asked for, so a gateway whose supervisor adds less keeps the review
+  # narrower; `check/2` passes exactly these in the read-back, each only as here.
   @baseline_read ~w(/var/log /proc /dev/urandom)
   @baseline_write ~w(/dev/null)
 
@@ -73,8 +74,8 @@ defmodule HalC2.OpenShell.Policy do
       version: 1,
       filesystem: %Sb.FilesystemPolicy{
         include_workdir: true,
-        read_only: ~w(/usr /lib /lib64 /bin /sbin /etc /opt) ++ @baseline_read,
-        read_write: Enum.map(@writable, &elem(&1, 0)) ++ @baseline_write
+        read_only: ~w(/usr /lib /lib64 /bin /sbin /etc /opt),
+        read_write: Enum.map(@writable, &elem(&1, 0))
       },
       landlock: %Sb.LandlockPolicy{compatibility: "hard_requirement"},
       process: %Sb.ProcessPolicy{run_as_user: "sandbox", run_as_group: "sandbox"},
@@ -185,9 +186,14 @@ defmodule HalC2.OpenShell.Policy do
     end)
   end
 
-  # In any order, as a gateway may keep them.
-  defp filesystem(%Sb.FilesystemPolicy{} = fs),
-    do: %{fs | read_only: Enum.sort(fs.read_only), read_write: Enum.sort(fs.read_write)}
+  # In any order, as a gateway may keep them, and without what the supervisor adds.
+  defp filesystem(%Sb.FilesystemPolicy{} = fs) do
+    %{
+      fs
+      | read_only: Enum.sort(fs.read_only -- @baseline_read),
+        read_write: Enum.sort(fs.read_write -- @baseline_write)
+    }
+  end
 
   defp filesystem(other), do: other
 

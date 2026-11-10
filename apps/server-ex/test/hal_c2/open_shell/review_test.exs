@@ -191,6 +191,24 @@ defmodule HalC2.OpenShell.ReviewTest do
     refute message =~ "OPENAI_API_KEY"
   end
 
+  # The step most likely to break on the next OpenShell or Codex: its log says how.
+  @tag sandbox: [printenv: :missing]
+  test "an agent that cannot sign in says why in the log, never its placeholder", %{
+    gateway: g,
+    repo: repo
+  } do
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, "The review's agent could not sign in in its sandbox."} =
+                 Review.open(spec(repo))
+      end)
+
+    assert log =~ "could not sign in its agent: printenv failed"
+    refute log =~ "openshell:resolve:env"
+    refute_received {:sandbox_login, _}
+    assert_gone(g)
+  end
+
   test "an agent that cannot run in a sandbox is refused, never run here" do
     assert Review.refusal(@thread, "cursor") =~ "cursor cannot run in yet"
     assert Review.refusal(@thread, "codex") =~ "Run the review again."
