@@ -612,6 +612,37 @@ fn project(model: &Model) -> Vec<Row> {
             continue;
         }
         let kind = kind_of(item);
+        // Subagents a turn started together are one closed group ("2
+        // subagents", their statuses); a lone one is its own row.
+        if kind == "subagent" {
+            let mut statuses: Vec<&str> = Vec::new();
+            let mut next = i;
+            while next < shown.len() {
+                let other = shown[next];
+                if next > i && fold_before.contains_key(other.id.as_str()) {
+                    break;
+                }
+                if kind_of(other) != "subagent"
+                    || folded.contains(other.id.as_str())
+                    || other.run != item.run
+                {
+                    break;
+                }
+                statuses.push(other.status.as_str());
+                next += 1;
+            }
+            if statuses.len() > 1 {
+                rows.push(Row {
+                    id: format!("subagents:{}", item.id),
+                    kind: "subagents".into(),
+                    title: format!("{} subagents", statuses.len()),
+                    text: summary::summarize_statuses(&statuses),
+                    ..Row::default()
+                });
+                i = next;
+                continue;
+            }
+        }
         if kind == "work" {
             let mut row = Row {
                 id: format!("work:{}", item.id),

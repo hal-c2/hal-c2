@@ -782,7 +782,7 @@ fn context_changes_are_marked() {
         (
             json!({"type": "fork", "targetThreadId": "thread-2"}),
             "Conversation fork",
-            "Continues in thread-2",
+            "",
         ),
         (
             json!({"type": "handoff", "summary": "Cart tax so far"}),
@@ -797,7 +797,7 @@ fn context_changes_are_marked() {
         (
             json!({"type": "compaction", "summary": "Earlier turns"}),
             "Context compacted",
-            "",
+            "Earlier turns",
         ),
     ] {
         let mut w = World::new();
@@ -1159,6 +1159,30 @@ fn a_subagent_row_redraws_its_model_only_when_it_changes() {
     w.set("subagent", "agent-1", json!({"model": "sonnet"}));
     assert!(model_redrawn(&w));
     assert_eq!(w.role(w.row("suba-2"), Role::Model), "sonnet");
+}
+
+// Regression (timeline_prop): a group's members are their launches with
+// what their subagents have said over them. A subagent known only by its
+// model still finished as its launch did, not "stopped".
+#[test]
+fn a_group_of_subagents_known_by_model_reads_their_launches_status() {
+    let mut w = World::new();
+    w.seq = 4;
+    w.snapshot(vec![
+        row("run", run("completed")),
+        row("subagent", json!({"id": "agent-1", "model": "opus"})),
+        row(
+            "turn-item",
+            item("suba-2", "subagent", 2, json!({"subagentId": "agent-1"})),
+        ),
+        row(
+            "turn-item",
+            item("suba-3", "subagent", 3, json!({"subagentId": "agent-1"})),
+        ),
+    ]);
+    let group = w.last_of("subagents");
+    assert_eq!(w.role(group, Role::Title), "2 subagents");
+    assert_eq!(w.role(group, Role::Text), "2 done");
 }
 
 #[test]

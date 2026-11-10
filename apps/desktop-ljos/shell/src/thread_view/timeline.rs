@@ -3543,15 +3543,8 @@ impl Timeline {
             if row.kind != "subagents" {
                 continue;
             }
-            let members: Vec<&Obj> = row
-                .items
-                .iter()
-                .map(|id| {
-                    let launch = self.entity("turn-item", id);
-                    let entity = self.entity("subagent", text(launch, "subagentId"));
-                    if entity.is_empty() { launch } else { entity }
-                })
-                .collect();
+            let members: Vec<Obj> = row.items.iter().map(|id| self.subagent_of(id)).collect();
+            let members: Vec<&Obj> = members.iter().collect();
             if summary::group_span(&members).live {
                 return true;
             }
@@ -3564,15 +3557,8 @@ impl Timeline {
             if shown.kind != "subagents" {
                 continue;
             }
-            let members: Vec<&Obj> = shown
-                .items
-                .iter()
-                .map(|id| {
-                    let launch = self.entity("turn-item", id);
-                    let entity = self.entity("subagent", text(launch, "subagentId"));
-                    if entity.is_empty() { launch } else { entity }
-                })
-                .collect();
+            let members: Vec<Obj> = shown.items.iter().map(|id| self.subagent_of(id)).collect();
+            let members: Vec<&Obj> = members.iter().collect();
             if summary::group_span(&members).live {
                 self.out.push(Out::DataChanged {
                     first: row,
@@ -3581,6 +3567,19 @@ impl Timeline {
                 });
             }
         }
+    }
+
+    /// Turn item `id` with its subagent's fields over it (subagentOf): the
+    /// entity moves on after the launch, and keeps only what it has said.
+    fn subagent_of(&self, id: &str) -> Obj {
+        let mut agent = self.entity("turn-item", id).clone();
+        let subagent = text(&agent, "subagentId").to_owned();
+        for (key, value) in self.entity("subagent", &subagent) {
+            if key != "id" && !value.is_null() {
+                agent.insert(key.clone(), value.clone());
+            }
+        }
+        agent
     }
 
     /// The card of a subagent the user opened, the same on either desktop
@@ -3594,16 +3593,7 @@ impl Timeline {
         if row.kind != "subagent" {
             return Obj::new();
         }
-        // The item with its subagent's fields over it (subagentOf).
-        let mut agent = self
-            .entity("turn-item", row.items.first().map_or("", String::as_str))
-            .clone();
-        let id = text(&agent, "subagentId").to_owned();
-        for (key, value) in self.entity("subagent", &id) {
-            if key != "id" && !value.is_null() {
-                agent.insert(key.clone(), value.clone());
-            }
-        }
+        let agent = self.subagent_of(row.items.first().map_or("", String::as_str));
         let status = text(&agent, "status");
         let mut card = Obj::new();
         let model = text(&agent, "model").trim();
@@ -3751,18 +3741,12 @@ impl Timeline {
         };
         let kind = text(item, "type");
         // A subagents group's members, as their turn items read now.
-        let members: Vec<&Obj> = if row.kind == "subagents" {
-            row.items
-                .iter()
-                .map(|id| {
-                    let launch = self.entity("turn-item", id);
-                    let entity = self.entity("subagent", text(launch, "subagentId"));
-                    if entity.is_empty() { launch } else { entity }
-                })
-                .collect()
+        let members: Vec<Obj> = if row.kind == "subagents" {
+            row.items.iter().map(|id| self.subagent_of(id)).collect()
         } else {
             Vec::new()
         };
+        let members: Vec<&Obj> = members.iter().collect();
         // A subagent's row follows its entity, which moves on after the
         // turn item.
         let agent = if row.kind == "subagent" {
