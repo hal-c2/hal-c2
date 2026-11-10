@@ -828,13 +828,26 @@ defmodule HalC2.OpenShell.Review do
   defp sign_in(conn, name, %{login: login, key: key}) do
     environment = %{"HOME" => Policy.home()}
 
-    with {:ok, out} <- run(conn, name, ["printenv", key], environment: environment),
-         placeholder when placeholder != "" <- String.trim(out),
-         {:ok, _} <- run(conn, name, login, environment: environment, input: placeholder <> "\n") do
+    # Each failure names its step and never the placeholder: the next OpenShell or
+    # agent version is most likely to break here, and the log is where to see how.
+    with {:printenv, {:ok, out}} <-
+           {:printenv, run(conn, name, ["printenv", key], environment: environment)},
+         {:placeholder, placeholder} when placeholder != "" <- {:placeholder, String.trim(out)},
+         {:login, {:ok, _}} <-
+           {:login, run(conn, name, login, environment: environment, input: placeholder <> "\n")} do
       :ok
     else
-      _ -> {:error, "The review's agent could not sign in in its sandbox."}
+      {:placeholder, _} ->
+        sign_in_failed(name, "#{key} is empty in the sandbox's environment")
+
+      {step, {:error, reason}} ->
+        sign_in_failed(name, "#{step} failed: #{inspect(reason)}")
     end
+  end
+
+  defp sign_in_failed(name, why) do
+    Logger.warning("openshell: review #{name} could not sign in its agent: #{why}")
+    {:error, "The review's agent could not sign in in its sandbox."}
   end
 
   # A command run to its end in the sandbox, given `opts[:input]` on its stdin:

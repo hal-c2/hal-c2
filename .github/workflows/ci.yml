@@ -212,9 +212,12 @@ jobs:
 
       # The tests that mount another machine's folder skip without it (HalC2.MachineFiles).
       # Regex content search needs ripgrep, which the runner image lacks (HalC2.Workspace).
+      - name: Install fuse3 and ripgrep
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+
       - name: Build the machine-files helper
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3 ripgrep
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       # The orphan reaper kills through it, and with `kill` without it (HalC2.Subprocess.Orphans).
@@ -266,9 +269,12 @@ jobs:
       - name: Setup the MC
         uses: ./.github/actions/setup-mc
 
+      - name: Install fuse3
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3'
+
       - name: Build the machine-files helper
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       - name: Build the pid-kill helper
@@ -372,14 +378,19 @@ jobs:
       # The terminal scenarios open zsh, which the runner image lacks.
       - name: Install zsh
         if: contains(matrix.dirs, 'terminal')
-        run: sudo apt-get update && sudo apt-get install -y zsh
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh zsh'
 
       # Files on another machine mount them with FUSE; they skip without the helper.
       # Regex content search needs ripgrep, which the runner image lacks.
+      - name: Install fuse3 and ripgrep
+        if: contains(matrix.dirs, 'files')
+        timeout-minutes: 10
+        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+
       - name: Build the machine-files helper
         if: contains(matrix.dirs, 'files')
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse3 ripgrep
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       # space/diagrams.feature draws with the real helper.

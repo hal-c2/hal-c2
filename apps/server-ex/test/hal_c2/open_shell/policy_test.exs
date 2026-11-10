@@ -29,6 +29,29 @@ defmodule HalC2.OpenShell.PolicyTest do
     assert Policy.check(policy, policy) == :ok
   end
 
+  # 0.1.7's supervisor adds these once the sandbox is up; a review never asks for them,
+  # so a gateway that adds less leaves it narrower.
+  test "the supervisor's own paths pass the read-back, and only as it adds them" do
+    wanted = Policy.review(@review)
+    refute "/proc" in wanted.filesystem.read_only
+    refute "/dev/null" in wanted.filesystem.read_write
+
+    add = fn policy, read, write ->
+      update_in(
+        policy.filesystem,
+        &%{&1 | read_only: &1.read_only ++ read, read_write: &1.read_write ++ write}
+      )
+    end
+
+    assert Policy.check(add.(wanted, ~w(/var/log /proc /dev/urandom), ~w(/dev/null)), wanted) ==
+             :ok
+
+    for {read, write} <- [{~w(/home), []}, {[], ~w(/proc)}, {[], ~w(/var/log)}] do
+      assert Policy.check(add.(wanted, read, write), wanted) ==
+               {:error, "the gateway changes the paths it may read or write"}
+    end
+  end
+
   # A gateway may keep a rule's endpoints, ports and addresses in its own order; what
   # they let through is what decides.
   test "a policy kept in another order is the one asked for, and one wider is not" do

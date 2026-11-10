@@ -86,6 +86,16 @@ defmodule HalC2.Codex.GeneratedImages do
 
   def turn_ended(state, _status, _stream), do: state
 
+  @doc "The images the current turn is still generating, by Codex's ids."
+  def generating(%{turn: %{native_turn_id: turn_id}} = state) when is_binary(turn_id) do
+    case Map.get(images(state), turn_id) do
+      %{running: running} -> MapSet.to_list(running)
+      nil -> []
+    end
+  end
+
+  def generating(_state), do: []
+
   @doc "The app-server is gone: images it was still generating never arrive."
   def forget(state), do: Map.put(state, :images, %{})
 

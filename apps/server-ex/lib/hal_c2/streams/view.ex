@@ -318,7 +318,9 @@ defmodule HalC2.Streams.View do
   offset to now. What the client held at its offset is not known here, only what it
   holds now, so an entity held now is taken to have been held then. A run out of the
   window deletes its items, and one waiting in the queue, which may have rejoined
-  it, sends its message again: all it holds before it runs.
+  it, sends its message again: all it holds before it runs. An item sent whole that
+  way is as it is now, so its own later patch is not sent too: applied after it, an
+  append would show twice.
   """
   @spec replayed(t, StreamState.t(), [HalC2.Store.event()]) :: [HalC2.Store.event()]
   def replayed(view, stream, events) do
@@ -326,11 +328,14 @@ defmodule HalC2.Streams.View do
     # What a run that settled since left in memory may have gone cold.
     entities = StreamState.lookup(stream, for(%{kind: k, entity: id} <- events, do: {k, id}))
 
-    Enum.flat_map(events, fn %{kind: kind, entity: id, patch: patch} = event ->
+    events
+    |> Enum.flat_map_reduce(MapSet.new(), fn %{kind: kind, entity: id, patch: patch} = event,
+                                             settled ->
       entity = entities[{kind, id}]
 
       sent =
-        if StreamState.void?(event) or not holds?(view, stream, kind, entity) do
+        if StreamState.void?(event) or MapSet.member?(settled, {kind, id}) or
+             not holds?(view, stream, kind, entity) do
           []
         else
           # `Wire.replay_patch/3` decides replacement against trimmed patch: the
@@ -343,8 +348,10 @@ defmodule HalC2.Streams.View do
         end
 
       # Whether or not the client holds runs: its items are what it is owed.
-      sent ++ rolled_since(view, stream, items, event)
+      rolled = rolled_since(view, stream, items, event)
+      {sent ++ rolled, Enum.into(rolled, settled, &{&1.kind, &1.entity})}
     end)
+    |> elem(0)
   end
 
   defp rolled_since(%{window: window} = view, stream, items, %{kind: "run", entity: run} = event)

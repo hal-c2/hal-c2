@@ -122,7 +122,9 @@ defmodule HalC2.PluginsTurnHooksTest do
     run_id = started["runId"]
 
     assert_receive {:observed, %{"type" => "turn.item", "tool" => "Bash"} = item}, 5_000
-    assert %{"runId" => ^run_id, "itemType" => "command_execution"} = item
+    # Its thread's project, so a plugin that heard nothing of the turn knows whose it is.
+    assert %{"runId" => ^run_id, "itemType" => "command_execution", "projectId" => "project-1"} =
+             item
 
     assert_receive {:observed,
                     %{"type" => "turn.item", "itemType" => "assistant_message"} = said},
@@ -134,6 +136,25 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id} = finished}, 5_000
     assert finished["status"] == "completed"
+    assert is_integer(finished["ordinal"])
+  end
+
+  test "a plugin hears a Claude subagent's calls as its parent turn's, marked as a subagent's",
+       %{thread_id: thread_id} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+
+    {:ok, _} = send_message(thread_id, "m1", "subagent works on: Check the tests")
+
+    assert_receive {:observed, %{"type" => "turn.started", "runId" => run_id}}, 5_000
+
+    assert_receive {:observed, %{"type" => "turn.item", "tool" => "Bash"} = call}, 5_000
+    assert %{"threadId" => ^thread_id, "runId" => ^run_id, "subagent" => true} = call
+    assert call["projectId"] == "project-1"
+    assert %{"itemType" => "command_execution", "input" => "mix test"} = call
+    assert_receive {:observed, %{"type" => "turn.finished", "runId" => ^run_id}}, 5_000
+    # What the subagent said is no call of its.
+    refute_received {:observed, %{"type" => "turn.item", "subagent" => true, "tool" => nil}}
   end
 
   test "a plugin hears which file a file change wrote, and a long output's or answer's end" do
@@ -452,6 +473,159 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert two["tokenUsage"] == nil
   end
 
+  test "a plugin hears Codex use the tools no thread shows, its subagents' too, and the thread shows them no more than before",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "use own tools")
+
+    for {type, tool} <- [
+          {"image_view", "view_image"},
+          {"image_generation", "image_generation"},
+          {"collab_tool_call", "wait"}
+        ] do
+      assert_receive {:observed, %{"type" => "turn.item", "itemType" => ^type} = item}, 5_000
+      assert %{"tool" => ^tool, "threadId" => ^thread_id, "status" => "completed"} = item
+    end
+
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+
+    {:ok, _} = send_message(thread_id, "m2", "spawn a subagent that views an image")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "image_view"} = image},
+                   5_000
+
+    assert %{"threadId" => ^thread_id, "subagent" => true, "tool" => "view_image"} = image
+
+    assert_receive {:observed,
+                    %{
+                      "type" => "turn.item",
+                      "itemType" => "collab_tool_call",
+                      "tool" => "spawnAgent"
+                    }},
+                   5_000
+
+    await_statuses(thread_id, ["completed", "completed"])
+
+    shown = thread_id |> state() |> StreamState.list("turn-item") |> Enum.map(& &1["type"])
+    assert Enum.all?(~w(image_view image_generation collab_tool_call), &(&1 not in shown))
+  end
+
+  test "a Codex subagent started before an update in place sets its goal without crashing its thread",
+       %{work: work, tmp_dir: dir} do
+    gates = Path.join(dir, "gates")
+    File.mkdir_p!(gates)
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_CODEX_GATE=#{gates}",
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+    {:ok, _} = send_message(thread_id, "m1", "spawn a subagent that sets a goal")
+
+    # The subagent runs; its handle is the one an MC from before this release made,
+    # which had no run in it.
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "subagent"}}, 5_000
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+
+    :sys.replace_state(runtime, fn state ->
+      update_in(state.subagents["native-child-1"].sub, &Map.delete(&1, :run))
+    end)
+
+    File.write!(Path.join(gates, "goal"), "")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "goal"} = goal}, 5_000
+    assert %{"threadId" => ^thread_id, "subagent" => true} = goal
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+    assert [{^runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+  end
+
+  test "a plugin hears a Codex image that failed as failed",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "make a failing image")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "image_generation"} = gen},
+                   5_000
+
+    assert gen["status"] == "failed"
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+  end
+
+  test "a plugin hears a Codex image still generating as its turn ends before the turn ends",
+       %{work: work, tmp_dir: dir} do
+    gates = Path.join(dir, "gates")
+    File.mkdir_p!(gates)
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_CODEX_GATE=#{gates}",
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+    {:ok, _} = send_message(thread_id, "m1", "draw slowly")
+
+    # Its turn ends with the image still generating: its use is the turn's, heard first.
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "image_generation"} = gen},
+                   5_000
+
+    assert %{"threadId" => ^thread_id, "tool" => "image_generation", "status" => "inProgress"} =
+             gen
+
+    refute_received {:observed, %{"type" => "turn.finished"}}
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+    File.write!(Path.join(gates, "image"), "")
+  end
+
+  test "a plugin hears no earlier Codex turn's agent call that ends late as this turn's",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    # A wait call of an earlier turn ends as this one runs.
+    {:ok, _} = send_message(thread_id, "m1", "late collab")
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    refute_received {:observed, %{"type" => "turn.item", "itemType" => "collab_tool_call"}}
+    await_statuses(thread_id, ["completed"])
+  end
+
+  test "a plugin hears a Codex collaboration call that failed as failed",
+       %{work: work} do
+    grant(%{"listener" => ["turns:observe"]})
+    feed("listener")
+    thread_id = create_thread(work, "codex", "gpt-5.4")
+
+    {:ok, _} = send_message(thread_id, "m1", "run a collab call that fails")
+
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "collab_tool_call"} = call},
+                   5_000
+
+    assert %{"tool" => "wait", "status" => "failed"} = call
+    assert_receive {:observed, %{"type" => "turn.finished"}}, 5_000
+    await_statuses(thread_id, ["completed"])
+  end
+
   test "a plugin hears and reads the usage a Codex goal's run ended with between Codex's turns",
        %{work: work} do
     grant(%{"listener" => ["turns:observe"]})
@@ -469,6 +643,9 @@ defmodule HalC2.PluginsTurnHooksTest do
     thread_id = create_thread(work, "codex", "gpt-5.4")
     {:ok, _} = send_message(thread_id, "m1", "/goal report usage 1500")
 
+    # Its goal's use, which no thread shows as a call.
+    assert_receive {:observed, %{"type" => "turn.item", "itemType" => "goal"} = goal}, 5_000
+    assert %{"tool" => "update_goal", "threadId" => ^thread_id} = goal
     assert_receive {:observed, %{"type" => "turn.finished"} = finished}, 5_000
     assert %{"usedTokens" => 1500, "updatedAt" => at} = finished["tokenUsage"]
     assert is_binary(at)
@@ -493,8 +670,13 @@ defmodule HalC2.PluginsTurnHooksTest do
                     %{"type" => "turn.item", "itemType" => "command_execution"} = stopped},
                    5_000
 
-    assert %{"status" => "interrupted", "input" => "npm run dev", "runId" => ^codex_run} =
-             stopped
+    assert %{
+             "status" => "interrupted",
+             "input" => "npm run dev",
+             "runId" => ^codex_run,
+             "provider" => "codex",
+             "projectId" => "project-1"
+           } = stopped
 
     {:ok, _} = send_message(claude, "m1", "background commands: build")
     [%{"id" => claude_run}] = await_statuses(claude, ["completed"])
@@ -505,7 +687,12 @@ defmodule HalC2.PluginsTurnHooksTest do
                     %{"type" => "turn.item", "threadId" => ^claude, "tool" => "Bash"} = ended},
                    5_000
 
-    assert %{"status" => "interrupted", "runId" => ^claude_run} = ended
+    assert %{
+             "status" => "interrupted",
+             "runId" => ^claude_run,
+             "provider" => "claudeAgent",
+             "projectId" => "project-1"
+           } = ended
   end
 
   test "a plugin hears what a Claude edit changed and what a web call searched for" do
@@ -716,7 +903,21 @@ defmodule HalC2.PluginsTurnHooksTest do
     assert Enum.any?(one["items"], &(&1["tool"] == "Bash"))
 
     assert {:ok, [^two]} = Host.history("reader", thread_id, limit: 1)
-    assert {:error, _} = Host.history("reader", "thread-none")
+    assert {:error, {:gone, _}} = Host.history("reader", "thread-none")
+
+    # Moved to another MC, the thread may come back with its turns: it is away.
+    moved = %{"mc" => "elsewhere@host", "label" => "Elsewhere", "at" => "2026-11-09T00:00:00Z"}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"thread", thread_id, %{"s" => %{"movedTo" => moved}}}
+      ])
+
+    assert {:error, {:away, _}} = Host.history("reader", thread_id)
+
+    # A deleted thread runs no more turns: it is gone, not unreadable.
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
+    assert {:error, {:gone, _}} = Host.history("reader", thread_id)
   end
 
   test "a plugin reads an older turn's calls after they went cold" do
@@ -777,6 +978,46 @@ defmodule HalC2.PluginsTurnHooksTest do
 
     :ok = HalC2.Claude.ThreadRuntime.interrupt(thread_id, working["id"])
     await_statuses(thread_id, ["completed", "completed", "interrupted"])
+  end
+
+  test "a plugin reads a thread's turns forwards, a page after the last",
+       %{thread_id: thread_id} do
+    grant(%{"reader" => ["turns:observe"]})
+
+    {:ok, _} = send_message(thread_id, "m1", "one")
+    await_statuses(thread_id, ["completed"])
+    {:ok, _} = send_message(thread_id, "m2", "two")
+    await_statuses(thread_id, ["completed", "completed"])
+    {:ok, _} = send_message(thread_id, "m3", "wait m3")
+    [first, second, working] = await_statuses(thread_id, ["completed", "completed", "running"])
+
+    assert {:ok, [one]} = Host.history("reader", thread_id, after: nil, limit: 1)
+    assert one["runId"] == first["id"]
+    # A turn under way is not among them, nor is it a cut.
+    assert {:ok, [two]} = Host.history("reader", thread_id, after: first["id"], limit: 1)
+    assert two["runId"] == second["id"]
+    assert {:ok, []} = Host.history("reader", thread_id, after: second["id"])
+    assert {:ok, [^one, ^two]} = Host.history("reader", thread_id, after: "run:none")
+
+    :ok = HalC2.Claude.ThreadRuntime.interrupt(thread_id, working["id"])
+    await_statuses(thread_id, ["completed", "completed", "interrupted"])
+  end
+
+  test "a plugin lists a project's threads on this MC, oldest first, those deleted left out",
+       %{thread_id: first, work: work} do
+    grant(%{"reader" => ["turns:observe"]})
+    second = create_thread(work)
+    deleted = create_thread(work)
+    {:ok, _} = send_message(second, "m1", "hello")
+    await_statuses(second, ["completed"])
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => deleted})
+    for id <- [first, second, deleted], do: :ok = HalC2.Streams.flush_shell(id)
+
+    assert {:ok, [one, two]} = Host.project_threads("reader", "project-1")
+    assert one["id"] == first and two["id"] == second
+    assert one["latestUserMessageAt"] == nil and is_binary(two["latestUserMessageAt"])
+    assert {:ok, []} = Host.project_threads("reader", "project-none")
+    assert {:error, _} = Host.project_threads("stranger", "project-1")
   end
 
   test "text generation for a plugin reports what the provider said it used, or an estimate" do

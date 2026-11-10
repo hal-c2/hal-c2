@@ -500,7 +500,14 @@ defmodule HalC2.Plugins.Host do
   "startedAt", "completedAt", "tokenUsage", "items"}`, each item as plugins hear it
   (`HalC2.Orchestration.TurnWriter.observed_item/1`), in the turn's order. What a
   plugin that hears turns missed while it was not running. Needs `turns:observe`.
-  `{:error, message}` when there is no such thread.
+  `{:error, {:gone, message}}` when there is no such thread or it was deleted: its
+  turns will never be read. `{:error, {:away, message}}` while it is on another MC,
+  which keeps its turns until it moves back here (`HalC2.ThreadMove`).
+
+  `"subagents"` says whether a provider's own subagent worked during the turn, started
+  in it or before: plugins hear a subagent's calls as its parent turn's
+  (`HalC2.Orchestration.NativeSubagent.observe/2`), but its child thread keeps them,
+  so the turn's `"items"` do not have them.
 
   `"provider"` is the driver the turn ran on (`"claudeAgent"`, `"codex"`, ...), kept
   with the thread, so it is known after the instance the turn ran on is deleted and
@@ -510,17 +517,53 @@ defmodule HalC2.Plugins.Host do
   ordinal), whether that run ended or not, and takes `limit` of those: a plugin that
   hears of a turn late, after more turns ended, still gets the turns before it. A run
   the thread does not have cuts nothing off.
+
+  `after: run_id` keeps only the turns that started after run `run_id` (a higher
+  ordinal) and takes the oldest `limit` of those, `after: nil` the oldest `limit` of
+  all: a plugin reads a thread's whole history forwards a page at a time, each page
+  after the last turn of the one before. A run the thread does not have cuts nothing
+  off.
   """
   def history(id, thread_id, opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
-    before = Keyword.get(opts, :before)
+
+    cut =
+      if Keyword.has_key?(opts, :after),
+        do: {:after, opts[:after]},
+        else: {:before, opts[:before]}
 
     with :ok <- permit(id, "turns:observe") do
       HalC2.Streams.read(thread_id, fn stream ->
-        if HalC2.StreamState.get(stream, "thread")[thread_id],
-          do: {:ok, turns(stream, limit, before)},
-          else: {:error, "There is no thread #{thread_id}."}
+        case HalC2.StreamState.get(stream, "thread")[thread_id] do
+          nil -> {:error, {:gone, "There is no thread #{thread_id}."}}
+          %{"deletedAt" => at} when at != nil -> {:error, {:gone, "#{thread_id} was deleted."}}
+          %{"movedTo" => %{}} -> {:error, {:away, "#{thread_id} is on another machine."}}
+          _thread -> {:ok, turns(stream, limit, cut)}
+        end
       end)
+    end
+  end
+
+  @doc """
+  The threads of project `project_id` on this MC that are not deleted, oldest first:
+  `%{"id", "createdAt", "updatedAt", "latestUserMessageAt", "latestRunCompletedAt"}`,
+  `latestUserMessageAt` nil for a thread never sent a message. For a plugin that learns
+  from a project's earlier turns (`history/3` reads each thread's). A thread moved to
+  another machine is that machine's. Needs `turns:observe`.
+  """
+  def project_threads(id, project_id) do
+    with :ok <- permit(id, "turns:observe") do
+      {:ok,
+       for(
+         {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+         mc == node() and row["projectId"] == project_id and row["deletedAt"] == nil,
+         do:
+           Map.take(
+             row,
+             ~w(id createdAt updatedAt latestUserMessageAt latestRunCompletedAt)
+           )
+       )
+       |> Enum.sort_by(&{&1["createdAt"] || "", &1["id"]})}
     end
   end
 
@@ -532,6 +575,27 @@ defmodule HalC2.Plugins.Host do
   def run_active?(id, thread_id, run_id) do
     granted?(id, "turns:observe") and
       HalC2.Orchestration.run_under_way?(HalC2.Streams.get(thread_id, "run", run_id))
+  end
+
+  @doc """
+  The project a thread is in, from its stream: `{:ok, project id}`, kept once the
+  thread is deleted or moved away. When its record names none, `{:error, {:gone,
+  message}}` for a thread deleted or never here, `{:error, {:away, message}}` for one
+  on another machine and `{:error, {:unknown, message}}` otherwise. Needs
+  `turns:observe`.
+  """
+  def thread_project(id, thread_id) do
+    with :ok <- permit(id, "turns:observe") do
+      HalC2.Streams.read(thread_id, fn stream ->
+        case HalC2.StreamState.get(stream, "thread")[thread_id] do
+          nil -> {:error, {:gone, "There is no thread #{thread_id}."}}
+          %{"projectId" => project_id} when is_binary(project_id) -> {:ok, project_id}
+          %{"deletedAt" => at} when at != nil -> {:error, {:gone, "#{thread_id} was deleted."}}
+          %{"movedTo" => %{}} -> {:error, {:away, "#{thread_id} is on another machine."}}
+          _thread -> {:error, {:unknown, "#{thread_id} names no project."}}
+        end
+      end)
+    end
   end
 
   @doc """
@@ -552,7 +616,7 @@ defmodule HalC2.Plugins.Host do
 
   @ended ~w(completed interrupted failed cancelled)
 
-  defp turns(stream, limit, before) do
+  defp turns(stream, limit, cut) do
     alias HalC2.StreamState
 
     attempts = StreamState.get(stream, "run-attempt")
@@ -560,9 +624,14 @@ defmodule HalC2.Plugins.Host do
     provider_threads = StreamState.get(stream, "provider-thread")
     runs = StreamState.get(stream, "run")
 
+    subagents =
+      for {_id, %{"origin" => "provider_native"} = sub} <- StreamState.get(stream, "subagent"),
+          do: sub
+
     cutoff =
-      case runs[before] do
-        %{"ordinal" => ordinal} -> &(&1["ordinal"] < ordinal)
+      case {cut, runs[elem(cut, 1)]} do
+        {{:before, _}, %{"ordinal" => ordinal}} -> &(&1["ordinal"] < ordinal)
+        {{:after, _}, %{"ordinal" => ordinal}} -> &(&1["ordinal"] > ordinal)
         _ -> fn _run -> true end
       end
 
@@ -571,7 +640,7 @@ defmodule HalC2.Plugins.Host do
       |> Map.values()
       |> Enum.filter(&(&1["status"] in @ended and cutoff.(&1)))
       |> Enum.sort_by(& &1["ordinal"])
-      |> Enum.take(-limit)
+      |> Enum.take(if(elem(cut, 0) == :after, do: limit, else: -limit))
 
     # The items of those runs alone, an older run's read back from the store once it
     # has gone cold (`HalC2.StreamState`, "Hot and cold").
@@ -597,9 +666,31 @@ defmodule HalC2.Plugins.Host do
         "items" =>
           (items[run["id"]] || [])
           |> Enum.sort_by(& &1["ordinal"])
-          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1)
+          |> Enum.map(&HalC2.Orchestration.TurnWriter.observed_item/1),
+        # A thread it delegated to (`"app_owned"`) makes its calls in turns of its own.
+        "subagents" =>
+          Enum.any?(
+            items[run["id"]] || [],
+            &(&1["type"] == "subagent" and &1["origin"] == "provider_native")
+          ) or Enum.any?(subagents, &worked_in?(&1, run))
       }
     end)
+  end
+
+  # A subagent worked during `run` if it started in it, or one of the spans it worked
+  # overlaps it: each before it was resumed (`HalC2.Orchestration.NativeSubagent.resume/3`),
+  # and the last, from its start or latest resume, still open while it runs.
+  defp worked_in?(sub, run) do
+    spans =
+      (sub["workedSpans"] || []) ++
+        [%{"from" => sub["resumedAt"] || sub["startedAt"], "to" => sub["completedAt"]}]
+
+    sub["runId"] == run["id"] or Enum.any?(spans, &overlaps?(&1, run))
+  end
+
+  defp overlaps?(%{"from" => from, "to" => to}, run) do
+    is_binary(from) and is_binary(run["completedAt"]) and from <= run["completedAt"] and
+      (to == nil or to >= (run["startedAt"] || ""))
   end
 
   @doc "Whether plugin `id` was granted `permission`."

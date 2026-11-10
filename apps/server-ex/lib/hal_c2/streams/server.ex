@@ -704,6 +704,14 @@ defmodule HalC2.Streams.Server do
     view = %{kinds: client[:kinds], window: window}
     replay = resumes? && replay(state, offset)
 
+    # How far a replay reaches, whatever of it is sent: an event left out because one
+    # sent whole holds it must not come again to a client cut off before `live`.
+    through =
+      case replay do
+        [_ | _] -> List.last(replay).seq
+        _ -> offset
+      end
+
     {view,
      fn stream ->
        missed =
@@ -747,7 +755,7 @@ defmodule HalC2.Streams.Server do
            send_chunks(
              events,
              fn chunk, more ->
-               seq = if more == :done, do: List.last(chunk).seq, else: offset
+               seq = if more == :done, do: max(List.last(chunk).seq, through), else: offset
                send(pid, {:hal_c2_stream, id, {:events, chunk, seq}})
              end,
              false

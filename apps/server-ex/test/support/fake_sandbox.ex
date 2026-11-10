@@ -7,7 +7,8 @@ defmodule HalC2.Test.FakeSandbox do
   - `tar -x ... -C dest -f -` unpacks its stdin into `dest`;
   - `sh -c script` runs `script` here, `/review` in it rewritten to `root`;
   - `printenv NAME` answers the placeholder OpenShell puts in a sandbox's
-    environment for a provider's credential, `openshell:resolve:env:fake_NAME`;
+    environment for a provider's credential, `openshell:resolve:env:fake_NAME`, or
+    with `printenv: :missing` exits 1, as for a provider OpenShell did not attach;
   - `codex login --with-api-key` keeps its stdin as the sandbox's Codex login, and
     tells `test` `{:sandbox_login, key}`: as 0.117's, the fake's Codex turn fails
     without one;
@@ -110,6 +111,8 @@ defmodule HalC2.Test.FakeSandbox do
 
     io.exit.(0)
   end
+
+  defp run(["printenv", _name], io, %{opts: %{printenv: :missing}}), do: io.exit.(1)
 
   defp run(["printenv", name], io, _s) do
     io.stdout.("openshell:resolve:env:fake_#{name}\n")

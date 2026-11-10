@@ -27,6 +27,9 @@ defmodule HalC2.CodeReviewTest do
     def send_resp(_state, _status, _headers, _body), do: raise("the connection is closed")
   end
 
+  # Ahead of the rest, as what this MC holds is keyed by its node's name.
+  setup context, do: if(context[:laptop], do: %{laptop: start_laptop()}, else: :ok)
+
   setup %{tmp_dir: dir} do
     restore = [
       env(~w(PATH FAKE_GH_RULES FAKE_GH_LOG GIT_SSH_COMMAND FAKE_CODEX_GATE) ++ @git_config),
@@ -1019,6 +1022,46 @@ defmodule HalC2.CodeReviewTest do
 
     assert_receive {:hal_c2_plugin_topic, _, "code-review", "reviews", %{"reviews" => [_ | _]}},
                    1_000
+  end
+
+  # A run reads where other machines have its head when it steps back, so a run the
+  # limit held back, back at a head it never reviewed, showed it was limited while the
+  # laptop had that head published.
+  @tag :laptop
+  test "a review the limit holds back shows where another machine has its head",
+       %{laptop: laptop} = context do
+    first = start_review()
+    arguments = %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, first["threadId"])
+    settle()
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+
+    # The pull request is back at the first head, which the laptop has published.
+    back = context.shas[1]
+    row = %{"sha" => back, "status" => "published", "claimed" => true}
+    :ok = :erpc.call(laptop.node, :persistent_term, :put, [:claims, %{@key => row}])
+    push!(context, 1)
+    rules!(context, head: 1)
+    refresh()
+    assert %{"status" => "running", "headSha" => ^back} = review()
+
+    # A desk machine out of reach never heard of the run starting.
+    desk = "hal_c2@desk.hal-c2"
+    assert GenServer.call(@server, {:told, @key, thread_id, [desk], []}) == :limited
+
+    # The read of the laptop's claims it sends itself goes out once the server takes it.
+    :sys.get_state(@server)
+    settle()
+
+    assert %{
+             "status" => "ready",
+             "limited" => %{"apart" => [^desk]},
+             "elsewhere" => %{"machine" => "laptop", "status" => "published", "claimed" => true}
+           } = review()
   end
 
   test "a review run again with the same findings is not published on what the run before showed",
@@ -2490,6 +2533,29 @@ defmodule HalC2.CodeReviewTest do
     assert [_] = posts(context)
   end
 
+  # The code review property's model took a dismissal on a review kept under local
+  # publishing, which the plugin refuses: a kept review is never posted.
+  test "a comment of a review kept in HAL-C2 cannot be dismissed", context do
+    rules!(context, head: 1)
+    save_settings(%{"publishing" => "local"})
+    review = start_review()
+
+    arguments = %{
+      "verdict" => "comment",
+      "summary" => "One thing.",
+      "comments" => [%{"path" => "src/limits.ts", "line" => 1, "body" => "One."}]
+    }
+
+    {:ok, _} = HalC2.Plugins.call_tool("code_review_report", arguments, review["threadId"])
+    settle()
+
+    assert {:error, %{"message" => message}} =
+             call("dismiss", %{"key" => @key, "commentId" => "c1"})
+
+    assert message =~ "not waiting to be published"
+    assert %{"status" => "kept", "comments" => [%{"dismissed" => false}]} = review()
+  end
+
   # While the plugin started again, its claims table was up before the claims saved on
   # disk were in it, so a peer reading it then was told this machine claimed nothing.
   test "a plugin starting again holds its saved claims from the moment a peer can read them",
@@ -3107,6 +3173,64 @@ defmodule HalC2.CodeReviewTest do
 
     git!(seed, ["push", "-q", bare, "#{shas[2]}:refs/fixtures/2", "#{shas[1]}:refs/pull/1/head"])
     shas
+  end
+
+  # A bare node connected to this one (`@tag :laptop`), with no MC: only a `HalC2.Plugins.Host` whose
+  # `peer/3` answers the code-review claims in its `:claims` persistent term, and no
+  # shared starts. It stops with the test, and the distribution started for it too.
+  defp start_laptop do
+    alive? = Node.alive?()
+
+    unless alive? do
+      {_, 0} = System.cmd("epmd", ["-daemon"])
+      name = :"hal_c2_test#{System.unique_integer([:positive])}@127.0.0.1"
+      {:ok, _} = Node.start(name, :longnames)
+    end
+
+    {:ok, pid, node} =
+      :peer.start_link(%{
+        name: :"hal_c2_laptop#{System.unique_integer([:positive])}",
+        host: ~c"127.0.0.1",
+        longnames: true,
+        args: [~c"-setcookie", Atom.to_charlist(Node.get_cookie())]
+      })
+
+    {:module, _} = :erpc.call(node, :code, :load_binary, [HalC2.Plugins.Host, ~c"laptop", stub()])
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: :peer.stop(pid)
+      unless alive?, do: Node.stop()
+    end)
+
+    %{pid: pid, node: node}
+  end
+
+  defp stub do
+    source = ~S"""
+    -module('Elixir.HalC2.Plugins.Host').
+    -export([peer/3]).
+    peer(<<"code-review">>, claims, [Keys]) ->
+        Rows = maps:with(Keys, persistent_term:get(claims, #{})),
+        {ok, #{<<"machine">> => <<"laptop">>, <<"result">> => Rows}};
+    peer(<<"code-review">>, Function, _) when Function == starts; Function == count_start ->
+        {ok, #{<<"machine">> => <<"laptop">>, <<"result">> => []}};
+    peer(_, _, _) ->
+        none.
+    """
+
+    {:ok, tokens, _} = :erl_scan.string(String.to_charlist(source))
+
+    forms =
+      tokens
+      |> Enum.chunk_by(&match?({:dot, _}, &1))
+      |> Enum.chunk_every(2)
+      |> Enum.map(fn chunk ->
+        {:ok, form} = :erl_parse.parse_form(Enum.concat(chunk))
+        form
+      end)
+
+    {:ok, _, binary} = :compile.forms(forms)
+    binary
   end
 
   defp push!(context, i) do

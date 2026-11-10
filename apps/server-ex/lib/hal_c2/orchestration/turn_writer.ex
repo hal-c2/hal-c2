@@ -374,10 +374,18 @@ defmodule HalC2.Orchestration.TurnWriter do
           Orchestration.upsert(stream, "node", node_id, &Map.merge(&1, done))
         ]
 
-        {Enum.filter(changes, &is_tuple/1), observing && heard_end(before, ended, %{})}
+        # Its turn may have gone: its node names its provider, its thread its project.
+        provider =
+          get_in(StreamState.fetch(stream, "node", node_id) || %{}, ["nativeItemRef", "driver"])
+
+        project = (StreamState.get(stream, "thread")[state.thread_id] || %{})["projectId"]
+        heard = observing && heard_end(before, ended, %{})
+        {Enum.filter(changes, &is_tuple/1), heard && {heard, provider, project}}
       end)
 
-    if current, do: observed_item_event(state, status, current)
+    with {item, provider, project} <- current,
+         do: observed_item_event(state, status, item, provider, project)
+
     state
   end
 
@@ -407,7 +415,7 @@ defmodule HalC2.Orchestration.TurnWriter do
     :ok
   end
 
-  defp observed_item_event(state, status, current) do
+  defp observed_item_event(state, status, current, provider \\ nil, project \\ nil) do
     HalC2.Plugins.observe(
       current
       |> observed_item()
@@ -416,6 +424,8 @@ defmodule HalC2.Orchestration.TurnWriter do
         "threadId" => state.thread_id,
         # The run it ran in: a background command can end after its turn did.
         "runId" => current["runId"] || state.turn.ids.run,
+        "provider" => provider || (state.turn && Entities.driver(state.turn.ids)),
+        "projectId" => project || (state.turn && Map.get(state.turn, :project_id)),
         "status" => heard_status(status)
       })
     )
@@ -1184,10 +1194,10 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   # Plugins that hear turns hear this one end, from the process that drove it, after
-  # its items. The usage is the provider's last report of the conversation's context
-  # during the run's last provider turn, which keeps it as it arrives: a Codex goal's run
-  # that ends between Codex's turns has settled that turn already, and names it on its
-  # attempt.
+  # its items, with the run's place in its thread (`Host.history/3`'s ordinals). The
+  # usage is the provider's last report of the conversation's context during the run's
+  # last provider turn, which keeps it as it arrives: a Codex goal's run that ends
+  # between Codex's turns has settled that turn already, and names it on its attempt.
   defp observe_finished(state, status) do
     if HalC2.Plugins.observing?() do
       ids = state.turn.ids
@@ -1203,6 +1213,7 @@ defmodule HalC2.Orchestration.TurnWriter do
         "type" => "turn.finished",
         "threadId" => state.thread_id,
         "runId" => ids.run,
+        "ordinal" => Map.get(state.turn, :run_ordinal),
         "status" => status,
         "tokenUsage" => provider_turn["tokenUsage"]
       })
