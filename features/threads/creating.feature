@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26495
+#   https://github.com/pingdotgg/t3code/pull/27722
 #   https://github.com/pingdotgg/t3code/pull/23967
 #   https://github.com/pingdotgg/t3code/pull/19724
 #   https://github.com/pingdotgg/t3code/pull/14538
@@ -8,6 +10,7 @@
 #   https://github.com/pingdotgg/t3code/pull/20442
 #   https://github.com/pingdotgg/t3code/pull/20519
 #   https://github.com/pingdotgg/t3code/pull/16628
+#   https://github.com/pingdotgg/t3code/pull/25839
 #   docs/user/thread-sidebar.md (New threads, background start, multi-model fan-out)
 #   apps/web/src/hooks/useHandleNewThread.ts
 #   apps/web/src/components/ChatView.tsx (several models: started count, failed model, uncertain start, send gates)
@@ -32,6 +35,7 @@
 #   https://github.com/pingdotgg/t3code/pull/15060
 #   https://github.com/pingdotgg/t3code/pull/15356
 #   https://github.com/pingdotgg/t3code/pull/15391
+#   https://github.com/pingdotgg/t3code/pull/26301
 
 Feature: Creating threads
   A thread is the durable conversation for a project. Starting one keeps the user's
@@ -53,24 +57,37 @@ Feature: Creating threads
     When the user starts a new thread
     Then a draft thread opens in "docs"
 
-  @backlog @desktop @priority-high
+  # Upstream #26495: in the list grouped by project, the header's button asks too.
+  @desktop @priority-high
   Scenario: The new thread button asks which project when there are several
     Given the environment also has the project "docs"
     When the user presses the new thread button in the thread list
     Then the user is asked which project to start the thread in
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The new thread button starts straight away when there is one project
     Given "shop" is the only project
     When the user presses the new thread button in the thread list
     Then a draft thread opens in "shop" without asking
 
-  @backlog @desktop
+  @desktop
   Scenario: Shift on the new thread button starts in the current project
     Given the environment also has the project "docs"
     When the user presses the new thread button in the thread list with Shift held
     Then a draft thread opens in "shop" without asking
     And the button's hint says Shift starts the thread in the current project
+
+  # Upstream #26495: with the thread list grouped by project, the header's new thread button and
+  # the new-thread shortcut started in the current project instead of asking; the shortcut for a
+  # new thread in the current project, and a single project, still start without asking.
+  @backlog @desktop
+  Scenario: The new-thread shortcut asks which project when there are several
+    Given the environment also has the project "docs"
+    And the thread list is grouped by project
+    When the user presses the new-thread shortcut
+    Then the user is asked which project to start the thread in
+    When the user presses the shortcut for a new thread in the current project
+    Then a draft thread opens in "shop" without asking
 
   @backlog @desktop
   Scenario: The new thread button without a project starts a thread without one
@@ -85,13 +102,22 @@ Feature: Creating threads
     And the environment does not offer threads without a project
     Then the new thread button in the thread list is disabled
 
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A new thread keeps the current model and mode
     Given the current thread uses the model "Opus" in plan mode
     When the user starts a new thread
     Then the draft uses the model "Opus" in plan mode
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
+  Scenario: A new thread from another thread takes that thread's model and mode
+    Given the current thread uses the model "Opus" in plan mode
+    And the user starts a new thread
+    And the draft uses the model "Opus" in plan mode
+    When the user opens another thread of "shop" that uses the model "GPT-5"
+    And the user starts a new thread
+    Then the draft uses the model "GPT-5" in default mode
+
+  @desktop @mobile @priority-high
   Scenario: A new thread uses the project default model when the project has one
     Given "shop" has the default model "Sonnet"
     And the current thread uses the model "Opus"
@@ -149,7 +175,7 @@ Feature: Creating threads
     When the user tries to start a thread with an empty first message
     Then the thread is not started
 
-  @desktop @mobile @backlog-mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: Starting a thread from another thread's branch
     Given the current thread is on the branch "feature/cart"
     When the user starts a new thread on that branch from the thread menu
@@ -200,6 +226,16 @@ Feature: Creating threads
     Then "Fix checkout" opens with its history
     But a link to a deleted or archived thread still returns to the start page
 
+  # Upstream #27722: a new thread read before its creation landed was taken for deleted, and that
+  # was remembered, so its conversation stayed blank.
+  @backlog @shared @priority-high
+  Scenario: A new thread read too early is asked for again
+    Given the client asked for the new thread "Fix checkout" before the MC had created it
+    And the MC answered that it does not exist
+    When the user opens "Fix checkout" once it is created
+    Then the client asks the MC again and shows its conversation
+    But a thread the MC said was deleted stays deleted
+
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: Starting a thread in the background opens a fresh draft
     Given the user has written a first message in a draft
@@ -209,7 +245,7 @@ Feature: Creating threads
 
   # Upstream #14538: New thread did nothing while the last sent draft was still creating its
   # worktree; it now opens a fresh draft.
-  @backlog @shared @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A new thread started while the last one sets up its worktree opens a fresh draft
     Given the user sent a draft that is still creating its worktree
     When the user starts a new thread
@@ -229,7 +265,7 @@ Feature: Creating threads
     Then three threads are created, one per model
     And each thread works in its own new worktree
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: A request to several models cut off by a quit comes back to its draft once
     Given "shop" is a Git project
     And the MC holds its answers
@@ -262,7 +298,7 @@ Feature: Creating threads
     And the user is told "Could not start Gemini" with the reason
     And the draft has its prompt back with only "Gemini" still chosen
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A failed start does not put back a prompt over a newer draft
     Given a request to several models is still starting
     And the user has typed a new prompt in the emptied draft
@@ -271,7 +307,7 @@ Feature: Creating threads
 
   # Upstream #14538: a start that fails after the user moved on gives its prompt back to its own
   # draft.
-  @backlog @shared
+  @shared @backlog-tui
   Scenario: A thread whose start fails gets its prompt back without touching a newer draft
     Given the user sent a draft and opened a new draft while it set up
     When the sent thread fails to start
@@ -317,7 +353,7 @@ Feature: Creating threads
     Then the user is told "Update this server before starting multiple models."
     And nothing is sent
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A draft whose project is gone cannot be sent
     Given the draft's project is no longer available
     When the user sends the first message
@@ -343,13 +379,13 @@ Feature: Creating threads
     When the user chooses the branch "release" for the draft
     Then the draft runs on the machine whose branch was chosen instead of a balanced one
 
-  @backlog @desktop @mobile @priority-high
+  @desktop @mobile @priority-high
   Scenario: A failed thread creation is reported
     Given the environment rejects new threads
-    When the user starts a new thread
+    When the user sends the first message of a new thread
     Then the user is told "Could not create thread"
 
-  @desktop @mobile @tui @backlog-desktop @backlog-mobile @priority-high
+  @desktop @mobile @tui @priority-high
   Scenario: A new thread cannot be created while the environment is offline
     Given the environment is unreachable
     When the user starts a new thread
@@ -364,6 +400,22 @@ Feature: Creating threads
     When the user starts a new thread in "shop"
     Then the draft opens at once with the usual defaults
     And the user can pick the machine that is online from the draft
+
+  # Upstream #25839: picking a project on two machines often started the thread on the offline one,
+  # whose draft turned into "Queue task".
+  @backlog @mobile
+  Scenario Outline: Picking a project on two machines starts on the connected one
+    Given "shop" lives on "My MacBook" and "Office Mac"
+    And <connected>
+    And "My MacBook" is the machine selected for new threads
+    When the user picks "shop" for a new thread
+    Then the draft is on <machine>
+
+    Examples:
+      | connected                       | machine      |
+      | only "Office Mac" is connected  | "Office Mac" |
+      | both are connected              | "My MacBook" |
+      | neither is connected            | "My MacBook" |
 
   @backlog @desktop
   Scenario: Opening a folder that is already a project starts a thread in it
@@ -460,10 +512,13 @@ Feature: Creating threads
     Then threads without a project are offered
     And a turn in such a thread runs without checkpoints
 
+  # Upstream #26301: a thread without a project starts on the primary (local) machine, not on
+  # whichever machine is on screen.
   @backlog @shared @priority-high
   Scenario Outline: No project is reachable from every new-thread entry point
+    Given the user is viewing a thread on the remote machine "work"
     When the user uses "<entry>"
-    Then a thread without a project is started on the machine in use
+    Then a thread without a project is started on the primary machine
 
     Examples:
       | entry                                          |
@@ -479,6 +534,26 @@ Feature: Creating threads
     When the user opens the project menu
     Then No project is not listed
     And the thread is never silently started on another machine
+
+  # Upstream #26301: without a scratch folder on the primary machine, the machine on screen is
+  # used, then the only machine that offers one. The phone has no primary machine.
+  @backlog @desktop @tui
+  Scenario Outline: A thread without a project falls back to a machine that offers one
+    Given <machines>
+    When the user starts a thread with No project
+    Then the thread is started on <machine>
+
+    Examples:
+      | machines                                                                       | machine |
+      | the primary machine offers no scratch folder and the user is viewing "work"    | "work"  |
+      | only "lab" offers a scratch folder and the user is viewing the primary machine | "lab"   |
+
+  # Upstream #26301: a scratch draft on a remote machine is still a draft without a project.
+  @backlog @shared @priority-low
+  Scenario: A draft without a project on another machine still says it has no project
+    Given the user moved a new thread without a project to the machine "work"
+    When the user looks at the draft
+    Then it reads as having no project
 
   @backlog @shared @priority-low
   Scenario: Starting a thread in the background has a plain-Enter binding

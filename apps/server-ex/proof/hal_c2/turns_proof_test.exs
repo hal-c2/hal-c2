@@ -12,7 +12,11 @@ defmodule HalC2.TurnsProofTest do
   @items "writes a turn's items, streamed text and requests; no run's status changes"
   @changes "builds a transaction's changes; each transaction is one step"
   @preparing "a run that waits on its worktree, then starts through begin_turn/2 as a message does"
+  @observe "what plugins hear of a turn (HalC2.Plugins.observe/1): reads a turn and its items; changes nothing"
   @steer "adds a message to the turn the runtime drives; here a message queues behind an active run"
+  @unrecorded "a turn the store cannot record, and its end held until the store takes it: unrecorded_turns.maude, whose store never fails here"
+
+  @partway "keeps the end a run's first abandon chose, which the store refused after a subagent's thread took it, for the ends after it; abandon/5 is one step here, so no end is ever partway"
 
   use HalC2.Proof,
     model: "turns.maude",
@@ -58,7 +62,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.started/1" => "started",
       "HalC2.Orchestration.TurnWriter.commit_active/3" => "started",
       "HalC2.Orchestration.TurnWriter.finish/3" => "finish",
-      "HalC2.Orchestration.TurnWriter.abandon/4" => "abandon",
+      "HalC2.Orchestration.TurnWriter.abandon/5" => "abandon",
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take started refused),
       "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _}" =>
         ~w(interrupted stale-pin no-turn stop-work),
@@ -71,6 +75,9 @@ defmodule HalC2.TurnsProofTest do
       # The deadline after an interrupt Codex never answered: the interrupted end
       # of that same run, arriving without Codex acknowledging it.
       "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "interrupted",
+      # Codex not going on with a goal within the grace its run waits between the
+      # goal's turns: the run ends as a completed turn ends it.
+      "HalC2.Codex.ThreadRuntime handle_info {:goal_grace, _}" => "finish",
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupted no-turn stop-work),
       "HalC2.Codex.ThreadRuntime handle_call :release" => ~w(release-idle keep-turn),
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
@@ -107,7 +114,7 @@ defmodule HalC2.TurnsProofTest do
         "settles a plugin's thread and lists or unlists it: sidebar organization, no turn state",
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
-      "HalC2.Orchestration.fail_prepared/4" => @preparing,
+      "HalC2.Orchestration.fail_prepared/5" => @preparing,
       "HalC2.Orchestration.retry_prepared/2" => @preparing,
       "HalC2.Orchestration.delegated?/1" => "reads a thread's lineage",
       "HalC2.Orchestration.cancel_queued/1" =>
@@ -117,28 +124,49 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.fail_queued/4" =>
         "the model sends no restart, and has no failure of one queued run: it only shortens the queue",
       "HalC2.Orchestration.warn_prepared/4" => @items,
+      # Cancels a thread's open message questions (a delegated task's end): request items only.
+      "HalC2.Orchestration.dismiss_questions/1" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,
       "HalC2.Orchestration.driver_for/1" => "names an instance's driver",
+      "HalC2.Orchestration.run_under_way?/1" =>
+        "reads whether a run's status is one the model's runs are under way in; it changes no run",
       "HalC2.Orchestration.session_call/2" =>
         "answers a call into a session that stopped mid-call as a lookup that found none would; it changes no run",
       "HalC2.Orchestration.TurnWriter.commit/2" => @items,
+      "HalC2.Orchestration.TurnWriter.observed_item/1" => @observe,
+      "HalC2.Orchestration.TurnWriter.new_conversation?/1" => @observe,
+      "HalC2.Orchestration.TurnWriter.observe_started/1" => @observe,
       "HalC2.Orchestration.TurnWriter.buffer/4" => @items,
       "HalC2.Orchestration.TurnWriter.flush/2" => @items,
       "HalC2.Orchestration.TurnWriter.split_ready/1" => @items,
       "HalC2.Orchestration.TurnWriter.item_id/2" => @items,
-      "HalC2.Orchestration.TurnWriter.ensure_item/4" => @items,
-      "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
+      "HalC2.Orchestration.TurnWriter.ensure_item/5" => @items,
+      "HalC2.Orchestration.TurnWriter.confirmed/2" => @items,
+      "HalC2.Orchestration.TurnWriter.finish_item/5" => @items,
+      "HalC2.Orchestration.TurnWriter.end_item/5" => @items,
+      "HalC2.Orchestration.TurnWriter.observe_item/3" => @observe,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,
-      "HalC2.Orchestration.TurnWriter.open_request/5" => @items,
+      "HalC2.Orchestration.TurnWriter.open_request/6" => @items,
       "HalC2.Orchestration.TurnWriter.open_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.open_async_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.resolve_request/4" => @items,
       "HalC2.Orchestration.TurnWriter.close_open_items/2" => @items,
       "HalC2.Orchestration.TurnWriter.message_request?/1" => @items,
       "HalC2.Orchestration.TurnWriter.start_failure/2" => "the message a failed start ends with",
+      "HalC2.Orchestration.TurnWriter.provider_turn_ended/3" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch.unrecorded/3" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch.ending/2" => @partway,
+      "HalC2.Orchestration.TurnWatch.ended/1" => @partway,
+      "HalC2.Orchestration.TurnWatch.attempted/2" =>
+        "for tests: waits on TurnWatch's next try at an unrecorded end; changes nothing",
+      "HalC2.Orchestration.TurnWatch handle_cast {:unrecorded, _, _, _}" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch handle_call {:attempted, _}" =>
+        "for tests: answers when a try at an unrecorded end fails or records; changes nothing",
+      "HalC2.Orchestration.TurnWatch handle_info {:retry, _}" => @unrecorded,
+      "HalC2.Orchestration.TurnWatch handle_info {:attempted, _, _}" => @unrecorded,
       "HalC2.Codex.ThreadRuntime handle_call {:steer, _, _}" => @steer,
       "HalC2.Codex.ThreadRuntime handle_call {:respond, _, _}" => @items,
       "HalC2.Codex.ThreadRuntime handle_call {:rollback, _}" =>
@@ -146,6 +174,9 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call {:upload_feedback, _}" =>
         "sends feedback; no run changes",
       "HalC2.Codex.ThreadRuntime handle_call :settle" => "a barrier for tests; changes nothing",
+      "HalC2.Codex.ThreadRuntime handle_call :mcp_session" =>
+        "reads the connection an MCP app's requests use; changes nothing",
+      # A turn held for a left-over one is between turns for what Codex asks meanwhile.
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, _, _}}" => @items,
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, \"item/tool/requestUserInput\", _}}" =>
         @items,
@@ -154,7 +185,10 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, _}" =>
         "drops what an app-server it stopped for another instance sent; the model has one",
       "HalC2.Codex.ThreadRuntime handle_info :flush" => @items,
-      "HalC2.Codex.ThreadRuntime handle_info _" => "ignores what it does not know",
+      "HalC2.Codex.ThreadRuntime handle_info _" =>
+        "ignores what it does not know, and hands every message to Unrecorded.handle_info/4, which only acts when the store fails (#{@unrecorded})",
+      "HalC2.Codex.ThreadRuntime handle_call _" =>
+        "hands every call to Unrecorded.handle_call/4, which only acts while the store fails a turn (#{@unrecorded})",
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Orchestration.IdleSessions.start_link/1" => "starts the timer the idle rules run on",
@@ -168,9 +202,17 @@ defmodule HalC2.TurnsProofTest do
         "saves state to a file for a later boot; no run changes",
       "HalC2.Codex.ThreadRuntime handle_info :durable_save" =>
         "saves state to a file for a later boot; no run changes",
+      "HalC2.Codex.ThreadRuntime handle_info {:leftover_deadline, _}" =>
+        "fails a follow-up held behind a turn left over from one the store could not record (#{@unrecorded})",
+      "HalC2.Codex.ThreadRuntime handle_info {:leftover_ended, _, _}" =>
+        "records the end of a turn left over from one the store could not record (#{@unrecorded})",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
-        "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does"
+        "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does",
+      "HalC2.Orchestration.Recovery.cut_off?/1" =>
+        "reads whether a restart ended an item; changes nothing, and no run's status turns on it",
+      "HalC2.Orchestration.Recovery.deliverable?/2" =>
+        "checks a continuation is still wanted when its effect runs; one sent is a message as dispatch/1 has it, one not wanted sends nothing"
     },
     environment: %{
       "crash" => "the runtime's process crashes",
@@ -202,7 +244,7 @@ defmodule HalC2.TurnsProofTest do
         "A turn cut off by a restart is interrupted at boot"
       ],
       "mc/orchestration/queue-and-steering.feature" => [
-        "A held queue does not start when a run ends"
+        "A held queue does not start when a run the user did not start ends"
       ]
     }
 

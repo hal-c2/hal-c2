@@ -3,6 +3,9 @@
 // send/stop button (features/composer/model-and-mode.feature,
 // qt-scenarios.feature).
 
+#include <algorithm>
+#include <functional>
+
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJSValue>
@@ -30,6 +33,11 @@ namespace {
 struct Expected {
   QString instanceId;
   QString slug;
+};
+
+// The picker's height before a scenario opens a provider's older models.
+struct PickerHeight {
+  qreal height = 0;
 };
 
 QVariant plain(const QVariant& value) {
@@ -250,6 +258,15 @@ void toolbarDraft(World& world) {
   composerBrick(world);
 }
 
+// A model with efforts keeps the model control open on them; one without closes it.
+void closedOrOnEfforts(World& world) {
+  world.waitFor([&] {
+    if (!pickerOpen(world)) return true;
+    QQuickItem* focused = world.brick->window().activeFocusItem();
+    return focused && focused->objectName().startsWith(QLatin1String("modelControlEffort:"));
+  }, QStringLiteral("the picker to close or move to the model's efforts"));
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -379,8 +396,9 @@ const Steps steps([] {
     const Expected& second = world.mc.part<Expected>();
     expect(!second.slug.isEmpty(), QStringLiteral("the picker listed one model"));
     expectSwitched(world, second.instanceId, second.slug);
-    expect(!popupOf(picker(world))->property("opened").toBool(), QStringLiteral("the picker stayed open"));
+    closedOrOnEfforts(world);
   });
+  step(QStringLiteral("the model picker closes, or stays open on the model's efforts"), [](World& world, const Captures&, const Table&) { closedOrOnEfforts(world); });
   step(QStringLiteral("the next turn runs on (?:that model|the second model listed)"), [](World& world, const Captures&, const Table&) {
     const Expected& second = world.mc.part<Expected>();
     expect(!second.slug.isEmpty(), QStringLiteral("the picker listed one model"));
@@ -460,8 +478,10 @@ const Steps steps([] {
 
   // The toolbar shortcuts (composer.effort, .mode, .host, .workspace, .branch).
   const QHash<QString, std::pair<QString, QString>> controls{
-      {QStringLiteral("effort picker"), {QStringLiteral("composer.effort"), QStringLiteral("effortPicker")}},
-      {QStringLiteral("access mode picker"), {QStringLiteral("composer.mode"), QStringLiteral("runtimeModePicker")}},
+      // The effort is the model control's.
+      {QStringLiteral("effort picker"), {QStringLiteral("composer.effort"), QStringLiteral("modelPicker")}},
+      // A new thread names its permissions in the context strip.
+      {QStringLiteral("access mode picker"), {QStringLiteral("composer.mode"), QStringLiteral("contextPermissions")}},
       {QStringLiteral("host picker"), {QStringLiteral("composer.host"), QStringLiteral("hostPicker")}},
       {QStringLiteral("workspace picker"), {QStringLiteral("composer.workspace"), QStringLiteral("envModePicker")}},
       {QStringLiteral("branch picker"), {QStringLiteral("composer.branch"), QStringLiteral("branchPicker")}}};
@@ -502,16 +522,16 @@ const Steps steps([] {
     }
     return rows;
   };
-  step(QStringLiteral("the composer offers its reasoning effort, plan and access controls"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the composer offers its plan and access controls"), [](World& world, const Captures&, const Table&) {
     openTurnThread(world);
     publishProviders(world.mc, {provider(QStringLiteral("codex"), QStringLiteral("Codex"), {model(QStringLiteral("gpt-5.4"), QStringLiteral("GPT-5.4"))})});
-    updateThread(world, {{QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5.4")}}}});
+    // Permissions other than the default, which the toolbar names.
+    updateThread(world, {{QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5.4")}}},
+                         {QStringLiteral("runtimeMode"), QStringLiteral("approval-required")}});
     expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true), QStringLiteral("plan mode could not be turned on"));
     composerBrick(world);
-    world.waitFor([&] {
-      return part(world, QStringLiteral("effortPicker"))->isVisible() && part(world, QStringLiteral("planToggle"))->isVisible() &&
-             part(world, QStringLiteral("runtimeModePicker"))->isVisible();
-    }, [&] { return QStringLiteral("the effort, plan and access on the toolbar; the composer shows %1").arg(show(composer(world))); });
+    world.waitFor([&] { return part(world, QStringLiteral("planToggle"))->isVisible() && part(world, QStringLiteral("runtimeModePicker"))->isVisible(); },
+                  [&] { return QStringLiteral("plan and access on the toolbar; the composer shows %1").arg(show(composer(world))); });
   });
   step(QStringLiteral("the composer is too narrow to show all its controls"), [](World& world, const Captures&, const Table&) {
     Brick& brick = composerBrick(world);
@@ -531,11 +551,11 @@ const Steps steps([] {
       if (item->objectName() != QLatin1String("primaryAction")) expect(middle.x() <= right, QStringLiteral("%1 runs under Send").arg(item->objectName()));
     }
   });
-  step(QStringLiteral("the reasoning effort is offered in its menu of further controls"), [shownChips, overflowRows](World& world, const Captures&, const Table&) {
-    expect(!shownChips(world).contains(part(world, QStringLiteral("effortPicker"))), QStringLiteral("the effort is still on the toolbar"));
+  step(QStringLiteral("plan is offered in its menu of further controls"), [shownChips, overflowRows](World& world, const Captures&, const Table&) {
+    expect(!shownChips(world).contains(part(world, QStringLiteral("planToggle"))), QStringLiteral("plan is still on the toolbar"));
     click(world, part(world, QStringLiteral("composerOverflow")));
-    world.waitFor([&] { return overflowRows(world).contains(QStringLiteral("composerOverflow:effortPicker")); },
-                  [&] { return QStringLiteral("the effort in the menu; it offers %1").arg(overflowRows(world).join(u", ")); });
+    world.waitFor([&] { return overflowRows(world).contains(QStringLiteral("composerOverflow:planToggle")); },
+                  [&] { return QStringLiteral("plan in the menu; it offers %1").arg(overflowRows(world).join(u", ")); });
   });
   step(QStringLiteral("the model can still be chosen beside it"), [](World& world, const Captures&, const Table&) {
     QQuickItem* picker = part(world, QStringLiteral("modelPicker"));
@@ -575,6 +595,310 @@ const Steps steps([] {
     QQuickItem* action = primary(world);
     world.waitFor([&] { return !action->property("stopMode").toBool() && action->property("sendable").toBool(); }, QStringLiteral("the composer to offer Send again"));
   });
+
+  // What a screen reader calls it: its QML Accessible.name, on the attached
+  // object QML parents to the item.
+  const auto accessibleName = [](const QQuickItem* item) {
+    for (const QObject* each : item->children()) {
+      if (qstrcmp(each->metaObject()->className(), "QQuickAccessibleAttached") == 0) return each->property("name").toString();
+    }
+    return QString();
+  };
+  step(QStringLiteral("the send control is named %1").arg(kQuoted), [primary, accessibleName](World& world, const Captures& c, const Table&) {
+    QQuickItem* action = primary(world);
+    world.waitFor([&] { return accessibleName(action) == c[0]; }, [&] { return QStringLiteral("the send control is named \"%1\"").arg(accessibleName(action)); });
+  });
+  step(QStringLiteral("the running turn has finished"), [](World& world, const Captures&, const Table&) {
+    settleRun(world, QStringLiteral("completed"), 30);
+    QJsonObject& row = world.mc.threads[kThread];
+    row.insert(QStringLiteral("activeRunId"), QJsonValue::Null);
+    world.mc.sendRow(kThread, row);
+    world.sync();
+  });
+  step(QStringLiteral("a turn is running and the follow-up behaviour is %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.native().controller<SettingsController>()->writeDevice(QStringLiteral("followUpBehavior"), c[0]);
+  });
+
+  // Search order, older models, new marks and the setup offer.
+  const auto quotedList = [](const QString& text) {
+    QStringList names;
+    const QRegularExpression quoted(QStringLiteral("\"([^\"]*)\""));
+    for (auto match = quoted.globalMatch(text); match.hasNext();) names.append(match.next().captured(1));
+    return names;
+  };
+  step(QStringLiteral("Claude lists (.+) in that order"), [quotedList](World& world, const Captures& c, const Table&) {
+    QJsonArray models;
+    for (const QString& name : quotedList(c[0])) models.append(model(name.toLower().replace(u' ', u'-'), name));
+    changeProvider(world, QStringLiteral("claudeAgent"), [&models](QJsonObject& entry) { entry.insert(QStringLiteral("models"), models); });
+  });
+  step(QStringLiteral("the models are listed as (.+)"), [quotedList](World& world, const Captures& c, const Table&) {
+    const QStringList expected = quotedList(c[0]);
+    world.waitFor([&] { return listed(world) == expected; }, [&] { return QStringLiteral("%1; the picker lists %2").arg(expected.join(u", "), listed(world).join(u", ")); });
+  });
+  step(QStringLiteral("a shorter name is not listed ahead of a newer model"), [](World& world, const Captures&, const Table&) {
+    const QStringList names = listed(world);
+    expect(names.indexOf(QStringLiteral("Opus 5")) > names.indexOf(QStringLiteral("Opus 5.5")) && names.indexOf(QStringLiteral("Opus 5.5")) >= 0,
+           QStringLiteral("the picker lists %1").arg(names.join(u", ")));
+  });
+  step(QStringLiteral("the user looks through (\\w+)'s models"), [](World& world, const Captures& c, const Table&) {
+    openPicker(world);
+    click(world, part(world, QStringLiteral("modelPickerProvider:") + driverOf(c[0])));
+  });
+  step(QStringLiteral("Codex lists the legacy model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("codex"), [&c](QJsonObject& entry) {
+      QJsonArray models = entry.value(QLatin1String("models")).toArray();
+      QJsonObject legacy = model(c[0], c[0]);
+      legacy.insert(QStringLiteral("isLegacy"), true);
+      models.append(legacy);
+      entry.insert(QStringLiteral("models"), models);
+    });
+  });
+  // Codex's own list, two current models then three older ones, with the
+  // picker's height and the "Show more" row it ends on.
+  step(QStringLiteral("Codex lists two current models and three it calls legacy"), [](World& world, const Captures&, const Table&) {
+    // The thread's own model stays current, so the picker opens with the
+    // older models folded.
+    const QVariantMap chosen = composer(world);
+    const QString first = chosen.value(QStringLiteral("selectedInstanceId")) == QLatin1String("codex") ? chosen.value(QStringLiteral("selectedModel")).toString() : QStringLiteral("gpt-6");
+    changeProvider(world, QStringLiteral("codex"), [&first](QJsonObject& entry) {
+      QJsonArray models{model(first, QStringLiteral("GPT-6")), model(QStringLiteral("gpt-6-mini"), QStringLiteral("GPT-6 Mini"))};
+      for (const QString& slug : {QStringLiteral("gpt-4.1"), QStringLiteral("gpt-4o"), QStringLiteral("o3")}) {
+        QJsonObject legacy = model(slug, slug.toUpper());
+        legacy.insert(QStringLiteral("isLegacy"), true);
+        models.append(legacy);
+      }
+      entry.insert(QStringLiteral("models"), models);
+    });
+  });
+  step(QStringLiteral("the user chooses %1 at the end of Codex's models").arg(q), [](World& world, const Captures& c, const Table&) {
+    openPicker(world);
+    click(world, part(world, QStringLiteral("modelPickerProvider:codex")));
+    world.waitFor([&] { return listed(world) == QStringList{QStringLiteral("GPT-6"), QStringLiteral("GPT-6 Mini"), QString()}; },
+                  [&] { return QStringLiteral("Codex's two current models and then a row; the picker lists %1").arg(show(rows(world))); });
+    expect(rows(world).last().toMap().value(QStringLiteral("kind")) == QLatin1String("legacy"), QStringLiteral("Codex's list ends on %1").arg(show(rows(world).last())));
+    QQuickItem* more = part(world, QStringLiteral("modelPickerLegacy:codex"));
+    expect(more->property("text") == c[0], QStringLiteral("the row reads %1, not %2").arg(more->property("text").toString(), c[0]));
+    world.mc.part<PickerHeight>().height = popupOf(picker(world))->property("height").toReal();
+    click(world, more);
+  });
+  step(QStringLiteral("the three older models are listed in place and the row reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList expected{QStringLiteral("GPT-6"), QStringLiteral("GPT-6 Mini"), QStringLiteral("GPT-4.1"), QStringLiteral("GPT-4O"), QStringLiteral("O3"), QString()};
+    world.waitFor([&] { return listed(world) == expected; }, [&] { return QStringLiteral("the older models above the row; the picker lists %1").arg(show(rows(world))); });
+    QQuickItem* less = part(world, QStringLiteral("modelPickerLegacy:codex"));
+    expect(less->property("text") == c[0], QStringLiteral("the row reads %1, not %2").arg(less->property("text").toString(), c[0]));
+    expect(pickerOpen(world), QStringLiteral("the picker closed"));
+  });
+  step(QStringLiteral("the list scrolls inside the picker"), [](World& world, const Captures&, const Table&) {
+    const qreal before = world.mc.part<PickerHeight>().height;
+    const qreal after = popupOf(picker(world))->property("height").toReal();
+    expect(before > 0 && qFuzzyCompare(before, after), QStringLiteral("the picker was %1 tall and is %2").arg(before).arg(after));
+    QQuickItem* row = part(world, QStringLiteral("modelPickerLegacy:codex"));
+    QQuickItem* list = row->parentItem();
+    while (list && !list->inherits("QQuickListView")) list = list->parentItem();
+    expect(list != nullptr, QStringLiteral("the rows are not in a list"));
+    expect(list->clip() && list->property("interactive").toBool(), QStringLiteral("the list does not scroll in place"));
+  });
+  step(QStringLiteral("%1 is listed without choosing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return listed(world).contains(c[0]); }, [&] { return QStringLiteral("%1 to be listed; the picker lists %2").arg(c[0], listed(world).join(u", ")); });
+  });
+  step(QStringLiteral("%1 is listed above Codex's current models without choosing %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QStringList names = listed(world);
+    expect(names.value(0) == c[0], QStringLiteral("the picker lists %1").arg(names.join(u", ")));
+  });
+  step(QStringLiteral("%1 is back among the older models behind %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] {
+      bool folded = false;
+      for (const QVariant& row : rows(world)) folded = folded || row.toMap().value(QStringLiteral("kind")) == QLatin1String("legacy");
+      return folded && !listed(world).contains(c[0]);
+    }, [&] { return QStringLiteral("%1 behind the older models; the picker lists %2").arg(c[0], listed(world).join(u", ")); });
+  });
+  step(QStringLiteral("Codex reports %1 as a new model").arg(q), [](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("codex"), [&c](QJsonObject& entry) {
+      QJsonArray models = entry.value(QLatin1String("models")).toArray();
+      QJsonObject fresh = model(c[0], c[0]);
+      fresh.insert(QStringLiteral("badge"), QStringLiteral("new"));
+      models.append(fresh);
+      entry.insert(QStringLiteral("models"), models);
+    });
+  });
+  step(QStringLiteral("%1 is marked as new").arg(q), [](World& world, const Captures& c, const Table&) {
+    bool marked = false;
+    for (const QVariant& row : rows(world)) {
+      const QVariantMap listedModel = row.toMap().value(QStringLiteral("model")).toMap();
+      if (listedModel.value(QStringLiteral("slug")) == c[0]) marked = listedModel.value(QStringLiteral("isNew")).toBool();
+    }
+    expect(marked && part(world, QStringLiteral("modelPickerRow:codex:") + c[0])->isVisible(), QStringLiteral("%1 is not marked as new").arg(c[0]));
+  });
+
+  // The picker opens on the favourites, or on a started thread's provider.
+  step(QStringLiteral("the user has marked %1 as a favourite").arg(q), [](World& world, const Captures& c, const Table&) {
+    QString instanceId;
+    for (const QVariant& entry : instances(world)) {
+      for (const QVariant& listed : entry.toMap().value(QStringLiteral("models")).toList()) {
+        if (listed.toMap().value(QStringLiteral("slug")) == c[0]) instanceId = entry.toMap().value(QStringLiteral("instanceId")).toString();
+      }
+    }
+    expect(!instanceId.isEmpty(), QStringLiteral("no provider lists %1").arg(c[0]));
+    world.bridge().dispatch(QStringLiteral("composer.model.favorite.toggle"), QVariantMap{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), c[0]}});
+    world.sync();
+  });
+  step(QStringLiteral("the favourites are listed first, each under its own provider's name"), [](World& world, const Captures&, const Table&) {
+    expect(picker(world)->property("view") == QLatin1String("favorites"), QStringLiteral("the picker opens on %1").arg(picker(world)->property("view").toString()));
+    const QVariantList shown = rows(world);
+    expect(!shown.isEmpty() && std::all_of(shown.cbegin(), shown.cend(), [](const QVariant& row) {
+             return row.toMap().value(QStringLiteral("model")).toMap().value(QStringLiteral("isFavorite")).toBool() &&
+                    !row.toMap().value(QStringLiteral("instance")).toMap().value(QStringLiteral("displayName")).toString().isEmpty();
+           }),
+           QStringLiteral("the favourites list %1").arg(listed(world).join(u", ")));
+  });
+  step(QStringLiteral("in a thread that has already run a turn the picker opens on the thread's provider"), [](World& world, const Captures&, const Table&) {
+    QMetaObject::invokeMethod(picker(world), "close");
+    updateThread(world, {{QStringLiteral("latestRunId"), QStringLiteral("run-0")},
+                         {QStringLiteral("runtime"), QJsonObject{{QStringLiteral("status"), QStringLiteral("ready")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:30:00Z")}}}});
+    openPicker(world);
+    expect(picker(world)->property("view") == composer(world).value(QStringLiteral("selectedInstanceId")),
+           QStringLiteral("the picker opens on %1").arg(picker(world)->property("view").toString()));
+  });
+
+  // Each model keeps the options it was last given.
+  const auto effortNow = [](World& world) {
+    for (const QVariant& option : composer(world).value(QStringLiteral("options")).toList()) {
+      if (option.toMap().value(QStringLiteral("id")) == QLatin1String("reasoningEffort")) {
+        return option.toMap().value(QStringLiteral("value")).toString();
+      }
+    }
+    return QString();
+  };
+  const auto pickAt = [](World& world, const QString& instanceId, const QString& model, const QString& effort) {
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), model}});
+    world.bridge().dispatch(QStringLiteral("composer.option.set"), QVariantMap{{QStringLiteral("id"), QStringLiteral("reasoningEffort")}, {QStringLiteral("value"), effort}});
+  };
+  struct Offered {
+    QString sonnet;
+    QString proxyMessage;
+  };
+  step(QStringLiteral("the user set %1 to high effort and %1 to low effort").arg(q), [&](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("claudeAgent"), [&](QJsonObject& entry) {
+      entry.insert(QStringLiteral("models"), QJsonArray{model(c[0], c[0]), model(c[1], c[1])});
+    });
+    pickAt(world, QStringLiteral("claudeAgent"), c[0], QStringLiteral("high"));
+    world.waitFor([&] { return effortNow(world) == QLatin1String("high"); }, QStringLiteral("high to be set"));
+    pickAt(world, QStringLiteral("claudeAgent"), c[1], QStringLiteral("low"));
+    world.waitFor([&] { return effortNow(world) == QLatin1String("low"); }, QStringLiteral("low to be set"));
+  });
+  step(QStringLiteral("the user switches from %1 to %1 and back").arg(q), [&](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), c[0]}});
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), c[1]}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == c[1]; }, QStringLiteral("the switch"));
+    world.mc.part<Offered>().sonnet = effortNow(world);
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")}, {QStringLiteral("model"), c[0]}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == c[0]; }, QStringLiteral("the switch back"));
+  });
+  step(QStringLiteral("%1 was offered with low effort and %1 is back at high effort").arg(q), [&](World& world, const Captures&, const Table&) {
+    expect(world.mc.part<Offered>().sonnet == QLatin1String("low"), QStringLiteral("sonnet was offered %1").arg(world.mc.part<Offered>().sonnet));
+    expect(effortNow(world) == QLatin1String("high"), QStringLiteral("opus is back at %1").arg(effortNow(world)));
+  });
+
+  // A custom model whose slug is also a built-in's alias stays itself.
+  step(QStringLiteral("the Codex account %1 has the custom model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    shellThread(world);
+    QJsonObject custom = model(c[1], c[1]);
+    custom.insert(QStringLiteral("isCustom"), true);
+    QJsonArray list = providers(world);
+    list.append(provider(QStringLiteral("codex_proxy"), c[0], {custom}));
+    offer(world, list);
+  });
+  step(QStringLiteral("the user picks %1 on %1 at high effort and sends a message").arg(q), [&](World& world, const Captures& c, const Table&) {
+    pickAt(world, QStringLiteral("codex_proxy"), c[0], QStringLiteral("high"));
+    world.waitFor([&] { return effortNow(world) == QLatin1String("high"); }, QStringLiteral("high to be set"));
+    world.bridge().dispatch(QStringLiteral("composer.submit"), QVariantMap{{QStringLiteral("text"), QStringLiteral("through the proxy")}, {QStringLiteral("intent"), QStringLiteral("foreground")}});
+    world.mc.part<Offered>().proxyMessage = QStringLiteral("through the proxy");
+    world.sync();
+  });
+  step(QStringLiteral("the turn runs on the custom model %1, not on a built-in model it is an alias of").arg(q), [&](World& world, const Captures& c, const Table&) {
+    // The thread's turn runs on what its switch (or its message) named.
+    QJsonObject selection;
+    for (auto it = world.mc.commands.crbegin(); it != world.mc.commands.crend() && selection.isEmpty(); ++it) {
+      const QString type = it->value(QLatin1String("type")).toString();
+      if ((type == QLatin1String("provider.switch") || type == QLatin1String("message.dispatch")) &&
+          it->contains(QLatin1String("modelSelection"))) {
+        selection = it->value(QLatin1String("modelSelection")).toObject();
+      }
+    }
+    expect(selection.value(QLatin1String("instanceId")) == QLatin1String("codex_proxy") && selection.value(QLatin1String("model")) == c[0],
+           QStringLiteral("the turn ran on %1; the MC has %2").arg(show(selection.toVariantMap()), world.describeCommands()));
+  });
+  step(QStringLiteral("picking %1 again offers high effort").arg(q), [&](World& world, const Captures& c, const Table&) {
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), QStringLiteral("codex_proxy")}, {QStringLiteral("model"), c[0]}});
+    world.waitFor([&] { return effortNow(world) == QLatin1String("high"); },
+                  [&] { return QStringLiteral("high again; the composer offers %1").arg(effortNow(world)); });
+  });
+
+  // The name the model button says.
+  step(QStringLiteral("the model manifest names %1 %1 for short").arg(q), [](World& world, const Captures& c, const Table&) {
+    changeProvider(world, QStringLiteral("claudeAgent"), [&c](QJsonObject& entry) {
+      QJsonObject named = model(QStringLiteral("claude-opus-5.5"), c[0]);
+      named.insert(QStringLiteral("shortName"), c[1]);
+      entry.insert(QStringLiteral("models"), QJsonArray{named});
+    });
+    openPicker(world);
+  });
+  step(QStringLiteral("the user chooses the (\\w+) model %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString instanceId = driverOf(c[0]);
+    QString slug = c[1].toLower();
+    slug.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
+    bool offered = false;
+    for (const QJsonValue& entry : providers(world)) offered = offered || entry.toObject().value(QLatin1String("instanceId")) == instanceId;
+    if (offered) {
+      changeProvider(world, instanceId, [&](QJsonObject& entry) { entry.insert(QStringLiteral("models"), QJsonArray{model(slug, c[1])}); });
+    } else {
+      QJsonArray list = providers(world);
+      list.append(provider(instanceId, c[0], {model(slug, c[1])}));
+      offer(world, list);
+    }
+    world.bridge().dispatch(QStringLiteral("composer.model.select"), QVariantMap{{QStringLiteral("instanceId"), instanceId}, {QStringLiteral("model"), slug}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("selectedModel")) == slug; },
+                  [&] { return QStringLiteral("the composer on %1; it shows %2").arg(slug, show(composer(world))); });
+    composerBrick(world);
+  });
+  step(QStringLiteral("the full name %1 is shown in its tooltip and in the model picker").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(picker(world)->property("triggerFullTitle") == c[0],
+           QStringLiteral("the tooltip names \"%1\"").arg(picker(world)->property("triggerFullTitle").toString()));
+    openPicker(world);
+    expect(listed(world).contains(c[0]), QStringLiteral("the picker lists %1").arg(listed(world).join(u", ")));
+  });
+  step(QStringLiteral("the model button reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return picker(world)->property("triggerTitle") == c[0]; },
+                  [&] { return QStringLiteral("the button to read \"%1\"; it reads \"%2\"").arg(c[0], picker(world)->property("triggerTitle").toString()); });
+    expect(part(world, QStringLiteral("modelPickerTitle"))->property("text") == c[0],
+           QStringLiteral("the button reads \"%1\"").arg(part(world, QStringLiteral("modelPickerTitle"))->property("text").toString()));
+  });
+
+  // A provider that needs setting up.
+  step(QStringLiteral("Cursor is not installed and HAL-C2 can install it"), [](World& world, const Captures&, const Table&) {
+    QJsonArray list = providers(world);
+    QJsonObject cursor = provider(QStringLiteral("cursor"), QStringLiteral("Cursor"), {model(QStringLiteral("cursor-auto"), QStringLiteral("Auto"))});
+    cursor.insert(QStringLiteral("installed"), false);
+    cursor.insert(QStringLiteral("status"), QStringLiteral("error"));
+    cursor.insert(QStringLiteral("message"), QStringLiteral("Cursor CLI is not installed."));
+    cursor.insert(QStringLiteral("setup"), QJsonObject{{QStringLiteral("canInstall"), true}, {QStringLiteral("canAuthenticate"), false}});
+    list.append(cursor);
+    offer(world, list);
+  });
+  step(QStringLiteral("the picker says why Cursor cannot be used and offers %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* reason = part(world, QStringLiteral("modelPickerSetupReason"));
+    QQuickItem* setup = part(world, QStringLiteral("modelPickerSetup"));
+    world.waitFor([&] { return reason->isVisible() && setup->isVisible() && setup->property("text") == c[0]; },
+                  [&] { return QStringLiteral("the setup offer; the picker says \"%1\"").arg(reason->property("text").toString()); });
+    expect(reason->property("text").toString().contains(QLatin1String("Cursor CLI is not installed.")), QStringLiteral("the picker says \"%1\"").arg(reason->property("text").toString()));
+  });
+  step(QStringLiteral("the picker closes and the setup for Cursor opens"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !popupOf(picker(world))->property("visible").toBool(); }, QStringLiteral("the picker to close"));
+    auto* navigation = world.native().controller<NavigationController>();
+    world.waitFor([&] { return navigation->route() == NavigationController::Route::settings(NavigationController::kProvidersSection); },
+                  [&] { return QStringLiteral("the Providers settings to open; the window shows %1").arg(show(world.state(QStringLiteral("route")))); });
+  });
 });
 
 }  // namespace
@@ -600,6 +924,41 @@ bool modelPickerChooses(World& world, const QString& name) {
   if (!composerBrickShown(world) || !pickerOpen(world)) return false;
   click(world, rowOf(world, name));
   return true;
+}
+
+bool modelPickerChoosesSetup(World& world) {
+  if (!composerBrickShown(world)) return false;
+  QQuickItem* setup = composerPart(world, QStringLiteral("modelPickerSetup"));
+  if (!setup || !setup->isVisible()) return false;
+  click(world, setup);
+  return true;
+}
+
+QQuickItem* openModelControl(World& world) {
+  composerBrick(world);
+  QQuickItem* control = picker(world);
+  expect(control->property("controlDocked").toBool(), QStringLiteral("the model picker holds no efforts"));
+  if (!popupOf(control)->property("visible").toBool()) click(world, control);
+  world.waitFor([&] { return pickerOpen(world); }, QStringLiteral("the model control to open"));
+  return control;
+}
+
+QQuickItem* modelControlPart(World& world, const QString& objectName) {
+  QQuickItem* item = nullptr;
+  world.waitFor([&] { return (item = composerPart(world, objectName)) != nullptr && item->isVisible(); },
+                QStringLiteral("the model control to show %1").arg(objectName));
+  return item;
+}
+
+QList<QQuickItem*> modelControlEfforts(World& world) {
+  QList<QQuickItem*> found;
+  const std::function<void(QQuickItem*)> collect = [&](QQuickItem* item) {
+    if (item->isVisible() && item->objectName().startsWith(QLatin1String("modelControlEffort:"))) found.append(item);
+    for (QQuickItem* child : item->childItems()) collect(child);
+  };
+  collect(composerBrick(world).window().contentItem());
+  std::sort(found.begin(), found.end(), [](QQuickItem* a, QQuickItem* b) { return a->mapToScene(QPointF()).y() < b->mapToScene(QPointF()).y(); });
+  return found;
 }
 
 bool modelPickerShownOpen(World& world) {

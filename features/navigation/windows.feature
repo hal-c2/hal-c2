@@ -1,6 +1,9 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/21200
+#   https://github.com/pingdotgg/t3code/pull/28223
+#   https://github.com/pingdotgg/t3code/pull/31794
 #   https://github.com/pingdotgg/t3code/pull/13713
+#   https://github.com/pingdotgg/t3code/pull/25860
 #   apps/web/src/contextMenuFallback.ts (dismissal, one menu at a time, clamping, submenus, disabled and destructive entries)
 #   docs/user/keybindings.md (Desktop quit shortcut, mod+w)
 #   apps/web/src/components/QuitHoldOverlay.tsx
@@ -30,7 +33,7 @@ Feature: Windows, zoom and quitting
 
   Rule: Window controls
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: The window controls act on the window
       When the user chooses <control> in the window controls
       Then the window <result>
@@ -41,13 +44,13 @@ Feature: Windows, zoom and quitting
         | Maximize | is maximized                           |
         | Close    | closes                                 |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Maximize restores a maximized window
       Given the window is maximized
       When the user chooses Maximize in the window controls
       Then the window returns to its previous size
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Window controls follow the platform's order and side
       Given the user is on <platform>
       Then the window controls are on the <side> in the order <order>
@@ -91,37 +94,46 @@ Feature: Windows, zoom and quitting
         | a plugin's page              |
         | a Space                      |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: macOS controls show their symbols only on hover
       Given the user is on macOS
       When the pointer is over the window controls
       Then the controls show their symbols
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: macOS controls turn grey in an inactive window
       Given the user is on macOS
       When another app's window is active
       Then the window controls are grey
 
     # The window system does the moving; offscreen tests can only see the ask.
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Dragging the header asks the window system to move the window
       When the user drags an empty part of the header
       Then the window asks the window system to move it
 
-    @desktop
+    # Upstream #31794: where the model picker overlapped the header, the window's drag area took
+    # the pointer, so its items gave no hover and could not be clicked there.
+    @backlog @desktop @priority-low
+    Scenario: A popup over the header answers the pointer
+      Given the model picker is open and some of its items lie over the header
+      When the user points at and clicks one of those items
+      Then the item is highlighted, shows its tooltip and is chosen
+      And the window is not moved
+
+    @desktop @backlog-desktop
     Scenario: Double-clicking the header toggles maximize
       Given the window is not maximized
       When the user double-clicks an empty part of the header
       Then the window is maximized
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A theme can ask for the system window frame
       Given the shell theme turns off the frameless window
       When the app starts
       Then the window has the system's own frame
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A theme can make the window translucent
       Given the shell theme sets the window opacity to 0.9
       Then the window is drawn at that opacity
@@ -254,18 +266,44 @@ Feature: Windows, zoom and quitting
       When the user restarts the app
       Then only the window "kept" reopens beside the first
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A window has a sensible title and size
       Given a second window shows no thread yet
       Then its title is "HAL-C2"
       And it cannot be made smaller than 640 by 400
 
+    # Upstream #28223: windows could not shrink below 840 by 620, too large for a half or quarter
+    # screen tile; the minimum is now 400 by 360. The scenario above holds until the Qt app follows.
+    @backlog @desktop
+    Scenario: A window fits a quarter of the screen
+      Given a second window shows no thread yet
+      When the user tiles it into a quarter of a 1600 by 900 screen
+      Then it takes the tile's size
+      And it cannot be made smaller than 400 by 360
+
+    # Upstream #28223: the first window's minimum dropped from 840 by 620 to 400 by 360.
     @backlog @desktop
     Scenario: The first window opens at a comfortable size it cannot shrink below
       Given the user has never resized the window
       When the app starts
       Then the first window opens at 1100 by 780
-      And it cannot be made smaller than 840 by 620
+      And it cannot be made smaller than 400 by 360
+
+    # Upstream #28223: a narrow window came back at the old minimum width after a restart.
+    @backlog @desktop
+    Scenario: A narrow window keeps its size after a restart
+      Given the user resized the first window to 420 by 700
+      When the user restarts the app
+      Then the first window opens at 420 by 700
+
+    # Upstream #28223: at the smallest size settings and the command palette opened under the
+    # window's own buttons, and a short window pushed the new thread's composer off screen.
+    @backlog @desktop @priority-low
+    Scenario: A window at its smallest size stays usable
+      Given the first window is 400 by 360
+      When the user starts a new thread
+      Then the composer and its notices are on screen
+      And settings and the command palette open below the window controls
 
     @backlog @desktop
     Scenario: The first window remembers its size and position across restarts
@@ -293,7 +331,8 @@ Feature: Windows, zoom and quitting
       Then no second copy of the app runs
       And the open window is shown in front, restored if it was minimized
 
-    @backlog @desktop
+    # Upstream #25860: mod+w no longer closes a window, so there is no window for a held one to close.
+    @dropped @desktop
     Scenario: Holding the close shortcut closes one window, not all of them
       Given three windows are open
       When the user holds mod+w so that it repeats
@@ -348,7 +387,7 @@ Feature: Windows, zoom and quitting
       When the user zooms the app in
       Then the preview is still at 125 percent
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Context menus follow the zoomed app
       Given the app is zoomed in
       When the user opens a context menu

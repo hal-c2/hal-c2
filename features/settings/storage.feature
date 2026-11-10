@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26038
+#   https://github.com/pingdotgg/t3code/pull/24097
+#   https://github.com/pingdotgg/t3code/pull/24689
 #   https://github.com/pingdotgg/t3code/pull/16473
 #   https://github.com/pingdotgg/t3code/pull/17910
 #   https://github.com/pingdotgg/t3code/pull/17909
@@ -21,6 +24,9 @@
 #   apps/web/src/components/settings/StorageSettings.tsx (project worktree modes, retention limits and default)
 #   packages/contracts/src/settings.ts (storageCleanup, project worktree cleanup)
 #   apps/tui/src/host/sections/storage.ts
+#   https://github.com/pingdotgg/t3code/pull/21545
+#   https://github.com/pingdotgg/t3code/pull/27175
+#   https://github.com/pingdotgg/t3code/pull/30026
 
 Feature: Storage cleanup
   The MC can remove worktrees and old files it created so disk use does not
@@ -48,7 +54,7 @@ Feature: Storage cleanup
         | deleting merged worktrees           | has a merged pull request                     |
         | deleting unchanged worktrees        | has no commits beyond the default branch      |
 
-    @backlog @mc
+    @mc
     Scenario: A settled thread's worktree is removed after the chosen days
       Given the user turned on deleting worktrees of threads settled for 2 days
       And a thread was settled 3 days ago and its session has stopped
@@ -58,12 +64,22 @@ Feature: Storage cleanup
       When the user sends the thread a new message
       Then its worktree is checked out again from the branch
 
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario: A worktree is never removed in the minute after its thread settles
       Given the user turned on deleting worktrees of threads settled for 0 days
       When a thread settles and the MC sweeps storage within a minute
       Then the worktree is kept so the project's settle script can run in it
       And the next sweep after that minute removes it
+
+    # Upstream #30026: a finished subagent's worktree was kept forever, because the subagent's own
+    # thread never settles when its parent does.
+    @backlog @mc
+    Scenario: A subagent's worktree is removed once the thread that started it has settled
+      Given the user turned on only deleting worktrees of threads settled for 0 days
+      And a finished subagent of "parent" has a worktree of its own
+      When "parent" settles and the MC sweeps storage after the settle script's minute
+      Then the subagent's worktree is removed
+      But it is kept while the subagent or any thread between it and "parent" is still working
 
     @backlog @mc
     Scenario: Delete now runs when settled retention is the only rule on
@@ -86,10 +102,43 @@ Feature: Storage cleanup
         | is checked out on a different branch    |
         | holds ignored files besides node_modules |
 
-    # Upstream #17563 made what counts as local changes a choice, and its default no longer
-    # keeps a worktree for ignored files such as ".env" alone; the row above is then true
-    # only under "Any local files".
-    @backlog @mc @shared
+    # Upstream #21545: on Windows, a terminal or live session at the worktree was missed when the
+    # path's case differed, and the worktree was removed.
+    @backlog @mc
+    Scenario Outline: A Windows worktree in use is kept whatever the case of its path
+      Given the MC runs on Windows
+      And the user turned on deleting worktrees idle for 8 days
+      And an idle thread's worktree is "C:\work\shop-wt"
+      And <user> is open at "c:\Work\Shop-WT"
+      When the MC sweeps storage
+      Then the worktree is kept
+
+      Examples:
+        | user                 |
+        | a terminal           |
+        | a live agent session |
+
+    # Upstream #27175: in a repository with no remote, unchanged-worktree cleanup failed with
+    # "No git remote is configured" and left the worktrees behind.
+    @backlog @mc
+    Scenario Outline: Unchanged worktrees of a repository without a remote are compared with its checkout
+      Given "api" has no remote and its own checkout is on <checkout>
+      And the user turned on deleting unchanged worktrees
+      And an idle thread's worktree <commits>
+      When the MC sweeps storage
+      Then the worktree is <outcome>
+
+      Examples:
+        | checkout          | commits                           | outcome |
+        | the branch "main" | has no commits beyond "main"      | removed |
+        | the branch "main" | has a commit "main" does not have | kept    |
+        | a detached HEAD   | has no commits of its own         | kept    |
+
+    # Upstream #17563 made what counts as local changes a choice. HAL-C2 keeps "Any local files"
+    # as the default on purpose, where upstream's is "Uncommitted changes": ignored files such as
+    # ".env" are often secrets that exist nowhere else, so a worktree holding them is kept unless
+    # the user chooses otherwise (hal-c2#1144). The "holds ignored files" row further up is that default.
+    @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
     Scenario Outline: The user chooses which local changes keep a worktree
       Given the user turned on deleting worktrees idle for 8 days
       And "Keep worktrees with local changes" is set to <choice>
@@ -98,13 +147,36 @@ Feature: Storage cleanup
       Then the worktree is <outcome>
 
       Examples:
-        | choice                         | changes                     | outcome |
-        | "Uncommitted changes", the default | an untracked file       | kept    |
-        | "Uncommitted changes", the default | only an ignored ".env" file | removed |
-        | "Any local files"              | only an ignored ".env" file | kept    |
-        | "Any local files"              | only "node_modules"         | removed |
-        | "Edited tracked files"         | an untracked file           | removed |
-        | "Edited tracked files"         | an edited tracked file      | kept    |
+        | choice                         | changes                                                 | outcome |
+        | "Any local files", the default | only an ignored ".env" file                             | kept    |
+        | "Any local files", the default | an untracked file                                       | kept    |
+        | "Any local files", the default | only "node_modules"                                     | removed |
+        | "Uncommitted changes"          | an untracked file                                       | kept    |
+        | "Uncommitted changes"          | only an ignored ".env" file                             | removed |
+        | "Edited tracked files"         | an edited tracked file                                  | kept    |
+        | "Edited tracked files"         | an untracked file                                       | removed |
+        | "Edited tracked files"         | only an ignored ".env" file                             | removed |
+        | "Edited tracked files"         | a repository with unpushed commits in an ignored folder | kept    |
+        | "Uncommitted changes"          | a repository with unpushed commits in an ignored folder | kept    |
+        | "One this MC does not know"    | only an ignored ".env" file                             | kept    |
+
+    # hal-c2#1148 review: what the choice counts is looked for once more inside the worktree's
+    # lease, right before removal, and "Edited tracked files" cleans untracked files only then,
+    # so a change the agent makes meanwhile loses nothing.
+    @mc @priority-high
+    Scenario Outline: A worktree changed just as it is being removed is kept with every file
+      Given the user turned on deleting worktrees idle for 8 days
+      And "Keep worktrees with local changes" is set to <choice>
+      And an idle thread's worktree has <changes>
+      And the agent <change> just as the sweep removes the worktree
+      When the MC sweeps storage
+      Then the worktree is kept with every file in it
+
+      Examples:
+        | choice                         | changes                     | change                      |
+        | "Edited tracked files"         | only an ignored ".env" file | edits a tracked file        |
+        | "Uncommitted changes"          | only an ignored ".env" file | adds an untracked file      |
+        | "Any local files", the default | only "node_modules"         | adds an ignored ".env" file |
 
     @backlog @mc @shared
     Scenario: Delete now runs the cleanup rules at once and says what happened
@@ -142,7 +214,7 @@ Feature: Storage cleanup
       When the user chooses Delete now in Storage settings
       Then each result names its machine, its checkout, its full folder and its thread
 
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario: A worktree that gets busy while it is being measured is kept
       Given a worktree about to be removed is being measured
       When its thread starts a turn before the measuring ends
@@ -155,7 +227,7 @@ Feature: Storage cleanup
       Then the worktree is kept
 
     # Legacy: apps/server/src/workspace/workspaceLease.ts (withWorkspaceLease), storageCleanup.ts (cleanWorktree), terminal/Manager.ts (open, restart)
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario Outline: A terminal started in a worktree and the worktree's removal never overlap
       Given a worktree about to be removed as idle
       When a terminal is <action> in that worktree while the sweep is removing it
@@ -202,7 +274,7 @@ Feature: Storage cleanup
       Then rotated logs older than 30 days are deleted
       And the current logs are kept
 
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario: A deleted thread's worktree is kept until its deletion has finished
       Given the user turned on deleting worktrees of deleted threads
       And a thread was deleted and its cleanup steps have not all finished
@@ -211,7 +283,31 @@ Feature: Storage cleanup
       When the cleanup steps have finished and the MC sweeps storage again
       Then the worktree is removed
 
-    @backlog @mc @priority-high
+    # Upstream #26038: with deleting worktrees of deleted threads on, every session that stopped
+    # started a full sweep, back to back on busy machines.
+    @backlog @mc
+    Scenario Outline: A stopped session sweeps storage only when a deleted thread's worktree waits on it
+      Given the user turned on deleting worktrees of deleted threads
+      And <state>
+      When a thread's agent session stops
+      Then the MC <sweeps>
+
+      Examples:
+        | state                                                                    | sweeps                  |
+        | no deleted thread's worktree was kept by the last sweep                  | does not sweep storage  |
+        | the last sweep kept a deleted thread's worktree for its open session     | sweeps storage          |
+        | the last sweep kept a deleted thread's worktree for its local changes, and the session ran in it | sweeps storage |
+        | a thread was deleted and no sweep has finished since                     | sweeps storage          |
+
+    # hal-c2#1148 review: a failed step is kept a week for diagnosis but never runs again.
+    @mc
+    Scenario: A deleted thread's cleanup step that failed for good does not keep its worktree
+      Given the user turned on deleting worktrees of deleted threads
+      And a thread was deleted and one of its cleanup steps failed for good
+      When the MC sweeps storage
+      Then the worktree is removed
+
+    @mc @priority-high
     Scenario Outline: A worktree with work the default branch lacks is kept by the merge and unchanged rules
       Given the user turned on <rule>
       And a thread's worktree has commits the default branch does not have
@@ -224,7 +320,7 @@ Feature: Storage cleanup
         | deleting merged worktrees    |
         | deleting unchanged worktrees |
 
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario Outline: A worktree whose pull request was squash merged is removed only at the merged head
       Given the user turned on deleting merged worktrees
       And a thread's worktree on branch "cart" has commits the default branch does not have
@@ -238,7 +334,7 @@ Feature: Storage cleanup
         | into the default branch, but the worktree has a later commit | kept |
         | into a release branch at the worktree's current head    | kept    |
 
-    @backlog @mc
+    @mc
     Scenario: The unchanged rule does not take a squash merge as merged
       Given the user turned on deleting unchanged worktrees only
       And a thread's worktree whose pull request was squash merged at its current head
@@ -248,7 +344,7 @@ Feature: Storage cleanup
 
     # Upstream #17909: with no local record of the remote's default branch, cleanup asks the remote
     # for it once per sweep and never guesses "main" or "master".
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario Outline: A repository that does not know its remote's default branch asks the remote
       Given the user turned on deleting merged worktrees
       And the repository's remote was added by hand, so the checkout does not record its default branch
@@ -262,7 +358,7 @@ Feature: Storage cleanup
         | the remote says its default is "trunk" and the worktree's commits are only on "main" | is kept    |
         | the remote cannot be asked for its default branch                                    | is kept    |
 
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario: An untracked file the repository's status settings hide still keeps the worktree
       Given the user turned on deleting worktrees of deleted threads
       And a deleted thread's worktree is set not to show untracked files in its status
@@ -270,7 +366,7 @@ Feature: Storage cleanup
       When the MC sweeps storage
       Then the worktree is kept with "notes.txt"
 
-    @backlog @mc
+    @mc
     Scenario Outline: An idle thread's worktree is removed however its last turn ended
       Given the user turned on deleting worktrees idle for 8 days
       And a thread whose last turn <ended> has been idle for 9 days with no pending work
@@ -285,13 +381,43 @@ Feature: Storage cleanup
         | was cancelled    |
         | was rolled back  |
 
+    # Upstream #24689: a new worktree whose first prompt hit a usage limit was removed as unchanged
+    # while the thread waited for the reset.
     @backlog @mc @priority-high
+    Scenario Outline: A worktree waiting for its usage limit to reset is kept
+      Given the user turned on deleting unchanged worktrees
+      And a thread in a new worktree with no commits stopped on a usage limit and <waits>
+      When the MC sweeps storage
+      Then the worktree is kept because its thread has pending work
+
+      Examples:
+        | waits                                         |
+        | is set to resume at the reset                 |
+        | is snoozed until a reset that has not come    |
+        | auto-resume is on but nothing is scheduled yet |
+
+    @mc @priority-high
     Scenario: Cleanup never follows a symbolic link out of the folder it cleans
       Given the user turned on deleting browser captures after 14 days
       And the captures folder holds a symbolic link to an old file elsewhere
       When the MC sweeps storage
       Then the file the link points to is untouched
       And the link is left in place
+    # Upstream #24097: any link above the folder made every sweep report "No expired files"
+    @backlog @mc
+    Scenario Outline: Cleanup runs when the HAL-C2 home is reached through a link
+      Given the user turned on deleting <kind> after 30 days
+      And <link>
+      And the folder holds <kind> 40 days old
+      When the MC sweeps storage
+      Then the old <kind> are <outcome>
+
+      Examples:
+        | kind             | link                                             | outcome |
+        | rotated logs     | the HAL-C2 home is a symbolic link to another disk | deleted |
+        | browser captures | the HAL-C2 home is a symbolic link to another disk | deleted |
+        | rotated logs     | the logs folder itself is a symbolic link         | kept    |
+
 
     @backlog @mc @priority-low
     Scenario: Only numbered rotations of a log are deleted
@@ -316,7 +442,7 @@ Feature: Storage cleanup
       Then rotated logs older than the limit are still deleted
       And the failure is logged
 
-    @backlog @mc
+    @mc
     Scenario: A thread and the subagents working in its worktree count as one owner
       Given the user turned on deleting worktrees idle for 8 days
       And a thread and two subagents it delegated to share its worktree on its branch
@@ -325,7 +451,7 @@ Feature: Storage cleanup
       Then the worktree is removed
 
     # Upstream #16473: cleanup read only active threads, missing archived threads' worktrees.
-    @backlog @mc
+    @mc
     Scenario: Cleanup rules reach the worktrees of archived threads
       Given the user turned on deleting worktrees idle for 8 days
       And an archived thread's worktree has been idle for 9 days with nothing to lose
@@ -333,7 +459,7 @@ Feature: Storage cleanup
       Then the worktree is removed
       But a worktree an archived thread shares with one that could lose work is kept
 
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario Outline: A worktree shared with subagents is kept when one of them could lose work
       Given the user turned on deleting worktrees idle for 8 days
       And a thread and a subagent it delegated to share its worktree
@@ -348,7 +474,7 @@ Feature: Storage cleanup
         | a forked thread also works in the worktree             | Shared by 3 threads                                         |
         | an unrelated thread also works in the worktree         | Shared by 3 threads                                         |
 
-    @backlog @mc
+    @mc
     Scenario: The newest work of a thread's subagents keeps their shared worktree
       Given the user turned on deleting worktrees idle for 8 days
       And a thread idle for 9 days shares its worktree with a subagent that worked 2 days ago
@@ -400,7 +526,7 @@ Feature: Storage cleanup
       And a folder already measured is not walked again while it stays unused
 
     # Upstream #20368: worktrees with initialized submodules are removed when nothing in them would be lost.
-    @backlog @mc
+    @mc
     Scenario: A worktree with initialized submodules is removed when nothing would be lost
       Given the user turned on deleting worktrees idle for 8 days
       And an idle thread's worktree has initialized submodules with nothing to lose
@@ -408,7 +534,7 @@ Feature: Storage cleanup
       Then the worktree is removed
 
     # Upstream #20368: a submodule commit that is not pushed anywhere still keeps the worktree.
-    @backlog @mc @priority-high
+    @mc @priority-high
     Scenario: A worktree whose submodule has unpublished work is kept
       Given the user turned on deleting worktrees idle for 8 days
       And an idle thread's worktree has a submodule with a commit not pushed anywhere

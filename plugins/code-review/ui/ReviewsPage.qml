@@ -129,6 +129,11 @@ Item {
         }
     }
 
+    // A pull request nobody trusted is reviewed only at the commit the user approved.
+    function gated(review) {
+        return (review.untrusted ?? "").length > 0 && review.approved !== review.headSha && !["running", "queued", "publishing"].includes(review.status);
+    }
+
     // Why a review is where it is, in a few words.
     function note(review) {
         if (review.elsewhere)
@@ -139,6 +144,13 @@ Item {
             return qsTr("Publishing failed: %1").arg(review.publishError);
         if (review.status === "published" && review.publishNote)
             return review.publishNote;
+        if (page.gated(review))
+            return qsTr("%1 Approve it to review this commit.").arg(review.untrusted);
+        // A review held for a machine out of reach has no time: it waits for the machine.
+        if (review.limited && review.limited.until)
+            return qsTr("Held back until %1: %2").arg(page.time(review.limited.until)).arg(review.limited.reason);
+        if (review.limited)
+            return qsTr("Held back: %1").arg(review.limited.reason);
         if (review.changed)
             return qsTr("Changed since its review");
         if (review.skipped)
@@ -393,6 +405,7 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
+                                    textFormat: Text.PlainText
                                     text: "#" + row.modelData.number + "  " + (row.modelData.title ?? "")
                                     color: page.foreground
                                     elide: Text.ElideRight
@@ -410,8 +423,11 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
+                                textFormat: Text.PlainText
                                 text: {
                                     const parts = [row.modelData.repository, row.modelData.author];
+                                    if (row.modelData.sandboxed)
+                                        parts.push(qsTr("In a sandbox"));
                                     if (page.several)
                                         parts.push(page.environmentLabel(row.modelData.environment));
                                     return parts.filter(part => part).join(" · ");
@@ -424,6 +440,7 @@ Item {
                             Text {
                                 Layout.fillWidth: true
                                 visible: text.length > 0
+                                textFormat: Text.PlainText
                                 text: page.note(row.modelData)
                                 color: !row.modelData.elsewhere && (row.modelData.status === "failed" || row.modelData.publishError) ? page.errorColor : page.muted
                                 elide: Text.ElideRight
@@ -471,6 +488,77 @@ Item {
                     readonly property string status: review?.status ?? ""
                     // Only a waiting review can still be published; a kept one never is.
                     readonly property bool open: status === "waiting"
+                    // The head commit shown when the user opened this review, or last took
+                    // in: an approval vouches for it alone, so a push while the page is
+                    // open is shown and has to be taken in before it can be approved.
+                    property string seenId: ""
+                    property string seenSha: ""
+                    readonly property string headSha: review?.headSha ?? ""
+                    readonly property bool moved: seenSha.length > 0 && headSha.length > 0 && seenSha !== headSha
+                    readonly property bool approvable: review !== null && page.gated(review) && (!review.elsewhere || review.elsewhere.away === true) && seenSha.length > 0
+                    // What publishing would post (the MC's `preview`), read when the user
+                    // asks to publish and shown for them to confirm: the settings or
+                    // GitHub may post the verdict as a comment. Null while it is read.
+                    property bool confirming: false
+                    property var preview: null
+                    property int previewAsk: 0
+                    readonly property string version: review?.version ?? ""
+
+                    // Another review picked, or a head first known, is what is shown now.
+                    function see() {
+                        const id = review?.id ?? "";
+                        if (id !== seenId || seenSha.length === 0) {
+                            if (id !== seenId)
+                                cancelPublish();
+                            seenId = id;
+                            seenSha = review?.headSha ?? "";
+                        }
+                    }
+
+                    // Reads what publishing would post; an older answer, from before the
+                    // review changed, is dropped.
+                    function readPreview() {
+                        const ask = ++previewAsk;
+                        preview = null;
+                        page.refusal = "";
+                        page.plugin.call("preview", {
+                            key: review.key
+                        }, (result, error) => {
+                            if (ask !== findings.previewAsk)
+                                return;
+                            if (error) {
+                                page.refusal = error;
+                                findings.cancelPublish();
+                            } else {
+                                findings.preview = result;
+                            }
+                        }, review.environment);
+                    }
+
+                    function cancelPublish() {
+                        ++previewAsk;
+                        confirming = false;
+                        preview = null;
+                    }
+
+                    // Publishes what was shown: the findings' version and the verdict of the
+                    // post, which the MC refuses to post anything else under.
+                    function publish() {
+                        const shown = preview;
+                        cancelPublish();
+                        page.ask("publish", {
+                            key: review.key,
+                            version: shown.version,
+                            verdict: shown.verdict
+                        }, review.environment);
+                    }
+
+                    onReviewChanged: see()
+                    onVersionChanged: if (confirming)
+                        readPreview()
+                    onOpenChanged: if (!open)
+                        cancelPublish()
+                    Component.onCompleted: see()
 
                     x: 20
                     y: 16
@@ -481,6 +569,7 @@ Item {
                     Text {
                         objectName: "codeReviewTitle"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         text: findings.review ? "#" + findings.review.number + "  " + (findings.review.title ?? "") : ""
                         color: page.foreground
                         wrapMode: Text.Wrap
@@ -490,6 +579,7 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         text: {
                             const review = findings.review;
                             if (!review)
@@ -532,6 +622,15 @@ Item {
                             font.weight: Font.DemiBold
                         }
 
+                        // The agent of an untrusted pull request runs in an OpenShell sandbox.
+                        Text {
+                            objectName: "codeReviewSandboxed"
+                            visible: findings.review?.sandboxed === true
+                            text: qsTr("In a sandbox")
+                            color: page.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+
                         Item {
                             Layout.fillWidth: true
                         }
@@ -543,22 +642,104 @@ Item {
 
                         ShellButton {
                             objectName: "codeReviewPublish"
-                            visible: findings.open
+                            visible: findings.open && !findings.confirming
                             primary: true
                             enabled: page.busy === 0
                             text: qsTr("Publish to GitHub")
-                            onClicked: page.ask("publish", { key: findings.review.key }, findings.review.environment)
+                            onClicked: {
+                                findings.confirming = true;
+                                findings.readPreview();
+                            }
+                        }
+
+                        // How the post goes, for the user to confirm before anything is posted.
+                        Text {
+                            objectName: "codeReviewPublishVerdict"
+                            visible: findings.open && findings.confirming
+                            height: approve.height
+                            verticalAlignment: Text.AlignVCenter
+                            textFormat: Text.PlainText
+                            text: findings.preview ? qsTr("Posted as: %1").arg(page.verdictText(findings.preview.verdict)) : qsTr("Reading what will be posted…")
+                            color: page.foreground
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+
+                        ShellButton {
+                            objectName: "codeReviewPublishConfirm"
+                            visible: findings.open && findings.confirming
+                            primary: true
+                            // The post read is of the findings shown here.
+                            enabled: page.busy === 0 && findings.preview !== null && findings.preview.version === findings.version
+                            text: qsTr("Publish")
+                            onClicked: findings.publish()
+                        }
+
+                        ShellButton {
+                            objectName: "codeReviewPublishCancel"
+                            visible: findings.open && findings.confirming
+                            subtle: true
+                            text: qsTr("Cancel")
+                            onClicked: findings.cancelPublish()
+                        }
+
+                        ShellButton {
+                            objectName: "codeReviewStop"
+                            visible: findings.status === "running"
+                            enabled: page.busy === 0
+                            text: findings.review?.sandboxed ? qsTr("Stop and delete the sandbox") : qsTr("Stop")
+                            onClicked: page.ask("stop", { key: findings.review.key }, findings.review.environment)
                         }
 
                         ShellButton {
                             objectName: "codeReviewRetry"
                             // Another machine reviews this head; a review here would be a second one,
                             // unless that machine is out of reach and may not come back.
-                            visible: findings.review !== null && (!findings.review.elsewhere || findings.review.elsewhere.away === true) && !["running", "queued", "publishing"].includes(findings.status)
+                            visible: findings.review !== null && (!findings.review.elsewhere || findings.review.elsewhere.away === true) && !["running", "queued", "publishing"].includes(findings.status) && !page.gated(findings.review)
                             primary: findings.status === "ready" || findings.status === "failed"
                             enabled: page.busy === 0
                             text: findings.status === "ready" ? qsTr("Review") : findings.status === "failed" ? qsTr("Try again") : qsTr("Review again")
                             onClicked: page.ask("retry", { key: findings.review.key }, findings.review.environment)
+                        }
+
+                        // The commit an approval vouches for, and a push since it was shown.
+                        Text {
+                            objectName: "codeReviewApproveCommit"
+                            visible: findings.approvable
+                            height: approve.height
+                            verticalAlignment: Text.AlignVCenter
+                            textFormat: Text.PlainText
+                            text: findings.moved ? qsTr("Pushed since you opened it: now at %1, not %2").arg(findings.headSha.slice(0, 7)).arg(findings.seenSha.slice(0, 7)) : qsTr("At commit %1").arg(findings.seenSha.slice(0, 7))
+                            color: findings.moved ? page.warningColor : page.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+
+                        // The user vouches for the commit shown, and only that one: a push
+                        // needs another approval, and one while the page is open is taken
+                        // in first rather than approved unseen.
+                        ShellButton {
+                            id: approve
+
+                            objectName: "codeReviewApprove"
+                            visible: findings.approvable
+                            primary: true
+                            enabled: page.busy === 0
+                            text: findings.moved ? qsTr("Show the new commit") : qsTr("Approve and review")
+                            onClicked: {
+                                if (findings.moved)
+                                    findings.seenSha = findings.headSha;
+                                else
+                                    page.ask("approve", { key: findings.review.key, headSha: findings.seenSha }, findings.review.environment);
+                            }
+                        }
+
+                        // Any approval kept can be taken back, whichever commit it is of.
+                        ShellButton {
+                            objectName: "codeReviewUnapprove"
+                            visible: findings.review !== null && (findings.review.untrusted ?? "").length > 0 && (findings.review.approved ?? "").length > 0 && !["running", "publishing"].includes(findings.status)
+                            subtle: true
+                            enabled: page.busy === 0
+                            text: qsTr("Withdraw approval")
+                            onClicked: page.ask("unapprove", { key: findings.review.key }, findings.review.environment)
                         }
 
                         ShellButton {
@@ -588,6 +769,7 @@ Item {
                     Text {
                         objectName: "codeReviewProblem"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         visible: text.length > 0
                         text: findings.review ? page.note(findings.review) : ""
                         color: !findings.review?.elsewhere && (findings.status === "failed" || findings.review?.publishError) ? page.errorColor : page.muted
@@ -624,6 +806,7 @@ Item {
                     Text {
                         objectName: "codeReviewHeadline"
                         Layout.fillWidth: true
+                        textFormat: Text.PlainText
                         visible: text.length > 0
                         text: findings.review?.headline ?? ""
                         color: page.foreground
@@ -721,6 +904,7 @@ Item {
 
                                     Text {
                                         Layout.fillWidth: true
+                                        textFormat: Text.PlainText
                                         text: comment.modelData.path + ":" + comment.modelData.line + (comment.modelData.side === "old" ? " " + qsTr("(removed)") : "") + (comment.modelData.severity ? " · " + (({ high: "🔴 High", medium: "🟡 Medium", low: "🔵 Low", blocking: "🔴 High", suggestion: "🟡 Medium", nit: "🔵 Low" })[comment.modelData.severity] ?? comment.modelData.severity) : "")
                                         color: page.muted
                                         elide: Text.ElideMiddle

@@ -10,6 +10,12 @@ import "js/modelPicker.js" as Picker
 // has the provider rail (ModelPickerSidebar) beside a searchable model list
 // (ModelPickerContent, ModelListRow). The catalogue is Shell.state.modelPicker;
 // choosing a model or starring it is dispatched to the shell.
+//
+// Docked (upstream's ComposerModelEffort), it is the composer's one model
+// control: the chosen model's efforts and other options sit in a column
+// beside the list, its speed beside the permissions below, and the trigger
+// names the effort, fast mode and context window after the model. A pick
+// leaves it open until Escape or a click outside.
 AbstractButton {
     id: control
 
@@ -29,10 +35,26 @@ AbstractButton {
         return onlyInstances === null ? all : all.filter(instance => onlyInstances.includes(instance.instanceId));
     }
     readonly property var activeInstance: Picker.findInstance(instances, selectedInstanceId)
+    // The instance the rail is looking at, when it cannot be used but the MC
+    // can set it up: its panel offers the setup instead of models.
+    readonly property var setupInstance: {
+        const looked = Picker.findInstance(instances, view);
+        return looked && !looked.isAvailable && looked.canSetUp === true ? looked : null;
+    }
     readonly property var activeModel: Picker.findModel(activeInstance, selectedModel)
     // The models a new thread's prompt goes to, once more than one is chosen.
     readonly property var multiple: onlyInstances === null ? (catalogue?.multiple ?? null) : null
-    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : activeModel ? Picker.displayName(activeModel, true) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // What stands where the model would be when no provider can run a turn
+    // (catalogue.noProvider, keyed in C++): it wins over the model name,
+    // which a keep-unlisted provider can still resolve while unready.
+    readonly property string noProviderText: catalogue?.noProvider === "open-provider-settings" ? qsTr("Open provider settings") : catalogue?.noProvider === "no-provider-available" ? qsTr("No provider available") : ""
+    // Short names are for chat models; where favorites is off (a Space's
+    // image models) the trigger keeps the model's own name.
+    readonly property string triggerTitle: multiple !== null ? qsTr("%1 models").arg(multiple.length) : noProviderText.length > 0 ? noProviderText : activeModel ? Picker.displayName(activeModel, favorites, activeInstance) : (selectedModel ? selectedModel : qsTr("Choose model"))
+    // The full name, for the tooltip the short title stands in for. Where
+    // the button shows a stand-in instead (no provider, or several models),
+    // the tooltip follows the button.
+    readonly property string triggerFullTitle: multiple === null && noProviderText.length === 0 && activeModel ? Picker.displayName(activeModel, false, activeInstance) + (activeModel.isUnavailable ? qsTr(" (Unavailable)") : "") : triggerTitle
 
     function inMultiple(instanceId, model) {
         return multiple !== null && multiple.some(entry => entry.instanceId === instanceId && entry.model === model);
@@ -40,6 +62,152 @@ AbstractButton {
     readonly property string triggerLabel: activeModel && activeModel.isUnavailable ? triggerTitle + qsTr(" (Unavailable)") : triggerTitle
     readonly property bool mac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property alias popup: popup
+
+    // The permissions the popup's footer offers ({value, label, icon}) and
+    // the thread's; with none the popup has no footer.
+    property var runtimeModes: []
+    property string runtimeMode: ""
+    // Docked, the footer stays for the speed so the popup keeps one height.
+    readonly property bool showFooter: onlyInstances === null && (runtimeModes.length > 0 || controlDocked)
+    // The part the popup opens on: "models" (the search), "effort" or
+    // "permissions".
+    property string openOn: "models"
+
+    // The model control: the composer's options for the chosen model
+    // (model.options, the effort marked `effort`) and Appearance's effort
+    // display ("label" or "bars").
+    property bool docked: false
+    property var options: []
+    property string effortDisplay: "label"
+    readonly property bool controlDocked: docked && onlyInstances === null
+    readonly property var effortOption: controlDocked ? (options.find(option => option.effort === true) ?? null) : null
+    readonly property bool effortLocked: (effortOption?.lockedReason ?? "").length > 0
+    // Fast mode, and Codex's service tier in its place, are the footer's speed.
+    readonly property var fastOption: controlDocked ? (options.find(option => option.id === "fastMode" && option.type === "boolean") ?? null) : null
+    readonly property var tierOption: controlDocked && activeInstance?.driverKind === "codex" ? (options.find(option => option.id === "serviceTier" && option.type === "select") ?? null) : null
+    // The column's other options, one row each below the efforts.
+    readonly property var columnOptions: controlDocked ? options.filter(option => !option.effort && option.id !== fastOption?.id && option.id !== tierOption?.id) : []
+    readonly property var speedChoices: tierOption ? tierOption.choices.map(choice => ({
+                value: choice.id,
+                label: choice.label,
+                fast: /fast/i.test(choice.label),
+                checked: choice.id === tierOption.value
+            })) : fastOption ? [false, true].map(value => ({
+                value: value,
+                label: value ? qsTr("Fast") : qsTr("Standard"),
+                fast: value,
+                checked: (fastOption.value === true) === value
+            })) : []
+    // What the trigger adds after the model: the effort as a word or as bars
+    // (Max and Ultrathink keep their names), a bolt for fast and the context
+    // window.
+    readonly property var triggerBars: effortDisplay === "bars" && effortOption?.bars && !effortOption.bars.special ? effortOption.bars : null
+    readonly property string triggerEffort: effortOption === null || triggerBars !== null ? "" : optionValueLabel(effortOption)
+    readonly property bool triggerFast: speedChoices.some(choice => choice.checked && choice.fast)
+    readonly property var contextWindowOption: controlDocked ? (options.find(option => option.id === "contextWindow" && option.type === "select" && !option.effort) ?? null) : null
+    readonly property string triggerContextWindow: contextWindowOption ? optionValueLabel(contextWindowOption) : ""
+    // A model chosen with an effort to pick, until its options arrive.
+    property string pendingEffortFor: ""
+    // The row a pick came from: the options it changes rebuild the rows, and
+    // the keyboard stays on the one picked.
+    property string refocusName: ""
+
+    // A select's chosen value by its label, else the option's own.
+    function optionValueLabel(option) {
+        const chosen = (option?.choices ?? []).find(choice => choice.id === option.value);
+        return chosen ? chosen.label : (option?.label ?? "");
+    }
+
+    function setOption(id, value) {
+        const focused = control.Window.activeFocusItem;
+        refocusName = popup.opened && focused ? focused.objectName : "";
+        Shell.dispatch("composer.option.set", {
+            id: id,
+            value: value
+        });
+    }
+
+    // The column's rows the keyboard moves through, top to bottom.
+    function columnRows() {
+        return columnBody.children.filter(child => child.inColumn === true && child.visible && child.enabled);
+    }
+
+    // Focuses the chosen effort, else the first effort; with `any` falls
+    // back to the column's first option. False when nothing took focus.
+    function focusEffort(any) {
+        const rows = columnRows();
+        const levels = rows.filter(row => row.effortLevel === true);
+        const row = levels.find(level => level.checked) ?? levels[0] ?? (any ? rows[0] : undefined);
+        if (!row)
+            return false;
+        row.forceActiveFocus(Qt.TabFocusReason);
+        return true;
+    }
+
+    function stepColumn(from, step) {
+        const rows = columnRows();
+        const next = rows[Math.max(0, Math.min(rows.length - 1, rows.indexOf(from) + step))];
+        if (next)
+            next.forceActiveFocus(Qt.TabFocusReason);
+    }
+
+    // Opens the popup on the current effort, or moves there.
+    function openEffort() {
+        if (!enabled || !controlDocked)
+            return;
+        if (popup.opened) {
+            focusEffort(true);
+            return;
+        }
+        openOn = "effort";
+        popup.open();
+    }
+
+    onOptionsChanged: {
+        if (pendingEffortFor.length > 0)
+            Qt.callLater(focusPendingEffort);
+        if (refocusName.length > 0)
+            Qt.callLater(restoreFocus);
+    }
+
+    function restoreFocus() {
+        const name = refocusName;
+        refocusName = "";
+        // Only when the rebuild dropped the keyboard to the popup itself: a
+        // user who moved on to another part keeps it there.
+        const focused = control.Window.activeFocusItem;
+        if (!popup.opened || (focused && popup.contentItem !== focused && isAncestor(popup.contentItem, focused)))
+            return;
+        const row = named(popup.contentItem, name);
+        if (row)
+            row.forceActiveFocus(Qt.TabFocusReason);
+    }
+
+    function isAncestor(ancestor, item) {
+        for (let at = item.parent; at; at = at.parent) {
+            if (at === ancestor)
+                return true;
+        }
+        return false;
+    }
+
+    function named(item, name) {
+        if (item.objectName === name)
+            return item;
+        for (const child of item.children) {
+            const found = named(child, name);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+
+    function focusPendingEffort() {
+        if (pendingEffortFor !== selectedInstanceId + "\n" + selectedModel || !popup.opened)
+            return;
+        if (focusEffort(false))
+            pendingEffortFor = "";
+    }
 
     signal chosen(string instanceId, string model)
 
@@ -73,8 +241,36 @@ AbstractButton {
             popup.open();
     }
 
+    // Opens the popup with its permissions menu open, or moves there.
+    function openPermissions() {
+        if (!enabled || !showFooter)
+            return;
+        if (popup.opened) {
+            permissionsPicker.forceActiveFocus();
+            permissionsPicker.popup.open();
+            return;
+        }
+        openOn = "permissions";
+        popup.open();
+    }
+
     function close() {
         popup.close();
+    }
+
+    // Out of the popup with the keyboard back on the trigger.
+    function leave() {
+        popup.close();
+        control.forceActiveFocus();
+    }
+
+    // One step back (the phone's system back): out of the permissions menu
+    // when it is open, else out of the popup.
+    function stepBack() {
+        if (permissionsPicker.popup.visible)
+            permissionsPicker.popup.close();
+        else
+            popup.close();
     }
 
     function selectView(next) {
@@ -117,6 +313,12 @@ AbstractButton {
             instanceId: instanceId,
             model: model
         });
+        // In the model control, a model with an effort stays open on it.
+        if (controlDocked && entry.hasEffort === true) {
+            pendingEffortFor = instanceId + "\n" + model;
+            Qt.callLater(focusPendingEffort);
+            return;
+        }
         popup.close();
     }
 
@@ -210,9 +412,20 @@ AbstractButton {
 
     ToolTip.visible: hovered && !popup.visible
     ToolTip.delay: 500
-    ToolTip.text: catalogue && catalogue.shortcut ? triggerLabel + " · " + catalogue.shortcut : triggerLabel
+    ToolTip.text: catalogue && catalogue.shortcut ? triggerFullTitle + " · " + catalogue.shortcut : triggerFullTitle
 
-    onClicked: popup.visible ? popup.close() : popup.open()
+    onClicked: {
+        // The stand-in that names provider settings goes there, as it says.
+        if (catalogue?.noProvider === "open-provider-settings") {
+            Shell.dispatch("settings.navigate", {
+                to: "/settings/providers"
+            });
+        } else if (popup.visible) {
+            popup.close();
+        } else {
+            popup.open();
+        }
+    }
 
     background: Rectangle {
         id: triggerBackground
@@ -266,6 +479,46 @@ AbstractButton {
             visible: control.activeModel !== null && control.activeModel.isUnavailable
             text: qsTr("Unavailable")
         }
+
+        Text {
+            objectName: "modelPickerEffort"
+            visible: text.length > 0
+            Layout.maximumWidth: Theme.control.md * 3
+            text: control.triggerEffort
+            font: control.font
+            color: control.muted
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        EffortBars {
+            objectName: "modelPickerEffortBars"
+            visible: control.triggerBars !== null
+            count: control.triggerBars?.count ?? 0
+            filled: control.triggerBars?.filled ?? 0
+            color: control.muted
+        }
+
+        ShellIcon {
+            objectName: "modelPickerFast"
+            visible: control.triggerFast
+            name: "zap"
+            filled: true
+            size: Theme.icon.sm
+            color: control.muted
+        }
+
+        Text {
+            objectName: "modelPickerContextWindow"
+            visible: text.length > 0
+            Layout.maximumWidth: Theme.control.md * 3
+            text: control.triggerContextWindow
+            font.family: control.fontFamily
+            font.pixelSize: Theme.type.meta.size
+            color: control.muted
+            elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+        }
     }
 
     Popup {
@@ -280,10 +533,10 @@ AbstractButton {
         x: 0
         y: below ? control.height + 4 : -height - 4
         // ljos-allow(layout-fixed-size): the rail and the list scroll inside it, and a size that followed the search's results would move the rows under the pointer as one types
-        width: 360
+        width: 360 + (control.controlDocked ? column.width : 0)
         // The search row, then six whole rows (46 tall, 2 apart) between the
         // list's margins: the list never stops on a sliced row.
-        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2
+        height: 40 + 2 * Theme.space.sm + 6 * 46 + 5 * 2 + (control.showFooter ? footer.height : 0)
         padding: 0
         margins: 8
         focus: true
@@ -298,15 +551,24 @@ AbstractButton {
             control.expandedLegacy = control.activeModel && control.activeModel.isLegacy ? {
                 [control.selectedInstanceId]: true
             } : {};
-            control.view = Picker.initialView(control.instances, control.selectedInstanceId);
+            control.view = Picker.initialView(control.instances, control.selectedInstanceId, control.catalogue?.locked === true);
+            control.pendingEffortFor = "";
+            control.refocusName = "";
         }
         // The keymap's modelPickerOpen.
         onVisibleChanged: Keybindings.modelPickerOpen = visible
         onOpened: {
             const selected = control.rows.findIndex(row => row.kind === "model" && row.instance.instanceId === control.selectedInstanceId && row.model.slug === control.selectedModel);
             control.highlightedIndex = selected >= 0 ? selected : control.firstSelectableRow(0, 1);
-            search.forceActiveFocus();
+            if (control.openOn === "permissions" && control.showFooter) {
+                permissionsPicker.forceActiveFocus();
+                permissionsPicker.popup.open();
+            } else if (control.openOn !== "effort" || !control.focusEffort(true)) {
+                search.forceActiveFocus();
+            }
+            control.openOn = "models";
         }
+        onClosed: permissionsPicker.popup.close()
 
         enter: Transition {
             NumberAnimation {
@@ -328,6 +590,9 @@ AbstractButton {
             // A Popup is no Item, so its name is on its content.
             Accessible.role: Accessible.Pane
             Accessible.name: qsTr("Models")
+            // Escape from any part the search and rail do not handle: the
+            // column, the speed and the permissions while their menu is shut.
+            Keys.onEscapePressed: control.leave()
 
             // The provider rail: favourites, then one button per enabled
             // instance. Hidden while searching, since search spans them all.
@@ -368,7 +633,7 @@ AbstractButton {
                 objectName: "modelPickerRail"
                 visible: control.showRail
                 width: 44
-                height: parent.height
+                height: parent.height - (control.showFooter ? footer.height : 0)
                 color: control.fade(control.mutedSurface, 0.3)
                 radius: Theme.radiusLg
 
@@ -419,6 +684,7 @@ AbstractButton {
                                 objectName: "modelPickerProvider:" + modelData.instanceId
                                 railId: modelData.instanceId
                                 available: modelData.isAvailable
+                                canSetUp: modelData.canSetUp === true
                                 tooltip: modelData.unavailableReason ?? modelData.displayName
 
                                 ProviderIcon {
@@ -441,9 +707,9 @@ AbstractButton {
                 id: main
 
                 anchors.left: rail.visible ? rail.right : parent.left
-                anchors.right: parent.right
+                anchors.right: column.visible ? column.left : parent.right
                 anchors.top: parent.top
-                anchors.bottom: parent.bottom
+                anchors.bottom: control.showFooter ? footer.top : parent.bottom
                 color: control.fade(control.mutedSurface, 0.4)
                 radius: rail.visible ? 0 : Theme.radiusLg
 
@@ -502,6 +768,13 @@ AbstractButton {
                                 event.accepted = control.chordFor(event) !== null;
                             }
                             Keys.onPressed: event => {
+                                // Enter and Escape mid-composition are the input method's:
+                                // they confirm or cancel the text, and leave the picker be.
+                                // Taken here, so the popup's own Escape never sees them.
+                                if (inputMethodComposing && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Escape)) {
+                                    event.accepted = true;
+                                    return;
+                                }
                                 if (control.handleChord(event)) {
                                     event.accepted = true;
                                     return;
@@ -569,15 +842,411 @@ AbstractButton {
                         }
 
                         Text {
+                            objectName: "modelPickerEmpty"
                             anchors.centerIn: parent
-                            visible: list.count === 0
+                            visible: list.count === 0 && control.setupInstance === null
                             text: qsTr("No models found")
                             color: control.muted
                             font.family: control.fontFamily
                             font.pixelSize: Theme.type.body.size
                         }
+
+                        Column {
+                            anchors.centerIn: parent
+                            width: parent.width - Theme.space.lg * 2
+                            visible: control.setupInstance !== null
+                            spacing: Theme.space.sm
+
+                            Text {
+                                objectName: "modelPickerSetupReason"
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                text: control.setupInstance ? (control.setupInstance.unavailableReason ?? "") : ""
+                                color: control.muted
+                                font.family: control.fontFamily
+                                font.pixelSize: Theme.type.body.size
+                            }
+
+                            ShellButton {
+                                objectName: "modelPickerSetup"
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: qsTr("Open provider setup")
+                                Accessible.name: qsTr("Open provider setup")
+                                onClicked: {
+                                    popup.close();
+                                    Shell.dispatch("settings.navigate", {
+                                        to: "/settings/providers"
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
+            }
+
+            // Beside the models in the model control: the chosen model's
+            // efforts, then its other options one row each.
+            Rectangle {
+                id: column
+
+                objectName: "modelControlColumn"
+                visible: control.controlDocked
+                // ljos-allow(layout-fixed-size): one width for every provider, so the popup does not move as the user goes between them
+                width: 200
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: control.showFooter ? footer.top : parent.bottom
+                color: control.fade(control.mutedSurface, 0.4)
+                radius: Theme.radiusLg
+
+                Rectangle {
+                    width: 1
+                    height: parent.height
+                    color: control.divider
+                }
+
+                RowLayout {
+                    id: columnHeader
+
+                    x: Theme.space.sm + 1
+                    width: parent.width - 2 * Theme.space.sm - 1
+                    height: 40
+                    spacing: Theme.space.sm
+
+                    Text {
+                        objectName: "modelControlHeader"
+                        text: control.effortOption?.label ?? (control.columnOptions.length > 0 ? qsTr("Options") : qsTr("Effort"))
+                        color: control.muted
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.meta.size
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+
+                    Text {
+                        objectName: "modelControlModel"
+                        text: control.triggerTitle
+                        color: control.muted
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.meta.size
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignRight
+                        Layout.maximumWidth: parent.width / 2
+                    }
+                }
+
+                Flickable {
+                    id: columnScroll
+
+                    anchors.top: columnHeader.bottom
+                    anchors.left: parent.left
+                    anchors.leftMargin: 1
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    contentHeight: columnBody.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    clip: true
+
+                    Column {
+                        id: columnBody
+
+                        width: columnScroll.width
+                        padding: 4
+                        spacing: 2
+
+                        Text {
+                            objectName: "modelControlEffortNote"
+                            visible: control.effortLocked
+                            width: parent.width - 8
+                            leftPadding: 4
+                            text: control.effortOption?.lockedReason ?? ""
+                            color: control.muted
+                            font.family: control.fontFamily
+                            font.pixelSize: Theme.type.meta.size
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: control.effortOption?.choices ?? []
+
+                            delegate: ColumnRow {
+                                required property var modelData
+
+                                objectName: "modelControlEffort:" + modelData.id
+                                effortLevel: true
+                                text: modelData.label
+                                isDefault: modelData.isDefault === true
+                                description: modelData.description ?? ""
+                                checked: modelData.id === control.effortOption?.value
+                                enabled: !control.effortLocked
+                                onClicked: control.setOption(control.effortOption.id, modelData.id)
+                            }
+                        }
+
+                        Text {
+                            objectName: "modelControlNoEffort"
+                            visible: control.effortOption === null && control.columnOptions.length === 0
+                            width: parent.width - 8
+                            leftPadding: 4
+                            text: qsTr("No effort levels")
+                            color: control.muted
+                            font.family: control.fontFamily
+                            font.pixelSize: Theme.type.body.size
+                        }
+
+                        Rectangle {
+                            visible: control.effortOption !== null && control.columnOptions.length > 0
+                            x: 4
+                            width: parent.width - 8
+                            height: 1
+                            color: control.divider
+                        }
+
+                        Repeater {
+                            model: control.columnOptions
+
+                            delegate: ColumnRow {
+                                id: optionRow
+
+                                required property var modelData
+                                readonly property bool isSwitch: modelData.type === "boolean"
+
+                                objectName: (isSwitch ? "modelControlSwitch:" : "modelControlOption:") + modelData.id
+                                text: modelData.label
+                                detail: isSwitch ? (modelData.value === true ? qsTr("On") : qsTr("Off")) : control.optionValueLabel(modelData)
+                                chevron: !isSwitch
+                                switchRow: isSwitch
+                                switchOn: isSwitch && modelData.value === true
+                                description: modelData.description ?? ""
+                                Accessible.role: isSwitch ? Accessible.CheckBox : Accessible.ButtonMenu
+                                onClicked: {
+                                    if (isSwitch)
+                                        control.setOption(modelData.id, modelData.value !== true);
+                                    else
+                                        choicesMenu.open();
+                                }
+                                Keys.onRightPressed: event => {
+                                    event.accepted = !isSwitch;
+                                    if (!isSwitch)
+                                        choicesMenu.open();
+                                }
+
+                                // The option's choices, beside its row.
+                                ShellMenu {
+                                    id: choicesMenu
+
+                                    objectName: "modelControlChoices:" + optionRow.modelData.id
+                                    x: optionRow.width
+                                    y: 0
+                                    // On the chosen value, so the arrows start from it.
+                                    onOpened: currentIndex = (optionRow.modelData.choices ?? []).findIndex(choice => choice.id === optionRow.modelData.value)
+                                    onClosed: if (popup.opened)
+                                        optionRow.forceActiveFocus()
+
+                                    Instantiator {
+                                        model: optionRow.isSwitch ? [] : optionRow.modelData.choices
+
+                                        delegate: ShellMenuItem {
+                                            required property var modelData
+
+                                            objectName: "modelControlChoice:" + optionRow.modelData.id + ":" + modelData.id
+                                            text: modelData.label
+                                            detail: modelData.isDefault === true ? qsTr("Default") : ""
+                                            current: modelData.id === optionRow.modelData.value
+                                            onTriggered: control.setOption(optionRow.modelData.id, modelData.id)
+                                            // Left closes the choices, back on their row.
+                                            Keys.onLeftPressed: choicesMenu.close()
+                                        }
+                                        onObjectAdded: (index, object) => choicesMenu.insertItem(index, object)
+                                        onObjectRemoved: (index, object) => choicesMenu.removeItem(object)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Below the models: the speed and the thread's permissions, which
+            // open their own menu.
+            Rectangle {
+                id: footer
+
+                objectName: "modelPickerFooter"
+                visible: control.showFooter
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Theme.control.md + 2 * Theme.space.xs + 1
+                color: control.fade(control.mutedSurface, 0.4)
+                radius: Theme.radiusLg
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: control.divider
+                }
+
+                // The speed, as segments at the footer's start.
+                Row {
+                    objectName: "modelControlSpeed"
+                    visible: control.speedChoices.length > 0
+                    x: Theme.space.xs
+                    y: 1 + Theme.space.xs
+                    spacing: 2
+
+                    Repeater {
+                        model: control.speedChoices
+
+                        delegate: ShellButton {
+                            required property var modelData
+
+                            objectName: "modelControlSpeed:" + modelData.value
+                            subtle: !modelData.checked
+                            checked: modelData.checked
+                            text: modelData.label
+                            iconName: modelData.fast ? "zap" : ""
+                            Accessible.name: qsTr("Speed: %1").arg(modelData.label)
+                            onClicked: control.setOption(control.tierOption?.id ?? control.fastOption.id, modelData.value)
+                        }
+                    }
+                }
+
+                ShellComboBox {
+                    id: permissionsPicker
+
+                    readonly property int current: control.runtimeModes.findIndex(mode => mode.value === control.runtimeMode)
+
+                    objectName: "modelPickerPermissions"
+                    visible: control.runtimeModes.length > 0
+                    // At the footer's end, where the speed controls do not reach.
+                    width: Math.min(implicitWidth, parent.width - 2 * Theme.space.xs)
+                    x: parent.width - width - Theme.space.xs
+                    y: 1 + Theme.space.xs
+                    iconName: current >= 0 ? (control.runtimeModes[current].icon ?? "") : ""
+                    model: control.runtimeModes.map(mode => mode.label)
+                    currentIndex: current
+                    Accessible.name: qsTr("Permissions")
+                    ToolTip.visible: hovered && !popup.visible && current >= 0
+                    ToolTip.delay: 500
+                    ToolTip.text: current >= 0 ? (control.runtimeModes[current].description ?? "") : ""
+                    onActivated: index => Shell.dispatch("composer.runtimeMode.set", {
+                            mode: control.runtimeModes[index].value
+                        })
+                }
+            }
+        }
+    }
+
+    // A row of the model control's column: an effort level (a check when
+    // chosen, "Default" on the provider's own), or another option naming its
+    // value with a chevron to its choices or a switch.
+    component ColumnRow: AbstractButton {
+        id: columnRow
+
+        readonly property bool inColumn: true
+        property bool effortLevel: false
+        property bool isDefault: false
+        property string description: ""
+        property string detail: ""
+        property bool chevron: false
+        property bool switchOn: false
+        property bool switchRow: false
+
+        width: parent ? parent.width - 8 : 0
+        x: 4
+        implicitHeight: detail.length > 0 ? 40 : 30
+        focusPolicy: Qt.StrongFocus
+        hoverEnabled: true
+        opacity: enabled ? 1 : 0.64
+        Accessible.role: effortLevel ? Accessible.RadioButton : Accessible.Button
+        Accessible.name: detail.length > 0 ? text + ", " + detail : text
+        Accessible.checked: checked || switchOn
+        ToolTip.visible: hovered && description.length > 0
+        ToolTip.delay: 500
+        ToolTip.text: description
+        Keys.onUpPressed: control.stepColumn(columnRow, -1)
+        Keys.onDownPressed: control.stepColumn(columnRow, 1)
+        Keys.onLeftPressed: search.forceActiveFocus()
+        Keys.onReturnPressed: clicked()
+        Keys.onEnterPressed: clicked()
+        Keys.onSpacePressed: clicked()
+
+        background: Rectangle {
+            radius: Theme.radiusXs
+            color: columnRow.hovered || columnRow.activeFocus ? control.highlight : columnRow.checked ? control.fade(control.foreground, 0.08) : "transparent"
+            border.color: Theme.palette.color("focus", "#3b82f6")
+            border.width: columnRow.visualFocus ? 1 : 0
+        }
+
+        contentItem: RowLayout {
+            spacing: Theme.space.sm
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 6
+                spacing: 0
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.space.xs
+
+                    Text {
+                        text: columnRow.text
+                        color: control.foreground
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.body.size
+                        elide: Text.ElideRight
+                        Layout.fillWidth: !columnRow.isDefault
+                    }
+
+                    Text {
+                        visible: columnRow.isDefault
+                        text: qsTr("Default")
+                        color: control.muted
+                        font.family: control.fontFamily
+                        font.pixelSize: Theme.type.meta.size
+                        Layout.fillWidth: true
+                    }
+                }
+
+                Text {
+                    visible: columnRow.detail.length > 0
+                    text: columnRow.detail
+                    color: control.muted
+                    font.family: control.fontFamily
+                    font.pixelSize: Theme.type.meta.size
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+            }
+
+            ShellIcon {
+                visible: columnRow.effortLevel && columnRow.checked
+                name: "check"
+                size: Theme.icon.sm
+                color: control.foreground
+                Layout.rightMargin: 4
+            }
+
+            ShellIcon {
+                visible: columnRow.chevron
+                name: "chevron-right"
+                size: Theme.icon.sm
+                color: control.muted
+                Layout.rightMargin: 4
+            }
+
+            ShellSwitch {
+                visible: columnRow.switchRow
+                checked: columnRow.switchOn
+                // The row's value, not its own: a click asks the row.
+                checkable: false
+                focusPolicy: Qt.NoFocus
+                onClicked: columnRow.clicked()
+                Layout.rightMargin: 2
             }
         }
     }
@@ -616,7 +1285,7 @@ AbstractButton {
             opacity: disabledReason.length > 0 ? 0.64 : 1
             color: highlighted || (rowHover.hovered && disabledReason.length === 0) ? control.highlight : isSelected ? control.fade(control.foreground, 0.08) : "transparent"
             Accessible.role: Accessible.ListItem
-            Accessible.name: model ? Picker.displayName(model, true) : ""
+            Accessible.name: model ? Picker.displayName(model, false, instance) : ""
             // The search field's arrows and Enter reach it from the keyboard.
             Accessible.onPressAction: if (row.model)
                 control.choose(row.instance.instanceId, row.model.slug)
@@ -663,7 +1332,7 @@ AbstractButton {
                             Layout.fillWidth: implicitWidth > width
                             Layout.maximumWidth: implicitWidth
                             Layout.fillHeight: false
-                            text: row.model ? Picker.displayName(row.model, true) : ""
+                            text: row.model ? Picker.displayName(row.model, false, row.instance) : ""
                             color: control.foreground
                             font.family: control.fontFamily
                             font.pixelSize: Theme.type.meta.size
@@ -821,18 +1490,22 @@ AbstractButton {
     Component {
         id: legacyRow
 
+        // The end of a provider's list when it has older models: "Show more"
+        // lists them above it, "Show less" folds them away again.
         Rectangle {
             id: legacy
 
             readonly property var entry: (parent as RowSlot)?.modelData ?? null
             readonly property int rowIndex: (parent as RowSlot)?.index ?? -1
+            readonly property bool active: control.highlightedIndex === rowIndex || legacyHover.hovered
+            readonly property string text: legacy.entry && legacy.entry.expanded ? qsTr("Show less") : qsTr("Show more")
 
             objectName: entry ? "modelPickerLegacy:" + entry.instanceId : ""
             implicitHeight: 46
             radius: Theme.radiusXs
-            color: control.highlightedIndex === rowIndex || legacyHover.hovered ? control.highlight : "transparent"
+            color: active ? control.highlight : "transparent"
             Accessible.role: Accessible.Button
-            Accessible.name: qsTr("Legacy models")
+            Accessible.name: legacy.text
             Accessible.onPressAction: if (legacy.entry)
                 control.toggleLegacy(legacy.entry.instanceId)
 
@@ -844,45 +1517,14 @@ AbstractButton {
                 onTapped: control.toggleLegacy(legacy.entry.instanceId)
             }
 
-            RowLayout {
-                anchors.fill: parent
+            Text {
+                anchors.left: parent.left
                 anchors.leftMargin: 8
-                anchors.rightMargin: 8
-                spacing: Theme.space.sm
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-
-                    Text {
-                        text: qsTr("Legacy models")
-                        color: control.foreground
-                        font.family: control.fontFamily
-                        font.pixelSize: Theme.type.meta.size
-                        font.weight: Font.Medium
-                    }
-
-                    Text {
-                        text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
-                        color: control.muted
-                        font.family: control.fontFamily
-                        font.pixelSize: Theme.type.meta.size
-                    }
-                }
-
-                ShellChevron {
-                    direction: "right"
-                    size: Theme.icon.md
-                    color: control.muted
-                    rotation: legacy.entry && legacy.entry.expanded ? 90 : 0
-
-                    Behavior on rotation {
-                        NumberAnimation {
-                            duration: 150
-                            easing.type: Easing.OutCubic
-                        }
-                    }
-                }
+                anchors.verticalCenter: parent.verticalCenter
+                text: legacy.text
+                color: legacy.active ? control.foreground : control.muted
+                font.family: control.fontFamily
+                font.pixelSize: Theme.type.body.size
             }
         }
     }
@@ -896,6 +1538,10 @@ AbstractButton {
         property string railId: ""
         property string tooltip: ""
         property bool available: true
+        // An unavailable provider the MC can set up can still be opened:
+        // its panel says why and offers the setup.
+        property bool canSetUp: false
+        readonly property bool selectable: available || canSetUp
         readonly property bool selected: control.view === railId
         default property alias content: face.data
 
@@ -927,7 +1573,7 @@ AbstractButton {
         }
 
         TapHandler {
-            enabled: railButton.available
+            enabled: railButton.selectable
             onTapped: control.selectView(railButton.railId)
         }
 
@@ -954,7 +1600,7 @@ AbstractButton {
             case Qt.Key_Return:
             case Qt.Key_Enter:
             case Qt.Key_Space:
-                if (railButton.available)
+                if (railButton.selectable)
                     control.selectView(railButton.railId);
                 break;
             case Qt.Key_Escape:

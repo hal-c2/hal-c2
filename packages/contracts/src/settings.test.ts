@@ -88,7 +88,9 @@ describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
+      worktreeKeepWhen: "any-local-files",
       worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
       worktreeOnMerge: false,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
@@ -97,6 +99,18 @@ describe("storage cleanup settings", () => {
       threadTempAfterDays: 7,
       temporaryFilesFolder: "",
     });
+  });
+
+  it("keeps worktrees with any local files unless the user chooses less", () => {
+    for (const worktreeKeepWhen of ["uncommitted-changes", "tracked-changes"] as const) {
+      expect(
+        decodeServerSettings({ storageCleanup: { worktreeKeepWhen } }).storageCleanup
+          .worktreeKeepWhen,
+      ).toBe(worktreeKeepWhen);
+    }
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "nothing" } }),
+    ).toThrow();
   });
 
   it("accepts eight-day retention and disabling one rule without resetting others", () => {
@@ -347,6 +361,22 @@ describe("ClientSettings default diff file state", () => {
     expect(decodeClientSettingsPatch({ diffFilesCollapsed }).diffFilesCollapsed).toBe(
       diffFilesCollapsed,
     );
+  });
+});
+
+describe("ClientSettings effort display", () => {
+  it("names the effort for settings saved without a choice", () => {
+    expect(decodeClientSettings({}).effortDisplay).toBe("label");
+  });
+
+  it.each(["label", "bars"])("round-trips %s", (effortDisplay) => {
+    const settings = decodeClientSettings({ effortDisplay });
+    expect(encodeClientSettings(settings).effortDisplay).toBe(effortDisplay);
+    expect(decodeClientSettingsPatch({ effortDisplay }).effortDisplay).toBe(effortDisplay);
+  });
+
+  it("rejects other displays", () => {
+    expect(() => decodeClientSettings({ effortDisplay: "dots" })).toThrow();
   });
 });
 

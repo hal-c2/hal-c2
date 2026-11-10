@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27151
+#   https://github.com/pingdotgg/t3code/pull/25556
+#   https://github.com/pingdotgg/t3code/pull/24488
 #   https://github.com/pingdotgg/t3code/pull/15972
 #   https://github.com/pingdotgg/t3code/pull/11109
 #   https://github.com/pingdotgg/t3code/pull/19400
@@ -11,6 +14,8 @@
 #   apps/desktop-qt/tests/native/features/KeybindingSteps.cpp (runs the rows and saves against a fake MC)
 #   apps/desktop-qt/tests/tst_KeybindingsSettings.qml (runs what the page shows and how its fields take keys)
 #   https://github.com/pingdotgg/t3code/pull/14548
+#   https://github.com/pingdotgg/t3code/pull/22496
+#   https://github.com/pingdotgg/t3code/pull/24494
 
 Feature: Keybindings settings
   Settings → Keybindings lists every command with its shortcut and condition, and lets the
@@ -33,7 +38,7 @@ Feature: Keybindings settings
       Then both shortcuts are listed for "chat.new"
       And each is marked Default
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The panel shows how many bindings there are
       Then the number of bindings is shown
 
@@ -51,12 +56,12 @@ Feature: Keybindings settings
         | outside the te | condition |
         | Custom         | source    |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Searching starts from its shortcut
       When the user presses mod+f
       Then the keybinding search has focus
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Nothing matches the search
       When the user searches keybindings for "qqqq"
       Then the panel says "No keybindings match your search."
@@ -82,16 +87,29 @@ Feature: Keybindings settings
       Then "diff.toggle" is bound to mod+shift+y
       And the binding is marked Custom
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The recorder waits for a shortcut
       When the user starts recording a shortcut for "diff.toggle"
       Then the user is prompted "Press shortcut"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Escape cancels recording
       Given the user is recording a shortcut for "diff.toggle"
       When the user presses Escape
       Then "diff.toggle" keeps its previous shortcut
+
+    # Upstream #27151: Escape in the recorder closed the whole of Settings and lost the draft.
+    @backlog @desktop
+    Scenario Outline: Escape while recording leaves Settings open
+      Given the user is recording <field>
+      When the user presses Escape
+      Then Settings stays open
+      And <after>
+
+      Examples:
+        | field                               | after                                                        |
+        | a new shortcut for "diff.toggle"    | "diff.toggle" shows its previous shortcut, with the keyboard on it |
+        | in the "Add keybinding" field       | the field is empty and no longer has the keyboard            |
 
     @desktop
     Scenario: A shortcut needs a modifier
@@ -139,7 +157,7 @@ Feature: Keybindings settings
 
   Rule: Conditions and conflicts
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A binding with no condition applies always
       When the user clears every condition on a binding
       Then the binding's condition reads "Always"
@@ -176,6 +194,15 @@ Feature: Keybindings settings
       Then the visual condition builder says to fix the expression to continue editing visually
       And the condition can be edited again once the expression is valid
 
+    # Upstream #24488: closing the editor on a broken condition kept the last valid one but left Save disabled.
+    @backlog @desktop
+    Scenario: Closing the condition editor on a broken condition keeps the binding savable
+      Given the user changed a binding's condition to "terminalFocus"
+      And then typed it on to "terminalFocus &&"
+      When the user closes the condition editor
+      Then the binding's condition reads "terminalFocus"
+      And the binding can be saved
+
     # Legacy: apps/web/src/components/settings/KeybindingsSettings.logic.ts (whenNodeRemoveLabel)
     @backlog @desktop @priority-low
     Scenario Outline: Removing from the condition builder says how much it removes
@@ -196,6 +223,21 @@ Feature: Keybindings settings
       Then the binding says it conflicts with "commandPalette.toggle"
       And the user is told the most recent matching binding wins when both conditions can apply
 
+    # Upstream #22496: a hand-written ctrl+k never showed a conflict with mod+k, though on Linux
+    # and Windows both are the same keys.
+    @backlog @desktop
+    Scenario Outline: A ctrl binding conflicts with a mod binding where mod is Ctrl
+      Given "chat.new" is bound to ctrl+k in the keybindings file
+      And "commandPalette.toggle" keeps its default mod+k
+      When the user looks at the keybindings on <platform>
+      Then <outcome>
+
+      Examples:
+        | platform | outcome                                         |
+        | Linux    | both bindings say they conflict with each other |
+        | Windows  | both bindings say they conflict with each other |
+        | macOS    | neither binding says it conflicts               |
+
   Rule: Reset, remove and add
 
     @desktop
@@ -215,12 +257,36 @@ Feature: Keybindings settings
       When the user removes that binding
       Then "script.test.run" has no shortcut
 
+    # Upstream #25556: a rule written in another spelling than the page shows could not be removed or replaced.
+    @backlog @desktop @mc
+    Scenario Outline: A binding written by hand in another spelling can be removed or changed
+      Given the keybindings file binds "chat.new" with the key "<key>" and the condition "<when>"
+      When the user <action> that binding in Settings
+      Then the keybindings file no longer holds the rule as it was written
+      And "chat.new" is bound to <bound>
+
+      Examples:
+        | key         | when                         | action                 | bound             |
+        | Shift+Cmd+R |                              | removes                | nothing           |
+        | escape      | terminalFocus&&!previewFocus | removes                | nothing           |
+        | Shift+Cmd+R |                              | rebinds to mod+shift+n | mod+shift+n alone |
+
+    # Upstream #24494: saving or removing any shortcut dropped every rule in the file this version
+    # could not read, such as a typo or a command only a newer version knows, and still said
+    # "Keybindings updated".
+    @backlog @desktop @mc @priority-high
+    Scenario: Changing a shortcut keeps the rules this version cannot read
+      Given the keybindings file holds a rule for a command this version does not know
+      When the user rebinds "diff.toggle" to mod+shift+y in Settings
+      Then the keybindings file still holds that rule, as it was written and where it was
+      And the user is still told the rule cannot be read
+
     @desktop
     Scenario: Adding a binding for a command
       When the user adds a keybinding for "thread.stop" with mod+shift+.
       Then "thread.stop" is bound to mod+shift+.
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Adding a binding can be cancelled
       Given the user started adding a keybinding
       When the user cancels

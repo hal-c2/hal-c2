@@ -22,7 +22,22 @@ defmodule HalC2.Git do
   """
   @spec run(Path.t(), [String.t()], keyword) :: {:ok, result} | {:error, String.t()}
   def run(cwd, args, opts \\ []) do
-    argv = [Application.get_env(:hal_c2, :git_command, "git") | args]
+    # A bare repository among a project's files is not opened as the repository of the
+    # folder it sits in, as its config and hooks would then run (a repository that is
+    # meant is named: `GIT_DIR`). Reads never take the index lock a user's git needs.
+    argv = [
+      Application.get_env(:hal_c2, :git_command, "git"),
+      "-c",
+      "safe.bareRepository=explicit" | args
+    ]
+
+    opts =
+      Keyword.update(
+        opts,
+        :env,
+        [{"GIT_OPTIONAL_LOCKS", "0"}],
+        &[{"GIT_OPTIONAL_LOCKS", "0"} | &1]
+      )
 
     run = fn argv -> within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) end
 
@@ -195,9 +210,13 @@ defmodule HalC2.Git do
 
   @doc "The checked-out branch, or nil when HEAD is detached."
   def current_branch(root) do
-    case ok(root, ~w(symbolic-ref --short -q HEAD)) do
-      {:ok, branch} -> String.trim(branch) |> then(&if(&1 == "", do: nil, else: &1))
-      _ -> nil
+    # The full ref, not `--short`: a tag of the same name makes git print `heads/<name>`.
+    case ok(root, ~w(symbolic-ref -q HEAD)) do
+      {:ok, "refs/heads/" <> branch} ->
+        String.trim(branch) |> then(&if(&1 == "", do: nil, else: &1))
+
+      _ ->
+        nil
     end
   end
 
@@ -209,6 +228,13 @@ defmodule HalC2.Git do
     configured = git_line(root, ["config", "--get", "branch.#{branch}.gh-merge-base"])
     remote = primary_remote(root)
 
+    # A base named on any remote ("upstream/main") is that remote's branch, not origin's.
+    if configured not in [nil, ""] and ref?(root, "refs/remotes/#{configured}"),
+      do: configured,
+      else: base_branch(root, branch, configured, remote)
+  end
+
+  defp base_branch(root, branch, configured, remote) do
     default =
       remote &&
         case git_line(root, ["symbolic-ref", "refs/remotes/#{remote}/HEAD"]) do
@@ -236,6 +262,25 @@ defmodule HalC2.Git do
         true -> nil
       end
     end)
+  end
+
+  @doc """
+  What `branch` tracks, read from its config rather than git's shortened name (a local
+  branch called "origin/feature/tax" makes git print the upstream "remotes/origin/..."):
+  `%{remote: name | nil, ref: "origin/feature/tax"}`, or nil. A branch that tracks a local
+  branch has no remote (git writes "." for it).
+  """
+  def upstream(root, branch) do
+    remote = git_line(root, ["config", "--get", "branch.#{branch}.remote"])
+    merge = git_line(root, ["config", "--get", "branch.#{branch}.merge"])
+
+    case {remote, merge} do
+      {r, "refs/heads/" <> name} when r not in [nil, ""] ->
+        if r == ".", do: %{remote: nil, ref: name}, else: %{remote: r, ref: "#{r}/#{name}"}
+
+      _ ->
+        nil
+    end
   end
 
   @doc "`origin` when it exists, else the first remote, or nil."

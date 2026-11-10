@@ -90,6 +90,10 @@ defmodule HalC2.StreamState do
   @spec new() :: t
   def new, do: %__MODULE__{}
 
+  @doc "The version of the state's shape this MC writes; `migrate/1` reads older ones."
+  @spec version() :: pos_integer
+  def version, do: @version
+
   @doc "The kinds that belong to a run, whose entities of older runs go cold."
   @spec windowed() :: [String.t()]
   def windowed, do: @windowed

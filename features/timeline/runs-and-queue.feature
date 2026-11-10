@@ -1,4 +1,13 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24861
+#   https://github.com/pingdotgg/t3code/pull/27305
+#   https://github.com/pingdotgg/t3code/pull/27377
+#   https://github.com/pingdotgg/t3code/pull/27324
+#   https://github.com/pingdotgg/t3code/pull/27373
+#   https://github.com/pingdotgg/t3code/pull/27306
+#   https://github.com/pingdotgg/t3code/pull/27372
+#   https://github.com/pingdotgg/t3code/pull/26769
+#   https://github.com/pingdotgg/t3code/pull/23723
 #   https://github.com/pingdotgg/t3code/pull/20054
 #   https://github.com/pingdotgg/t3code/pull/23135
 #   https://github.com/pingdotgg/t3code/pull/23814
@@ -42,6 +51,9 @@
 #   apps/desktop-qt/src/native/TimelineModel.cpp (sent files listed by name, kind and size)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (sent file, video and unknown attachments)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (a message not yet acknowledged shows Pending)
+#   https://github.com/pingdotgg/t3code/pull/25002
+#   https://github.com/pingdotgg/t3code/pull/27383
+#   https://github.com/pingdotgg/t3code/pull/30369
 
 Feature: Runs, interruptions and the queue
   A turn runs until it finishes, fails or the user stops it. Messages sent meanwhile
@@ -115,7 +127,7 @@ Feature: Runs, interruptions and the queue
   # Upstream #21417: the phone marks sent steer and queued messages like the desktop, as muted
   # text beside the time, not tappable pills.
   # Since upstream #21474 a message that waited in the queue carries no marker; see the replacement below.
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario Outline: A sent message says how it reached the agent
     When the user's message was <how>
     Then the message is marked "<marker>"
@@ -140,14 +152,14 @@ Feature: Runs, interruptions and the queue
       | sent as a steer                      | marked "Steered the active turn"                                    |
       | queued and later promoted to a steer | marked "Originally queued, then promoted to steer the active turn" |
 
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A reply that finished before a steer stays the turn's answer
     Given the agent finished its reply
     When the user's steer restarts the run before the turn closed
     Then the finished reply stays visible as the turn's answer
     And it is not folded away as partial output
 
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A reply cut off by a steer is folded as cut off
     Given the agent is in the middle of its reply
     When the user's steer restarts the run
@@ -155,7 +167,7 @@ Feature: Runs, interruptions and the queue
 
   # Only a steer marks the run it interrupts; a crash, an MC restart or an imported
   # thread that stopped mid-reply leaves the reply interrupted with no mark.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A reply that stopped without a steer is not folded as cut off
     Given the agent is in the middle of its reply
     When the run ends interrupted without a steer
@@ -177,19 +189,56 @@ Feature: Runs, interruptions and the queue
     When the MC acknowledges the message
     Then the message shows the time it was sent
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A sent message shows its images
     When the user sent the image "cart.png" with a message
     Then the message shows the image "cart.png" from its MC
 
-  @shared @backlog-mobile @priority-high
+  # Upstream #26769: a message of only images showed the prompt the agent receives for it
+  # ("[User attached one or more files without additional text. ...]") as if the user had typed it.
+  @backlog @shared @mobile @priority-high
+  Scenario Outline: A message of only images shows the images, not the agent's prompt
+    Given the user sent <images> with no text
+    Then the message shows <shown> without a text bubble behind them
+    And the prompt the agent received for them shows nowhere: not in the message, its queue preview or find in thread
+
+    Examples:
+      | images                                | shown                                   |
+      | "cart.png"                            | "cart.png" at a fixed height            |
+      | "cart.png" and "checkout.png"         | both images side by side in one collage |
+      | "cart.png" with the ultrathink effort | "cart.png" at a fixed height            |
+
+  # Upstream #27383: titles, search, the minimap, a queued edit and prompt links still used the
+  # prompt the agent receives for a message of only images.
+  @backlog @shared @mobile
+  Scenario Outline: The prompt for a message of only images is not taken for the user's words
+    Given the user sent "cart.png" with no text
+    Then <place> does not use the prompt the agent received for it
+
+    Examples:
+      | place                                 |
+      | the thread's generated title          |
+      | the thread's regenerated title        |
+      | a search across threads               |
+      | the timeline's overview               |
+      | a link copied to the message's prompt |
+
+  # Upstream #27383: editing a queued message of only images opened with the agent's prompt in it.
+  @backlog @shared @mobile
+  Scenario: Editing a queued message of only images starts with no text
+    Given the user queued "cart.png" with no text and the ultrathink effort
+    When the user edits the queued message
+    Then the editor holds only the ultrathink prefix and "cart.png"
+    And saving it with no words keeps it a message of only "cart.png" with the ultrathink effort
+
+  @shared @priority-high
   Scenario: An image is still shown after its address stops working
     Given the user sent the image "cart.png" with a message
     And the message shows the image "cart.png" from its MC
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A sent file shows its name, kind and size
     When the user sent the file "report.pdf" of 2 MB with a message
     Then the message shows "report.pdf" with its kind and size
@@ -213,6 +262,84 @@ Feature: Runs, interruptions and the queue
     Then the message shows "demo.mp4" as a video
     When the user opens it
     Then the video plays
+
+  # Upstream #27372: macOS and Windows give ".ts" files a video type, so a TypeScript file showed as
+  # a black video player.
+  @backlog @shared @mobile
+  Scenario Outline: A TypeScript file is not taken for a video
+    When the user sent "clamp.ts" with the type "<type>"
+    Then the message shows "clamp.ts" as a code file with a text preview
+    And a sent "demo.mp4" still shows as a video
+
+    Examples:
+      | type                    |
+      | video/mp2t              |
+      | video/vnd.dlna.mpeg-tts |
+
+  # Upstream #27306: images and videos sent with words were squeezed into the text bubble
+  # as small thumbnails, unlike the same media sent alone.
+  # Upstream #27373: same change as #27306.
+  @backlog @shared @mobile
+  Scenario Outline: Images and videos sent with text sit above the text bubble
+    When the user sent <media> with the text "Here is the bug"
+    Then <shown> above the bubble holding "Here is the bug"
+    And files sent with the text stay inline in the bubble
+
+    Examples:
+      | media                         | shown                                                     |
+      | "cart.png"                    | "cart.png" shows at a fixed height in its own proportions |
+      | "cart.png" and "checkout.png" | both images show as one collage                           |
+      | "demo.mp4"                    | "demo.mp4" shows as a video of its own                    |
+
+  # Upstream #27324: a file sent without words was a bubble around a name chip.
+  # Upstream #27373: same change as #27324.
+  @backlog @shared @mobile
+  Scenario: A file sent without text shows as a file card
+    When the user sent "report.pdf" of 2 MB with no text
+    Then the message shows a card for "report.pdf" with its icon, name, type and size and no text bubble
+    And the card opens the file's preview and offers to download it
+    And a file sent with text still shows inline in its bubble
+
+  # Upstream #27377: a few attachments still showed as a bubble around a label or in confusing states.
+  @backlog @shared @mobile
+  Scenario Outline: An attachment sent on its own takes the shape of what it is
+    When the user sent <attachment> with no text
+    Then the message shows <shown>
+
+    Examples:
+      | attachment                             | shown                                                              |
+      | a long paste that became an attachment | it as "Pasted text", not its file name                             |
+      | a voice note                           | the voice note in a bubble of its own                              |
+      | a snapshot taken with the desktop      | the snapshot in its own proportions, rounded like other images     |
+      | "report.pdf" that is still uploading   | "Sending…" on the card where its type and size go, without buttons |
+
+  # Upstream #27377: images or videos sent without words could not be copied.
+  @backlog @shared @mobile
+  Scenario: Copying a message of only images attaches them again when pasted
+    Given the user sent "cart.png" with no text
+    When the user copies the message and pastes it into the composer
+    Then the composer attaches "cart.png"
+
+  # Upstream #27305: two steers in a row each repeated their label with a full message gap
+  # between them, so the follow-up did not read as part of the same thought.
+  # Upstream #27373: same change as #27305.
+  @backlog @shared @mobile
+  Scenario: Messages the user sends back to back sit together under one steer label
+    Given the user steered the running turn twice in a row
+    Then the two messages sit close together as one burst
+    And only the first carries the "Steer" label
+    And each message keeps its own time and actions
+
+  # Upstream #27305
+  @backlog @shared @mobile
+  Scenario Outline: A message from someone else breaks the user's burst
+    Given the user sent a message, then <other>, then another message
+    Then the user's two messages are spaced apart as separate messages
+
+    Examples:
+      | other                  |
+      | the agent replied      |
+      | an automation sent one |
 
   @shared @backlog-mobile @backlog-tui @priority-low
   Scenario: A sent attachment of a kind this client does not know is listed by name only
@@ -258,7 +385,7 @@ Feature: Runs, interruptions and the queue
     When the provider exits before the turn starts
     Then the run fails with "The provider stopped while starting the turn."
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A finished turn that left work running says what it is waiting on
     Given the turn has finished and left <tasks> running in the background
     Then the thread says "<notice>"
@@ -278,7 +405,15 @@ Feature: Runs, interruptions and the queue
     And the link to the subagent's thread is still shown
     And Stop stays beside the notice's title
 
-  @backlog @desktop @priority-low
+  # Upstream #30369: a finished background command's notice cut its label at 79 characters and could
+  # keep half an emoji, in the timeline row, the phone's work log and a delegated task's question wake.
+  @backlog @mc @shared @priority-low
+  Scenario: A finished background work notice is cut before an emoji, not through it
+    Given a background command whose label is 100 characters with an emoji at the 79th
+    When the command finishes after its turn ended
+    Then the thread's notice quotes the label cut before the emoji and ending in "…"
+
+  @desktop @priority-low
   Scenario: Background work is not announced while a turn is running
     Given a turn is running and has started background tasks
     Then the thread shows no notice about background work
@@ -294,22 +429,34 @@ Feature: Runs, interruptions and the queue
     Then "npm test" shows as finished, also after the app is reopened
     And work that is still running stays shown as running
 
-  @backlog @desktop @priority-high
-  Scenario: Stopping background work can be asked again
+  # Upstream #25002: Stop came back as soon as the environment accepted, while the work still ran,
+  # so it looked as if the stop had failed. It now waits for the stopped work, for up to 10 seconds.
+  @desktop @mobile @backlog-mobile @priority-high
+  Scenario: Stopping background work stays pending until that work ends
     Given the turn has finished and left the task "watch tests" running
     When the user stops the background work and the environment accepts
-    And "watch tests" is still running
+    Then the stop shows "Stopping..." and cannot be pressed while "watch tests" is still running
+    When "watch tests" is still running 10 seconds later
     Then the user can ask to stop it again
 
+  # Upstream #25002: only the work the stop was asked for keeps it pending.
+  @desktop @mobile @backlog-mobile @priority-high
+  Scenario: Work started after a stop does not keep it pending
+    Given the turn has finished and left the task "watch tests" running
+    When the user stops the background work and the environment accepts
+    And the task "lint" starts in the background
+    And "watch tests" ends
+    Then the notice offers Stop for "lint"
+
   # Upstream #22052: a thread can be stopped without knowing which run is active.
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Background work left by a turn that is not loaded can still be stopped
     Given an earlier turn left the task "watch tests" running
     And that turn is older than the part of the thread the client has loaded
     When the user stops the thread
     Then "watch tests" is stopped
 
-  @backlog @desktop
+  @desktop
   Scenario: Background work that cannot be stopped says why
     Given the turn has finished and left the task "watch tests" running
     And the environment rejects the stop
@@ -317,14 +464,14 @@ Feature: Runs, interruptions and the queue
     Then the thread shows the reason as its error
     And the notice about "watch tests" stays
 
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: The user dismisses a thread's error
     Given the thread shows the error "Rate limited"
     When the user dismisses the error
     Then the error is hidden for this thread
     And a different error on the same thread is still shown
 
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A later run that fails the same way shows its error again
     Given the thread shows the error "Rate limited"
     And the user dismisses the error
@@ -332,7 +479,7 @@ Feature: Runs, interruptions and the queue
     Then the thread shows "Rate limited" as its error
 
   # A failed run's error goes once a later run succeeds.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A later run that succeeds does not bring a dismissed error back
     Given the thread shows the error "Rate limited"
     And the user dismisses the error
@@ -347,7 +494,7 @@ Feature: Runs, interruptions and the queue
     Then the error reads "Your request was blocked"
     And the user can open the full error to read the whole payload
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A usage limit is one warning line naming when to retry
     Given the provider stopped the turn at its usage limit, resetting at the top of an hour
     Then the timeline shows one warning line naming when to retry
@@ -364,8 +511,8 @@ Feature: Runs, interruptions and the queue
       | chooses to resume at reset | the thread continues at 3 pm             |
       | cancels the auto-resume    | the thread waits for the user after 3 pm |
 
-  # The MC reports contextUsage and the TUI draws the meter (apps/tui/src/contextWindow.ts); the Qt clients do not show it yet.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  # The MC reports contextUsage on the thread's provider thread; the clients draw it as a meter behind the "Context window indicator" setting.
+  @shared @priority-high
   Scenario Outline: The thread shows how full the context window is
     Given the agent has used 144,000 tokens <of>
     Then the context window reads "<reading>"
@@ -376,7 +523,7 @@ Feature: Runs, interruptions and the queue
       | of an unknown window      | 144k used       |
 
   # Upstream #17539: counts just under a million rounded up inside the thousands and read "1000k".
-  @shared @backlog-desktop @backlog-mobile @priority-low
+  @shared @priority-low
   Scenario Outline: A context count that rounds up to a million reads as a million
     Given the agent has used <tokens> tokens of an unknown window
     Then the context window reads "<reading>"
@@ -386,8 +533,20 @@ Feature: Runs, interruptions and the queue
       | 999,499   | 999k used |
       | 999,500   | 1m used   |
       | 1,000,000 | 1m used   |
+  # Upstream #23723: the diff's compact counts had the same rollover and read "+1000k", and "1000m" below a billion.
+  @backlog @desktop @tui @priority-low
+  Scenario Outline: A diff count that rounds up to the next unit reads in that unit
+    Given a diff adds <lines> lines
+    Then its summary and file row read "<reading>"
 
-  @backlog @desktop
+    Examples:
+      | lines         | reading |
+      | 999,499       | +999k   |
+      | 999,500       | +1m     |
+      | 999,950,000   | +1b     |
+
+
+  @desktop
   Scenario: The context window reading is shown only when its setting is on
     Given the context window meter setting is off
     When the agent has used 144,000 tokens of a 200,000 token window
@@ -395,7 +554,7 @@ Feature: Runs, interruptions and the queue
     When the user turns the context window meter setting on
     Then the context window reads "72% · 144k/200k"
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: A context window under a tenth full is read to one decimal
     Given the agent has used <used> tokens of a 200,000 token window
     Then the context window is "<percent>" full
@@ -406,7 +565,7 @@ Feature: Runs, interruptions and the queue
       | 4,000   | 2%      |
       | 25,000  | 13%     |
 
-  @backlog @desktop
+  @desktop
   Scenario: A context window more than nine tenths full is flagged
     Given the agent has used 184,000 tokens of a 200,000 token window
     Then the context window reading is marked as nearly full
@@ -435,7 +594,7 @@ Feature: Runs, interruptions and the queue
     Then the context window reads "40k used"
     And the window's size is not known
 
-  @backlog @desktop
+  @desktop
   Scenario: The context window's details show what the thread has processed and cost
     Given the agent has used 144,000 tokens of a 200,000 token window
     And the thread has processed 1,200,000 tokens in all at a cost of 0.42 US dollars
@@ -560,7 +719,7 @@ Feature: Runs, interruptions and the queue
     When the user reloads the thread
     Then the offer to continue with less context counts the tokens of Claude's latest turn, not an older one
 
-  @desktop @backlog @priority-high
+  @desktop @priority-high
   Scenario Outline: The thread says when its provider cannot run
     Given the thread in "shop" runs on Codex
     And Codex <problem>
@@ -574,20 +733,30 @@ Feature: Runs, interruptions and the queue
       | is signed out and can only be signed in from its own CLI | Codex is unauthenticated | Sign in via the CLI to authenticate again.                |
       | is unavailable                                           | Codex provider status    | Codex provider is unavailable.                            |
 
-  @desktop @backlog
+  @desktop
   Scenario: A provider version known to break turns is flagged even when it is ready
     Given the thread in "shop" runs on Codex 0.9.0
     And Codex 0.9.0 is known to be broken
     When the user looks at the thread
     Then the thread warns "Codex 0.9.0 is known to be broken"
 
-  @desktop @backlog
+  @desktop
   Scenario: The user installs or signs in to the provider from the thread
     Given the thread shows that Codex is signed out
     When the user opens provider setup from the thread
     Then the setup for Codex opens
 
-  @desktop @backlog
+  # Upstream #24861: the thread's provider notice had no way to check again, so the user had to
+  # leave the thread for Settings > Providers.
+  @desktop @backlog @priority-low
+  Scenario: The user checks the thread's provider again from its notice
+    Given the thread shows that Codex is unavailable
+    When the user chooses "Refresh" on the notice
+    Then the thread's environment checks Codex and its models again
+    And "Refresh" cannot be chosen again until that check ends
+    And a failed check is reported the way a refresh from Settings is
+
+  @desktop
   Scenario: A dismissed provider notice stays away until the problem changes
     Given the thread shows that Codex is signed out
     When the user dismisses the notice
@@ -595,7 +764,7 @@ Feature: Runs, interruptions and the queue
     When Codex later becomes unavailable for another reason
     Then the thread shows the new problem
 
-  @desktop @backlog
+  @desktop
   Scenario: Antigravity after a restart is not reported as signed out
     Given the thread in "shop" runs on Antigravity
     And Antigravity has not checked its saved sign-in since the environment restarted
@@ -630,7 +799,7 @@ Feature: Runs, interruptions and the queue
       | Antigravity reports an error and the thread's model is missing from its catalog    |
       | the thread uses Antigravity's default model and the catalog does not list it       |
 
-  @backlog @desktop
+  @desktop
   Scenario: Several notices above the composer show one at a time, the most pressing first
     Given the thread shows the error "Rate limited" and the answer to "/usage-limits"
     Then the error is the notice shown and the composer says there are other notices behind it
@@ -639,7 +808,7 @@ Feature: Runs, interruptions and the queue
     When the user presses Escape
     Then only the error is shown again
 
-  @backlog @desktop
+  @desktop
   Scenario: Dismissing the notice in front brings the next one forward
     Given the thread shows the error "Rate limited" and the answer to "/usage-limits"
     When the user dismisses the error
@@ -647,7 +816,7 @@ Feature: Runs, interruptions and the queue
     And the composer no longer says there are other notices
 
   # Upstream #25238: switching threads while a dismissed notice was still going away brought it back.
-  @backlog @desktop @priority-low
+  @desktop
   Scenario: A notice dismissed just before switching threads stays dismissed
     Given the thread shows the error "Rate limited"
     When the user dismisses the error and at once opens another thread
@@ -656,7 +825,7 @@ Feature: Runs, interruptions and the queue
 
   # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
   # actions; errors, warnings and urgent notices now come first, activity behind them.
-  @backlog @desktop
+  @desktop
   Scenario Outline: Errors and warnings stay in front of what the agent is doing
     Given the thread <activity>
     And the thread shows <notice>
@@ -666,7 +835,19 @@ Feature: Runs, interruptions and the queue
     Examples:
       | activity                                                | notice                                  |
       | says it is waiting on the background work "watch tests" | the error "Rate limited"                |
-      | is working toward a goal                                | a usage limit with its recovery actions |
+      | says it is waiting on the background work "watch tests" | a usage limit with its recovery actions |
+
+  # Split from the outline above: HAL-C2 has no goal activity notice yet (the
+  # goal's banner is the "pursuing a goal" row of the end-of-timeline rule
+  # below), so there is no goal notice to put behind the limit.
+  # Upstream #18919: activity notices took the front over a usage limit and hid its recovery
+  # actions; errors, warnings and urgent notices now come first, activity behind them.
+  @backlog @desktop
+  Scenario: A usage limit stays in front of a thread working toward a goal
+    Given the thread is working toward a goal
+    And the thread shows a usage limit with its recovery actions
+    Then a usage limit with its recovery actions is the notice shown
+    And the notice about what the agent is doing waits behind it
 
   # Upstream #20299: a time that rounds up to a minute reads as a minute.
   @backlog @shared @priority-low
@@ -728,6 +909,7 @@ Feature: Runs, interruptions and the queue
       | the agent of the thread "Review the 2.4 notes" | "Review the 2.4 notes" |
       | an agent whose thread is not known          | "Agent"                |
 
+  # Upstream #23135: another agent's folded message opens whole and leads to its thread.
   @backlog @shared
   Scenario: Opening another agent's message shows it whole and leads to its thread
     Given the agent of "Review the 2.4 notes" sent a message into the thread
@@ -735,12 +917,14 @@ Feature: Runs, interruptions and the queue
     Then the whole message is shown with its time, a copy action and "Open thread"
     And "Open thread" opens "Review the 2.4 notes"
 
+  # Upstream #23135: finding text inside a folded agent message opens it.
   @backlog @shared @priority-low
   Scenario: Finding text inside a folded agent message opens it
     Given a folded message from another agent mentions "release blocker"
     When the user finds "release blocker" in the thread
     Then the message opens with the match shown
 
+  # Upstream #23135: messages HAL-C2 itself sends stay whole.
   @backlog @shared @priority-low
   Scenario: Messages HAL-C2 sends stay whole
     Given a delegated task's result was sent into the thread by HAL-C2

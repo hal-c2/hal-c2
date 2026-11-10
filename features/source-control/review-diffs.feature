@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29575
+#   https://github.com/pingdotgg/t3code/pull/27960
+#   https://github.com/pingdotgg/t3code/pull/29579
+#   https://github.com/pingdotgg/t3code/pull/29571
+#   https://github.com/pingdotgg/t3code/pull/19941
+#   https://github.com/pingdotgg/t3code/pull/27635
+#   https://github.com/pingdotgg/t3code/pull/25303
 #   https://github.com/pingdotgg/t3code/pull/18430
 #   https://github.com/pingdotgg/t3code/pull/19550
 #   https://github.com/pingdotgg/t3code/pull/17886
@@ -36,6 +43,15 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/RightPanel.qml (Diff)
 #   https://github.com/pingdotgg/t3code/pull/15005
 #   https://github.com/pingdotgg/t3code/pull/21909
+#   https://github.com/pingdotgg/t3code/pull/28244
+#   https://github.com/pingdotgg/t3code/pull/23421
+#   https://github.com/pingdotgg/t3code/pull/27899
+#   https://github.com/pingdotgg/t3code/pull/25865
+#   https://github.com/pingdotgg/t3code/pull/29852
+#   https://github.com/pingdotgg/t3code/pull/29693
+#   https://github.com/pingdotgg/t3code/pull/30567
+#   https://github.com/pingdotgg/t3code/pull/29615
+#   https://github.com/pingdotgg/t3code/pull/29880
 
 Feature: Reviewing working tree and branch changes
   Beside a thread the user reviews what changed in the checkout, either uncommitted work
@@ -62,6 +78,28 @@ Feature: Reviewing working tree and branch changes
     When the user reviews the working tree
     Then "src/cart.ts" is still the only staged file afterwards
 
+  # Upstream #29571: a staged deletion git paired into a rename with a staged copy was lost from
+  # the uncommitted review, which showed only a new file.
+  @backlog @mc
+  Scenario: A staged deletion that git pairs with a staged copy stays in the uncommitted review
+    Given the user unstaged "src/old.ts" with it still on disk and staged a near copy "src/new.ts"
+    When the user reviews the uncommitted changes
+    Then "src/old.ts" is shown renamed to "src/new.ts", not "src/new.ts" as a new file
+
+  # Upstream #23421: expanding a diff dropped the UTF-8 byte-order mark from both sides, so a change
+  # that only added or removed it vanished.
+  @backlog @mc
+  Scenario Outline: A change to a file's byte-order mark is kept in the diff's contents
+    Given "notes.txt" <change> its UTF-8 byte-order mark and nothing else
+    When the user expands "notes.txt" in the working tree diff
+    Then the old side <old> the byte-order mark
+    And the new side <new> the byte-order mark
+
+    Examples:
+      | change | old                 | new                 |
+      | gained | does not start with | starts with         |
+      | lost   | starts with         | does not start with |
+
   # The review must not trust a copied index's timestamps to tell an unchanged file from a new one.
   # Untracked files are what make the review copy the index.
   @mc
@@ -85,6 +123,13 @@ Feature: Reviewing working tree and branch changes
     When the user reviews the working tree hiding whitespace changes
     Then "src/cart.ts" shows no changed lines
 
+  # Upstream #25303: the client trimmed the patch, dropping a blank last line and spaces at the end of a final added line.
+  @backlog @shared
+  Scenario: A diff keeps whitespace at the end of its last hunk
+    Given "notes.txt" holds "alpha", "beta", "gamma" and an empty fourth line
+    When the user changes "alpha" to "ALPHA" and reviews the working tree
+    Then the diff of "notes.txt" shows the empty fourth line as context
+
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: PATCH_RENDER_PREFIX_ARGS)
   @mc
   Scenario: A repository set to show diffs without path prefixes still reviews correctly
@@ -92,6 +137,23 @@ Feature: Reviewing working tree and branch changes
     And "src/cart.ts" has an uncommitted change
     When the user reviews the working tree
     Then "src/cart.ts" is shown as one file with its change
+
+  # Upstream #29579: under diff.suppressBlankEmpty git writes a blank context line as an empty line,
+  # which the clients' parser dropped, shifting every later line number in the hunk.
+  @backlog @mc @shared
+  Scenario: A repository set to write blank context lines empty still shows them in the review
+    Given the user set git to suppress blank context lines in "shop"
+    And "src/cart.ts" changed a line that follows a blank line
+    When the user reviews the working tree
+    Then the blank line is shown as context and the changed line keeps its line number
+
+  # Upstream #29852: under diff.submodule=log or diff a moved submodule had no entry in the review.
+  @backlog @mc @shared @priority-low
+  Scenario: The review shows a moved submodule when git is set to log submodule changes
+    Given the user set git to show submodule changes as a log of their commits in "shop"
+    And the submodule "vendor/ui" now points at another commit
+    When the user reviews the working tree
+    Then "vendor/ui" has an entry showing its old and new commit
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (getReviewDiffPreview: unborn HEAD)
   @mc
@@ -174,11 +236,84 @@ Feature: Reviewing working tree and branch changes
     When the user compares the branch against "origin/main" instead of "main"
     Then the diff shows the changes against "origin/main"
 
+  # Upstream #27960: on Android, switching the review to Uncommitted could show the counts but a
+  # blank diff, and Refresh did not bring it back.
+  @backlog @mobile
+  Scenario: Switching review sections on the phone never leaves the diff blank
+    Given "greeting.txt" has an uncommitted change and it is the thread's only change
+    When the user switches the review between Changes and Uncommitted, again and again
+    Then each section shows the diff of "greeting.txt"
+    And refreshing the diff keeps it shown
+
+  # Upstream #27635: a base with no common commit hid the base choice, and the choice was kept,
+  # so the diff stayed stuck after a reload.
+  @backlog @desktop
+  Scenario: A base the diff cannot be shown against can still be changed
+    Given the user chose to compare against a branch with no commit in common
+    When the diff fails to load, now or after a reload
+    Then the bases to compare against are still offered
+    And choosing Automatic or another branch shows the diff again
+
+  # Upstream #19941: the diff pane could not show one local commit, and a code host's commit link left the app
+  @backlog @mc @shared
+  Scenario: Reviewing one local commit in the diff
+    Given "feature/tax" has 3 commits on top of "main"
+    When the user picks the second of those commits in the diff
+    Then the diff shows only the changes that commit made
+    And the commit's hash is shown in the diff's header
+
+  # Upstream #19941: a code-host commit link in the thread opens that commit in the Diff pane, using that host's URL rules.
+  @backlog @shared @mc
+  Scenario Outline: A <host> commit link in the thread opens that commit in the diff
+    Given the thread's checkout has the commit "a1b2c3d" and its remote is on <host>
+    When the user clicks a <host> link to commit "a1b2c3d" of that repository
+    Then the diff shows commit "a1b2c3d"
+    When the user clicks the link with a modifier held
+    Then the link opens in the browser instead
+
+    Examples:
+      | host             |
+      | GitHub           |
+      | GitLab           |
+      | Forgejo or Gitea |
+      | GitCafe          |
+      | Bitbucket Cloud  |
+      | Azure DevOps     |
+
+  # Upstream #19941: a commit link the checkout cannot show follows the browser setting.
+  @backlog @shared @mc
+  Scenario: A commit link the checkout cannot show follows the link setting
+    Given the thread's checkout does not have the commit a link points at
+    When the user clicks the link
+    Then it opens the way links are set to open
+    And a pull request's commit opens in that pull request's review instead
+
+  # Upstream #19941: a shallow clone's boundary commit, whose parents are missing, is not opened as a diff.
+  @backlog @mc
+  Scenario: A commit at the edge of a shallow clone is not shown as a diff
+    Given the checkout is a shallow clone and "a1b2c3d" is its oldest commit
+    When a client asks for the diff of "a1b2c3d"
+    Then the MC refuses it because the commit's parent is missing
+
   @desktop
   Scenario: Browsing the changed files as a tree
     When the user shows the file tree of the diff
     Then the changed files are listed by folder
     And choosing a file jumps to it
+
+  # Upstream #28244: the file lists of Changes and a pull request's code could not be widened,
+  # so long file names could not be told apart.
+  @backlog @desktop
+  Scenario Outline: The changed files list of <view> can be widened and keeps its width
+    Given the user shows the file tree of <view>
+    When the user widens the file list by pointer or keyboard
+    Then the file list is wider, up to 560 pixels
+    And it has that width again after the app restarts
+
+    Examples:
+      | view                      |
+      | the diff                  |
+      | a pull request's code     |
 
   @desktop
   Scenario: Collapsing and expanding every file
@@ -326,6 +461,34 @@ Feature: Reviewing working tree and branch changes
     And a file's changes are loaded when the user opens that file
     And a file whose changes cannot be loaded says no patch is available for it
 
+  # Upstream #29693: in a diff loaded file by file, an untracked nested repository with commits
+  # never loaded, and Retry failed every time.
+  @backlog @mc @desktop @priority-low
+  Scenario: A nested repository in a diff loaded file by file loads its entry
+    Given the changes are too large for the diff to carry every file's patch
+    And "vendor/lib" is an untracked nested git repository with commits
+    When the user opens "vendor/lib" in the diff
+    Then its entry shows the repository's commit as a new subproject
+
+  # Upstream #29615: a listing of untracked files over the output cap, such as a "node_modules" from
+  # before a ".gitignore", failed the whole review and hid the tracked changes.
+  @backlog @mc @desktop @priority-high
+  Scenario: Too many untracked files to list still shows the tracked changes
+    Given "shop" has changes to tracked files and about 90,000 untracked files not ignored
+    When the user opens the diff of the working tree
+    Then the tracked changes are shown and the diff says it is incomplete
+    And the change totals say there are too many untracked files to count
+
+  # Upstream #29880: in a sparse checkout, one untracked file outside the checked-out folders failed
+  # the whole review.
+  @backlog @mc @desktop @priority-high
+  Scenario: A sparse checkout with an untracked file outside its folders still shows its changes
+    Given "shop" is a sparse checkout that leaves out the folder "docs"
+    And the agent changed "src/cart.ts" and created the untracked "docs/new.md"
+    When the user opens the diff of the working tree
+    Then the change to "src/cart.ts" and the new "docs/new.md" are shown
+    And the sparse checkout and the user's own staged changes are left as they were
+
   @desktop
   Scenario: A file too large to show in full is marked as a partial preview
     Given "src/cart.ts" has changes too large to show in full
@@ -340,6 +503,24 @@ Feature: Reviewing working tree and branch changes
     Then the file offers to retry loading the diff
     When the user retries and the environment answers
     Then the changes of "src/cart.ts" are shown
+
+  # Upstream #30567: Changes waited for untracked files to be found before showing tracked ones,
+  # and an open file jumped back to its top as patches arrived.
+  @backlog @mc @desktop @priority-high
+  Scenario: Changes lists the tracked files before untracked ones are found
+    Given finding the untracked files of "shop" takes a long time
+    When the user opens Changes
+    Then the tracked changed files are listed with their totals
+    And the untracked files join the same list once they are found
+
+  # Upstream #30567: Changes waited for untracked files to be found before showing tracked ones,
+  # and an open file jumped back to its top as patches arrived.
+  @backlog @desktop
+  Scenario: An open file keeps its scroll position as the rest of Changes loads
+    Given the user scrolled halfway down "src/cart.ts" in Changes
+    When untracked files are added above it and the other files' patches arrive
+    Then "src/cart.ts" stays where the user scrolled
+    And a refresh that fails keeps the content the user was reading
 
   @desktop
   Scenario: A file's changes that the checkout no longer has say the diff is gone
@@ -438,6 +619,24 @@ Feature: Reviewing working tree and branch changes
     When the user reviews the working tree
     Then each file is shown with the highlighting of its language
 
+  # Upstream #27899: assembly files were not highlighted; ".s" was taken for an unsupported RISC-V lexer.
+  # Upstream #25865: Luau and XSL files showed as plain text next to highlighted Lua and XML.
+  @backlog @shared
+  Scenario Outline: Files in dialects without a lexer of their own are highlighted as <language>
+    Given the diff changes "<file>"
+    When the user reviews the working tree or opens "<file>"
+    Then the file is shown with the highlighting of <language>
+
+    Examples:
+      | file              | language |
+      | boot/start.asm    | Assembly |
+      | boot/start.s      | Assembly |
+      | boot/start.S      | Assembly |
+      | boot/start.nasm   | Assembly |
+      | game/player.luau  | Lua      |
+      | site/page.xsl     | XML      |
+      | site/page.xslt    | XML      |
+
   # Waits for "Each file of the diff on the desktop is coloured by its language" (hal-c2/hal-c2#916): the
   # desktop's diff has no highlighter to fail yet.
   @backlog @blocked @desktop
@@ -452,6 +651,21 @@ Feature: Reviewing working tree and branch changes
     When the message with that comment is sent
     Then the provider receives the comment and the quoted lines with the code kept in one piece
     And the quoted lines carry the language of "src/cart.ts"
+
+  # Upstream #29575: a comment's excerpt was trimmed, so a selection ending on a blank context line
+  # or trailing whitespace lost its last line, and a comment on one blank line sent a bare hunk header.
+  @backlog @shared
+  Scenario Outline: A review comment's excerpt keeps its last line
+    Given the user comments on lines 10 to 12 of "src/cart.ts", and line 12 is <last line>
+    When the message with that comment is sent
+    Then the provider receives line 12 in the comment's excerpt
+    And the comment shown on the sent message includes line 12
+
+    Examples:
+      | last line                       |
+      | a blank context line            |
+      | an added line ending in a tab   |
+      | a whitespace-only edit          |
 
   @desktop
   Scenario: A line comment is added from the keyboard

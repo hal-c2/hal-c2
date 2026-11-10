@@ -9,6 +9,11 @@ class World;
 // (SidebarSteps' "the user picks" does this when no menu is open).
 void pickAnswer(World& world, const QString& label);
 
+// "X is shown" for a question of the agent's pending request on the composer
+// on screen: checks the card shows it and returns true. False leaves the step
+// to its own domain (an open thread, a settings page).
+bool questionShown(World& world, const QString& text);
+
 // Opens a thread of "shop" on a connected MC, unless one is open.
 void openTurnThread(World& world);
 
@@ -16,6 +21,10 @@ void openTurnThread(World& world);
 // its queue behind that turn (its run is "run-queued-<text>").
 void startWorkingTurn(World& world);
 void queueTurnMessage(World& world, const QString& text);
+// The same working turn waiting on the user: an approval to run a command,
+// or the agent's question "Which database?".
+void awaitTurnApproval(World& world);
+void awaitTurnQuestion(World& world);
 
 class Brick;
 

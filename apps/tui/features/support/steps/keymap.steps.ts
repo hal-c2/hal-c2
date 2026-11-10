@@ -405,10 +405,10 @@ step("the diff viewer closes", async (ctx: World) => {
 step("the highlighted model is applied", async (ctx: World) => {
   await settle(ctx);
   expect(select(ctx).open).toBe(false);
-  // The picker opens on the thread's model, gpt-5.
+  // The picker opens on the thread's model, gpt-5 (named GPT-5).
   expect(composer(ctx).selectedModel).toBe("gpt-5");
   expect(ctx.dispatched!.map((entry) => entry.action)).toContain("select.confirm");
-  expect(shownText(findObject(ctx, "composerModel").get("text"))).toContain("gpt-5");
+  expect(shownText(findObject(ctx, "composerModel").get("text"))).toContain("GPT-5");
 });
 
 // --- tmux wheel ---------------------------------------------------------------

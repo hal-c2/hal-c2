@@ -123,6 +123,25 @@ defmodule HalC2.Steps.Parity.Rpc do
     context
   end
 
+  step "the MC answers with a bounded page of a thread, newest user turns first, with a cursor",
+       context do
+    {:rpc, _, {:ok, result}} = context.answer
+    assert %{"rows" => rows, "offset" => offset, "cursor" => _, "overBudget" => false} = result
+    assert is_integer(offset)
+    thread = context.fixtures.thread
+    assert Enum.any?(rows, &match?(["thread", ^thread, %{}], &1))
+    context
+  end
+
+  step "the MC answers with a thread's family as shell rows, its lineage and subagent tree",
+       context do
+    {:rpc, _, {:ok, result}} = context.answer
+    assert %{"rows" => rows} = result
+    thread = context.fixtures.thread
+    assert Enum.any?(rows, &match?([_, ^thread, "thread", %{}], &1))
+    context
+  end
+
   step "the MC answers with the keybindings after the change", context do
     {:rpc, _, {:ok, %{"rules" => rules}}} = context.answer
     assert Enum.any?(rules, &(&1["command"] == "terminal.toggle" and &1["key"] == "mod+shift+j"))
@@ -255,6 +274,10 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "provider.auth." <> _ ->
         {%{"instanceId" => "opencode", "flowId" => "hal-c2-none"}, context}
 
+      # Codex here is on the CLI's own login, so there is no account to move.
+      "provider.chatgpt.move" ->
+        {%{"instanceId" => "codex", "environmentId" => "hal-c2-none"}, context}
+
       # Started against a download that fails at once: the reply is the new state.
       "provider.install.start" ->
         {%{"instanceId" => "antigravity"}, managed_install(context)}
@@ -277,6 +300,12 @@ defmodule HalC2.Steps.Parity.Fixtures do
         {%{"settings" => HalC2.Settings.settings(), "version" => f.settings_version}, context}
 
       "hal-c2.threadRows" ->
+        {%{"threadId" => f.thread}, context}
+
+      "hal-c2.threadHistory" ->
+        {%{"threadId" => f.thread}, context}
+
+      "hal-c2.threadFamily" ->
         {%{"threadId" => f.thread}, context}
 
       "hal-c2.upsertKeybinding" ->
@@ -329,6 +358,11 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
       "server." <> acp when acp in ~w(setAcpRegistryProvider disableAcpRegistryProvider) ->
         {%{"instanceId" => "opencode", "projectId" => f.project, "providerId" => "fake"}, context}
+
+      # The machine's facts are an Intel Mac's, so the status asks no container runtime.
+      "server.getOpenShellStatus" ->
+        World.put_app_env(:openshell_facts, %{os: :darwin, arch: "x86_64", runtime: nil})
+        {%{}, context}
 
       "server.get" <> history
       when history in ~w(ProcessResourceHistory ResourceTelemetryHistory) ->
@@ -441,6 +475,24 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
       "provider.uploadFeedback" ->
         {%{"threadId" => f.thread, "reason" => "parity"}, context}
+
+      # A tool call with no app: the contract's not-an-app error.
+      "mcpApps." <> request ->
+        target = %{"threadId" => f.thread, "itemId" => "turn-item:parity"}
+
+        {case request do
+           "callTool" ->
+             Map.merge(target, %{"name" => "get", "arguments" => %{}})
+
+           "toolInfo" ->
+             Map.put(target, "name", "get")
+
+           "readResource" ->
+             Map.put(target, "uri", "ui://parity/app.html")
+
+           "updateModelContext" ->
+             Map.put(target, "content", [%{"type" => "text", "text" => "hi"}])
+         end, context}
 
       "vcs.init" ->
         {%{"cwd" => Mc.tmp_dir(context.mc, "fresh")}, context}
@@ -585,6 +637,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "orchestration.getFullThreadDiff" ->
         {%{"threadId" => f.thread, "toTurnCount" => 0}, context}
 
+      "orchestration.getCommandOutput" ->
+        {%{"threadId" => f.thread, "itemId" => "turn-item:none"}, context}
+
       "orchestration.searchThreads" ->
         {%{"query" => "Work"}, context}
 
@@ -655,6 +710,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
           [HalC2.UsageLimitSources]
 
         "provider.auth." <> _ ->
+          provider_auth()
+
+        "provider.chatgpt.move" ->
           provider_auth()
 
         "provider.install." <> _ ->

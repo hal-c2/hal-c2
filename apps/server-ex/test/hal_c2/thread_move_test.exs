@@ -145,13 +145,33 @@ defmodule HalC2.ThreadMoveTest do
     end)
 
     assert_receive {:move_held, back, :sending, ^id}, 30_000
+    moving = Machines.on(context, "desktop", HalC2.ThreadArchive, :local_thread, [id])["moving"]
     Machines.on(context, "desktop", HalC2.ThreadMove, :settle, [id])
+
+    # Its mover lives: the move back is neither let go nor called off.
+    assert Machines.on(context, "desktop", HalC2.ThreadArchive, :local_thread, [id])["moving"] ==
+             moving
 
     send(mover, :release)
     assert_receive {:moved, {:ok, %{"status" => "moved"}}}, 30_000
     send(back, :release)
-    assert_receive {:moved_back, _}, 30_000
+    assert_receive {:moved_back, {:ok, %{"status" => "moved"}}}, 30_000
 
+    assert holders(context, id) == ["laptop"]
+  end
+
+  # A settle while a move was still on its way released it, and the destination, asking
+  # to take the thread, heard the move was called off. A settle timer an earlier move of
+  # the thread left behind fired while the thread moved again.
+  # Found by prop/hal_c2/thread_move_prop_test.exs.
+  test "a settle leaves a move whose mover is still sending it", %{context: context} do
+    {context, id, mover} = hold_move(context)
+
+    assert HalC2.ThreadMove.settle(id) == []
+    assert World.thread(context, "Plan")["moving"]
+
+    send(mover, :release)
+    assert_receive {:moved, {:ok, %{"status" => "moved"}}}, 30_000
     assert holders(context, id) == ["desktop"]
   end
 
@@ -252,12 +272,12 @@ defmodule HalC2.ThreadMoveTest do
     context = Machines.cluster(context, "laptop", others)
     Mc.ensure(HalC2.ThreadMove)
     root = Path.join(context.mc.home, "shop")
-    File.mkdir_p!(root)
+    Machines.shop_checkout(root)
     context = World.create_project(context, "shop", %{"workspaceRoot" => root})
 
     for label <- others do
       peer_root = Path.join(Machines.home(context, label), "shop")
-      Machines.on(context, label, File, :mkdir_p!, [peer_root])
+      Machines.on(context, label, Machines, :shop_checkout, [peer_root])
       Machines.on(context, label, Machines, :create_project, ["shop", "shop", peer_root])
     end
 

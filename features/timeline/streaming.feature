@@ -1,4 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27419
+#   https://github.com/pingdotgg/t3code/pull/27418
+#   https://github.com/pingdotgg/t3code/pull/27417
+#   https://github.com/pingdotgg/t3code/pull/27420
+#   https://github.com/pingdotgg/t3code/pull/27316
 #   https://github.com/pingdotgg/t3code/pull/16624
 #   https://github.com/pingdotgg/t3code/pull/19334
 #   https://github.com/pingdotgg/t3code/pull/19338
@@ -30,6 +35,11 @@
 #   apps/desktop-qt/src/native/ThreadStore.cpp (reload, retrying a thread its MC stopped sending)
 #   apps/desktop-qt/src/native/TimelineModel.cpp (the thread's cursor, a catch-up applied whole)
 #   apps/server-ex/lib/hal_c2/streams/server.ex (resuming from an offset, a catch-up in several parts)
+#   https://github.com/pingdotgg/t3code/pull/23679
+#   https://github.com/pingdotgg/t3code/pull/28285
+#   https://github.com/pingdotgg/t3code/pull/28610
+#   https://github.com/pingdotgg/t3code/pull/29166
+#   https://github.com/pingdotgg/t3code/pull/29680
 
 Feature: Streaming the agent's reply
   While a turn runs, the agent's text and reasoning arrive as they are written. When the
@@ -129,6 +139,18 @@ Feature: Streaming the agent's reply
       | 62 seconds        | 1m 2s   |
       | 1 hour 5 seconds  | 1h 5s   |
 
+  # Upstream #27316: a whole number of seconds under ten read "Worked for 7.0s". Kept apart from the
+  # passing outline above until every surface is checked.
+  @backlog @shared @priority-low
+  Scenario Outline: A duration under ten seconds drops a trailing zero
+    When the thread shows a duration of <duration>
+    Then it reads "<shown>"
+
+    Examples:
+      | duration     | shown |
+      | 7 seconds    | 7s    |
+      | 7.4 seconds  | 7.4s  |
+
   # TUI: implemented in apps/tui/src/timeline.ts
   @shared
   Scenario: A finished turn folds its work behind how long it took
@@ -136,6 +158,15 @@ Feature: Streaming the agent's reply
     When the turn completes after 2 minutes
     Then the tool calls fold behind "Worked for 2m"
     And the answer stays visible
+
+  # Upstream #29166: opening the folded work at the bottom of the timeline kept the timeline at the
+  # bottom and pushed the heading out of view.
+  @backlog @shared
+  Scenario: Opening folded work keeps its heading where it was
+    Given the user is at the bottom of the timeline
+    When the user opens "Worked for 2m"
+    Then the "Worked for 2m" heading stays where it was
+    And the work opens below it
 
   # Upstream #21393: the phone left the agent's progress notes beside the final answer.
   @backlog @shared
@@ -260,6 +291,19 @@ Feature: Streaming the agent's reply
     When the user copies the reply
     Then the user sees a "Failed to copy" message beside the copy button with the reason
 
+  # Upstream #23679: a failed copy showed only "Failed to copy" for a second, never the reason.
+  @backlog @desktop
+  Scenario Outline: A failed copy is reported as an error the user can read
+    Given the clipboard refuses the copy
+    When the user copies <what>
+    Then the user sees an error notification with the clipboard's reason
+    And it stays for the usual time unless the user dismisses it
+
+    Examples:
+      | what                        |
+      | a message                   |
+      | a file's path from the diff |
+
   # The Run action sits beside Copy on a shell block the agent wrote. It sends the command to
   # the thread's terminal, the same path a project script takes, and leaves the project's
   # selected script alone.
@@ -300,6 +344,42 @@ Feature: Streaming the agent's reply
     Given the agent has started a reply and written nothing yet
     Then the reply shows no text and no "(empty response)"
 
+  # Upstream #27420: every visible row of the timeline redrew on each streamed update, not
+  # just the streaming one (210 history row renders before, 0 after; 32 timeline renders across 30
+  # updates before, at most 3 after).
+  # Upstream #27419: same change as #27420.
+  @backlog @shared @priority-low
+  Scenario: A streaming reply redraws only its own row
+    Given the thread shows earlier turns above a reply that is streaming
+    When 30 updates of the reply arrive
+    Then no earlier row of the timeline is drawn again
+    And the timeline itself is laid out again at most 3 times
+
+  # Upstream #27417: each streamed update parsed and drew the whole reply again, so a long reply got
+  # slower with every update (465 paragraph renders before, 30 after, for 30 updates).
+  @backlog @shared @priority-low
+  Scenario: A streaming reply draws again only its last block
+    Given a streaming reply has finished 10 paragraphs
+    When 30 updates add to its last paragraph
+    Then the 10 finished paragraphs are not parsed or drawn again
+    And once the reply finishes it is shown whole
+
+  # Upstream #28285: a list item's code block whose closing fence sat at the line start was cut
+  # early while streaming, so the reply jumped when it finished.
+  @backlog @shared @priority-low
+  Scenario: A streaming reply shows a list item's code block as the finished reply will
+    Given a streaming reply has a list item whose code block is closed by a fence at the line start
+    When text after the fence streams in
+    Then the reply is shown as it will be once finished
+    And it does not change its layout when the turn ends
+
+  # Upstream #27418: the git actions panel redrew with its menus on every streamed update.
+  @backlog @shared @priority-low
+  Scenario: The git actions do not redraw while a reply streams
+    Given a reply is streaming in the thread
+    When updates of the reply arrive
+    Then the thread's git actions are not drawn again
+
   @shared
   Scenario: Only a turn's last reply carries its time and actions
     Given the agent commented, ran a tool call and then answered
@@ -307,6 +387,17 @@ Feature: Streaming the agent's reply
     When the turn completes after 2 minutes
     And the user opens the folded work
     Then only the answer shows its time and actions
+
+  # Upstream #28610: the reply written just before a running command had no time on hover until the
+  # whole response ended; the latest finished reply showed its time while the turn went on.
+  # Upstream #29680: reverted it as a timeline change that had shipped without a UI review, so the
+  # passing scenario above stands.
+  @dropped @desktop
+  Scenario: A finished reply shows its time on hover while the turn runs a command
+    Given the agent wrote a reply and then started a command that is still running
+    When the user holds the pointer over the reply
+    Then the reply shows the time it was written
+    And it offers no copy or fork until the turn completes
 
   @shared
   Scenario Outline: A message says when it was sent, in the time format the user chose

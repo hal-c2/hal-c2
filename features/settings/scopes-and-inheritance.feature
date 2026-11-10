@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24472
+#   https://github.com/pingdotgg/t3code/pull/23672
 #   https://github.com/pingdotgg/t3code/pull/16581
 #   https://github.com/pingdotgg/t3code/pull/18503
 #   https://github.com/pingdotgg/t3code/pull/18582
@@ -23,6 +25,10 @@
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.readSettings, hal-c2.writeSettings)
 #   apps/server/src/serverSettings.ts (the settings file: sparse writes, unreadable file kept, retired values, folded project fields, secrets)
 #   apps/server-ex/lib/hal_c2/web/socket.ex (config.settings)
+#   https://github.com/pingdotgg/t3code/pull/28005
+#   https://github.com/pingdotgg/t3code/pull/23669
+#   https://github.com/pingdotgg/t3code/pull/23450
+#   https://github.com/pingdotgg/t3code/pull/23678
 
 Feature: Settings scopes and inheritance
   Settings apply to all environments, one environment, one project, or one checkout of a
@@ -87,7 +93,7 @@ Feature: Settings scopes and inheritance
 
     # Upstream #17879. A project's provider switch overrides the environment's, and the MC
     # checks the project's value wherever a turn can start.
-    @backlog @mc
+    @mc
     Scenario Outline: A project turns a provider on or off apart from its environment
       Given the "Codex" provider is <environment> on this environment
       And the project "hal-c2" <project>
@@ -101,7 +107,7 @@ Feature: Settings scopes and inheritance
         | disabled    | has no provider switch of its own    | is refused because "Codex" is off  |
         | enabled     | has no provider switch of its own    | starts                             |
 
-    @backlog @mc
+    @mc
     Scenario Outline: Every way a turn starts honours the project's provider switch
       Given the project "hal-c2" turns "Codex" off
       When <how> on "Codex" in "hal-c2"
@@ -116,21 +122,37 @@ Feature: Settings scopes and inheritance
         | an agent starts a child thread or delegates by MCP |
         | a scheduled task runs                             |
 
-    @backlog @mc
+    @mc
     Scenario: A running turn finishes when its project turns the provider off
       Given a "Codex" turn is running on a thread in "hal-c2" for a delegated task
       When the project "hal-c2" turns "Codex" off
       Then the running turn finishes
       And the delegated task's result still reaches its parent thread
 
-    @backlog @mc
+    # Upstream #23669: a prepared turn could still be retried or released after its project
+    # turned the provider off.
+    @mc @priority-high
+    Scenario Outline: A prepared turn does not start once its project turns the provider off
+      Given a "Codex" thread in "hal-c2" is preparing its worktree
+      And <when>
+      When the project "hal-c2" turns "Codex" off
+      And the prepared turn is <next>
+      Then no "Codex" turn starts
+      But a retry or release accepted before "Codex" was turned off is answered as before
+
+      Examples:
+        | when                             | next     |
+        | its preparation failed           | retried  |
+        | its preparation is still running | released |
+
+    @mc
     Scenario: A provider off on the environment keeps running for a project that turned it on
       Given the "Codex" provider is disabled on this environment
       And the project "hal-c2" turns "Codex" on
       Then "Codex" stays available for turns in "hal-c2"
       And other projects still cannot start "Codex" turns
 
-    @backlog @mc
+    @mc
     Scenario: Writing in a project falls back when the project turned the writer's provider off
       Given titles and commit messages are written by "Codex"
       And the project "hal-c2" turns "Codex" off
@@ -138,20 +160,44 @@ Feature: Settings scopes and inheritance
       Then it is written by the next usable provider
       And titles in other projects are still written by "Codex"
 
-    @backlog @mc
+    # Upstream #23672: stacked git actions from a draft thread resolve its project before picking a writer.
+    @mc
+    Scenario: A draft thread's commit message honours its project's provider switch from a subfolder
+      Given commit messages are written by "Codex"
+      And the project "hal-c2" turns "Codex" off
+      And a draft thread in "hal-c2" works in a folder below the project root
+      When the user commits and opens a pull request from that thread
+      Then the commit message and pull request text are written by the next usable provider
+
+    @mc
     Scenario: Deleting a project drops its provider switches
       Given the project "hal-c2" turns "Codex" off
       When the project "hal-c2" is deleted
       Then the settings keep no provider switch for "hal-c2"
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (the file is checked again every couple of seconds)
+    # Upstream #24472: a client older than its MC erased project overrides it did not know about.
     @backlog @mc @priority-high
+    Scenario: A project edit from an older client keeps the overrides it does not know
+      Given the project "hal-c2" overrides the thread title instructions
+      And a client built before that setting existed
+      When the user changes the project's auto-pull from that client
+      Then the project keeps its thread title instructions override
+      But resetting a setting the client knows still removes that override
+
+    # Upstream #24472
+    @mc
+    Scenario: An MC older than its settings file keeps project overrides it does not know
+      Given the settings file holds a project override written by a newer MC
+      When an older MC loads it and the user edits that project
+      Then the newer override is still in the settings file
+
+    @mc
     Scenario: A settings file edited by hand reaches connected clients
       Given a client is connected to the MC
       When the user changes a setting in settings.json with a text editor
       Then the client receives the changed settings without the MC restarting
 
-    @backlog @mc
+    @mc
     Scenario: A hand edit that is not valid JSON is ignored until it is fixed
       Given the MC is running with its settings
       When the user saves a settings.json that is not valid JSON
@@ -159,21 +205,28 @@ Feature: Settings scopes and inheritance
       And connected clients are not sent broken settings
 
     # Upstream #18582: a client's save no longer reverts a hand edit to settings.json the server had not read yet.
-    @backlog @mc
+    @mc
     Scenario: A client's save keeps a hand edit the MC has not noticed yet
       Given the user edited settings.json by hand a moment ago
       When a client saves a different setting before the MC has read the edit
       Then settings.json holds both the hand edit and the client's change
 
+    # Upstream #18582: the hand edit kept may sit inside an object the client changed too.
+    @mc
+    Scenario: A client's save to one provider keeps a hand edit to another
+      Given the user edited one provider's settings in settings.json by hand a moment ago
+      When a client saves another provider's setting before the MC has read the edit
+      Then settings.json holds both providers' changes
+
     # Upstream #18582: a save over a settings.json that is not valid JSON is refused.
-    @backlog @mc
+    @mc
     Scenario: A save over a settings file that is not valid JSON is refused and leaves it unchanged
       Given settings.json holds a hand edit that is not valid JSON
       When a client saves a setting
       Then the save is refused
       And settings.json still holds the user's text for them to fix
 
-    @backlog @mc
+    @mc
     Scenario: A settings file that cannot be read at startup is kept for repair
       Given settings.json is not valid JSON
       When the MC starts
@@ -194,8 +247,7 @@ Feature: Settings scopes and inheritance
         | cannot be decoded as settings   | the read fails and the damaged file is left on disk unchanged    |
         | cannot be opened                | the read fails and the user's saved choices are not overwritten  |
 
-    # Likely already implemented: apps/server-ex/lib/hal_c2/settings.ex (write!: temporary file, owner-only, rename)
-    @backlog @mc @priority-high
+    @mc
     Scenario: The settings file is private to its owner and replaced in one step
       When a client saves a setting
       Then settings.json is readable only by the user the MC runs as
@@ -489,6 +541,18 @@ Feature: Settings scopes and inheritance
       When the user chooses one model
       Then every environment uses that model
 
+    # Upstream #28005: two environments on automatic defaults were read as one default, showing
+    # one environment's model and an effort the other could not take.
+    @backlog @desktop
+    Scenario: Automatic defaults that resolve to different models show as mixed
+      Given "Laptop" and "Build box" both leave the default model on automatic
+      And "Laptop" resolves it to a Codex model and "Build box" to a Claude model
+      And the user is editing settings across all environments
+      When the user looks at the default model
+      Then it reads "Automatic (mixed)"
+      And the user is told to select one environment or choose a model they share
+      And no effort can be chosen until the model is the same on every selected environment
+
     @desktop
     Scenario: A model missing on one environment cannot be applied to all of them
       Given the model "opus" is only available on "Laptop"
@@ -544,6 +608,24 @@ Feature: Settings scopes and inheritance
         | Source control writer model   | Text generation model  |
         | Default thread mode           | Inherit                |
         | Worktree submodules           | Inherit                |
+
+    @backlog @desktop @priority-low
+    Scenario Outline: A layer's value reads in the setting's own words
+      Given the <layer> layer sets "<setting>" to <value>
+      When the user asks where it comes from
+      Then the <layer> layer reads "<reading>"
+
+      # Upstream #23450: background activity layers all read "Custom".
+      Examples:
+        | layer       | setting             | value                   | reading     |
+        | environment | Background activity | the Performance profile | Performance |
+        | Default     | Background activity | the Balanced profile    | Balanced    |
+
+      # Upstream #23678: cleanup modes read with the writing-style labels.
+      Examples:
+        | layer       | setting                    | value         | reading |
+        | environment | Automatic worktree cleanup | a custom rule | Custom  |
+        | environment | Automatic worktree cleanup | off           | Off     |
 
     # Legacy: apps/web/src/components/settings/SettingInheritance.tsx (overridingProjects)
     @backlog @desktop @priority-low

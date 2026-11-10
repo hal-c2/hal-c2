@@ -122,23 +122,48 @@ defmodule HalC2.Attachments do
 
   @doc """
   Moves a message's pending uploads into its thread: each is copied under a
-  thread-scoped id, which the message then names. Attachments the thread already
-  has pass through.
+  thread-scoped id of its own, which the message then names, so two messages naming
+  one upload hold two copies. Attachments the thread already has pass through, without
+  the mark only the MC's own folds carry.
   """
   def claim(thread_id, attachments) when is_list(attachments) do
     Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
       case claim_one(thread_id, attachment) do
         {:ok, claimed} -> {:cont, {:ok, [claimed | acc]}}
-        {:error, _} = error -> {:halt, error}
+        {:error, _} = error -> {:halt, {error, acc}}
       end
     end)
     |> case do
-      {:ok, claimed} -> {:ok, Enum.reverse(claimed)}
-      error -> error
+      {:ok, claimed} ->
+        {:ok, Enum.reverse(claimed)}
+
+      # One that cannot be claimed leaves none of the message's uploads claimed.
+      {error, claimed} ->
+        release(attachments, Enum.reverse(claimed))
+        error
     end
   end
 
   def claim(_thread_id, _attachments), do: {:ok, []}
+
+  @doc """
+  Gives back what `claim/2` returned for `attachments` when the MC then refuses the
+  message: the thread's copies go, and the pending uploads they were copied from stay,
+  so the client can send them again. Attachments the thread already had are not touched.
+  """
+  # Removes only files named by a checked id in the attachments directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  def release(attachments, claimed) when is_list(attachments) and is_list(claimed) do
+    for {%{"id" => from}, %{"id" => id}} <- Enum.zip(attachments, claimed),
+        from != id,
+        safe_id?(id),
+        file <- Path.wildcard(Path.join(dir(), id <> ".*")),
+        do: File.rm(file)
+
+    :ok
+  end
+
+  def release(_attachments, _claimed), do: :ok
 
   defp claim_one(thread_id, %{"id" => "pending-" <> rest = id} = attachment) do
     with true <- safe_id?(id) || {:error, "Attachment '#{attachment["name"]}' has a bad id."},
@@ -147,9 +172,11 @@ defmodule HalC2.Attachments do
          true <-
            size == attachment["sizeBytes"] ||
              {:error, "Attachment '#{attachment["name"]}' does not match its upload."} do
-      claimed_id = "#{thread_segment(thread_id)}-#{rest}"
+      # Each claim stores a copy of its own, so `release/2` of a message the MC refused
+      # can never take a file another message names (proof/models/asset_stream.maude).
+      claimed_id = "#{thread_segment(thread_id)}-#{copy_tag()}-#{rest}"
       File.cp!(source, Path.join(dir(), claimed_id <> Path.extname(source)))
-      {:ok, Map.put(attachment, "id", claimed_id)}
+      {:ok, attachment |> unmarked() |> Map.put("id", claimed_id)}
     else
       [] -> {:error, "Attachment '#{attachment["name"]}' was not uploaded."}
       {:error, message} when is_binary(message) -> {:error, message}
@@ -157,56 +184,288 @@ defmodule HalC2.Attachments do
     end
   end
 
-  defp claim_one(_thread_id, attachment), do: {:ok, attachment}
+  defp claim_one(_thread_id, attachment), do: {:ok, unmarked(attachment)}
+
+  @doc """
+  Copies the stored attachment `id` into `thread_id` under an id of its own, so a thread
+  forked from another keeps the document when the source is deleted
+  (`delete_thread/1`). `{:ok, new_id}`, or `:error` when the attachment is not stored.
+  """
+  # The source comes from `path/1` and the copy is named by a checked thread segment.
+  # sobelow_skip ["Traversal.FileModule"]
+  def copy(thread_id, id) do
+    with source when is_binary(source) <- path(%{"id" => id}),
+         new_id = copy_id(thread_id, id),
+         :ok <- File.cp(source, Path.join(dir(), new_id <> Path.extname(source))) do
+      {:ok, new_id}
+    else
+      _ -> :error
+    end
+  end
+
+  # An MCP app document keeps its `-mcp-app-` marker, which is how its inline URL gets
+  # the app sandbox when the client sends no `renderIntent` (`mcp_app_claims/2`).
+  defp copy_id(thread_id, id) do
+    marker = if HalC2.McpApps.document_id?(id), do: "mcp-app-", else: ""
+    "#{thread_segment(thread_id)}-#{marker}#{copy_tag()}"
+  end
+
+  defp copy_tag, do: 4 |> :crypto.strong_rand_bytes() |> Base.encode16(case: :lower)
 
   @doc """
   `assets.persistChatAttachments`: images a client sends inline (pasted), stored
-  straight into the thread as its attachments.
+  straight into the thread as its attachments. Every image is checked before any is
+  written, so one that is not what it claims to be stores none of the message's images.
   """
   def persist(%{"threadId" => thread_id, "attachments" => attachments}) do
-    Enum.reduce_while(attachments, {:ok, []}, fn attachment, {:ok, acc} ->
-      with "data:" <> rest <- attachment["dataUrl"] || "",
-           [header, data] <- String.split(rest, ",", parts: 2),
-           true <- String.ends_with?(header, ";base64"),
-           {:ok, bytes} <- Base.decode64(data, ignore: :whitespace),
-           true <- byte_size(bytes) <= @max_image_bytes do
-        mime = attachment["mimeType"] || String.replace_suffix(header, ";base64", "")
-        id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
-        File.mkdir_p!(dir())
-        File.write!(Path.join(dir(), id <> extension("image", mime, attachment["name"])), bytes)
-
-        stored =
-          %{
-            "type" => "image",
-            "id" => id,
-            "name" => attachment["name"],
-            "mimeType" => mime,
-            "sizeBytes" => byte_size(bytes)
-          }
-          |> then(
-            &if(attachment["source"], do: Map.put(&1, "source", attachment["source"]), else: &1)
-          )
-
-        {:cont, {:ok, [stored | acc]}}
-      else
-        _ ->
-          {:halt,
-           {:error,
-            %{
-              "_tag" => "PersistChatAttachmentsError",
-              "message" => "Image '#{attachment["name"]}' could not be saved."
-            }}}
+    attachments
+    |> Enum.reduce_while({:ok, []}, fn attachment, {:ok, acc} ->
+      case pasted_image(attachment) do
+        {:ok, decoded} -> {:cont, {:ok, [{attachment, decoded} | acc]}}
+        :error -> {:halt, {:error, persist_error(attachment)}}
       end
     end)
     |> case do
-      {:ok, stored} -> {:ok, %{"attachments" => Enum.reverse(stored)}}
+      {:ok, decoded} ->
+        decoded
+        |> Enum.reverse()
+        |> Enum.reduce_while({:ok, []}, fn image, {:ok, saved} ->
+          case store_pasted(thread_id, image) do
+            {:ok, attachment} -> {:cont, {:ok, [attachment | saved]}}
+            {:error, _} = error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:ok, saved} -> {:ok, %{"attachments" => Enum.reverse(saved)}}
+          error -> error
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp persist_error(attachment) do
+    %{
+      "_tag" => "PersistChatAttachmentsError",
+      "message" => "Image '#{attachment["name"]}' could not be saved."
+    }
+  end
+
+  # The data URL must be a base64 image of the type and size the client declared.
+  defp pasted_image(attachment) do
+    with "data:" <> rest <- attachment["dataUrl"] || "",
+         [header, data] <- String.split(rest, ",", parts: 2),
+         [type, "base64"] <- header |> String.split(";") |> Enum.map(&String.trim/1),
+         "image/" <> _ <- String.downcase(type),
+         declared = attachment["mimeType"] || type,
+         true <- String.downcase(declared) == String.downcase(type),
+         {:ok, bytes} <- Base.decode64(data, ignore: :whitespace),
+         true <- bytes != "" and byte_size(bytes) <= @max_image_bytes,
+         true <-
+           is_nil(attachment["sizeBytes"]) or attachment["sizeBytes"] == byte_size(bytes) do
+      {:ok, {declared, bytes}}
+    else
+      _ -> :error
+    end
+  end
+
+  # The file is named by a checked thread segment and a fresh uuid in the attachments folder.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp store_pasted(thread_id, {attachment, {mime, bytes}}) do
+    id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+    file = Path.join(dir(), id <> extension("image", mime, attachment["name"]))
+
+    with :ok <- File.mkdir_p(dir()),
+         :ok <- File.write(file, bytes) do
+      {:ok, stored(id, attachment, mime, bytes)}
+    else
+      {:error, _reason} -> {:error, persist_error(attachment)}
+    end
+  end
+
+  defp stored(id, attachment, mime, bytes) do
+    %{
+      "type" => "image",
+      "id" => id,
+      "name" => attachment["name"],
+      "mimeType" => mime,
+      "sizeBytes" => byte_size(bytes)
+    }
+    |> then(&if(attachment["source"], do: Map.put(&1, "source", attachment["source"]), else: &1))
+  end
+
+  # What of a message too long to send whole stays in its text (`fold_long_text/3`).
+  @long_text_chars 120_000
+  @long_text_start 8_000
+  @long_text_end 2_000
+  @folded_source %{"_tag" => "pasted-text", "folded" => true}
+
+  @doc """
+  A message too long to send whole, folded as a client folds a long paste: past
+  120,000 characters its text becomes its start and end around a mark saying what was
+  cut, and the whole of it a text file attached to the message (a `pasted-text` file,
+  which providers are given as a path). The thread shows what the agent was sent, and
+  the file goes wherever the thread does. Shorter text passes through.
+  """
+  # The file is the attachments folder, a thread segment of `[a-z0-9_-]` and a fresh
+  # uuid, never a path a client or an agent names.
+  # sobelow_skip ["Traversal.FileModule"]
+  def fold_long_text(thread_id, text, attachments) when is_binary(text) do
+    chars = String.length(text)
+
+    cond do
+      chars <= @long_text_chars ->
+        {:ok, text, attachments}
+
+      byte_size(text) > @max_file_bytes ->
+        {:error,
+         "The message is too long to send, even as a file: at most #{div(@max_file_bytes, 1024 * 1024)} MB."}
+
+      true ->
+        id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+        name = free_name(attachments, "message")
+        file = Path.join(dir(), id <> ".txt")
+
+        case with(:ok <- File.mkdir_p(dir()), do: File.write(file, text)) do
+          :ok ->
+            cut = chars - @long_text_start - @long_text_end
+
+            folded =
+              String.slice(text, 0, @long_text_start) <>
+                "\n\n[... #{cut} characters cut here; the whole message is in the attached #{name} ...]\n\n" <>
+                String.slice(text, chars - @long_text_end, @long_text_end)
+
+            file = %{
+              "type" => "file",
+              "id" => id,
+              "name" => name,
+              "mimeType" => "text/plain",
+              "sizeBytes" => byte_size(text),
+              "source" => @folded_source
+            }
+
+            {:ok, folded, attachments ++ [file]}
+
+          # No message names what a failed write left, so it goes here.
+          {:error, reason} ->
+            File.rm(file)
+
+            {:error,
+             "The message is too long to send whole, and saving it as a file failed: #{:file.format_error(reason)}."}
+        end
+    end
+  end
+
+  def fold_long_text(_thread_id, text, attachments), do: {:ok, text, attachments}
+
+  @doc """
+  The files `fold_long_text/3` folded a message's `text` into, among its
+  `attachments`: those the MC marked as its folds whose name a cut mark in `text`
+  names. Only the MC marks a file (`claim/2` drops a client's mark), so text quoting a cut mark, or a
+  pasted text of the same name, never makes another file a fold.
+  """
+  def folded_into(text, attachments) when is_binary(text) and is_list(attachments) do
+    named =
+      ~r/\[\.\.\. \d+ characters cut here; the whole message is in the attached (.+?) \.\.\.\]/
+      |> Regex.scan(text, capture: :all_but_first)
+      |> MapSet.new(fn [name] -> name end)
+
+    Enum.filter(attachments, &(&1["source"] == @folded_source and &1["name"] in named))
+  end
+
+  def folded_into(_text, _attachments), do: []
+
+  # An attachment a client names, without the mark only the MC gives the files it folds
+  # long messages into (`folded_into/2`).
+  defp unmarked(%{"source" => %{"_tag" => "pasted-text"} = source} = attachment),
+    do: Map.put(attachment, "source", Map.delete(source, "folded"))
+
+  defp unmarked(attachment), do: attachment
+
+  @doc """
+  What an edit of a message's text from `old` to `new` leaves behind among its
+  `attachments`: the file `old` was folded into, unless `new` still names it among the
+  attachments the edit `kept`, as an edit of the stored folded text does.
+  """
+  def left_behind(old, new, attachments, kept),
+    do: folded_into(old, attachments) -- folded_into(new, kept)
+
+  # `message.txt`, or `message-2.txt` and on when the message already has one.
+  defp free_name(attachments, base) do
+    taken = MapSet.new(attachments, & &1["name"])
+
+    Stream.iterate(1, &(&1 + 1))
+    |> Stream.map(&if(&1 == 1, do: "#{base}.txt", else: "#{base}-#{&1}.txt"))
+    |> Enum.find(&(not MapSet.member?(taken, &1)))
+  end
+
+  @doc """
+  A thread's own copies of attachments another thread's messages name (a fork copies
+  its source's), under ids of its own, so they stay when that thread and its files are
+  deleted: `{:ok, copies}`, in order. An
+  attachment whose file is not on this MC, or goes while it is copied, passes through.
+  A copy that cannot be made of a file that is there (a full disk) is `{:error,
+  reason}`, and the copies already made go: passed through, the thread would name
+  files that go with the other thread's.
+  """
+  # The source comes from `path/1` (a `safe_id?` id inside the attachments folder) and
+  # the target is that folder, a thread segment and a fresh uuid.
+  # sobelow_skip ["Traversal.FileModule"]
+  def copy_into(thread_id, attachments) when is_list(attachments) do
+    attachments
+    |> Enum.reduce_while({:ok, []}, fn attachment, {:ok, copies} ->
+      case copy_file(thread_id, attachment) do
+        {:ok, copy} ->
+          {:cont, {:ok, [copy | copies]}}
+
+        {:error, reason} ->
+          for copy <- copies, copy not in attachments, path = path(copy), do: File.rm(path)
+
+          {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, copies} -> {:ok, Enum.reverse(copies)}
       error -> error
+    end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp copy_file(thread_id, attachment) do
+    with source when is_binary(source) <- match?(%{"id" => _}, attachment) && path(attachment) do
+      id = "#{thread_segment(thread_id)}-#{HalC2.Environment.uuid4()}"
+      target = Path.join(dir(), id <> Path.extname(source))
+
+      # A copy, not a link: an agent is given each file's path and may write into
+      # it, which a link would carry into the other thread's file.
+      case File.cp(source, target) do
+        :ok ->
+          {:ok, Map.put(attachment, "id", id)}
+
+        {:error, reason} ->
+          File.rm(target)
+          if File.exists?(source), do: {:error, reason}, else: {:ok, attachment}
+      end
+    else
+      _ -> {:ok, attachment}
     end
   end
 
   @doc "The file of an attachment on this MC, or `nil`."
   def path(%{"id" => id}),
     do: if(safe_id?(id), do: List.first(Path.wildcard(Path.join(dir(), id <> ".*"))))
+
+  @doc "The bytes of an attachment stored on this MC, or `:error`."
+  # The file comes from `path/1`: an id that passed `safe_id?` inside the attachments
+  # folder, never a path a client or an agent names.
+  # sobelow_skip ["Traversal.FileModule"]
+  def read(attachment) do
+    case path(attachment) do
+      path when is_binary(path) -> File.read(path)
+      nil -> :error
+    end
+  end
 
   @doc "Whether an attachment id can name a stored upload at all."
   def valid_id?(id), do: safe_id?(id)
@@ -339,6 +598,8 @@ defmodule HalC2.Attachments do
             if(resource["_tag"] == "attachment", do: "attachment", else: "inline")
       }
 
+      claims = mcp_app_claims(claims, resource)
+
       # A media file is served only while it is the file that was signed: one
       # replaced under its name (a rename over it) needs a new URL.
       {:ok,
@@ -346,6 +607,23 @@ defmodule HalC2.Attachments do
        name}
     end
   end
+
+  # An MCP app document shown inline is served as an app (`HalC2.McpApps`): in its
+  # own sandbox, with the host's bootstraps. It gets that sandbox whether or not the
+  # client asked for `renderIntent: "mcp-app"`, so no app document runs in the MC's
+  # origin. A download is the stored file as it is.
+  defp mcp_app_claims(
+         %{"disposition" => "inline", "path" => path} = claims,
+         %{"_tag" => "attachment"} = resource
+       ) do
+    if Path.extname(path) == ".html" and
+         (resource["renderIntent"] == "mcp-app" or
+            HalC2.McpApps.document_id?(resource["attachmentId"])),
+       do: Map.merge(claims, %{"renderIntent" => "mcp-app", "mimeType" => "text/html"}),
+       else: claims
+  end
+
+  defp mcp_app_claims(claims, _resource), do: claims
 
   # A favicon URL stays the same for half an hour, so clients cache one image.
   defp favicon_expiry(now), do: (div(now, 30 * 60_000) + 2) * 30 * 60_000
@@ -401,6 +679,39 @@ defmodule HalC2.Attachments do
     do: HalC2.Attachments.GitHubMedia.serve(claims, headers)
 
   defp serve_claims(%{"path" => nil}, _headers), do: {:error, 404, "The project has no favicon."}
+
+  # An MCP app's document, sandboxed (`HalC2.McpApps.serve_document/1`). `path` is the
+  # signed claim's, which `path/1` found by a checked id.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp serve_claims(%{"renderIntent" => "mcp-app", "path" => path} = claims, _headers) do
+    max = HalC2.McpApps.max_document_bytes()
+
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular, size: size}} when size > max ->
+        {:error, 413, "The MCP app is too large to show."}
+
+      {:ok, %File.Stat{type: :regular}} ->
+        case File.read(path) do
+          {:ok, html} ->
+            name = String.replace(claims["fileName"] || Path.basename(path), ~s("), "")
+
+            {:ok, 200,
+             [
+               {"content-type", "text/html; charset=utf-8"},
+               {"content-disposition", ~s(inline; filename="#{name}")},
+               {"cache-control", "private, no-cache"}
+               | HalC2.McpApps.serve_headers()
+             ], HalC2.McpApps.serve_document(html)}
+
+          _ ->
+            {:error, 404, "The file is gone."}
+        end
+
+      _ ->
+        {:error, 404, "The file is gone."}
+    end
+  end
+
   defp serve_claims(%{"path" => path} = claims, headers), do: serve_file(path, claims, headers)
 
   defp serve_file(path, claims, headers) do

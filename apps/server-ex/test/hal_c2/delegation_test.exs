@@ -180,6 +180,49 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a check that runs as a restart's continuation is sent" do
+    # The check first reads the child quiet, with its run interrupted; the continuation's
+    # message and run then land and its effect's row goes before the check reads the
+    # child's continuations. Neither is in what it read first.
+    test "does not settle the task as the interrupted run" do
+      delegate("interrupted")
+      message = "message:restart-continuation:cr"
+      key = "effect:c:effect-continue"
+
+      :ok =
+        HalC2.Store.put_meta(
+          key,
+          JSON.encode!(%{
+            "id" => "effect-continue",
+            "threadId" => "c",
+            "type" => "provider-runtime.continue",
+            "status" => "running",
+            "createdAt" => @at,
+            "args" => %{"command" => %{"messageId" => message}}
+          })
+        )
+
+      hook_with(fn
+        :continuations, "c" ->
+          {:ok, _} =
+            HalC2.Streams.commit("c", :thread, [
+              {"message", message,
+               %{"s" => %{"id" => message, "runId" => "cr2", "role" => "user", "text" => "Go"}}},
+              run("cr2", 2, "running")
+            ])
+
+          :ok = HalC2.Store.delete_meta(key)
+
+        _stage, _id ->
+          :ok
+      end)
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert task()["status"] == "running"
+      refute woken?()
+    end
+  end
+
   describe "a task whose child thread was never created" do
     test "fails at boot but is left alone once a launch may be under way" do
       {:ok, _} =
@@ -225,6 +268,55 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a task whose child failed with a plain-text failure" do
+    # An adapter that ends a run with a string failure leaves no error item, only the
+    # failure on the run itself (`TurnWriter`): the result still says why.
+    test "carries the message the run recorded" do
+      :ok = delegate("failed")
+
+      :ok =
+        HalC2.Streams.transact("c", :thread, fn state ->
+          {[
+             HalC2.Orchestration.upsert(
+               state,
+               "run",
+               "cr",
+               &Map.put(&1, "failure", "Out of quota")
+             )
+           ], :ok}
+        end)
+
+      assert Delegation.reconcile("p") == 1
+      assert %{"status" => "failed", "result" => "Out of quota"} = task()
+    end
+
+    # The provider session's `lastError` outlives its runs: a later run that failed with
+    # no failure of its own must not report the earlier run's.
+    test "does not report an earlier run's error as its own" do
+      :ok = delegate("failed")
+
+      :ok =
+        HalC2.Streams.transact("c", :thread, fn state ->
+          {[
+             HalC2.Orchestration.upsert(state, "run", "cr", fn run ->
+               Map.merge(run, %{"providerThreadId" => "pt"})
+             end),
+             {"provider-thread", "pt", %{"s" => %{"id" => "pt", "providerSessionId" => "ps"}}},
+             {"provider-session", "ps", %{"s" => %{"id" => "ps", "lastError" => "Error A"}}}
+           ], :ok}
+        end)
+
+      assert Delegation.reconcile("p") == 1
+      assert task()["result"] == nil
+    end
+
+    test "says no answer only when nothing recorded a failure" do
+      :ok = delegate("failed")
+      assert Delegation.reconcile("p") == 1
+      assert task()["result"] == nil
+    end
+  end
+
   describe "a task's child that links a pull request" do
     @heard %{"state" => "open", "checksFailed" => false}
 
@@ -241,7 +333,8 @@ defmodule HalC2.Orchestration.DelegationTest do
                 "url" => "https://github.com/acme/app/pull/7",
                 "source" => "agent",
                 "linkedAt" => @at,
-                "heard" => @heard
+                "heard" => @heard,
+                "snapshot" => %{"headSha" => "abc123", "checksState" => "pending"}
               }
             ]
           })
@@ -265,6 +358,23 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert [%{"number" => 7, "source" => "agent", "heard" => @heard}] = links("p")
     end
 
+    # Found by prop/hal_c2/delegation_prop_test.exs: with every run rolled back no
+    # run speaks for the child, yet its links are handed over, so the result names them.
+    test "names it when the boot settles a task whose runs were all rolled back" do
+      :ok = delegate("completed")
+      :ok = link_child()
+      :ok = end_child("rolled_back")
+
+      assert Delegation.reconcile("p") == 1
+
+      assert %{"status" => "cancelled", "result" => result} = task()
+
+      assert result ==
+               "Pull requests handed to you to watch: acme/app#7 at abc123 (checks pending)."
+
+      assert [%{"number" => 7}] = links("p")
+    end
+
     test "keeps it when the caller is deleted" do
       :ok = delegate("completed")
       :ok = link_child()
@@ -276,6 +386,122 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert [%{"number" => 7}] = links("c")
       assert links("p") == []
+    end
+
+    # PR news reaches a quiet child that still owes a restart continuation:
+    # `HalC2.PullRequests.Wakes` hands its links over then, before the task can
+    # settle, and the settled result must still name them.
+    test "names it in the result when the handover beat the settle" do
+      :ok = delegate("completed")
+      :ok = link_child()
+      key = "effect:c:effect-continue"
+
+      :ok =
+        HalC2.Store.put_meta(
+          key,
+          JSON.encode!(%{
+            "id" => "effect-continue",
+            "threadId" => "c",
+            "type" => "provider-runtime.continue",
+            "status" => "running",
+            "createdAt" => @at,
+            "args" => %{"command" => %{"messageId" => "message:restart-continuation:cr"}}
+          })
+        )
+
+      assert Delegation.hand_over_pull_requests("c") == :ok
+      assert links("c") == []
+      assert [%{"number" => 7}] = links("p")
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert task()["status"] == "running"
+
+      :ok = HalC2.Store.delete_meta(key)
+      assert :ok = Delegation.settle_if_quiet("c")
+
+      assert %{"status" => "completed", "result" => result} = task()
+      assert result =~ "Pull requests handed to you to watch: acme/app#7 at abc123"
+      assert result =~ "(checks pending)"
+    end
+
+    # A settle that handed the links over and then failed before it committed:
+    # the retry builds the result from what was handed over, and still names it.
+    test "names it in the result when a settle failed after handing over" do
+      :ok = delegate("completed")
+      :ok = link_child()
+
+      hook_with(fn
+        :handed_over, "c" -> exit(:settle_failed)
+        _stage, _id -> :ok
+      end)
+
+      assert catch_exit(Delegation.finished("c", "cr", "completed")) == :settle_failed
+      assert task()["status"] == "running"
+      assert links("c") == []
+      assert [%{"number" => 7}] = links("p")
+
+      Application.delete_env(:hal_c2, :delegation_hook)
+      assert :ok = Delegation.settle_if_quiet("c")
+
+      assert %{"status" => "completed", "result" => result} = task()
+      assert result =~ "Pull requests handed to you to watch: acme/app#7 at abc123"
+      assert result =~ "(checks pending)"
+    end
+
+    # A tombstone the caller does not carry is a link the child dismissed, not
+    # one it handed back: the result does not name it.
+    test "does not name a dismissed link the caller does not carry" do
+      :ok = delegate("completed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          thread("c", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"},
+            "pullRequests" => [
+              %{
+                "host" => "github.com",
+                "repository" => "acme/app",
+                "number" => 7,
+                "url" => "https://github.com/acme/app/pull/7",
+                "source" => "stack-dismissed",
+                "linkedAt" => @at
+              }
+            ]
+          })
+        ])
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert %{"status" => "completed", "result" => result} = task()
+      refute result =~ "acme/app#7"
+    end
+  end
+
+  describe "a pull request the caller dismissed" do
+    # The caller carries only a tombstone for it: it is not on the caller's visible
+    # links, so the result does not name it, though the child still links it.
+    test "is not named in the result" do
+      :ok = delegate("completed")
+      :ok = link_child()
+
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          thread("p", %{
+            "pullRequests" => [
+              %{
+                "host" => "github.com",
+                "repository" => "acme/app",
+                "number" => 7,
+                "url" => "https://github.com/acme/app/pull/7",
+                "source" => "stack-dismissed",
+                "linkedAt" => @at
+              }
+            ]
+          })
+        ])
+
+      assert :ok = Delegation.settle_if_quiet("c")
+      assert %{"status" => "completed", "result" => result} = task()
+      refute result =~ "acme/app#7"
     end
   end
 
@@ -389,6 +615,38 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert_received {:at_interrupt, %{"status" => "cancelled"}}
     end
 
+    # Upstream #24299: an agent's `task_cancel` read as the user's stop.
+    test "a cancel an agent asked for names the agent in the child's interrupt request" do
+      delegate("running")
+
+      assert {:ok, %{"status" => "cancelled"}} =
+               Delegation.cancel("p", "task", requested_by: "agent")
+
+      request =
+        "c"
+        |> HalC2.Streams.ensure()
+        |> HalC2.Streams.Server.state()
+        |> StreamState.get("turn-item")
+        |> Map.get("turn-item:run:cr:signal:interrupt-request")
+
+      assert request["stoppedBy"] == "agent"
+    end
+
+    test "a cancel the user asked for names the user in the child's interrupt request" do
+      delegate("running")
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
+
+      request =
+        "c"
+        |> HalC2.Streams.ensure()
+        |> HalC2.Streams.Server.state()
+        |> StreamState.get("turn-item")
+        |> Map.get("turn-item:run:cr:signal:interrupt-request")
+
+      assert request["stoppedBy"] == "user"
+    end
+
     test "is refused for a task that already ended" do
       delegate("completed")
       Delegation.finished("c", "cr", "completed")
@@ -396,6 +654,128 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert {:error, "task_not_cancellable", _} = Delegation.cancel("p", "task")
       assert task()["status"] == "completed"
+    end
+  end
+
+  describe "a task whose child has nothing left running (upstream #22581)" do
+    test "is cancelled, though nothing is interrupted, and wakes nobody" do
+      delegate("completed")
+      assert task()["status"] == "running"
+
+      assert {:ok, %{"status" => "cancelled"}} = Delegation.cancel("p", "task")
+      assert %{"status" => "cancelled", "completionDelivery" => %{"state" => "disposed"}} = task()
+      assert item()["status"] == "cancelled"
+      refute woken?()
+    end
+  end
+
+  describe "the user stopping a child that never started a run" do
+    test "cancels its task and wakes nobody" do
+      delegate("running", %{"childThreadId" => "c0"})
+
+      {:ok, _} =
+        HalC2.Streams.commit("c0", :thread, [
+          thread("c0", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
+          })
+        ])
+
+      assert :ok = Delegation.child_stopped("c0")
+      assert %{"status" => "cancelled", "completionDelivery" => %{"state" => "disposed"}} = task()
+      refute woken?()
+    end
+
+    test "leaves a task whose child has a run to settle the usual way" do
+      delegate("running")
+      assert :ok = Delegation.child_stopped("c")
+      assert task()["status"] == "running"
+    end
+  end
+
+  # A request the child's run `cr` stops on, or with `capability` "message" a question
+  # it asked as it works on.
+  defp request(kind, capability \\ "live") do
+    {:ok, _} =
+      HalC2.Streams.commit("c", :thread, [
+        {"node", "node:cr", %{"s" => %{"id" => "node:cr", "runId" => "cr"}}},
+        {"runtime-request", "req",
+         %{
+           "s" => %{
+             "id" => "req",
+             "kind" => kind,
+             "status" => "pending",
+             "nodeId" => "node:cr",
+             "responseCapability" => %{"type" => capability}
+           }
+         }}
+      ])
+
+    :ok
+  end
+
+  describe "a task's status" do
+    test "tells the caller to end its turn while the task works on and will wake it" do
+      delegate("running")
+      assert {:ok, %{"next" => next} = status} = Delegation.task_status("p", "task")
+      assert next =~ "end your turn"
+      refute Map.has_key?(status, "pendingRequest")
+      assert Delegation.working_task?("p", "c")
+    end
+
+    test "does not once the task ended, or when the caller waits on it" do
+      delegate("completed")
+      Delegation.finished("c", "cr", "completed")
+      assert {:ok, status} = Delegation.task_status("p", "task")
+      refute Map.has_key?(status, "next")
+      refute Delegation.working_task?("p", "c")
+
+      delegate("running", %{"completionWake" => "settled_only"})
+      assert {:ok, status} = Delegation.task_status("p", "task")
+      refute Map.has_key?(status, "next")
+    end
+
+    test "names the request its child's run stops on, and does not tell the caller to end its turn" do
+      delegate("running")
+      request("command")
+
+      assert {:ok, %{"pendingRequest" => pending} = status} = Delegation.task_status("p", "task")
+
+      assert Map.delete(pending, "next") == %{
+               "requestId" => "req",
+               "kind" => "command",
+               "runId" => "cr"
+             }
+
+      assert pending["next"] =~ "hal_c2_pending_request_respond"
+      assert pending["next"] =~ "requestId req"
+      refute Map.has_key?(status, "next")
+    end
+
+    test "is not blocked by a question the child asked as it works on" do
+      delegate("running")
+      request("user_input", "message")
+
+      assert {:ok, %{"next" => _} = status} = Delegation.task_status("p", "task")
+      refute Map.has_key?(status, "pendingRequest")
+    end
+  end
+
+  describe "a wait on a task whose child stops on an approval" do
+    test "returns with the request, and the task's end wakes the caller" do
+      delegate("running", %{"completionWake" => "settled_only"})
+      test = self()
+
+      waiter = Task.async(fn -> Delegation.wait("p", "task", 600_000) end)
+      # Before or after the wait first reads the task, it returns on the request.
+      hook_with(fn stage, _ -> send(test, stage) end)
+      request("command")
+
+      assert {:ok, %{"status" => "running", "pendingRequest" => %{"requestId" => "req"}} = answer} =
+               Task.await(waiter)
+
+      assert_received :expiring
+      refute answer["waitTimedOut"]
+      assert task()["completionWake"] == "always"
     end
   end
 

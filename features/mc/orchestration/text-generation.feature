@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/22442
+#   https://github.com/pingdotgg/t3code/pull/27191
+#   https://github.com/pingdotgg/t3code/pull/25025
 #   https://github.com/pingdotgg/t3code/pull/21882
 #   https://github.com/pingdotgg/t3code/pull/18291
 #   https://github.com/pingdotgg/t3code/pull/24857
@@ -8,6 +11,12 @@
 #   https://github.com/pingdotgg/t3code/pull/18781
 #   https://github.com/pingdotgg/t3code/pull/19386
 #   https://github.com/pingdotgg/t3code/pull/19394
+#   https://github.com/pingdotgg/t3code/pull/29819
+#   https://github.com/pingdotgg/t3code/pull/29653
+#   https://github.com/pingdotgg/t3code/pull/30078
+#   https://github.com/pingdotgg/t3code/pull/29607
+#   https://github.com/pingdotgg/t3code/pull/30331
+#   https://github.com/pingdotgg/t3code/pull/29656
 #   apps/server-ex/lib/hal_c2/text_generation.ex (model selection, fallback, thread titles,
 #     branch names, output normalization)
 #   apps/server-ex/lib/hal_c2/text_generation/prompts.ex, style.ex
@@ -49,14 +58,15 @@ Feature: Generated titles, branch names and source control text
     Then titles are written by "gpt-6-luna" on "codex" with low reasoning effort
 
   # Upstream #21882: settings name the title model but cannot say how titles are written.
-  @backlog @mc
+  @mc
   Scenario: Thread title instructions are given to the title writer
     Given the project "demo" has the thread title instructions "Start with the ticket number"
     When a title is generated for "Fix ABC-12 login redirect loop"
     Then the title writer is asked to follow "Start with the ticket number"
     And with no instructions set the title request is unchanged
 
-  @backlog @desktop @tui
+  # Upstream #21882: thread title instructions are set in the text generation settings.
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: Thread title instructions are set under text generation
     When the user sets thread title instructions in the text generation settings
     Then new and regenerated titles follow them
@@ -102,26 +112,63 @@ Feature: Generated titles, branch names and source control text
     Examples:
       | provider      | model              |
       | "codex"       | "gpt-6-luna"       |
-      | "claudeAgent" | "claude-haiku-4-5" |
+      | "claudeAgent" | "claude-haiku-5-5" |
       | "cursor"      | "composer-2"       |
       | "grok"        | "grok-build"       |
-      | "opencode"    | "openai/gpt-5"     |
+      | "opencode"    | "opencode/big-pickle" |
 
-  # Upstream #18781 moved Claude's default writer from Haiku 4.5 to Haiku 5.5. Replaces the
-  # "claudeAgent" row above once the MC carries it.
-  @backlog @mc
+  # Upstream #18781: Claude's default writer moved from Haiku 4.5 to Haiku 5.5.
+  @mc
   Scenario: Claude falls back to writing with Haiku 5.5
     Given the text model's provider cannot be used and only "claudeAgent" is installed and enabled
     When a title is generated
     Then "claudeAgent" writes it with "claude-haiku-5-5"
 
-  @backlog @mc
+  # Upstream #22442: many OpenCode users have no access to "openai/gpt-5", so the default moved
+  # to OpenCode's own model.
+  @mc @plugin-opencode
+  Scenario: OpenCode writes with Big Pickle by default
+    Given the text model's provider cannot be used and only "opencode" is installed and enabled
+    When a title is generated
+    Then "opencode" writes it with "opencode/big-pickle"
+    And a text generation model the user saved for OpenCode is kept
+
+  # Upstream #29607: Codex, the default writer, was still asked when it was missing or signed out,
+  # so every title silently stayed the cut first message.
+  @mc @priority-high
+  Scenario Outline: A writer that is <state> hands the title to the next usable provider
+    Given the text model is "codex" and Codex is <state>
+    And "claudeAgent" is installed, signed in and enabled
+    When a title is generated
+    Then "claudeAgent" writes it
+
+    Examples:
+      | state         |
+      | not installed |
+      | signed out    |
+
+  # Upstream #29607: providers still being checked at startup keep the selection.
+  @mc @priority-low
+  Scenario: A writer still being checked keeps the title
+    Given the text model is "codex" and Codex's check has not finished
+    When a title is generated
+    Then "codex" writes it
+
+  # Upstream #29607: an installed provider whose check failed could be picked ahead of a healthy one.
+  @mc @priority-low
+  Scenario: The fallback skips a provider whose check failed
+    Given the text model's provider cannot be used
+    And "claudeAgent" is installed but its version check failed, and "cursor" is healthy
+    When a title is generated
+    Then "cursor" writes it
+
+  @mc
   Scenario: A saved Haiku 4.5 text model is kept
     Given the text generation model was saved as "claude-haiku-4-5" on "claudeAgent"
     When a title is generated
     Then "claudeAgent" writes it with "claude-haiku-4-5"
 
-  @backlog @mc
+  @mc
   Scenario: The fallback uses the thread's custom model where the built-in default could be refused
     Given no usable text generation model is chosen
     And the default thread model is "router/claude-guarded", a custom model of the Claude instance text falls back to
@@ -135,7 +182,7 @@ Feature: Generated titles, branch names and source control text
     When a title is generated
     Then it fails with "No text generation provider is available. Install Claude Code or Codex, or enable another provider."
 
-  @backlog @mc
+  @mc
   Scenario: A writing CLI missing from PATH is named in the failure
     Given the text model is "codex" and the codex CLI is not on PATH
     When a title is generated
@@ -159,12 +206,12 @@ Feature: Generated titles, branch names and source control text
     Then it runs in a new temporary folder that is removed afterwards
     And the user's hooks, slash commands and MCP servers are not loaded
 
-  @backlog @mc
+  @mc
   Scenario: Codex writes without the user's MCP servers, plugins or apps
     Given the user's Codex configuration enables the MCP server "augmenter"
     When "codex" writes a branch name for a prompt that asks to call "augmenter"
     Then "augmenter" is not started and nothing reaches it
-    And the branch name is still written when Codex cannot list its MCP servers
+    And the branch name is still written, in a Codex home with no MCP servers, when Codex cannot list them
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("runs Claude text generation with the configured CLAUDE_CONFIG_DIR")
   @mc @priority-high
@@ -174,7 +221,7 @@ Feature: Generated titles, branch names and source control text
     Then Claude is run with that instance's home as its configuration folder
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("generates branch names from skill prompts without executable capabilities")
-  @backlog @mc
+  @mc
   Scenario: A message that looks like a slash command is text for the writer, not a command
     Given a first message "/call-script"
     When a branch name is generated
@@ -182,8 +229,7 @@ Feature: Generated titles, branch names and source control text
     And no script or skill runs
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("forwards Claude thinking settings without passing unsupported effort")
-  # Uncertain: the legacy test names a model whose effort is unsupported; the exact capability rule was not reread.
-  @backlog @mc
+  @mc
   Scenario: A model's thinking choice is passed as a setting and unsupported effort is left out
     Given the text model has a thinking switch turned off and an effort chosen
     And the model does not take an effort option
@@ -192,17 +238,17 @@ Feature: Generated titles, branch names and source control text
     And no effort option is passed
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts ("keeps a configured custom alias opaque to the Claude CLI")
-  @backlog @mc
+  @mc
   Scenario: A custom model alias is passed to Claude unchanged
     Given the text model is a custom alias the user configured
     When a title is generated
     Then Claude is run with the alias exactly as configured
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts (verbose output rejection cases)
-  @backlog @mc
+  @mc
   Scenario Outline: Claude output without a final structured result gives no title
     When "claudeAgent" writes a title and its output is <output>
-    Then text generation fails
+    Then no title is written
 
     Examples:
       | output                                                                   |
@@ -212,7 +258,7 @@ Feature: Generated titles, branch names and source control text
       | a final result with no answer after an earlier result that had one       |
 
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.test.ts (verbose output with init, assistant and rate-limit messages)
-  @backlog @mc
+  @mc
   Scenario: A title is read from Claude's final result among other messages
     When "claudeAgent" writes a title and its output holds start-up, assistant and rate-limit messages before the result
     Then the title is taken from the final result
@@ -267,7 +313,7 @@ Feature: Generated titles, branch names and source control text
       | "pi"       |
 
   # Legacy: apps/server/src/textGeneration/CodexTextGeneration.ts (model slug lookup before exec)
-  @backlog @mc
+  @mc
   Scenario: A Codex family name is written with the family's first installed model
     Given the text model names a Codex model family rather than a model Codex lists
     And Codex lists a built-in model of that family
@@ -275,8 +321,31 @@ Feature: Generated titles, branch names and source control text
     Then Codex is run with that listed model
     And a name that matches no listed model is passed to Codex as written
 
+  # Upstream #30078: ChatGPT accounts whose catalog leaves out gpt-6-luna, the default, failed
+  # every title, commit message and branch name.
+  @mc @plugin-codex @priority-high
+  Scenario: Codex writes with a model the account lists when the default is not listed
+    Given the text model is the built-in "gpt-6-luna" on Codex
+    And the Codex account lists neither "gpt-6-luna" nor a model of its family
+    When a title is generated
+    Then Codex is run with the instance's default model, or else the first current model it lists
+    And it is run with the default reasoning effort and no service tier
+
+  # Upstream #30078: an account that lists the requested model keeps it, and a custom model is sent as is.
+  @mc @plugin-codex @priority-low
+  Scenario Outline: Codex keeps a text model <kind>
+    Given the text model is <model> on Codex
+    And <listing>
+    When a title is generated
+    Then Codex is run with <model>
+
+    Examples:
+      | kind                      | model             | listing                                    |
+      | its account lists         | "gpt-6-luna"      | the Codex account lists "gpt-6-luna"       |
+      | the user typed themselves | "my-proxy-model"  | the Codex account does not list it         |
+
   # Legacy: apps/server/src/textGeneration/ClaudeTextGeneration.ts, CodexTextGeneration.ts (exit code failure text)
-  @backlog @mc
+  @mc
   Scenario Outline: A writing CLI that fails says what it printed
     When "<provider>" writes a title and its CLI exits with code 1 <printing>
     Then it fails naming the operation and saying "<message>"
@@ -288,22 +357,30 @@ Feature: Generated titles, branch names and source control text
       | codex         | after printing "x" | Codex CLI command failed: x            |
       | codex         | with no output     | Codex CLI command failed with code 1.  |
 
-  @backlog @mc @plugin-claude @priority-low
+  @mc @plugin-claude @priority-low
   Scenario: A failed Claude writer shows the error Claude reported, not a wrapper's notice
     Given the claude command runs through a wrapper that prints a notice on its error output
     When a title is generated and Claude's result reports "API Error: 400 Model blocked by guardrail"
     Then it fails saying "API Error: 400 Model blocked by guardrail"
     And the wrapper's notice is not the failure shown
 
+  # Upstream #30331: an error result carrying a list of errors and no result text fell through
+  # to the whole result JSON.
+  @mc @plugin-claude @priority-low
+  Scenario: A failed Claude writer shows the errors Claude listed
+    When a pull request description is generated and Claude's result ends in an error listing "Failed to provide valid structured output after 5 attempts"
+    Then it fails saying "Failed to provide valid structured output after 5 attempts"
+    And neither the result JSON nor Claude's diagnostic entries are shown
+
   # Legacy: apps/server/src/textGeneration/TextGenerationUtils.ts (normalizeCliError), TextGenerationPrompts.test.ts
-  @backlog @mc
+  @mc
   Scenario: A failure that is not the CLI's own output does not show its details
     When a commit message is generated and the writer's process fails with an error that holds an access token
     Then the failure says "Failed to generate a commit message"
     And the token is not in the failure
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (run status checks, credential lookup), CursorTextGeneration.test.ts
-  @backlog @mc
+  @mc
   Scenario Outline: A Cursor run that did not finish well gives no title even if it printed one
     When "cursor" writes a title and the run ends <ending> after printing a valid title
     Then it fails with "<message>"
@@ -313,8 +390,13 @@ Feature: Generated titles, branch names and source control text
       | with an error     | Cursor SDK request finished with an error. |
       | cancelled         | Cursor SDK request was cancelled.          |
 
+  @mc
+  Scenario: A renamed Cursor instance gives the same ending
+    When the Cursor instance "Work Cursor" writes a title and the run ends with an error after printing a valid title
+    Then it fails with "Cursor SDK request finished with an error."
+
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (requires a key or sign-in), CursorTextGeneration.test.ts
-  @backlog @mc
+  @mc
   Scenario: Cursor is not asked to write text without a sign-in or key
     Given Cursor is not signed in and has no API key
     When "cursor" is asked to write a title
@@ -322,21 +404,21 @@ Feature: Generated titles, branch names and source control text
     And Cursor is not called
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.test.ts ("resolves the browser credential for every request after an account change")
-  @backlog @mc
+  @mc
   Scenario: Cursor writes with the account that is signed in now
     Given Cursor wrote a title while one account was signed in
     When the user signs in with another account and a title is generated
     Then Cursor is called with the other account's credential
 
   # Legacy: apps/server/src/textGeneration/CursorTextGeneration.ts (timeouts of 5 seconds on cancel and dispose)
-  @backlog @mc
+  @mc
   Scenario: A Cursor run that times out is cancelled and its resources released
     Given a Cursor title run does not finish within 3 minutes
-    Then the run is cancelled
+    Then the Cursor run is cancelled
     And the SDK's resources are released even if they only become available late
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (image parts only), OpenCodeTextGeneration.test.ts
-  @backlog @mc
+  @mc
   Scenario: Only images are sent with a title request to OpenCode
     Given a message with an image and a PDF attached
     When "opencode" writes a title
@@ -344,6 +426,7 @@ Feature: Generated titles, branch names and source control text
     And the PDF is not sent
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (warm server, idle TTL), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: OpenCode's server is kept warm between requests and closed when idle
     Given OpenCode writes text on a server the MC started
@@ -354,6 +437,7 @@ Feature: Generated titles, branch names and source control text
     And the next request starts a new one
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (configured server URL, auth), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: A configured OpenCode server is used as is and never closed by the MC
     Given OpenCode is set up with the URL of a server the user runs
@@ -364,6 +448,7 @@ Feature: Generated titles, branch names and source control text
     And the password saved in the OpenCode settings is
 
   # Legacy: apps/server/src/textGeneration/OpenCodeTextGeneration.ts (connection check before the session), OpenCodeTextGeneration.test.ts
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
   @backlog @mc @priority-low
   Scenario: An OpenCode server that is too old is refused before a session is created
     Given a configured OpenCode server older than the supported version
@@ -378,8 +463,23 @@ Feature: Generated titles, branch names and source control text
     Then it fails saying Antigravity wrote files during text generation
     And the folder and the session it made are removed
 
+  # Upstream #27191: Antigravity creates empty skill folders when its session starts, and a valid
+  # title was refused as a file write because of them.
+  @mc @plugin-antigravity @priority-high
+  Scenario Outline: The empty skill folders Antigravity makes on start are not taken for written files
+    Given Antigravity makes empty ".agents/skills" and ".gemini/skills" folders in its working folder when it starts
+    When "antigravity" writes a <text> and leaves <left>
+    Then <outcome>
+
+    Examples:
+      | text           | left                                      | outcome                                                  |
+      | title          | only those empty folders                  | the title is used                                        |
+      | commit message | only those empty folders                  | the commit message is used                               |
+      | title          | a file inside ".agents/skills"            | it fails saying Antigravity wrote files during text generation |
+      | title          | a folder Antigravity does not make on start | it fails saying Antigravity wrote files during text generation |
+
   # Legacy: apps/server/src/textGeneration/GrokTextGeneration.ts, GrokTextGeneration.test.ts
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: Grok's answer must hold the JSON that was asked for
     When "grok" writes a title and answers <answer>
     Then <outcome>
@@ -387,8 +487,8 @@ Feature: Generated titles, branch names and source control text
     Examples:
       | answer                                           | outcome                                |
       | a JSON object inside conversational text         | the object is used                     |
-      | nothing                                          | text generation fails                  |
-      | text that holds no valid JSON                    | text generation fails                  |
+      | nothing                                          | no title is written                    |
+      | text that holds no valid JSON                    | no title is written                    |
 
   # Legacy: apps/server/src/textGeneration/CodexTextGeneration.ts (image inputs by attachment id)
   @mc @priority-high
@@ -398,7 +498,37 @@ Feature: Generated titles, branch names and source control text
     Then Codex receives the stored image as an image input
     And the missing one is left out without failing
 
-  @backlog @mc
+  # Upstream #29819: OpenCode 2 text generation attached every image, so on an external server, or
+  # with a missing or SVG image, the title failed while the turn worked.
+  # Blocked on hal-c2#1299: this assumes OpenCode's HTTP/SDK server; the MC drives OpenCode over ACP, one process per thread.
+  @backlog @mc @plugin-opencode @priority-low
+  Scenario Outline: OpenCode writes a title sending only the images it can open
+    Given OpenCode 2 runs on <server>
+    And a message with a stored PNG, a PNG no longer stored and an SVG image attached
+    When "opencode" writes a title
+    Then <files>
+    And the title is written
+
+    Examples:
+      | server                     | files                                         |
+      | a server HAL-C2 manages    | only the stored PNG is attached as a file     |
+      | an external server         | no image is attached as a file                |
+
+  # Upstream #29653: shortening long context for commit, pull request, branch and title writers
+  # could cut an emoji in half, which Grok refused outright.
+  @mc
+  Scenario Outline: Context cut for a writer does not split an emoji
+    Given <what> has an emoji where its cut falls
+    When <writer> is written
+    Then the writer receives the text cut before the emoji or after it, not through it
+
+    Examples:
+      | what                                   | writer             |
+      | the staged patch                       | a commit message   |
+      | a thread's first message, at its start | a thread title     |
+      | a thread's first message, at its end   | a thread title     |
+
+  @mc
   Scenario: A very large change is cut before the commit writer sees it
     Given the staged change is far larger than the writer's prompt limit
     When a commit message is generated
@@ -423,7 +553,7 @@ Feature: Generated titles, branch names and source control text
       | 200 characters long                  | the first 117 characters followed by "..."   |
       | empty                                | "New thread"                                 |
 
-  @backlog @mc
+  @mc
   Scenario: A title the writer wraps in a JSON object is unwrapped
     When the writing agent answers the title as a JSON object with a "title" field
     Then the title is the text of that field
@@ -433,7 +563,7 @@ Feature: Generated titles, branch names and source control text
     When the writing agent answers a title and says it needs refinement
     Then the title result says it needs refinement
 
-  @backlog @mc
+  @mc
   Scenario: A long thread gives the title writer only its recent context
     Given a thread whose messages together run past 8,000 characters
     When a title is generated for that thread
@@ -448,6 +578,7 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given the source's title and its messages up to the fork point, across forks of forks
     And it is asked for the inherited subject together with the fork's new direction
 
+  # Upstream #24857: forked threads get titles from the history they inherit.
   @backlog @mc
   Scenario: A fork whose source is gone is titled from its own messages
     Given a forked thread whose source thread was deleted
@@ -488,7 +619,7 @@ Feature: Generated titles, branch names and source control text
     And the writer receives the first message's image and the three most recent ones
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleContext.ts (assistantCitationsToPlainText), packages/shared/src/assistantCitations.ts
-  @backlog @mc
+  @mc
   Scenario: A quoted reply the user commented on is given to the title writer as plain text
     Given a user message that cites part of an assistant reply and adds a comment
     When a title is generated for that thread
@@ -499,6 +630,18 @@ Feature: Generated titles, branch names and source control text
   Scenario: GitHub links in a message give the title writer context
     When a title is generated for a message linking a github.com pull request and an issue
     Then the writer is given each linked item's title and the start of its body
+
+  # Upstream #29656: a link followed by a colon, or wrapped in bold markers, kept them on its path and
+  # was never looked up.
+  @mc
+  Scenario Outline: A linked pull request written as <written> gives the title writer context
+    When a title is generated for a message holding <written>
+    Then the writer is given the title of "acme/app#12" and the start of its body
+
+    Examples:
+      | written                                                          |
+      | "Review https://github.com/acme/app/pull/12: the tests fail"     |
+      | "**https://github.com/acme/app/pull/12**"                        |
 
   @mc
   Scenario: At most two linked items are looked up, each within 3 seconds
@@ -513,7 +656,7 @@ Feature: Generated titles, branch names and source control text
 
   # Legacy: apps/server/src/sourceControl/SourceControlProviderRegistry.ts (resolveLink), GitHubSourceControlProvider.ts, GitLabSourceControlProvider.ts (resolveLink)
   # Legacy: apps/server/src/textGeneration/ThreadTitleLinks.ts (resolveThreadTitleLinks)
-  @mc @backlog
+  @mc
   Scenario Outline: Only a link to a pull request, merge request or issue is looked up
     When a title is generated for a message linking <link>
     Then <outcome>
@@ -522,12 +665,13 @@ Feature: Generated titles, branch names and source control text
       | link                                                       | outcome                                                    |
       | a github.com repository page                               | nothing is looked up                                       |
       | a gitlab.com merge request or issue in a nested group      | its title and description are looked up                    |
+      | a gitlab.com merge request in the older link form          | its title and description are looked up                    |
       | a github.com pull request over plain http                  | nothing is looked up                                       |
       | a github.com pull request whose link carries a user name   | nothing is looked up                                       |
       | a github.com pull request number that is zero              | nothing is looked up                                       |
 
   # Legacy: apps/server/src/textGeneration/ThreadTitleLinks.ts (providers select supported links before the budget)
-  @mc @backlog
+  @mc
   Scenario: Links that cannot be looked up do not use up the two lookups
     When a title is generated for a message linking a repository page, a pull request on another host and then two github.com issues
     Then both issues are looked up
@@ -552,8 +696,9 @@ Feature: Generated titles, branch names and source control text
       | "!!!"                        | "update"                 |
 
   # Upstream #15615. A suggested namespace such as fix/ is kept instead of nested under
-  # feature/; only a name with no namespace gets feature/.
-  @backlog @mc @priority-low
+  # feature/; only a name with no namespace gets feature/. Only a short list of leading words
+  # (feat, fix, chore, docs, ...) is a namespace: a slash after any other word is part of the name.
+  @mc @priority-low
   Scenario Outline: A generated branch keeps the namespace the writer chose
     Given the repository has the branches <existing>
     When the writing agent answers the branch <raw> for a new branch
@@ -565,6 +710,7 @@ Feature: Generated titles, branch names and source control text
       | "main"                   | "calendar-filter"            | "feature/calendar-filter"       |
       | "main" and "fix"         | "fix/calendar-filter"        | "fix-2/calendar-filter"         |
       | "main" and "fix/calendar-filter" | "fix/calendar-filter" | "fix/calendar-filter-2"         |
+      | "main"                   | "add login/logout page"      | "feature/add-login-logout-page" |
 
   @mc @plugin-pi
   Scenario: Pi can write titles and branch names
@@ -611,6 +757,26 @@ Feature: Generated titles, branch names and source control text
       | only one markdown file in ".github/PULL_REQUEST_TEMPLATE"                            | that file                                   |
       | a file in ".github/PULL_REQUEST_TEMPLATE" and "pull_request_template.md"             | "pull_request_template.md"                  |
 
+  # Upstream #25025: GitHub accepts text templates and any capitalisation of their names.
+  @mc
+  Scenario Outline: A text or differently capitalised template is found
+    Given the base branch has only <template>
+    When pull request text is generated
+    Then the writer is given that template for the body
+
+    Examples:
+      | template                                         |
+      | ".github/Pull_Request_Template.md"               |
+      | ".github/pull_request_template.txt"              |
+      | one text file in ".github/PULL_REQUEST_TEMPLATE" |
+
+  # Upstream #25025
+  @mc @priority-low
+  Scenario: The exact spelling of a template's name wins over another capitalisation
+    Given the base branch has ".github/pull_request_template.md" and ".github/PULL_REQUEST_TEMPLATE.MD"
+    When pull request text is generated
+    Then the writer is given ".github/pull_request_template.md" for the body
+
   # Legacy: apps/server/src/sourceControl/PrTemplateDetection.ts (readTemplateBlob, parseTemplateTreeEntries)
   @mc @priority-high
   Scenario: A very long template is cut and says so
@@ -632,7 +798,7 @@ Feature: Generated titles, branch names and source control text
       | a file with only blank lines |
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: templates are read for GitHub only)
-  @mc @backlog
+  @mc
   Scenario: Templates are followed only on a host that has them
     Given the project follows pull request templates
     And the base branch has ".github/pull_request_template.md"
@@ -641,7 +807,7 @@ Feature: Generated titles, branch names and source control text
     Then the writer is given no template
 
   # Upstream #19813: GitLab merge requests follow the repository's default merge request template.
-  @mc @backlog
+  @mc
   Scenario: A GitLab merge request follows the repository's default template
     Given the project follows pull request templates
     And the project's remote is on GitLab
@@ -651,14 +817,22 @@ Feature: Generated titles, branch names and source control text
     And no other template in ".gitlab/merge_request_templates" is used in its place
 
   # Upstream #18291: generated pull requests said tests were not run because the writer saw only the diff.
-  @mc @backlog
+  @mc
   Scenario: Pull request text generated from a thread knows what the thread checked
     Given a thread ran "mix test" and it passed
     When pull request text is generated for that thread's branch
     Then the writer is given a short account of the thread's visible history with the check and its result
     And turns that were rolled back are left out of it
 
-  @mc @backlog
+  # Upstream #18291: the agent usually runs the checks and creates the PR in the same turn.
+  @mc
+  Scenario: Pull request text knows the checks the running turn has already finished
+    Given a thread's only turn is still running and has run "mix test" and it passed
+    When pull request text is generated for that thread's branch
+    Then the writer is given a short account of the thread's visible history with the check and its result
+
+  # Upstream #18291: generated pull requests include the thread's context, such as the checks it ran.
+  @mc
   Scenario: Pull request text from a thread needs permission to read the thread
     Given a client that may write to source control but may not read threads
     When it asks for pull request text for a thread

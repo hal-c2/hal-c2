@@ -10,6 +10,8 @@ defmodule HalC2.PullRequests.GitHub do
   listings show. The executable is `Application.get_env(:hal_c2, :gh_command, "gh")`.
   """
 
+  require Logger
+
   @page 100
   @thread_pages 10
   @files_viewed_pages 5
@@ -27,7 +29,7 @@ defmodule HalC2.PullRequests.GitHub do
   @detail_fields @list_fields <>
                    ",body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest"
 
-  @actions ~w(merge ready draft close reopen update-branch enable-auto-merge disable-auto-merge revert approve-workflows)
+  @actions ~w(merge ready draft close reopen update-branch enable-auto-merge disable-auto-merge revert approve-workflows allow-maintainer-edits stop-maintainer-edits)
   @verdicts ~w(comment approve request-changes)
 
   @doc "What GitHub can do, as `PullRequestCapabilities`. Stack actions are not served."
@@ -70,18 +72,18 @@ defmodule HalC2.PullRequests.GitHub do
   @core_query """
   query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
     repository(owner: $owner, name: $name) {
-      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
+      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission
       pullRequest(number: $number) {
-        number title url body state isDraft mergeable reviewDecision
+        number title url body state isDraft mergeable mergeStateStatus reviewDecision
         additions deletions changedFiles createdAt updatedAt mergedAt closedAt
-        headRefName baseRefName headRefOid isCrossRepository
+        headRefName baseRefName headRefOid isCrossRepository maintainerCanModify
         headRepositoryOwner { login }
         author { login avatarUrl ... on User { id name } }
         autoMergeRequest { mergeMethod }
         viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
         baseRef { compare(headRef: $headRef) { behindBy } }
         reviewRequests(first: 100) {
-          nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
+          nodes { requestedReviewer { ... on User { login name avatarUrl } ... on Bot { login avatarUrl } ... on Team { slug name avatarUrl organization { login } } } }
         }
         labels(first: 100) { nodes { name color } }
         commits(last: 1) {
@@ -229,8 +231,9 @@ defmodule HalC2.PullRequests.GitHub do
   @permissions_query """
   query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
-      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
-      pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
+      mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission
+      pullRequest(number: $number) {
+        mergeStateStatus isCrossRepository state maintainerCanModify viewerCanUpdate viewerDidAuthor }
     }
   }
   """
@@ -261,6 +264,36 @@ defmodule HalC2.PullRequests.GitHub do
         nodes { name color description }
       }
       pullRequest(number: $number) { labels(first: #{@page}) { nodes { name } } }
+    }
+  }
+  """
+
+  # Who opened a pull request and who asked for its review, with the standing GitHub
+  # gives each in the repository (`trust/2`). Named, so a fake GitHub can tell it apart.
+  @trust_query """
+  query PullRequestTrust($owner: String!, $name: String!, $number: Int!) {
+    viewer { login }
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        author { __typename login }
+        authorAssociation
+        isCrossRepository
+        headRefOid
+        headRepositoryOwner { login }
+        comments(last: 100) { nodes { author { __typename login } authorAssociation body createdAt } }
+        timelineItems(last: 100, itemTypes: [LABELED_EVENT, REVIEW_REQUESTED_EVENT]) {
+          pageInfo { hasPreviousPage }
+          nodes {
+            __typename
+            ... on LabeledEvent { createdAt actor { __typename login } label { name } }
+            ... on ReviewRequestedEvent {
+              createdAt
+              actor { __typename login }
+              requestedReviewer { ... on User { login } }
+            }
+          }
+        }
+      }
     }
   }
   """
@@ -311,6 +344,14 @@ defmodule HalC2.PullRequests.GitHub do
     updatePullRequest(input: { pullRequestId: $pullRequestId, title: $title, body: $body }) { pullRequest { id } }
   }
   """
+
+  @maintainer_mutation """
+  mutation($pullRequestId: ID!, $allow: Boolean!) {
+    updatePullRequest(input: { pullRequestId: $pullRequestId, maintainerCanModify: $allow }) { pullRequest { id } }
+  }
+  """
+
+  @maintainer_notice "Letting maintainers edit the branch also gives the branch's workflows access to the repository's secrets."
 
   @revert_mutation """
   mutation($pullRequestId: ID!) {
@@ -453,16 +494,85 @@ defmodule HalC2.PullRequests.GitHub do
   is the usual one.
   """
   def list(ctx, opts) do
-    case list_read(ctx, opts, true) do
-      {:ok, %{items: []}} = empty ->
-        if opts.cursor == nil and String.trim(opts.query || "") == "",
-          do: unindexed(ctx, opts, empty),
-          else: empty
+    read =
+      case list_read(ctx, opts, true) do
+        {:ok, %{items: []}} = empty ->
+          if opts.cursor == nil and String.trim(opts.query || "") == "",
+            do: unindexed(ctx, opts, empty),
+            else: empty
+
+        other ->
+          other
+      end
+
+    # Rows carry the stack they belong to, where GitHub can say; a stack read
+    # that fails leaves the rows as they are rather than failing the list.
+    case read do
+      {:ok, %{items: [_ | _]} = page} ->
+        memberships = stack_memberships(ctx)
+
+        items =
+          Enum.map(page.items, fn item ->
+            case memberships[item["number"]] do
+              nil -> item
+              stack -> Map.put(item, "stack", stack)
+            end
+          end)
+
+        {:ok, %{page | items: items}}
 
       other ->
         other
     end
   end
+
+  # Every stack of the repository as `{pull request number => membership}`: its
+  # stack's number, its one-based place in it, its size and its base, read a
+  # hundred stacks at a time until a short page ends them. Any failure (a
+  # host without stacks, a read refused) keeps the memberships already read;
+  # a stack that names no base is skipped, since a membership must name one.
+  defp stack_memberships(ctx), do: stack_memberships(ctx, 1, %{})
+
+  defp stack_memberships(ctx, page, acc) do
+    case rest(ctx, "stacks?per_page=100&page=#{page}") do
+      {:ok, stacks} when is_list(stacks) ->
+        acc =
+          Enum.reduce(stacks, acc, fn stack, acc ->
+            case stack_membership(stack) do
+              nil -> acc
+              entries -> Map.merge(acc, Map.new(entries))
+            end
+          end)
+
+        if length(stacks) >= 100 and page < 100,
+          do: stack_memberships(ctx, page + 1, acc),
+          else: acc
+
+      _ ->
+        acc
+    end
+  end
+
+  defp stack_membership(%{"number" => number} = stack)
+       when is_integer(number) do
+    base = trimmed(if is_map(stack["base"]), do: stack["base"]["ref"], else: stack["base"])
+    layers = stack["pull_requests"] || []
+
+    if base do
+      for {layer, index} <- Enum.with_index(layers),
+          is_integer(layer["number"]) do
+        {layer["number"],
+         %{
+           "number" => number,
+           "position" => index + 1,
+           "size" => length(layers),
+           "base" => base
+         }}
+      end
+    end
+  end
+
+  defp stack_membership(_stack), do: nil
 
   defp unindexed(ctx, opts, empty) do
     q = "repo:#{ctx.repository} is:pr"
@@ -479,10 +589,28 @@ defmodule HalC2.PullRequests.GitHub do
   defp list_read(ctx, opts, true) do
     variables = %{"q" => Enum.join(search_terms(ctx, opts), " ")}
 
-    with {:ok, raw, _more, page} <-
-           list_pages(ctx, opts, @list_search_query, variables, ["search"], opts.limit + 1) do
-      items = Enum.flat_map(raw, &list_node/1)
-      truncated = length(raw) > opts.limit
+    # A continuation asks for the boundary instant inclusively, so the rows
+    # already sent at it come back first: read past them, or a page that shares
+    # one update time would hand back only what was already listed.
+    seen = if opts.cursor, do: opts.cursor.seen || [], else: []
+
+    with {:ok, raw, more, page} <-
+           list_pages(
+             ctx,
+             opts,
+             @list_search_query,
+             variables,
+             ["search"],
+             opts.limit + 1 + length(seen)
+           ) do
+      items =
+        raw
+        |> Enum.flat_map(&list_node/1)
+        |> Enum.reject(
+          &(opts.cursor && &1["updatedAt"] == opts.cursor.boundary && &1["number"] in seen)
+        )
+
+      truncated = length(items) > opts.limit or more
 
       {:ok,
        %{items: Enum.take(items, opts.limit), truncated: truncated, sorted: true, page: page}}
@@ -812,18 +940,57 @@ defmodule HalC2.PullRequests.GitHub do
   # `comments` and `reviews` are the marker `HalC2.PullRequests.Wakes` reads news from:
   # the last few of each, enough to find the newest from a trusted author (`activity/2`).
   @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
+  # Kept apart: an Enterprise host whose schema has no merge queue rejects the whole
+  # document over these, so a chunk that fails for them is read again without them
+  # (`summaries_chunk/2`).
+  @summary_queue_selection " mergeQueueEntry { state position } mergeQueueRemoval: timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { createdAt reason } } }"
 
   # Review bots whose reviews and comments count as a member's (logins without `[bot]`).
   @trusted_bots ~w(copilot-pull-request-reviewer copilot chatgpt-codex-connector)
   @trusted_associations ~w(OWNER MEMBER COLLABORATOR)
 
+  # A host that proved to have no merge queue in its schema is asked without the
+  # queue fields from then on, so its summaries (and every wake that rides on them)
+  # keep flowing.
   defp summaries_chunk(ctx, chunk) do
+    queue? = :persistent_term.get({__MODULE__, :merge_queue, ctx.host}, true)
+
+    case summaries_chunk(ctx, chunk, queue?) do
+      {:error, reason} = error when queue? ->
+        if merge_queue_unknown?(reason) do
+          Logger.warning(
+            "pull request summaries on #{ctx.host}: its schema has no merge queue; " <>
+              "reading without the merge-queue fields from now on"
+          )
+
+          :persistent_term.put({__MODULE__, :merge_queue, ctx.host}, false)
+          summaries_chunk(ctx, chunk, false)
+        else
+          error
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp merge_queue_unknown?(reason),
+    do:
+      String.contains?(
+        inspect(reason),
+        ["mergeQueueEntry", "RemovedFromMergeQueueEvent", "REMOVED_FROM_MERGE_QUEUE_EVENT"]
+      )
+
+  defp summaries_chunk(ctx, chunk, queue?) do
+    selection =
+      if queue?, do: @summary_selection <> @summary_queue_selection, else: @summary_selection
+
     selections =
       for {{repository, number}, index} <- Enum.with_index(chunk),
           [owner, name] <- [String.split(repository, "/")],
           Regex.match?(~r/^[A-Za-z0-9._-]+$/, owner) and Regex.match?(~r/^[A-Za-z0-9._-]+$/, name),
           is_integer(number) and number > 0 do
-        ~s[s#{index}: repository(owner: "#{owner}", name: "#{name}") { pullRequest(number: #{number}) { #{@summary_selection} } }]
+        ~s[s#{index}: repository(owner: "#{owner}", name: "#{name}") { pullRequest(number: #{number}) { #{selection} } }]
       end
 
     with true <- selections != [],
@@ -864,7 +1031,9 @@ defmodule HalC2.PullRequests.GitHub do
             "changedFiles" => pr["changedFiles"] || 0,
             "reviewDecision" => review_decision(pr["reviewDecision"], pr["latestReviews"]),
             "checksState" => rollup(head_rollup),
-            "mergeability" => mergeability(pr["mergeable"])
+            "mergeability" => mergeability(pr["mergeable"]),
+            "mergeQueue" => merge_queue(pr["mergeQueueEntry"]),
+            "mergeQueueRemoval" => merge_queue_removal(pr["mergeQueueRemoval"])
           }
           |> Map.merge(activity(pr, viewer))}
        end}
@@ -929,12 +1098,12 @@ defmodule HalC2.PullRequests.GitHub do
   @doc """
   The newest pull request whose head is `branch`, in whichever repository `gh` reads
   the checkout at `cwd` against: `%{"number", "url", "state", "title", "baseRef",
-  "headRef", "isDraft", "updatedAt", "mergedAt", "closedAt"}`, or nil. Every reader of
+  "headRef", "headSha", "isDraft", "updatedAt", "mergedAt", "closedAt"}`, or nil. Every reader of
   this answer asks it through `HalC2.PullRequests.Branches`.
   """
   def branch_pull_request(cwd, branch) do
     args =
-      ~w(pr list --state all --limit 1 --json number,title,url,baseRefName,headRefName,state,isDraft,updatedAt,mergedAt,closedAt --head) ++
+      ~w(pr list --state all --limit 1 --json number,title,url,baseRefName,headRefName,headRefOid,state,isDraft,updatedAt,mergedAt,closedAt --head) ++
         [branch]
 
     # A status read waits on it, so a hung `gh` gives up sooner than the 30 s default.
@@ -949,6 +1118,7 @@ defmodule HalC2.PullRequests.GitHub do
            "title" => pr["title"],
            "baseRef" => pr["baseRefName"],
            "headRef" => pr["headRefName"],
+           "headSha" => trimmed(pr["headRefOid"]),
            "isDraft" => pr["isDraft"] == true,
            "updatedAt" => pr["updatedAt"],
            "mergedAt" => trimmed(pr["mergedAt"]),
@@ -1051,6 +1221,8 @@ defmodule HalC2.PullRequests.GitHub do
         repo
         |> access(pr["viewerCanUpdate"], pr["viewerDidAuthor"])
         |> Map.put(:can_update_branch, comparison != nil and pr["viewerCanUpdateBranch"] == true)
+        |> Map.put(:auto_merge_waits, auto_merge_waits?(repo, pr))
+        |> Map.put(:maintainer_edits, maintainer_edits(pr))
 
       method = merge_method(get_in(pr, ["autoMergeRequest", "mergeMethod"]))
       {checks, approvals} = with_approvals(ctx, pr, checks(raw_checks))
@@ -1067,9 +1239,9 @@ defmodule HalC2.PullRequests.GitHub do
           "mergedAt" => trimmed(pr["mergedAt"]),
           "closedAt" => trimmed(pr["closedAt"]),
           "reviewers" =>
-            for(
-              l <- item["reviewRequestLogins"],
-              do: %{"login" => l, "name" => nil, "avatarUrl" => nil}
+            Enum.flat_map(
+              nodes(pr, ["reviewRequests", "nodes"], "requestedReviewer"),
+              &reviewer_actor/1
             ),
           "checks" => checks,
           "mergeCapabilities" => merge_capabilities(repo),
@@ -1086,6 +1258,12 @@ defmodule HalC2.PullRequests.GitHub do
         |> put_present("behindBy", comparison)
         |> put_present("autoMergeMethod", method)
         |> put_present("workflowApprovalsRequired", approvals)
+        |> put_present(
+          "maintainerEdits",
+          if(access.maintainer_edits != nil,
+            do: %{"allowed" => access.maintainer_edits, "notice" => @maintainer_notice}
+          )
+        )
 
       {:ok, detail, pr}
     else
@@ -1221,6 +1399,14 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  # Whether maintainers may edit the branch, known only to the author of an open pull
+  # request from a fork, where GitHub offers the choice; nil elsewhere.
+  defp maintainer_edits(pr) do
+    if pr["isCrossRepository"] == true and pr["viewerDidAuthor"] == true and
+         pr["state"] == "OPEN" and is_boolean(pr["maintainerCanModify"]),
+       do: pr["maintainerCanModify"]
+  end
+
   defp access(repo, can_update, did_author) do
     permission = up(repo["viewerPermission"])
     can_write = permission in ~w(ADMIN MAINTAIN WRITE)
@@ -1230,9 +1416,18 @@ defmodule HalC2.PullRequests.GitHub do
       can_triage: can_write or permission == "TRIAGE",
       can_update: can_update != false,
       did_author: did_author == true,
-      can_update_branch: false
+      can_update_branch: false,
+      maintainer_edits: nil
     }
   end
+
+  # Auto-merge is worth arming only where GitHub would wait: the repository allows it,
+  # and the pull request is not mergeable this moment (`CLEAN`, or `UNSTABLE` with only
+  # optional checks failing, or `HAS_HOOKS`), which GitHub refuses to arm.
+  defp auto_merge_waits?(repo, pr),
+    do:
+      repo["autoMergeAllowed"] != false and
+        up(pr["mergeStateStatus"]) not in ~w(CLEAN UNSTABLE HAS_HOOKS)
 
   defp merge_capabilities(repo),
     do: %{
@@ -1249,11 +1444,20 @@ defmodule HalC2.PullRequests.GitHub do
     %{
       "actions" =>
         if(access.can_write,
-          do: ~w(merge enable-auto-merge disable-auto-merge revert approve-workflows),
+          do:
+            if(Map.get(access, :auto_merge_waits, true),
+              do: ~w(merge enable-auto-merge disable-auto-merge revert approve-workflows),
+              else: ~w(merge disable-auto-merge revert approve-workflows)
+            ),
           else: []
         ) ++
           if(access.can_update, do: ~w(ready draft close reopen), else: []) ++
-          if(access.can_update_branch, do: ["update-branch"], else: []),
+          if(access.can_update_branch, do: ["update-branch"], else: []) ++
+          case access.maintainer_edits do
+            nil -> []
+            true -> ["stop-maintainer-edits"]
+            false -> ["allow-maintainer-edits"]
+          end,
       "comment" => true,
       "resolve" => access.can_write or access.did_author,
       "verdicts" => if(access.did_author, do: ["comment"], else: @verdicts),
@@ -1266,7 +1470,8 @@ defmodule HalC2.PullRequests.GitHub do
 
   @doc """
   What the signed-in account may do here, asked fresh. Updating the branch is only
-  known from the base comparison, which the detail read carries (`update_branch?`).
+  known from the base comparison, which the detail read carries (`update_branch?`);
+  the maintainer-edit toggles need only the light read.
   """
   def viewer_permissions(ctx, update_branch? \\ false) do
     if update_branch? do
@@ -1275,7 +1480,15 @@ defmodule HalC2.PullRequests.GitHub do
       with {:ok, data} <- graphql(ctx, @permissions_query, vars(ctx)),
            %{} = repo <- data["repository"] do
         pr = repo["pullRequest"] || %{}
-        {:ok, permissions(access(repo, pr["viewerCanUpdate"], pr["viewerDidAuthor"]))}
+
+        # The detail's own answer, so `runAction` refuses what the detail does not offer.
+        access =
+          repo
+          |> access(pr["viewerCanUpdate"], pr["viewerDidAuthor"])
+          |> Map.put(:auto_merge_waits, auto_merge_waits?(repo, pr))
+          |> Map.put(:maintainer_edits, maintainer_edits(pr))
+
+        {:ok, permissions(access)}
       else
         {:error, _} = error -> error
         _ -> not_found(ctx)
@@ -1694,10 +1907,10 @@ defmodule HalC2.PullRequests.GitHub do
 
     cond do
       commit != nil and not sha?(commit) ->
-        {:error, {:failed, "The commit is not one this change can name."}}
+        {:error, {:failed, "The named commit was not a commit sha."}}
 
       cursor != nil and not is_integer(page) ->
-        {:error, {:failed, "The diff cannot be carried on from that cursor."}}
+        {:error, {:failed, "The diff cursor was not one this pull request handed out."}}
 
       cursor != nil or commit != nil ->
         files_page(ctx, page || 1, commit)
@@ -1840,16 +2053,20 @@ defmodule HalC2.PullRequests.GitHub do
         do: {"commits/#{commit}", "[.parents[0].sha, .sha] | @tsv"},
         else: {"pulls/#{ctx.number}", "[.base.sha, .head.sha] | @tsv"}
 
+    revisions = fn ->
+      gh(ctx.cwd, ["api", "--hostname", ctx.host, "repos/#{owner}/#{name}/#{path}", "--jq", jq])
+    end
+
+    # The revisions and the changed-file guard are independent reads; neither
+    # waits on the other.
     with true <- commit == nil or sha?(commit),
-         {:ok, out} <-
-           gh(ctx.cwd, [
-             "api",
-             "--hostname",
-             ctx.host,
-             "repos/#{owner}/#{name}/#{path}",
-             "--jq",
-             jq
-           ]),
+         [revisions, changed] <-
+           Task.await_many(
+             [Task.async(revisions), Task.async(fn -> changed_file(ctx, commit, input) end)],
+             :infinity
+           ),
+         :ok <- changed,
+         {:ok, out} <- revisions,
          [base, head] <- out |> String.trim_trailing() |> String.split("\t"),
          true <-
            sha?(head) and
@@ -1875,9 +2092,61 @@ defmodule HalC2.PullRequests.GitHub do
            {:ok, new} <- new,
            do: {:ok, %{"oldContents" => old, "newContents" => new}}
     else
-      {:error, _} = error -> error
-      _ -> {:error, {:failed, "The revisions of this change could not be read."}}
+      {:error, _} = error ->
+        error
+
+      _ ->
+        {:error,
+         {:failed, "Pull request ##{ctx.number} reported no usable base and head revisions."}}
     end
+  end
+
+  # Only a file this change (or the named commit of it) actually changes may be
+  # expanded: both paths a client names must be the two sides of one entry of
+  # the host's own list of changed files, exactly as they will be read, so
+  # contents of any other file of the repository at the base or head are never
+  # handed out through a pull request.
+  defp changed_file(ctx, commit, input, page \\ 1) do
+    {owner, name} = split(ctx.repository)
+    paging = "per_page=#{@files_page}&page=#{page}"
+
+    args =
+      if commit,
+        do: ["repos/#{owner}/#{name}/commits/#{commit}?#{paging}", "--jq", ".files // []"],
+        else: ["repos/#{owner}/#{name}/pulls/#{ctx.number}/files?#{paging}"]
+
+    case gh(ctx.cwd, ["api", "--hostname", ctx.host | args],
+           timeout: @diff_timeout,
+           max_bytes: @diff_max_bytes
+         ) do
+      {:ok, out} ->
+        case JSON.decode(out) do
+          {:ok, files} when is_list(files) ->
+            found = Enum.any?(files, &sides_of?(&1, input))
+
+            cond do
+              found -> :ok
+              length(files) < @files_page -> {:error, {:not_found, "The file was not found."}}
+              true -> changed_file(ctx, commit, input, page + 1)
+            end
+
+          _ ->
+            decoded(:error)
+        end
+
+      error ->
+        error
+    end
+  end
+
+  # The side a change type leaves empty is never read, so it need not match.
+  defp sides_of?(file, input) do
+    new = file["filename"]
+    old = file["previous_filename"] || new
+
+    is_binary(new) and
+      (input["changeType"] == "deleted" or input["newPath"] == new) and
+      (input["changeType"] == "new" or input["oldPath"] == old)
   end
 
   defp raw_file(ctx, revision, path) do
@@ -1898,10 +2167,10 @@ defmodule HalC2.PullRequests.GitHub do
     with {:ok, out} <- gh(ctx.cwd, args, timeout: 60_000) do
       cond do
         byte_size(out) > 1024 * 1024 ->
-          {:error, {:failed, "#{path} is too large to show."}}
+          {:error, {:failed, "The diff file '#{path}' exceeds the 1 MB expansion limit."}}
 
         String.contains?(out, <<0>>) or not String.valid?(out) ->
-          {:error, {:failed, "#{path} is a binary file."}}
+          {:error, {:failed, "The diff file '#{path}' is binary."}}
 
         true ->
           {:ok, out}
@@ -1984,6 +2253,9 @@ defmodule HalC2.PullRequests.GitHub do
          do: done(graphql(ctx, @revert_mutation, %{"pullRequestId" => id}))
   end
 
+  def action(ctx, "allow-maintainer-edits", _merge, _update), do: maintainer_edits(ctx, true)
+  def action(ctx, "stop-maintainer-edits", _merge, _update), do: maintainer_edits(ctx, false)
+
   def action(ctx, "approve-workflows", _merge, _update) do
     with {:ok, _detail, pr} <- detail(ctx) do
       cond do
@@ -2017,6 +2289,11 @@ defmodule HalC2.PullRequests.GitHub do
       end
 
     done(gh(ctx.cwd, ["pr", sub, "#{ctx.number}"] ++ repo_args(ctx) ++ flags))
+  end
+
+  defp maintainer_edits(ctx, allow) do
+    with {:ok, id} <- node_id(ctx),
+         do: done(graphql(ctx, @maintainer_mutation, %{"pullRequestId" => id, "allow" => allow}))
   end
 
   def comment(ctx, body),
@@ -2091,6 +2368,190 @@ defmodule HalC2.PullRequests.GitHub do
              })
            )
   end
+
+  @doc """
+  Who stands behind a pull request, for deciding whether to act on it: `%{"viewer",
+  "author", "isCrossRepository", "headOwner", "headSha", "comments", "labeled",
+  "requested"}`. An actor is `%{"login", "isBot", "association", "role"}`:
+  `association` is GitHub's `authorAssociation` (`OWNER`, `MEMBER`, `COLLABORATOR`,
+  `CONTRIBUTOR`, `NONE`, ...), known for the author and each commenter; `role` is the
+  actor's permission on the repository (`admin`, `maintain`, `write`, `triage`, `read`),
+  read for whoever last added `label` and last asked the viewer for a review, and nil
+  where GitHub would not say. `comments` are the last hundred, each an actor with its
+  `body` and `createdAt`; `labeled` and `requested` are that event's actor with its
+  `createdAt`, or nil, and when other events matched at the same time, `tied` lists
+  their actors who are someone else (an unreadable one, or one the last hundred events
+  may have left out at that time, with a nil `login`). `isUser`
+  says the account is a user's: a bot or a mannequin of an import may have a user's
+  login, so only a user's login can name the viewer or a user, and only a user has a
+  `role` read.
+  """
+  def trust(ctx, label \\ nil) do
+    with {:ok, data} <- graphql(ctx, @trust_query, vars(ctx)),
+         %{} = pr <- get_in(data, ["repository", "pullRequest"]) do
+      viewer = trimmed(get_in(data, ["viewer", "login"]))
+      author = trust_actor(pr["author"], pr["authorAssociation"])
+      events = get_in(pr, ["timelineItems", "nodes"]) || []
+      label = trimmed(label)
+      # A full page GitHub does not say is all there is may have left older events out:
+      # those at its earliest time are not all seen.
+      cut =
+        if length(events) >= 100 and
+             get_in(pr, ["timelineItems", "pageInfo", "hasPreviousPage"]) != false,
+           do: events |> Enum.filter(&is_map/1) |> Enum.map(&event_at/1) |> Enum.min(fn -> 0 end)
+
+      labeled =
+        if label,
+          do:
+            last_event(
+              events,
+              cut,
+              "LabeledEvent",
+              &(String.downcase(trimmed(get_in(&1, ["label", "name"])) || "") ==
+                  String.downcase(label))
+            ),
+          else: {nil, []}
+
+      requested =
+        if viewer,
+          do:
+            last_event(
+              events,
+              cut,
+              "ReviewRequestedEvent",
+              &same_login?(get_in(&1, ["requestedReviewer", "login"]), viewer)
+            ),
+          else: {nil, []}
+
+      {:ok,
+       %{
+         "viewer" => viewer,
+         "author" => author,
+         "isCrossRepository" => pr["isCrossRepository"] == true,
+         "headOwner" => trimmed(get_in(pr, ["headRepositoryOwner", "login"])),
+         "headSha" => trimmed(pr["headRefOid"]),
+         "comments" => trust_comments(get_in(pr, ["comments", "nodes"]) || []),
+         "labeled" => event_actors(ctx, labeled, author),
+         "requested" => event_actors(ctx, requested, author)
+       }}
+    else
+      {:error, _} = error -> error
+      _ -> not_found(ctx)
+    end
+  end
+
+  defp trust_comments(nodes) do
+    for c <- nodes, is_map(c), actor = trust_actor(c["author"], c["authorAssociation"]) do
+      Map.merge(actor, %{"body" => c["body"] || "", "createdAt" => c["createdAt"]})
+    end
+  end
+
+  defp trust_actor(raw, association) do
+    with %{"login" => login} = actor <- actor(raw) do
+      %{
+        "login" => login,
+        "isBot" => actor["isBot"] == true,
+        "isUser" => raw["__typename"] == "User",
+        "association" => up(association),
+        "role" => nil
+      }
+    end
+  end
+
+  # The latest of the matching events, last in timeline order, and the others GitHub
+  # gives the same time: within one second its order cannot be relied on, so whoever
+  # made any of them may be the one who made the latest. `{nil, []}` when none match.
+  # At `cut`, the earliest time of a page with older events left out, some of those
+  # may be at the same time too: one unseen, with no actor, is among the tied.
+  defp last_event(events, cut, type, match?) do
+    matching =
+      Enum.filter(events, &(is_map(&1) and &1["__typename"] == type and match?.(&1)))
+
+    case matching do
+      [] ->
+        {nil, []}
+
+      _ ->
+        latest = matching |> Enum.map(&event_at/1) |> Enum.max()
+        [last | tied] = matching |> Enum.filter(&(event_at(&1) == latest)) |> Enum.reverse()
+        unseen = if cut != nil and latest <= cut, do: [%{"actor" => nil}], else: []
+        {last, tied ++ unseen}
+    end
+  end
+
+  defp event_at(event), do: HalC2.Projection.JS.epoch_ms(event["createdAt"]) || 0
+
+  # The latest event's actor, with `tied` holding the actors of the others at its time
+  # who are someone else; the trigger counts only if all of them are trusted.
+  defp event_actors(_ctx, {nil, _tied}, _author), do: nil
+
+  defp event_actors(ctx, {event, tied}, author) do
+    with %{} = actor <- event_actor(ctx, event, author) do
+      # Someone else is another account: a login and its kind, as a bot or a mannequin
+      # may have a user's login.
+      account =
+        &{get_in(&1, ["actor", "__typename"]),
+         String.downcase(get_in(&1, ["actor", "login"]) || "")}
+
+      others =
+        tied
+        |> Enum.reject(&(account.(&1) == account.(event)))
+        |> Enum.uniq_by(account)
+        |> Enum.map(&(event_actor(ctx, &1, author) || %{"login" => nil}))
+
+      if others == [], do: actor, else: Map.put(actor, "tied", others)
+    end
+  end
+
+  # The event's actor with their permission on the repository: GitHub gives events no
+  # association. A user who is the author has their association already. Only a user's
+  # is read, and a user goes by no other account's: the permission is read by login,
+  # and a bot, a mannequin of an import or any other kind of account may share its
+  # login with a user it is not. Unreadable, nil.
+  defp event_actor(ctx, event, author) do
+    case trust_actor(event["actor"], nil) do
+      nil ->
+        nil
+
+      %{"login" => login} = actor ->
+        user? = get_in(event, ["actor", "__typename"]) == "User"
+
+        actor =
+          cond do
+            user? and match?(%{"isUser" => true}, author) and
+                same_login?(login, author["login"]) ->
+              %{actor | "association" => author["association"]}
+
+            not user? ->
+              actor
+
+            true ->
+              case rest(ctx, "collaborators/#{encode(login)}/permission") do
+                {:ok, %{} = answer} ->
+                  %{actor | "role" => collaborator_role(answer)}
+
+                _ ->
+                  actor
+              end
+          end
+
+        Map.put(actor, "createdAt", event["createdAt"])
+    end
+  end
+
+  # A collaborator's role on the repository: one of GitHub's own, or for a custom
+  # role the base permission it extends, which is all a reader of it can go by.
+  # Neither known, nil.
+  @standard_roles ~w(admin maintain write triage read none)
+  defp collaborator_role(answer) do
+    role = trimmed(answer["role_name"])
+    if role in @standard_roles, do: role, else: trimmed(answer["permission"])
+  end
+
+  defp same_login?(a, b) when is_binary(a) and is_binary(b),
+    do: String.downcase(a) == String.downcase(b)
+
+  defp same_login?(_a, _b), do: false
 
   @doc "Who a review may be asked of, whoever is already asked first; never the author."
   def reviewer_candidates(ctx) do
@@ -2236,9 +2697,44 @@ defmodule HalC2.PullRequests.GitHub do
   defp done(error), do: error
 
   defp not_found(ctx), do: {:error, {:not_found, "Pull request ##{ctx.number} was not found."}}
-  defp out_of_scope, do: {:error, {:failed, "That remark does not belong to this pull request."}}
+
+  defp out_of_scope,
+    do: {:error, {:failed, "The named subject did not belong to the named pull request."}}
 
   # --- JSON ----------------------------------------------------------------------------
+
+  # A requested reviewer as an actor: a person by their login, a team by the
+  # `organisation/slug` it is asked as, each with the name and picture the host
+  # gave. A team is its own reviewer, never the member whose login is its slug.
+  defp reviewer_actor(raw) do
+    slug = raw && trimmed(raw["slug"])
+    login = raw && trimmed(raw["login"])
+
+    cond do
+      slug ->
+        org = trimmed(get_in(raw, ["organization", "login"]))
+
+        [
+          %{
+            "login" => if(org, do: "#{org}/#{slug}", else: slug),
+            "name" => trimmed(raw["name"]),
+            "avatarUrl" => trimmed(raw["avatarUrl"])
+          }
+        ]
+
+      login ->
+        [
+          %{
+            "login" => login,
+            "name" => trimmed(raw["name"]),
+            "avatarUrl" => trimmed(raw["avatarUrl"])
+          }
+        ]
+
+      true ->
+        []
+    end
+  end
 
   @doc "A `PullRequestActor`, or nil for anyone with no login."
   def actor(nil), do: nil
@@ -2289,6 +2785,22 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  # Whether the pull request is in the merge queue now, and where; nil when it is not.
+  defp merge_queue(%{"state" => state, "position" => position})
+       when is_binary(state) and is_integer(position),
+       do: %{
+         "state" => state |> String.downcase() |> String.replace("_", "-"),
+         "position" => position
+       }
+
+  defp merge_queue(_), do: nil
+
+  # The latest time the pull request left the merge queue, and why; nil when it never has.
+  defp merge_queue_removal(%{"nodes" => [%{"createdAt" => at} = node | _]}) when is_binary(at),
+    do: %{"at" => at, "reason" => trimmed(node["reason"])}
+
+  defp merge_queue_removal(_), do: nil
+
   defp merge_method(value) do
     case up(value) do
       method when method in ~w(MERGE SQUASH REBASE) -> String.downcase(method)
@@ -2296,8 +2808,10 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  # GitHub's own decision counts only reviews that satisfy branch rules; when it has
-  # none, the latest review per reviewer decides, changes requested first.
+  # GitHub's own decision counts only reviews that satisfy branch rules, so where
+  # it has one it wins: an approving review does not approve a pull request GitHub
+  # still marks review-required. When it has none, the latest review per reviewer
+  # decides, changes requested first.
   defp review_decision(value, latest) do
     summarized =
       case up(value) do
@@ -2311,10 +2825,10 @@ defmodule HalC2.PullRequests.GitHub do
     states = MapSet.new(reviews, &up(&1 && &1["state"]))
 
     cond do
-      summarized in ["approved", "changes-requested"] -> summarized
+      summarized != nil -> summarized
       "CHANGES_REQUESTED" in states -> "changes-requested"
       "APPROVED" in states -> "approved"
-      true -> summarized
+      true -> nil
     end
   end
 
@@ -2364,12 +2878,15 @@ defmodule HalC2.PullRequests.GitHub do
       end
 
     {order, newest} =
-      Enum.reduce(entries, {[], %{}}, fn {check, workflow, at} = entry, {order, newest} ->
+      Enum.reduce(entries, {[], %{}}, fn entry, {order, newest} ->
+        {check, workflow, _at} = entry
         key = {workflow, check["name"]}
 
         case newest do
-          %{^key => {_, _, kept}} ->
-            if newer?(at, kept), do: {order, Map.put(newest, key, entry)}, else: {order, newest}
+          %{^key => kept} ->
+            if better?(entry, kept),
+              do: {order, Map.put(newest, key, entry)},
+              else: {order, newest}
 
           _ ->
             {[key | order], Map.put(newest, key, entry)}
@@ -2386,13 +2903,36 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  # One run of a check still going means the check is pending, however an
+  # earlier finished run of it ended: a workflow run on both push and
+  # pull_request leaves a passing run beside the one still running, and
+  # calling that passing wakes readers with news that is not true yet.
+  defp better?({check, _workflow, at}, {kept, _kept_workflow, kept_at}) do
+    cond do
+      check["status"] == "pending" and kept["status"] != "pending" -> true
+      kept["status"] == "pending" and check["status"] != "pending" -> false
+      true -> newer?(at, kept_at)
+    end
+  end
+
   defp newer?(nil, kept), do: kept == nil
   defp newer?(at, kept), do: kept == nil or at >= kept
 
+  # An instant, however the host spelled it: "12:00:00.500Z" is after
+  # "12:00:00Z", which comparing the spellings would miss.
   defp timestamp(value) do
     case trimmed(value) do
-      "0001-01-01T00:00:00Z" -> nil
-      at -> at
+      "0001-01-01T00:00:00Z" ->
+        nil
+
+      at when is_binary(at) ->
+        case DateTime.from_iso8601(at) do
+          {:ok, instant, _offset} -> DateTime.to_unix(instant, :microsecond)
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 

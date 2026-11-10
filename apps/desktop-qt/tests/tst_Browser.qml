@@ -29,7 +29,10 @@ TestCase {
             { tag: "blank", input: "   " },
             { tag: "file", input: "file:///etc/passwd" },
             { tag: "javascript", input: "javascript://alert(1)" },
-            { tag: "spaces", input: "not an address" }
+            { tag: "spaces", input: "not an address" },
+            { tag: "mailto", input: "mailto:alice@example.com" },
+            { tag: "javascript without slashes", input: "javascript:alert(1)" },
+            { tag: "no host", input: "http://" }
         ];
     }
 
@@ -39,9 +42,22 @@ TestCase {
         verify(result.error.length > 0);
     }
 
-    function test_otherSchemesAreNamed() {
-        compare(BrowserJs.normalizeAddress("file:///etc/passwd").error, "Only http and https pages open here.");
-        compare(BrowserJs.normalizeAddress("ftp://example.com").error, "Only http and https pages open here.");
+    // Upstream #23577: a refusal says what to type instead.
+    function test_refusalsSayWhatToType_data() {
+        return [
+            { tag: "file", input: "file:///etc/passwd", error: "Only http and https pages open here. Enter an http or https URL, such as https://example.com." },
+            { tag: "ftp", input: "ftp://example.com", error: "Only http and https pages open here. Enter an http or https URL, such as https://example.com." },
+            { tag: "mailto", input: "mailto:alice@example.com", error: "mailto: addresses do not open here. Enter an http or https URL, such as https://example.com." },
+            { tag: "no host", input: "http://", error: "\"http://\" is not a web address. Enter an http or https URL, such as https://example.com." }
+        ];
+    }
+
+    function test_refusalsSayWhatToType(data) {
+        compare(BrowserJs.normalizeAddress(data.input).error, data.error);
+    }
+
+    function test_aPortIsNotAScheme() {
+        compare(BrowserJs.normalizeAddress("example.com:8443/a").url, "https://example.com:8443/a");
     }
 
     function test_zoomSteps_data() {
@@ -144,5 +160,85 @@ TestCase {
         const frames = BrowserJs.layoutDevices(["desktop"], 400, 400, 0, 0, 0);
         compare(frames[0].scale, 400 / 1440);
         compare(frames[0].frameHeight, 900 * (400 / 1440));
+    }
+
+    function test_sizesThePreviewRenders_data() {
+        return [
+            { tag: "smallest", width: 240, height: 800, allowed: true },
+            { tag: "too narrow", width: 239, height: 800, allowed: false },
+            { tag: "too short", width: 800, height: 239, allowed: false },
+            { tag: "too wide", width: 3841, height: 800, allowed: false },
+            { tag: "largest", width: 3840, height: 2160, allowed: true },
+            { tag: "too large", width: 3840, height: 2161, allowed: false },
+            { tag: "fractional", width: 500.5, height: 800, allowed: false },
+            { tag: "not a number", width: Number("abc"), height: 800, allowed: false }
+        ];
+    }
+
+    function test_sizesThePreviewRenders(data) {
+        compare(BrowserJs.sizeAllowed(data.width, data.height), data.allowed);
+    }
+
+    function test_sizeAtRatioFollowsTheLeadingSide() {
+        compare(BrowserJs.sizeAtRatio(2560, 16 / 9, "width"), { width: 2560, height: 1440 });
+        compare(BrowserJs.sizeAtRatio(600, 0.5, "height"), { width: 300, height: 600 });
+    }
+
+    function test_sizeAtRatioKeepsBothSidesInBounds() {
+        // 120 wide at 1:2 would be too narrow: the smallest that can is 240 by 480.
+        compare(BrowserJs.sizeAtRatio(120, 0.5, "width"), { width: 240, height: 480 });
+        const widest = BrowserJs.sizeAtRatio(5000, 16 / 9, "width");
+        verify(BrowserJs.sizeAllowed(widest.width, widest.height));
+        compare(widest.width, 3840);
+    }
+
+    function test_resizedFreely() {
+        compare(BrowserJs.resized({ width: 400, height: 800 }, -100, 0, 0), { width: 300, height: 800 });
+        compare(BrowserJs.resized({ width: 400, height: 800 }, -300, 0, 0), { width: 240, height: 800 });
+        // Wider than the largest area: the side that moved gives way.
+        compare(BrowserJs.resized({ width: 2000, height: 3840 }, 2000, 0, 0), { width: 2160, height: 3840 });
+    }
+
+    function test_resizedAtALockedRatio() {
+        compare(BrowserJs.resized({ width: 400, height: 800 }, -100, 0, 0.5), { width: 300, height: 600 });
+        compare(BrowserJs.resized({ width: 400, height: 800 }, 0, 200, 0.5), { width: 500, height: 1000 });
+    }
+
+    function test_draggedEdgeFollowsThePointerOnACentredPage() {
+        // The page is centred, so its edge moving 50 pixels makes it 100 wider.
+        compare(BrowserJs.dragged({ width: 400, height: 800 }, 50, 0, { width: 900, height: 1000 }, 1, 0), { width: 500, height: 800 });
+        // Shown at half size, the edge moving 25 pixels makes it 100 wider.
+        compare(BrowserJs.dragged({ width: 400, height: 800 }, 25, 0, { width: 900, height: 1000 }, 0.5, 0), { width: 500, height: 800 });
+        compare(BrowserJs.dragged({ width: 400, height: 800 }, 0, -50, { width: 900, height: 1000 }, 1, 0), { width: 400, height: 700 });
+    }
+
+    function test_aSizePickedKeepsItsRatioOnlyIfTaken() {
+        const phone = { _tag: "preset", width: 375, height: 667, presetId: "iphone-se" };
+        const turned = { _tag: "freeform", width: 800, height: 500 };
+        // Rotated with the ratio locked, then refused: the size and its ratio go back.
+        compare(BrowserJs.ratioAnswered({ viewport: turned, ratio: 1.6, before: 0.625 }, { _tag: "freeform", width: 500, height: 800 }), 0.625);
+        compare(BrowserJs.ratioAnswered({ viewport: turned, ratio: 1.6, before: 0.625 }, turned), 1.6);
+        // A preset picked with the ratio locked, refused while the tab fills.
+        compare(BrowserJs.ratioAnswered({ viewport: phone, ratio: 375 / 667, before: 0.5 }, { _tag: "fill" }), 0.5);
+        compare(BrowserJs.ratioAnswered({ viewport: phone, ratio: 375 / 667, before: 0.5 }, phone), 375 / 667);
+        // Another preset of the same size is another pick.
+        compare(BrowserJs.ratioAnswered({ viewport: phone, ratio: 1, before: 0 }, Object.assign({}, phone, { presetId: "other" })), 0);
+    }
+
+    function test_aTypedSideKeepsTheLockedRatio() {
+        compare(BrowserJs.typedAtRatio("width", 300, 0.5), { width: 300, height: 600 });
+        compare(BrowserJs.typedAtRatio("height", 600, 0.5), { width: 300, height: 600 });
+        // Not held to the bounds: the pair fails instead of passing at another ratio.
+        const wide = BrowserJs.typedAtRatio("width", 2000, 0.5);
+        compare(wide, { width: 2000, height: 4000 });
+        verify(!BrowserJs.sizeAllowed(wide.width, wide.height));
+        const narrow = BrowserJs.typedAtRatio("width", 120, 0.5);
+        verify(!BrowserJs.sizeAllowed(narrow.width, narrow.height));
+    }
+
+    function test_aPresetPickedRelocksTheRatio() {
+        const phone = BrowserJs.preset("iphone-se");
+        compare(BrowserJs.presetRatio(phone, 0.5), phone.width / phone.height);
+        compare(BrowserJs.presetRatio(phone, 0), 0);
     }
 }

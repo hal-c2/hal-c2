@@ -94,6 +94,10 @@ defmodule HalC2.Steps.Common do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
 
+  step "the MC restarted", context do
+    %{context | mc: Mc.restart(context.mc), clients: %{}}
+  end
+
   step "the MC starts again", context do
     %{context | mc: Mc.restart(context.mc), clients: %{}}
   end
@@ -105,11 +109,14 @@ defmodule HalC2.Steps.Common do
   # --- shared outcomes -----------------------------------------------------------------
 
   # Said of an agent's file request (providers/antigravity.feature) and of a
-  # client's preview forward (preview/remote.feature); each checks its own.
+  # client's preview forward (preview/remote.feature) and of a subscription the socket
+  # turned away (orchestration/text-generation.feature); each checks its own.
   step "the request is refused", context do
-    if Map.has_key?(context, :forward_reply),
-      do: HalC2.Steps.Preview.Forward.refused(context),
-      else: HalC2.Steps.Providers.Antigravity.refused(context)
+    cond do
+      Map.has_key?(context, :forward_reply) -> HalC2.Steps.Preview.Forward.refused(context)
+      Map.has_key?(context, :refused) -> HalC2.Steps.Orchestration.TextGeneration.refused(context)
+      true -> HalC2.Steps.Providers.Antigravity.refused(context)
+    end
   end
 
   step "the request is refused with {string}", %{args: [message]} = context do
@@ -246,7 +253,7 @@ defmodule HalC2.Steps.Common do
       )
     end)
 
-    World.await_row(id, &(&1["pendingBackgroundTasks"] == [] and &1["activeRunId"] == nil))
+    World.await_row(id, &(&1["runningBackgroundTasks"] == [] and &1["activeRunId"] == nil))
     context
   end
 
@@ -301,7 +308,10 @@ defmodule HalC2.Steps.Common do
         do: %{"instanceId" => context.provider, "refreshModels" => true},
         else: %{"refreshModels" => true}
 
-    {reply, context} = World.call_keeping(context, "server.refreshProviders", input)
+    # A refresh probes CLIs synchronously; a slow one is given a minute.
+    {reply, context} =
+      World.call_keeping(context, "server.refreshProviders", input, "default", 60_000)
+
     context = Map.put(context, :reply, reply)
 
     case reply do
@@ -630,6 +640,14 @@ defmodule HalC2.Steps.Common do
     Map.put(context, :request, request)
   end
 
+  # The turn the scenario is watching was not ended by what just happened: it
+  # is still running, or it ran to its own end.
+  step "the turn goes on", context do
+    assert %{"status" => status} = World.latest_run(context, World.current_thread(context))
+    assert status in ["running", "completed"]
+    context
+  end
+
   # The default socket drops and connects again. A scenario that follows the MC
   # over the socket says how it resumes with `context.after_reconnect`.
   step "the client reconnects", context do
@@ -673,6 +691,14 @@ defmodule HalC2.Steps.Common do
     assert File.dir?(path), "the worktree #{path} was removed"
     assert path in worktrees(context.worktree.root)
     if control = context[:control], do: refute(File.exists?(control), "the sweep did not run")
+
+    # A scenario that knows why the sweep keeps it checks the sweep's own report.
+    if reason = context[:expected_reason] do
+      report = HalC2.StorageCleanup.report() || []
+      entry = Enum.find(report, &(&1["path"] == Path.expand(path)))
+      assert %{"outcome" => "kept", "reason" => ^reason} = entry
+    end
+
     context
   end
 
@@ -1238,7 +1264,7 @@ defmodule HalC2.Steps.Common do
           "name" => name,
           "version" => "1.0.0",
           "description" => "An ACP agent",
-          "distribution" => %{"npx" => %{"package" => "@acme/#{id}"}}
+          "distribution" => %{"npx" => %{"package" => "@acme/#{id}@1.0.0"}}
         },
         fields
       )
@@ -1261,13 +1287,54 @@ defmodule HalC2.Steps.Common do
         for(n <- 1..24, do: agent.("agent-#{n}", "Agent #{n}", %{"description" => "writes code"}))
 
     ctx = Acp.publish(ctx, agents)
-    {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => query})
+
+    {reply, ctx} =
+      Acp.with_runners(ctx, fn ->
+        World.call(ctx, "server.searchAcpRegistry", %{"query" => query})
+      end)
+
     Map.merge(ctx, %{reply: reply, query: query})
   end
 
   step "the user searches the registry", context do
-    {reply, ctx} = World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
-    Map.put(ctx, :reply, reply)
+    # A scenario that set up no registry of its own searches the fake one,
+    # which lists "acme" with everything the real registry publishes for it.
+    context =
+      if Map.has_key?(context, :acp) or Map.has_key?(context, :registry) do
+        context
+      else
+        ctx = HalC2.Test.AcpFixtures.serve_registry(context)
+
+        full = %{
+          "license" => "MIT",
+          "website" => "https://acme.test",
+          "repository" => "https://github.com/acme/acme"
+        }
+
+        beta =
+          ctx
+          |> HalC2.Test.AcpFixtures.acme_agent(id: "acme-beta")
+          |> Map.merge(full)
+          |> Map.put("distribution", %{"npx" => %{"package" => "@acme/beta@1.0.0"}})
+
+        HalC2.Test.AcpFixtures.publish(ctx, [
+          Map.merge(HalC2.Test.AcpFixtures.acme_agent(ctx), full),
+          beta
+        ])
+      end
+
+    {reply, ctx} =
+      HalC2.Test.AcpFixtures.with_runners(context, fn ->
+        World.call(context, "server.searchAcpRegistry", %{"query" => "acme"})
+      end)
+
+    listing =
+      case reply do
+        {:ok, %{"agents" => agents}} -> Enum.map(agents, & &1["id"])
+        _ -> []
+      end
+
+    ctx |> Map.put(:reply, reply) |> Map.put(:listing, listing)
   end
 
   # An ACP sign-in (`context.auth_instance`, `context.flow`), cancelled from the client
@@ -1342,7 +1409,8 @@ defmodule HalC2.Steps.Common do
             context
             |> Map.delete(:pending_launch)
             |> HalC2.Test.AcpFixtures.launch("Work", instance, "hello",
-              mode: fields["runtimeMode"]
+              mode: fields["runtimeMode"],
+              model: fields["model"]
             )
 
           HalC2.Test.AcpFixtures.await_runs(ctx.threads["Work"], 1)
@@ -1533,9 +1601,13 @@ defmodule HalC2.Steps.Common do
   end
 
   # Into a draft ("a new thread titled ...") this launches the thread with a title
-  # asked for; otherwise it is sent to the current thread.
+  # asked for; with `context.send_message` (a fun of the context and the text) that
+  # sends it; otherwise it is sent to the current thread.
   step "the user sends {string}", %{args: [text]} = context do
     case context[:draft] do
+      nil when is_function(context.send_message, 2) ->
+        context.send_message.(context, text)
+
       nil ->
         title = World.current(context)
         {{:ok, _}, context} = World.send_message(context, title, text)

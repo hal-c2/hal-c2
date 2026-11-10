@@ -6,10 +6,11 @@
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
 #   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*)
+#   apps/server-ex/lib/hal_c2/codex/chatgpt.ex (provider.chatgpt.move)
 #   apps/server-ex/lib/hal_c2/machine_files.ex (files.localPath)
 #   apps/server-ex/lib/hal_c2/cluster.ex (cluster.*; the TypeScript server answers them as unsupported)
 #   packages/contracts/src/environmentHttp.ts, apps/server-ex/lib/hal_c2/web/router.ex (/api/auth/*, twinned by hal-c2.* access methods)
-#   Counts: 175 contract methods; 172 aligned, 3 dropped. cloud.getRelayClientStatus and
+#   Counts: 181 contract methods; 178 aligned, 3 dropped. cloud.getRelayClientStatus and
 #   cloud.installRelayClient left the contract with HAL-C2 Connect (connections/hal-c2-connect.feature).
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
@@ -30,7 +31,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method> through its <via>
     Then the MC answers with the contract's response shape for <method>
 
-    Examples: 172 aligned methods
+    Examples: 178 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
@@ -45,6 +46,7 @@ Feature: RPC parity with the TypeScript server
       | provider.auth.cancel                     | provider          | rpc                                                                       |
       | provider.auth.logout                     | provider          | rpc                                                                       |
       | provider.auth.subscribe                  | provider          | shape providerAuth                                                        |
+      | provider.chatgpt.move                    | provider          | rpc                                                                       |
       | provider.install.start                   | provider          | rpc                                                                       |
       | provider.install.cancel                  | provider          | rpc                                                                       |
       | provider.install.remove                  | provider          | rpc                                                                       |
@@ -67,6 +69,7 @@ Feature: RPC parity with the TypeScript server
       | server.logoutAcpRegistry                 | server            | rpc                                                                       |
       | server.getTraceDiagnostics               | server            | rpc                                                                       |
       | server.getProcessDiagnostics             | server            | rpc                                                                       |
+      | server.getOpenShellStatus                | server            | rpc                                                                       |
       | server.getHostResources                  | server            | rpc                                                                       |
       | server.getProcessResourceHistory         | server            | rpc                                                                       |
       | server.getResourceTelemetryHistory       | server            | rpc                                                                       |
@@ -129,6 +132,10 @@ Feature: RPC parity with the TypeScript server
       | assets.persistChatAttachments            | assets            | rpc                                                                       |
       | attachments.createUploadUrl              | attachments       | rpc                                                                       |
       | attachments.delete                       | attachments       | rpc                                                                       |
+      | mcpApps.callTool                         | mcpApps           | rpc                                                                       |
+      | mcpApps.toolInfo                         | mcpApps           | rpc                                                                       |
+      | mcpApps.readResource                     | mcpApps           | rpc                                                                       |
+      | mcpApps.updateModelContext               | mcpApps           | rpc                                                                       |
       | provider.uploadFeedback                  | provider          | rpc                                                                       |
       | subscribeVcsStatus                       | vcs               | shape vcs                                                                 |
       | vcs.pull                                 | vcs               | rpc                                                                       |
@@ -181,6 +188,7 @@ Feature: RPC parity with the TypeScript server
       | orchestration.dispatchCommand            | orchestration     | rpc                                                                       |
       | orchestration.getTurnDiff                | orchestration     | rpc                                                                       |
       | orchestration.getFullThreadDiff          | orchestration     | rpc                                                                       |
+      | orchestration.getCommandOutput         | orchestration     | rpc                                                                       |
       | orchestration.searchThreads              | orchestration     | rpc                                                                       |
       | orchestration.getArchivedShellSnapshot   | orchestration     | rpc                                                                       |
       | orchestration.getThreadProjection        | orchestration     | rpc as hal-c2.threadRows                                                      |
@@ -248,6 +256,8 @@ Feature: RPC parity with the TypeScript server
       | hal-c2.readSettings       | the settings document with its version                        |
       | hal-c2.writeSettings      | the new version, or a stale-settings error for an old version |
       | hal-c2.threadRows         | one thread's stream rows with their offset and time           |
+      | hal-c2.threadHistory      | a bounded page of a thread, newest user turns first, with a cursor |
+      | hal-c2.threadFamily       | a thread's family as shell rows, its lineage and subagent tree     |
       | hal-c2.upsertKeybinding   | the keybindings after the change                              |
       | hal-c2.removeKeybinding   | the keybindings after the removal                             |
 

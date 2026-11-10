@@ -115,6 +115,24 @@ defmodule HalC2.AttachmentsTest do
     assert {"content-disposition", ~s(attachment; filename="#{claimed}.png")} in headers
   end
 
+  # Claims once shared one copy per upload and thread, so a second message naming the
+  # upload deleted the first one's file when it was refused or failed part-way.
+  test "a message that gives its uploads back keeps the copies other messages claimed" do
+    {id, token} = upload()
+    :ok = Attachments.store(token, @png)
+    image = %{"type" => "image", "id" => id, "name" => "shot.png", "sizeBytes" => byte_size(@png)}
+    missing = %{image | "id" => "pending-00000000-0000-0000-0000-000000000000"}
+
+    {:ok, [sent]} = Attachments.claim("t", [image])
+    assert {:error, _} = Attachments.claim("t", [image, missing])
+    {:ok, refused} = Attachments.claim("t", [image])
+    :ok = Attachments.release([image], refused)
+
+    assert File.read!(Attachments.path(sent)) == @png
+    assert Attachments.path(hd(refused)) == nil
+    assert {:ok, [_]} = Attachments.claim("t", [image])
+  end
+
   test "the HTTP routes take an upload and serve an asset" do
     {id, token} = upload()
     conn = conn(:post, "/api/attachments/upload/" <> token, @png) |> HalC2.Web.Router.call([])
@@ -136,6 +154,31 @@ defmodule HalC2.AttachmentsTest do
     assert ["image/png" <> _] = Plug.Conn.get_resp_header(conn, "content-type")
 
     assert (conn(:get, "/api/assets/bad.token") |> HalC2.Web.Router.call([])).status == 403
+  end
+
+  test "a copied MCP app document is still served inline in the app sandbox" do
+    File.mkdir_p!(Attachments.dir())
+    source = Attachments.thread_segment("src") <> "-mcp-app-abc123"
+    File.write!(Path.join(Attachments.dir(), source <> ".html"), "<p>app</p>")
+
+    assert {:ok, copy} = Attachments.copy("fork", source)
+    assert copy != source and HalC2.McpApps.document_id?(copy)
+
+    # No `renderIntent`: the marker alone puts the document in its sandbox.
+    {:ok, %{"relativeUrl" => url}} =
+      Attachments.create_url(%{
+        "resource" => %{
+          "_tag" => "attachment",
+          "attachmentId" => copy,
+          "disposition" => "inline"
+        }
+      })
+
+    conn = conn(:get, url) |> HalC2.Web.Router.call([])
+    assert conn.status == 200
+
+    assert ["sandbox allow-scripts" <> _] =
+             Plug.Conn.get_resp_header(conn, "content-security-policy")
   end
 
   test "media URLs serve only media files" do
@@ -331,5 +374,146 @@ defmodule HalC2.AttachmentsTest do
                "threadId" => "t1",
                "attachments" => [%{"name" => "x", "dataUrl" => "nope"}]
              })
+  end
+
+  describe "fold_long_text/3" do
+    test "text of 120,000 characters or fewer passes through" do
+      text = String.duplicate("é", 120_000)
+      assert Attachments.fold_long_text("t1", text, []) == {:ok, text, []}
+      assert Attachments.fold_long_text("t1", nil, []) == {:ok, nil, []}
+    end
+
+    test "longer text keeps its start and end, and the whole of it is a pasted-text file" do
+      # Counted in characters, not bytes: "é" is two bytes.
+      text =
+        String.duplicate("a", 8_000) <>
+          String.duplicate("é", 110_001) <> String.duplicate("z", 2_000)
+
+      {:ok, folded, [file]} = Attachments.fold_long_text("t1", text, [])
+
+      assert folded ==
+               String.duplicate("a", 8_000) <>
+                 "\n\n[... 110001 characters cut here; the whole message is in the attached message.txt ...]\n\n" <>
+                 String.duplicate("z", 2_000)
+
+      assert %{"type" => "file", "name" => "message.txt", "mimeType" => "text/plain"} = file
+      assert file["source"] == %{"_tag" => "pasted-text", "folded" => true}
+      assert file["sizeBytes"] == byte_size(text)
+      assert String.starts_with?(file["id"], Attachments.thread_segment("t1") <> "-")
+      assert File.read!(Attachments.path(file)) == text
+    end
+
+    test "a name the message's attachments already use is not reused" do
+      text = String.duplicate("x", 120_001)
+
+      kept = [
+        %{"type" => "file", "id" => "f1", "name" => "message.txt"},
+        %{"type" => "file", "id" => "f2", "name" => "message-2.txt"}
+      ]
+
+      {:ok, folded, attachments} = Attachments.fold_long_text("t1", text, kept)
+
+      assert Enum.take(attachments, 2) == kept
+      assert List.last(attachments)["name"] == "message-3.txt"
+      assert folded =~ "in the attached message-3.txt"
+    end
+
+    # #1363 review: the first cut mark named the message's own pasted text.
+    test "a quoted cut mark never makes a pasted text of its name the fold" do
+      own = %{
+        "type" => "file",
+        "id" => "f1",
+        "name" => "message.txt",
+        "source" => %{"_tag" => "pasted-text"}
+      }
+
+      text =
+        "[... 5 characters cut here; the whole message is in the attached message.txt ...]" <>
+          String.duplicate("x", 120_001)
+
+      {:ok, folded, [^own, file]} = Attachments.fold_long_text("t1", text, [own])
+
+      assert file["name"] == "message-2.txt"
+      assert Attachments.folded_into(folded, [own, file]) == [file]
+      assert Attachments.left_behind(folded, "short", [own, file], [own, file]) == [file]
+    end
+
+    test "only the MC marks a fold: a client's mark is dropped as it is claimed" do
+      forged = %{
+        "type" => "file",
+        "id" => "t1-forged",
+        "name" => "message.txt",
+        "source" => %{"_tag" => "pasted-text", "folded" => true}
+      }
+
+      assert {:ok, [claimed]} = Attachments.claim("t1", [forged])
+      assert claimed["source"] == %{"_tag" => "pasted-text"}
+
+      assert Attachments.folded_into(
+               "[... 5 characters cut here; the whole message is in the attached message.txt ...]",
+               [claimed]
+             ) == []
+    end
+
+    test "a folder that cannot be made refuses the message instead of raising" do
+      parent = Path.dirname(Attachments.dir())
+      File.mkdir_p!(parent)
+      File.chmod!(parent, 0o555)
+      on_exit(fn -> File.chmod(parent, 0o755) end)
+
+      assert {:error,
+              "The message is too long to send whole, and saving it as a file failed: " <> _} =
+               Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+    end
+
+    test "a write that fails leaves no file behind" do
+      File.mkdir_p!(Attachments.dir())
+      File.chmod!(Attachments.dir(), 0o555)
+      on_exit(fn -> File.chmod(Attachments.dir(), 0o755) end)
+
+      assert {:error, _} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      File.chmod!(Attachments.dir(), 0o755)
+      assert File.ls!(Attachments.dir()) == []
+    end
+  end
+
+  describe "copy_into/2" do
+    test "a thread gets its own copy of another thread's file, which outlives that thread's" do
+      {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      {:ok, [copy]} = Attachments.copy_into("t2", [file])
+
+      assert Map.delete(copy, "id") == Map.delete(file, "id")
+      assert String.starts_with?(copy["id"], "t2-")
+      :ok = Attachments.delete_thread("t1")
+      assert Attachments.path(file) == nil
+      assert File.read!(Attachments.path(copy)) == String.duplicate("x", 120_001)
+    end
+
+    # The source thread's agent is given its file's path and may write into it.
+    test "a copy keeps its bytes when the source's file is written over in place" do
+      {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      {:ok, [copy]} = Attachments.copy_into("t2", [file])
+
+      File.write!(Attachments.path(file), "changed")
+      assert File.read!(Attachments.path(copy)) == String.duplicate("x", 120_001)
+    end
+
+    test "an attachment whose file is not here passes through" do
+      gone = %{"type" => "file", "id" => "t1-gone", "name" => "a.txt"}
+
+      assert Attachments.copy_into("t2", [gone, %{"name" => "no id"}]) ==
+               {:ok, [gone, %{"name" => "no id"}]}
+    end
+
+    # Passed through, the copy would name a file that goes with the other thread's.
+    test "a file that is here but cannot be copied is an error, and the copies made go" do
+      {:ok, _text, [file]} = Attachments.fold_long_text("t1", String.duplicate("x", 120_001), [])
+      # Not copied, as a full disk refuses it.
+      File.mkdir_p!(Path.join(Attachments.dir(), "t1-stuck.txt"))
+      stuck = %{"type" => "file", "id" => "t1-stuck", "name" => "b.txt"}
+
+      assert {:error, _} = Attachments.copy_into("t2", [file, stuck])
+      assert Enum.filter(File.ls!(Attachments.dir()), &String.starts_with?(&1, "t2-")) == []
+    end
   end
 end

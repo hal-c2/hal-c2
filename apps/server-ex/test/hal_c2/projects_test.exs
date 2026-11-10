@@ -66,4 +66,110 @@ defmodule HalC2.ProjectsTest do
     assert {:ok, %{"entries" => all}} = Projects.browse(%{"partialPath" => dir <> "/"})
     assert ".hidden" in Enum.map(all, & &1["name"])
   end
+
+  test "no folder is refused, not read as the MC's working directory", %{tmp_dir: dir} do
+    assert {:error, "a workspace folder is required"} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "e",
+               "workspaceRoot" => ""
+             })
+
+    assert {:ok, _} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "p1",
+               "workspaceRoot" => dir
+             })
+
+    assert {:error, "a workspace folder is required"} =
+             Projects.mutate(%{
+               "type" => "project.update",
+               "projectId" => "p1",
+               "workspaceRoot" => ""
+             })
+  end
+
+  test "a folder another project owns is refused with that project's id for a client", %{
+    tmp_dir: dir
+  } do
+    create = %{"type" => "project.create", "projectId" => "p1", "workspaceRoot" => dir}
+    assert {:ok, _} = Projects.mutate_for_client(create)
+
+    typed = Path.join([dir, "x", ".."])
+
+    assert {:error, %{"_tag" => "WorkspaceInUse", "projectId" => "p1", "message" => message}} =
+             Projects.mutate_for_client(%{create | "projectId" => "p2", "workspaceRoot" => typed})
+
+    assert message =~ "already belongs to project p1"
+
+    assert {:error, ^message} =
+             Projects.mutate(%{create | "projectId" => "p3", "workspaceRoot" => typed})
+  end
+
+  test "a project folder is expanded and canonical, and a relative one is refused", %{
+    tmp_dir: dir
+  } do
+    home = System.get_env("HOME")
+    messy = Path.join([dir, "a", "..", "b", "."])
+
+    assert {:ok, %{"workspaceRoot" => root}} =
+             Projects.mutate(%{
+               "type" => "project.create",
+               "projectId" => "p1",
+               "workspaceRoot" => messy,
+               "createWorkspaceRootIfMissing" => true
+             })
+
+    assert root == Path.join(dir, "b")
+
+    for relative <- ["shop", "./shop", "../shop", "~sam/shop"] do
+      assert {:error, "Workspace " <> _ = error} =
+               Projects.mutate(%{
+                 "type" => "project.create",
+                 "projectId" => "r",
+                 "workspaceRoot" => relative,
+                 "createWorkspaceRootIfMissing" => true
+               })
+
+      assert error =~ "is not an absolute path"
+
+      assert {:error, ^error} =
+               Projects.mutate(%{
+                 "type" => "project.update",
+                 "projectId" => "p1",
+                 "workspaceRoot" => relative
+               })
+    end
+
+    assert {:ok, %{"workspaceRoot" => expanded}} =
+             Projects.mutate(%{
+               "type" => "project.update",
+               "projectId" => "p1",
+               "workspaceRoot" => "~/../" <> Path.basename(home)
+             })
+
+    assert expanded == home
+  end
+
+  test "browse refuses Windows paths and relative paths without a project, and names unreadable folders",
+       %{tmp_dir: dir} do
+    assert {:error, "Windows-style workspace path 'C:\\code' is not supported on" <> _} =
+             Projects.browse(%{"partialPath" => "C:\\code"})
+
+    assert {:error, "A current project is required to browse relative workspace path './x'."} =
+             Projects.browse(%{"partialPath" => "./x"})
+
+    File.mkdir_p!(Path.join(dir, "proj/shop-api"))
+
+    assert {:ok, %{"entries" => [%{"name" => "shop-api"}]}} =
+             Projects.browse(%{"partialPath" => "./sh", "cwd" => Path.join(dir, "proj")})
+
+    missing = Path.join(dir, "nowhere")
+
+    assert {:error, "The folder '" <> _ = message} =
+             Projects.browse(%{"partialPath" => missing <> "/"})
+
+    assert message =~ missing
+  end
 end

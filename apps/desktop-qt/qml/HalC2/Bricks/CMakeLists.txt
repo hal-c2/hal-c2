@@ -9,6 +9,7 @@ set(hal_c2_bricks_qml_files
     Composer.qml
     ComposerAttachment.qml
     ModelPicker.qml
+    EffortBars.qml
     ProviderIcon.qml
     ComposerVimKeys.qml
     ConversationDrop.qml
@@ -32,6 +33,7 @@ set(hal_c2_bricks_qml_files
     UsageModelPrices.qml
     ProviderModelList.qml
     ComposerUsageLimits.qml
+    ContextWindowMeter.qml
     RedactedText.qml
     ConnectionStatusRow.qml
     ServerUpdateAction.qml
@@ -61,6 +63,7 @@ set(hal_c2_bricks_qml_files
     SidebarUpdateButton.qml
     DesktopUpdateSettings.qml
     SidebarThreadRow.qml
+    SidebarProjectHeader.qml
     HalC2Wordmark.qml
     StagePill.qml
     KeybindingsSettings.qml
@@ -84,13 +87,17 @@ set(hal_c2_bricks_qml_files
     ThemeInspector.qml
     TurnRequests.qml
     ProjectRemovalDialog.qml
+    ProjectRenameDialog.qml
     ConfirmDialog.qml
     CustomSnoozeDialog.qml
     PullRequestThreadDialog.qml
     EditFromHereDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
+    ThreadErrorBanner.qml
+    ProviderStatusBanner.qml
     ThreadNotice.qml
+    NoticeStackPeek.qml
     ProviderUpdateNotice.qml
     ThreadLineage.qml
     DiffPanel.qml
@@ -164,6 +171,7 @@ set(hal_c2_bricks_qml_files
     IntegrationsSettings.qml
     SettingsScopeSentence.qml
     StorageSettings.qml
+    SandboxSettings.qml
     ProjectSettings.qml
     DevicePanel.qml
     DeviceToolsPanel.qml
@@ -180,6 +188,8 @@ set(hal_c2_bricks_qml_files
     js/markdown.js
     BrowserPanel.qml
     BrowserDevicesView.qml
+    BrowserDeviceToolbar.qml
+    BrowserResizeHandles.qml
     DevicesPicker.qml
     AgentCue.qml
     js/browser.js

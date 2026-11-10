@@ -288,6 +288,10 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+// How the composer shows the model's reasoning effort: its name, or bars.
+export const EffortDisplay = Schema.Literals(["label", "bars"]);
+export type EffortDisplay = typeof EffortDisplay.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -296,6 +300,7 @@ export const ClientSettingsSchema = Schema.Struct({
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
+  effortDisplay: EffortDisplay.pipe(Schema.withDecodingDefault(Effect.succeed("label" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -456,6 +461,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // The Working section: busy threads fold into it, and the inbox orders by when
+  // each came back. On until the user turns it off (upstream #25190).
+  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -612,6 +620,11 @@ export const CodexSettings = makeProviderSettingsSchema(
         title: "Launch arguments",
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
+    ),
+    // "managed": a ChatGPT account HAL-C2 connects signs Codex in, in a home
+    // the MC keeps. "existing" (or absent): the Codex CLI's own login.
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
@@ -960,7 +973,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Server password",
-        description: "Stored in plain text on disk.",
+        description: "Kept in the secret store, never in the settings file.",
         providerSettingsForm: {
           control: "password",
           placeholder: "Optional",
@@ -1089,8 +1102,29 @@ const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
 
+// Days after a thread settles; 0 removes its worktree once the settle grace minute is over.
+const SettledWorktreeRetentionDays = Schema.NullOr(
+  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
+);
+
+// What local leftovers keep a worktree from removal. HAL-C2 defaults to "any-local-files"
+// (upstream #17563 defaults to "uncommitted-changes"): ignored files such as `.env` are
+// often secrets that exist nowhere else.
+export const WorktreeKeepWhen = Schema.Literals([
+  "any-local-files",
+  "uncommitted-changes",
+  "tracked-changes",
+]);
+export type WorktreeKeepWhen = typeof WorktreeKeepWhen.Type;
+
 export const WorktreeCleanupRules = Schema.Struct({
+  worktreeKeepWhen: WorktreeKeepWhen.pipe(
+    Schema.withDecodingDefault(Effect.succeed("any-local-files")),
+  ),
   worktreeAfterDays: StorageRetentionDays,
+  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
@@ -1127,6 +1161,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
   "sourceControlWritingStyle",
+  "threadTitleInstructions",
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
@@ -1156,6 +1191,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+  threadTitleInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
@@ -1187,7 +1223,13 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
 ]);
 
 export const StorageCleanupSettings = Schema.Struct({
+  worktreeKeepWhen: WorktreeKeepWhen.pipe(
+    Schema.withDecodingDefault(Effect.succeed("any-local-files")),
+  ),
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1375,6 +1417,8 @@ export const ServerSettings = Schema.Struct({
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** How thread titles are written, added to the title writer's prompt; empty adds nothing. */
+  threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1531,6 +1575,7 @@ const CodexSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   shadowHomePath: Schema.optionalKey(TrimmedString),
   launchArgs: Schema.optionalKey(TrimmedString),
+  setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
@@ -1597,7 +1642,9 @@ export const ServerSettingsPatch = Schema.Struct({
         Schema.Struct({
           mode: Schema.Literal("custom"),
           rules: Schema.Struct({
+            worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
             worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
+            worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
             worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
             worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
@@ -1608,7 +1655,9 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   storageCleanup: Schema.optionalKey(
     Schema.Struct({
+      worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
       worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
+      worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
       worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
@@ -1682,6 +1731,7 @@ export const ServerSettingsPatch = Schema.Struct({
       followChangeRequestTemplates: Schema.optionalKey(Schema.Boolean),
     }),
   ),
+  threadTitleInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   observability: Schema.optionalKey(
@@ -1738,6 +1788,7 @@ export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
+  effortDisplay: Schema.optionalKey(EffortDisplay),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
@@ -1805,6 +1856,7 @@ export const ClientSettingsPatch = Schema.Struct({
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

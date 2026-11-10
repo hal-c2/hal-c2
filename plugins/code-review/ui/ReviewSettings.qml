@@ -286,6 +286,32 @@ ColumnLayout {
             settings.set(count.key, Number(text))
     }
 
+    // Logins separated by commas. The text stays as typed while it is edited, with
+    // what it names set as it changes, and is shown from the setting again once
+    // editing ends, or when the setting changes to other logins (a reset, a load).
+    component Logins: ShellTextField {
+        id: logins
+
+        property string key
+        readonly property var list: settings.values[logins.key] ?? []
+
+        function parse(text) {
+            return text.split(",").map(each => each.trim()).filter(each => each.length > 0);
+        }
+
+        function show() {
+            logins.text = logins.list.join(", ");
+        }
+
+        objectName: "codeReviewSetting:" + key
+        Layout.fillWidth: true
+        Component.onCompleted: show()
+        onListChanged: if (JSON.stringify(logins.parse(logins.text)) !== JSON.stringify(logins.list))
+            logins.show()
+        onTextEdited: settings.set(logins.key, logins.parse(logins.text))
+        onEditingFinished: show()
+    }
+
     component Area: TextArea {
         Layout.fillWidth: true
         wrapMode: TextEdit.Wrap
@@ -438,6 +464,8 @@ ColumnLayout {
 
                 ShellTextField {
                     objectName: "codeReviewSetting:label"
+                    Accessible.name: qsTr("Label that asks for a review")
+                    Accessible.description: qsTr("Leave empty to turn off.")
                     implicitWidth: 240
                     text: settings.values.label ?? ""
                     onTextEdited: settings.set("label", text)
@@ -450,6 +478,8 @@ ColumnLayout {
 
                 ShellTextField {
                     objectName: "codeReviewSetting:command"
+                    Accessible.name: qsTr("Comment that asks for a review")
+                    Accessible.description: qsTr("A comment starting with this starts a review. Leave empty to turn off.")
                     implicitWidth: 240
                     text: settings.values.command ?? ""
                     onTextEdited: settings.set("command", text)
@@ -471,11 +501,10 @@ ColumnLayout {
                 label: qsTr("Ignored authors")
                 hint: qsTr("Logins, separated by commas.")
 
-                ShellTextField {
-                    objectName: "codeReviewSetting:ignoredAuthors"
-                    Layout.fillWidth: true
-                    text: (settings.values.ignoredAuthors ?? []).join(", ")
-                    onTextEdited: settings.set("ignoredAuthors", text.split(",").map(each => each.trim()).filter(each => each.length > 0))
+                Logins {
+                    key: "ignoredAuthors"
+                    Accessible.name: qsTr("Ignored authors")
+                    Accessible.description: qsTr("Logins, separated by commas.")
                 }
             }
 
@@ -485,6 +514,8 @@ ColumnLayout {
 
                 Count {
                     key: "maxChangedLines"
+                    Accessible.name: qsTr("Largest change reviewed automatically")
+                    Accessible.description: qsTr("Lines added and removed. 0 for no limit.")
                 }
             }
         }
@@ -493,6 +524,45 @@ ColumnLayout {
             key: "reviewNewPushes"
             label: qsTr("Review new pushes")
             hint: qsTr("Review a pull request again when its head changes after a review.")
+        }
+
+        Field {
+            label: qsTr("Trusted logins")
+            hint: qsTr("Logins, separated by commas. Besides the repository's members and collaborators, these may have their pull requests reviewed and ask for reviews. Approve anyone else's pull request on the Reviews page.")
+
+            Logins {
+                key: "trustedLogins"
+                Accessible.name: qsTr("Trusted logins")
+                Accessible.description: qsTr("Logins, separated by commas, whose pull requests are reviewed and who may ask for reviews.")
+            }
+        }
+
+        // Side by side where they fit, one under the other on a narrow screen.
+        Flow {
+            Layout.fillWidth: true
+            spacing: 24
+
+            Field {
+                label: qsTr("Reviews per author a day")
+                hint: qsTr("Across your machines. 0 for no limit.")
+
+                Count {
+                    key: "reviewsPerAuthorPerDay"
+                    Accessible.name: qsTr("Reviews per author a day")
+                    Accessible.description: qsTr("Across your machines. 0 for no limit.")
+                }
+            }
+
+            Field {
+                label: qsTr("Reviews per repository a day")
+                hint: qsTr("Reviews you start yourself are never held back.")
+
+                Count {
+                    key: "reviewsPerRepositoryPerDay"
+                    Accessible.name: qsTr("Reviews per repository a day")
+                    Accessible.description: qsTr("Reviews you start yourself are never held back.")
+                }
+            }
         }
 
         Heading {
@@ -583,25 +653,58 @@ ColumnLayout {
             }
         }
 
-        RowLayout {
+        Toggle {
+            key: "sandboxEveryReview"
+            label: qsTr("Sandbox every review")
+            hint: qsTr("Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key.")
+        }
+
+        // Side by side where they fit, one under the other on a narrow screen.
+        Flow {
             Layout.fillWidth: true
             spacing: 24
 
             Field {
-                Layout.fillWidth: false
-                label: qsTr("Reviews at once")
+                label: qsTr("Sandboxed review time limit (minutes)")
 
                 Count {
-                    key: "concurrency"
+                    key: "sandboxMinutes"
+                    Accessible.name: qsTr("Sandboxed review time limit (minutes)")
                 }
             }
 
             Field {
-                Layout.fillWidth: false
+                label: qsTr("Sandboxed review token budget")
+                hint: qsTr("0 for no limit.")
+
+                Count {
+                    key: "sandboxTokens"
+                    Accessible.name: qsTr("Sandboxed review token budget")
+                    Accessible.description: qsTr("0 for no limit.")
+                }
+            }
+        }
+
+        // Side by side where they fit, one under the other on a narrow screen.
+        Flow {
+            Layout.fillWidth: true
+            spacing: 24
+
+            Field {
+                label: qsTr("Reviews at once")
+
+                Count {
+                    key: "concurrency"
+                    Accessible.name: qsTr("Reviews at once")
+                }
+            }
+
+            Field {
                 label: qsTr("Look for pull requests every (minutes)")
 
                 Count {
                     key: "pollMinutes"
+                    Accessible.name: qsTr("Look for pull requests every (minutes)")
                 }
             }
         }
@@ -729,6 +832,7 @@ ColumnLayout {
             }
 
             ShellButton {
+                objectName: "codeReviewDiscard"
                 subtle: true
                 text: qsTr("Discard changes")
                 enabled: settings.dirty && !settings.saving

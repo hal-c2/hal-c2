@@ -71,6 +71,7 @@ import {
   interruptThreadTurn,
   respondToThreadApproval,
   respondToThreadUserInput,
+  resumeThreadQueue,
   setThreadAutoSettle as setThreadAutoSettleOp,
   setThreadInteractionMode,
   setThreadRuntimeMode,
@@ -663,6 +664,8 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
     planId: string,
   ) => Promise<void>;
   readonly interrupt: (threadId: ThreadId) => Promise<void>;
+  /** Starts a held queue again (`queue.resume`). */
+  readonly resumeQueue: (threadId: ThreadId) => Promise<void>;
   readonly approve: (
     threadId: ThreadId,
     requestId: string,
@@ -715,6 +718,14 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly getTurnDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** Fetch the cumulative diff of all changes in the thread up to `toTurnCount`. */
   readonly getFullThreadDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
+  /**
+   * A command's output, which the thread does not carry: what it has printed so far
+   * while it runs (at most the last 64 KiB), what the thread kept once it ended.
+   */
+  readonly getCommandOutput: (
+    threadId: ThreadId,
+    itemId: string,
+  ) => Promise<{ readonly output: string; readonly running: boolean }>;
   /** The selectable models reported by the server's configured providers. */
   readonly listModels: () => Promise<ModelOption[]>;
   /**
@@ -1194,6 +1205,9 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
     interrupt: (threadId) =>
       runtime.runPromise(interruptThreadTurn({ threadId }).pipe(Effect.asVoid)),
 
+    resumeQueue: (threadId) =>
+      runtime.runPromise(resumeThreadQueue({ threadId }).pipe(Effect.asVoid)),
+
     approve: (threadId, requestId, decision) =>
       runtime.runPromise(
         respondToThreadApproval({
@@ -1339,6 +1353,14 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
           threadId,
           toTurnCount: NonNegativeInt.make(toTurnCount),
         }).pipe(Effect.map((result) => result.diff)),
+      ),
+
+    getCommandOutput: (threadId, itemId) =>
+      runtime.runPromise(
+        request(ORCHESTRATION_V2_WS_METHODS.getCommandOutput, {
+          threadId,
+          itemId: itemId as never,
+        }),
       ),
 
     listModels: () =>

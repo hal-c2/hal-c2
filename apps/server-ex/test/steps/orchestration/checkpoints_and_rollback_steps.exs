@@ -286,10 +286,18 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   end
 
   step "the user rewinds {string} to run {int}", %{args: [thread, n]} = context do
-    # A thread that moved to another machine is rewound there.
-    if context[:move_to],
-      do: HalC2.Steps.Threads.MovingBetweenMachines.rewind_moved(context, thread, n),
-      else: context |> ensure_later_runs(thread, n) |> rewind(thread, n)
+    cond do
+      # A thread that moved to another machine is rewound there.
+      context[:move_to] ->
+        HalC2.Steps.Threads.MovingBetweenMachines.rewind_moved(context, thread, n)
+
+      # Held at its restore so a later step can act while it runs.
+      context[:rewind_gate] ->
+        held_rewind(context, thread, n)
+
+      true ->
+        context |> ensure_later_runs(thread, n) |> rewind(thread, n)
+    end
   end
 
   step "the user rewinds {string} to run {int} restoring files", %{args: [thread, n]} = context do
@@ -362,6 +370,34 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
   # Codex cuts its history before the first turn it drops (the fake names the cut
   # thread after that turn), so after both rewinds its conversation ends with turn 1.
   step "the provider receives the history through run {int}", %{args: [1]} = context do
+    if context[:during_rewind],
+      do: history_after_held_rewind(context),
+      else: history_after_two_rewinds(context)
+  end
+
+  # The message sent while the rewind ran: one revert, then its turn starts on
+  # the rewound conversation (run 3, after run 1).
+  defp history_after_held_rewind(context) do
+    thread = context.run_title
+    run = World.await_latest_run(context, thread, "completed", 10_000)
+    assert run["ordinal"] == 3
+    assert rewind_requests(context) == ["thread/revert"]
+
+    assert [%{"beforeTurnId" => "native-turn-2"}] =
+             World.codex_requests(context, "thread/revert")
+
+    start = List.last(World.codex_requests(context, "turn/start"))
+    assert hd(start["input"])["text"] == "Again"
+    assert start["threadId"] == "native-thread-1-before-native-turn-2"
+
+    state = World.state(context, thread)
+    [provider_thread] = StreamState.list(state, "provider-thread")
+    assert start["threadId"] == get_in(provider_thread, ["nativeThreadRef", "nativeId"])
+    assert provider_thread["lastRunOrdinal"] == 3
+    Map.put(context, :again, start)
+  end
+
+  defp history_after_two_rewinds(context) do
     thread = context.run_title
     assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
     run = World.await_latest_run(context, thread, "completed", 10_000)
@@ -653,9 +689,12 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     context
   end
 
+  # Codex answers thread/revert with its own reason (the turn is not on the
+  # latest history page); there is no thread/rollback fallback to ask instead.
   step "the command fails explaining the provider could not roll back", context do
     assert {:error, "Failed to roll back codex provider thread " <> rest, _} = context.reply
-    assert rest =~ "paginated"
+    assert rest =~ "is not on the latest history page"
+    assert rewind_requests(context) == ["thread/revert"]
     context
   end
 
@@ -1369,7 +1408,7 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
 
     File.write!(script, """
     #!/bin/sh
-    if [ "$1" = "restore" ] && mkdir '#{dir}/held' 2>/dev/null; then read _ < '#{gate}'; fi
+    case " $* " in *" restore "*) mkdir '#{dir}/held' 2>/dev/null && read _ < '#{gate}';; esac
     exec '#{System.find_executable("git")}' "$@"
     """)
 
@@ -1499,7 +1538,645 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     context
   end
 
+  # --- slow forge ------------------------------------------------------------------
+
+  step "the project's Forgejo answers each pull request lookup after six seconds", context do
+    root = World.project(context, "demo").root
+    World.git!(root, ["remote", "add", "origin", "git@codeberg.org:acme/shop.git"])
+    # Held on a gate the scenario releases once it has seen the checkpoint and
+    # the next turn land: slower than six seconds, and not a race with them.
+    gate = Path.join(context.mc.home, "forge-release")
+
+    context
+    |> World.fake_cli(["gh", "tea"])
+    |> World.cli_rules([
+      %{
+        "cmd" => "tea",
+        "args" => ["login list"],
+        "stdout" => [
+          %{
+            "name" => "codeberg",
+            "url" => "https://codeberg.org",
+            "user" => "octocat",
+            "default" => "true",
+            "valid" => "true"
+          }
+        ]
+      },
+      %{
+        "cmd" => "tea",
+        "args" => ["api", "--login codeberg", "/api/v1/repos/acme/shop/pulls?state=all"],
+        "stderr" => "HTTP/2.0 200 OK\n",
+        "run" => "while [ ! -f '#{gate}' ]; do sleep 0.05; done",
+        "stdout" => []
+      }
+    ])
+    |> Map.merge(%{forge_root: root, forge_gate: gate})
+  end
+
+  step "twelve pull request lookups are waiting on it", context do
+    root = context.forge_root
+
+    tasks =
+      for _ <- 1..12,
+          do: Task.async(fn -> HalC2.Vcs.branch_pull_request(root, "t1") end)
+
+    await_cli_calls(context, "repos/acme/shop/pulls", 12)
+    Map.put(context, :forge_tasks, tasks)
+  end
+
+  step "a run of {string} completes and the user sends the next message",
+       %{args: [thread]} = context do
+    context = complete(context, thread, "write forge.txt")
+    complete(context, thread, "write next.txt")
+  end
+
+  # The forge only answers once the gate opens, and the scenario opens it
+  # last: a checkpoint (or turn) that is done before then never waited on an
+  # answer. (A lookup task may already have given up on its own — the MC
+  # stops waiting on a forge after ten seconds — which is also not waiting.)
+  step "the run's checkpoint is captured without waiting on the forge", context do
+    checkpoint = checkpoint(context, context.run_title, 1)
+    assert checkpoint["status"] == "ready"
+    assert Checkpoint.exists?(cwd(context, context.run_title), checkpoint["ref"])
+    refute File.exists?(context.forge_gate)
+    context
+  end
+
+  step "the next turn starts without waiting on the pull request status of {string}",
+       %{args: [thread]} = context do
+    assert [%{"ordinal" => 1}, %{"ordinal" => 2, "status" => "completed"}] =
+             World.runs(context, thread) |> Enum.sort_by(& &1["ordinal"]) |> Enum.take(-2)
+
+    refute File.exists?(context.forge_gate)
+
+    # Released, the lookups do finish, with no pull request for the branch.
+    File.write!(context.forge_gate, "")
+    assert Task.await_many(context.forge_tasks, 15_000) == List.duplicate(nil, 12)
+    context
+  end
+
+  # --- flagged entries (25,000 files) ----------------------------------------------
+
+  step ~r/^the worktree of "(?<thread>[^"]+)" has 25,000 tracked files, one of them marked (?<flag>skip-worktree|assume-unchanged)$/,
+       %{args: [thread, flag]} = context do
+    cwd = cwd(context, thread)
+    old = System.system_time(:second) - 120
+
+    for d <- 0..249 do
+      dir = Path.join(cwd, "many/d#{d}")
+      File.mkdir_p!(dir)
+
+      for f <- 0..99 do
+        path = Path.join(dir, "f#{f}.txt")
+        File.write!(path, "file #{d}/#{f}\n")
+        File.touch!(path, old)
+      end
+    end
+
+    World.git!(cwd, ["add", "many"])
+    World.git!(cwd, ~w(commit -q -m many))
+    assert length(String.split(git(cwd, ~w(ls-files)), "\n", trim: true)) >= 25_000
+
+    # The no-flag time, after a warm capture of the same tree.
+    :ok = Checkpoint.capture(cwd, "refs/hal-c2/test/many-warm")
+
+    {baseline_us, :ok} =
+      :timer.tc(fn -> Checkpoint.capture(cwd, "refs/hal-c2/test/many-base") end)
+
+    target = "many/d0/f0.txt"
+    World.git!(cwd, ["update-index", "--#{flag}", target])
+
+    context
+    |> Map.merge(%{many_baseline_ms: div(baseline_us, 1_000), many_target: target})
+    |> Map.put(:run_title, thread)
+  end
+
+  step "the user edited that file without changing its size", context do
+    path = Path.join(cwd(context, context.run_title), context.many_target)
+    before = File.read!(path)
+    edited = String.replace(before, "file", "EDIT")
+    assert byte_size(edited) == byte_size(before)
+    File.write!(path, edited)
+    Map.put(context, :many_edited, edited)
+  end
+
+  step "the checkpoint is captured in about the time of a worktree with no such entry",
+       context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+    cwd = cwd(context, context.run_title)
+
+    {flagged_us, :ok} =
+      :timer.tc(fn -> Checkpoint.capture(cwd, "refs/hal-c2/test/many-flagged") end)
+
+    flagged_ms = div(flagged_us, 1_000)
+
+    assert flagged_ms <= context.many_baseline_ms * 2 + 3_000,
+           "capture with a flagged entry took #{flagged_ms} ms against a " <>
+             "#{context.many_baseline_ms} ms baseline"
+
+    context
+  end
+
+  step "the checkpoint holds the edited content of that file", context do
+    checkpoint = last_checkpoint(context)
+
+    assert git(cwd(context, context.run_title), [
+             "show",
+             "#{checkpoint["ref"]}:#{context.many_target}"
+           ]) == context.many_edited
+
+    context
+  end
+
+  # --- split index -----------------------------------------------------------------
+
+  step "a repository that keeps its git index split, with shared index files that expire",
+       context do
+    cwd = cwd(context, "t1")
+    World.git!(cwd, ~w(config core.splitIndex true))
+    World.git!(cwd, ~w(config splitIndex.sharedIndexExpire now))
+    World.git!(cwd, ~w(update-index --split-index))
+    git_dir = String.trim(git(cwd, ["rev-parse", "--absolute-git-dir"]))
+    shared = Path.wildcard(Path.join(git_dir, "sharedindex.*"))
+    assert shared != []
+    Map.put(context, :shared_index, shared)
+  end
+
+  step "a checkpoint is captured", context do
+    complete(context, "t1", "write split.txt")
+  end
+
+  step "the shared index the repository uses is still there", context do
+    assert last_checkpoint(context)["status"] == "ready"
+
+    for file <- context.shared_index,
+        do: assert(File.exists?(file), "#{file} is gone after the capture")
+
+    context
+  end
+
+  step "git commands in the repository keep working", context do
+    cwd = cwd(context, "t1")
+    assert git(cwd, ~w(status --porcelain)) =~ "split.txt"
+    assert git(cwd, ~w(ls-files)) =~ "README.md"
+    context
+  end
+
+  # --- safecrlf --------------------------------------------------------------------
+
+  step "the user's git has {string} set to true and converts line endings to CRLF",
+       %{args: [key]} = context do
+    assert key == "core.safecrlf"
+    cwd = cwd(context, "t1")
+    World.git!(cwd, ["config", key, "true"])
+    World.git!(cwd, ~w(config core.autocrlf true))
+    Map.put(context, :run_title, "t1")
+  end
+
+  step "run {int} of {string} wrote a file with only LF line endings",
+       %{args: [n, thread]} = context do
+    context = complete_through(context, thread, n - 1)
+    File.write!(Path.join(cwd(context, thread), "lf.txt"), "only\nlf\n")
+    Map.put(context, :run_title, thread)
+  end
+
+  step "run {int} completes", %{args: [n]} = context do
+    complete(context, context.run_title, "write run-#{n}.txt")
+  end
+
+  step "run {int} has a checkpoint with its diff", %{args: [n]} = context do
+    checkpoint = checkpoint(context, context.run_title, n)
+    assert checkpoint["status"] == "ready"
+    assert Enum.any?(checkpoint["files"], &(&1["path"] == "lf.txt"))
+    context
+  end
+
+  step "the user's own git settings and index are unchanged", context do
+    cwd = cwd(context, context.run_title)
+    assert git(cwd, ~w(config core.safecrlf)) == "true\n"
+    assert git(cwd, ~w(config core.autocrlf)) == "true\n"
+    assert git(cwd, ~w(diff --cached --name-only)) == ""
+    context
+  end
+
+  # --- restore in a repository with no commits --------------------------------------
+
+  step "the worktree of {string} is a repository with no commits yet and the untracked file {string}",
+       %{args: [thread, file]} = context do
+    fresh = Path.join(context.mc.home, "fresh-#{thread}")
+    File.mkdir_p!(fresh)
+    World.git!(fresh, ~w(init -q -b main))
+    File.write!(Path.join(fresh, file), "v1\n")
+
+    context
+    |> World.patch_thread(thread, %{"worktreePath" => fresh, "branch" => "main"})
+    |> Map.put(:run_title, thread)
+  end
+
+  step "run {int} of {string} changed {string}", %{args: [n, thread, file]} = context do
+    context = complete_through(context, thread, n - 1)
+    File.write!(Path.join(cwd(context, thread), file), "v2\n")
+    complete(context, thread, "write run-#{n}.txt")
+  end
+
+  step "{string} is untracked again, as it was before run {int}",
+       %{args: [file, _n]} = context do
+    assert {:ok, _} = context.reply
+    cwd = cwd(context, context.run_title)
+    assert File.read!(Path.join(cwd, file)) == "v1\n"
+    assert git(cwd, ~w(status --porcelain -- file.txt)) == "?? #{file}\n"
+    context
+  end
+
+  # --- restoring what a .gitignore hid ----------------------------------------------
+
+  step "run {int} of {string} created {string} ignoring {string} and {string}",
+       %{args: [n, thread, ignore_file, first, second]} = context do
+    context = complete_through(context, thread, n - 1)
+    path = Path.join(cwd(context, thread), ignore_file)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "#{first}\n#{second}\n")
+    Map.put(context, :run_title, thread)
+  end
+
+  step "run {int} then created {string} and {string}",
+       %{args: [n, first, second]} = context do
+    thread = context.run_title
+    cwd = cwd(context, thread)
+
+    for file <- [first, second] do
+      path = Path.join(cwd, file)
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "hidden\n")
+    end
+
+    complete(context, thread, "write run-#{n}.txt")
+  end
+
+  step "the user rewinds {string} to run {int} and restores files",
+       %{args: [thread, n]} = context do
+    context |> ensure_later_runs(thread, n) |> rewind(thread, n, %{"restoreFiles" => true})
+  end
+
+  step "{string}, {string} and {string} are gone", %{args: files} = context do
+    assert {:ok, _} = context.reply
+    cwd = cwd(context, context.run_title)
+    for file <- files, do: refute(File.exists?(Path.join(cwd, file)), "#{file} is still there")
+    context
+  end
+
+  step "the next checkpoint of {string} holds none of them", %{args: [thread]} = context do
+    context = complete(context, thread, "write after.txt")
+    checkpoint = last_checkpoint(context)
+    tree = git(cwd(context, thread), ["ls-tree", "-r", "--name-only", checkpoint["ref"]])
+    refute tree =~ "web/.gitignore"
+    refute tree =~ "node_modules"
+    refute tree =~ ".env"
+    context
+  end
+
+  step "run {int} of {string} created a chain of more than four nested .gitignore files, each hiding the next",
+       %{args: [n, thread]} = context do
+    context = complete_through(context, thread, n - 1)
+    cwd = cwd(context, thread)
+    levels = ~w(l1 l1/l2 l1/l2/l3 l1/l2/l3/l4 l1/l2/l3/l4/l5)
+
+    for {level, next} <- Enum.zip(levels, tl(levels) ++ ["leaf"]) do
+      File.mkdir_p!(Path.join(cwd, level))
+      File.write!(Path.join(cwd, "#{level}/.gitignore"), "#{Path.basename(next)}/\n")
+    end
+
+    File.write!(Path.join(cwd, "l1/l2/l3/l4/l5/leaf.txt"), "leaf\n")
+    complete(context, thread, "write run-#{n}.txt")
+  end
+
+  step "the restore fails with the clean error rather than reporting success", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "git clean could not remove"
+    context
+  end
+
+  # --- ignored workspace folders -----------------------------------------------------
+
+  step "thread {string} works in a subfolder that its repository ignores, with no tracked files",
+       %{args: [thread]} = context do
+    ignored_thread(context, thread, false)
+  end
+
+  step "thread {string} works in an ignored subfolder that holds tracked files",
+       %{args: [thread]} = context do
+    ignored_thread(context, thread, true)
+  end
+
+  defp ignored_thread(context, thread, tracked?) do
+    root = World.project(context, "demo").root
+    name = "ignored-#{thread}"
+    sub = Path.join(root, name)
+    File.mkdir_p!(sub)
+    File.write!(Path.join(root, ".gitignore"), "#{name}/\n", [:append])
+    World.git!(root, ["add", ".gitignore"])
+    World.git!(root, ~w(commit -q -m ignore-sub))
+
+    if tracked? do
+      File.write!(Path.join(sub, "tracked.txt"), "v1\n")
+      World.git!(root, ["add", "-f", "#{name}/tracked.txt"])
+      World.git!(root, ~w(commit -q -m tracked-in-ignored))
+    end
+
+    context
+    |> World.create_thread(thread, "demo", %{"worktreePath" => sub})
+    |> Map.merge(%{run_title: thread, ignored_name: name})
+  end
+
+  step "the run's checkpoint is missing, not an error", context do
+    assert %{"status" => "missing"} = last_checkpoint(context)
+    context
+  end
+
+  step "a run of {string} completes after changing a tracked file", %{args: [thread]} = context do
+    File.write!(Path.join(cwd(context, thread), "ignored.txt"), "ignored\n")
+    complete(context, thread, "write tracked.txt")
+  end
+
+  step "a ready checkpoint holds that change", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+
+    assert git(cwd(context, context.run_title), [
+             "show",
+             "#{checkpoint["ref"]}:#{context.ignored_name}/tracked.txt"
+           ]) == "write tracked.txt\n"
+
+    context
+  end
+
+  step "new files the repository ignores are left out", context do
+    checkpoint = last_checkpoint(context)
+
+    tree =
+      git(cwd(context, context.run_title), ["ls-tree", "-r", "--name-only", checkpoint["ref"]])
+
+    refute tree =~ "ignored.txt"
+    context
+  end
+
+  # --- empty checkpoint in a subfolder ------------------------------------------------
+
+  step "{string} is rooted at the folder {string} inside a git repository",
+       %{args: [project, folder]} = context do
+    root = World.project(context, project).root
+    sub = Path.join(root, folder)
+    File.mkdir_p!(sub)
+
+    context
+    |> World.patch_thread("t1", %{"worktreePath" => sub, "branch" => nil})
+    |> Map.merge(%{run_title: "t1", subfolder: folder, folder_base: root})
+  end
+
+  step "the rewind succeeds", context do
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  # --- plain flush --------------------------------------------------------------------
+
+  step "the worktree of {string} is on a macOS network mount that refuses Git's full flush",
+       %{args: [thread]} = context do
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "fsync-git")
+    script = Path.join(dir, "git")
+
+    File.write!(script, """
+    #!/bin/sh
+    case "$*" in *fsyncMethod=fsync*) echo "fatal: fsync failed: Operation not supported" >&2; exit 1;; esac
+    exec '#{System.find_executable("git")}' "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    World.put_app_env(:git_command, script)
+    Map.put(context, :run_title, thread)
+  end
+
+  step "the checkpoint is captured with a plain flush instead", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+    assert Checkpoint.exists?(cwd(context, context.run_title), checkpoint["ref"])
+    context
+  end
+
+  step "a capture that fails for another reason is still marked as an error", context do
+    cwd = cwd(context, context.run_title)
+    common = String.trim(git(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)))
+    # A file where the ref needs a directory: update-ref cannot succeed.
+    File.write!(Path.join(common, "refs/hal-c2-blocked"), "")
+    assert {:error, _} = Checkpoint.capture(cwd, "refs/hal-c2-blocked/x")
+    context
+  end
+
+  # --- long paths ---------------------------------------------------------------------
+
+  step "the MC runs on Windows and git's long paths setting is off", context do
+    # The capture turns long paths on for itself; on this machine the setting
+    # is only recorded off and the long path is exercised as far as it goes.
+    World.git!(cwd(context, "t1"), ~w(config core.longpaths false))
+    context
+  end
+
+  step "the worktree of {string} holds a file whose path is longer than 260 characters",
+       %{args: [thread]} = context do
+    long =
+      Enum.map_join(1..10, "/", fn i -> "directory-number-#{i}-with-a-long-name" end) <>
+        "/a-file-with-a-rather-long-name.txt"
+
+    assert String.length(long) > 260
+    path = Path.join(cwd(context, thread), long)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "long\n")
+
+    context
+    |> Map.merge(%{long_path: long, run_title: thread})
+  end
+
+  step "the checkpoint holds that file", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+
+    tree =
+      git(cwd(context, context.run_title), ["ls-tree", "-r", "--name-only", checkpoint["ref"]])
+
+    assert tree =~ context.long_path
+    context
+  end
+
+  step "rewinding {string} to that checkpoint restores it", %{args: [thread]} = context do
+    path = Path.join(cwd(context, thread), context.long_path)
+    File.write!(path, "changed\n")
+    context = rewind(context, thread, 1)
+    assert {:ok, _} = context.reply
+    assert File.read!(path) == "long\n"
+    context
+  end
+
+  # --- index lock on restore -----------------------------------------------------------
+
+  step "another git process holds the index lock of the workspace", context do
+    cwd = cwd(context, context.run_title)
+    lock = Path.join(String.trim(git(cwd, ["rev-parse", "--absolute-git-dir"])), "index.lock")
+    File.write!(lock, "")
+    Map.put(context, :index_lock, lock)
+  end
+
+  step "the user rewinds {string} to run {int} and restores the files",
+       %{args: [thread, n]} = context do
+    rewind(context, thread, n, %{"restoreFiles" => true})
+  end
+
+  step "the rewind ends with an error saying git's index lock is held and to try again once it is free",
+       context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "index lock"
+    assert message =~ "try again once it is free"
+    context
+  end
+
+  step "the lock file and the workspace files are left as they were", context do
+    assert File.exists?(context.index_lock)
+    cwd = cwd(context, context.run_title)
+    assert tree(cwd) == context.tree_before
+    File.rm!(context.index_lock)
+    context
+  end
+
+  # --- a message sent while a rewind runs ---------------------------------------------
+
+  # The restore gate is installed with the runs, so the rewind a later step
+  # starts can be held while a message is sent (see `held_rewind/3`).
+  step "runs {int} and {int} of {string} completed",
+       %{args: [_first, last, thread]} = context do
+    context = complete_through(context, thread, last)
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "rewind-hold")
+    gate = Path.join(dir, "gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    script = Path.join(dir, "git")
+
+    File.write!(script, """
+    #!/bin/sh
+    case " $* " in *" restore "*) mkdir '#{dir}/held' 2>/dev/null && read _ < '#{gate}';; esac
+    exec '#{System.find_executable("git")}' "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    World.put_app_env(:git_command, script)
+    Map.merge(context, %{rewind_gate: %{dir: dir, gate: gate}, run_title: thread})
+  end
+
+  # Dispatches the rewind in a task; it stops at the restore gate until the
+  # "before the rewind has finished" step releases it.
+  defp held_rewind(context, thread, n) do
+    id = World.thread_id(context, thread)
+    scope = Checkpoint.scope_id(id)
+
+    command = %{
+      "type" => "checkpoint.rollback",
+      "threadId" => id,
+      "scopeId" => scope,
+      "checkpointId" => Checkpoint.checkpoint_id(scope, n)
+    }
+
+    task = Task.async(fn -> HalC2.Orchestration.dispatch(command) end)
+    await_file(Path.join(context.rewind_gate.dir, "held"))
+
+    context
+    |> Map.put(:rewind_task, task)
+    |> Map.put(:run_title, thread)
+  end
+
+  step "the user sends {string} to {string} before the rewind has finished",
+       %{args: [text, thread]} = context do
+    # The command is dispatched from a task while the rewind is held at its
+    # restore (World.send_turn/3 itself can only run in the test process, so
+    # the command it would send is built here and dispatched directly).
+    # Its run being decided before the gate opens is what makes the message
+    # one sent during the rewind, not after it.
+    command = World.message_command(context, thread, text)
+    send_task = Task.async(fn -> HalC2.Orchestration.dispatch(command) end)
+
+    World.await_state(context, thread, fn state ->
+      length(StreamState.list(state, "run")) >= 3
+    end)
+
+    File.write!(context.rewind_gate.gate, "go\n")
+    rewind_reply = Task.await(context.rewind_task, 15_000)
+    assert {:ok, _} = rewind_reply
+    assert {:ok, _} = Task.await(send_task, 15_000)
+
+    context
+    |> Map.merge(%{during_rewind: true, reply: {:ok, %{}}})
+    |> Map.put(:run_title, thread)
+  end
+
+  step "run {int} is not replayed", %{args: [n]} = context do
+    thread = context.run_title
+    runs = runs_by_ordinal(World.state(context, thread))
+
+    assert %{1 => "completed", 2 => "rolled_back", 3 => "completed"} =
+             Map.new(runs, fn {ordinal, run} -> {ordinal, run["status"]} end)
+
+    prompt = Enum.map_join(context.again["input"], "\n", &(&1["text"] || ""))
+    refute prompt =~ "<conversation_history>"
+
+    assert Enum.count(World.provider_prompts(context, "codex"), &(&1 =~ "write run-#{n}.txt")) ==
+             1
+
+    context
+  end
+
+  # --- Codex legacy history -------------------------------------------------------------
+
+  step "a Codex thread created before Codex 0.151 with a run to rewind to", context do
+    context = World.providers(context)
+    ["env" | rest] = Application.get_env(:hal_c2, :codex_command)
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_CODEX_LEGACY=1",
+      "FAKE_CODEX_NO_ROLLBACK=1" | rest
+    ])
+
+    complete_through(context, "t1", 3)
+  end
+
+  step "the user rewinds it to that run", context do
+    rewind(context, context.run_title, 1)
+  end
+
+  step "the command fails with Codex's reason for refusing the rollback", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "legacy history"
+    # Refused by thread/revert; thread/rollback was never tried as a fallback.
+    assert rewind_requests(context) == ["thread/revert"]
+    context
+  end
+
   # --- helpers -------------------------------------------------------------------
+
+  # Waits until the fake CLI has been called `count` times with `fragment` in
+  # its args (the call is logged before the fake answers, so the calls are
+  # still waiting on it).
+  defp await_cli_calls(context, fragment, count, tries \\ 1_000) do
+    cond do
+      length(World.cli_calls(context, fragment)) >= count ->
+        :ok
+
+      tries > 0 ->
+        Process.sleep(10)
+        await_cli_calls(context, fragment, count, tries - 1)
+
+      true ->
+        flunk("only #{length(World.cli_calls(context, fragment))} calls matching #{fragment}")
+    end
+  end
 
   # Waits for a gate file a held git command leaves when it reaches the gate.
   defp await_file(path, tries \\ 1_000) do

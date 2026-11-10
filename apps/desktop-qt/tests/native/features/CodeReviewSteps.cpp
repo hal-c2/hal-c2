@@ -46,7 +46,7 @@ void publish(World& world) {
     const QString thread = review.value(QLatin1String("threadId")).toString();
     if (thread.isEmpty()) continue;
     QJsonObject fields;
-    for (const char* field : {"key", "repository", "number", "title", "url", "headBranch", "baseBranch", "status", "verdict", "error", "publishError"}) {
+    for (const char* field : {"key", "repository", "number", "title", "url", "headBranch", "baseBranch", "status", "verdict", "error", "publishError", "version"}) {
       if (review.contains(QLatin1String(field))) fields.insert(QLatin1String(field), review.value(QLatin1String(field)));
     }
     threads.insert(thread, fields);
@@ -93,6 +93,7 @@ void finish(QJsonObject& review, const QString& status, const QString& verdict) 
   review.insert(QStringLiteral("status"), status);
   review.insert(QStringLiteral("verdict"), verdict);
   review.insert(QStringLiteral("summary"), QStringLiteral("The limits are not checked per user."));
+  review.insert(QStringLiteral("version"), QStringLiteral("v1"));
   review.insert(QStringLiteral("comments"), QJsonArray{comment(QStringLiteral("c1"), 12, QStringLiteral("This counts every user together.")),
                                                        comment(QStringLiteral("c2"), 30, QStringLiteral("The window never resets."))});
 }
@@ -158,6 +159,21 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
   }
   if (!fake.reviews.contains(at)) return world.mc.refuse(rpc, QStringLiteral("no review %1").arg(at));
   QJsonObject& review = fake.reviews[at];
+  if (method == QLatin1String("preview")) {
+    // What publishing would post: here the summary as the body, and the comments kept.
+    QJsonArray comments;
+    for (const QJsonValue& each : review.value(QLatin1String("comments")).toArray()) {
+      const QJsonObject comment = each.toObject();
+      if (comment.value(QLatin1String("dismissed")).toBool()) continue;
+      comments.append(QJsonObject{{QStringLiteral("path"), comment.value(QLatin1String("path"))},
+                                  {QStringLiteral("line"), comment.value(QLatin1String("line"))},
+                                  {QStringLiteral("body"), comment.value(QLatin1String("body"))}});
+    }
+    return world.mc.reply(rpc, QJsonObject{{QStringLiteral("version"), review.value(QLatin1String("version"))},
+                                           {QStringLiteral("verdict"), review.value(QLatin1String("verdict"))},
+                                           {QStringLiteral("body"), review.value(QLatin1String("summary"))},
+                                           {QStringLiteral("comments"), comments}});
+  }
   if (method == QLatin1String("dismiss")) {
     QJsonArray comments = review.value(QLatin1String("comments")).toArray();
     for (QJsonValueRef each : comments) {
@@ -169,7 +185,16 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
   } else if (method == QLatin1String("retry")) {
     review.insert(QStringLiteral("status"), QStringLiteral("queued"));
     review.insert(QStringLiteral("elsewhere"), QJsonValue::Null);
+  } else if (method == QLatin1String("approve")) {
+    review.insert(QStringLiteral("approved"), input.value(QLatin1String("headSha")));
+    review.insert(QStringLiteral("status"), QStringLiteral("queued"));
+  } else if (method == QLatin1String("unapprove")) {
+    review.insert(QStringLiteral("approved"), QJsonValue::Null);
+    if (review.value(QLatin1String("status")) == QLatin1String("queued")) review.insert(QStringLiteral("status"), QStringLiteral("ready"));
   } else if (method == QLatin1String("publish")) {
+    // What is posted is the review the user saw.
+    if (input.value(QLatin1String("version")) != review.value(QLatin1String("version")) || input.value(QLatin1String("verdict")) != review.value(QLatin1String("verdict")))
+      return world.mc.refuse(rpc, QStringLiteral("The review of %1 changed since you looked at it.").arg(at));
     review.insert(QStringLiteral("status"), QStringLiteral("published"));
     review.insert(QStringLiteral("publishedAt"), QStringLiteral("2026-10-07T09:30:00Z"));
   } else {
@@ -279,7 +304,7 @@ const Steps steps([] {
     const QString ran = textOf(world, QStringLiteral("codeReviewValidationLines:ran"));
     expect(ran.contains(QLatin1String("mix test: 412 passed")), QStringLiteral("what ran reads %1").arg(ran));
   });
-  step(QStringLiteral("the user can publish it or dismiss comments"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user can dismiss comments, and publish it once shown how it is posted"), [](World& world, const Captures&, const Table&) {
     // A changed review draws its comments again.
     const auto dismiss = [&] { return findNamed(waitShownNamed(world, QStringLiteral("codeReviewComment:c1")), QStringLiteral("codeReviewDismiss")); };
     click(world, dismiss());
@@ -288,10 +313,82 @@ const Steps steps([] {
     expect(dismissed == QJsonObject{{QStringLiteral("key"), key(13)}, {QStringLiteral("commentId"), QStringLiteral("c1")}, {QStringLiteral("dismissed"), true}},
            QStringLiteral("the MC was asked %1").arg(show(dismissed)));
 
+    // Publishing first shows how the post goes, and posts only what the user confirms.
     click(world, waitShownNamed(world, QStringLiteral("codeReviewPublish")));
+    const QString verdict = state(world).reviews.value(state(world).order.last()).value(QLatin1String("verdict")).toString();
+    world.waitFor([&] { return textOf(world, QStringLiteral("codeReviewPublishVerdict")).startsWith(QLatin1String("Posted as: ")); },
+                  [&] { return textOf(world, QStringLiteral("codeReviewPublishVerdict")); });
+    expect(asked(world, QStringLiteral("publish")).isEmpty(), QStringLiteral("the review was published before the user confirmed"));
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewPublishConfirm")));
     world.waitFor([&] { return textOf(world, QStringLiteral("codeReviewStatus")).startsWith(QLatin1String("Published")); },
                   [&] { return textOf(world, QStringLiteral("codeReviewStatus")); });
-    expect(asked(world, QStringLiteral("publish")) == QList<QJsonObject>{{{QStringLiteral("key"), key(13)}}}, QStringLiteral("the review was not published once"));
+    expect(asked(world, QStringLiteral("publish")) == QList<QJsonObject>{{{QStringLiteral("key"), key(13)}, {QStringLiteral("version"), QStringLiteral("v1")}, {QStringLiteral("verdict"), verdict}}},
+           QStringLiteral("the review was not published once, as shown"));
+  });
+
+  step(QStringLiteral("#(\\d+) by %1, who is not a member or collaborator, is listed").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& review = add(world, c[0].toInt(), QStringLiteral("ready"));
+    review.insert(QStringLiteral("author"), c[1]);
+    review.insert(QStringLiteral("untrusted"), QStringLiteral("Opened by %1, who is not a member or collaborator of the repository.").arg(c[1]));
+    publish(world);
+  });
+  step(QStringLiteral("it says %1 is not a member or collaborator").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString note = textOf(world, QStringLiteral("codeReviewProblem"));
+    expect(note.contains(c[0]) && note.contains(QLatin1String("not a member or collaborator")), QStringLiteral("the review says %1").arg(note));
+    world.sync();
+    QQuickItem* retry = findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReviewRetry"));
+    expect(retry && !retry->isVisible(), QStringLiteral("it can be reviewed without an approval"));
+  });
+  step(QStringLiteral("the user can approve #(\\d+) at the commit shown, and withdraw the approval"), [](World& world, const Captures& c, const Table&) {
+    const int number = c[0].toInt();
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewApprove")));
+    waitText(world, QStringLiteral("codeReviewStatus"), QStringLiteral("Queued"));
+    const QJsonObject approved = asked(world, QStringLiteral("approve")).value(0);
+    expect(approved == QJsonObject{{QStringLiteral("key"), key(number)}, {QStringLiteral("headSha"), QStringLiteral("abc%1").arg(number)}},
+           QStringLiteral("the MC was asked %1").arg(show(approved)));
+
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewUnapprove")));
+    waitText(world, QStringLiteral("codeReviewStatus"), QStringLiteral("Not reviewed"));
+    expect(asked(world, QStringLiteral("unapprove")) == QList<QJsonObject>{{{QStringLiteral("key"), key(number)}}}, QStringLiteral("the approval was not withdrawn once"));
+    waitShownNamed(world, QStringLiteral("codeReviewApprove"));
+  });
+
+  step(QStringLiteral("#(\\d+) by %1, who is not a member or collaborator, is listed with an approval of an earlier commit").arg(q), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& review = add(world, c[0].toInt(), QStringLiteral("ready"));
+    review.insert(QStringLiteral("author"), c[1]);
+    review.insert(QStringLiteral("untrusted"), QStringLiteral("Opened by %1, who is not a member or collaborator of the repository.").arg(c[1]));
+    review.insert(QStringLiteral("approved"), QStringLiteral("old%1").arg(c[0]));
+    publish(world);
+  });
+  step(QStringLiteral("the user can withdraw the approval of #(\\d+)"), [](World& world, const Captures& c, const Table&) {
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewUnapprove")));
+    world.waitFor([&] { return !asked(world, QStringLiteral("unapprove")).isEmpty(); }, QStringLiteral("the withdrawal to be asked"));
+    expect(asked(world, QStringLiteral("unapprove")) == QList<QJsonObject>{{{QStringLiteral("key"), key(c[0].toInt())}}}, QStringLiteral("the approval was not withdrawn once"));
+    world.sync();
+    QQuickItem* withdraw = findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReviewUnapprove"));
+    expect(withdraw && !withdraw->isVisible(), QStringLiteral("the approval is still offered for withdrawal"));
+  });
+
+  step(QStringLiteral("#(\\d+) is pushed to while the page is open"), [](World& world, const Captures& c, const Table&) {
+    waitText(world, QStringLiteral("codeReviewApproveCommit"), QStringLiteral("At commit abc%1").arg(c[0]));
+    state(world).reviews[key(c[0].toInt())].insert(QStringLiteral("headSha"), QStringLiteral("def%1").arg(c[0]));
+    publish(world);
+  });
+  step(QStringLiteral("the page says #(\\d+) was pushed since the user opened it"), [](World& world, const Captures& c, const Table&) {
+    waitText(world, QStringLiteral("codeReviewApproveCommit"), QStringLiteral("Pushed since you opened it: now at def%1, not abc%1").arg(c[0]));
+  });
+  step(QStringLiteral("the user approves #(\\d+) only at the new commit, once they have taken it in"), [](World& world, const Captures& c, const Table&) {
+    const int number = c[0].toInt();
+    // The first click takes in the new commit and approves nothing.
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewApprove")));
+    waitText(world, QStringLiteral("codeReviewApproveCommit"), QStringLiteral("At commit def%1").arg(number));
+    expect(asked(world, QStringLiteral("approve")).isEmpty(), QStringLiteral("a commit the user had not seen was approved"));
+
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewApprove")));
+    waitText(world, QStringLiteral("codeReviewStatus"), QStringLiteral("Queued"));
+    const QJsonObject approved = asked(world, QStringLiteral("approve")).value(0);
+    expect(approved == QJsonObject{{QStringLiteral("key"), key(number)}, {QStringLiteral("headSha"), QStringLiteral("def%1").arg(number)}},
+           QStringLiteral("the MC was asked %1").arg(show(approved)));
   });
 
   step(QStringLiteral("the review of #(\\d+) is running on the user's machine %1").arg(q), [](World& world, const Captures& c, const Table&) {
@@ -348,6 +445,44 @@ const Steps steps([] {
                   [&] { return findNamed(header, QStringLiteral("codeReviewPullRequest"))->property("text").toString(); });
     expect(findNamed(header, QStringLiteral("codeReviewVerdict"))->property("text") == QStringLiteral("Approve"), QStringLiteral("the verdict is not shown"));
     expect(findNamed(header, QStringLiteral("codeReviewPublish"))->isVisible(), QStringLiteral("the review cannot be published"));
+  });
+
+  step(QStringLiteral("the user publishes the review from above the conversation"), [](World& world, const Captures&, const Table&) {
+    click(world, findNamed(waitShownNamed(world, QStringLiteral("codeReviewHeader")), QStringLiteral("codeReviewPublish")));
+  });
+  step(QStringLiteral("the summary and comments that will be posted are shown, and nothing is posted yet"), [](World& world, const Captures&, const Table&) {
+    waitText(world, QStringLiteral("codeReviewConfirmBody"), QStringLiteral("The limits are not checked per user."));
+    const QString first = drawsText(waitShownNamed(world, QStringLiteral("codeReviewConfirmComment:0")), QStringLiteral("This counts every user together.")) ? QString() : QStringLiteral("first");
+    const QString second = drawsText(waitShownNamed(world, QStringLiteral("codeReviewConfirmComment:1")), QStringLiteral("The window never resets.")) ? QString() : QStringLiteral("second");
+    expect(first.isEmpty() && second.isEmpty(), QStringLiteral("the %1 comment is not shown").arg(first.isEmpty() ? second : first));
+    expect(asked(world, QStringLiteral("preview")) == QList<QJsonObject>{{{QStringLiteral("key"), key(13)}}}, QStringLiteral("what will be posted was not read once"));
+    expect(asked(world, QStringLiteral("publish")).isEmpty(), QStringLiteral("the review was published before the user confirmed"));
+  });
+  step(QStringLiteral("the review changes while they are shown"), [](World& world, const Captures&, const Table&) {
+    // Another of the user's devices dismisses a comment.
+    QJsonObject& review = state(world).reviews[state(world).order.last()];
+    QJsonArray comments = review.value(QLatin1String("comments")).toArray();
+    QJsonObject second = comments.at(1).toObject();
+    second.insert(QStringLiteral("dismissed"), true);
+    comments.replace(1, second);
+    review.insert(QStringLiteral("comments"), comments);
+    review.insert(QStringLiteral("version"), QStringLiteral("v2"));
+    publish(world);
+  });
+  step(QStringLiteral("what is shown is read again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return asked(world, QStringLiteral("preview")).size() == 2; }, QStringLiteral("what will be posted to be read again"));
+    world.waitFor([&] {
+      QQuickItem* gone = findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReviewConfirmComment:1"));
+      return (gone == nullptr || !gone->isVisible()) && findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReviewConfirmComment:0")) != nullptr;
+    }, QStringLiteral("the dismissed comment to leave what is shown"));
+  });
+  step(QStringLiteral("the user confirms what will be posted"), [](World& world, const Captures&, const Table&) {
+    click(world, waitShownNamed(world, QStringLiteral("codeReviewConfirmPublishButton")));
+  });
+  step(QStringLiteral("the review is published as it was shown"), [](World& world, const Captures&, const Table&) {
+    const QList<QJsonObject> expected{{{QStringLiteral("key"), key(13)}, {QStringLiteral("version"), QStringLiteral("v2")}, {QStringLiteral("verdict"), QStringLiteral("approve")}}};
+    world.waitFor([&] { return asked(world, QStringLiteral("publish")) == expected; },
+                  [&] { return QStringLiteral("the MC to be asked to publish what was shown, not %1").arg(show(asked(world, QStringLiteral("publish")).value(0))); });
   });
 
   step(QStringLiteral("%1 shows reviews as %1").arg(q), [](World& world, const Captures& c, const Table&) {

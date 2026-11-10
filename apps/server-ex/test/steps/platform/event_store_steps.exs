@@ -2,9 +2,12 @@ defmodule HalC2.Steps.Platform.EventStore do
   @moduledoc "Steps for features/mc/platform/event-store.feature."
   use Cucumber.StepDefinition
   import ExUnit.Assertions
+  import ExUnit.Callbacks, only: [start_supervised!: 1, stop_supervised!: 1]
 
   alias Exqlite.Sqlite3
-  alias HalC2.{Store, StreamState, Streams}
+  alias HalC2.{Doctor, Store, StreamState, Streams}
+  alias HalC2.Projection.Check
+  alias HalC2.Store.{Compaction, Compactor}
   alias HalC2.Test.{Mc, WsClient}
   alias HalC2.Test.Mc.World
 
@@ -687,7 +690,7 @@ defmodule HalC2.Steps.Platform.EventStore do
     # Index casts land before this call returns.
     Store.path()
     sql!(context, "DELETE FROM messages")
-    sql!(context, "DELETE FROM meta WHERE key = 'messages_typed'")
+    sql!(context, "DELETE FROM meta WHERE key = 'messages_typed_2'")
     assert Store.search_messages(context.mc.store, "%flux%", 10) == []
     context
   end
@@ -699,13 +702,13 @@ defmodule HalC2.Steps.Platform.EventStore do
     assert found |> Enum.map(&elem(&1, 0)) |> Enum.sort() ==
              Enum.sort([World.thread_id(context, "main"), World.thread_id(context, "other")])
 
-    assert Store.meta(context.mc.store, "messages_typed") == "1"
+    assert Store.meta(context.mc.store, "messages_typed_2") == "1"
 
     # A later start does not index them again.
     sql!(context, "DELETE FROM messages")
     backfill()
     assert Store.search_messages(context.mc.store, "%flux%", 10) == []
-    sql!(context, "DELETE FROM meta WHERE key = 'messages_typed'")
+    sql!(context, "DELETE FROM meta WHERE key = 'messages_typed_2'")
     backfill()
     context
   end
@@ -790,6 +793,593 @@ defmodule HalC2.Steps.Platform.EventStore do
     refute Process.whereis(Store)
     # The file is left as it was.
     assert Store.meta(context.mc.store, "schema_version") == Integer.to_string(context.newer)
+    context
+  end
+
+  # --- table statistics -----------------------------------------------------------------
+
+  step "a store with no table statistics", context do
+    context = stopped(context)
+    sql!(context, "DROP TABLE IF EXISTS sqlite_stat1")
+    assert stat_tables(context) == []
+    Map.put(context, :stopped_at, System.monotonic_time(:millisecond))
+  end
+
+  step "it opens the store without reading through its tables", context do
+    # ANALYZE, or PRAGMA optimize on a store without statistics, reads every table and
+    # leaves what it found in sqlite_stat1.
+    assert stat_tables(context) == []
+    context
+  end
+
+  step "it accepts clients within a second of opening the store", context do
+    client = Mc.config(Mc.connect(context.mc))
+    assert System.monotonic_time(:millisecond) - context.stopped_at < 1_000
+    World.put_client(context, client)
+  end
+
+  # --- checking projections -------------------------------------------------------------
+
+  step "a thread in the log has no projection", context do
+    context = stopped(context)
+    id = World.thread_id(context, "main")
+    sql!(context, "DELETE FROM shell WHERE stream = #{key(id)}")
+    Map.put(context, :faults, [{:missing, id}])
+  end
+
+  step "a projection exists for a thread the log never created", context do
+    context = stopped(context)
+    sql!(context, "INSERT INTO streams (id, kind) VALUES ('th-ghost', 'thread')")
+
+    sql!(context, """
+    INSERT INTO shell (stream, seq, kind, row)
+    SELECT #{key("th-ghost")}, seq, kind, row FROM shell WHERE stream = #{key(World.thread_id(context, "main"))}
+    """)
+
+    Map.put(context, :faults, [{:unexpected, "th-ghost"}])
+  end
+
+  step "a thread's stored projection can no longer be read", context do
+    context = stopped(context)
+    id = World.thread_id(context, "main")
+    put_snapshot_bytes(context, id, <<0>>)
+    Map.put(context, :faults, [{:unreadable, id}])
+  end
+
+  step "a fork's source thread can no longer be read", context do
+    source = World.thread_id(context, "main")
+    fork = "th-fork"
+
+    thread = %{
+      "id" => fork,
+      "projectId" => World.project(context).id,
+      "title" => "fork",
+      "forkedFrom" => %{"type" => "run", "threadId" => source, "runId" => "run-1"}
+    }
+
+    {:ok, _} = Streams.commit(fork, :thread, [{"thread", fork, HalC2.Patch.diff(nil, thread)}])
+    World.await_row(fork, & &1)
+    context = stopped(context)
+    put_snapshot_bytes(context, source, <<0>>)
+    Map.put(context, :faults, [{:unreadable, source}, {:unreadable_source, source, fork}])
+  end
+
+  step "the projections stopped at an earlier sequence than the log", context do
+    context = stopped(context)
+    id = World.thread_id(context, "main")
+    sql!(context, "UPDATE shell SET seq = 1 WHERE stream = #{key(id)}")
+    [%{seq: last} | _] = context |> log(id) |> Enum.reverse()
+    Map.put(context, :faults, [{:behind, id, 1, last}])
+  end
+
+  step "the projections were written by another projection format", context do
+    context = stopped(context)
+    id = World.thread_id(context, "main")
+    put_snapshot_bytes(context, id, :erlang.term_to_binary(%{v: 99}))
+    Map.put(context, :faults, [{:format, id, 99}])
+  end
+
+  step "the projections are checked against the log", context do
+    Map.put(context, :problems, Check.run(context.mc.store))
+  end
+
+  for report <- [
+        "the missing thread",
+        "the unexpected thread",
+        "the unreadable thread",
+        "the source and the fork as unreadable",
+        "the sequence they are at and the log's",
+        "the format version it found"
+      ] do
+    step "the check fails and names #{report}", context do
+      assert context.problems == Enum.sort(context.faults)
+      for problem <- context.problems, do: assert(Check.describe(problem) =~ elem(problem, 1))
+      context
+    end
+  end
+
+  # --- rebuilding projections -----------------------------------------------------------
+
+  step "the projections of the MC are damaged", context do
+    Application.put_env(:hal_c2, :stream_hot_items, 2)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :stream_hot_items) end)
+    id = World.thread_id(context, "main")
+    # The stream started before memory was made this small.
+    idle_stop(id)
+
+    for i <- 1..3 do
+      run = "run-#{i}"
+
+      commit(context, [
+        {"run", run, %{"s" => %{"id" => run, "ordinal" => i, "status" => "running"}}},
+        {"message", "#{run}-m",
+         %{
+           "s" => %{
+             "id" => "#{run}-m",
+             "runId" => run,
+             "role" => "user",
+             "text" => "question #{i} about flux"
+           }
+         }}
+        | for(
+            j <- 1..3,
+            do:
+              {"turn-item", "#{run}-#{j}",
+               %{
+                 "s" => %{
+                   "id" => "#{run}-#{j}",
+                   "runId" => run,
+                   "threadId" => id,
+                   "text" => "#{i}.#{j}"
+                 }
+               }}
+          )
+      ])
+
+      commit(context, [{"run", run, %{"s" => %{"status" => "completed"}}}])
+    end
+
+    state = thread_state(context)
+    expected = entities(state)
+    order = for {"turn-item", item, _} <- StreamState.rows(state), do: item
+    assert length(order) == 9
+    context = stopped(context)
+
+    for sql <- [
+          "DELETE FROM shell",
+          "UPDATE hot_snapshots SET state = x'00'",
+          "DELETE FROM cold",
+          "DELETE FROM messages"
+        ],
+        do: sql!(context, sql)
+
+    assert Check.run(context.mc.store) != []
+    Map.merge(context, %{expected: expected, order: order})
+  end
+
+  step "the projections are rebuilt", context do
+    start_supervised!({Store, path: context.mc.store})
+    Map.put(context, :rebuilt, Check.rebuild())
+  end
+
+  step "every thread, run, message and timeline item is derived again from the log", context do
+    id = World.thread_id(context, "main")
+    assert id in context.rebuilt
+    state = StreamState.load(context.mc.store, id)
+    assert entities(state) == context.expected
+    assert [_ | _] = Store.search_messages(context.mc.store, "%flux%", 10)
+    Map.put(context, :loaded, state)
+  end
+
+  step "timeline items keep the order they first had", context do
+    assert for({"turn-item", item, _} <- StreamState.rows(context.loaded), do: item) ==
+             context.order
+
+    context
+  end
+
+  step "the check against the log passes", context do
+    assert Check.run(context.mc.store) == []
+    context
+  end
+
+  # --- compaction -----------------------------------------------------------------------
+
+  step "a thread was renamed, pinned, linked to pull requests and visited many times and its messages streamed in many updates",
+       context do
+    id = World.thread_id(context, "main")
+
+    for i <- 1..3 do
+      for command <- [
+            %{"type" => "thread.metadata.update", "title" => "title #{i}"},
+            %{"type" => "thread.pin"},
+            %{"type" => "thread.unpin"},
+            %{"type" => "thread.visit", "visitedAt" => World.iso_from_now(i * 1_000)}
+          ],
+          do: {:ok, _} = dispatch(Map.put(command, "threadId", id))
+
+      link = %{"host" => "github.com", "repository" => "o/r", "number" => i, "url" => "u#{i}"}
+      commit(context, [{"thread", id, %{"s" => %{"pullRequests" => [link]}}}])
+    end
+
+    for m <- ["m-1", "m-2"], do: stream_message(context, m, 10, 10)
+
+    commit(context, [
+      {"run", "run-1", %{"s" => %{"id" => "run-1", "status" => "running"}}},
+      {"turn-item", "i-1", %{"s" => %{"id" => "i-1", "runId" => "run-1", "text" => "a"}}}
+    ])
+
+    commit(context, [{"turn-item", "i-1", %{"a" => %{"text" => "b"}}}])
+    commit(context, [{"run", "run-1", %{"s" => %{"status" => "completed"}}}])
+    context
+  end
+
+  step "the thread was deleted", context do
+    id = World.thread_id(context, "main")
+    # As `thread.delete` marks its thread.
+    commit(context, [{"thread", id, %{"s" => %{"deletedAt" => World.iso_from_now(0)}}}])
+    state = thread_state(context)
+
+    Map.merge(context, %{
+      before: log(context, id),
+      entities_before: entities(state),
+      row_before: HalC2.Projection.row(context.mc.store, id, state)
+    })
+  end
+
+  # Said of a compaction a step runs, and of the one the MC runs in the background.
+  step "the log is compacted", context do
+    if context[:background] do
+      assert_receive {:compacted, %{events: events}} when events > 0, 5_000
+      context
+    else
+      id = World.thread_id(context, "main")
+      context = Map.put_new_lazy(context, :before, fn -> log(context, id) end)
+      Map.put(context, :compaction, Compaction.run(Store, all: true))
+    end
+  end
+
+  step "of the thread's updates only its creation and its deletion are kept", context do
+    id = World.thread_id(context, "main")
+    written = for %{kind: "thread"} = e <- context.before, do: e
+    kept = for %{kind: "thread"} = e <- log(context, id), do: e
+    assert [hd(written).seq, List.last(written).seq] == Enum.map(kept, & &1.seq)
+    assert %{"s" => %{"deletedAt" => _, "title" => "title 3"}} = List.last(kept).patch
+    context
+  end
+
+  step "the oldest and the newest update of each message are kept", context do
+    after_compaction = log(context, World.thread_id(context, "main"))
+
+    for m <- ["m-1", "m-2"] do
+      written = for %{kind: "message", entity: ^m} = e <- context.before, do: e.seq
+      kept = for %{kind: "message", entity: ^m} = e <- after_compaction, do: e.seq
+      assert length(written) == 12
+      assert kept == [hd(written), List.last(written)]
+    end
+
+    context
+  end
+
+  step "its runs and every timeline item update stay in the log", context do
+    stays = &(&1.kind in ["run", "turn-item"])
+    after_compaction = log(context, World.thread_id(context, "main"))
+    assert Enum.filter(after_compaction, stays) == Enum.filter(context.before, stays)
+    assert length(Enum.filter(after_compaction, stays)) == 4
+    context
+  end
+
+  step "rebuilding the projections gives the same threads as before", context do
+    id = World.thread_id(context, "main")
+    context = stopped(context)
+    start_supervised!({Store, path: context.mc.store})
+    Check.rebuild()
+
+    assert entities(StreamState.load(context.mc.store, id)) == context.entities_before
+    {kind, row} = context.row_before
+    assert {id, kind, row} == List.keyfind(Store.list_shell(context.mc.store), id, 0)
+    assert Check.run(context.mc.store) == []
+    context
+  end
+
+  step "a thread was renamed and then visited", context do
+    id = World.thread_id(context, "main")
+
+    {:ok, %{"sequence" => renamed}} =
+      dispatch(%{"type" => "thread.metadata.update", "threadId" => id, "title" => "Renamed"})
+
+    visits =
+      for {type, n} <- [visit: 1, visit: 2, unread: 3, visit: 4] do
+        command =
+          if type == :visit,
+            do: %{"type" => "thread.visit", "visitedAt" => World.iso_from_now(n * 1_000)},
+            else: %{"type" => "thread.mark-unread"}
+
+        {:ok, %{"sequence" => seq}} = dispatch(Map.put(command, "threadId", id))
+        seq
+      end
+
+    before = log(context, id)
+    assert Enum.all?(visits, fn seq -> Enum.find(before, &(&1.seq == seq)).patch["q"] end)
+    Map.merge(context, %{renamed: renamed, visits: visits, before: before})
+  end
+
+  step "the rename stays in the log", context do
+    after_compaction = log(context, World.thread_id(context, "main"))
+    rename = Enum.find(context.before, &(&1.seq == context.renamed))
+    assert Enum.find(after_compaction, &(&1.seq == context.renamed)) == rename
+    assert fold(after_compaction).updated_at == fold(context.before).updated_at
+    assert fold(after_compaction).updated_at == rename.at
+    context
+  end
+
+  step "of the visits and marks as unread only the newest is kept", context do
+    after_compaction = log(context, World.thread_id(context, "main"))
+    quiet = for %{kind: "thread", patch: %{"q" => true}} = e <- after_compaction, do: e.seq
+    assert quiet == [List.last(context.visits)]
+    assert fold(after_compaction).entities == fold(context.before).entities
+    context
+  end
+
+  step "a client last read the log at an offset before many messages were streamed", context do
+    id = World.thread_id(context, "main")
+    client = sub(World.client(context), 1, id)
+    {live, _, client} = WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 1))
+    Mc.unsub(client, 1)
+    offset = live["offset"]
+    for m <- ["m-1", "m-2", "m-3"], do: stream_message(context, m, 20, 10)
+    known = context |> log(id) |> Enum.take_while(&(&1.seq <= offset)) |> fold()
+    context |> World.put_client(client) |> Map.merge(%{offset: offset, known: known})
+  end
+
+  step "the log was compacted since", context do
+    whole = fold(log(context, World.thread_id(context, "main")))
+    assert %{events: removed} = Compaction.run(Store, all: true)
+    assert removed > 0
+    Map.put(context, :whole, whole)
+  end
+
+  step "the client resumes from its offset", context do
+    id = World.thread_id(context, "main")
+    client = sub(World.client(context, "resuming"), 2, id, context.offset)
+    {_live, frames, client} = WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 2))
+    refute Enum.any?(frames, &(&1["t"] == "snapshot" and &1["id"] == 2))
+
+    resumed =
+      for %{"t" => "events", "id" => 2, "events" => events} <- frames,
+          [seq, kind, entity, patch, at] <- events,
+          reduce: context.known,
+          do: (state ->
+                 StreamState.apply_event(state, %{
+                   seq: seq,
+                   kind: kind,
+                   entity: entity,
+                   patch: patch,
+                   at: at
+                 }))
+
+    context |> World.put_client("resuming", client) |> Map.put(:resumed, resumed)
+  end
+
+  step "it ends with the same threads and messages, in the same order, as a client that read every event",
+       context do
+    assert Enum.to_list(StreamState.rows(context.resumed)) ==
+             Enum.to_list(StreamState.rows(context.whole))
+
+    assert context.resumed.updated_at == context.whole.updated_at
+
+    # And a client reading the thread now gets the same rows.
+    client = sub(World.client(context, "fresh"), 3, World.thread_id(context, "main"))
+    {_, frames, client} = WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 3))
+    rows = for %{"t" => "snapshot", "id" => 3, "rows" => rows} <- frames, row <- rows, do: row
+
+    assert rows ==
+             for(
+               {kind, id, entity} <- StreamState.rows(context.whole),
+               do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
+             )
+
+    World.put_client(context, "fresh", client)
+  end
+
+  step "the MC has been running for one minute", context do
+    stream_message(context, "m-big", 200, 2_000)
+    assert Store.space(context.mc.store).vacuum == :incremental
+    start_supervised!({Compactor, after: 0, every: 50, gap: 0, pages: 8, notify: self()})
+    Map.put(context, :background, true)
+  end
+
+  step "it is compacted again every six hours after that", context do
+    assert Compactor.schedule() == {:timer.minutes(1), :timer.hours(6)}
+    assert_receive {:compacted, %{events: 0}}, 5_000
+    context
+  end
+
+  step "the space it frees is given back to the disk a little at a time while the MC runs",
+       context do
+    page = pragma(context, "page_size")
+    steps = reclaimed([])
+    assert length(steps) > 1
+    assert steps == Enum.sort(steps, :desc) and List.last(steps) == 0
+    for [a, b] <- Enum.chunk_every(steps, 2, 1, :discard), do: assert(a - b <= 8 * page)
+    stop_supervised!(Compactor)
+    context
+  end
+
+  step "a message was streamed in many updates", context do
+    stream_message(context, "m-big", 100, 2_000)
+    Map.put(context, :events_before, pragma(context, "events"))
+  end
+
+  step "it reports how many events it removed", context do
+    removed = context.events_before - pragma(context, "events")
+    assert removed >= 100 and context.compaction.events == removed
+    assert Compaction.describe(context.compaction) =~ "removed #{removed} events"
+    context
+  end
+
+  step "how many bytes the store can now give back", context do
+    free = Store.space(context.mc.store).free
+    assert free > 0 and context.compaction.reclaimable == free
+    assert Compaction.describe(context.compaction) =~ "#{free} bytes reclaimable"
+    context
+  end
+
+  step "a log with many thousands of events", context do
+    for m <- 1..4, do: stream_message(context, "m-#{m}", 750, 10)
+    ops = Compaction.plan(context.mc.store, World.thread_id(context, "main"))
+    assert length(ops) > 3_000
+    Map.put(context, :ops, ops)
+  end
+
+  step "the log is compacted while clients send commands", context do
+    id = World.thread_id(context, "main")
+    counter = :counters.new(1, [])
+
+    on_batch = fn ->
+      :counters.add(counter, 1, 1)
+      title = "batch #{:counters.get(counter, 1)}"
+
+      assert {:ok, _} =
+               dispatch(%{"type" => "thread.metadata.update", "threadId" => id, "title" => title})
+    end
+
+    report = Compaction.run(Store, all: true, on_batch: on_batch)
+    Map.merge(context, %{compaction: report, batches: :counters.get(counter, 1)})
+  end
+
+  step "the commands are accepted between the batches of 50 events it works through", context do
+    assert context.batches == ceil(length(context.ops) / 50)
+    id = World.thread_id(context, "main")
+    state = thread_state(context)
+    assert StreamState.get(state, "thread")[id]["title"] == "batch #{context.batches}"
+    assert view(StreamState.load(context.mc.store, id)) == view(state)
+    assert view(fold(log(context, id))) == view(state)
+    context
+  end
+
+  # --- doctor ---------------------------------------------------------------------------
+
+  step "a store created before it could give space back to the disk while running", context do
+    stream_message(context, "m-big", 100, 2_000)
+    context = stopped(context)
+    # The mode takes effect with a VACUUM on the connection that set it.
+    sql!(context, "PRAGMA auto_vacuum = NONE; VACUUM")
+    assert Store.space(context.mc.store).vacuum == :none
+
+    Map.merge(context, %{
+      size_before: store_size(context),
+      events_before: pragma(context, "events")
+    })
+  end
+
+  step "a log with events no replay needs", context do
+    stream_message(context, "m-big", 20, 100)
+    context = stopped(context)
+    assert Compaction.removable(context.mc.store) > 0
+    Map.put(context, :unchanged, unchanged(context))
+  end
+
+  step "an MC or a client has the store open", context do
+    id = World.thread_id(context, "main")
+
+    for title <- ~w(a b c),
+        do:
+          {:ok, _} =
+            dispatch(%{"type" => "thread.metadata.update", "threadId" => id, "title" => title})
+
+    # A client reading the store directly, as sqlite3 or a backup tool does.
+    {:ok, db} = Sqlite3.open(context.mc.store, mode: :readonly)
+    {:ok, stmt} = Sqlite3.prepare(db, "SELECT count(*) FROM events")
+    {:row, [_]} = Sqlite3.step(db, stmt)
+    :ok = Sqlite3.release(db, stmt)
+    ExUnit.Callbacks.on_exit(fn -> Sqlite3.close(db) end)
+    assert Compaction.removable(context.mc.store) > 0
+    Map.merge(context, %{reader: db, unchanged: unchanged(context)})
+  end
+
+  step "the user runs the MC's doctor command with {string}", %{args: [flag]} = context do
+    run_doctor(context, [flag])
+  end
+
+  step "the user runs the MC's doctor command with {string} and {string}",
+       %{args: flags} = context do
+    run_doctor(context, flags)
+  end
+
+  step "the user runs the MC's doctor command in a terminal", context do
+    me = self()
+
+    output =
+      ExUnit.CaptureIO.capture_io("\n\n\n\n", fn ->
+        send(me, {:doctor, Doctor.command([], path: context.mc.store, tty?: true)})
+      end)
+
+    assert_received {:doctor, result}
+    Map.merge(context, %{doctor: result, output: output})
+  end
+
+  step "the user chooses the repairs, with the recommended ones chosen", context do
+    asked = Regex.scan(~r/Make this repair\? \[(.)\/(.)\]/, context.output)
+    assert asked != [] and Enum.all?(asked, &(&1 == ["Make this repair? [Y/n]", "Y", "n"]))
+    assert {:ok, text} = context.doctor
+    assert text =~ "Compacted the log: removed"
+    assert Compaction.removable(context.mc.store) == 0
+    context
+  end
+
+  step "the repairs are listed and nothing changes", context do
+    assert {:ok, text} = context.doctor
+    assert text =~ "Compact the log:" and text =~ "Nothing was changed"
+    assert unchanged(context) == context.unchanged
+    context
+  end
+
+  step "the projections are checked, the log is compacted and the projections are checked again",
+       context do
+    assert {:ok, text} = context.doctor
+
+    lines =
+      for line <- [
+            "Checked the projections: they match the log",
+            "Compacted the log: removed",
+            "Checked the projections again: they match the log"
+          ],
+          do: :binary.match(text, line)
+
+    assert Enum.all?(lines, &(&1 != :nomatch)) and lines == Enum.sort(lines)
+    context
+  end
+
+  step "the store is switched to give space back while running and is shrunk", context do
+    assert %{vacuum: :incremental, free: 0} = Store.space(context.mc.store)
+    assert store_size(context) < context.size_before
+    context
+  end
+
+  step "it reports the store's size before and after and how many events it removed", context do
+    {:ok, text} = context.doctor
+    assert [_, removed] = Regex.run(~r/removed (\d+) events/, text)
+    assert String.to_integer(removed) == context.events_before - pragma(context, "events")
+    assert String.to_integer(removed) >= 100
+    assert text =~ ~r/Store size: [\d.]+ [kMG]?B(ytes)? before, [\d.]+ [kMG]?B(ytes)? after/
+    context
+  end
+
+  step "a second run reports {string}", %{args: [text]} = context do
+    assert Doctor.command(["--fix"], path: context.mc.store) == {:ok, text}
+    context
+  end
+
+  step "it refuses and changes nothing", context do
+    assert [_, _] = context.refusals
+
+    for result <- context.refusals do
+      assert {:error, message} = result
+      assert message =~ "is open" and message =~ "Nothing was changed"
+    end
+
+    assert unchanged(context) == context.unchanged
     context
   end
 
@@ -933,4 +1523,105 @@ defmodule HalC2.Steps.Platform.EventStore do
     :ok = HalC2.Search.backfill()
     Store.path()
   end
+
+  defp stopped(context) do
+    context = %{context | mc: Mc.stop(context.mc), clients: %{}}
+    # A clean stop leaves every projection matching the log.
+    assert Check.run(context.mc.store) == []
+    context
+  end
+
+  defp key(id), do: "(SELECT key FROM streams WHERE id = '#{id}')"
+
+  defp put_snapshot_bytes(context, id, bytes) do
+    sql!(context, """
+    INSERT INTO hot_snapshots (stream, seq, state) VALUES (#{key(id)}, 1, x'#{Base.encode16(bytes)}')
+    ON CONFLICT(stream) DO UPDATE SET state = excluded.state
+    """)
+  end
+
+  defp stat_tables(context) do
+    with_db(context, [mode: :readonly], fn db ->
+      {:ok, stmt} =
+        Sqlite3.prepare(db, "SELECT name FROM sqlite_master WHERE name LIKE 'sqlite_stat%'")
+
+      {:ok, rows} = Sqlite3.fetch_all(db, stmt)
+      rows
+    end)
+  end
+
+  # `"events"` counts the log; anything else is a PRAGMA.
+  defp pragma(context, name) do
+    sql = if name == "events", do: "SELECT count(*) FROM events", else: "PRAGMA #{name}"
+
+    with_db(context, [mode: :readonly], fn db ->
+      {:ok, stmt} = Sqlite3.prepare(db, sql)
+      {:ok, [[value]]} = Sqlite3.fetch_all(db, stmt)
+      value
+    end)
+  end
+
+  defp entities(state),
+    do:
+      Map.new(
+        ~w(thread run message turn-item),
+        &{&1, Enum.sort_by(StreamState.all(state, &1), fn entity -> entity["id"] end)}
+      )
+
+  # A message streamed as an agent writes one: created, `appends` chunks of `size`
+  # characters, then finished, each its own event.
+  defp stream_message(context, id, appends, size) do
+    message = %{"id" => id, "role" => "assistant", "text" => "", "streaming" => true}
+    commit(context, [{"message", id, %{"s" => message}}])
+
+    for _ <- 1..appends do
+      chunk = binary_part(Base.encode64(:crypto.strong_rand_bytes(size)), 0, size)
+      commit(context, [{"message", id, %{"a" => %{"text" => chunk}}}])
+    end
+
+    commit(context, [{"message", id, %{"s" => %{"streaming" => false}}}])
+  end
+
+  defp fold(events), do: Enum.reduce(events, StreamState.new(), &StreamState.apply_event(&2, &1))
+
+  defp view(state),
+    do: Map.take(state, [:seq, :updated_at, :entities, :created, :changed, :deleted])
+
+  defp reclaimed(steps) do
+    receive do
+      {:reclaimed, 0} -> Enum.reverse([0 | steps])
+      {:reclaimed, free} -> reclaimed([free | steps])
+    after
+      5_000 -> flunk("the store stopped giving space back at #{inspect(steps)}")
+    end
+  end
+
+  defp store_size(context) do
+    for file <- [context.mc.store, context.mc.store <> "-wal"],
+        {:ok, %{size: size}} <- [File.stat(file)],
+        reduce: 0,
+        do: (total -> total + size)
+  end
+
+  # What a repair would change: the log, what compaction would remove, and how the store
+  # gives space back.
+  defp unchanged(context) do
+    %{
+      events: pragma(context, "events"),
+      log: log(context, World.thread_id(context, "main")),
+      removable: Compaction.removable(context.mc.store),
+      vacuum: Store.space(context.mc.store).vacuum
+    }
+  end
+
+  # With a client reading the store, the doctor runs once with the MC up and once with
+  # only the client left.
+  defp run_doctor(%{reader: _} = context, args) do
+    with_mc = Doctor.command(args, path: context.mc.store)
+    context = stopped(context)
+    Map.put(context, :refusals, [with_mc, Doctor.command(args, path: context.mc.store)])
+  end
+
+  defp run_doctor(context, args),
+    do: Map.put(context, :doctor, Doctor.command(args, path: context.mc.store))
 end

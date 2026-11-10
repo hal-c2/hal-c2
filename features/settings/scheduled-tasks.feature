@@ -1,4 +1,11 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29476
+#   https://github.com/pingdotgg/t3code/pull/24149
+#   https://github.com/pingdotgg/t3code/pull/23414
+#   https://github.com/pingdotgg/t3code/pull/25291
+#   https://github.com/pingdotgg/t3code/pull/26070
+#   https://github.com/pingdotgg/t3code/pull/24046
+#   https://github.com/pingdotgg/t3code/pull/23244
 #   https://github.com/pingdotgg/t3code/pull/23282
 #   https://github.com/pingdotgg/t3code/pull/20447
 #   https://github.com/pingdotgg/t3code/pull/21026
@@ -26,6 +33,12 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/ScheduledTaskEditor.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/js/scheduledTasks.js
 #   apps/tui/src/host/sections/scheduledTasks.ts (the terminal client's list and editor)
+#   https://github.com/pingdotgg/t3code/pull/28104
+#   https://github.com/pingdotgg/t3code/pull/26658
+#   https://github.com/pingdotgg/t3code/pull/22158
+#   https://github.com/pingdotgg/t3code/pull/31764
+#   https://github.com/pingdotgg/t3code/pull/30326
+#   https://github.com/pingdotgg/t3code/pull/28585
 
 Feature: Scheduled tasks
   A scheduled task sends a saved prompt to a project on a timer, either at
@@ -65,6 +78,51 @@ Feature: Scheduled tasks
       Then the task does not run immediately
       And its next run moves to the next 09:00
 
+    # Upstream #28104: a task can run once at a date and time, then has no next run.
+    @backlog @mc
+    Scenario: A one-time task runs once at its date and time
+      Given a task "Release notes" that runs once on Friday at 15:00
+      When Friday 15:00 passes
+      Then the task has run once
+      And it has no next run
+
+    # Upstream #28104: a one-time run missed while the MC was off runs when it is back, like intervals.
+    @backlog @mc
+    Scenario: A one-time run missed while the machine was off runs when the MC starts
+      Given a task that runs once on Friday at 15:00
+      And the machine was off from 14:00 until 16:00
+      When the MC starts again
+      Then the task runs
+      And it has no next run
+
+    # Upstream #28104
+    @backlog @mc
+    Scenario Outline: A one-time task cannot be aimed at the past
+      Given it is Friday 16:00
+      When the user <action> a task that runs once on Friday at 15:00
+      Then it fails with "The run time has passed. Pick a time in the future."
+
+      Examples:
+        | action                  |
+        | saves an enabled        |
+        | resumes a paused        |
+
+    # Upstream #28104: editing the title or prompt of a task that already ran neither fails nor runs it again.
+    @backlog @mc
+    Scenario: Editing a one-time task that already ran does not run it again
+      Given a task that ran once on Friday at 15:00
+      When the user changes its prompt on Saturday
+      Then the task is saved
+      And it does not run again
+
+    # Upstream #28104: a save racing a finishing run keeps the run's next time.
+    @backlog @mc
+    Scenario: A one-time task saved while its run finishes runs only once
+      Given a task that runs once is running
+      When the user saves a new prompt for it before the run finishes
+      Then the task has run once
+      And it has no next run
+
     @mc
     Scenario Outline: A run goes to the task's thread or a new one
       Given a task <target>
@@ -75,6 +133,35 @@ Feature: Scheduled tasks
         | target                          | result                          |
         | that names an existing thread   | is sent into that thread        |
         | with no thread                  | starts a new thread for the run |
+
+    # Upstream #30326: a task either started a new thread every run or grew one conversation
+    # forever, and Settings could not make a one-thread task at all.
+    @backlog @mc @shared
+    Scenario Outline: A task's destination decides where its later runs go
+      Given the user creates the task "Check Sentry" with the destination <destination>
+      When it has run twice
+      Then <result>
+
+      Examples:
+        | destination                          | result                                                                    |
+        | "New thread each run"                | each run started its own thread                                           |
+        | "One thread"                         | both runs went into the thread its first run started, in one conversation |
+        | "One thread, fresh session each run" | both runs went into that thread, the second starting a fresh session      |
+
+    # Upstream #30326: a form opened before the first run cannot unbind the thread it made.
+    @backlog @mc
+    Scenario: Saving a one-thread task keeps the thread its first run made
+      Given the user opened the task "Check Sentry", destination "One thread", before its first run
+      And the first run started the thread "Check Sentry"
+      When the user saves the form
+      Then the task still runs into "Check Sentry"
+      And only choosing "New thread each run" unbinds it
+
+    # Upstream #30326
+    @backlog @shared
+    Scenario: The task editor says deleting a one-thread task's thread deletes the task
+      When the user picks the destination "One thread" for the task "Check Sentry"
+      Then the editor says deleting its thread deletes the task too
 
     @mc
     Scenario: Tasks survive an MC restart
@@ -217,6 +304,26 @@ Feature: Scheduled tasks
       And the failed task is badged "Failed"
       And each task shows its prompt
 
+    # Upstream #31764: a task that posts into one thread gave no way to get to that thread.
+    @backlog @shared
+    Scenario Outline: A task that posts into one thread opens it from scheduled tasks
+      Given a task that runs in the thread "Nightly triage"
+      When the user opens scheduled tasks <on>
+      And the user <opens>
+      Then settings close and "Nightly triage" is open
+
+      Examples:
+        | on              | opens                                         |
+        | on the desktop  | chooses the task's "Nightly triage" link      |
+        | on the phone    | chooses "Open thread" from the task's menu    |
+
+    # Upstream #31764: a task that starts a new thread each run has no single thread to link to.
+    @backlog @shared @priority-low
+    Scenario: A task that starts a new thread each run links to no thread
+      Given a task that starts a new thread each run
+      When the user opens scheduled tasks
+      Then the task offers no thread to open
+
     # The web said "No environments available" with none paired. A QML client shows settings only
     # once its MC has synced, so its own environment is always there.
     @dropped @shared
@@ -242,6 +349,18 @@ Feature: Scheduled tasks
       When the user edits it
       Then the editor says saving raises the interval to a minute
       And saving it runs every minute
+
+    # Upstream #26658: the editor kept a task's destination thread without ever showing it.
+    @backlog @shared @priority-low
+    Scenario Outline: The task editor says where the task's runs go
+      Given the task "Check Sentry" <binding>
+      When the user edits it
+      Then the editor says <destination>
+
+      Examples:
+        | binding                          | destination                  |
+        | is bound to "Triage"             | its runs go to "Triage"      |
+        | starts a new thread for each run | each run starts a new thread |
 
     @shared @backlog-mobile @priority-low
     Scenario: An open editor says when its task was deleted elsewhere
@@ -290,6 +409,21 @@ Feature: Scheduled tasks
         | at 09:00 on every day                 | Daily at 09:00           |
         | at 09:00 from Monday to Friday        | Weekdays at 09:00        |
         | at 18:30 on Saturday and Sunday       | Sat, Sun at 18:30        |
+
+    # Upstream #28104: a Once mode takes a date and a time in the user's own time zone.
+    @backlog @desktop @mobile
+    Scenario: The user schedules a task to run once at a date and time
+      When the user creates a task "Release notes" in "api" that runs once on Friday at 15:00 local time
+      Then the task's next run is Friday at 15:00
+      And after it runs the task says "Not scheduled" with its outcome
+
+    # Upstream #28104: older MCs refuse one-time schedules, so the choice is offered only where the
+    # environment says it supports them.
+    @backlog @desktop @mobile
+    Scenario: Running once is not offered for an environment that cannot do it
+      Given the environment of the task cannot run one-time schedules
+      When the user creates a task there
+      Then running once is not offered
 
     @backlog @desktop
     Scenario Outline: The next run is said relative to now
@@ -371,6 +505,15 @@ Feature: Scheduled tasks
       Then it asks which machine it runs on
       And changing the machine clears the project, model and base branch chosen so far
 
+    # Upstream #23244: New task checked only the first selected environment's permission.
+    @backlog @desktop @priority-low
+    Scenario: A new task opens on a selected machine that may create tasks
+      Given the user has two connected environments selected in scheduled tasks
+      And the user may only read tasks on "laptop" but may create them on "server"
+      When the user starts a new task
+      Then the new task is set to run on "server"
+      And with neither machine allowing it, a new task cannot be started
+
     @backlog @desktop
     Scenario: A task keeps its machine once saved
       Given a task "Check Sentry" on "laptop"
@@ -408,6 +551,18 @@ Feature: Scheduled tasks
       When the user saves a task that runs every 1.5 minutes
       Then it runs every 90 seconds
 
+    # Upstream #22158: in a region that writes decimals with a comma, "2,5" could not be saved.
+    @backlog @mobile
+    Scenario Outline: An interval written with a decimal comma is understood
+      When the user on a phone set to a comma-decimal region enters an interval of "<entered>" minutes
+      Then <outcome>
+
+      Examples:
+        | entered | outcome                                       |
+        | 2,5     | the task saves and runs every 150 seconds     |
+        | 0,5     | the editor says the interval must be a minute |
+        | abc     | the editor says the interval must be a minute |
+
     @backlog @desktop
     Scenario: Following a link to a task opens it for editing
       Given a task "Check Sentry" in the selected project
@@ -433,6 +588,14 @@ Feature: Scheduled tasks
       When the user opens the details of "Triage"
       Then "Check Sentry" is listed under "Automations" with how its last run went and when it runs next
       And "Nightly build" is not listed
+
+    # Upstream #28585: about 25 bound tasks made the details too tall, and the denser layout they
+    # switched to left out the Automations section.
+    @backlog @desktop @priority-low
+    Scenario: A thread with many tasks bound to it still lists them in its details
+      Given 25 tasks send their prompts into the thread "Triage"
+      When the user opens the details of "Triage"
+      Then all 25 are listed under "Automations", scrolling within the section
 
     @backlog @desktop
     Scenario: A thread with no tasks bound to it shows no automations
@@ -502,6 +665,14 @@ Feature: Scheduled tasks
     And a wrong token and an unknown task both answer 404
     And a signature can be required, with its header, encoding and prefix set, and a write-only secret
     And a task is limited to 60 requests a minute and 1 MiB a body
+
+  # Upstream #25291: a HEAD probe from a link checker or chat unfurler started a real run.
+  @backlog @mc @priority-high
+  Scenario: A HEAD request to a webhook does not run its task
+    Given a task whose trigger is a webhook
+    When something sends the task's secret URL a HEAD request
+    Then it is answered 405 naming the methods the webhook takes
+    And the task does not run
 
   # Upstream #20447: values from the request reach the agent framed and marked as untrusted data.
   @backlog @mc @priority-high
@@ -577,6 +748,21 @@ Feature: Scheduled tasks
       | notEquals  | bug             | "needs more info"           | runs                 |
       | exists     |                 | nothing                     | filters the delivery |
 
+  # Upstream #23414: an exists filter over a list of objects threw the objects away before
+  # checking, so an issue with labels failed it.
+  @backlog @mc @priority-low
+  Scenario Outline: A webhook filter that a list of objects exists
+    Given a webhook task with the filter "body.issue.labels[] exists"
+    When a request arrives whose issue has <labels>
+    Then the task <runs>
+
+    Examples:
+      | labels                                 | runs                 |
+      | the labels "bug" and "needs more info" | runs                 |
+      | an empty list of labels                | filters the delivery |
+      | no labels field                        | filters the delivery |
+
+  # Upstream #23282: a webhook placeholder path ending in [] renders every element of a list.
   @backlog @mc @priority-low
   Scenario: A webhook prompt placeholder over a list renders every element
     Given a webhook task whose prompt is "Labels: {{body.issue.labels[].name}}"
@@ -664,6 +850,32 @@ Feature: Scheduled tasks
     Then one run starts 120 seconds after the first delivery, with the third delivery's payload
     And the later two are logged as coalesced
 
+  # Upstream #29476: a coalesced run rendered the prompt saved when its window opened, but took the
+  # model, thread and other settings from the task as it was at dispatch.
+  @backlog @mc
+  Scenario: A coalesced webhook run uses the prompt saved while its window was open
+    Given a webhook task with the prompt "Use the original instructions." and a 60 second coalesce window
+    And a delivery opened a window
+    When the user saves the prompt "Use the updated instructions." before the window closes
+    Then the run's message and its delivery log both say "Use the updated instructions."
+    And a retry of that run sends the same prompt again
+
+  # Upstream #24046: coalesced deliveries whose filled-in prompt was too long escaped the 20-row limit for such failures.
+  @backlog @mc @priority-low
+  Scenario: Coalesced deliveries whose prompt is too long keep at most 20 failures
+    Given a webhook task with a coalesce key
+    When 30 coalescing windows each close with a filled-in prompt longer than the provider allows
+    Then at most 20 of those deliveries are kept, failed with "The filled-in prompt is too long."
+    And deliveries that ran are not pushed out of the log
+
+  # Upstream #26070: a logged body cut inside a multibyte character ended in a replacement character the sender never sent.
+  @backlog @mc @priority-low
+  Scenario: A truncated delivery body ends at the last whole character
+    Given a webhook task
+    When a delivery arrives whose body is 65,535 bytes of "a" followed by "€"
+    Then the delivery's logged body is marked truncated
+    And it ends in "aaa", with no replacement character
+
   # Upstream #22234: the window does not move with later deliveries and survives a restart.
   @backlog @mc
   Scenario: A coalescing window keeps its deadline across an MC restart
@@ -704,6 +916,13 @@ Feature: Scheduled tasks
     Given a saved webhook task
     When the user sets its replay key, its coalesce key and a 300 second window, and saves
     Then repeated deliveries are dropped and deliveries for the same item wait 300 seconds to run once
+
+  # Upstream #24149: "Replay key" did not say it stops duplicate runs.
+  @backlog @shared @priority-low
+  Scenario: The duplicate request key says what it is for
+    When the user edits a webhook task
+    Then the field that drops repeated deliveries is called "Duplicate request key"
+    And beside it the user is told a repeated key is dropped for seven days
 
   # Upstream #15087: mobile creates and copies webhook automations
   # Upstream #15088: web creates webhook automations and inspects their deliveries

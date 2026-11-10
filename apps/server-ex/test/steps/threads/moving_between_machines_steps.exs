@@ -589,14 +589,34 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     legacy_file(context)
   end
 
-  defp legacy_file(context) do
+  # The mark is from before plugins kept their threads: the destination's copy of the
+  # plugin is what keeps it.
+  step "a thread file exported by the previous server of a thread the plugin {string} started",
+       %{args: [plugin]} = context do
+    context = legacy_file(context, %{"plugin" => %{"id" => plugin, "kind" => "review"}})
+    Map.put(context, :image, context.legacy.image)
+  end
+
+  step "the user is told {string} keeps {string} on the machine it started on",
+       %{args: [plugin, title]} = context do
+    assert context.imported ==
+             {:error,
+              "#{title} was started by #{plugin}, which keeps it on the machine it started on. #{title} was not imported."}
+
+    context
+  end
+
+  defp legacy_file(context, fields \\ %{}) do
     root = World.project(context, "shop").root
     id = "th-legacy-#{System.unique_integer([:positive])}"
     at = "2026-09-01T00:00:00.000Z"
     image = "#{id}-img"
 
     thread =
-      Map.merge(thread_fields(id, "Legacy", "shop"), %{"createdAt" => at, "updatedAt" => at})
+      id
+      |> thread_fields("Legacy", "shop")
+      |> Map.merge(%{"createdAt" => at, "updatedAt" => at})
+      |> Map.merge(fields)
 
     events = [
       v1_event(id, "thread.created", thread, at),
@@ -1129,6 +1149,94 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     World.patch_thread(context, title, %{"plugin" => mark})
   end
 
+  step "{string} was started by the plugin {string}, which keeps its threads on the machine",
+       %{args: [title, plugin]} = context do
+    mark = %{"id" => plugin, "kind" => "review", "listed" => false, "stays" => true}
+    World.patch_thread(context, title, %{"plugin" => mark})
+  end
+
+  # A plugin whose manifest does not keep its threads, but which ran this one in a sandbox.
+  step "{string} runs in a review sandbox the plugin {string} opened on the machine",
+       %{args: [title, plugin]} = context do
+    mark = %{"id" => plugin, "kind" => "review", "listed" => false, "sandboxed" => true}
+    World.patch_thread(context, title, %{"plugin" => mark})
+  end
+
+  # A thread from before the manifest said so: its mark has no `"stays"`.
+  step "{string} was started by the plugin {string} before it kept its threads on the machine",
+       %{args: [title, plugin]} = context do
+    mark = %{"id" => plugin, "kind" => "review", "listed" => false}
+    World.patch_thread(context, title, %{"plugin" => mark})
+  end
+
+  step "the plugin {string} is installed on {string} and keeps its threads there, but is turned off",
+       %{args: [plugin, machine]} = context do
+    on = &Machines.on(context, machine, &1, &2, &3)
+    dir = Path.join([on.(HalC2.Paths, :data_dir, []), "plugins", plugin])
+    on.(File, :mkdir_p!, [dir])
+    manifest = JSON.encode!(%{"id" => plugin, "name" => plugin, "threadsStay" => true})
+    on.(File, :write!, [Path.join(dir, "plugin.json"), manifest])
+    refute on.(HalC2.Plugins, :running?, [plugin])
+    context
+  end
+
+  # The plugin host never loads it: nothing rescans after the manifest is written.
+  step "the plugin {string} is installed on {string} with a manifest that is not valid JSON, so the plugin host loaded no version of it",
+       %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    dir = Path.join([HalC2.Paths.data_dir(), "plugins", plugin])
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "plugin.json"), "{ \"id\": ")
+    refute HalC2.Plugins.running?(plugin)
+    context
+  end
+
+  step "the plugin {string} is uninstalled from {string}", %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    File.rm_rf!(Path.join([HalC2.Paths.data_dir(), "plugins", plugin]))
+    context
+  end
+
+  # Where `mix hal_c2.plugins.install` stands between its two renames: the installed
+  # package moved aside, its replacement staged beside the plugins directory.
+  step "a new version of {string} is being installed on {string}, the old one moved aside and the new one not yet in place",
+       %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+    installed = Path.join(plugins, plugin)
+    staged = HalC2.Plugins.Package.staged_dir(plugins, plugin)
+    File.mkdir_p!(staged)
+    File.cp!(Path.join(installed, "plugin.json"), Path.join(staged, "plugin.json"))
+    File.rename!(installed, HalC2.Plugins.Package.aside_dir(plugins, plugin))
+    refute File.exists?(installed)
+    context
+  end
+
+  # The first install's old version left aside; the second, putting it back first, fails
+  # as a full disk fails a copy.
+  step "an install of a new version of {string} on {string} was cut off between its renames, and the next one while it copied",
+       %{args: [plugin, machine]} = context do
+    assert Machines.machine(context, machine) == :local
+    plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+    installed = Path.join(plugins, plugin)
+    File.rename!(installed, HalC2.Plugins.Package.aside_dir(plugins, plugin))
+
+    assert_raise File.CopyError, fn ->
+      HalC2.Plugins.Package.replace(plugins, plugin, fn staged ->
+        File.mkdir_p!(staged)
+        raise File.CopyError, source: "plugin.json", destination: staged, reason: :enospc
+      end)
+    end
+
+    context
+  end
+
+  step "the user asks which machines {string} could move to", %{args: [title]} = context do
+    result = HalC2.ThreadMove.destinations(World.thread_id(context, title))
+    assert {:error, %{"code" => "thread_not_movable", "message" => message}} = result
+    Map.put(context, :told, [message])
+  end
+
   step "{string} on {string} is an ordinary thread, in the thread list",
        %{args: [title, machine]} = context do
     moved!(context)
@@ -1576,7 +1684,11 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
        %{args: [fork, machine, title]} = context do
     assert Machines.machine(context, machine) == :local
     assert %{"status" => "completed"} = World.finish_turn(context, title, "write run-1.txt")
-    World.fork(context, title, 1, fork)
+    :ok = HalC2.Shell.subscribe(self())
+    context = World.fork(context, title, 1, fork)
+    # The sidebar lists the fork once the shell has it, which a move looks it up in.
+    World.await_row(World.thread_id(context, fork), & &1)
+    context
   end
 
   step "{string} still names {string} as its parent", %{args: [fork, title]} = context do
@@ -2848,11 +2960,13 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     before = if Map.has_key?(context[:threads] || %{}, title), do: World.state(context, title)
     path = export_path(context, file)
 
-    Map.merge(context, %{
-      thread_file: path,
-      before: before,
-      exported: Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path | args])
-    })
+    exported = Mc.run_task(Mix.Tasks.HalC2.Thread.Export, [title, path | args])
+    context = Map.merge(context, %{thread_file: path, before: before, exported: exported})
+
+    case exported do
+      {:error, message} -> Map.put(context, :told, [message])
+      _ -> context
+    end
   end
 
   # One folder of exports a scenario, so a file named twice is the same file.

@@ -232,6 +232,30 @@ defmodule HalC2.Test.Mc do
   end
 
   @doc """
+  The list a `localServers` subscription `id` holds once the scan its subscribe started
+  has finished (on `mc`, this node by default): the first frame answers from the last
+  scan, and the scan's own result follows as a change. Returns `{frame, client}`.
+  """
+  def await_local_servers(client, id, mc \\ node()) do
+    shape = &(&1["t"] == "localServers" and &1["id"] == id)
+    {first, client} = await(client, shape, 10_000)
+
+    sync = fn client ->
+      client = WsClient.send_json(client, %{"t" => "ping"})
+      {_, skipped, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 10_000)
+      {Enum.filter(skipped, shape), client}
+    end
+
+    # The ping ends after the subscribe was taken, so its scan is queued; the scan
+    # asked for now is done when the call returns, its change sent before the pong.
+    {early, client} = sync.(client)
+    :erpc.call(mc, Kernel, :send, [HalC2.LocalServers, :scan])
+    :erpc.call(mc, :sys, :get_state, [HalC2.LocalServers])
+    {late, client} = sync.(client)
+    {List.last([first | early ++ late]), client}
+  end
+
+  @doc """
   The config frame of the subscription `id`. A config the MC could not build comes as an
   error frame saying why, and waiting on past it would only report a missing frame.
   """
@@ -679,11 +703,18 @@ defmodule HalC2.Test.Mc do
       {:ok, spec} = :application.get_all_key(:hal_c2)
 
       ExUnit.Callbacks.on_exit(fn ->
+        # A removal of old versions a boot started ends in this scenario's home.
+        with pid when is_pid(pid) <- Process.whereis(HalC2.Upgrade.Prune) do
+          ref = Process.monitor(pid)
+          receive(do: ({:DOWN, ^ref, _, _, _} -> :ok))
+        end
+
         System.delete_env("RELEASE_ROOT")
         System.delete_env("HAL_C2_SERVICE")
         Application.delete_env(:hal_c2, :restart_exit)
         :persistent_term.erase({HalC2.Upgrade, :version})
         :persistent_term.erase({HalC2.Upgrade, :outcome})
+        :persistent_term.erase({HalC2.Upgrade, :continue_threads})
         :persistent_term.erase({__MODULE__, :release})
         :code.set_path(paths)
         restore_modules()
@@ -732,11 +763,13 @@ defmodule HalC2.Test.Mc do
   (`{module, beam}`, or `{module, beam, running beam}` for one with no beam file) in
   place of the code it runs. Those modules join the running release at the code
   that runs, and are loaded back when the scenario ends. `changes["sys.config"]` is
-  the release's configuration rather than a manifest entry.
+  the release's configuration rather than a manifest entry, and `changes["bin"]`
+  (`%{name => script}`) the bundle's launchers.
   """
   def bundle(mc, version, changes \\ %{}, modules \\ []) do
     dir = tmp_dir(mc, "bundle")
     {sys, changes} = Map.pop(changes, "sys.config", [])
+    {bin, changes} = Map.pop(changes, "bin", %{})
     {root, from} = {HalC2.Upgrade.release_root(), HalC2.Upgrade.version()}
 
     running =
@@ -779,13 +812,20 @@ defmodule HalC2.Test.Mc do
         HalC2.Upgrade.Source.file_name(version, HalC2.Upgrade.platform())
       )
 
+    for {name, script} <- bin do
+      file = Path.join([dir, "bin", name])
+      File.mkdir_p!(Path.dirname(file))
+      File.write!(file, script)
+      File.chmod!(file, 0o755)
+    end
+
     :ok =
       :erl_tar.create(
         String.to_charlist(path),
         [
           {~c"releases", String.to_charlist(Path.join(dir, "releases"))},
           {~c"lib", String.to_charlist(Path.join(dir, "lib"))}
-        ],
+        ] ++ if(bin == %{}, do: [], else: [{~c"bin", String.to_charlist(Path.join(dir, "bin"))}]),
         [:compressed]
       )
 
@@ -1018,20 +1058,24 @@ defmodule HalC2.Test.Mc.World do
   @doc "Waits until a stream's sidebar row satisfies `fun`; the test process must be subscribed to the shell."
   def await_row(id, fun, timeout \\ 10_000) do
     case HalC2.Shell.row(node(), id) do
-      {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
-      nil -> await_next_row(id, fun, timeout)
+      {_kind, row} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout, row)
+      nil -> await_next_row(id, fun, timeout, nil)
     end
   end
 
-  defp await_next_row(id, fun, timeout) do
+  # `last` is the row as last seen, which a failure shows.
+  defp await_next_row(id, fun, timeout, last) do
     receive do
       {:hal_c2_shell, {:rows, _, rows}} ->
         case List.keyfind(rows, id, 0) do
-          {^id, {_kind, row}} -> if fun.(row), do: row, else: await_next_row(id, fun, timeout)
-          nil -> await_next_row(id, fun, timeout)
+          {^id, {_kind, row}} ->
+            if fun.(row), do: row, else: await_next_row(id, fun, timeout, row)
+
+          nil ->
+            await_next_row(id, fun, timeout, last)
         end
     after
-      timeout -> flunk("#{id}'s row never changed as expected")
+      timeout -> flunk("#{id}'s row never changed as expected; last seen: #{inspect(last)}")
     end
   end
 
@@ -1376,6 +1420,7 @@ defmodule HalC2.Test.Mc.World do
         ],
         do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
+    Mc.ensure(HalC2.WorkspaceLease)
     Mc.ensure(HalC2.StorageCleanup)
     context
   end
@@ -1393,6 +1438,23 @@ defmodule HalC2.Test.Mc.World do
   scenario ends.
   """
   def open_terminal(thread_id, cwd, terminal_id \\ "term-1") do
+    start_terminals()
+
+    {:ok, %{"pid" => shell}} =
+      HalC2.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
+    end)
+
+    shell
+  end
+
+  @doc """
+  Starts the terminal services (registry, supervisor, hub) and the workspace leases
+  terminals take while they start, if the scenario has not, with `/bin/sh` as the shell.
+  """
+  def start_terminals do
     put_env("SHELL", "/bin/sh")
 
     Mc.ensure(
@@ -1403,15 +1465,8 @@ defmodule HalC2.Test.Mc.World do
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
     Mc.ensure(HalC2.Terminal.Hub)
-
-    {:ok, %{"pid" => shell}} =
-      HalC2.Terminal.open(%{"threadId" => thread_id, "terminalId" => terminal_id, "cwd" => cwd})
-
-    ExUnit.Callbacks.on_exit(fn ->
-      System.cmd("kill", ["-9", "#{shell}"], stderr_to_stdout: true)
-    end)
-
-    shell
+    Mc.ensure(HalC2.WorkspaceLease)
+    :ok
   end
 
   @doc "The output tokens a usage summary counts for `provider` across its buckets."
@@ -1424,10 +1479,10 @@ defmodule HalC2.Test.Mc.World do
   Like `call/4`, but frames the MC pushed before the reply (a `config.providers`
   after a refresh, rows a command wrote) stay in the socket's inbox to be received.
   """
-  def call_keeping(context, method, payload \\ %{}, name \\ "default") do
+  def call_keeping(context, method, payload \\ %{}, name \\ "default", timeout \\ 5_000) do
     id = System.unique_integer([:positive])
     client = Mc.rpc(client(context, name), context.mc.environment, id, method, payload)
-    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Mc.reply?(id))
+    {frame, skipped, client} = HalC2.Test.WsClient.recv_until(client, Mc.reply?(id), timeout)
     client = %{client | inbox: skipped ++ client.inbox}
 
     reply =
@@ -1601,10 +1656,17 @@ defmodule HalC2.Test.Mc.World do
     dir = Mc.tmp_dir(context.mc, "remotes")
     ssh = Path.join(dir, "fake-ssh")
 
-    File.write!(
-      ssh,
-      ~s(#!/bin/sh\nfor last; do :; done\ncd "$HAL_C2_FAKE_REMOTES" && exec sh -c "$last"\n)
-    )
+    # A host with a directory `@<host>` of its own is served from it, so two hosts can
+    # hold same-named repositories; any other host from the directory itself.
+    File.write!(ssh, """
+    #!/bin/sh
+    dir="$HAL_C2_FAKE_REMOTES"
+    for arg; do
+      case "$arg" in *@*) [ -d "$HAL_C2_FAKE_REMOTES/@${arg#*@}" ] && dir="$HAL_C2_FAKE_REMOTES/@${arg#*@}" ;; esac
+      last="$arg"
+    done
+    cd "$dir" && exec sh -c "$last"
+    """)
 
     File.chmod!(ssh, 0o755)
     previous = {System.get_env("GIT_SSH_COMMAND"), System.get_env("HAL_C2_FAKE_REMOTES")}
@@ -1770,6 +1832,7 @@ defmodule HalC2.Test.Mc.World do
   defp fake_codex do
     Mc.ensure({Registry, keys: :unique, name: HalC2.Codex.Registry})
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
 
     unless Application.get_env(:hal_c2, :codex_command) == ["python3", "-u", @fake_codex] do
       previous = Application.get_env(:hal_c2, :codex_command)
@@ -1960,9 +2023,11 @@ defmodule HalC2.Test.Mc.World do
       |> Map.put_new("FAKE_CODEX_LOG", Path.join(context.mc.home, "codex-requests.log"))
       |> Map.put_new("FAKE_CODEX_REJECT_STEER", Path.join(context.mc.home, "reject-steer"))
       |> Map.put_new("FAKE_CODEX_HOLD_STEER", Path.join(context.mc.home, "hold-steer"))
+      |> Map.put_new("FAKE_CODEX_KEEP_TURN", Path.join(context.mc.home, "keep-turn"))
       |> Map.put_new("FAKE_ACP_LOG", Path.join(context.mc.home, "acp-requests.log"))
       |> Map.put_new("FAKE_CLAUDE_LOG", Path.join(context.mc.home, "claude-prompts.log"))
       |> Map.put_new("FAKE_CODEX_GATE", Path.join(context.mc.home, "gate"))
+      |> Map.put_new("FAKE_CLAUDE_GATE", Path.join(context.mc.home, "gate"))
 
     fake = &["python3", "-u", Path.join(@support, &1)]
     keys = ~w(codex_command claude_command acp_commands text_codex_command text_claude_command)a
@@ -1997,6 +2062,7 @@ defmodule HalC2.Test.Mc.World do
         do: Mc.ensure(Supervisor.child_spec({Registry, keys: :unique, name: name}, id: name))
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
     Map.put(context, :agents, true)
   end
 
@@ -2057,23 +2123,137 @@ defmodule HalC2.Test.Mc.World do
 
   @doc """
   Waits until `fun` holds for the thread's stream state and returns that state.
-  Wakes on the stream's own commits, never on a timer.
+  Wakes on the stream's own commits, never on a timer. `timeout` ms with no commit
+  fails it, unless the MC still has effects waiting or running (a checkpoint's git
+  fsyncs on a busy disk take seconds): those are waited out on the effect worker's
+  drain (each effect once, for at most six times `timeout`, 30s at most), and a
+  stalled one fails it, named. With none in flight, the thread's own processes are
+  drained instead (`drain_thread/2`): its stream, which answers once the commit it
+  is writing has landed, and its provider runtime, once the work it does between
+  effects is done. Only a drain that moved the stream on keeps the wait going.
   """
   def await_thread(context, title, fun, timeout \\ 5_000) do
     id = thread_id(context, title)
     state = stream(context, title)
-    if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
+    if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state, MapSet.new())
   end
 
-  defp await_stream_next(id, fun, timeout, last) do
+  defp await_stream_next(id, fun, timeout, last, drained) do
     receive do
       {:hal_c2_stream, ^id, _} ->
         state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
-        if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state)
+        if fun.(state), do: state, else: await_stream_next(id, fun, timeout, state, drained)
     after
       timeout ->
-        runs = last |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"])
-        flunk("#{id} never reached the expected state (runs: #{inspect(runs)})")
+        case Enum.reject(effects_in_flight(), &MapSet.member?(drained, &1["id"])) do
+          [] ->
+            # Nothing recorded is in flight, but a commit can still be on its way: one the
+            # stream is writing to a slow disk, or one the provider runtime makes after
+            # inline work. Each answers once that is done, so a turn that is only slow
+            # moves the stream on, and one that is stuck fails here, as it is now.
+            case drain_thread(id, min(6 * timeout, 30_000)) do
+              {:busy, what} ->
+                flunk(
+                  "#{id} never reached the expected state (runs: #{run_statuses(last)}): #{what}"
+                )
+
+              %{seq: seq} = state when seq > last.seq ->
+                if fun.(state),
+                  do: state,
+                  else: await_stream_next(id, fun, timeout, state, drained)
+
+              state ->
+                flunk("#{id} never reached the expected state (runs: #{run_statuses(state)})")
+            end
+
+          effects ->
+            # Bounded well under ExUnit's 60s, so a stuck effect is named, not killed.
+            bound = min(6 * timeout, 30_000)
+
+            for thread <- Enum.uniq(Enum.map(effects, & &1["threadId"])),
+                HalC2.Orchestration.Effects.drain(thread, bound) != :ok do
+              stalled =
+                for effect <- effects_in_flight(),
+                    do: Map.take(effect, ~w(type threadId status))
+
+              flunk(
+                "#{id} never reached the expected state (runs: #{run_statuses(last)}): " <>
+                  "effects of #{thread} still in flight after #{bound}ms: #{inspect(stalled)}"
+              )
+            end
+
+            state = HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
+            drained = MapSet.union(drained, MapSet.new(effects, & &1["id"]))
+
+            if fun.(state),
+              do: state,
+              else: await_stream_next(id, fun, timeout, state, drained)
+        end
+    end
+  end
+
+  @runtime_registries [
+    HalC2.Codex.Registry,
+    HalC2.Claude.Registry,
+    HalC2.Acp.Registry,
+    HalC2.Pi.Registry,
+    HalC2.Muse.Registry
+  ]
+
+  # The thread's stream as it stands once its provider runtime has handled what it
+  # had been sent, and the stream has written what that committed: each call is
+  # answered after the work in hand. `{:busy, why}` when either is still at it
+  # `bound` ms after the drain began: one deadline for both, so a caller's wait is
+  # never twice `bound`.
+  defp drain_thread(id, bound) do
+    deadline = System.monotonic_time(:millisecond) + bound
+    left = fn -> max(deadline - System.monotonic_time(:millisecond), 0) end
+
+    busy =
+      Enum.find_value(
+        for(registry <- @runtime_registries, Process.whereis(registry), do: registry),
+        fn registry ->
+          Enum.find_value(Registry.lookup(registry, id), fn {pid, _} ->
+            try do
+              _ = :sys.get_state(pid, left.())
+              nil
+            catch
+              :exit, {:timeout, _} ->
+                "its provider runtime was still busy after #{bound}ms in " <>
+                  inspect(Process.info(pid, :current_stacktrace))
+
+              # A runtime that ended meanwhile has nothing more in hand.
+              :exit, _ ->
+                nil
+            end
+          end)
+        end
+      )
+
+    if busy do
+      {:busy, busy}
+    else
+      task = Task.async(fn -> HalC2.Streams.Server.state(HalC2.Streams.ensure(id)) end)
+
+      case Task.yield(task, left.()) || Task.shutdown(task) do
+        {:ok, state} -> state
+        _ -> {:busy, "its stream was still writing #{bound}ms after the drain began"}
+      end
+    end
+  end
+
+  defp run_statuses(state),
+    do: state |> HalC2.StreamState.list("run") |> Enum.map(& &1["status"]) |> inspect()
+
+  # The effects this MC's worker has recorded and not finished.
+  defp effects_in_flight do
+    if Process.whereis(HalC2.Orchestration.Effects) && Process.whereis(HalC2.Store) do
+      for {_key, json} <- HalC2.Store.metas(HalC2.Store.path(), "effect:"),
+          %{"status" => status} = effect = JSON.decode!(json),
+          status in ~w(pending running),
+          do: effect
+    else
+      []
     end
   end
 
@@ -2542,6 +2722,9 @@ defmodule HalC2.Test.Mc.World do
       ignore =
         "FAKE_CODEX_IGNORE_INTERRUPT_FILE=" <> Path.join(context.mc.home, "ignore-interrupt")
 
+      # Turns stay running while this file exists.
+      held = "FAKE_CODEX_HOLD_TURN_FILE=" <> Path.join(context.mc.home, "hold-turn")
+
       Application.put_env(:hal_c2, :codex_command, [
         "env",
         log,
@@ -2550,6 +2733,7 @@ defmodule HalC2.Test.Mc.World do
         full,
         hold,
         ignore,
+        held,
         "python3",
         "-u",
         @fake_codex
@@ -2561,11 +2745,15 @@ defmodule HalC2.Test.Mc.World do
     if Application.get_env(:hal_c2, :claude_command) == nil do
       log = "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(context.mc.home, "claude-argv.jsonl")
       input = "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(context.mc.home, "claude-inputs.jsonl")
+      gate = "FAKE_CLAUDE_GATE=" <> Path.join(context.mc.home, "gate")
+      mcp = "FAKE_CLAUDE_MCP_LOG=" <> Path.join(context.mc.home, "claude-mcp.jsonl")
 
       Application.put_env(:hal_c2, :claude_command, [
         "env",
         log,
         input,
+        gate,
+        mcp,
         "python3",
         "-u",
         @fake_claude
@@ -2594,6 +2782,7 @@ defmodule HalC2.Test.Mc.World do
           ),
           HalC2.Mcp,
           HalC2.Orchestration.TurnWatch,
+          HalC2.Orchestration.CommandTail,
           HalC2.Orchestration.Effects
         ],
         do: Mc.ensure(child)
@@ -2710,6 +2899,17 @@ defmodule HalC2.Test.Mc.World do
   def provider_inputs(context) do
     case File.read(Path.join(context.mc.home, "codex-inputs.jsonl")) do
       {:ok, lines} -> lines |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
+      {:error, :enoent} -> []
+    end
+  end
+
+  @doc """
+  The MCP servers each fake Claude CLI was handed over stdin in this scenario
+  (`mcp_set_servers`, with Claude's `${VAR}` expansion done), oldest first.
+  """
+  def claude_mcp_servers(context) do
+    case File.read(Path.join(context.mc.home, "claude-mcp.jsonl")) do
+      {:ok, text} -> text |> String.split("\n", trim: true) |> Enum.map(&JSON.decode!/1)
       {:error, :enoent} -> []
     end
   end
@@ -2869,7 +3069,13 @@ defmodule HalC2.Test.Mc.World do
         do: Mc.ensure(Supervisor.child_spec(spec, id: name))
 
     Enum.each(
-      [HalC2.Settings, HalC2.Terminal.Hub, HalC2.Mcp, HalC2.Orchestration.TurnWatch],
+      [
+        HalC2.Settings,
+        HalC2.Terminal.Hub,
+        HalC2.Mcp,
+        HalC2.Orchestration.TurnWatch,
+        HalC2.Orchestration.CommandTail
+      ],
       &Mc.ensure/1
     )
   end
@@ -3339,6 +3545,18 @@ defmodule HalC2.Test.Mc.World do
   end
 
   @doc """
+  Ends the thread's running Codex turn as completed, as the (fake) app-server does
+  when the agent finishes on its own; returns the context. A Stop would hold the queue.
+  """
+  def complete_codex_turn(context, title) do
+    {_pid, runtime} = codex_runtime(context, title)
+
+    codex_notify(context, title, "turn/completed", %{
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+  end
+
+  @doc """
   Makes the fake Claude (`test/support/fake_claude.py`) log the text of every user
   message it receives from now on, for `claude_prompts/1`; returns the context.
   """
@@ -3419,7 +3637,7 @@ defmodule HalC2.Test.Mc.World do
       )
 
     codex =
-      fake_cli(dir, "codex", opts[:codex_layout], opts[:codex_version] || "0.50.0",
+      fake_cli(dir, "codex", opts[:codex_layout], opts[:codex_version] || "0.160.0",
         version_line: "echo \"codex-cli $(cat #{Path.join(dir, "codex.version")})\"",
         exec: "python3 -u #{@fakes}/fake_codex.py \"$@\""
       )
@@ -3429,6 +3647,7 @@ defmodule HalC2.Test.Mc.World do
 
     env = %{
       "FAKE_CLAUDE_TRACE" => logs["claude"],
+      "FAKE_CLAUDE_MCP_LOG" => Path.join(context.mc.home, "claude-mcp.jsonl"),
       "FAKE_CODEX_TRACE" => logs["codex"],
       "FAKE_ACP_TRACE" => logs["acp"],
       # OpenCode's sessions, which every fake reads (a fork reads its source's).
@@ -3446,7 +3665,7 @@ defmodule HalC2.Test.Mc.World do
     ExUnit.Callbacks.on_exit(fn ->
       for key <-
             ~w(FAKE_CODEX_MODELS FAKE_CODEX_ACCOUNT FAKE_CLAUDE_USAGE FAKE_CLAUDE_MODELS FAKE_ACP_MODELS FAKE_ACP_CAPS FAKE_AUTH_FILE FAKE_CODEX_CONSUME_LOG
-                    FAKE_CODEX_CONSUME_FAIL),
+                    FAKE_CODEX_CONSUME_FAIL FAKE_CLAUDE_USAGE_EMPTY FAKE_CODEX_CONSUME_OUTCOME),
           do: System.delete_env(key)
 
       reset_provider_caches()
@@ -3468,6 +3687,7 @@ defmodule HalC2.Test.Mc.World do
     )
 
     Mc.ensure({DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one})
+    Mc.ensure(HalC2.Orchestration.CommandTail)
 
     # The built-in ACP agents run the fake through their binary setting, unless the
     # scenario already pointed them elsewhere.
@@ -3565,6 +3785,8 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.Claude.Provider, :models},
           {HalC2.Claude.Provider, :capabilities},
           {HalC2.Claude.Provider, :health},
+          {HalC2.ProviderUpdates, :claude_channel, "latest"},
+          {HalC2.ProviderUpdates, :claude_channel, "stable"},
           {HalC2.ProviderUpdates, "codex"},
           {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.
@@ -3574,6 +3796,10 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.ProviderUpdates, "claudeAgent", :state}
         ],
         do: :persistent_term.erase(key)
+
+    # Claude's sign-in reads live in their ETS table, emptied with the rest.
+    if :ets.whereis(:hal_c2_claude_auth) != :undefined,
+      do: :ets.delete_all_objects(:hal_c2_claude_auth)
 
     :ok
   end
@@ -3594,7 +3820,10 @@ defmodule HalC2.Test.Mc.World do
   def launch_on(context, title, instance, text, fields \\ %{}) do
     id = "th-#{slug(title)}-#{System.unique_integer([:positive])}"
     :ok = HalC2.Streams.subscribe(id, self(), nil)
-    project = if context[:projects] not in [nil, %{}], do: project(context).id
+
+    project =
+      fields["projectId"] || if context[:projects] not in [nil, %{}], do: project(context).id
+
     {model, fields} = Map.pop(fields, "model", default_model(instance))
 
     {:ok, _} =
@@ -3885,7 +4114,7 @@ defmodule HalC2.Test.Mc.World do
             "name" => name,
             "version" => "1.0.0",
             "description" => "",
-            "distribution" => %{"npx" => %{"package" => id}}
+            "distribution" => %{"npx" => %{"package" => "#{id}@1.0.0"}}
           }
         ]
       })
@@ -4542,6 +4771,7 @@ defmodule HalC2.Test.Mc.Host do
         real = path(context, "/home/sam")
         File.mkdir_p!(real)
         previous = System.get_env("HOME")
+        keep_mise(previous)
         System.put_env("HOME", real)
         ExUnit.Callbacks.on_exit(fn -> System.put_env("HOME", previous) end)
         Process.put({__MODULE__, :home}, real)
@@ -4549,6 +4779,25 @@ defmodule HalC2.Test.Mc.Host do
 
       real ->
         real
+    end
+  end
+
+  # The fake tools a scenario runs start through `#!/usr/bin/env python3` and the like,
+  # which on a machine with mise shims is mise. Under the scenario's `$HOME` mise would
+  # look for its installs and trust records there, and refuse the real user's config it
+  # still finds above the working directory. Its own directories stay the real ones.
+  defp keep_mise(nil), do: :ok
+
+  defp keep_mise(home) do
+    for {name, xdg, default} <- [
+          {"MISE_CONFIG_DIR", "XDG_CONFIG_HOME", ".config"},
+          {"MISE_DATA_DIR", "XDG_DATA_HOME", ".local/share"},
+          {"MISE_STATE_DIR", "XDG_STATE_HOME", ".local/state"},
+          {"MISE_CACHE_DIR", "XDG_CACHE_HOME", ".cache"}
+        ],
+        System.get_env(name) == nil do
+      System.put_env(name, Path.join(System.get_env(xdg) || Path.join(home, default), "mise"))
+      ExUnit.Callbacks.on_exit(fn -> System.delete_env(name) end)
     end
   end
 end

@@ -20,10 +20,15 @@ defmodule HalC2.Test.DevServer do
   @socket [:binary, active: false, reuseaddr: true, packet: :raw]
 
   @doc "An echo server on `ip` at `port` (0 for a free one)."
-  def echo(ip, port, owner), do: hold(owner, fn -> echo_listen(ip, port, owner) end)
+  def echo(ip, port, owner),
+    do: unreserved(port, fn -> hold(owner, fn -> echo_listen(ip, port, owner) end) end)
 
   @doc "An HTTP server with a websocket echo on `ip` at `port` (0 for a free one)."
   def websocket(ip, port, owner) do
+    unreserved(port, fn -> websocket_hold(ip, port, owner) end)
+  end
+
+  defp websocket_hold(ip, port, owner) do
     hold(owner, fn ->
       {:ok, server} =
         Bandit.start_link(
@@ -47,23 +52,53 @@ defmodule HalC2.Test.DevServer do
   there may already be taken at 127.0.0.1, by any socket of this machine.
   """
   def on_free_port(start) do
+    {v4, v6, port} = free_pair()
+
+    try do
+      start.(port)
+    after
+      :gen_tcp.close(v4)
+      close_v6(v6)
+    end
+  end
+
+  @doc """
+  Like `on_free_port/1`, but the port stays in use at this machine's 127.0.0.1
+  after `start` returns: it gives `{what start returned, listener}` and the
+  caller closes the listener. For a test whose point is a port that is in use
+  here; one that was free when a step looked and is bound again later can be
+  taken in between, by any socket of this machine.
+  """
+  def on_busy_port(start) do
+    {v4, v6, port} = free_pair()
+
+    try do
+      {start.(port), v4}
+    rescue
+      error ->
+        :gen_tcp.close(v4)
+        reraise error, __STACKTRACE__
+    after
+      close_v6(v6)
+    end
+  end
+
+  # A port free at 127.0.0.1 and ::1, listened on at both: `{v4, v6, port}`.
+  defp free_pair do
     {:ok, v4} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
     {:ok, port} = :inet.port(v4)
 
     case :gen_tcp.listen(port, [:inet6, ip: {0, 0, 0, 0, 0, 0, 0, 1}, ipv6_v6only: true]) do
       {:error, :eaddrinuse} ->
         :gen_tcp.close(v4)
-        on_free_port(start)
+        free_pair()
 
       v6 ->
-        try do
-          start.(port)
-        after
-          :gen_tcp.close(v4)
-          with {:ok, socket} <- v6, do: :gen_tcp.close(socket)
-        end
+        {v4, v6, port}
     end
   end
+
+  defp close_v6(v6), do: with({:ok, socket} <- v6, do: :gen_tcp.close(socket))
 
   @doc """
   Watches `pid` on this MC from a process of its own, for a test on another MC
@@ -81,6 +116,24 @@ defmodule HalC2.Test.DevServer do
   def down(watcher) do
     send(watcher, {:reason, self()})
     receive(do: ({:reason, reason} -> reason))
+  end
+
+  # A port the OS picks at one address can be one this MC holds, or held, at another:
+  # the cluster tests' distribution listens at 127.0.0.1, and a forward refuses the MC's
+  # own ports by number (`HalC2.PreviewForward.Grant.reserved/0`). Each server passed
+  # over stays up until one is kept, so the OS cannot hand its port back.
+  defp unreserved(0, start), do: pick(start, [])
+  defp unreserved(_port, start), do: start.()
+
+  defp pick(start, passed) do
+    {port, server} = start.()
+
+    if port in HalC2.PreviewForward.Grant.reserved() do
+      pick(start, [server | passed])
+    else
+      Enum.each(passed, &stop/1)
+      {port, server}
+    end
   end
 
   # Runs `start` in a process of its own that outlives the caller (an `:erpc`

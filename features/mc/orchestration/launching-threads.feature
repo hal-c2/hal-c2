@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29563
+#   https://github.com/pingdotgg/t3code/pull/30721
+#   https://github.com/pingdotgg/t3code/pull/23802
 #   packages/contracts/src/rpc.ts (orchestration.launchThread)
 #   packages/contracts/src/orchestrationV2.ts (thread.create, message.dispatch, prepared-run.release,
 #     prepared-run.progress, prepared-run.fail, run.created, run.updated)
@@ -113,6 +116,16 @@ Feature: Launching a thread with its first message
     Then the run is failed
     And the thread can take its next message
 
+  # Upstream #23802: a checkout past a fixed five-minute deadline was killed, leaving its branch
+  # behind so Retry failed with "branch already exists".
+  @backlog @mc @priority-low
+  Scenario: A slow worktree checkout is left to finish
+    Given a launched thread's first run is preparing its worktree
+    And the project's post-checkout hook takes six minutes
+    When the hook finishes
+    Then the worktree is ready and the run starts
+    And cancelling the setup before then still stops git and its hook
+
   @mc
   Scenario: Cancelling worktree preparation cancels the waiting run
     Given a launched thread's first run is preparing its worktree
@@ -225,3 +238,20 @@ Feature: Launching a thread with its first message
     Given a run failed with "Workspace preparation failed"
     When the user chooses Retry
     Then the preparation runs again for the same run, reusing a worktree the failed attempt created
+
+  # Upstream #29563: `t3 thread start` without --title cut the first line at 80 UTF-16 units,
+  # so an emoji at the cut left half a character, stored as U+FFFD.
+  @backlog @mc
+  Scenario: A thread started from the command line without a title is named from its message, never through a character
+    When the user starts a thread in "demo" from the command line with no title and a first line of 78 letters, an emoji and more text
+    Then the thread's title is that line cut to at most 80 characters before the emoji, not through it
+
+  # Upstream #30721: a quoted "~/…" project path was read beneath the current folder, so a thread
+  # could start in the project the user happened to be in.
+  @backlog @mc @priority-low
+  Scenario: A home-relative project path on the command line names the project in the home folder
+    Given the projects "shop" at "/home/sam/shop" and "My Project" at "/home/sam/My Project"
+    And the operator is in "/home/sam/shop"
+    When the operator starts a thread from the command line in "~/My Project"
+    Then the thread starts in "My Project", not "shop"
+    And listing threads from the command line for "~/My Project" lists that project's threads

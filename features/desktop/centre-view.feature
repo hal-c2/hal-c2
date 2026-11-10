@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25064
+#   https://github.com/pingdotgg/t3code/pull/26958
 #   https://github.com/pingdotgg/t3code/pull/24847
 #   https://github.com/pingdotgg/t3code/pull/19065
 #   https://github.com/pingdotgg/t3code/pull/15686
@@ -24,7 +26,7 @@ Feature: The desktop shell draws the thread in the window's centre
 
   Rule: The centre says what state the thread is in and where its rows lead
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A thread route shows the conversation in the centre
       When the user opens a thread
       Then the thread's conversation is shown above the composer
@@ -55,30 +57,55 @@ Feature: The desktop shell draws the thread in the window's centre
       Then the thread behind does not react
       And Escape closes only the topmost thing open inside settings first
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A thread says it is loading without moving
       When the user opens a thread whose rows have not arrived
       Then the centre reads "Loading…"
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A thread without messages says how to start
       When the user opens a thread with no messages yet
       Then the centre reads "Send a message to start the conversation."
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A new thread's draft says where it will run
       When the user starts a new thread in "shop" on a new worktree from "main"
       Then the centre reads "What should we build in shop?"
       And the centre says the thread runs in a new worktree from "main"
 
-    @desktop
+    # Upstream #25064: with projects grouped by repository, the headline named the repository's
+    # group while the breadcrumb named the checkout the draft would run in.
+    @backlog @desktop @priority-low
+    Scenario: A new thread's draft names the checkout it was started in
+      Given projects are grouped by repository
+      And "shop" and its checkout "shop-hotfix" share a repository
+      When the user starts a new thread in "shop-hotfix"
+      Then the centre reads "What should we build in shop-hotfix?"
+      And the draft's project picker still lists the repository's group
+
+    # Upstream #26958: the reconnecting notice pushed the new thread's headline and composer up.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A notice in a new thread's draft does not move its composer
+      Given the user is in a new thread's draft
+      When <notice> appears
+      Then it shows as its own card under the composer's branch row
+      And the headline and the composer do not move
+
+      Examples:
+        | notice                                  |
+        | the notice that the MC is reconnecting  |
+        | the notice that a fallback model is used |
+        | a usage limit notice                    |
+
+
+    @desktop @backlog-desktop
     Scenario: A thread whose MC cannot be reached offers a retry
       Given the thread's MC cannot be reached
       Then the centre says why the thread cannot be reached
       When the user retries
       Then the shell follows the thread again
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario Outline: Links in a reply lead where they point
       When the user follows the link "<link>" in a reply
       Then <result>
@@ -89,20 +116,20 @@ Feature: The desktop shell draws the thread in the window's centre
         | file:///work/shop/a.ts:7 | "/work/shop/a.ts" opens in the right panel's files at line 7 |
         | https://example.com/docs | nothing opens in the right panel                             |
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A file a turn changed opens in the right panel
       When the user opens "src/cart.ts" from a reply's changed files
       Then "src/cart.ts" opens in the right panel's diff of that reply's turn
       When the user opens the file a tool call changed
       Then that file opens in the right panel's files
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: The user cancels a revert
       When the user asks to revert to a reply's turn
       And the user cancels
       Then the thread is not reverted
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: Jump to latest is a command
       Then "Jump to latest" is a command the shell runs
 

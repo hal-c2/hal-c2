@@ -50,10 +50,13 @@ defmodule HalC2.AcpTest do
   test "agent commands follow the runtime mode and the configured binary" do
     assert {:ok, ["opencode", "acp"], []} = HalC2.Acp.command("opencode", "full-access")
 
-    assert {:ok, ["grok", "agent", "--always-approve", "stdio"], []} =
+    # Grok is told HAL-C2 started it.
+    referrer = [{"GROK_OAUTH2_REFERRER", "hal-c2"}]
+
+    assert {:ok, ["grok", "agent", "--always-approve", "stdio"], ^referrer} =
              HalC2.Acp.command("grok", "full-access")
 
-    assert {:ok, ["grok", "--permission-mode", "default", "agent", "stdio"], []} =
+    assert {:ok, ["grok", "--permission-mode", "default", "agent", "stdio"], ^referrer} =
              HalC2.Acp.command("grok", "approval-required")
 
     {:ok, _} =
@@ -85,8 +88,104 @@ defmodule HalC2.AcpTest do
     assert {"HAL_C2_CURSOR_CREDENTIALS", Path.join(dir, "provider-auth/cursor/cursor.json")} in env
   end
 
-  test "Pi is offered only where its binary is installed" do
-    {:ok, _} =
+  test "an invalid legacy Cursor login is retried on the next start", %{tmp_dir: dir} do
+    home = Path.join(dir, "home")
+    legacy = Path.join([home, ".cursor", "sdk", "auth.json"])
+    File.mkdir_p!(Path.dirname(legacy))
+
+    previous = System.get_env("HOME")
+    System.put_env("HOME", home)
+
+    on_exit(fn ->
+      if previous, do: System.put_env("HOME", previous), else: System.delete_env("HOME")
+    end)
+
+    target = HalC2.Acp.cursor_credentials("cursor")
+    marker = Path.join(Path.dirname(target), "legacy-migrated")
+
+    # Not a readable login: nothing is copied and nothing is remembered.
+    File.write!(legacy, "not json")
+    assert {:ok, _, _} = HalC2.Acp.command("cursor")
+    refute File.exists?(target)
+    refute File.exists?(marker)
+
+    # A readable login at the next start is copied, and only then remembered;
+    # the SDK's own file stays where it was.
+    File.write!(legacy, JSON.encode!(%{"apiKey" => "cursor-key"}))
+    assert {:ok, _, _} = HalC2.Acp.command("cursor")
+    assert JSON.decode!(File.read!(target))["apiKey"] == "cursor-key"
+    assert File.exists?(marker)
+    assert File.exists?(legacy)
+  end
+
+  test "a Cursor skill mention reads the workspace snapshot, not a fresh scan",
+       %{tmp_dir: dir} do
+    home = Path.join(dir, "home")
+    File.mkdir_p!(home)
+    previous = System.get_env("HOME")
+    System.put_env("HOME", home)
+
+    on_exit(fn ->
+      if previous, do: System.put_env("HOME", previous), else: System.delete_env("HOME")
+      :persistent_term.erase({HalC2.Acp, "cursor", :workspaces})
+    end)
+
+    work = Path.join(dir, "work")
+    skill = Path.join([work, ".cursor", "skills", "deploy"])
+    File.mkdir_p!(skill)
+    File.write!(Path.join(skill, "SKILL.md"), "---\n---\nShip it.\n")
+
+    # No snapshot yet: the mention resolves by scanning the workspace.
+    assert HalC2.Acp.cursor_skill_mentions("run $deploy now", "cursor", work) ==
+             "run /deploy now"
+
+    # With a snapshot read, its names decide — the folder can even be gone.
+    assert :ok = HalC2.Acp.CursorSkills.refresh_workspace("cursor", work)
+    File.rm_rf!(Path.join(work, ".cursor"))
+
+    assert HalC2.Acp.cursor_skill_mentions("run $deploy now", "cursor", work) ==
+             "run /deploy now"
+  end
+
+  # Review of #1284: two refreshes of different folders each read the snapshots, added
+  # theirs and wrote them back, so one overwrote the other's; and a scan that began
+  # before the instance was dropped wrote its snapshot back after it.
+  test "Cursor workspace refreshes keep each other's snapshots and not a dropped one's",
+       %{tmp_dir: dir} do
+    previous = System.get_env("HOME")
+    System.put_env("HOME", Path.join(dir, "home"))
+
+    on_exit(fn ->
+      if previous, do: System.put_env("HOME", previous), else: System.delete_env("HOME")
+      :persistent_term.erase({HalC2.Acp, "cursor", :workspaces})
+    end)
+
+    folders =
+      for n <- 1..8 do
+        work = Path.join(dir, "work#{n}")
+        File.mkdir_p!(Path.join([work, ".cursor", "skills", "s#{n}"]))
+        File.write!(Path.join([work, ".cursor", "skills", "s#{n}", "SKILL.md"]), "---\n---\nx\n")
+        work
+      end
+
+    folders
+    |> Task.async_stream(&HalC2.Acp.CursorSkills.refresh_workspace("cursor", &1),
+      max_concurrency: 8
+    )
+    |> Enum.each(&assert {:ok, :ok} = &1)
+
+    assert Enum.sort(Enum.map(HalC2.Acp.CursorSkills.workspaces("cursor"), & &1["cwd"])) ==
+             Enum.sort(folders)
+
+    epoch = HalC2.Acp.workspaces_epoch("cursor")
+    HalC2.Acp.drop("cursor")
+    assert HalC2.Acp.CursorSkills.workspaces("cursor") == []
+    assert :dropped = HalC2.Acp.put_workspace("cursor", hd(folders), %{}, epoch)
+    assert HalC2.Acp.CursorSkills.workspaces("cursor") == []
+  end
+
+  test "an enabled Pi whose binary is missing stays listed as unavailable" do
+    {:ok, version} =
       HalC2.Settings.put(
         %{
           "providerInstances" => %{
@@ -101,6 +200,27 @@ defmodule HalC2.AcpTest do
       )
 
     assert HalC2.Acp.agent?("pi")
+
+    # An enabled Pi stays listed so its health load can say it is missing
+    # (pi.feature health states), as an enabled Muse does; a Pi nobody
+    # enabled is not offered at all (pi.feature "only offered when installed").
+    assert %{"installed" => false, "status" => "error", "availability" => "unavailable"} =
+             HalC2.Acp.entry("pi")
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "pi" => %{
+              "driver" => "pi",
+              "enabled" => false,
+              "config" => %{"binaryPath" => "/nope/pi"}
+            }
+          }
+        },
+        version
+      )
+
     assert HalC2.Acp.entry("pi") == nil
   end
 
@@ -221,6 +341,10 @@ defmodule HalC2.AcpTest do
 
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, sys
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
@@ -264,6 +388,10 @@ defmodule HalC2.AcpTest do
     # The first launch answers `session/new` with what no read can take.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
@@ -304,6 +432,17 @@ defmodule HalC2.AcpTest do
     assert %{"models" => [%{"slug" => "fresh"}]} = HalC2.Acp.entry("grok")
   end
 
+  # One macOS refuses (quarantine) dies before it answers: its connection may stop
+  # before `initialize` is sent, while it is written, or while it waits. Each of
+  # those is a closed connection, never an exit that leaves the read unpublished.
+  test "an agent that dies at once fails as closed", %{tmp_dir: dir} do
+    Application.put_env(:hal_c2, :acp_commands, %{"dying" => ["sh", "-c", "exit 137"]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
+
+    assert HalC2.Acp.with_agent("dying", dir, fn _conn, _init -> :answered end) ==
+             {:error, :closed}
+  end
+
   test "a read that was forgotten while it ran leaves no failure behind", %{tmp_dir: dir} do
     # The agent refuses `initialize` once the instance is forgotten.
     forgotten_mid_read(dir, """
@@ -341,6 +480,10 @@ defmodule HalC2.AcpTest do
     # let the first read overwrite the second.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     def answer(request, result):
@@ -406,6 +549,10 @@ defmodule HalC2.AcpTest do
     # never answers, so a read started beside the reload cannot stand in for it.
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     first = not os.path.exists("#{probes}")
@@ -465,6 +612,10 @@ defmodule HalC2.AcpTest do
 
     File.write!(grok, """
     #!/usr/bin/env python3
+    import sys
+    if sys.argv[1:] == ["--version"]:
+        print("grok 9.9.9")
+        sys.exit(0)
     import json, os, sys
     request = json.loads(sys.stdin.readline())
     open("#{started}", "w").write(os.getcwd() + "\\n")
@@ -510,6 +661,26 @@ defmodule HalC2.AcpTest do
 
     assert :persistent_term.get({HalC2.Acp, "gone", :generation}, :none) == :none
     assert :persistent_term.get({HalC2.Acp, "gone", :models}, :none) == :none
+  end
+
+  test "an instance's commands and skills are its own and are forgotten with it" do
+    HalC2.Acp.put_commands("opencode", [
+      %{"name" => "review", "description" => "Review"},
+      %{"name" => "$deploy", "description" => "Deploy"}
+    ])
+
+    on_exit(fn -> HalC2.Acp.forget("opencode") end)
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}) ==
+             [%{"name" => "review", "description" => "Review"}]
+
+    assert [%{"name" => "deploy"}] = :persistent_term.get({HalC2.Acp, "opencode", :skills})
+    assert :persistent_term.get({HalC2.Acp, "grok", :commands}, :none) == :none
+
+    HalC2.Acp.forget("opencode")
+
+    assert :persistent_term.get({HalC2.Acp, "opencode", :commands}, :none) == :none
+    assert :persistent_term.get({HalC2.Acp, "opencode", :skills}, :none) == :none
   end
 
   # Other services broadcast `providers_changed` too. The read's own broadcast follows

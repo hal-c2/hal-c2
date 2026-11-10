@@ -10,20 +10,19 @@ defmodule HalC2.Heir do
   use GenServer
 
   @doc """
-  The child spec of a supervisor running the heir `name` and then `server`, under
-  `server`'s id: stopping or restarting that id takes both.
+  The child spec of a supervisor running the heir `name`, then the processes `before`
+  the server needs, and then `server`, under `server`'s id: stopping or restarting that
+  id takes them all.
   """
-  def supervise(name, server, supervisor) do
+  def supervise(name, server, supervisor, before \\ []) do
     %{
       id: server.id,
       type: :supervisor,
       start:
         {Supervisor, :start_link,
          [
-           [
-             %{id: name, start: {GenServer, :start_link, [__MODULE__, nil, [name: name]]}},
-             server
-           ],
+           [%{id: name, start: {GenServer, :start_link, [__MODULE__, nil, [name: name]]}}] ++
+             before ++ [server],
            [strategy: :rest_for_one, name: supervisor]
          ]}
     }

@@ -776,6 +776,57 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
+  step "the agent of {string} launched a thread in {string} with request key {string} and message {string}",
+       %{args: [caller, project, key, text]} = context do
+    args = %{
+      "projectId" => World.project(context, project).id,
+      "title" => "Release notes",
+      "message" => text,
+      "clientRequestId" => key
+    }
+
+    result = World.mcp_tool(context, caller, "hal_c2_thread_launch", args)
+    assert {:ok, %{"threadId" => id}} = result
+    World.await_row(id, & &1)
+
+    context
+    |> Map.merge(%{launch_args: args, launch_caller: caller, first_launch: result})
+    |> put_in([:threads, "launched"], id)
+  end
+
+  step "it repeats the launch with request key {string}", %{args: [key]} = context do
+    args = Map.put(context.launch_args, "clientRequestId", key)
+    result = World.mcp_tool(context, context.launch_caller, "hal_c2_thread_launch", args)
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "it is answered with the thread the first launch created", context do
+    assert {:ok, %{"threadId" => id}} = context.mcp_result
+    assert {:ok, %{"threadId" => ^id}} = context.first_launch
+    context
+  end
+
+  step "that thread has one user message", context do
+    state = World.state(context, "launched")
+
+    assert [%{"text" => "Hello"}] =
+             Enum.filter(StreamState.list(state, "message"), &(&1["role"] == "user"))
+
+    context
+  end
+
+  step "no extra thread is created", context do
+    caller = World.thread_id(context, "caller")
+
+    launched =
+      for {{_mc, id}, {"thread", _row}} <- HalC2.Shell.rows(),
+          String.starts_with?(id, "thread:mcp:#{caller}:launch:"),
+          do: id
+
+    assert length(launched) == 1
+    context
+  end
+
   step "their ids are derived from the caller, the request key and their position", context do
     assert {:ok, %{"threads" => threads}} = context.mcp_result
     caller = World.thread_id(context, "caller")
@@ -1197,12 +1248,22 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   step ~r/^"(?<thread>[^"]+)" is (?<result>unpinned|settled|unsettled|snoozed|not snoozed|unarchived|marked unread)$/,
        %{args: [thread, result]} = context do
     # In pull-request-links these arrange the state discovery and the sync
-    # cadence then observe, rather than awaiting a tool's doing.
-    if String.contains?(context[:file] || "", "pull-request-links") and
-         result in ["settled", "unarchived"] do
-      HalC2.Steps.Orchestration.PullRequestLinks.arrange_state(context, thread, result)
-    else
-      await_organized(context, thread, result)
+    # cadence then observe, rather than awaiting a tool's doing; in
+    # recovery-and-idle-sessions, a thread settled before the MC restarts.
+    file = context[:file] || ""
+
+    cond do
+      String.contains?(file, "pull-request-links") and result in ["settled", "unarchived"] ->
+        HalC2.Steps.Orchestration.PullRequestLinks.arrange_state(context, thread, result)
+
+      String.contains?(file, "recovery-and-idle-sessions") and result == "settled" ->
+        World.patch_thread(context, thread, %{
+          "settledOverride" => "settled",
+          "settledAt" => World.iso_from_now(0)
+        })
+
+      true ->
+        await_organized(context, thread, result)
     end
   end
 
@@ -1616,7 +1677,11 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
-  step "the agent of {string} lists or reads {string}", %{args: [caller, thread]} = context do
+  step("the agent of {string} lists or reads {string}", %{args: [caller, thread]} = context,
+    do: lists_or_reads(context, caller, thread) |> Map.put(:settled_thread, thread)
+  )
+
+  defp lists_or_reads(context, caller, thread) do
     listed = World.mcp_tool(context, caller, "hal_c2_thread_list", %{})
 
     read =
@@ -1651,18 +1716,8 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
-  step "the user attached thread {string} of another project to a message of {string}",
-       %{args: [elsewhere, caller]} = context do
-    context
-    |> attachable_elsewhere(elsewhere)
-    |> attach_as_context(caller, elsewhere, %{})
-  end
-
-  step "a message written by an agent of {string} carries a context record naming thread {string} of another project",
-       %{args: [caller, elsewhere]} = context do
-    context
-    |> attachable_elsewhere(elsewhere)
-    |> attach_as_context(caller, elsewhere, %{"createdBy" => "agent", "creationSource" => "mcp"})
+  step "thread {string} of another project has a message", %{args: [elsewhere]} = context do
+    elsewhere_with_a_message(context, elsewhere)
   end
 
   step "it receives the thread's messages", context do
@@ -1672,7 +1727,7 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
-  step "listing, sending to or interrupting {string} is still refused",
+  step "listing its own project, sending to or interrupting {string} is still refused",
        %{args: [elsewhere]} = context do
     id = World.thread_id(context, elsewhere)
 
@@ -1894,8 +1949,8 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     context
   end
 
-  # A thread in another project with a message of its own, named for attachment.
-  defp attachable_elsewhere(context, elsewhere) do
+  # A thread in another project with a message of its own.
+  defp elsewhere_with_a_message(context, elsewhere) do
     context =
       context
       |> World.create_project("another")
@@ -1903,38 +1958,6 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
 
     assert %{"status" => "completed"} =
              World.finish_turn(context, elsewhere, "say from elsewhere")
-
-    context
-  end
-
-  # Sends a message to `caller` carrying a `thread` context record for
-  # `elsewhere`; `fields` says who wrote it (the user by default).
-  defp attach_as_context(context, caller, elsewhere, fields) do
-    record = %{
-      "contextId" => "ctx-elsewhere",
-      "kind" => "thread",
-      "threadId" => World.thread_id(context, elsewhere),
-      "title" => elsewhere
-    }
-
-    fields = Map.put(fields, "context", %{"records" => [record]})
-
-    context =
-      World.send_turn(
-        context,
-        caller,
-        "See [#{elsewhere}](hal-c2-context://v1/thread/ctx-elsewhere)",
-        fields
-      )
-
-    World.await_state(context, caller, fn state ->
-      Enum.any?(StreamState.list(state, "message"), fn message ->
-        Enum.any?(
-          get_in(message, ["context", "records"]) || [],
-          &(&1["threadId"] == record["threadId"])
-        )
-      end)
-    end)
 
     context
   end
@@ -1955,6 +1978,286 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     World.await_row(World.thread_id(context, thread), &(&1["activeRunId"] != nil))
     context
   end
+
+  # --- list filters, read limits, sender, snooze and pull request links ---------------
+
+  step "the agent of {string} lists threads with an empty list of statuses",
+       %{args: [caller]} = context do
+    Map.put(
+      context,
+      :mcp_result,
+      World.mcp_tool(context, caller, "hal_c2_thread_list", %{"statuses" => []})
+    )
+  end
+
+  step "it receives {string} and {string} with a total of {int}",
+       %{args: [first, second, total]} = context do
+    assert {:ok, result} = context.mcp_result
+    ids = Enum.map(result["threads"], & &1["threadId"])
+
+    assert Enum.sort(ids) ==
+             Enum.sort([World.thread_id(context, first), World.thread_id(context, second)])
+
+    assert result["total"] == total
+    context
+  end
+
+  step ~r/^the agent of "(?<caller>[^"]+)" reads "(?<thread>[^"]+)" with (?<argument>limit|runLimit|maxCharsPerItem) of (?<value>\d+)$/,
+       %{args: [caller, thread, argument, value]} = context do
+    value = String.to_integer(value)
+
+    context =
+      if argument == "maxCharsPerItem" and value > 50_000 do
+        assert %{"status" => "completed"} =
+                 World.finish_turn(context, thread, String.duplicate("x", 60_000))
+
+        context
+      else
+        context
+      end
+
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, thread),
+        argument => value
+      })
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "it reads with a limit of {int}", %{args: [limit]} = context do
+    assert {:ok, %{"limit" => ^limit}} = context.mcp_result
+    context
+  end
+
+  step "it reads with a run limit of {int}", %{args: [limit]} = context do
+    assert {:ok, %{"runLimit" => ^limit}} = context.mcp_result
+    context
+  end
+
+  step ~r/^it reads with at most (?<chars>[\d,]+) characters$/, %{args: [chars]} = context do
+    limit = chars |> String.replace(",", "") |> String.to_integer()
+    assert {:ok, %{"maxCharsPerItem" => ^limit, "items" => items}} = context.mcp_result
+    assert Enum.all?(items, &(String.length(&1["text"]) <= limit))
+    assert Enum.any?(items, &(&1["truncated"] and String.length(&1["text"]) == limit))
+    context
+  end
+
+  step "the read is refused", context do
+    assert {:error, "invalid_request", _} = context.mcp_result
+    context
+  end
+
+  step "the agent of {string} sent {string} to {string}",
+       %{args: [caller, text, thread]} = context do
+    # A message the user typed, to tell it apart from the agent's.
+    assert %{"status" => "completed"} = World.finish_turn(context, thread, "say hello")
+
+    assert {:ok, %{"messageId" => _}} =
+             World.mcp_tool(context, caller, "hal_c2_thread_send", %{
+               "threadId" => World.thread_id(context, thread),
+               "message" => text
+             })
+
+    Map.merge(context, %{sent_text: text, sent_to: thread, sent_from: caller})
+  end
+
+  step "another agent reads {string}", %{args: [thread]} = context do
+    context = World.launch_titled(context, "reader", "demo", "wait for it")
+    World.await_runs(context, "reader", ["running"])
+
+    result =
+      World.mcp_tool(context, "reader", "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "{string} names {string} as the thread that sent it", %{args: [text, sender]} = context do
+    assert {:ok, %{"items" => items}} = context.mcp_result
+    assert %{"sentByThreadId" => id} = Enum.find(items, &(&1["text"] == text))
+    assert id == World.thread_id(context, sender)
+    context
+  end
+
+  step "messages the user typed name no sending thread", context do
+    assert {:ok, %{"items" => items}} = context.mcp_result
+    assert %{"sentByThreadId" => nil} = Enum.find(items, &(&1["text"] == "say hello"))
+    context
+  end
+
+  step "the response says {string} is snoozed until tomorrow 09:00",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    # The sidebar row follows the command, so ask again once it shows the snooze.
+    World.await_row(id, &(&1["snoozedUntil"] != nil))
+    context = lists_or_reads(context, "caller", thread)
+    assert {:ok, %{"threads" => threads}} = context.listed
+    listed = Enum.find(threads, &(&1["threadId"] == id))
+    assert {:ok, %{"thread" => read}} = context.mcp_result
+    until = World.thread(context, thread)["snoozedUntil"]
+    assert is_binary(until)
+
+    for item <- [listed, read] do
+      assert item["snoozed"] == true
+      assert item["snoozedUntil"] == until
+    end
+
+    context
+  end
+
+  step "thread {string} is snoozed and thread {string} in {string} is not",
+       %{args: [snoozed, other, project]} = context do
+    context |> World.create_thread(other, project) |> snooze(snoozed)
+  end
+
+  step "the agent of {string} lists threads with snoozed {word}",
+       %{args: [caller, filter]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_list", %{"snoozed" => filter == "true"})
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "the list holds {string} and not {string}", %{args: [held, left_out]} = context do
+    assert {:ok, %{"threads" => threads}} = context.mcp_result
+    ids = Enum.map(threads, & &1["threadId"])
+    assert World.thread_id(context, held) in ids
+    refute World.thread_id(context, left_out) in ids
+    context
+  end
+
+  step "thread {string} in {string} and thread {string} in {string} are snoozed",
+       %{args: [first, first_project, second, second_project]} = context do
+    context
+    |> World.create_project(first_project)
+    |> World.create_thread(first, first_project)
+    |> World.create_thread(second, second_project)
+    |> snooze(first)
+    |> snooze(second)
+  end
+
+  step "the agent of {string} lists threads of all projects with snoozed true",
+       %{args: [caller]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_list", %{
+        "allProjects" => true,
+        "snoozed" => true
+      })
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "the list holds {string} and {string}, each naming its project",
+       %{args: [first, second]} = context do
+    assert {:ok, %{"threads" => threads}} = context.mcp_result
+
+    assert Enum.sort(Enum.map(threads, & &1["threadId"])) ==
+             Enum.sort([World.thread_id(context, first), World.thread_id(context, second)])
+
+    for thread <- threads do
+      assert thread["projectId"] ==
+               World.thread(context, thread_title(context, thread))["projectId"]
+    end
+
+    context
+  end
+
+  step "the list names no single project", context do
+    assert {:ok, %{"projectId" => nil}} = context.mcp_result
+    context
+  end
+
+  step "the agent of {string} can read and unsnooze each listed thread",
+       %{args: [caller]} = context do
+    assert {:ok, %{"threads" => threads}} = context.mcp_result
+
+    for %{"threadId" => id} = thread <- threads do
+      assert {:ok, %{"thread" => %{"threadId" => ^id}}} =
+               World.mcp_tool(context, caller, "hal_c2_thread_read", %{"threadId" => id})
+
+      assert {:ok, _} = organize(context, caller, thread_title(context, thread), "unsnooze")
+      World.await_row(id, organized("unsnooze"))
+    end
+
+    context
+  end
+
+  step "{string} is linked to pull request 42 in {string} and pull request 7 in another repository",
+       %{args: [thread, _project]} = context do
+    links = [
+      %{
+        "host" => "github.com",
+        "repository" => "acme/demo",
+        "number" => 42,
+        "url" => "https://github.com/acme/demo/pull/42",
+        "source" => "manual",
+        "snapshot" => %{"state" => "open"}
+      },
+      %{
+        "host" => "github.com",
+        "repository" => "acme/other",
+        "number" => 7,
+        "url" => "https://github.com/acme/other/pull/7",
+        "source" => "manual",
+        "snapshot" => %{"state" => "merged"}
+      },
+      %{
+        "host" => "github.com",
+        "repository" => "acme/demo",
+        "number" => 99,
+        "url" => "https://github.com/acme/demo/pull/99",
+        "source" => "stack-dismissed"
+      }
+    ]
+
+    World.patch_thread(context, thread, %{"pullRequests" => links})
+  end
+
+  step "the response names both pull requests with their host, repository, number and state",
+       %{args: []} = context do
+    id = World.thread_id(context, "t2")
+    assert {:ok, %{"threads" => threads}} = context.listed
+    listed = Enum.find(threads, &(&1["threadId"] == id))
+    assert {:ok, %{"thread" => read}} = context.mcp_result
+
+    for item <- [listed, read] do
+      assert [
+               %{
+                 "host" => "github.com",
+                 "repository" => "acme/demo",
+                 "number" => 42,
+                 "state" => "open"
+               },
+               %{
+                 "host" => "github.com",
+                 "repository" => "acme/other",
+                 "number" => 7,
+                 "state" => "merged"
+               }
+             ] = item["pullRequests"]
+    end
+
+    context
+  end
+
+  defp snooze(context, thread),
+    do:
+      World.patch_thread(context, thread, %{
+        "snoozedUntil" => tomorrow(),
+        "snoozedAt" => World.iso_from_now(0)
+      })
+
+  defp tomorrow do
+    Date.utc_today()
+    |> Date.add(1)
+    |> DateTime.new!(~T[09:00:00.000], "Etc/UTC")
+    |> DateTime.to_iso8601()
+  end
+
+  defp thread_title(context, %{"threadId" => id}),
+    do: Enum.find_value(context.threads, fn {title, tid} -> tid == id && title end)
 
   defp send_message(context, caller, thread, arguments) do
     context = Map.merge(context, %{sent_to: thread, runs_before: World.runs(context, thread)})

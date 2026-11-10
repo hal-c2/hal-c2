@@ -8,18 +8,29 @@ defmodule HalC2.PluginsPropTest do
   Commands write packages (good ones, new versions, ones whose manifest is broken or
   whose code does not compile, updates that ask for more or fewer permissions), rescan,
   install one while a process is parked in the code now loaded (an update the host
-  refuses must leave that version loaded), enable with whatever a client sends as accepted permissions, disable, restart, save
+  refuses must leave that version loaded), install one the cache cannot copy (a later
+  scan must load it), enable with whatever a client sends as accepted permissions, disable, restart, save
   settings (version 2 of a package takes them live, so its process stays; version 1
   is restarted with them), call the running plugin (whose process must run with the
   settings saved last, after a crash too), read its files, follow, publish and drop topics,
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
-  install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
+  hand the running plugins a turn (`observe/1`: every package hears turns, and only
+  those granted `turns:observe` may, with the settings saved last) and ask them to shape
+  a run (`shape_run/1`: version 2 of a package answers from the settings it runs with,
+  so a save it takes live must reach that too), ask from a process that does not trap
+  exits while one of them raises, dies with a process it linked, or answers what is not
+  JSON (it is left out, and the asker lives), ask while the supervisor shapes are asked
+  under restarts (none is asked, and the asker lives), kill the process a plugin hears turns in
+  (it starts again with the settings saved last), install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
   courier does) that each plugin holds until the test releases it, check that a
   package's code compiles without enabling it (`plugins.compile`: what runs and is
   loaded must be as it was, whatever the code does as it compiles), and kill the host
-  itself. After every step the listing, the document, the code that is loaded and
-  running, what the packages' code did at compile time, the host's monitors, and the
+  itself, and break settings.json and mend it (a document the MC cannot read refuses every
+  save: enabling, disabling and saving settings answer `ServerSettingsError` and change
+  nothing, and a new version's dropped permissions stay granted). After every step the listing, the document, the code that is loaded and
+  running, what the packages' code did at compile time, the host's monitors, the hooks
+  of the running plugins (`HalC2.Plugins.Feed`), and the
   events still waiting for a plugin must agree with the model: an event belongs to the
   run of the plugin it was handed to, and is dropped when that run stops.
   """
@@ -39,6 +50,7 @@ defmodule HalC2.PluginsPropTest do
   @marker "••••••"
   @defaults %{"count" => 1, "mode" => "a", "tags" => []}
   @valid [:ok, :ui, :compile_error, :two_modules, :second_broken]
+  @hooks ["turns:observe", "runs:shape"]
 
   setup do
     saved =
@@ -98,6 +110,7 @@ defmodule HalC2.PluginsPropTest do
   defp stop do
     for {_, pid} <- Process.delete({__MODULE__, :clients}) || %{}, do: Process.exit(pid, :kill)
     HalC2.Prop.stop_services()
+    Application.delete_env(:hal_c2, Packages.failing())
     Process.unregister(Packages.probe())
     flush_heard()
   end
@@ -105,6 +118,7 @@ defmodule HalC2.PluginsPropTest do
   defp flush_heard do
     receive do
       {:prop_heard, _id, _n, _pid} -> flush_heard()
+      {:prop_observed, _id, _n, _mode} -> flush_heard()
     after
       0 -> :ok
     end
@@ -118,9 +132,13 @@ defmodule HalC2.PluginsPropTest do
   # client accepted for an id. last: what each topic last carried; subs and inbox:
   # what each client follows and has been sent. runs: how many runs have started, each
   # held entry's `run` its own. queue: the Slack events handed to each id and not yet
-  # heard to the end, `{run, n}` in order; next: the number of the next event.
+  # heard to the end, `{run, n}` in order; next: the number of the next event. broken:
+  # settings.json cannot be read; unrevoked: the ids whose dropped permissions a scan
+  # could not take back while it was (hal-c2/hal-c2#1225).
   def initial_state,
     do: %{
+      broken: false,
+      unrevoked: MapSet.new(),
       runs: 0,
       queue: %{},
       next: 0,
@@ -160,7 +178,16 @@ defmodule HalC2.PluginsPropTest do
         {1, {:call, __MODULE__, :kill_client, [client()]}},
         {1, {:call, __MODULE__, :kill_plugins, []}},
         {1, {:call, __MODULE__, :stale_worker, [held]}},
+        {1, {:call, __MODULE__, :update_in_place, []}},
+        {1, {:call, __MODULE__, :unreadable_scan, [held]}},
+        {1, {:call, __MODULE__, :install_uncopied, [id(), desc()]}},
         {2, {:call, __MODULE__, :listen, [id(), oneof(["1", "2"])]}},
+        {2, {:call, __MODULE__, :hook, [id(), oneof(["1", "2"])]}},
+        {2, {:call, __MODULE__, :observe_turn, [integer(1, 9)]}},
+        {if(hooked(state, :shape, "runs:shape") == [], do: 1, else: 6),
+         {:call, __MODULE__, :shape, []}},
+        {if(state.broken, do: 3, else: 1),
+         {:call, __MODULE__, if(state.broken, do: :mend_settings, else: :break_settings), []}},
         {if(hearing(state) == [], do: 1, else: 8), {:call, __MODULE__, :deliver, [state.next]}}
       ] ++
         for({id, [{_, n} | _]} <- state.queue, do: {8, {:call, __MODULE__, :release, [id, n]}}) ++
@@ -173,13 +200,27 @@ defmodule HalC2.PluginsPropTest do
             {2, {:call, __MODULE__, :crash, [oneof(workers)]}},
             {1, {:call, __MODULE__, :crash_hard, [oneof(workers)]}},
             {3, {:call, __MODULE__, :save_settings, [oneof(workers), accepted_settings()]}},
-            {3, {:call, __MODULE__, :call_plugin, [oneof(workers)]}}
+            {3, {:call, __MODULE__, :call_plugin, [oneof(workers)]}},
+            {2, {:call, __MODULE__, :kill_feed, [oneof(workers)]}}
           ]
+        end ++
+        case hooked(state, :shape, "runs:shape") do
+          [] ->
+            []
+
+          shaping ->
+            [
+              {3, {:call, __MODULE__, :shape_failing, [oneof(shaping), failure()]}},
+              {1, {:call, __MODULE__, :shape_restarting, []}}
+            ]
         end
     )
   end
 
   defp id, do: frequency([{5, "alpha"}, {4, "beta"}, {1, "Gamma"}])
+
+  # How a plugin asked to shape a run can fail.
+  defp failure, do: oneof([:raise, :linked_exit, :not_json])
 
   # Mostly an id the host holds, so the commands that need one reach it.
   defp held_id(%{held: held}) when held == %{}, do: id()
@@ -220,7 +261,9 @@ defmodule HalC2.PluginsPropTest do
           ["threads:read"],
           ["projects:read", "threads:read"],
           ["slack:read"],
-          ["projects:read", "slack:read"]
+          ["projects:read", "slack:read"],
+          ["turns:observe"],
+          ["turns:observe", "runs:shape"]
         ])
     ] do
       {variant, version, permissions}
@@ -237,6 +280,7 @@ defmodule HalC2.PluginsPropTest do
         ["threads:read"],
         ["projects:read", "threads:read"],
         ["slack:read"],
+        ["turns:observe", "runs:shape"],
         "projects:read",
         [1]
       ])
@@ -279,7 +323,8 @@ defmodule HalC2.PluginsPropTest do
         "missing.txt"
       ])
 
-  def precondition(state, {:call, _, op, [id]}) when op in [:crash, :crash_hard] do
+  # A feed killed counts toward its supervisor's restarts as the worker's crashes do.
+  def precondition(state, {:call, _, op, [id]}) when op in [:crash, :crash_hard, :kill_feed] do
     case state.held[id] do
       %{running: true, st: :compiled, desc: {:ok, _, _}, crashes: crashes} ->
         op == :crash_hard or crashes < 3
@@ -293,6 +338,14 @@ defmodule HalC2.PluginsPropTest do
   def precondition(state, {:call, _, :release, [id, n]}),
     do: match?([{_, ^n} | _], state.queue[id])
 
+  # Of a version the host holds as it is on disk, so the scan has nothing else to load.
+  def precondition(state, {:call, _, :unreadable_scan, [id]}),
+    do:
+      is_map_key(state.disk, id) and state.held[id] != nil and
+        state.held[id].desc == state.disk[id] and not MapSet.member?(state.unrevoked, id)
+
+  def precondition(state, {:call, _, :break_settings, []}), do: not state.broken
+  def precondition(state, {:call, _, :mend_settings, []}), do: state.broken
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, call), do: state |> step(call) |> elem(0)
@@ -368,6 +421,28 @@ defmodule HalC2.PluginsPropTest do
         do: {id, run}
   end
 
+  # The running plugins whose code loaded: each hears turns, version 2 shapes runs too.
+  defp hooked(s) do
+    for {id, %{running: true, st: :compiled, desc: {:ok, version, _}}} <- s.held,
+        hook <- if(version == "2", do: [:observe, :shape], else: [:observe]),
+        do: {hook, id}
+  end
+
+  defp hooked(s, hook, permission),
+    do: for({^hook, id} <- hooked(s), permission in conf(s, id).granted, do: id)
+
+  # What the plugins `ids` add to a new conversation, as `shape/0` reads it.
+  defp shape_of(_s, []), do: {:exactly, nil}
+
+  defp shape_of(s, ids),
+    do:
+      {:exactly,
+       %{
+         contexts: Enum.sort(for id <- ids, do: "#{id} #{effective(conf(s, id))["mode"]}"),
+         denied: Enum.sort(["shared" | for(id <- ids, do: "#{id}-tool")]),
+         plugins: Enum.sort(ids)
+       }}
+
   # Every running plugin whose code loaded and that was granted slack:read is handed the
   # event; it hears it once it is done with the ones before.
   defp act(s, {:call, _, :deliver, [n]}) do
@@ -379,6 +454,27 @@ defmodule HalC2.PluginsPropTest do
     {%{s | queue: queue, next: max(s.next, n + 1)}, :ok}
   end
 
+  # Each plugin that hears turns hears it with the settings saved last.
+  defp act(s, {:call, _, :observe_turn, [_n]}),
+    do:
+      {s,
+       {:exactly,
+        Enum.sort(
+          for id <- hooked(s, :observe, "turns:observe"), do: {id, effective(conf(s, id))["mode"]}
+        )}}
+
+  defp act(s, {:call, _, :shape, []}), do: {s, shape_of(s, hooked(s, :shape, "runs:shape"))}
+
+  # A plugin that fails as it is asked is left out, and the asker lives.
+  defp act(s, {:call, _, :shape_failing, [id, _how]}),
+    do: {s, shape_of(s, hooked(s, :shape, "runs:shape") -- [id])}
+
+  # No plugin can be asked: the conversation goes unshaped, and the asker lives.
+  defp act(s, {:call, _, :shape_restarting, []}), do: {s, {:exactly, nil}}
+
+  # Its supervisor starts it again, as it does a crashed worker.
+  defp act(s, {:call, _, :kill_feed, [id]}), do: {update_in(s.held[id].crashes, &(&1 + 1)), :ok}
+
   defp act(s, {:call, _, :release, [id, n]}),
     do: {update_in(s.queue[id], &tl/1), {:exactly, {:heard, n}}}
 
@@ -389,10 +485,22 @@ defmodule HalC2.PluginsPropTest do
   end
 
   # `{next state, the reply expected}`.
+  # A package that hears and shapes turns installed and turned on, as `listen/2`.
+  defp act(s, {:call, _, :hook, [id, version]}) do
+    {s, :ok} = act(s, {:call, nil, :install, [id, {:ok, version, @hooks}]})
+    act(s, {:call, nil, :enable, [id, @hooks]})
+  end
+
   defp act(s, {:call, _, :write, [id, desc]}), do: {put_in(s.disk[id], desc), :ok}
+  defp act(s, {:call, _, :break_settings, []}), do: {%{s | broken: true}, :ok}
+  defp act(s, {:call, _, :mend_settings, []}), do: {%{s | broken: false}, :ok}
   defp act(s, {:call, _, :remove, [id]}), do: {%{s | disk: Map.delete(s.disk, id)}, :ok}
   defp act(s, {:call, _, :rescan, []}), do: {scan(s), :ok}
   defp act(s, {:call, _, :install, [id, desc]}), do: {scan(put_in(s.disk[id], desc)), :ok}
+
+  # The same, but the scan cannot copy a package it would load anew.
+  defp act(s, {:call, _, :install_uncopied, [id, desc]}),
+    do: {scan(put_in(s.disk[id], desc), false), :ok}
 
   # The same: a process in the loaded version's code only changes how the host loads.
   defp act(s, {:call, _, :install_busy, [id, desc]}),
@@ -415,12 +523,16 @@ defmodule HalC2.PluginsPropTest do
       (missing = perms(s.held[id]) -- (conf(s, id).granted ++ (accepted || []))) != [] ->
         {s, {:consent, missing}}
 
+      s.broken ->
+        {s, {:tag, "ServerSettingsError"}}
+
       true ->
         e = s.held[id]
 
         s =
           s
           |> put_conf(id, &%{&1 | enabled: true, granted: perms(e)})
+          |> Map.update!(:unrevoked, &MapSet.delete(&1, id))
           |> update_in(
             [:accepted],
             &Map.update(&1, id, accepted || [], fn a -> a ++ (accepted || []) end)
@@ -438,6 +550,9 @@ defmodule HalC2.PluginsPropTest do
     case s.held[id] do
       nil ->
         {s, {:tag, "PluginNotFound"}}
+
+      _ when s.broken ->
+        {s, {:tag, "ServerSettingsError"}}
 
       e ->
         s =
@@ -550,6 +665,19 @@ defmodule HalC2.PluginsPropTest do
   # Its supervisor is not known, so it is no one's, whatever runs now.
   defp act(s, {:call, _, :stale_worker, [_id]}), do: {s, :ok}
 
+  # A release upgrade changes nothing the host holds.
+  defp act(s, {:call, _, :update_in_place, []}), do: {s, :ok}
+
+  # A scan that cannot read `id`'s manifest refuses the package as one whose manifest is
+  # broken, though it is the version held: the next scan reads it again. The version
+  # refused is no version on disk, so that scan loads the package anew.
+  defp act(s, {:call, _, :unreadable_scan, [id]}) do
+    {_, version, permissions} = s.disk[id]
+    unreadable = entry({:unreadable, version, permissions}, :error_manifest)
+    s = scan(s)
+    {reconcile(put_in(s.held[id], keep(s.held[id], unreadable))), :ok}
+  end
+
   # Killed until its supervisor gives up: how many kills that took is not known.
   defp act(s, {:call, _, :crash_hard, [id]}) do
     e = s.held[id]
@@ -591,26 +719,44 @@ defmodule HalC2.PluginsPropTest do
       e.st in [:compiled, :uncompiled] and conf(s, id).enabled == true and
         perms(e) -- conf(s, id).granted == []
 
-  # The packages on disk as a scan loads them, then what is enabled started.
-  defp scan(s) do
-    held = Map.new(s.disk, fn {id, desc} -> {id, load(s, id, s.held[id], desc)} end)
+  # The packages on disk as a scan loads them, then what is enabled started. A scan
+  # that cannot `copy` refuses every package it would load anew.
+  defp scan(s, copy \\ true) do
+    held = Map.new(s.disk, fn {id, desc} -> {id, load(s, id, s.held[id], desc, copy)} end)
 
-    # A version that stops asking for a permission gives it up.
+    # A version that stops asking for a permission gives it up, unless the document
+    # cannot be saved.
     s =
       Enum.reduce(held, s, fn {id, e}, s ->
-        if e.st in [:compiled, :uncompiled],
-          do:
-            put_conf(s, id, fn c -> %{c | granted: Enum.filter(c.granted, &(&1 in perms(e)))} end),
-          else: s
+        kept = Enum.filter(conf(s, id).granted, &(&1 in perms(e)))
+
+        cond do
+          e.st not in [:compiled, :uncompiled] or kept == conf(s, id).granted ->
+            s
+
+          s.broken ->
+            update_in(s.unrevoked, &MapSet.put(&1, id))
+
+          true ->
+            s
+            |> put_conf(id, &%{&1 | granted: kept})
+            |> update_in([:unrevoked], &MapSet.delete(&1, id))
+        end
       end)
 
     reconcile(%{s | held: held})
   end
 
-  defp load(s, id, held, desc) do
+  defp load(s, id, held, desc, copy) do
     cond do
       held != nil and held.desc == desc ->
         if valid?(id, desc), do: %{held | reload_error: false}, else: held
+
+      # Refused as a package without a manifest, that is no version on disk: the next
+      # scan that can copy it loads it anew.
+      valid?(id, desc) and not copy ->
+        {_, version, permissions} = desc
+        keep(held, entry({:uncopied, version, permissions}, :error_manifest))
 
       valid?(id, desc) ->
         new = entry(desc, if(code?(desc), do: :uncompiled, else: :compiled))
@@ -675,6 +821,10 @@ defmodule HalC2.PluginsPropTest do
 
       module? and Map.get(next, "count", 1) > 100 ->
         {s, {:tag, "PluginSettingsInvalid"}}
+
+      # Nothing is saved, the secret neither.
+      s.broken ->
+        {s, {:tag, "ServerSettingsError"}}
 
       true ->
         {stored, secret} =
@@ -751,6 +901,7 @@ defmodule HalC2.PluginsPropTest do
       observed.code
     )
     |> check(:monitors, monitors(s), observed.monitors)
+    |> check(:hooks, Enum.sort(hooked(s)), observed.hooks)
     |> check(
       :waiting,
       Enum.sort(for {id, q} <- s.queue, {_, n} <- q, do: {id, n}),
@@ -766,7 +917,7 @@ defmodule HalC2.PluginsPropTest do
       [],
       for(
         {id, %{st: st} = e} <- s.held,
-        st in [:compiled, :uncompiled],
+        st in [:compiled, :uncompiled] and not MapSet.member?(s.unrevoked, id),
         p <- observed.config[id].granted,
         p not in perms(e),
         do: {id, p}
@@ -913,6 +1064,18 @@ defmodule HalC2.PluginsPropTest do
 
   def rescan, do: {Plugins.handle("rescan", %{}), observe()}
 
+  # The MC never noticed: the settings file check is off in this test.
+  def break_settings do
+    File.write!(settings_file(), "{ not json")
+    {:ok, observe()}
+  end
+
+  # Removed, the file is the MC's document again, as the error tells the user.
+  def mend_settings do
+    File.rm!(settings_file())
+    {:ok, observe()}
+  end
+
   def enable(id, nil), do: {Plugins.handle("enable", %{"id" => id}), observe()}
 
   def enable(id, accepted),
@@ -1035,6 +1198,56 @@ defmodule HalC2.PluginsPropTest do
     {:ok, observe()}
   end
 
+  # The host updated in place by a release upgrade from a version without the table of
+  # `threadsStay` declarations: `init/1` does not run again, so the table is not there
+  # until `code_change/3` makes it. Every later step then needs the host to have kept
+  # working; the reply says whether the table is there.
+  def update_in_place do
+    :sys.replace_state(Plugins, fn state ->
+      :ets.delete(HalC2.Plugins.Stays)
+      state
+    end)
+
+    :ok = :sys.suspend(Plugins)
+    :ok = :sys.change_code(Plugins, Plugins, "before", [])
+    :ok = :sys.resume(Plugins)
+    reply = if :ets.whereis(HalC2.Plugins.Stays) == :undefined, do: :no_table, else: :ok
+    {reply, observe()}
+  end
+
+  # A scan while `id`'s manifest cannot be read, as when an install replaces the package
+  # under it; readable again afterwards.
+  # An install the scan cannot copy, as when the cache is briefly full or unwritable;
+  # it takes copies again afterwards.
+  def install_uncopied(id, desc) do
+    put_package(id, desc)
+    copies = Path.join(HalC2.Paths.cache_dir(), "plugin-packages")
+    File.mkdir_p!(copies)
+    dirs = [copies | Path.wildcard(Path.join(copies, "*"))]
+    Enum.each(dirs, &File.chmod!(&1, 0o500))
+
+    try do
+      Plugins.handle("rescan", %{})
+    after
+      Enum.each(dirs, &File.chmod!(&1, 0o755))
+    end
+
+    {:ok, observe()}
+  end
+
+  def unreadable_scan(id) do
+    manifest = Path.join([plugins_dir(), id, "plugin.json"])
+    File.chmod!(manifest, 0o000)
+
+    try do
+      Plugins.handle("rescan", %{})
+    after
+      File.chmod!(manifest, 0o644)
+    end
+
+    {:ok, observe()}
+  end
+
   # The plugin's process is killed until its supervisor gives up.
   def crash_hard(id) do
     sup = parent(Process.whereis(plugin_module(id)))
@@ -1091,6 +1304,115 @@ defmodule HalC2.PluginsPropTest do
     put_package(id, {:ok, version, ["slack:read"]})
     Plugins.handle("rescan", %{})
     {Plugins.handle("enable", %{"id" => id, "acceptPermissions" => ["slack:read"]}), observe()}
+  end
+
+  def hook(id, version) do
+    put_package(id, {:ok, version, @hooks})
+    Plugins.handle("rescan", %{})
+    {Plugins.handle("enable", %{"id" => id, "acceptPermissions" => @hooks}), observe()}
+  end
+
+  # A turn's event handed to the plugins that hear turns; each has heard it once its
+  # feed answers. The reply is who heard it.
+  def observe_turn(n) do
+    :ok = Plugins.observe(%{"type" => "turn.started", "n" => n})
+
+    for {pid, _} <- HalC2.Plugins.Feed.lookup(:observe) do
+      try do
+        :sys.get_state(pid)
+      catch
+        :exit, _ -> :gone
+      end
+    end
+
+    {heard_turn(n, []), observe()}
+  end
+
+  defp heard_turn(n, ids) do
+    receive do
+      {:prop_observed, id, ^n, mode} -> heard_turn(n, [{id, mode} | ids])
+    after
+      0 -> Enum.sort(ids)
+    end
+  end
+
+  # What the plugins that shape runs add to a new conversation, without their order.
+  def shape, do: {shaped(), observe()}
+
+  defp shaped do
+    case Plugins.shape_run(%{"threadId" => "prop"}) do
+      nil ->
+        nil
+
+      %{"context" => context, "deniedTools" => denied, "plugins" => plugins} ->
+        %{
+          contexts: context |> String.split("\n\n") |> Enum.sort(),
+          denied: Enum.sort(denied),
+          plugins: Enum.sort(plugins)
+        }
+    end
+  end
+
+  # A shape asked from a process that does not trap exits while plugin `id` fails `how`
+  # as it answers. The reply is what the others added, or how the asker died.
+  def shape_failing(id, how) do
+    Application.put_env(:hal_c2, Packages.failing(), {id, how})
+    probe = self()
+    {asker, ref} = spawn_monitor(fn -> send(probe, {:shaped, self(), shaped()}) end)
+
+    reply =
+      receive do
+        {:shaped, ^asker, reply} -> reply
+        {:DOWN, ^ref, _, _, reason} -> {:asker_died, reason}
+      end
+
+    Process.demonitor(ref, [:flush])
+    Application.delete_env(:hal_c2, Packages.failing())
+    {reply, observe()}
+  end
+
+  # A shape asked from a process that does not trap exits while the supervisor the
+  # plugins' shapes run under is down, as it is while it restarts.
+  def shape_restarting do
+    :ok = Supervisor.terminate_child(HalC2.Plugins.Supervisor, HalC2.Plugins.Shapes)
+    probe = self()
+    {asker, ref} = spawn_monitor(fn -> send(probe, {:shaped, self(), shaped()}) end)
+
+    reply =
+      receive do
+        {:shaped, ^asker, reply} -> reply
+        {:DOWN, ^ref, _, _, reason} -> {:asker_died, reason}
+      end
+
+    Process.demonitor(ref, [:flush])
+    {:ok, _} = Supervisor.restart_child(HalC2.Plugins.Supervisor, HalC2.Plugins.Shapes)
+    {reply, observe()}
+  end
+
+  # The process plugin `id` hears turns in is killed; its supervisor starts it again.
+  def kill_feed(id) do
+    [{feed, _}] = Registry.lookup(HalC2.Plugins.Hooks, {:observe, id})
+    sup = parent(feed)
+    ref = Process.monitor(feed)
+    Process.exit(feed, :kill)
+
+    receive do
+      {:DOWN, ^ref, _, _, _} -> :ok
+    end
+
+    await_feed(id, feed, sup)
+    {:ok, observe()}
+  end
+
+  # As `await_restart/3`: asked until the feed that registers is a new one.
+  defp await_feed(id, old, sup, deadline \\ deadline()) do
+    if past?(deadline), do: raise("the plugin's supervisor never restarted its feed")
+    :sys.get_state(sup, 60_000)
+
+    case Registry.lookup(HalC2.Plugins.Hooks, {:observe, id}) do
+      [{feed, _}] when feed != old -> :ok
+      _ -> await_feed(id, old, sup, deadline)
+    end
   end
 
   # Event `n` is handed on, after the ones before it, as the Slack courier hands them.
@@ -1169,7 +1491,8 @@ defmodule HalC2.PluginsPropTest do
       code: Map.new(@code_ids, &{&1, code(&1)}),
       marks: new_marks(),
       monitors: observed_monitors(),
-      waiting: waiting()
+      waiting: waiting(),
+      hooks: hooks()
     }
   end
 
@@ -1247,12 +1570,25 @@ defmodule HalC2.PluginsPropTest do
     |> Enum.sort()
   end
 
+  # The hooks of live feeds: a stopped feed's entry may outlive it until the registry
+  # hears of its exit, and is never handed anything.
+  defp hooks do
+    HalC2.Plugins.Hooks
+    |> Registry.select([{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.filter(fn {_key, pid} -> Process.alive?(pid) end)
+    |> Enum.map(&elem(&1, 0))
+    |> Enum.sort()
+  rescue
+    ArgumentError -> []
+  end
+
   defp observed_monitors do
     {:monitors, monitors} = Process.info(Process.whereis(Plugins), :monitors)
     length(monitors)
   end
 
   defp plugins_dir, do: Path.join(HalC2.Paths.data_dir(), "plugins")
+  defp settings_file, do: Path.join(HalC2.Paths.config_dir(), "settings.json")
   defp plugin_module(id), do: Packages.plugin_module(id)
 
   defmodule Client do
@@ -1309,6 +1645,9 @@ defmodule HalC2.PluginsPropTest do
 
     def plugin_module(id), do: Module.concat(HalC2PropPlugin, Macro.camelize(id))
     def probe, do: HalC2.PluginsPropTest.Probe
+
+    @doc "The app env key naming the plugin that fails as it is asked to shape, and how."
+    def failing, do: :prop_shape_fails
 
     # Where a plugin's `handle_event` waits to be released, by a tail call: a process
     # waiting in the plugin's own code keeps that code in use, and the host stops it when
@@ -1443,9 +1782,36 @@ defmodule HalC2.PluginsPropTest do
 
         def call(method, _input, _context), do: {:error, "no method " <> method}
 
+        def observe(event, context),
+          do: send(#{inspect(probe())}, {:prop_observed, context.id, event["n"], context.settings["mode"]})
+
+        #{if version == "2", do: shape_run()}
+
         def handle_event(event, context) do
           send(#{inspect(probe())}, {:prop_heard, context.id, event["n"], self()})
           #{inspect(__MODULE__)}.hold()
+        end
+      end
+      """
+    end
+
+    defp shape_run do
+      """
+      def shape_run(_run, context) do
+        case Application.get_env(:hal_c2, #{inspect(failing())}) do
+          {id, how} when id == context.id -> fail(how)
+          _ -> %{"context" => context.id <> " " <> context.settings["mode"], "deniedTools" => [context.id <> "-tool", "shared"]}
+        end
+      end
+
+      defp fail(:raise), do: raise("shaping failed")
+      defp fail(:not_json), do: %{"context" => self()}
+
+      defp fail(:linked_exit) do
+        spawn_link(fn -> exit(:shaping_failed) end)
+
+        receive do
+          :never -> %{}
         end
       end
       """

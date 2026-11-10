@@ -9,11 +9,13 @@ defmodule HalC2.Mcp.Tools.Threads do
   # Threads one create_threads call may hold.
   @max_batch_threads 20
   @capability_models 25
+  @runtime_modes ~w(approval-required auto-accept-edits auto full-access)
 
   import HalC2.Mcp.Tools,
     only: [
       command_id: 0,
       live: 1,
+      mc_thread: 2,
       message_run: 2,
       mode: 3,
       no_escalation: 2,
@@ -51,7 +53,11 @@ defmodule HalC2.Mcp.Tools.Threads do
            ),
          %{} <-
            project_row(project_id) || {:error, "invalid_request", "The project was not found."} do
-      id = command_id()
+      # A request key names the thread, so a retry after a lost reply finds it.
+      id =
+        if key = args["clientRequestId"],
+          do: "thread:mcp:#{me["id"]}:launch:#{key}",
+          else: command_id()
 
       input = %{
         "commandId" => id,
@@ -76,6 +82,8 @@ defmodule HalC2.Mcp.Tools.Threads do
               "attachments" => attachments
             })
 
+      # A retry with the same key finds the thread and resumes the launch: the first message
+      # is a command of its own, answered once, so a retry delivers it only if it was not.
       with {:ok, _} <- orchestration(Orchestration.launch_thread(input)) do
         thread = thread(id)
         run = Enum.find(StreamState.list(stream(id), "run"), &(&1["userMessageId"] == id))
@@ -97,7 +105,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     with :ok <- live(caller),
          :ok <- batch_size(args["threads"]) do
       parent = thread(me["id"])
-      providers = HalC2.Environment.providers()
+      providers = HalC2.Settings.providers_for((parent || me)["projectId"])
       key = args["clientRequestId"] || HalC2.Environment.uuid4()
 
       args["threads"]
@@ -229,8 +237,12 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("hal_c2_thread_organize", %{"action" => action} = args, caller) do
-    with {:ok, row} <- writable(caller, args["threadId"]),
+  # Any thread of this MC, like `hal_c2_thread_read`: the snoozed threads
+  # `hal_c2_thread_list` finds with `allProjects` can be woken from one thread.
+  def run("hal_c2_thread_organize", %{"action" => action} = args, %{row: me} = caller) do
+    with {:ok, row} <- mc_thread(me, args["threadId"]),
+         :ok <- live(caller),
+         :ok <- no_escalation(me, row),
          {:ok, command} <- organize_command(action, args),
          {:ok, %{"sequence" => sequence}} <-
            command
@@ -344,7 +356,7 @@ defmodule HalC2.Mcp.Tools.Threads do
   def run("orchestrator_capabilities", args, %{row: me} = caller) do
     parent = thread(me["id"]) || me
     only = if is_binary(args["providerInstanceId"]), do: args["providerInstanceId"]
-    providers = HalC2.Environment.providers()
+    providers = HalC2.Settings.providers_for(parent["projectId"])
 
     if only && not Enum.any?(providers, &(&1["instanceId"] == only)) do
       {:error, "invalid_request", "Unknown providerInstanceId #{only}."}
@@ -364,6 +376,8 @@ defmodule HalC2.Mcp.Tools.Threads do
          "parentThreadId" => me["id"],
          "inheritedProviderInstanceId" => get_in(parent, ["modelSelection", "instanceId"]),
          "inheritedModel" => get_in(parent, ["modelSelection", "model"]),
+         "inheritedOptions" =>
+           HalC2.Orchestration.Delegation.model_options(providers, parent["modelSelection"]),
          "runtimeMode" => parent["runtimeMode"],
          "interactionMode" => parent["interactionMode"],
          "maxWaitMs" => HalC2.Mcp.max_wait_ms(caller.instance),
@@ -579,6 +593,12 @@ defmodule HalC2.Mcp.Tools.Threads do
 
           %{"id" => model["slug"], "label" => model["name"]}
           |> then(&if(options? and options, do: Map.put(&1, "options", options), else: &1))
+        end,
+      # As `Delegation` checks a requested mode: an empty list offers every mode.
+      "runtimeModes" =>
+        case provider["supportedRuntimeModes"] do
+          [_ | _] = modes -> modes
+          _ -> @runtime_modes
         end,
       "canRunChildTask" => constraints == [],
       "canRunCrossProviderChildTask" => constraints == [],

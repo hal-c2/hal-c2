@@ -119,6 +119,7 @@ Feature: Plugin packages
       | which                                  | reason                       |
       | whose second MC file does not compile  | undefined function           |
       | whose MC files hold two plugin modules | more than one plugin module  |
+      | whose MC file the MC cannot read       | could not be copied          |
 
   @mc
   Scenario: A disabled package does not serve its UI parts
@@ -334,6 +335,42 @@ Feature: Plugin packages
       When the user moves the thread to another machine
       Then the user is told the thread stays on this machine while "code-review" runs
       And once "code-review" is removed, the move is no longer refused for it
+
+    # A plugin declares it in its manifest (`"threadsStay": true`); "code-review" does, as its sandbox
+    # and checkout of untrusted code do not travel. Threads it starts afterwards carry the mark, so
+    # the refusal outlives the plugin, and a fork carries it too (threads/moving-between-machines.feature).
+    @mc
+    Scenario: A plugin can declare that its threads never move
+      Given "code-review" declares that its threads stay on their machine
+      When "code-review" starts a "review" thread
+      Then the thread is marked as staying on its machine
+      When the user moves the thread to another machine
+      Then the user is told the thread stays on this machine
+      And once "code-review" is removed, the move is still refused
+
+    # A reload that fails keeps the version before it running, and the threads it starts take
+    # their mark from the version that runs; a manifest on disk that cannot be read is taken to declare it
+    # (threads/moving-between-machines.feature), so the thread stays either way.
+    @mc
+    Scenario: A plugin whose new version failed to load still keeps the threads it starts
+      Given "code-review" declares that its threads stay on their machine
+      And "code-review" runs on after a new version whose manifest is not valid JSON fails to load
+      When "code-review" starts a "review" thread
+      Then the thread is marked as staying on its machine
+      When "code-review" is disabled
+      Then the thread can be neither moved nor exported
+
+    # A release upgrade updates the plugin host in place, without starting it again, so what the
+    # host keeps beside its state (which plugins keep their threads) is made as the code changes.
+    @mc
+    Scenario: A plugin host updated in place by a release upgrade still keeps a plugin's threads
+      Given "code-review" declares that its threads stay on their machine
+      And the package "code-review" is enabled
+      When the MC is updated in place from a release that did not know plugins keep their threads
+      And the MC rescans its plugins
+      Then the plugin host has run on through the update and the rescan
+      When "code-review" starts a "review" thread
+      Then the thread is marked as staying on its machine
 
     @mc
     Scenario: A plugin can keep its threads out of the thread list

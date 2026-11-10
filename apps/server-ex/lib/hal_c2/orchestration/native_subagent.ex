@@ -17,8 +17,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
   @doc """
   Records a subagent the provider started as `native` (its tool call id) in the turn
-  `ids`; `task` has `prompt`, `title`, `model`. Returns the handle `append/2` and
-  `finish/3` take.
+  `ids`; `task` has `prompt`, `title`, `model`, and `reasoningEffort` from a provider
+  that reports a subagent's effort (nil when it named none). Returns the handle
+  `append/2` and `finish/3` take.
   """
   def start(ids, native, task) do
     driver = Entities.driver(ids)
@@ -97,11 +98,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
           "threadId" => child_id,
           "projectId" => parent["projectId"],
           "title" => title(parent["title"] || "", task["title"], prompt, ordinal),
-          "modelSelection" =>
-            if(task["model"],
-              do: Map.put(parent["modelSelection"] || %{}, "model", task["model"]),
-              else: parent["modelSelection"]
-            ),
+          "modelSelection" => child_selection(parent["modelSelection"], task),
           "runtimeMode" => parent["runtimeMode"],
           "interactionMode" => parent["interactionMode"],
           "createdBy" => "agent",
@@ -157,7 +154,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
   subagent it started earlier): the subagent `entity` runs again, and the message is
   the next thing its child thread says, where the answer to it will follow. Works from
   the thread's record alone, so a runtime that has forgotten the subagent can resume
-  it. Returns the handle `append/2` and `finish/3` take.
+  it. It keeps the run that started it, and records the run that resumed it
+  (`"resumedRunId"`), whose runtime drives it now (`TurnWriter.abandon/5`'s `lost:`).
+  Returns the handle `append/2` and `finish/3` take.
   """
   def resume(ids, %{"id" => id, "childThreadId" => child} = entity, message) do
     driver = Entities.driver(ids)
@@ -179,17 +178,21 @@ defmodule HalC2.Orchestration.NativeSubagent do
       text: ""
     }
 
+    # Running again, so no longer what a restart cut off (`Recovery.cut_off?/1`).
     open =
       &Map.merge(&1, %{
         "status" => "running",
         "completedAt" => nil,
         "result" => nil,
+        "statusDetail" => nil,
         "updatedAt" => at
       })
 
+    resumed = if is_binary(ids[:run]), do: &Map.put(&1, "resumedRunId", ids.run), else: & &1
+
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
-         Orchestration.upsert(state, "subagent", id, open),
+         Orchestration.upsert(state, "subagent", id, &(&1 |> open.() |> resumed.())),
          Orchestration.upsert(
            state,
            "node",
@@ -208,6 +211,28 @@ defmodule HalC2.Orchestration.NativeSubagent do
     end)
 
     sub
+  end
+
+  @doc """
+  The run whose runtime drives provider subagent `entity` now: the run that last
+  resumed it (`resume/3`), else the one that started it. A run's cleanup takes a
+  subagent, with its node and item (`keys/1`), only as this run's.
+  """
+  def run(entity), do: entity["resumedRunId"] || entity["runId"]
+
+  @doc "The `{kind, id}`s of provider subagent `id` in its parent thread: it, its node and item."
+  def keys(id), do: [{"subagent", id}, {"node", id}, {"turn-item", "turn-item:subagent:#{id}"}]
+
+  @doc """
+  The run that drives each provider subagent of thread `state` now (`run/1`), by each
+  of its `keys/1`: where a run's cleanup reads which run records are of, these read
+  as of that run, whatever run started them.
+  """
+  def driven(state) do
+    for {id, %{"origin" => "provider_native"} = entity} <- StreamState.get(state, "subagent"),
+        key <- keys(id),
+        into: %{},
+        do: {key, run(entity)}
   end
 
   @doc "Appends streamed answer text to the subagent's child thread."
@@ -401,6 +426,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
     if message_id, do: Map.put(sub, :said, fields["text"]), else: sub
   end
 
+  @doc "What the subagent said so far, or nil."
+  def said(sub), do: nilify(Map.get(sub, :said) || sub.text)
+
   @doc """
   Settles the subagent as `status` with its `result` (the answer it streamed when the
   provider reports none). With `summary: true` the result only sums up its work (a
@@ -416,8 +444,11 @@ defmodule HalC2.Orchestration.NativeSubagent do
         # What the subagent said (`item/5`) is in its thread, the latest its answer,
         # which the provider's result repeats with more around it (Claude adds the
         # agent's id and usage); a result that does not repeat it follows as its answer.
+        # A summary that only repeats the end of what was said (a message per message
+        # id keeps all of it in one) is already in the thread.
         said != nil and result != nil and not Keyword.get(opts, :summary, false) and
-            not String.contains?(result, String.trim(said)) ->
+          not String.contains?(result, String.trim(said)) and
+            not String.contains?(said, String.trim(result)) ->
           item(sub, "#{sub.native}:message:result", "assistant_message", "completed", %{
             "text" => result
           })
@@ -459,11 +490,92 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
-  # Work still open in the child thread (a tool call, the progress) ends with it.
-  defp settle_child(sub, status, at) do
+  @doc """
+  Ends the still-running work in the child threads of `thread_id`'s provider
+  subagents as `status`, from the thread's record alone: for an end no runtime
+  reports (the thread was deleted), where no handle survives to `finish/3`.
+  """
+  def settle_children(thread_id, status) do
+    at = Entities.now()
+
+    for subagent <- StreamState.list(stream(thread_id), "subagent"),
+        subagent["origin"] == "provider_native",
+        is_binary(subagent["childThreadId"]) do
+      settle_child(%{child: subagent["childThreadId"]}, status, at)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Ends the still-running work in the child threads of the provider subagents of
+  `thread_id`'s run `run_id`, each as its subagent ended or as `status`: for a run
+  ended from the thread's record (`TurnWriter.abandon/5`), whose runtime's own end of
+  them the store refused or that crashed before it. The run's subagents are those it
+  drives now (`run/1`): one a later run resumed is that run's. With `ended`, the
+  `{kind, id}`s that runtime ended, less any a later run drives now, the subagents it
+  ended are settled whichever run they are of (one it resumed), and the run's it keeps
+  running are left to it, unless `keep?` is false (the runtime went, and its
+  app-server with them). A child thread the store refuses raises.
+
+  A later run can resume a subagent as this settles it, and start work in its thread.
+  What runs in the thread is read before which run drives the subagent, and only that
+  ends: a resume records its run (`resume/3`) before the work it starts, so the work
+  of a run whose resume this does not see is not among it.
+  """
+  def settle_run_children(thread_id, run_id, status, at, ended \\ nil, keep? \\ true) do
+    for %{"id" => id, "origin" => "provider_native", "childThreadId" => child} = subagent <-
+          StreamState.list(stream(thread_id), "subagent"),
+        is_binary(child),
+        # Only the run's own or the ones its runtime ended can settle: a subagent passes
+        # from a run only to a later one, so no other's thread is read.
+        run(subagent) == run_id or (ended != nil and {"subagent", id} in ended),
+        # Its thread's work, then the subagent as it stands after it.
+        open = running(child),
+        parent = stream(thread_id),
+        subagent = StreamState.get(parent, "subagent")[id],
+        settles?(parent, subagent, run_id, ended, keep?) do
+      ended = if subagent["status"] in @terminal, do: subagent["status"], else: status
+      settle_child(%{child: child}, ended, at, open)
+    end
+
+    :ok
+  end
+
+  defp running(child),
+    do:
+      HalC2.Streams.read(child, fn state ->
+        for item <- StreamState.list(state, "turn-item"),
+            item["status"] == "running",
+            into: MapSet.new(),
+            do: item["id"]
+      end)
+
+  defp settles?(_state, nil, _run_id, _ended, _keep?), do: false
+  defp settles?(_state, subagent, run_id, nil, _keep?), do: run(subagent) == run_id
+
+  # What the runtime ended is settled whichever run it is of, but not once a later run
+  # drives it (`TurnWriter`'s `unless_later/3`, as the subagent stands now).
+  defp settles?(state, %{"id" => id} = subagent, run_id, ended, keep?),
+    do:
+      ({"subagent", id} in ended and not later?(state, run(subagent), run_id)) or
+        (run(subagent) == run_id and (not keep? or subagent["status"] in @terminal))
+
+  defp later?(state, run, than) do
+    runs = StreamState.get(state, "run")
+
+    case {(runs[run] || %{})["ordinal"], (runs[than] || %{})["ordinal"]} do
+      {ordinal, other} when is_integer(ordinal) and is_integer(other) -> ordinal > other
+      _ -> false
+    end
+  end
+
+  # Work still open in the child thread (a tool call, the progress) ends with it: of
+  # `only`, the ids of the work to end, what still runs.
+  defp settle_child(sub, status, at, only \\ nil) do
     HalC2.Streams.transact(sub.child, :thread, fn state ->
       {for item <- StreamState.list(state, "turn-item"),
-           item["status"] == "running" do
+           item["status"] == "running" and (only == nil or item["id"] in only) do
          Orchestration.upsert(state, "turn-item", item["id"], fn item ->
            item
            |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
@@ -528,19 +640,53 @@ defmodule HalC2.Orchestration.NativeSubagent do
     [{"message", message_id, message}, {"turn-item", item_id, item}]
   end
 
+  # A subagent on its own model keeps the parent's instance but not its options:
+  # the parent's reasoning effort belongs to the parent's model.
+  defp subagent_selection(parent, nil), do: parent
+
+  defp subagent_selection(parent, model) do
+    parent = parent || %{}
+
+    if parent["model"] in [nil, model],
+      do: Map.put(parent, "model", model),
+      else: parent |> Map.put("model", model) |> Map.delete("options")
+  end
+
   # The child's title (upstream `subagentThreadTitle`): its given title, else its
-  # prompt, cut to 72 characters; with neither, it is named after its parent.
+  # prompt, cut to 72 characters; with neither, it is named after its parent. The
+  # cut counts UTF-16 units as upstream's did, and never falls through a character
+  # (an emoji's surrogate pair), which clients would show as a replacement glyph.
   defp title(parent_title, given, prompt, ordinal) do
     case trimmed(given) || trimmed(prompt) do
-      nil ->
-        "#{parent_title} subagent #{ordinal}"
-
-      detail ->
-        if String.length(detail) > 72,
-          do: String.slice(detail, 0, 69) <> "...",
-          else: detail
+      nil -> "#{parent_title} subagent #{ordinal}"
+      detail -> cut(detail, 72, 69)
     end
   end
+
+  defp cut(text, limit, keep) do
+    if utf16_length(text) > limit, do: grapheme_prefix(text, keep) <> "...", else: text
+  end
+
+  # The longest prefix of `text` within `budget` UTF-16 units that ends on a
+  # grapheme boundary, so the cut never falls through a surrogate pair, a
+  # joined sequence, a flag, or a variation selector.
+  defp grapheme_prefix(text, budget) do
+    text
+    |> String.graphemes()
+    |> Enum.reduce_while({0, []}, fn grapheme, {used, kept} ->
+      length = utf16_length(grapheme)
+
+      if used + length <= budget,
+        do: {:cont, {used + length, [grapheme | kept]}},
+        else: {:halt, {used, kept}}
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+    |> Enum.join()
+  end
+
+  defp utf16_length(text),
+    do: text |> :unicode.characters_to_binary(:utf8, :utf16) |> byte_size() |> div(2)
 
   defp trimmed(value) when is_binary(value) do
     case String.trim(value) do
@@ -555,4 +701,24 @@ defmodule HalC2.Orchestration.NativeSubagent do
   defp nilify(text), do: text
 
   defp stream(thread_id), do: HalC2.Streams.state(thread_id)
+
+  # The child runs on the model the provider names, else the parent's. A provider
+  # that reports a subagent's effort gives the child that effort, and one that named
+  # none leaves it unset rather than copying the parent's (pingdotgg/t3code#24467).
+  defp child_selection(%{} = selection, %{"reasoningEffort" => effort} = task) do
+    selection = child_selection(selection, Map.delete(task, "reasoningEffort"))
+    options = Enum.reject(selection["options"] || [], &(&1["id"] == "reasoningEffort"))
+
+    options =
+      if is_binary(effort),
+        do: options ++ [%{"id" => "reasoningEffort", "value" => effort}],
+        else: options
+
+    Map.put(selection, "options", options)
+  end
+
+  defp child_selection(selection, %{"model" => model}),
+    do: subagent_selection(selection, model)
+
+  defp child_selection(selection, _task), do: selection
 end

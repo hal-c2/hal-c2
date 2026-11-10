@@ -619,8 +619,10 @@ synced and nothing is sent. The Previews tab (`PreviewsPanel` over
 browser. The add menu's "Browser tab" (`rightPanel.add {kind: "browser"}`) is
 `preview.open` with no address: an empty tab the Previews tab fills from the
 MC's `localServers` shape (the MC's machine's servers, never this one's), the
-project scripts' `previewUrl`s and this device's last ten pages
-(`previewRecentPages`), with `preview.navigate`. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
+project scripts' `previewUrl`s and the last ten pages this device visited in
+the project (`PreviewHistory`, the `previewHistory` device setting), with
+`preview.navigate`. A visit is filed from the MC's tab snapshots, timed by their
+`updatedAt`, so a thread listing a page's older title does not undo a newer one. Moving another tab to QML is a line in `js/panelTabs.js` plus its kind
 in `RightPanelController::nativeKinds`.
 
 The desktop embeds QtWebEngine (a required dependency) for the browser tab,

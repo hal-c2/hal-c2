@@ -1,11 +1,17 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26904
+#   https://github.com/pingdotgg/t3code/pull/24202
+#   https://github.com/pingdotgg/t3code/pull/26859
+#   https://github.com/pingdotgg/t3code/pull/21508
 #   https://github.com/pingdotgg/t3code/pull/24847
+#   https://github.com/pingdotgg/t3code/pull/26058
 #   https://github.com/pingdotgg/t3code/pull/22898
 #   https://github.com/pingdotgg/t3code/pull/18860
 #   https://github.com/pingdotgg/t3code/pull/18849
 #   https://github.com/pingdotgg/t3code/pull/17327
 #   https://github.com/pingdotgg/t3code/pull/17730
 #   https://github.com/pingdotgg/t3code/pull/25389
+#   https://github.com/pingdotgg/t3code/pull/27892
 #   apps/desktop-qt/qml/HalC2/Bricks/DefaultShell.qml
 #   apps/desktop-qt/qml/HalC2/Bricks/ShellWindow.qml (sidebarCollapsed, settingsActive)
 #   apps/desktop-qt/src/native/LayoutController.cpp (sidebar.toggle, remembered on the device)
@@ -68,6 +74,7 @@ Feature: Layout: sidebar, header, right panel and drawer
       When the user presses the sidebar shortcut
       Then the sidebar is shown
 
+    # Upstream #24202: upstream's sidebar saved its collapsed state but never read it back.
     @desktop
     Scenario: A hidden sidebar stays hidden after a restart
       Given the sidebar is hidden
@@ -371,6 +378,30 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then pull request cannot be added
       And the Add menu says "This thread's branch has no pull request yet." for pull request
 
+    # Upstream #21508: the launcher's letters compared only the typed character, so Cyrillic, Greek
+    # and other non-Latin layouts could not use them.
+    @backlog @desktop @priority-low
+    Scenario Outline: An empty right panel opens a tab from its letter's key on any layout
+      Given the right panel is open with no tabs
+      And the user's keyboard layout is <layout>
+      When the user presses the key where QWERTY has "t"
+      Then a terminal tab opens in the right panel
+      And nothing is typed into the composer
+
+      Examples:
+        | layout    |
+        | US        |
+        | Ukrainian |
+        | Greek     |
+
+    # Upstream #21508: a key that types its own Latin letter or symbol keeps typing it.
+    @backlog @desktop @priority-low
+    Scenario: A key that types a Latin letter of its own does not open a tab from another letter
+      Given the right panel is open with no tabs
+      And the user's keyboard layout types "è" on the key where QWERTY has "t"
+      When the user presses that key
+      Then no terminal tab opens
+
     @desktop @backlog-desktop @priority-low
     Scenario: The right panel is set apart from the thread by a border
       Given the right panel is open
@@ -539,6 +570,76 @@ Feature: Layout: sidebar, header, right panel and drawer
       Then the thread details panel names "Planning" as the thread it was forked from
       When the user opens the related thread "Planning"
       Then the thread "Planning" is open
+    # Upstream #26904: the user chooses which rows the thread details card shows
+    @backlog @desktop @priority-low
+    Scenario: The user chooses what the thread details show
+      Given the thread details panel is shown
+      When the user opens its context menu, or Settings > Appearance > Thread details
+      And unticks "Scripts" and "Open in editor"
+      Then the thread details panel no longer shows those rows, at once
+      And their keyboard shortcuts still work
+
+    # Upstream #26904: the thread details card can be chosen per row, and Reset to default brings back the standard rows.
+    @backlog @desktop @priority-low
+    Scenario: Reset to default brings back the standard thread details
+      Given the user hid rows from the thread details
+      When the user chooses "Reset to default"
+      Then the thread details show the standard rows
+
+    # Upstream #26904: with every row hidden, the thread details card offers to choose what it shows.
+    @backlog @desktop @priority-low
+    Scenario: Thread details with every row hidden offer to choose what to show
+      Given the user hid every row that has something to show in this thread
+      When the thread details panel is shown
+      Then it offers "Choose what to show"
+
+    # Upstream #26859: usage limits and context in the thread details (a Labs toggle, made a row by #26904); context moved to its own rows below (#27892)
+    @backlog @desktop @priority-low
+    Scenario Outline: The thread details can show how much of each limit is left
+      Given the user turned on "Usage" in the thread details
+      And the thread's provider reports <reading>
+      When the thread details panel is shown
+      Then it shows <row>
+
+      Examples:
+        | reading                                  | row                                                         |
+        | its 5-hour window 60% used               | "5h" with "40% left"                                        |
+        | its weekly window 85% used               | "Weekly" with "15% left", marked as running low             |
+        | its weekly window 93% used               | "Weekly" with "7% left", marked as nearly out               |
+        | that it cannot read its limits           | one "Limits · Unavailable" row with the provider's message  |
+
+    @backlog @desktop @priority-low
+    Scenario: Hovering a usage row in the thread details tells when it resets
+      Given the thread details show the "Weekly" usage row
+      When the user hovers over it
+      Then it shows when the window resets and how fast it is being used
+      And the time to the reset is updated once a minute
+
+    # Upstream #27892: the Context row counted down under the Usage toggle; it now has its own
+    # toggle, fills as context is used and shows tokens against the limit.
+    @backlog @desktop @priority-low
+    Scenario Outline: The thread details show how full the context window is
+      Given the user turned on "Context window" in the thread details, and not "Usage"
+      And the thread has used <used> of 200,000 context tokens
+      When the thread details panel is shown
+      Then it shows "Context" with "<reading>", its bar filled to <percent><mark>
+      And it shows no usage limit rows
+
+      Examples:
+        | used    | reading     | percent | mark                       |
+        | 144,000 | 144k / 200k | 72%     |                            |
+        | 164,000 | 164k / 200k | 82%     | , marked as running low    |
+        | 184,000 | 184k / 200k | 92%     | , marked as nearly full    |
+
+    # Upstream #27892
+    @backlog @desktop @priority-low
+    Scenario: The context bar marks where the provider compacts on its own
+      Given the user turned on "Context window" in the thread details
+      And the thread's Claude compacts on its own at about 617,000 tokens of a 1,000,000 token window
+      When the thread details panel is shown
+      Then the context bar marks the point where Claude compacts
+      And hovering it gives the exact token counts
+
 
     @backlog @desktop
     Scenario Outline: An open right panel with no tabs offers what it can show, each with a letter
@@ -646,6 +747,19 @@ Feature: Layout: sidebar, header, right panel and drawer
       Given the right panel has only a "Diff" tab
       When the user closes the "Diff" tab
       Then the right panel is closed
+
+    # Upstream #26058: a last Browser tab left the panel open on its empty picker.
+    @backlog @desktop
+    Scenario Outline: Closing the last Browser tab closes the right panel
+      Given the right panel has only a Browser tab
+      When <who> closes it
+      Then the right panel is closed
+
+      Examples:
+        | who                        |
+        | the user                   |
+        | the agent                  |
+        | the user on another client |
 
     @backlog @desktop
     Scenario: A middle click closes a right panel tab
@@ -779,27 +893,27 @@ Feature: Layout: sidebar, header, right panel and drawer
 
   Rule: Rearranging the shell
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A user's own shell layout replaces the default
       Given the user wrote their own shell layout in the HAL-C2 home
       When the app starts
       Then the app uses the user's layout
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A user's own shell layout still answers the agent
       Given the app is using the user's own shell layout
       And that layout shows the composer
       When the agent asks the user a question
       Then the question and its options show on the composer
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A broken shell layout falls back to the default
       Given the user's own shell layout has an error
       When the app starts
       Then the default layout is used
       And the error is shown to the user
 
-    @desktop
+    @desktop @backlog-desktop
     Scenario: A shell layout change applies without restarting
       Given the app is using the user's own shell layout
       When the user saves a change to it

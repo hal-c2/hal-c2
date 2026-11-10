@@ -56,15 +56,22 @@ defmodule HalC2.Application do
       # Stopped after the runtimes: a clean stop settles the turns they leave.
       HalC2.Orchestration.Recovery.Shutdown,
       HalC2.Orchestration.TurnWatch,
+      # What running commands have printed lately; never written to a thread's log.
+      HalC2.Orchestration.CommandTail,
       # The recorded side effects of accepted commands, replayed or cancelled
       # for what the last boot left unfinished.
       HalC2.Orchestration.Effects,
       # Wakes threads for work their provider finished in the background.
       HalC2.Orchestration.Wake,
       Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
+      {Registry, keys: :duplicate, name: HalC2.Traces.Registry},
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
+      # Owns the table of Claude's sign-in reads.
+      HalC2.Claude.AuthCache,
       {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
+      # Terminals starting and storage cleanup removing a worktree take turns on its folder.
+      HalC2.WorkspaceLease,
       {Registry, keys: :unique, name: HalC2.Terminal.Registry},
       {DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one},
       HalC2.Terminal.Hub,
@@ -101,6 +108,8 @@ defmodule HalC2.Application do
       HalC2.Orchestration.LimitRecovery,
       HalC2.Usage,
       HalC2.Mcp,
+      # The sandboxes untrusted code reviews run in; deletes those an earlier MC left.
+      HalC2.OpenShell.Review,
       HalC2.Plugins,
       # The Slack connection plugins borrow, made again from the stored tokens.
       HalC2.Slack,
@@ -111,10 +120,12 @@ defmodule HalC2.Application do
       HalC2.ProviderUsageLimits,
       HalC2.UsageLimitSources,
       HalC2.StorageCleanup,
+      HalC2.Store.Compactor,
       HalC2.Orchestration.IdleSessions,
       {Registry, keys: :unique, name: HalC2.ProviderAuth.Registry},
       {DynamicSupervisor, name: HalC2.ProviderAuth.Supervisor, strategy: :one_for_one},
       {DynamicSupervisor, name: HalC2.Vcs.Supervisor, strategy: :one_for_one},
+      HalC2.Codex.Installation,
       Supervisor.child_spec({Task, &HalC2.Codex.Provider.boot/0}, id: :codex_models),
       Supervisor.child_spec({Task, &HalC2.Claude.Provider.load/0}, id: :claude_models),
       Supervisor.child_spec({Task, &HalC2.ModelManifest.refresh/0}, id: :model_manifest),

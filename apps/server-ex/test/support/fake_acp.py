@@ -14,10 +14,10 @@
 # 127.0.0.1:P for the `opencode` user and OPENCODE_SERVER_PASSWORD, over sessions kept
 # as JSON files in FAKE_ACP_SESSIONS (shared by every fake; a private directory without
 # it): each prompt adds a user message, and each turn's end an assistant message.
-# GET /session/:id/message[?limit=n] and POST /session/:id/fork ({messageID}: the
-# messages before it, with new ids) are served; each request is traced as
+# GET /session/:id/message[?limit=n], PATCH /session/:id ({title}) and POST /session/:id/fork ({messageID}: the
+# messages before it, with new ids, less any marked "lostOnFork") are served; each request is traced as
 # {"http": {method, path, body}}.
-import base64, json, os, re, sys, tempfile, threading, time
+import base64, errno, json, os, re, signal, sys, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
@@ -119,6 +119,14 @@ if len(sys.argv) > 2 and sys.argv[1] in ("export", "import") and os.environ.get(
         print("Imported session: %s" % sid)
     sys.exit(0)
 
+# A session's title, in <id>.title: PATCH /session/:id sets it, and a session still
+# untitled at a prompt gets one of OpenCode's own, as its title model writes. A title
+# saying "unwritable" is refused.
+def set_title(sid, title):
+    os.makedirs(SESSIONS, exist_ok=True)
+    with open(os.path.join(SESSIONS, "%s.title" % sid), "w") as f:
+        f.write(title)
+
 def add_message(sid, role, text):
     if PORT:
         with LOCK:
@@ -152,6 +160,11 @@ class Api(BaseHTTPRequestHandler):
             return self.reply(401, {"message": "Unauthorized"})
         path, _, query = self.path.partition("?")
         parts = path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] == "session" and method == "PATCH":
+            if "unwritable" in ((body or {}).get("title") or ""):
+                return self.reply(500, {"data": {"message": "title not saved"}})
+            set_title(parts[1], (body or {}).get("title"))
+            return self.reply(200, {"id": parts[1], "title": (body or {}).get("title")})
         if len(parts) != 3 or parts[0] != "session":
             return self.reply(404, {"message": "not found"})
         sid, action = parts[1], parts[2]
@@ -167,7 +180,10 @@ class Api(BaseHTTPRequestHandler):
                 for msg in messages(sid):
                     if msg["info"]["id"] == before:
                         break
-                    kept.append(msg)
+                    # A message marked "lostOnFork" is not copied: an OpenCode whose fork
+                    # did not keep what it was asked to.
+                    if not msg["info"].get("lostOnFork"):
+                        kept.append(msg)
                 fork = new_id("ses")
                 for msg in kept:
                     msg["info"] = dict(msg["info"], id=new_id("msg"), sessionID=fork)
@@ -181,9 +197,29 @@ class Api(BaseHTTPRequestHandler):
     def do_POST(self):
         self.handle_any("POST")
 
+    def do_PATCH(self):
+        self.handle_any("PATCH")
+
 if PORT:
     api = ThreadingHTTPServer(("127.0.0.1", PORT), Api)
     threading.Thread(target=api.serve_forever, daemon=True).start()
+
+# A waiting prompt notes this process's pid in `<FAKE_ACP_TRACE>.waiting`; SIGUSR1 then fails
+# it with the JSON-RPC error in `<FAKE_ACP_TRACE>.stop`, as OpenCode fails a prompt whose
+# model request failed.
+def stop_waiting(*_):
+    global waiting
+    if waiting and TRACE and os.path.exists(TRACE + ".stop"):
+        with open(TRACE + ".stop") as f:
+            send({"id": waiting[0], "error": json.load(f)})
+        waiting = None
+
+def note_waiting():
+    if TRACE:
+        with open(TRACE + ".waiting", "w") as f:
+            f.write(str(os.getpid()))
+
+signal.signal(signal.SIGUSR1, stop_waiting)
 
 def steered_end(text):
     """How a waiting prompt's loop ends as a steer lands, if it does."""
@@ -217,16 +253,28 @@ def answer_title():
     # Text generation: log what the agent was allowed, then answer the schema's keys.
     global titling
     pid, sid, text, answers = titling["pid"], titling["sid"], titling["text"], titling["answers"]
+    titling_images = titling.get("images", [])
     titling = None
     cwd = cwds.get(sid, os.getcwd())
     with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
         f.write(json.dumps({"acp": INSTANCE, "argv": sys.argv[1:], "cwd": cwd, "listing": os.listdir(cwd),
-                            "prompt": text, "model": model, "refused": answers}) + "\n")
+                            "prompt": text, "model": model, "refused": answers,
+                            "account": os.environ.get("FAKE_CURSOR_ACCOUNT"),
+                            "images": titling_images}) + "\n")
     out = {"title": "%s title" % INSTANCE, "needsRefinement": False}
     out.update(json.loads(os.environ.get("FAKE_TEXT_ANSWER") or "{}"))
-    update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1",
-                 "content": {"type": "text", "text": json.dumps(out)}})
-    send({"id": pid, "result": {"stopReason": "end_turn"}})
+    # $FAKE_TEXT_RAW (a JSON string) is what the agent says instead of the keys; "" says nothing.
+    raw = os.environ.get("FAKE_TEXT_RAW")
+    said = json.loads(raw) if raw is not None else json.dumps(out)
+    if said != "":
+        update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-1",
+                     "content": {"type": "text", "text": said}})
+    # $FAKE_TEXT_STOP ends the run badly after the answer: "cancelled", or "error".
+    ending = os.environ.get("FAKE_TEXT_STOP")
+    if ending == "error":
+        send({"id": pid, "error": {"code": -32000, "message": "internal failure"}})
+    else:
+        send({"id": pid, "result": {"stopReason": ending or "end_turn"}})
 
 trace({"argv": sys.argv[1:]})
 for line in sys.stdin:
@@ -264,7 +312,7 @@ for line in sys.stdin:
             open(AUTH_FILE, "w").write("signed in")
             send({"id": authenticating, "result": {}})
         else:
-            send({"id": authenticating, "error": {"code": -32000, "message": "declined"}})
+            send({"id": authenticating, "error": {"code": -32000, "message": (open(AUTH_FILE + ".decline").read() if os.path.exists(AUTH_FILE + ".decline") else "declined")}})
         continue
     if method == "authenticate":
         authenticating = mid
@@ -297,6 +345,8 @@ for line in sys.stdin:
         names = json.loads(os.environ.get("FAKE_ACP_MODELS", "null")) or ["Fake/One", "Fake/Two"]
         options = [{"value": n.lower().replace(" ", "-"), "name": n} for n in names]
         result = {"configOptions": [{"id": "model", "currentValue": options[0]["value"], "options": options}]}
+        # FAKE_ACP_NO_MODEL_SWITCH: the session offers no way to switch models.
+        if os.environ.get("FAKE_ACP_NO_MODEL_SWITCH"): result = {}
         if method == "session/new": result["sessionId"] = sid
         cwds[sid] = params.get("cwd") or os.getcwd()
         # A session in the shared store belongs to the directory it was opened in.
@@ -309,6 +359,8 @@ for line in sys.stdin:
     elif method == "session/prompt":
         sid = params["sessionId"]
         text = params["prompt"][0]["text"]
+        prompt_images = [{"mimeType": b.get("mimeType"), "bytes": len(b.get("data") or "")}
+                         for b in params["prompt"] if b.get("type") == "image"]
         # FAKE_ACP_INPUT_LOG names a file each prompt's text is appended to, as JSON.
         if os.environ.get("FAKE_ACP_INPUT_LOG"):
             with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as input_log:
@@ -322,6 +374,8 @@ for line in sys.stdin:
         # ("waiting", ...) must not pick the script.
         text = re.sub(r"\AYou are a HAL-C2 worker delegated by .*?\nTask:\n", "", text, flags=re.S)
         add_message(sid, "user", text)
+        if PORT and not os.path.exists(os.path.join(SESSIONS, "%s.title" % sid)):
+            set_title(sid, "OpenCode's own title")
         if "never answered" in text:
             continue
         if waiting and waiting[1] == sid and waiting[2]:
@@ -353,9 +407,28 @@ for line in sys.stdin:
             continue
         update(sid, {"sessionUpdate": "agent_thought_chunk", "messageId": "th-1", "content": {"type": "text", "text": "Let me look."}})
         update(sid, {"sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "bash", "kind": "execute", "status": "pending", "rawInput": {}})
+        if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG") and os.environ.get("FAKE_TEXT_HANG"):
+            # A title writer that never answers: its pid and folder go to the log.
+            with open(os.environ["FAKE_TEXT_LOG"], "a") as f:
+                f.write(json.dumps({"acp": INSTANCE, "pid": os.getpid(), "cwd": cwds.get(sid, os.getcwd()), "hung": True}) + "\n")
+            # $FAKE_TEXT_STARTED names a fifo that gets a byte once the log is written.
+            if os.environ.get("FAKE_TEXT_STARTED"):
+                # Non-blocking, retried briefly: with no reader attached the test fails on
+                # its own assertion instead of hanging this process in open().
+                for _ in range(50):
+                    try:
+                        fd = os.open(os.environ["FAKE_TEXT_STARTED"], os.O_WRONLY | os.O_NONBLOCK)
+                        os.write(fd, b"started")
+                        os.close(fd)
+                        break
+                    except OSError as e:
+                        if e.errno != errno.ENXIO:
+                            break
+                        time.sleep(0.1)
+            continue
         if "Return JSON with keys title and needsRefinement." in text and os.environ.get("FAKE_TEXT_LOG"):
             # A title writer that tries a command and a file read first.
-            titling = {"pid": mid, "sid": sid, "text": text, "answers": {}}
+            titling = {"pid": mid, "sid": sid, "text": text, "answers": {}, "images": prompt_images}
             send({"id": "tg-perm", "method": "session/request_permission", "params": {"sessionId": sid,
                   "toolCall": {"toolCallId": "call-1", "title": "ls", "kind": "execute", "rawInput": {"command": "ls"}},
                   "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
@@ -380,6 +453,16 @@ for line in sys.stdin:
                     "rawInput": {"plan": "# Plan\n\n1. Add the form"}}
             update(sid, dict(call, sessionUpdate="tool_call", status="pending"))
             update(sid, dict(call, sessionUpdate="tool_call_update", status="completed"))
+            finish_turn(mid, sid)
+        elif "run a failing command" in text:
+            # A shell command the agent reports completed, with its non-zero exit
+            # only in the raw output: the MC decides what that says about the tool.
+            update(sid, {"sessionUpdate": "tool_call", "toolCallId": "sh-fail", "title": "make test",
+                         "kind": "execute", "status": "in_progress", "rawInput": {"command": "make test"}})
+            update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "sh-fail", "status": "completed",
+                         "kind": "execute", "title": "make test", "rawInput": {"command": "make test"},
+                         "content": [{"type": "content", "content": {"type": "text", "text": "boom\n"}}],
+                         "rawOutput": {"output": "boom\n", "exitCode": 1}})
             finish_turn(mid, sid)
         elif "hand it to a subagent" in text:
             # The agent's task tool: a subagent it runs to the end inside the turn.
@@ -408,11 +491,14 @@ for line in sys.stdin:
             else:
                 finish_turn(mid, sid)
         elif "wait" in text:
+            waiting = (mid, sid, steered_end(text))
+            note_waiting()
             # OpenCode names the command once it runs, with its output so far.
+            # Sent after the note, so the update on the thread is the receipt
+            # that the pid is there for a step waiting to signal it.
             update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress",
                          "kind": "execute", "title": "ls", "rawInput": {"command": "ls"},
                          "content": [{"type": "content", "content": {"type": "text", "text": "a.txt\n"}}]})
-            waiting = (mid, sid, steered_end(text))
         elif "approve" in text:
             pending = (mid, sid)
             asked += 1
@@ -450,6 +536,8 @@ for line in sys.stdin:
         if method == "logout" and AUTH_FILE and os.path.exists(AUTH_FILE):
             os.remove(AUTH_FILE)
         send({"id": mid, "result": {}})
+    elif method == "session/load" and os.environ.get("FAKE_ACP_HANG_LOAD"):
+        pass  # FAKE_ACP_HANG_LOAD: a load that is never answered.
     elif method == "session/cancel" and waiting:
         end_prompt(waiting[0], waiting[1], "cancelled")
         waiting = None

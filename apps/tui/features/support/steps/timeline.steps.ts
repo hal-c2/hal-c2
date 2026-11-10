@@ -39,6 +39,7 @@ type Line = {
     chunks: Array<{ text: string; attributes?: number; link?: { url: string }; fg?: unknown }>;
   };
   parts?: ReadonlyArray<unknown> | null;
+  right?: { text: Line["text"] } | null;
 };
 type Item = { key: string; kind: string; align: string; boxed: boolean; lines: Line[] };
 
@@ -78,7 +79,7 @@ step(
     expect(shown.map((item) => item.kind)).toEqual(["message", "work", "message"]);
     expect(itemText(shown[0]!)).toBe("Looking at the build.");
     expect(itemText(shown[1]!)).toContain("bun run build");
-    expect(itemText(shown[1]!)).toContain("+1 previous tool call");
+    expect(plain(shown[1]!.lines[0]!.right!.text)).toBe("+1 previous tool call");
     expect(itemText(shown[2]!)).toBe("The build passes now.");
     const screen = await snapshot(ctx);
     expect(screen.indexOf("Looking at the build.")).toBeLessThan(screen.indexOf("bun run build"));
@@ -864,12 +865,17 @@ step(
 );
 
 // The fixtures are timed on the real clock, so a message's stamp reads `<time>`.
-const STAMP = /\d{1,2}:\d{2}(?: [AP]M)?$/;
+// Past midnight the stamp carries its day (src/timestampFormat.ts): `yesterday at `,
+// `m/d `, `m/d/yyyy `.
+const DAY = String.raw`(?:yesterday at |\d{1,2}/\d{1,2}(?:/\d{2,4})? )?`;
+const TIME = String.raw`\d{1,2}:\d{2}(?: [AP]M)?`;
+const STAMP = new RegExp(`${DAY}${TIME}$`);
+const USER_STAMP = new RegExp(`^ *${DAY}${TIME}$`);
 const unstamped = (rows: ReadonlyArray<string>) =>
   rows.map((row) => {
     const text = row.trimEnd();
     // A user message's stamp keeps its right edge, under the bubble.
-    if (/^ *\d{1,2}:\d{2}(?: [AP]M)?$/.test(text)) return "<time>".padStart(text.length);
+    if (USER_STAMP.test(text)) return "<time>".padStart(text.length);
     return /⧉ Copy · /.test(text) ? text.replace(STAMP, "<time>") : row;
   });
 

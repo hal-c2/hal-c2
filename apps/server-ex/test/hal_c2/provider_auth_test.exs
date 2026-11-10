@@ -7,7 +7,8 @@ defmodule HalC2.ProviderAuthTest do
   setup %{tmp_dir: dir} do
     auth_file = Path.join(dir, "signed-in")
     Application.put_env(:hal_c2, :home, dir)
-    Application.put_env(:hal_c2, :acp_commands, %{"opencode" => ["python3", "-u", @fake_acp]})
+    fake = ["python3", "-u", @fake_acp]
+    Application.put_env(:hal_c2, :acp_commands, %{"opencode" => fake, "cursor" => fake})
     on_exit(fn -> Application.delete_env(:hal_c2, :acp_commands) end)
     start_supervised!(HalC2.Settings)
 
@@ -18,6 +19,11 @@ defmodule HalC2.ProviderAuthTest do
           "providerInstances" => %{
             "opencode" => %{
               "driver" => "opencode",
+              "enabled" => true,
+              "environment" => [%{"name" => "FAKE_AUTH_FILE", "value" => auth_file}]
+            },
+            "cursor" => %{
+              "driver" => "cursor",
               "enabled" => true,
               "environment" => [%{"name" => "FAKE_AUTH_FILE", "value" => auth_file}]
             }
@@ -41,6 +47,16 @@ defmodule HalC2.ProviderAuthTest do
     HalC2.Acp.forget("opencode")
     on_exit(fn -> HalC2.Acp.forget("opencode") end)
     %{auth_file: auth_file}
+  end
+
+  # Review of #1322: every MC's own token was the one owner "local", so the local tools
+  # of two MCs in a cluster could answer and see each other's sign-ins.
+  test "a client is a different owner on each MC of a cluster" do
+    alias HalC2.ProviderAuth
+    assert ProviderAuth.owner(nil) == ProviderAuth.owner(nil, node())
+    refute ProviderAuth.owner(nil, :a@host) == ProviderAuth.owner(nil, :b@host)
+    refute ProviderAuth.owner("s1", :a@host) == ProviderAuth.owner("s1", :b@host)
+    refute ProviderAuth.owner(nil, :a@host) == ProviderAuth.owner("own-token", :a@host)
   end
 
   # A socket's unsubscribe can arrive after the test's registry has stopped (scenario teardown).
@@ -117,7 +133,9 @@ defmodule HalC2.ProviderAuthTest do
         "response" => %{"type" => "browser", "action" => "decline"}
       })
 
-    assert await_phase("failed")["message"] == "The ACP agent could not complete sign-in."
+    # The agent's own reason follows the MC's message (upstream #30295).
+    assert await_phase("failed")["message"] ==
+             "The ACP agent could not complete sign-in. declined."
 
     {:ok, %{"flowId" => flow}} =
       HalC2.ProviderAuth.start(%{"instanceId" => "opencode", "methodId" => "cli"})
@@ -126,6 +144,61 @@ defmodule HalC2.ProviderAuthTest do
 
     assert {:ok, %{"phase" => "cancelled"}} =
              HalC2.ProviderAuth.cancel(%{"instanceId" => "opencode", "flowId" => flow})
+  end
+
+  # Review of #1284: Cursor's own words skipped the redaction, the sign-in-secret
+  # suppression and the length limit every other agent's reason gets.
+  describe "Cursor's sign-in failure" do
+    defp cursor_declines(auth_file, reason) do
+      File.write!(auth_file <> ".decline", reason)
+      {:ok, _} = HalC2.ProviderAuth.subscribe("cursor", self())
+      assert_receive {:hal_c2_provider_auth, "cursor", %{"methods" => _}}, 5_000
+
+      {:ok, %{"flowId" => flow}} =
+        HalC2.ProviderAuth.start(%{"instanceId" => "cursor", "methodId" => "browser"})
+
+      await_phase("waiting")
+
+      {:ok, _} =
+        HalC2.ProviderAuth.respond(%{
+          "instanceId" => "cursor",
+          "flowId" => flow,
+          "interactionId" => "e1",
+          "response" => %{"type" => "browser", "action" => "decline"}
+        })
+
+      state = await_failed()
+      HalC2.Acp.forget("cursor")
+      state["message"]
+    end
+
+    defp await_failed do
+      receive do
+        {:hal_c2_provider_auth, _, %{"phase" => "failed"} = state} -> state
+        {:hal_c2_provider_auth, _, _} -> await_failed()
+      after
+        10_000 -> flunk("no failed state")
+      end
+    end
+
+    test "keeps its own wording, cut to the length limit", %{auth_file: auth_file} do
+      text = "A paid Cursor plan is needed. " <> String.duplicate("x", 800)
+      message = cursor_declines(auth_file, text)
+      assert message =~ "A paid Cursor plan is needed."
+      assert String.length(message) <= 500
+    end
+
+    test "leaves out a sign-in address or device code", %{auth_file: auth_file} do
+      message = cursor_declines(auth_file, "Open https://cursor.com/loginDeepControl?code=1 now")
+      assert message == "The ACP agent could not complete sign-in."
+    end
+
+    test "redacts credentials", %{auth_file: auth_file} do
+      message =
+        cursor_declines(auth_file, "Rejected: Authorization: Bearer abcdefghijklmnop1234567890")
+
+      refute message =~ "abcdefghijklmnop1234567890"
+    end
   end
 
   defp flush_provider_changes do

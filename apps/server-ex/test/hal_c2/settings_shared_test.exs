@@ -318,7 +318,7 @@ defmodule HalC2.SettingsSharedTest do
       assert {%{}, 0} = Settings.get()
     end
 
-    test "a write while the document cannot be read resets no shared setting it left alone",
+    test "a write while the document cannot be read is refused and leaves the file and records",
          %{path: path, records: records} do
       :ok = stop_supervised(Settings)
       seeded = %{"defaultRuntimeMode" => record(5, "zz", "full-access")}
@@ -327,19 +327,26 @@ defmodule HalC2.SettingsSharedTest do
       start_supervised!(Settings)
 
       # The shared settings stand in for the document a client reads and writes back.
-      assert {%{"defaultRuntimeMode" => "full-access"}, 0} = Settings.get()
-      {:ok, 1} = Settings.update(&Map.put(&1, "defaultTheme", "x"))
-      {doc, 1} = Settings.get()
-      {:ok, 2} = Settings.put(Map.put(doc, "environmentIcon", "laptop"), 1)
+      assert {%{"defaultRuntimeMode" => "full-access"} = doc, 0} = Settings.get()
+      assert {:error, _} = Settings.update(&Map.put(&1, "defaultTheme", "x"))
 
+      assert {:error, %{"_tag" => "ServerSettingsError"}} =
+               HalC2.Rpc.handle("hal-c2.writeSettings", %{"settings" => doc, "version" => 0})
+
+      assert File.read!(path) == "{not json"
       assert Settings.shared_records() == seeded
       assert JSON.decode!(File.read!(records)) == seeded
 
-      assert JSON.decode!(File.read!(path)) == %{
-               "defaultRuntimeMode" => "full-access",
-               "defaultTheme" => "x",
-               "environmentIcon" => "laptop"
-             }
+      # Repaired by hand, the file is read again and saves work.
+      File.write!(path, JSON.encode!(%{"defaultTheme" => "y"}))
+      send(Settings, :check)
+      _ = :sys.get_state(Settings)
+      assert {%{"defaultTheme" => "y"} = doc, _} = Settings.get()
+
+      assert {:ok, _} =
+               Settings.put(Map.put(doc, "environmentIcon", "laptop"), elem(Settings.get(), 1))
+
+      assert JSON.decode!(File.read!(path))["defaultTheme"] == "y"
     end
 
     test "a client's edit queued behind a member's rules is made on top of them", %{id: id} do

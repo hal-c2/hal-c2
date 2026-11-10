@@ -13,6 +13,12 @@ MAUDE_PATH=/opt/maude/maude mix proof             # a Maude of your own
 `mix proof` installs Maude into `_build/maude` the first time, unless `MAUDE_PATH`
 names one. `mise run proof [files]` does the same from anywhere in the repository.
 
+Some searches are large: `provider_handoff_proof_test.exs` peaks above 7 GB. Under a
+memory cap below what a search needs, the kernel kills Maude and its test fails. A run
+stopped by SIGTERM (a `timeout`, or a systemd scope stopped once something in it was
+killed) ends with status 143 and no summary (`HalC2.Test.StopSignal`). Without that
+trap it ended 0 and read as passed.
+
 ## What a proof is for
 
 A property test (`prop/`) runs the real code on sequences of calls PropEr samples, so it
@@ -25,7 +31,9 @@ protocol across machines goes wrong, and where sampling rarely looks. A proof ch
 - liveness under fairness: what starts eventually ends, given that the code's steps
   are taken while they can be and that crashes restart and partitions heal
   (`assert_ltl`);
-- deadlock freedom: no reachable state is stuck with work left (`refute_deadlock`).
+- deadlock freedom: no reachable state is stuck with work left (`refute_deadlock`);
+- that each part of a fix is needed: with it switched off in the model, the bad state
+  is reachable (`assert_reachable`), so a property does not pass for want of a path.
 
 A model is only as good as its likeness to the code, so a proof also checks that it
 still covers the code (below). Use a proof for a protocol between processes or
@@ -47,8 +55,9 @@ When the code changes, change the model with it: a mapping updated without the
 model is a proof of something else.
 
 CI leans on this. A model check's answer depends on the model and not on the MC's code, so
-on each change CI runs only the coverage test of every proof, and the checks of the
-proofs whose model changed (`.github/scripts/ci-changes.sh`); all of them run nightly. A
+each push to a pull request runs only the coverage test of every proof, and the merge queue
+adds the checks of the proofs whose model changed (`.github/scripts/ci-changes.sh`); all of
+them run nightly. A
 proof whose model should have changed is caught only by the coverage test, so a fact
 mapped to a rule has to mean it.
 

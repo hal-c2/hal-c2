@@ -318,6 +318,8 @@ QList<Instance> instances(const QJsonArray& providers) {
     instance.available = str(provider, QLatin1String("availability")) != QLatin1String("unavailable");
     instance.requiresNewThreadForModelChange = provider.value(QLatin1String("requiresNewThreadForModelChange")).toBool();
     instance.showInteractionModeToggle = provider.value(QLatin1String("showInteractionModeToggle")) != QJsonValue(false);
+    const QJsonObject setup = provider.value(QLatin1String("setup")).toObject();
+    instance.canSetUp = setup.value(QLatin1String("canInstall")).toBool() || setup.value(QLatin1String("canAuthenticate")).toBool();
     for (const QJsonValue& mode : provider.value(QLatin1String("supportedRuntimeModes")).toArray()) {
       instance.runtimeModes.append(mode.toString());
     }
@@ -352,6 +354,24 @@ QJsonObject findModel(const Instance& instance, const QString& model) {
   }
   for (const QJsonValue& value : instance.models) {
     if (modelMatches(value.toObject(), model)) return value.toObject();
+  }
+  return {};
+}
+
+QString fallbackModelSlug(const Instance& instance, const QString& model) {
+  if (model.isEmpty()) return {};
+  for (const QJsonValue& value : instance.models) {
+    if (str(value.toObject(), QLatin1String("slug")) == model) return model;
+  }
+  for (const QJsonValue& value : instance.models) {
+    const QJsonObject candidate = value.toObject();
+    if (candidate.value(QLatin1String("isCustom")).toBool()) continue;
+    if (str(candidate, QLatin1String("name")).compare(model, Qt::CaseInsensitive) == 0) {
+      return str(candidate, QLatin1String("slug"));
+    }
+    for (const QJsonValue& alias : candidate.value(QLatin1String("aliases")).toArray()) {
+      if (alias.toString() == model) return str(candidate, QLatin1String("slug"));
+    }
   }
   return {};
 }
@@ -446,6 +466,8 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
           {QStringLiteral("isNew"), str(model, QLatin1String("badge")) == QLatin1String("new")},
           {QStringLiteral("isLegacy"), model.value(QLatin1String("isLegacy")).toBool()},
           {QStringLiteral("isUnavailable"), model.value(QLatin1String("isUnavailable")).toBool()},
+          // Whether choosing it leaves an effort to pick in the model control.
+          {QStringLiteral("hasEffort"), effortIndex(model.value(QLatin1String("capabilities")).toObject().value(QLatin1String("optionDescriptors")).toArray()) >= 0},
           {QStringLiteral("disabledReason"), disabledReason.isValid() ? disabledReason : QVariant::fromValue(nullptr)},
       });
     }
@@ -460,6 +482,7 @@ QVariantList pickerInstances(const QList<Instance>& list, const ModelPrefs& pref
         {QStringLiteral("initials"), initialsOf(instance.displayName)},
         {QStringLiteral("showBadge"), showBadge(instance, visible)},
         {QStringLiteral("status"), instance.status},
+        {QStringLiteral("canSetUp"), instance.canSetUp},
         {QStringLiteral("isAvailable"), instance.ready() || !shown.isEmpty()},
         {QStringLiteral("unavailableReason"), reason},
         {QStringLiteral("models"), shown},
@@ -570,7 +593,9 @@ QVariantList shellOptions(const QJsonArray& descriptors) {
     if (select) {
       for (const QJsonValue& choice : descriptor.value(QLatin1String("options")).toArray()) {
         choices.append(QVariantMap{{QStringLiteral("id"), str(choice.toObject(), QLatin1String("id"))},
-                                   {QStringLiteral("label"), str(choice.toObject(), QLatin1String("label"))}});
+                                   {QStringLiteral("label"), str(choice.toObject(), QLatin1String("label"))},
+                                   {QStringLiteral("isDefault"), choice.toObject().value(QLatin1String("isDefault")).toBool()},
+                                   {QStringLiteral("description"), str(choice.toObject(), QLatin1String("description"))}});
       }
     }
     const QJsonValue current = descriptor.value(QLatin1String("currentValue"));
@@ -610,6 +635,100 @@ std::optional<QJsonArray> applyOption(const QJsonArray& descriptors, const QStri
   return selectionsOf(next);
 }
 
+std::optional<QString> steppedChoice(const QJsonObject& descriptor, int direction) {
+  if (str(descriptor, QLatin1String("type")) != QLatin1String("select") || direction == 0) return std::nullopt;
+  const QJsonArray injected = descriptor.value(QLatin1String("promptInjectedValues")).toArray();
+  QStringList choices;
+  QString fallback;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("options")).toArray()) {
+    const QString id = str(value.toObject(), QLatin1String("id"));
+    if (id.isEmpty() || injected.contains(QJsonValue(id))) continue;
+    if (value.toObject().value(QLatin1String("isDefault")).toBool() && fallback.isEmpty()) fallback = id;
+    choices.append(id);
+  }
+  const qsizetype count = choices.size();
+  if (count < 2) return std::nullopt;
+  qsizetype at = choices.indexOf(descriptor.value(QLatin1String("currentValue")).toString());
+  // From the prompt's own effort (Ultrathink), which sits above the top
+  // level: up wraps to the lowest, down comes to the highest.
+  if (at < 0 && injected.contains(descriptor.value(QLatin1String("currentValue")))) return direction > 0 ? choices.first() : choices.last();
+  if (at < 0) at = choices.indexOf(fallback);
+  if (at < 0) return direction > 0 ? choices.first() : choices.last();
+  return choices.at(((at + (direction > 0 ? 1 : -1)) % count + count) % count);
+}
+
+namespace {
+// A select that is the reasoning effort by its id, or that its agent marked
+// as reasoning (an ACP agent's `thought_level`).
+bool isReasoning(const QJsonObject& descriptor) {
+  static const QStringList reasoningIds{QStringLiteral("effort"), QStringLiteral("reasoningEffort"), QStringLiteral("reasoning")};
+  return str(descriptor, QLatin1String("type")) == QLatin1String("select") &&
+         (reasoningIds.contains(str(descriptor, QLatin1String("id"))) || str(descriptor, QLatin1String("role")) == QLatin1String("reasoning"));
+}
+}  // namespace
+
+qsizetype effortIndex(const QJsonArray& descriptors) {
+  qsizetype first = -1;
+  for (qsizetype i = 0; i < descriptors.size(); ++i) {
+    const QJsonObject descriptor = descriptors.at(i).toObject();
+    if (str(descriptor, QLatin1String("type")) != QLatin1String("select")) continue;
+    if (isReasoning(descriptor)) return i;
+    if (first < 0) first = i;
+  }
+  return first;
+}
+
+QVariantMap effortBars(const QJsonObject& descriptor, const QString& current) {
+  // Ultracode changes the workflow and Max tops the scale: both keep their names.
+  static const QStringList named{QStringLiteral("ultracode"), QStringLiteral("max")};
+  static const QStringList off{QStringLiteral("off"), QStringLiteral("none")};
+  // More bars than this no longer fit the glyph's height in whole pixels.
+  constexpr qsizetype maxBars = 7;
+  if (!isReasoning(descriptor) || current.isEmpty()) return {};
+  QStringList special = named;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("promptInjectedValues")).toArray()) special.append(value.toString());
+  QStringList levels;
+  QString label = current;
+  for (const QJsonValue& value : descriptor.value(QLatin1String("options")).toArray()) {
+    const QString id = str(value.toObject(), QLatin1String("id"));
+    if (id == current && !str(value.toObject(), QLatin1String("label")).isEmpty()) label = str(value.toObject(), QLatin1String("label"));
+    if (!special.contains(id)) levels.append(id);
+  }
+  if (levels.size() < 2 || levels.size() > maxBars) return {};
+  const bool startsAtOff = off.contains(levels.first());
+  const qsizetype count = startsAtOff ? levels.size() - 1 : levels.size();
+  if (special.contains(current)) {
+    return {{QStringLiteral("count"), count}, {QStringLiteral("filled"), count}, {QStringLiteral("special"), label}};
+  }
+  const qsizetype at = levels.indexOf(current);
+  if (at < 0) return {};
+  return {{QStringLiteral("count"), count}, {QStringLiteral("filled"), startsAtOff ? at : at + 1}, {QStringLiteral("special"), QString()}};
+}
+
+bool pickMatchesThread(const QJsonObject& pick, const QJsonObject& thread) {
+  const auto options = [](const QJsonObject& selection) {
+    QMap<QString, QJsonValue> byId;
+    for (const QJsonValue& entry : selection.value(QLatin1String("options")).toArray()) {
+      const QString id = entry.toObject().value(QLatin1String("id")).toString();
+      const QJsonValue value = entry.toObject().value(QLatin1String("value"));
+      if (id == QLatin1String("fastMode") && value == QJsonValue(false)) continue;
+      byId.insert(id, value);
+    }
+    return byId;
+  };
+  return !pick.value(QLatin1String("model")).toString().isEmpty() &&
+         pick.value(QLatin1String("instanceId")) == thread.value(QLatin1String("instanceId")) &&
+         pick.value(QLatin1String("model")) == thread.value(QLatin1String("model")) && options(pick) == options(thread);
+}
+
+bool ultrathinkInWords(const QString& text) {
+  // The picker writes the prefix with a capital; typed any other way it is
+  // the user's own word.
+  static const QRegularExpression prefix(QStringLiteral("^\\s*Ultrathink:\\s*"));
+  static const QRegularExpression word(QStringLiteral("\\bultrathink\\b"), QRegularExpression::CaseInsensitiveOption);
+  return word.match(QString(text).remove(prefix)).hasMatch();
+}
+
 QVariantList runtimeModes(const Instance* instance) {
   struct Mode {
     const char* value;
@@ -633,6 +752,27 @@ QVariantList runtimeModes(const Instance* instance) {
   return result;
 }
 
+QString shownRuntimeMode(const Instance* instance, const QString& saved) {
+  const QVariantList offered = runtimeModes(instance);
+  QStringList values;
+  for (const QVariant& entry : offered) values.append(entry.toMap().value(QStringLiteral("value")).toString());
+  if (values.contains(saved)) return saved;
+  if (values.contains(QStringLiteral("approval-required"))) return QStringLiteral("approval-required");
+  return values.isEmpty() ? saved : values.first();
+}
+
+QString noProviderStandIn(const QList<Instance>& list) {
+  // No providers reported yet is not "none can run a turn": the composer
+  // still shows the thread's model while it waits.
+  if (list.isEmpty()) return {};
+  bool setUp = false;
+  for (const Instance& instance : list) {
+    if (instance.ready()) return {};
+    if (instance.canSetUp) setUp = true;
+  }
+  return setUp ? QStringLiteral("open-provider-settings") : QStringLiteral("no-provider-available");
+}
+
 // What Enter and its modified forms send.
 QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, const QString& sendShortcut, bool draft,
                          bool running) {
@@ -651,7 +791,15 @@ QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, 
       if (meta) held.append(QStringLiteral("meta"));
       if (alt) held.append(QStringLiteral("alt"));
       if (shift) held.append(QStringLiteral("shift"));
-      const QString command = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, shift);
+      QString command = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, shift);
+      if (needsModifier && (ctrl || meta) && !alt) {
+        // When sending takes the modifier, mod+Enter sends the way the
+        // follow-up setting says and mod+Shift+Enter the other, over any
+        // window binding of it (the composer gives that back while empty).
+        const QString plain = commandFor(bindings, mac, context, QStringLiteral("enter"), ctrl, meta, alt, false);
+        if (plain == QLatin1String("composer.sendAlternate") && (!shift || !command.startsWith(QLatin1String("composer."))))
+          command = shift ? plain : QString();
+      }
       QString intent;
       if (command == QLatin1String("composer.sendAlternate") && running) {
         intent = QStringLiteral("alternate");
@@ -694,10 +842,11 @@ std::optional<Trigger> trigger(const QString& text, int cursor) {
   cursor = std::clamp(cursor, 0, int(text.size()));
   const int lineStart = cursor > 0 ? int(text.lastIndexOf(u'\n', cursor - 1)) + 1 : 0;
   const QString linePrefix = text.mid(lineStart, cursor - lineStart);
-  if (linePrefix.startsWith(u'/')) {
-    static const QRegularExpression command(QStringLiteral("^/(\\S*)$"));
-    const QRegularExpressionMatch match = command.match(linePrefix);
-    if (match.hasMatch()) return Trigger{QStringLiteral("slash-command"), match.captured(1), lineStart, cursor};
+  // Spaces before a line's slash still make it the line's command, and
+  // choosing one replaces them too.
+  static const QRegularExpression command(QStringLiteral("^\\s*/(\\S*)$"));
+  if (const QRegularExpressionMatch match = command.match(linePrefix); match.hasMatch()) {
+    return Trigger{QStringLiteral("slash-command"), match.captured(1), lineStart, cursor};
   }
   int tokenStart = cursor;
   while (tokenStart > 0 && !isSpace(text.at(tokenStart - 1))) --tokenStart;
@@ -711,6 +860,13 @@ std::optional<Trigger> trigger(const QString& text, int cursor) {
     return Trigger{QStringLiteral("skill"), token.mid(1), tokenStart, cursor};
   }
   if (token.startsWith(u'@')) return Trigger{QStringLiteral("path"), token.mid(1), tokenStart, cursor};
+  // A slash after other text searches the composer's commands and skills
+  // (slashItems leaves the provider's out there, and matches names by prefix
+  // only); a path has a second slash.
+  static const QRegularExpression midCommand(QStringLiteral("^/([^\\s/]*)$"));
+  if (const QRegularExpressionMatch match = midCommand.match(token); match.hasMatch()) {
+    return Trigger{QStringLiteral("slash-command"), match.captured(1), tokenStart, cursor, true};
+  }
   return std::nullopt;
 }
 
@@ -772,6 +928,18 @@ QList<Suggestion> slashItems(const Instance* instance, const Trigger& trigger, b
   QList<Ranked> scored;
   const QString provider = instance ? instance->driver : QString();
   for (const Item& item : items) {
+    // Mid-sentence, "/thread" or "/tmp" is prose until it starts a name: a
+    // fuzzy or description match would let Enter take a command the user
+    // never picked instead of sending.
+    if (trigger.midLine) {
+      const QString wanted = item.group == 2 && query.startsWith(QLatin1String("skill:")) ? query.mid(6) : query;
+      // The menu labels skills "/skill:<name>", so typing toward that label names every skill,
+      // once it is three letters in: "/s" ending a sentence is prose, not the start of a label.
+      const bool named = item.name.toLower().startsWith(wanted) ||
+                         (item.group == 2 && (skillLabel(item.skill).toLower().startsWith(wanted) ||
+                                              (query.size() >= 3 && QStringLiteral("skill:").startsWith(query))));
+      if (!named) continue;
+    }
     std::optional<int> score;
     if (item.group == 2) {
       if (query == QLatin1String("skill")) {
@@ -847,6 +1015,19 @@ QString emptyText(const QString& kind) {
   if (kind == QLatin1String("path")) return QStringLiteral("No matching files or folders.");
   if (kind == QLatin1String("slash-command")) return QStringLiteral("No matching command.");
   return {};
+}
+
+QString pathSearchingText() {
+  return QStringLiteral("Searching workspace files...");
+}
+
+bool opensSkillMenu(const Instance* instance, const QString& query) {
+  if (query.isEmpty() || !query.at(0).isDigit()) return true;
+  if (!instance) return false;
+  const QList<QJsonObject> skills = invocableSkills(instance->skills);
+  return std::any_of(skills.cbegin(), skills.cend(), [&](const QJsonObject& skill) {
+    return str(skill, QLatin1String("name")).startsWith(query, Qt::CaseInsensitive);
+  });
 }
 
 QString pathSearchUnavailableText() {

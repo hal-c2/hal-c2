@@ -4,11 +4,14 @@ defmodule HalC2.AcpReadsPropTest do
   instance is read by reloads (`reload/1`, as Refresh does), boot reads (`load/0`),
   and the read a listing (`entry/1`) starts when nothing is known or being read, and
   forgotten by settings changes and `forget/1`. Each read's agent is held until the
-  case releases it, to answer with models, refuse, say it is signed out, or send
-  what makes the read raise. Whatever order they finish in, the instance shows what
-  the most recently asked-for read that nothing overtook answered; a listing starts
-  no read while one is under way, and does once the current read raised (#438); and
-  a reload returns with its own answer in place (#459).
+  case releases it, to answer with models, refuse, say it is signed out, die before
+  answering (a binary macOS refuses), close its stdin before the read's next call
+  (one still dying), or send what makes the read raise. Whatever order they finish
+  in, the instance shows what the most recently asked-for read that nothing
+  overtook answered; a listing starts no read while one is under way, and does once
+  the current read raised (#438); an agent that dies leaves its read's failure,
+  never an unchecked instance; a reload returns with its own answer in place
+  (#459); and a read that fails leaves the models shown before it.
 
   A live session's writers (`put_models/2`, `put_commands/2`,
   `put_unauthenticated/1`) land at any point between: they stand until a forget or a
@@ -73,7 +76,17 @@ defmodule HalC2.AcpReadsPropTest do
     :persistent_term.put(
       {HalC2.Acp.Catalog, :index},
       {System.system_time(:millisecond),
-       [%{"id" => @agent_id, "name" => "Prop agent", "version" => "1.0.0"}]}
+       [
+         %{
+           "id" => @agent_id,
+           "name" => "Prop agent",
+           "version" => "1.0.0",
+           # A build for this machine, so the instance counts as ready to run.
+           "distribution" => %{
+             "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => "", "cmd" => "./prop"}}
+           }
+         }
+       ]}
     )
 
     HalC2.Acp.forget(@instance)
@@ -133,7 +146,14 @@ defmodule HalC2.AcpReadsPropTest do
         print(json.dumps({"jsonrpc": "2.0", **message}), flush=True)
     def answer(request, result):
         send({"id": request["id"], "result": result})
+    if outcome == "dies":
+        sys.exit(137)
+    if outcome == "hangs_up":
+        os.close(0)
     answer(request, {"protocolVersion": 1, "agentInfo": {"version": "1.0.0"}, "agentCapabilities": {}})
+    if outcome == "hangs_up":
+        case.recv(1)
+        sys.exit(137)
     model = {"id": "model", "currentValue": label, "options": [{"value": label, "name": label}]}
     if #{if name == :b, do: "True", else: "False"}:
         session = {"sessionId": "s", "models": {"currentModelId": label, "availableModels": [{"modelId": label, "name": label}]}}
@@ -189,7 +209,14 @@ defmodule HalC2.AcpReadsPropTest do
            {:call, __MODULE__, :release,
             [
               oneof(Enum.map(state.reads, & &1.n)),
-              frequency([{3, :answers}, {3, :raises}, {1, :refuses}, {1, :signed_out}])
+              frequency([
+                {3, :answers},
+                {3, :raises},
+                {1, :refuses},
+                {1, :signed_out},
+                {1, :dies},
+                {1, :hangs_up}
+              ])
             ]}}
         ]
 
@@ -223,7 +250,9 @@ defmodule HalC2.AcpReadsPropTest do
   def precondition(state, {:call, _, :configure, [agent]}), do: agent != state.agent
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :reload, [n]}), do: start(forgotten(state), n)
+  def next_state(state, _result, {:call, _, :reload, [n]}),
+    do: start(forgotten(state), n, state.shown)
+
   def next_state(state, _result, {:call, _, :boot, [n]}), do: start(state, n)
 
   def next_state(state, _result, {:call, _, :list, [n, true]}), do: start(state, n)
@@ -232,7 +261,7 @@ defmodule HalC2.AcpReadsPropTest do
   def next_state(state, _result, {:call, _, :release, [n, outcome]}) do
     {[read], rest} = Enum.split_with(state.reads, &(&1.n == n))
     state = %{state | reads: rest}
-    if read.current, do: answered(state, n, outcome), else: state
+    if read.current, do: state |> answered(n, outcome) |> kept(read.kept), else: state
   end
 
   def next_state(state, _result, {:call, _, :configure, [agent]}),
@@ -248,9 +277,16 @@ defmodule HalC2.AcpReadsPropTest do
   def next_state(state, _result, {:call, _, :put_unauthenticated, []}),
     do: %{state | signed_out: true}
 
-  defp start(state, n) do
+  # A reload keeps the models shown before it (`kept`), for a check that fails.
+  defp start(state, n, kept \\ nil) do
     state = supersede(state)
-    %{state | reads: state.reads ++ [%{n: n, current: true}], next: n + 1, loading: true}
+
+    %{
+      state
+      | reads: state.reads ++ [%{n: n, current: true, kept: kept}],
+        next: n + 1,
+        loading: true
+    }
   end
 
   defp supersede(state), do: %{state | reads: Enum.map(state.reads, &%{&1 | current: false})}
@@ -271,8 +307,15 @@ defmodule HalC2.AcpReadsPropTest do
     do: %{state | shown: label(n), failure: nil, signed_out: false}
 
   defp answered(state, n, :refuses), do: %{state | failure: label(n) <> " refused"}
+  defp answered(state, _n, :dies), do: %{state | failure: :closed}
+  defp answered(state, _n, :hangs_up), do: %{state | failure: :closed}
   defp answered(state, _n, :signed_out), do: %{state | failure: :signed_out, signed_out: true}
   defp answered(state, _n, :raises), do: %{state | loading: false}
+
+  # A current reload that read no models (it failed, and no session reported any
+  # meanwhile) leaves the models from before it shown.
+  defp kept(%{shown: nil} = state, kept), do: %{state | shown: kept}
+  defp kept(state, _kept), do: state
 
   def postcondition(state, {:call, _, cmd, _} = call, result)
       when cmd in [:release, :forget, :put_models, :put_commands, :put_unauthenticated],
@@ -372,6 +415,7 @@ defmodule HalC2.AcpReadsPropTest do
   # A refusal says the agent's message; a sign-out says the MC's own.
   defp failure(nil), do: nil
   defp failure("r" <> _ = message), do: message
+  defp failure(":closed"), do: :closed
   defp failure(_message), do: :signed_out
 
   def configure(agent) do

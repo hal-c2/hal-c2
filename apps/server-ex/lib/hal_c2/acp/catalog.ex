@@ -18,8 +18,14 @@ defmodule HalC2.Acp.Catalog do
 
   @url "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
   @max_index_bytes 1_048_576
+  @max_agents 512
   @max_results 20
   @stale_ms 24 * 60 * 60 * 1000
+  @search_stale_ms 5 * 60 * 1000
+  # After a failed fetch, searches serve the cached copy for this long instead
+  # of each queueing on the fetch lock and fetching again (under the minute the
+  # search-reuse scenario allows before a search tries again).
+  @failed_fetch_backoff_ms 30_000
   @install_timeout 20 * 60 * 1000
   @id ~r/^[a-z0-9][a-z0-9._-]{0,127}$/
   @version ~r/^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/
@@ -30,10 +36,16 @@ defmodule HalC2.Acp.Catalog do
   def search(%{} = input) do
     query = input["query"] |> to_string() |> String.trim() |> String.downcase()
 
-    with {:ok, agents} <- index(true) do
+    with {:ok, agents} <- index(:search) do
+      runners = %{
+        "npx" => System.find_executable("npm") != nil,
+        "uvx" => System.find_executable("uv") != nil
+      }
+
       found =
         for agent <- agents,
             dist = distribution(agent, "auto"),
+            runner_available?(dist, runners),
             rank = rank(agent, query),
             do: {rank, String.downcase(agent["name"]), agent, dist}
 
@@ -69,17 +81,44 @@ defmodule HalC2.Acp.Catalog do
   """
   def uninstall(%{"agentId" => id}) do
     cond do
-      not Regex.match?(@id, to_string(id)) ->
-        error("agent_not_found", "Unknown ACP Registry agent #{inspect(id)}.")
+      not (is_binary(id) and Regex.match?(@id, id)) ->
+        error(
+          "agent_not_found",
+          "ACP Registry managed binary uninstall received an invalid agent ID."
+        )
 
       referenced?(id) ->
         {:ok, %{"agentId" => id, "removed" => false}}
 
       true ->
-        dir = Path.join(tools_dir(), id)
-        removed = File.exists?(dir)
-        File.rm_rf!(dir)
-        {:ok, %{"agentId" => id, "removed" => removed}}
+        {:ok, %{"agentId" => id, "removed" => remove_binaries(Path.join(tools_dir(), id))}}
+    end
+  end
+
+  # Only the downloaded binaries are the MC's to remove; what a package
+  # manager installed under `npm/` or `python/` stays.
+  defp remove_binaries(dir) do
+    removed =
+      for version <- list_dir(dir),
+          sub <- list_dir(Path.join(dir, version)),
+          sub not in ["npm", "python"],
+          File.dir?(Path.join([dir, version, sub])) do
+        File.rm_rf!(Path.join([dir, version, sub]))
+        true
+      end
+
+    for version <- list_dir(dir), list_dir(Path.join(dir, version)) == [] do
+      File.rmdir(Path.join(dir, version))
+    end
+
+    if File.dir?(dir) and list_dir(dir) == [], do: File.rmdir(dir)
+    removed != []
+  end
+
+  defp list_dir(dir) do
+    case File.ls(dir) do
+      {:ok, entries} -> entries
+      _ -> []
     end
   end
 
@@ -102,18 +141,82 @@ defmodule HalC2.Acp.Catalog do
     with {:ok, agent} <- agent(config["agentId"], false),
          {:ok, dist} <- pick(agent, config["distribution"] || "auto"),
          {:ok, exe} <- executable(agent, dist, config["commandPath"]) do
-      {:ok, [exe | dist.args], Enum.to_list(dist.env)}
+      # The installed command's own folder leads its PATH, so helpers the
+      # package installed beside it win over same-named commands elsewhere.
+      rest = dist.env["PATH"] || System.get_env("PATH") || ""
+
+      env =
+        Map.put(
+          dist.env,
+          "PATH",
+          Enum.join(Enum.reject([Path.dirname(exe), rest], &(&1 == "")), ":")
+        )
+
+      {:ok, [exe | dist.args], Enum.to_list(env)}
     end
   end
 
-  defp executable(_agent, _dist, path) when is_binary(path) and path != "" do
+  defp executable(agent, _dist, path) when is_binary(path) and path != "" do
     case System.find_executable(path) do
-      nil -> error("runner_unavailable", "#{path} was not found.")
-      exe -> {:ok, exe}
+      nil ->
+        error(
+          "runner_unavailable",
+          "ACP Registry agent #{agent["id"]} requires '#{path}', but it is not available on this provider instance's PATH."
+        )
+
+      exe ->
+        {:ok, exe}
     end
   end
 
   defp executable(agent, dist, _path), do: install(agent, dist)
+
+  @doc """
+  Why an instance's registry agent (`config`) cannot run on this MC yet, or `:ok`.
+  A registry that cannot be read says nothing here: starting the agent says why.
+  """
+  def readiness(%{} = config) do
+    id = config["agentId"]
+
+    if is_binary(id) and String.trim(id) != "" do
+      case agent(id, false) do
+        {:ok, agent} ->
+          runnable(agent, config)
+
+        {:error, %{"reason" => "agent_not_found"}} ->
+          {:error, "ACP Registry does not contain agent '#{id}'."}
+
+        {:error, _} ->
+          :ok
+      end
+    else
+      {:error, "Select an ACP Registry agent before starting a thread."}
+    end
+  end
+
+  # An executable override runs whatever the registry publishes.
+  defp runnable(_agent, %{"commandPath" => path}) when is_binary(path) and path != "", do: :ok
+
+  defp runnable(agent, config) do
+    case distribution(agent, config["distribution"] || "auto") do
+      nil ->
+        {:error,
+         "ACP Registry agent '#{agent["id"]}' has no compatible distribution for this environment."}
+
+      # HAL-C2 installs an npx package with npm and a uvx one with uv.
+      %{kind: kind} when kind in ["npx", "uvx"] ->
+        manager = if kind == "npx", do: "npm", else: "uv"
+
+        if System.find_executable(manager),
+          do: :ok,
+          else:
+            {:error,
+             "ACP Registry agent '#{agent["id"]}' requires '#{manager}' on this environment's PATH."}
+
+      _ ->
+        :ok
+    end
+  end
 
   @doc "The registry entry's name and version, for an instance's provider snapshot."
   def describe(agent_id) do
@@ -144,44 +247,146 @@ defmodule HalC2.Acp.Catalog do
          do: {:ok, Enum.map(agents, &HalC2.Acp.Kimi.registry_entry/1)}
   end
 
-  defp cached_index(refresh) do
-    now = System.system_time(:millisecond)
-
+  # The cache is `{fetched_at, agents, fresh}`: `fresh` is false once a fetch
+  # failed and the cached copy served instead, so a search tries again.
+  defp current_cache do
     case :persistent_term.get({__MODULE__, :index}, nil) || read_cache() do
-      {at, agents} when not refresh and now - at < @stale_ms ->
+      {at, agents} -> {at, agents, true}
+      {at, agents, fresh} -> {at, agents, fresh}
+      nil -> nil
+    end
+  end
+
+  defp usable?(_cached, true), do: false
+
+  defp usable?({at, _agents, fresh}, mode) do
+    age = System.system_time(:millisecond) - at
+
+    case mode do
+      :search -> (fresh and age >= 0 and age < @search_stale_ms) or failed_recently?(at)
+      _ -> age >= 0 and age < @stale_ms
+    end
+  end
+
+  # A fetch that failed a moment ago is not retried by every search that
+  # queued behind it: the cached copy it fell back to serves until the
+  # backoff passes. Only a failure recorded after this copy was fetched
+  # counts, so a stale record cannot hold a newer copy back.
+  defp failed_recently?(fetched_at) do
+    case :persistent_term.get({__MODULE__, :fetch_failed_at}, nil) do
+      failed_at when is_integer(failed_at) and failed_at >= fetched_at ->
+        age = System.system_time(:millisecond) - failed_at
+        age >= 0 and age < @failed_fetch_backoff_ms
+
+      _ ->
+        false
+    end
+  end
+
+  defp cached_index(mode) do
+    case current_cache() do
+      {_, agents, _} = cached ->
+        if usable?(cached, mode), do: {:ok, agents}, else: fetch_index(mode)
+
+      nil ->
+        fetch_index(mode)
+    end
+  end
+
+  # One fetch at a time: a caller that waited re-reads the cache first, so
+  # searches made at the same moment share the winner's fetch.
+  defp fetch_index(mode) do
+    :global.trans(
+      {{__MODULE__, :fetch}, self()},
+      fn ->
+        case current_cache() do
+          {_, agents, _} = cached ->
+            if usable?(cached, mode), do: {:ok, agents}, else: do_fetch(cached)
+
+          nil ->
+            do_fetch(nil)
+        end
+      end,
+      [node()]
+    )
+  end
+
+  defp do_fetch(cached) do
+    case fetch() do
+      {:ok, text, agents} ->
+        write_cache(text)
+        :persistent_term.erase({__MODULE__, :fetch_failed_at})
+
+        :persistent_term.put(
+          {__MODULE__, :index},
+          {System.system_time(:millisecond), agents, true}
+        )
+
         {:ok, agents}
 
-      cached ->
-        case fetch() do
-          {:ok, text, agents} ->
-            write_cache(text)
-            :persistent_term.put({__MODULE__, :index}, {now, agents})
+      {:error, _} = error ->
+        case cached do
+          {at, agents, _} ->
+            :persistent_term.put({__MODULE__, :fetch_failed_at}, System.system_time(:millisecond))
+            :persistent_term.put({__MODULE__, :index}, {at, agents, false})
             {:ok, agents}
 
-          {:error, _} = error ->
-            case cached do
-              {_, agents} -> {:ok, agents}
-              nil -> error
-            end
+          nil ->
+            error
         end
     end
   end
 
   defp fetch do
-    with {:ok, text} <- get(registry_url(), 30_000),
-         true <- byte_size(text) <= @max_index_bytes,
-         {:ok, %{"agents" => agents}} when is_list(agents) <- JSON.decode(text) do
-      {:ok, text, registry(agents)}
-    else
-      _ -> error("registry_unavailable", "The ACP Registry could not be loaded.")
+    url = registry_url()
+
+    case get(url, 30_000) do
+      {:ok, text} ->
+        parse_index(text)
+
+      {:error, {:http_status, _status}} ->
+        unavailable("Could not fetch ACP Registry index from #{url}.")
+
+      {:error, :timeout} ->
+        unavailable("Timed out fetching ACP Registry index.")
+
+      {:error, {:failed_connect, _}} ->
+        unavailable("The ACP Registry could not be loaded.")
+
+      {:error, _} ->
+        unavailable("Could not read ACP Registry response body.")
     end
   end
+
+  defp parse_index(text) do
+    cond do
+      byte_size(text) > @max_index_bytes ->
+        unavailable("ACP Registry index exceeds #{@max_index_bytes} bytes.")
+
+      not String.valid?(text) ->
+        unavailable("ACP Registry index is not valid UTF-8.")
+
+      true ->
+        case JSON.decode(text) do
+          {:ok, %{"agents" => agents}} when is_list(agents) and length(agents) <= @max_agents ->
+            {:ok, text, registry(agents)}
+
+          {:ok, _} ->
+            unavailable("ACP Registry returned an invalid index.")
+
+          {:error, _} ->
+            unavailable("ACP Registry returned invalid JSON.")
+        end
+    end
+  end
+
+  defp unavailable(message), do: error("registry_unavailable", message)
 
   defp read_cache do
     with {:ok, %{mtime: mtime}} <- File.stat(cache_path(), time: :posix),
          {:ok, text} <- File.read(cache_path()),
          {:ok, %{"agents" => agents}} when is_list(agents) <- JSON.decode(text) do
-      cached = {mtime * 1000, registry(agents)}
+      cached = {mtime * 1000, registry(agents), true}
       :persistent_term.put({__MODULE__, :index}, cached)
       cached
     else
@@ -200,21 +405,66 @@ defmodule HalC2.Acp.Catalog do
   defp valid?(%{"id" => id, "name" => name, "version" => version, "distribution" => %{}} = agent)
        when is_binary(id) and is_binary(name) and is_binary(version) do
     Regex.match?(@id, id) and Regex.match?(@version, version) and
+      String.trim(name) != "" and
       is_binary(agent["description"] || "") and
-      Enum.all?(Map.values(get_in(agent, ["distribution", "binary"]) || %{}), &valid_target?/1)
+      Enum.all?(Map.values(get_in(agent, ["distribution", "binary"]) || %{}), &valid_target?/1) and
+      pinned?(agent, "npx") and pinned?(agent, "uvx")
   end
 
   defp valid?(_), do: false
 
+  # A package distribution the registry lists must pin the exact version to
+  # install: `name@1.2.3` for npx, `name==1.2.3` (or `name@1.2.3`) for uvx.
+  # The whole spec must be that and nothing else: `pkg@https://…/pkg-1.2.3`,
+  # `pkg@git+https://…#1.2.3` and `pkg@npm:other@1.2.3` only end in a version.
+  @exact_version ~r/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
+  @package_name ~r/^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]+\])?$/
+  @scoped_name ~r/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+  defp pinned?(agent, kind) do
+    case get_in(agent, ["distribution", kind]) do
+      nil ->
+        true
+
+      %{"package" => package} when is_binary(package) ->
+        not String.contains?(package, [" ", "^", "~", "*", ">", "<"]) and
+          case kind do
+            "npx" -> not String.contains?(package, "==") and at_pinned?(package)
+            "uvx" -> eq_pinned?(package) or at_pinned?(package)
+          end
+
+      _ ->
+        false
+    end
+  end
+
+  defp at_pinned?(package) do
+    case String.split(package, "@") do
+      [name, version] -> Regex.match?(@package_name, name) and exact_version?(version)
+      ["", scoped, version] -> Regex.match?(@scoped_name, scoped) and exact_version?(version)
+      _ -> false
+    end
+  end
+
+  defp eq_pinned?(package) do
+    case String.split(package, "==") do
+      [name, version] -> Regex.match?(@package_name, name) and exact_version?(version)
+      _ -> false
+    end
+  end
+
+  defp exact_version?(version), do: Regex.match?(@exact_version, version)
+
   defp registry(agents), do: Enum.filter(agents, &valid?/1)
 
   # Archives come over HTTPS; plain HTTP only from this machine (a local mirror, tests).
+  # The command path is checked when the agent is prepared, before any download.
   defp valid_target?(%{"archive" => archive, "cmd" => cmd})
        when is_binary(archive) and is_binary(cmd) do
     uri = URI.parse(archive)
 
     (uri.scheme == "https" or (uri.scheme == "http" and uri.host in ["127.0.0.1", "localhost"])) and
-      uri.userinfo == nil and relative_segments(cmd) != nil
+      uri.userinfo == nil
   end
 
   defp valid_target?(_), do: false
@@ -290,26 +540,57 @@ defmodule HalC2.Acp.Catalog do
 
     Enum.find_value(kinds, fn
       "binary" ->
-        target = platform() && get_in(dists, ["binary", platform()])
-        if target, do: dist("binary", target, target)
+        case binary_target(dists) do
+          {platform, target} -> dist("binary", target, target, platform)
+          nil -> nil
+        end
 
       kind ->
-        if is_binary(get_in(dists, [kind, "package"])), do: dist(kind, dists[kind], nil)
+        if is_binary(get_in(dists, [kind, "package"])), do: dist(kind, dists[kind], nil, nil)
     end)
   end
 
-  defp dist(kind, spec, target) do
+  # Windows on ARM runs x64 builds, so one serves when no ARM build is published.
+  defp binary_target(dists) do
+    platforms =
+      case platform() do
+        "windows-aarch64" -> ["windows-aarch64", "windows-x86_64"]
+        other -> [other]
+      end
+
+    Enum.find_value(platforms, fn platform ->
+      target = platform && get_in(dists, ["binary", platform])
+      if target, do: {platform, target}
+    end)
+  end
+
+  defp dist(kind, spec, target, platform) do
     %{
       kind: kind,
       target: target,
+      platform: platform,
       package: spec["package"],
       args: Enum.filter(spec["args"] || [], &is_binary/1),
       env: for({k, v} <- spec["env"] || %{}, is_binary(v), into: %{}, do: {k, v})
     }
   end
 
+  # Search only offers agents this machine can run: a package agent whose
+  # package manager is missing cannot be installed here.
+  defp runner_available?(%{kind: kind}, runners) when kind in ["npx", "uvx"],
+    do: Map.fetch!(runners, kind)
+
+  defp runner_available?(_dist, _runners), do: true
+
   @doc "The registry's name for this machine, such as `darwin-aarch64`."
   def platform do
+    case Application.get_env(:hal_c2, :acp_platform, :auto) do
+      :auto -> machine_platform()
+      override -> override
+    end
+  end
+
+  defp machine_platform do
     os =
       case :os.type() do
         {:unix, :darwin} -> "darwin"
@@ -333,17 +614,56 @@ defmodule HalC2.Acp.Catalog do
   # --- installs --------------------------------------------------------------------
 
   # One install per agent at a time; a second caller waits and finds it done.
-  defp install(agent, dist) do
+  defp install(agent, %{kind: "binary", target: target} = dist) do
+    # Refused before anything is downloaded.
+    if relative_segments(target["cmd"]) do
+      locked_install(agent, dist)
+    else
+      error(
+        "archive_invalid",
+        "ACP Registry agent #{agent["id"]} declares an unsafe command path '#{target["cmd"]}'."
+      )
+    end
+  end
+
+  defp install(agent, dist), do: locked_install(agent, dist)
+
+  defp locked_install(agent, dist) do
     lock = {{__MODULE__, agent["id"]}, self()}
-    :global.trans(lock, fn -> installed(agent, dist) || do_install(agent, dist) end, [node()])
+
+    :global.trans(
+      lock,
+      fn ->
+        case installed(agent, dist) do
+          nil -> do_install(agent, dist)
+          result -> result
+        end
+      end,
+      [node()]
+    )
   end
 
   defp version_dir(agent),
     do: Path.join([tools_dir(), agent["id"], URI.encode_www_form(agent["version"])])
 
+  defp binary_root(agent, dist), do: Path.join(version_dir(agent), dist.platform || platform())
+
+  # An installed binary is checked again every time it is used: what is there
+  # now may not be what the install put there.
   defp installed(agent, %{kind: "binary"} = dist) do
-    exe = Path.join([version_dir(agent), platform() | relative_segments(dist.target["cmd"])])
-    if File.regular?(exe), do: {:ok, exe}
+    root = binary_root(agent, dist)
+    exe = Path.join([root | relative_segments(dist.target["cmd"])])
+
+    case File.lstat(exe) do
+      {:ok, _} ->
+        case check_command(agent, root, exe, dist.target["cmd"]) do
+          :ok -> {:ok, exe}
+          {:error, _} = error -> error
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp installed(agent, dist) do
@@ -353,8 +673,88 @@ defmodule HalC2.Acp.Catalog do
     end
   end
 
+  defp check_command(agent, root, exe, cmd) do
+    case File.lstat(exe) do
+      # Even a regular file can sit outside, reached through a linked folder
+      # on its path, so every command is resolved before it is trusted.
+      {:ok, %File.Stat{type: type}} when type in [:regular, :symlink] ->
+        if resolved_inside?(exe, root) do
+          :ok
+        else
+          archive_error(
+            "ACP Registry archive command resolves outside its installation directory."
+          )
+        end
+
+      {:ok, _} ->
+        archive_error("ACP Registry archive command is not a regular executable file.")
+
+      _ ->
+        archive_error(
+          "ACP Registry archive for #{agent["id"]} did not contain '#{Path.join(relative_segments(cmd))}'."
+        )
+    end
+  end
+
+  # Resolve every segment of both paths in the order the OS would: a link's
+  # target segments are walked next (against the link's own folder when
+  # relative), and a ".." climbs from the already-resolved path. Folding
+  # ".." by string first would misjudge a target like `evil/../bin/sh`,
+  # where `evil` is itself a link outside, and a linked folder on the
+  # command's path can take it outside just as a linked command can.
+  defp resolved_inside?(exe, root) do
+    with {:ok, resolved} <- canonical(Path.absname(exe)),
+         {:ok, canonical_root} <- canonical(Path.absname(root)) do
+      (resolved == canonical_root or String.starts_with?(resolved, canonical_root <> "/")) and
+        File.regular?(resolved)
+    else
+      _ -> false
+    end
+  end
+
+  defp canonical(path, hops \\ 40)
+  defp canonical(_path, hops) when hops < 0, do: :error
+
+  defp canonical(path, hops) do
+    [first | rest] = Path.split(path)
+    walk_segments(rest, first, hops)
+  end
+
+  defp walk_segments([], current, _hops), do: {:ok, current}
+  defp walk_segments(_segments, _current, hops) when hops < 0, do: :error
+  defp walk_segments(["/" | rest], _current, hops), do: walk_segments(rest, "/", hops)
+  defp walk_segments(["." | rest], current, hops), do: walk_segments(rest, current, hops)
+
+  defp walk_segments([".." | rest], current, hops),
+    do: walk_segments(rest, Path.dirname(current), hops)
+
+  defp walk_segments([segment | rest], current, hops) do
+    if Regex.match?(~r/^[a-zA-Z]:\/$/, segment) do
+      walk_segments(rest, segment, hops)
+    else
+      candidate = Path.join(current, segment)
+
+      case File.lstat(candidate) do
+        {:ok, %File.Stat{type: :symlink}} ->
+          case File.read_link(candidate) do
+            {:ok, target} ->
+              base = if Path.type(target) == :absolute, do: "/", else: current
+              walk_segments(Path.split(target) ++ rest, base, hops - 1)
+
+            _ ->
+              :error
+          end
+
+        _ ->
+          walk_segments(rest, candidate, hops)
+      end
+    end
+  end
+
+  defp archive_error(message), do: error("archive_invalid", message)
+
   defp do_install(agent, %{kind: "binary", target: target} = dist) do
-    root = Path.join(version_dir(agent), platform())
+    root = binary_root(agent, dist)
     tmp = "#{root}.tmp-#{System.unique_integer([:positive])}"
     archive = Path.join(tmp <> ".download", archive_name(target["archive"]))
 
@@ -362,20 +762,23 @@ defmodule HalC2.Acp.Catalog do
       File.mkdir_p!(Path.dirname(archive))
       File.mkdir_p!(tmp)
 
-      with :ok <- download(target["archive"], archive),
+      with :ok <- download(agent, target["archive"], archive),
            :ok <- verify(archive, target["sha256"]),
-           :ok <- extract(archive, tmp, target["cmd"]) do
-        exe = Path.join([tmp | relative_segments(target["cmd"])])
-
-        if File.regular?(exe) do
-          File.chmod!(exe, 0o755)
-          File.rm_rf!(root)
-          File.rename!(tmp, root)
-          installed(agent, dist)
-        else
-          error("archive_invalid", "#{agent["name"]}'s archive has no #{target["cmd"]}.")
-        end
+           :ok <- check_archive(agent, archive),
+           :ok <- extract(archive, tmp, target["cmd"]),
+           exe = Path.join([tmp | relative_segments(target["cmd"])]),
+           :ok <- check_command(agent, tmp, exe, target["cmd"]) do
+        File.chmod!(exe, 0o755)
+        File.rm_rf!(root)
+        File.rename!(tmp, root)
+        installed(agent, dist)
       end
+    rescue
+      _ in File.Error ->
+        error(
+          "download_failed",
+          "Could not save ACP Registry agent #{agent["id"]} #{agent["version"]}."
+        )
     after
       File.rm_rf(tmp)
       File.rm_rf(tmp <> ".download")
@@ -388,7 +791,7 @@ defmodule HalC2.Acp.Catalog do
         do: {"npm", ["install", "--global", package]},
         else: {"uv", ["tool", "install", "--force", package]}
 
-    with {:ok, path} <- runner(manager),
+    with {:ok, path} <- runner(manager, agent),
          dir = package_dir(agent, kind),
          :ok <- File.mkdir_p(dir),
          {:ok, _} <- run([path | args], package_env(agent, kind)) do
@@ -397,16 +800,80 @@ defmodule HalC2.Acp.Catalog do
           {:ok, exe}
 
         :error ->
-          error("install_failed", "#{package} installed no executable for #{agent["name"]}.")
+          error(
+            "install_failed",
+            "ACP Registry installed #{package}, but could not resolve its global command."
+          )
       end
     end
   end
 
-  defp runner(manager) do
+  defp runner("uv", agent) do
+    case System.find_executable("uv") do
+      nil ->
+        error(
+          "runner_unavailable",
+          "ACP Registry agent #{agent["id"]} requires 'uv', but it is not available on this environment's PATH."
+        )
+
+      path ->
+        {:ok, path}
+    end
+  end
+
+  defp runner(manager, _agent) do
     case System.find_executable(manager) do
       nil -> error("runner_unavailable", "Install #{manager} to use this agent.")
       path -> {:ok, path}
     end
+  end
+
+  # No entry of an archive may land outside the folder it is unpacked into.
+  defp check_archive(agent, archive) do
+    names =
+      case Path.basename(archive) do
+        "agent.tar.gz" ->
+          case :erl_tar.table(to_charlist(archive), [:compressed]) do
+            {:ok, names} -> Enum.map(names, &to_string/1)
+            _ -> nil
+          end
+
+        "agent.zip" ->
+          case :zip.list_dir(to_charlist(archive)) do
+            {:ok, entries} ->
+              for {:zip_file, name, _, _, _, _} <- entries, do: to_string(name)
+
+            _ ->
+              nil
+          end
+
+        "agent.tar.bz2" ->
+          case System.cmd("tar", ["-tjf", archive], stderr_to_stdout: true) do
+            {out, 0} -> String.split(out, "\n", trim: true)
+            _ -> nil
+          end
+
+        _ ->
+          []
+      end
+
+    cond do
+      names == nil ->
+        archive_error("The archive could not be extracted: it could not be listed.")
+
+      Enum.any?(names, &unsafe_entry?/1) ->
+        archive_error("ACP Registry agent #{agent["id"]} archive contains an unsafe path.")
+
+      true ->
+        :ok
+    end
+  end
+
+  defp unsafe_entry?(name) do
+    normalized = String.replace(name, "\\", "/")
+
+    String.starts_with?(normalized, "/") or Regex.match?(~r/^[a-zA-Z]:/, normalized) or
+      Enum.member?(String.split(normalized, "/"), "..")
   end
 
   defp package_dir(agent, "npx"), do: Path.join(version_dir(agent), "npm")
@@ -425,8 +892,9 @@ defmodule HalC2.Acp.Catalog do
     root = Path.join([package_dir(agent, "npx"), "lib", "node_modules" | String.split(name, "/")])
 
     with {:ok, text} <- File.read(Path.join(root, "package.json")),
-         {:ok, %{"bin" => bin}} <- JSON.decode(text),
-         command when is_binary(command) <- bin_command(bin, name),
+         {:ok, %{"bin" => bin} = manifest} <- JSON.decode(text),
+         true <- manifest["version"] in [nil, pinned_version(package)],
+         command when is_binary(command) <- bin_command(bin, agent["id"], name),
          exe = Path.join([package_dir(agent, "npx"), "bin", command]),
          true <- File.exists?(exe) do
       {:ok, exe}
@@ -437,10 +905,10 @@ defmodule HalC2.Acp.Catalog do
 
   defp package_executable(agent, %{kind: "uvx", package: package}) do
     bin = Path.join(package_dir(agent, "uvx"), "bin")
-    name = package_name(package)
+    names = [agent["id"], package_name(package)]
 
     with {:ok, [_ | _] = entries} <- File.ls(bin) do
-      command = Enum.find(entries, &(&1 == name)) || Enum.min(entries)
+      command = Enum.find(names, &(&1 in entries)) || Enum.min(entries)
       {:ok, Path.join(bin, command)}
     else
       _ -> :error
@@ -458,14 +926,32 @@ defmodule HalC2.Acp.Catalog do
     end
   end
 
-  defp bin_command(bin, name) when is_binary(bin), do: name |> String.split("/") |> List.last()
-
-  defp bin_command(%{} = bin, name) when map_size(bin) > 0 do
-    short = name |> String.split("/") |> List.last()
-    if Map.has_key?(bin, short), do: short, else: bin |> Map.keys() |> Enum.min()
+  defp pinned_version(package) do
+    case String.split(package, "==") do
+      [_, version] -> version
+      _ -> package |> String.split("@") |> List.last()
+    end
   end
 
-  defp bin_command(_, _), do: nil
+  defp bin_command(bin, _agent_id, name) when is_binary(bin),
+    do: name |> String.split("/") |> List.last()
+
+  # The agent's command is the one named for the agent or the package; failing
+  # that, the only command, or the first by name of several that all lead to
+  # the same file. Commands that cannot be told apart resolve to none.
+  defp bin_command(%{} = bin, agent_id, name) when map_size(bin) > 0 do
+    short = name |> String.split("/") |> List.last()
+
+    cond do
+      Map.has_key?(bin, agent_id) -> agent_id
+      Map.has_key?(bin, short) -> short
+      map_size(bin) == 1 -> bin |> Map.keys() |> hd()
+      bin |> Map.values() |> Enum.uniq() |> length() == 1 -> bin |> Map.keys() |> Enum.min()
+      true -> nil
+    end
+  end
+
+  defp bin_command(_, _, _), do: nil
 
   defp archive_name(url) do
     path = URI.parse(url).path |> to_string() |> String.downcase()
@@ -492,7 +978,10 @@ defmodule HalC2.Acp.Catalog do
       else: error("checksum_mismatch", "The downloaded archive does not match its sha256.")
   end
 
-  # erl_tar and zip refuse entries that would land outside `dir`.
+  # erl_tar and zip refuse entries that would land outside `dir`. A bare binary
+  # lands at `cmd`, whose segments relative_segments/1 has already checked
+  # (no absolute path, drive letter, `.` or `..`), so it stays inside `dir`.
+  # sobelow_skip ["Traversal.FileModule"]
   defp extract(archive, dir, cmd) do
     result =
       case Path.basename(archive) do
@@ -509,12 +998,17 @@ defmodule HalC2.Acp.Catalog do
           end
 
         "agent.bin" ->
-          File.cp(archive, Path.join([dir | relative_segments(cmd)]))
+          dest = Path.join([dir | relative_segments(cmd)])
+          File.mkdir_p!(Path.dirname(dest))
+          File.cp(archive, dest)
       end
 
     case result do
       :ok ->
         :ok
+
+      {:error, {_, :unsafe_symlink}} ->
+        archive_error("ACP Registry archive command resolves outside its installation directory.")
 
       {:error, reason} ->
         error("archive_invalid", "The archive could not be extracted: #{inspect(reason)}")
@@ -523,31 +1017,77 @@ defmodule HalC2.Acp.Catalog do
 
   # --- processes and HTTP ----------------------------------------------------------
 
+  # Unlinked and monitored, so the caller's exit trapping and mailbox are
+  # never touched, however the install ends.
   defp run(cmd, env) do
-    task =
-      Task.async(fn ->
-        Exile.stream(cmd, env: env, stderr: :redirect_to_stdout, ignore_epipe: true)
-        |> Enum.reduce({[], nil}, fn
-          {:exit, status}, {out, _} -> {out, status}
-          data, {out, status} when is_binary(data) -> {[out, data], status}
-          _, acc -> acc
-        end)
+    me = self()
+    ref = make_ref()
+
+    {pid, monitor} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            Exile.stream(cmd, env: env, stderr: :redirect_to_stdout, ignore_epipe: true)
+            |> Enum.reduce({[], nil}, fn
+              {:exit, status}, {out, _} -> {out, status}
+              data, {out, status} when is_binary(data) -> {[out, data], status}
+              _, acc -> acc
+            end)
+          rescue
+            _ in Exile.Stream.AbnormalExit -> :abnormal
+          end
+
+        send(me, {ref, result})
       end)
 
-    case Task.yield(task, @install_timeout) || Task.shutdown(task, :brutal_kill) do
+    result =
+      receive do
+        {^ref, result} ->
+          Process.demonitor(monitor, [:flush])
+          {:ok, result}
+
+        {:DOWN, ^monitor, :process, _, _reason} ->
+          :exit
+      after
+        @install_timeout ->
+          Process.exit(pid, :kill)
+          Process.demonitor(monitor, [:flush])
+
+          # A result sent as the timeout fired is already in the mailbox.
+          receive do
+            {^ref, _} -> :ok
+          after
+            0 -> :ok
+          end
+
+          :timeout
+      end
+
+    case result do
       {:ok, {out, {:status, 0}}} ->
         {:ok, IO.iodata_to_binary(out)}
 
-      {:ok, {out, _}} ->
+      {:ok, {out, {:status, code}}} ->
         text = out |> IO.iodata_to_binary() |> String.trim() |> String.slice(-1000, 1000)
-        error("install_failed", "#{Path.basename(hd(cmd))} failed: #{text}")
 
-      nil ->
-        error("install_failed", "#{Path.basename(hd(cmd))} timed out")
+        # The spawner itself reports a command it could not exec this way.
+        if code == 125 and text =~ "execvp(): failed" do
+          error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
+        else
+          text = if text == "", do: "", else: ": #{text}"
+
+          error(
+            "install_failed",
+            "ACP Registry install command '#{hd(cmd)}' exited with code #{code}#{text}"
+          )
+        end
+
+      :timeout ->
+        error("install_failed", "Timed out running ACP Registry install command '#{hd(cmd)}'.")
+
+      _ ->
+        error("install_failed", "Could not run ACP Registry install command '#{hd(cmd)}'.")
     end
-  rescue
-    e in Exile.Stream.AbnormalExit ->
-      error("install_failed", "#{Path.basename(hd(cmd))} failed: #{Exception.message(e)}")
   end
 
   defp get(url, timeout) do
@@ -555,11 +1095,13 @@ defmodule HalC2.Acp.Catalog do
            body_format: :binary
          ) do
       {:ok, {{_, 200, _}, _, body}} -> {:ok, body}
+      {:ok, {{_, status, _}, _, _body}} -> {:error, {:http_status, status}}
+      {:error, reason} -> {:error, reason}
       other -> {:error, other}
     end
   end
 
-  defp download(url, path) do
+  defp download(agent, url, path) do
     case :httpc.request(:get, {to_charlist(url), headers()}, http_options(@install_timeout),
            stream: to_charlist(path)
          ) do
@@ -568,7 +1110,11 @@ defmodule HalC2.Acp.Catalog do
 
       other ->
         Logger.warning("ACP agent download failed: #{inspect(other)}")
-        error("download_failed", "The agent could not be downloaded.")
+
+        error(
+          "download_failed",
+          "Could not download ACP Registry agent #{agent["id"]} #{agent["version"]}."
+        )
     end
   end
 

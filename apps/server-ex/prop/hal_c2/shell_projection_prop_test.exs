@@ -227,6 +227,7 @@ defmodule HalC2.ShellProjectionPropTest do
       {"updatedAt", iso()},
       {"title", maybe(oneof(["  ", "Build"]))},
       {"input", oneof([nil, "make", %{"persistent" => true}])},
+      {"awaited", maybe(boolean())},
       {"nativeItemRef", maybe(%{"nativeId" => "task-1"})},
       {"failure",
        maybe(
@@ -264,7 +265,12 @@ defmodule HalC2.ShellProjectionPropTest do
       {"providerInstanceId", oneof(["codex", "claude"])},
       {"createdAt", iso()},
       {"pendingBackgroundTasks",
-       oneof([[], [%{"taskId" => "k1", "taskType" => "bash", "description" => " d "}]])}
+       oneof([
+         [],
+         [%{"taskId" => "k1", "taskType" => "bash", "description" => " d "}],
+         [%{"taskId" => "k1", "taskType" => "local_bash", "awaited" => true}],
+         [%{"taskId" => "k1", "taskType" => "local_bash", "awaited" => false}]
+       ])}
     ])
   end
 

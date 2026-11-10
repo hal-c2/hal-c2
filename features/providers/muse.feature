@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23856
 #   https://github.com/pingdotgg/t3code/pull/19306
 #   https://github.com/pingdotgg/t3code/pull/19195
 #   https://github.com/pingdotgg/t3code/pull/19100
@@ -17,6 +18,9 @@
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/adapter.ts (capabilities, approvals, questions, steering, MCP tools)
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/modelCatalog.ts (reasoning effort tiers)
 #   upstream pingdotgg/t3code packages/provider-muse/src/server/protocol.ts (approval choices)
+#   https://github.com/pingdotgg/t3code/pull/22346
+#   https://github.com/pingdotgg/t3code/pull/29910
+#   https://github.com/pingdotgg/t3code/pull/32154
 #
 # Steering, the hidden plan/build toggle and the missing rewind are in capabilities.feature.
 
@@ -70,6 +74,14 @@ Feature: Muse Code
     When the user sends a message to Muse Code
     Then the turn runs on the user's own Muse Code installation
 
+  # Upstream #22346: on a case-insensitive disk, a project path in another case failed every turn.
+  @backlog
+  Scenario: A Muse Code turn runs when the project path's case differs from the disk
+    Given the MC runs on macOS
+    And the project was added as "~/code/EEVEE" while the folder on disk is "~/code/eevee"
+    When the user sends a message to Muse Code in that project
+    Then the turn runs in "~/code/eevee"
+
   Scenario: A Muse Code instance the user added is read again after its binary changes
     Given a Muse Code instance the user added runs a muse whose version check fails
     When the user points that instance at a working muse
@@ -89,6 +101,16 @@ Feature: Muse Code
     Given a Muse Code thread with history
     When Muse Code exits and the user sends another message
     Then Muse Code continues the same session
+
+  # Upstream #32154: Muse resumed a session whose history view was unavailable and still took the
+  # turn, whose events never arrived, so the thread ran forever.
+  @backlog
+  Scenario: A resumed Muse Code session whose history is unavailable is replaced by a fresh one
+    Given a Muse Code thread with history
+    And Muse Code resumes its session reporting that the session's history is unavailable
+    When the user sends another message
+    Then the turn runs in a fresh Muse Code session that is handed the conversation so far
+    And the thread does not stay running
 
   Scenario Outline: A Muse Code host that answers <command> for another id is replaced
     Given a Muse Code thread whose host answers <command> for another id
@@ -215,6 +237,15 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent and the turn completes first
     When the subagent answers after the turn has ended
     Then the subagent is shown with its answer in its own thread
+
+  # Upstream #23856: Muse lists a running child as background work under one id while its turn
+  # item uses another that changes as the child runs, so the same child could show twice.
+  @backlog
+  Scenario: A running Muse Code subagent is listed once as background work
+    Given Muse Code delegates a review to a subagent that is still running
+    When Muse Code names the subagent's own session while it runs
+    Then the thread lists the subagent once as background work
+    And recovering after a restart does not stop it a second time
 
   # Upstream #18353. Muse child threads have no session of their own to answer through.
   @backlog
@@ -442,7 +473,6 @@ Feature: Muse Code
     Then Muse Code asks first, as in supervised
 
   # Upstream #18266: Muse turns stopped by the subscription quota are Limited with their reset time.
-  @backlog
   Scenario: A Muse Code turn stopped by its subscription quota is Limited
     Given Muse Code reported a usage window that resets at 10:45
     When a turn is refused because the subscription quota is used up
@@ -466,3 +496,11 @@ Feature: Muse Code
     Then the approval is given without showing it to the user
     And the thread does not wait on it after a reconnect
     But if giving it fails while the agent is still running, the user is asked
+
+  # Upstream #29910: the thread's error banner showed the failure unredacted and uncut, while the
+  # timeline redacted it.
+  @backlog
+  Scenario: A failed Muse Code turn shows the same redacted error in the banner as in the timeline
+    Given a Muse Code turn fails with "Provider rejected this turn: api_key=abc123"
+    Then the timeline and the thread's error banner both show "api_key=[REDACTED]"
+    And a failure longer than 4,096 characters is cut the same way in both

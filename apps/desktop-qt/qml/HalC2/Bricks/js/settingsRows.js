@@ -38,6 +38,8 @@ var general = [
       daysDescription: "Any new activity un-settles a thread automatically.", min: 1, max: 90 },
     { key: "sidebarShowSettledPluginThreads", kind: "switch", title: "Show plugin threads in Settled",
       description: "List settled threads a plugin started, such as code reviews. Search and the plugin's page find them either way." },
+    { key: "sidebarWorkingShelfEnabled", kind: "switch", title: "Working section",
+      description: "Fold threads that are working into their own section. The list above it then keeps the order threads came back to you in, so it cannot be rearranged." },
 
     { section: "Behavior" },
     { key: "notificationMode", kind: "select", title: "Thread notifications",
@@ -129,6 +131,8 @@ var general = [
       description: "Shows context window usage as a circular indicator in the composer." },
     { key: "legacySidebarEnabled", kind: "switch", title: "Sidebar",
       description: "Restore per-project thread trees instead of the default flat sidebar." },
+    { key: "sidebarThreadPreviewCount", kind: "number", title: "Visible threads", min: 1, max: 15, step: 1,
+      description: "How many threads each project in the legacy sidebar shows before offering more." },
 ];
 
 var appearance = [
@@ -145,6 +149,9 @@ var appearance = [
       options: [option("red-green", "Red & green"), option("blue-orange", "Blue & orange")] },
     { key: "persistComposerContextStrip", kind: "switch", title: "Composer context",
       description: "Keep branch and worktree controls below the composer after a thread starts." },
+    { key: "effortDisplay", kind: "select", title: "Effort display",
+      description: "Show reasoning effort in the composer as its name, such as High, or as bars.",
+      options: [option("label", "Word"), option("bars", "Bars")] },
     { key: "wordWrap", kind: "switch", title: "Word wrap",
       description: "Wrap long lines in code blocks, tables, diffs, and file previews by default." },
     { key: "fontSmoothing", kind: "switch", title: "Font smoothing", macOnly: true,

@@ -11,7 +11,13 @@
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty; a steer
 # with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
-import glob, json, os, re, signal, sys, threading, time, uuid
+import glob, json, os, re, signal, string, sys, threading, time, uuid
+sys.dont_write_bytecode = True  # its own modules leave no __pycache__ in the tree
+import fake_codex_goals as goals  # thread/goal/*: Codex's own goal
+import fake_codex_chatgpt  # the ChatGPT sign-in, while FAKE_CODEX_CHATGPT is set
+import fake_codex_images  # images and partial answers, which it describes
+import fake_codex_mcp_apps  # MCP Apps: tool calls that return a ui:// app, and the app's requests
+import fake_codex_models  # the model catalog Codex refreshes, and its config/read
 
 # A "will-not-exit" file in the working directory has the process ignore SIGTERM and a
 # closed stdin, as a wedged app-server does: only SIGKILL ends it.
@@ -42,7 +48,10 @@ interrupted_turns = set()
 
 def send(msg):
     with send_lock:
-        write(msg)
+        write(fake_codex_images.outgoing(msg))
+    goals.sent(msg)
+
+goals.setup(send)
 
 def write(msg):
     # FAKE_CODEX_FRAMING plays the wire's shapes: "split" writes a message in two
@@ -115,6 +124,22 @@ def stream_reply(ctx, text):
     send({"method": "item/completed", "params": {**ctx, "item": {**msg["item"], "text": "".join(parts)}}})
     send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
 
+def print_output(ctx, turn_id, size):
+    item = {"type": "commandExecution", "id": "cmd-print", "command": "make", "status": "inProgress"}
+    send({"method": "item/started", "params": {**ctx, "item": item}})
+    sent = 0
+    while sent < size:
+        n = min(65536, size - sent)
+        start = sent % 26
+        chunk = (string.ascii_lowercase * 2524)[start:start + n]
+        send({"method": "item/commandExecution/outputDelta", "params": {**ctx, "itemId": "cmd-print", "delta": chunk}})
+        sent += n
+    gate("printed")
+    send({"method": "item/commandExecution/outputDelta", "params": {**ctx, "itemId": "cmd-print", "delta": "more\n"}})
+    gate("more")
+    send({"method": "item/completed", "params": {**ctx, "item": {**item, "status": "completed", "aggregatedOutput": "kept output\n", "exitCode": 0}}})
+    send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
+
 # "say A | B" answers with one assistant message per part and ends the turn.
 def say(ctx, text):
     for i, part in enumerate(text[4:].split(" | ")):
@@ -175,6 +200,8 @@ def rollout_history():
     return [r["payload"]["content"][0]["text"] for r in records
             if r.get("type") == "response_item" and r["payload"].get("role") == "user"]
 
+fake_codex_images.setup(rollout_find=rollout_find if SESSIONS else None, rollout_append=rollout_append, gate=gate)
+
 # With FAKE_CODEX_INSTANCE set, the fake is that provider instance's Codex: its thread and
 # turn ids start with the instance, and it cannot resume another instance's thread, which
 # lives in another home.
@@ -190,6 +217,7 @@ closing = False  # "closing": the turn takes a steer, answers it and ends before
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
+    fake_codex_images.incoming(msg)
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     # Wire test hooks: "test/hang" is a request that is never answered,
     # "test/exit" leaves with code 1, and "test/garbage" writes a line that is
@@ -202,6 +230,23 @@ for line in sys.stdin:
         sys.stdout.write("this is not a protocol message\n")
         sys.stdout.flush()
         continue
+    # "test/deaf" closes stdin and keeps stdout open, as an app-server that stopped
+    # reading does: the MC's next write fails. Its answer comes once stdin is closed.
+    if method == "test/deaf":
+        os.close(0)
+        if mid is not None:
+            send({"id": mid, "result": {}})
+        while True:
+            time.sleep(1)
+    # "test/mute" closes stdout and runs on; "test/mute-exit" closes it and exits with
+    # code 3 a moment later, as a dying app-server does.
+    if method in ("test/mute", "test/mute-exit"):
+        os.close(1)
+        if method == "test/mute-exit":
+            time.sleep(0.05)
+            os._exit(3)
+        while True:
+            time.sleep(1)
     if method == "test/flood":
         sys.stderr.write("x" * 300_000 + "\n")
         sys.stderr.flush()
@@ -250,6 +295,8 @@ for line in sys.stdin:
             text = "received " + json.dumps(msg.get("result"), sort_keys=True)
             send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
         continue
+    if fake_codex_chatgpt.handle(method, params, mid, send) or fake_codex_mcp_apps.answer(method, params, mid, send) or fake_codex_models.handle(method, mid, params, send):
+        continue
     if method == "initialize":
         # FAKE_CODEX_PROBE_ERROR is answered as the initialize call's error, and
         # FAKE_CODEX_PROBE_HANG leaves it unanswered: a status check's two failures.
@@ -260,7 +307,9 @@ for line in sys.stdin:
             continue
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
     elif method == "model/list":
-        # FAKE_CODEX_MODELS replaces the default catalogue.
+        # FAKE_CODEX_MODELS_HANG never answers; FAKE_CODEX_MODELS replaces the catalogue.
+        if os.environ.get("FAKE_CODEX_MODELS_HANG"):
+            continue
         send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or [
             {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
             {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
@@ -275,6 +324,15 @@ for line in sys.stdin:
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
     elif method == "thread/resume" and os.environ.get("FAKE_CODEX_RESUME_ERROR"):
         send({"id": mid, "error": {"code": -32600, "message": os.environ["FAKE_CODEX_RESUME_ERROR"]}})
+    # While the file FAKE_CODEX_ARCHIVED_FILE names exists, the native thread is
+    # archived: resuming or forking it fails until thread/unarchive removes the file.
+    elif method in ("thread/resume", "thread/fork") and os.environ.get("FAKE_CODEX_ARCHIVED_FILE") and os.path.exists(os.environ["FAKE_CODEX_ARCHIVED_FILE"]):
+        send({"id": mid, "error": {"code": -32600, "message": f"thread {params.get('threadId')} is archived"}})
+    elif method == "thread/unarchive":
+        flag = os.environ.get("FAKE_CODEX_ARCHIVED_FILE")
+        if flag and os.path.exists(flag):
+            os.remove(flag)
+        send({"id": mid, "result": {"thread": {"id": params.get("threadId") or thread_id}}})
     elif method in ("thread/start", "thread/resume"):
         # FAKE_CODEX_SESSION_LOG collects each thread/start and thread/resume's params.
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):
@@ -305,7 +363,8 @@ for line in sys.stdin:
             with open(os.environ["FAKE_CODEX_INPUT_LOG"], "a") as f:
                 f.write(json.dumps(params["input"]) + "\n")
         turns += 1
-        turn_id = f"{INSTANCE or 'native'}-turn-{turns}"
+        # FAKE_CODEX_REPEAT_TURN_ID answers every turn/start with the first turn's id.
+        turn_id = f"{INSTANCE or 'native'}-turn-{1 if os.environ.get('FAKE_CODEX_REPEAT_TURN_ID') else turns}"
         prompt = params["input"][0]["text"]
         # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
@@ -323,8 +382,16 @@ for line in sys.stdin:
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
+        if fake_codex_images.turn(ctx, text, send) or fake_codex_mcp_apps.play(text, ctx, turn_id, send):
+            continue
         if "stream paragraphs" in text or "stream a reply" in text:
             stream_reply(ctx, text)
+            continue
+        # "print output N" runs a command that prints N bytes (the letters a-z over and over,
+        # 64 KiB at a time), waits at the gate "printed", prints "more\n", waits at "more",
+        # and ends with the short output Codex reports for it.
+        if text.startswith("print output "):
+            print_output(ctx, turn_id, int(text.split()[2]))
             continue
         if "answer from gate" in text:
             threading.Thread(target=answer_from_gate, args=(ctx, turn_id), daemon=True).start()
@@ -348,7 +415,9 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": text[len("say and wait "):]}}})
             waiting_ctx = ctx
             continue
-        if "wait" in text or "finishing" in text or "closing" in text:
+        # While the file FAKE_CODEX_HOLD_TURN_FILE names exists, every turn waits as "wait" does.
+        held_turn = os.path.exists(os.environ.get("FAKE_CODEX_HOLD_TURN_FILE", "/nonexistent"))
+        if "wait" in text or "finishing" in text or "closing" in text or held_turn:
             # FAKE_CODEX_STDERR_FLOOD writes far more than a pipe buffer holds.
             if os.environ.get("FAKE_CODEX_STDERR_FLOOD"):
                 sys.stderr.write("x" * 300_000 + "\n")
@@ -359,6 +428,14 @@ for line in sys.stdin:
             continue
         if text.startswith("say "):
             say(ctx, text)
+            continue
+        # "compact the context" has Codex compact the thread's context during the turn,
+        # as it does on its own when the context fills up.
+        if "compact the context" in text:
+            item = {"type": "contextCompaction", "id": f"compaction-{turn_id}"}
+            send({"method": "item/started", "params": {**ctx, "item": item}})
+            send({"method": "item/completed", "params": {**ctx, "item": item}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
         if "where are we" in text:
             where = f"on {thread_id} history {'<conversation_history>' in prompt} merged {'<merged_work>' in prompt}"
@@ -383,11 +460,23 @@ for line in sys.stdin:
             name = text.split()[1]
             os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
             open(name, "w").write(text + "\n")
+        # "... report usage N" reports N tokens in the context, as Codex does on the thread.
+        reported = re.search(r"report usage (\d+)", text)
+        if reported:
+            send({"method": "thread/tokenUsage/updated", "params": {**ctx, "tokenUsage": {"last": {"totalTokens": int(reported.group(1)), "inputTokens": int(reported.group(1))}, "modelContextWindow": 200000}}})
         # "edit NAME" reports a change to NAME (a fileChange item) before the usual answer.
         if text.startswith("edit "):
             name = text.split()[1]
             change = {"path": name, "kind": {"type": "update"}, "diff": "@@ -1 +1 @@\n-old\n+new\n"}
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "fileChange", "id": "file-1", "status": "completed", "changes": [change]}}})
+        # "edit-around NAME" starts a change to NAME, runs a command, then ends the change.
+        if text.startswith("edit-around "):
+            name = text.split()[1]
+            change = {"path": name, "kind": {"type": "update"}, "diff": "@@ -1 +1 @@\n-old\n+new\n"}
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "fileChange", "id": "file-2", "status": "inProgress", "changes": [change]}}})
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-2", "command": "true", "status": "inProgress"}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": "cmd-2", "command": "true", "status": "completed", "aggregatedOutput": "", "exitCode": 0}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "fileChange", "id": "file-2", "status": "completed", "changes": [change]}}})
         # "indent NAME" re-indents every line of NAME; "fill NAME" writes 11 MB to it.
         if text.startswith("indent "):
             name = text.split()[1]
@@ -471,6 +560,11 @@ for line in sys.stdin:
             pending_ctx = ctx
             send({"id": "input-1", "method": "item/tool/requestUserInput", "params": {**ctx, "itemId": "ask-1", "questions": [
                 {"id": "color", "header": "Color", "question": text.split("ask: ", 1)[1] if "ask: " in text else "Which color?", "options": [{"label": "Red", "description": "Warm"}]}]}})
+            continue
+        # "capped" stops the turn on a rate limit Codex names no reset for.
+        if "capped" in text:
+            send({"method": "error", "params": {**ctx, "willRetry": False, "error": {"message": "Rate limited.", "codexErrorInfo": "rateLimitExceeded"}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "Rate limited."}}}})
             continue
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
@@ -569,7 +663,9 @@ for line in sys.stdin:
         item_id = steer_item_id()
         send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
         send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
-        send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+        # While FAKE_CODEX_KEEP_TURN's file exists, the turn keeps working after a steer.
+        if not os.path.exists(os.environ.get("FAKE_CODEX_KEEP_TURN", "/nonexistent")):
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.
         path = params.get("path") or rollout_find(params["threadId"])
@@ -588,8 +684,16 @@ for line in sys.stdin:
         thread_id = f"forked-{params['threadId']}-at-{params.get('lastTurnId')}"
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
     elif method == "thread/revert" and os.environ.get("FAKE_CODEX_NO_REVERT"):
-        # FAKE_CODEX_NO_REVERT: cutting paginated history before a turn is refused.
-        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not available"}})
+        # FAKE_CODEX_NO_REVERT: an app-server without thread/revert. It cannot
+        # deserialize the method into its request type, so it answers -32600
+        # naming it an unknown variant rather than -32601.
+        send({"id": mid, "error": {"code": -32600, "message": "Invalid request: unknown variant `thread/revert`, expected one of `thread/rollback`, `turn/start`"}})
+    elif method == "thread/revert" and not paginated and os.environ.get("FAKE_CODEX_NO_ROLLBACK"):
+        # Codex 0.156 dropped thread/rollback, and thread/revert refuses a
+        # thread whose history predates paginated history (before 0.151).
+        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not supported for threads with legacy history"}})
+    elif method == "thread/rollback" and os.environ.get("FAKE_CODEX_NO_ROLLBACK"):
+        send({"id": mid, "error": {"code": -32601, "message": method}})
     elif method == "thread/revert" and paginated and page_size and int(params["beforeTurnId"].rsplit("-", 1)[1]) <= turns - page_size:
         send({"id": mid, "error": {"code": -32600, "message": f"{params['beforeTurnId']} is not on the latest history page"}})
     elif method == "thread/revert" and paginated:
@@ -606,7 +710,8 @@ for line in sys.stdin:
     # fails once while the FAKE_CODEX_CONSUME_FAIL file exists.
     elif method == "account/read":
         kind = os.environ.get("FAKE_CODEX_ACCOUNT", "chatgpt")
-        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": "pro"}
+        # FAKE_CODEX_PLAN is the planType the account reports (default "pro").
+        account = None if kind == "none" else {"type": kind, "email": "me@example.com", "planType": os.environ.get("FAKE_CODEX_PLAN", "pro")}
         send({"id": mid, "result": {"account": account, "requiresOpenaiAuth": True}})
     # FAKE_CODEX_RESET_CREDITS sets how many reset credits are banked (default two);
     # FAKE_CODEX_CONSUME_OUTCOME is what a redemption answers (default "reset").
@@ -623,9 +728,13 @@ for line in sys.stdin:
         else:
             credits = {"availableCount": int(count), "credits": [
                 {"status": "available", "expiresAt": 1800000000 + i} for i in range(int(count))]}
-        main = {"limitId": "codex", "planType": "pro",
+        # FAKE_CODEX_USAGE_PLAN is the planType the usage read reports ("none" omits it).
+        usage_plan = os.environ.get("FAKE_CODEX_USAGE_PLAN", os.environ.get("FAKE_CODEX_PLAN", "pro"))
+        main = {"limitId": "codex",
                 "primary": {"usedPercent": 0 if reset else 42, "windowDurationMins": 300, "resetsAt": 1790000000},
                 "secondary": {"usedPercent": 10.5, "resetsAt": 1790500000}}
+        if usage_plan != "none":
+            main["planType"] = usage_plan
         send({"id": mid, "result": {
             "rateLimits": {"limitId": "codex_spark", "primary": {"usedPercent": 99}},
             "rateLimitsByLimitId": {"codex": main, "codex_spark": {"limitId": "codex_spark", "primary": {"usedPercent": 99}}},
@@ -644,11 +753,19 @@ for line in sys.stdin:
             send({"id": mid, "result": {"outcome": outcome}})
     # A "terminal-stays" file in the working directory has the terminal outlive the
     # terminate, still listed.
+    elif method.startswith("thread/backgroundTerminals/") and os.path.exists("thread-unloaded"):
+        # Codex unloads a thread it has had idle a while: its calls on it no longer find it.
+        send({"id": mid, "error": {"code": -32600, "message": f"thread not found: {params.get('threadId')}"}})
     elif method == "thread/backgroundTerminals/terminate":
         send({"id": mid, "result": {"terminated": not os.path.exists("terminal-stays")}})
     elif method == "thread/backgroundTerminals/list":
         stays = [{"processId": "4275"}] if os.path.exists("terminal-stays") else []
         send({"id": mid, "result": {"data": stays, "nextCursor": None}})
+    elif method == "thread/inject_items":
+        send({"id": mid, "result": {}})
+    elif method == "turn/interrupt" and os.path.exists("interrupt-unanswered"):
+        # While the file "interrupt-unanswered" exists, a stop is never answered.
+        pass
     elif method == "turn/interrupt":
         # FAKE_CODEX_IGNORE_INTERRUPT, or the file FAKE_CODEX_IGNORE_INTERRUPT_FILE names
         # existing, acknowledges the stop and never ends the turn.
@@ -665,8 +782,21 @@ for line in sys.stdin:
                 sys.exit("fake Codex: interrupt held past 120s (stuck hold-interrupt gate)")
             time.sleep(0.01)
         send({"id": mid, "result": {}})
+        # A file named as FAKE_CODEX_IGNORE_INTERRUPT_FILE's with "-reports" after it has the
+        # stopped turn report an answer, ask an approval and start a subagent before it
+        # ends, once.
+        reports = os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT_FILE", "/nonexistent") + "-reports"
+        if os.path.exists(reports):
+            os.remove(reports)
+            ctx = {"threadId": thread_id, "turnId": params["turnId"]}
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-leftover", "text": ""}}})
+            send({"method": "item/agentMessage/delta", "params": {**ctx, "itemId": "msg-leftover", "delta": "Left over."}})
+            send({"id": "leftover-approval", "method": "item/commandExecution/requestApproval", "params": {**ctx, "itemId": "cmd-leftover", "command": "touch left-over"}})
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "collabAgentToolCall", "id": "collab-leftover", "tool": "spawnAgent", "prompt": "Look around", "senderThreadId": thread_id, "receiverThreadIds": ["native-leftover"], "status": "inProgress", "agentsStates": {"native-leftover": {"status": "running"}}}}})
         if not ignore:
             send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
+    elif (method or "").startswith("thread/goal/"):
+        goals.request(mid, method, params)
     else:
         send({"id": mid, "error": {"code": -32601, "message": method}})
 

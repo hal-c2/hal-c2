@@ -15,6 +15,8 @@
 #   apps/web/src/components/composerFooterLayout.ts, apps/web/src/components/chat/ChatComposer.tsx (when the composer shrinks to one line)
 #   apps/web/src/components/chat/CompactComposerControlsMenu.tsx (controls of a narrow composer)
 #   https://github.com/pingdotgg/t3code/pull/15050
+#   https://github.com/pingdotgg/t3code/pull/25869
+#   https://github.com/pingdotgg/t3code/pull/27522
 
 Feature: Drafting and sending a message
   The user writes a turn and sends it to the agent. Drafts survive switching
@@ -117,6 +119,15 @@ Feature: Drafting and sending a message
     When the MC takes the message
     Then the thread no longer says the message is sending
 
+  # Upstream #27522: a new thread asked for itself before it existed, was taken for deleted and
+  # never showed its first run until the app reloaded.
+  @backlog @desktop @mobile @tui @priority-high
+  Scenario: A new thread's first reply shows without reloading
+    Given the user starts a new thread in the project
+    When the user sends "Reply with one word" and the agent replies
+    Then the thread shows the agent's reply as it streams
+    And the reply is still shown after the user switches to another thread and back
+
   @desktop
   Scenario: Text typed while a new thread starts carries over to the thread
     Given the user starts a new thread in the project
@@ -142,12 +153,21 @@ Feature: Drafting and sending a message
     When the user types "second"
     Then the draft reads "second" after the send completes
 
-  @desktop @mobile @backlog-mobile @priority-high
+  # The limit was the upstream server's, on what one turn could carry. The MC sends a
+  # message that long as a file instead (mc/orchestration/composer-context.feature),
+  # so the composer no longer refuses it.
+  @desktop @mobile @dropped @priority-high
   Scenario: A message over the character limit is refused before sending
     Given the user has typed a prompt 10 characters over the 120,000-character limit
     When the user tries to send it
     Then the message is not sent
     And the user is told the prompt is 10 characters over the limit and to shorten or split it
+
+  @desktop @mobile @backlog-mobile @priority-high
+  Scenario: A message over 120,000 characters is sent whole
+    Given the user has typed a prompt 10 characters over the 120,000-character limit
+    When the user tries to send it
+    Then the whole prompt is sent to the MC
 
   @desktop @tui @mobile @backlog-mobile @priority-high
   Scenario: Sending while disconnected keeps the draft
@@ -217,7 +237,9 @@ Feature: Drafting and sending a message
     Then one thread per model starts with "Add caching"
     And each thread works in its own worktree
 
-  @backlog @desktop @priority-low
+  # Upstream #25869: the desktop composer no longer collapses while scrolling, and its
+  # "Collapse composer on scroll" setting is gone. Dropped to follow upstream.
+  @dropped @desktop
   Scenario: Scrolling a long conversation shrinks the composer to one line
     Given the conversation is longer than the window and "Collapse composer on scroll" is on
     And the draft holds one line of text
@@ -226,7 +248,8 @@ Feature: Drafting and sending a message
     When the user clicks into the composer
     Then the composer is back at its full size
 
-  @backlog @desktop @priority-low
+  # Upstream #25869: dropped with the collapsing composer.
+  @dropped @desktop
   Scenario Outline: The composer keeps its size while it has something to show
     Given the conversation is longer than the window and "Collapse composer on scroll" is on
     And <state>
@@ -246,13 +269,15 @@ Feature: Drafting and sending a message
       | the last send was refused and the reason is shown  |
       | a draft image may not have been saved              |
 
-  @backlog @desktop @priority-low
+  # Upstream #25869: dropped with the collapsing composer.
+  @dropped @desktop @priority-low
   Scenario: A conversation that fits the window never shrinks the composer
     Given the conversation is shorter than the window
     When the user scrolls the conversation
     Then the composer keeps its full size
 
-  @backlog @desktop @priority-low
+  # Upstream #25869: dropped with the collapsing composer.
+  @dropped @desktop @priority-low
   Scenario: Clicking away or switching windows does not shrink or grow the composer
     Given the composer is at its full size
     When the user clicks a message in the conversation
@@ -261,7 +286,8 @@ Feature: Drafting and sending a message
     When the user switches to another application and back
     Then the composer is still one line
 
-  @backlog @desktop @priority-low
+  # Upstream #25869: dropped with the collapsing composer.
+  @dropped @desktop @priority-low
   Scenario: A shrunk composer still shows the draft's images
     Given the draft carries five images and the composer has shrunk to one line
     Then three of the images are shown small beside the draft
@@ -269,18 +295,20 @@ Feature: Drafting and sending a message
     When the user chooses to see the rest
     Then the composer is back at its full size showing all five
 
-  @backlog @desktop @priority-low
+  # Upstream #25869: dropped with the collapsing composer.
+  @dropped @desktop @priority-low
   Scenario: A control opened by its shortcut grows the composer first
     Given the composer has shrunk to one line and its controls are hidden
     When the user presses the model picker shortcut
     Then the composer is back at its full size with the model picker open
 
+  # Upstream #28057: the reasoning effort moved into the model control, so plan is what folds.
   @desktop
   Scenario: A narrow composer folds its controls into one menu instead of wrapping
-    Given the composer offers its reasoning effort, plan and access controls
+    Given the composer offers its plan and access controls
     When the composer is too narrow to show all its controls
     Then its toolbar is still one line
-    And the reasoning effort is offered in its menu of further controls
+    And plan is offered in its menu of further controls
     And the model can still be chosen beside it
     When the user chooses "Plan" in that menu
     Then plan mode is requested

@@ -3,6 +3,7 @@
   "name": "Code Review",
   "version": "1.0.0",
   "apiVersion": 1,
+  "threadsStay": true,
   "description": "An agent of your choice reviews pull requests on the repositories you pick, and you decide what of it reaches the pull request.",
   "author": { "name": "HAL-C2", "url": "https://github.com/hal-c2/hal-c2" },
   "homepage": "https://github.com/hal-c2/hal-c2/tree/main/plugins/code-review",
@@ -108,6 +109,27 @@
       "description": "Pull requests by these logins are never reviewed automatically."
     },
     {
+      "key": "trustedLogins",
+      "label": "Trusted logins",
+      "type": "list",
+      "default": [],
+      "description": "Besides the repository's members and collaborators, these logins may have their pull requests reviewed and ask for reviews."
+    },
+    {
+      "key": "reviewsPerAuthorPerDay",
+      "label": "Reviews per author per day",
+      "type": "number",
+      "default": 10,
+      "description": "Across all your machines. Reviews you start yourself count but are never held back. 0 for no limit."
+    },
+    {
+      "key": "reviewsPerRepositoryPerDay",
+      "label": "Reviews per repository per day",
+      "type": "number",
+      "default": 50,
+      "description": "Across all your machines. 0 for no limit."
+    },
+    {
       "key": "maxChangedLines",
       "label": "Largest change reviewed automatically",
       "type": "number",
@@ -166,6 +188,27 @@
       ],
       "default": "auto-accept-edits",
       "description": "The agent works in its own checkout of the pull request, which runs the pull request's code if the agent runs commands."
+    },
+    {
+      "key": "sandboxEveryReview",
+      "label": "Sandbox every review",
+      "type": "boolean",
+      "default": false,
+      "description": "Run every review in an OpenShell sandbox. Off, only reviews of pull requests HAL-C2 does not trust run in one: those opened by someone who is not a member, collaborator or trusted login, or whose commits come from someone else's fork. Needs OpenShell on this MC, and Claude or Codex with an API key."
+    },
+    {
+      "key": "sandboxMinutes",
+      "label": "Sandboxed review time limit (minutes)",
+      "type": "number",
+      "default": 60,
+      "description": "A sandboxed review still running after this is stopped and its sandbox deleted."
+    },
+    {
+      "key": "sandboxTokens",
+      "label": "Sandboxed review token budget",
+      "type": "number",
+      "default": 5000000,
+      "description": "Tokens a sandboxed review's agent may use, input and output together, as it reports them. 0 for no limit."
     },
     {
       "key": "prompt",

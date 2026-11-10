@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23156
 #   https://github.com/pingdotgg/t3code/pull/24032
 #   https://github.com/pingdotgg/t3code/pull/25133
 #   https://github.com/pingdotgg/t3code/pull/24709
@@ -8,6 +9,7 @@
 #   https://github.com/pingdotgg/t3code/pull/8513
 #   https://github.com/pingdotgg/t3code/pull/10158
 #   https://github.com/pingdotgg/t3code/pull/25315
+#   https://github.com/pingdotgg/t3code/pull/29891
 #   docs/user/keyboard-focus.md
 #   docs/user/appearance.md (Change theme, Change appearance)
 #   apps/web/src/components/CommandPalette.tsx
@@ -169,6 +171,7 @@ Feature: Command palette
       Then the environment is told "Refactor" was opened, once
       And "Refactor" ranks as opened lately in search on every device
 
+    # Upstream #24343: typing a query a thread was picked from before ranks that thread first.
     @backlog @mc @desktop @mobile @priority-low
     Scenario: A query the user picked a thread from before puts that thread first
       Given the user searched for "cart" and opened "Ship checkout" from the results last week
@@ -185,6 +188,7 @@ Feature: Command palette
       Then "Fix checkout" and "Checkout fork" are listed and "Checkout tests" is not
       And "Checkout tests" is not among the recent threads either
 
+    # Upstream #24343: palette rows say why they matched ("Branch: …", "PR: #…").
     @backlog @desktop @mobile
     Scenario Outline: A thread row says why it matched
       Given a thread whose <field> contains "zebra" and whose title does not
@@ -195,6 +199,20 @@ Feature: Command palette
         | field               | says           |
         | branch              | Branch: zebra  |
         | linked pull request | PR: #42        |
+
+    # Upstream #23156: a thread's palette row showed its linked pull request as pending while
+    # the sidebar knew it was merged, closed or a draft.
+    @backlog @desktop @mobile @priority-low
+    Scenario Outline: A thread's palette row shows its linked pull request's state
+      Given "Fix checkout" is linked to pull request 42, which is <state>
+      When the user finds "Fix checkout" in the palette
+      Then its row shows pull request 42 as <state>, as the sidebar does
+
+      Examples:
+        | state  |
+        | merged |
+        | closed |
+        | a draft |
 
     @desktop
     Scenario Outline: Threads are found by more than their title
@@ -245,6 +263,7 @@ Feature: Command palette
       And the rows above and the highlight stay where they were
       And the footer said "Searching messages…" until they arrived, without the palette changing height
 
+    # Upstream #24343: choosing a message result opens the thread at that message.
     @backlog @desktop @mobile
     Scenario: Choosing a message match opens the thread at that message
       Given the palette lists a match for "zebra" inside an older message of "Fix checkout"
@@ -303,6 +322,15 @@ Feature: Command palette
     @desktop
     Scenario: Choosing a project opens its latest thread
       Given the project "docs-site" has the threads "Write intro" and "Fix links"
+      When the user searches the palette for "docs-site"
+      And the user moves the highlight to "docs-site" and presses Enter
+      Then the thread "Fix links" opens
+
+    # Upstream #29891: the latest-thread pick skips subagent and side-chat threads.
+    @backlog @desktop @mobile @priority-high
+    Scenario: Choosing a project opens its latest main thread, not a subagent or side chat
+      Given the project "docs-site" has the thread "Fix links"
+      And a subagent of "Fix links" and a side chat on it were updated after its last message
       When the user searches the palette for "docs-site"
       And the user moves the highlight to "docs-site" and presses Enter
       Then the thread "Fix links" opens

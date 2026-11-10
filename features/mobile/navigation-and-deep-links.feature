@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27089
 #   https://github.com/pingdotgg/t3code/pull/24262
 #   https://github.com/pingdotgg/t3code/pull/24750
 #   https://github.com/pingdotgg/t3code/pull/24742
@@ -369,6 +370,7 @@ Feature: Navigating the phone app and opening links into it
       | a thread mention in a message's context  |
       | the composer's thread chip               |
 
+  # Upstream #23795: opening the thread just behind goes back to it instead of stacking another.
   @backlog @mobile @priority-low
   Scenario: Opening the thread just behind goes back to it
     Given the user opened the subagent thread "Add tests" from "Fix checkout"
@@ -376,14 +378,25 @@ Feature: Navigating the phone app and opening links into it
     Then "Fix checkout" is shown
     And going back again returns to the home screen
 
-  # Upstream #23841 and #24524: Usage was reached only through Settings, and Settings opened as
+  # Upstream #23841: Usage was reached only through Settings, and Settings opened as
   # a separate card outside the workspace's columns.
+  # Upstream #24524: same change as #23841.
   @backlog @mobile
   Scenario: The workspace's navigation reaches chats, pull requests, usage and settings
     When the user looks at the phone's workspace navigation
     Then it offers Chats, Pull requests, Usage and Settings
     And the section that is open is marked
 
+  # Upstream #27089: before iOS 26 the floating navigation bar, built for Liquid Glass, drew as a
+  # grey block short of the screen edge with the new-task button floating beside it.
+  @backlog @mobile @priority-low
+  Scenario: Without a floating glass bar the navigation spans the screen
+    Given the phone's system draws no floating glass navigation bar
+    When the user looks at the phone's workspace navigation
+    Then the navigation spans the full width of the screen
+    And new task is offered in the header beside search, not beside the navigation
+
+  # Upstream #24524: Settings is a workspace tab whose list stays in the sidebar beside its page.
   @backlog @mobile
   Scenario: Settings on a split layout keeps its list beside the page
     Given the layout is split
@@ -391,6 +404,7 @@ Feature: Navigating the phone app and opening links into it
     Then the settings list stays in the sidebar with "Environments" marked
     And the "Environments" page opens beside it
 
+  # Upstream #24524: tabs never open on an empty "Select a…" detail.
   @backlog @mobile
   Scenario: Switching sections never lands on an empty page
     Given the layout is split and the user was last on the "Environments" settings page

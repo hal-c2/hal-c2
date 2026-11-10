@@ -26,7 +26,8 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.ThreadMove.arrived?/2" => ~w(answer locked got has moves),
       "HalC2.ThreadMove.settle/1" =>
         ~w(settle let-go forward stop letting freeing? again release forsake found unsure),
-      "HalC2.ThreadMove handle_cast {:watch, _, _, _}" => "mover-died",
+      "HalC2.ThreadMove handle_call {:watch, _, _, _}" => "mover-died",
+      "HalC2.ThreadMove handle_call {:mover?, _}" => "release",
       "HalC2.ThreadMove handle_cast {:done, _, _}" => "settle",
       "HalC2.ThreadMove.removed/1" => ~w(forsake found out),
       "HalC2.ThreadMove handle_cast {:removed, _}" => ~w(forsake found),
@@ -63,11 +64,16 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.ThreadMove.locate/1" => "reads where the thread lives; changes nothing",
       "HalC2.ThreadMove.read/3" =>
         "serves the files the destination stages; a call that breaks off ends the staging, as stage and sever model",
-      "HalC2.Orchestration.Handoff.plan/5" => @handoff,
+      "HalC2.Orchestration.Handoff.plan/6" => @handoff,
+      "HalC2.Orchestration.Handoff.room/3" => @handoff,
       "HalC2.Orchestration.Handoff.prompt/2" => @handoff,
-      "HalC2.Orchestration.Handoff.transcript/3" => @handoff,
+      "HalC2.Orchestration.Handoff.transcript/5" => @handoff,
       "HalC2.Orchestration.Handoff.legacy_summary/1" => @handoff,
-      "HalC2.Orchestration.Handoff.fork_boundary/3" => @handoff
+      "HalC2.Orchestration.Handoff.history/2" => @handoff,
+      "HalC2.Orchestration.Handoff.select/2" => @handoff,
+      "HalC2.Orchestration.Handoff.ahead/2" => @handoff,
+      "HalC2.Orchestration.Handoff.fork_boundary/3" => @handoff,
+      "HalC2.Orchestration.Handoff.fresh_start/2" => @handoff
     },
     environment: %{
       "crash" => "an MC stops: its processes die, its store stays, its links break",
@@ -94,7 +100,9 @@ defmodule HalC2.ThreadMoveProofTest do
         "A move to a removed machine waits for a member that is switched off",
         "The source restarting while the destination takes the thread does not undo the move",
         "The source going offline after the destination confirmed does not undo the move",
-        "A thread cannot be moved twice at once"
+        "A thread cannot be moved twice at once",
+        "A thread its plugin keeps on the machine is not moved",
+        "A thread its plugin keeps is refused by the machine it would arrive on"
       ]
     }
 
@@ -116,6 +124,21 @@ defmodule HalC2.ThreadMoveProofTest do
     test "a move never gets stuck, from #{init}", %{proof: proof} do
       refute_deadlock(proof, unquote(init), "settled", besides: @faults)
     end
+  end
+
+  # A thread its plugin keeps never begins to move, whatever else happens to the cluster.
+  test "a thread its plugin keeps on the machine never begins to move", %{proof: proof} do
+    refute_reachable(proof, "kept(2, 1)", "broken", [])
+  end
+
+  # A source from before plugins kept their threads begins the move; the destination
+  # refuses the thread, and the move ends with it where it was.
+  test "a thread its plugin keeps never arrives from a source that lets it go", %{proof: proof} do
+    refute_reachable(proof, "old(2, 1)", "broken", [])
+  end
+
+  test "a move a destination refuses for its plugin never gets stuck", %{proof: proof} do
+    refute_deadlock(proof, "old(2, 1)", "settled", besides: @faults)
   end
 
   # The thread keeps only the last move from each MC. Keeping only the last of all fails

@@ -8,6 +8,7 @@
 
 #include <QColor>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaEnum>
 #include <QPointer>
@@ -24,6 +25,7 @@
 
 #include "Brick.h"
 #include "Browser.h"
+#include "Browsing.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "Preview.h"
@@ -69,6 +71,13 @@ public:
   }
   // `path` redirects to `to`.
   void redirect(const QString& path, const QString& to) { m_redirects.insert(path, to); }
+  // The page at `path` comes in part: titled `title`, with `body`, and the rest never.
+  void unfinished(const QString& path, const QString& title, const QString& body) {
+    // Past the engine's first read, so it draws what came.
+    m_unfinished.insert(path, QStringLiteral("<!doctype html><html><head><meta charset=utf-8><title>%1</title></head><body><p>%2</p><!-- %3 -->")
+                                  .arg(title, body, QString(4096, QLatin1Char('.')))
+                                  .toUtf8());
+  }
   // Requests wait for release() while held.
   void hold() { m_holding = true; }
   void release() {
@@ -97,6 +106,10 @@ private:
   void answer(QTcpSocket* socket) {
     const QString path = QString::fromLatin1(m_buffers.take(socket).split(' ').value(1));
     QByteArray reply;
+    if (m_unfinished.contains(path)) {
+      socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n" + m_unfinished.value(path));
+      return;
+    }
     if (m_redirects.contains(path)) {
       reply = "HTTP/1.1 302 Found\r\nLocation: " + m_redirects.value(path).toUtf8() + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     } else {
@@ -115,6 +128,7 @@ private:
   QList<QPointer<QTcpSocket>> m_held;
   QHash<QString, QByteArray> m_pages;
   QHash<QString, QString> m_redirects;
+  QHash<QString, QByteArray> m_unfinished;
   QHash<QTcpSocket*, QByteArray> m_buffers;
 };
 
@@ -156,11 +170,19 @@ const FakeMc::Extension pages([](FakeMc& mc) {
     }
     mc.reply(rpc, QJsonValue::Null);
   });
+  // A size waits while `preview.resize` is held, and is refused while `refusals` has it.
   mc.onRpc(QStringLiteral("preview.resize"), [&mc, update](const FakeMc::Rpc& rpc) {
-    const auto tab = update(rpc, {QStringLiteral("viewport")});
-    if (!tab) return;
-    preview::emitEvent(mc, *tab, QStringLiteral("resized"), {{QStringLiteral("snapshot"), *tab}});
-    mc.reply(rpc, *tab);
+    const auto answer = [&mc, update, rpc] {
+      if (mc.refusals.contains(rpc.method)) return mc.refuse(rpc, mc.refusals.value(rpc.method));
+      const auto tab = update(rpc, {QStringLiteral("viewport")});
+      if (!tab) return;
+      preview::emitEvent(mc, *tab, QStringLiteral("resized"), {{QStringLiteral("snapshot"), *tab}});
+      mc.reply(rpc, *tab);
+    };
+    if (mc.holding(rpc.method))
+      mc.defer(answer);
+    else
+      answer();
   });
 });
 
@@ -179,6 +201,8 @@ void embed(World& world) {
   model(world).setEmbedded(true);
   Browser* browser = Browser::instance();
   browser->setStore(nullptr, nullptr);
+  // A new run of the app: no answer kept.
+  browser->permissions()->clear();
   browser->setDevToolsDock(QStringLiteral("bottom"));
   browser->setDevToolsShare(0.4);
   browser->setDevicesView(false);
@@ -377,6 +401,13 @@ const QHash<QString, int> kNetErrors{
     {QStringLiteral("ERR_CERT_AUTHORITY_INVALID"), -202}, {QStringLiteral("ERR_TOO_MANY_REDIRECTS"), -310},
 };
 
+// The MC's requests, as JSON.
+QString payloads(const QList<QJsonObject>& requests) {
+  QJsonArray all;
+  for (const QJsonObject& request : requests) all.append(request);
+  return QString::fromUtf8(QJsonDocument(all).toJson(QJsonDocument::Compact));
+}
+
 // A device size's preset id, from its label ("Pixel 7": pixel-7).
 QString presetId(const QString& label) {
   return label.toLower().replace(QLatin1Char(' '), QLatin1Char('-'));
@@ -424,7 +455,7 @@ const Steps steps([] {
   step(QStringLiteral("the start page offers the dev server to open"), [](World& world, const Captures&, const Table&) {
     waitForEngine(world, [&] { QQuickItem* start = find(world, QStringLiteral("browserStart"));
                         QQuickItem* first = find(world, QStringLiteral("browserSuggestion-0"));
-                        return start && start->isVisible() && first && first->isVisible() && first->property("text").toString().startsWith(devServer(world).url()); },
+                        return start && start->isVisible() && first && first->isVisible() && first->property("modelData").toMap().value(QStringLiteral("url")).toString().startsWith(devServer(world).url()); },
                   [&] { return QStringLiteral("the start page to offer %1; %2").arg(devServer(world).url(), state(world)); });
     saveGrab(world, QStringLiteral("browser-start"));
   });
@@ -809,7 +840,50 @@ const Steps steps([] {
     typeText(world, c[0]);
     world.brick->press(QStringLiteral("enter"));
   });
-  step(QStringLiteral("the tab stays on the thread's dev server"), [](World& world, const Captures&, const Table&) {
+  // The desktop opens a tab at an address as a new tab, typed into.
+  step(QStringLiteral("a client opens a browser tab for the thread at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    preview::showPreviews(world);
+    embed(world);
+    drawPanel(world);
+    model(world).newTab();
+    waitForTab(world, QString());
+    QQuickItem* field = world.brick->item(QStringLiteral("browserAddress"));
+    field->forceActiveFocus();
+    typeText(world, c[0]);
+    world.brick->press(QStringLiteral("enter"));
+    world.sync();
+  });
+  step(QStringLiteral("the thread has a new tab loading %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The address as typed, or with the root path a browser gives it.
+    const auto is = [&c](const QString& url) { return url == c[0] || url == c[0] + QLatin1Char('/'); };
+    const FakePreviews& fake = world.mc.part<FakePreviews>();
+    waitForEngine(world, [&] { return fake.navigations.size() == 1 && is(fake.navigations.first().value(QLatin1String("url")).toString()) && is(viewUrl(world)); },
+                  [&] { return QStringLiteral("the tab to load %1; the MC was asked for %2 (opened %3); the toasts are %4; %5")
+                                   .arg(c[0], payloads(fake.navigations), payloads(fake.opens), show(world.state(QStringLiteral("toasts"))), state(world)); });
+    // In the one tab the MC opened.
+    expect(fake.tabs.size() == 1 && fake.tabs.first().value(QLatin1String("tabId")) == fake.navigations.first().value(QLatin1String("tabId")),
+           QStringLiteral("the MC opened %1 tabs").arg(fake.tabs.size()));
+  });
+  step(QStringLiteral("no tab opens"), [](World& world, const Captures&, const Table&) {
+    // The new tab stays empty: the MC is not asked to open a page in it.
+    world.sync();
+    expect(world.mc.part<FakePreviews>().navigations.isEmpty() && viewUrl(world).isEmpty(), state(world));
+  });
+  step(QStringLiteral("the client is told the address cannot be opened"), [](World& world, const Captures&, const Table&) {
+    const QString problem = panel(world)->property("addressProblem").toString();
+    expect(problem.contains(QLatin1String("Only http and https pages open here")), QStringLiteral("the field says \"%1\"").arg(problem));
+  });
+  step(QStringLiteral("the user is told to enter an http or https URL"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    QQuickItem* field = world.brick->item(QStringLiteral("browserAddress"));
+    const QString problem = panel(world)->property("addressProblem").toString();
+    expect(problem.contains(QLatin1String("Enter an http or https URL")), QStringLiteral("the field says \"%1\"").arg(problem));
+    // Beside what was typed, still there to be put right.
+    expect(field->hasActiveFocus(), QStringLiteral("the address field lost the keyboard, so the problem is not shown"));
+    const QString text = field->property("text").toString();
+    expect(text != devServer(world).url(), QStringLiteral("the field put the page's address back"));
+  });
+  step(QStringLiteral("the tab stays on (?:its page|the thread's dev server)"), [](World& world, const Captures&, const Table&) {
     world.sync();
     expect(viewUrl(world) == devServer(world).url() && world.mc.part<FakePreviews>().navigations.isEmpty(), state(world));
   });
@@ -859,7 +933,65 @@ const Steps steps([] {
     waitForTitle(world, QStringLiteral("Other"));
   });
   step(QStringLiteral("the tab shows the other page"), [](World& world, const Captures&, const Table&) { waitForPage(world, devServer(world).url(QStringLiteral("/other"))); });
-  step(QStringLiteral("the user goes back in the tab"), [](World& world, const Captures&, const Table&) { world.brick->click(QStringLiteral("browserBack")); });
+  // Back is enabled once the view says it can go back, which it does after the
+  // page it went back to has been reached and the view is idle. The button is
+  // triggered, not clicked: a second pointer click on it, once the web view has
+  // navigated under the pointer, is sometimes not delivered to it at all
+  // (Back's own `clicked` never fires), which has nothing to do with what the
+  // scenario says.
+  step(QStringLiteral("the user goes back in the tab"), [](World& world, const Captures&, const Table&) {
+    waitForEngine(world, [&] { QQuickItem* back = find(world, QStringLiteral("browserBack")); return back && back->isEnabled() && !loading(world) && evaluate(world, QStringLiteral("document.readyState")) == QStringLiteral("complete"); },
+                  [&] { return QStringLiteral("Back to be available; %1").arg(state(world)); });
+    QMetaObject::invokeMethod(find(world, QStringLiteral("browserBack")), "clicked");
+  });
+  // Where the tab can go.
+  step(QStringLiteral("a browser tab whose page (is the only one it has shown|follows an earlier page|is the first page, reached by going back)"),
+       [](World& world, const Captures& c, const Table&) {
+         showTab(world);
+         if (c[0].startsWith(QLatin1String("is the only"))) return;
+         DevServer& server = devServer(world);
+         server.page(QStringLiteral("/other"), QStringLiteral("Other"));
+         QMetaObject::invokeMethod(panel(world), "go", Q_ARG(QVariant, server.url(QStringLiteral("/other"))), Q_ARG(QVariant, true));
+         waitForPage(world, server.url(QStringLiteral("/other")));
+         if (c[0].startsWith(QLatin1String("follows"))) return;
+         world.brick->click(QStringLiteral("browserBack"));
+         waitForPage(world, server.url());
+       });
+  step(QStringLiteral("going (back|forward) is (available|unavailable)"), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* button = world.brick->item(c[0] == QLatin1String("back") ? QStringLiteral("browserBack") : QStringLiteral("browserForward"));
+    const bool available = c[1] == QLatin1String("available");
+    waitForEngine(world, [&] { return button->isEnabled() == available; },
+                  [&] { return QStringLiteral("going %1 to be %2; %3").arg(c[0], c[1], state(world)); });
+  });
+  // Stopping a load.
+  step(QStringLiteral("a browser tab whose page is still loading"), [](World& world, const Captures&, const Table&) {
+    showTab(world);
+    devServer(world).unfinished(QStringLiteral("/slow"), QStringLiteral("Half"), QStringLiteral("The first half"));
+    QMetaObject::invokeMethod(panel(world), "go", Q_ARG(QVariant, devServer(world).url(QStringLiteral("/slow"))), Q_ARG(QVariant, true));
+    // The first half drawn, the rest on its way.
+    waitForEngine(world, [&] { return view(world)->property("title").toString() == QLatin1String("Half") && loading(world); },
+                  [&] { return QStringLiteral("the first half of the page; %1").arg(state(world)); });
+  });
+  const auto offers = [](World& world, const QString& icon, const QString& what) {
+    QQuickItem* button = world.brick->item(QStringLiteral("browserReload"));
+    waitForEngine(world, [&] { return button->isEnabled() && button->property("iconName").toString() == icon; },
+                  [&] { return QStringLiteral("the tab to offer to %1; its button shows %2; %3").arg(what, button->property("iconName").toString(), state(world)); });
+  };
+  step(QStringLiteral("the tab offers to stop loading instead of reloading"), [offers](World& world, const Captures&, const Table&) {
+    offers(world, QStringLiteral("x"), QStringLiteral("stop"));
+  });
+  step(QStringLiteral("the tab offers to reload again"), [offers](World& world, const Captures&, const Table&) {
+    offers(world, QStringLiteral("rotate-cw"), QStringLiteral("reload"));
+  });
+  step(QStringLiteral("the user stops the load"), [](World& world, const Captures&, const Table&) {
+    world.brick->click(QStringLiteral("browserReload"));
+    waitForEngine(world, [&] { return !loading(world); }, [&] { return QStringLiteral("the load to stop; %1").arg(state(world)); });
+  });
+  step(QStringLiteral("the tab keeps what had loaded"), [](World& world, const Captures&, const Table&) {
+    expect(viewUrl(world) == devServer(world).url(QStringLiteral("/slow")) && failure(world).isEmpty(), state(world));
+    const QString shown = evaluate(world, QStringLiteral("document.title + ': ' + document.body.innerText.trim()")).toString();
+    expect(shown == QLatin1String("Half: The first half"), QStringLiteral("the page shows \"%1\"").arg(shown));
+  });
   step(QStringLiteral("the address field says only web addresses can be opened"), [](World& world, const Captures&, const Table&) {
     const QString problem = panel(world)->property("addressProblem").toString();
     expect(problem.contains(QLatin1String("http")), QStringLiteral("the field says \"%1\"").arg(problem));
@@ -908,3 +1040,43 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+namespace webtab {
+
+void servePage(World& world, const QString& path, const QString& title, const QString& body) {
+  devServer(world).page(path, title, body);
+}
+QString serverUrl(World& world, const QString& path) {
+  return devServer(world).url(path);
+}
+void showTab(World& world, const QString& path) {
+  ::showTab(world, path);
+}
+void embed(World& world) {
+  ::embed(world);
+}
+void drawEmbedded(World& world) {
+  preview::showPreviews(world);
+  embed(world);
+  drawPanel(world);
+}
+void waitForTab(World& world) {
+  ::waitForTab(world, QString());
+}
+BrowserPage* page(World& world) {
+  return ::page(world);
+}
+QString tabId(World& world) {
+  return world.mc.part<Browsing>().tabId;
+}
+QVariant evaluate(World& world, const QString& script) {
+  return ::evaluate(world, script);
+}
+void waitForEngine(World& world, const std::function<bool()>& condition, const std::function<QString()>& what) {
+  ::waitForEngine(world, condition, what);
+}
+QList<QQuickWindow*> popups(World& world) {
+  return ::popups(world);
+}
+
+}  // namespace webtab

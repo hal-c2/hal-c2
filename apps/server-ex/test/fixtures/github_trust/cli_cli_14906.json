@@ -1,0 +1,80 @@
+{
+  "data": {
+    "viewer": {
+      "login": "olafura"
+    },
+    "repository": {
+      "pullRequest": {
+        "author": {
+          "__typename": "Bot",
+          "login": "dependabot"
+        },
+        "authorAssociation": "CONTRIBUTOR",
+        "isCrossRepository": false,
+        "headRefOid": "7ed464c372b68460df8c2a6b63828a2b7adf6579",
+        "headRepositoryOwner": {
+          "login": "cli"
+        },
+        "comments": {
+          "nodes": [
+            {
+              "author": {
+                "__typename": "Bot",
+                "login": "cli-triage"
+              },
+              "authorAssociation": "NONE",
+              "body": "**Recommendation: Merge, Confidence: High**",
+              "createdAt": "2026-11-02T14:30:17Z"
+            }
+          ]
+        },
+        "timelineItems": {
+          "nodes": [
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-11-02T14:03:22Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "dependabot"
+              },
+              "label": {
+                "name": "dependencies"
+              }
+            },
+            {
+              "__typename": "LabeledEvent",
+              "createdAt": "2026-11-02T14:03:23Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "dependabot"
+              },
+              "label": {
+                "name": "go"
+              }
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-02T14:03:23Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "dependabot"
+              },
+              "requestedReviewer": null
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-11-02T14:03:25Z",
+              "actor": {
+                "__typename": "Bot",
+                "login": "dependabot"
+              },
+              "requestedReviewer": {
+                "login": "babakks"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

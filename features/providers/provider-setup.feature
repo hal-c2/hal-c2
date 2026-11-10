@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/24763
+#   https://github.com/pingdotgg/t3code/pull/27321
+#   https://github.com/pingdotgg/t3code/pull/22941
+#   https://github.com/pingdotgg/t3code/pull/25235
 #   https://github.com/pingdotgg/t3code/pull/20386
 #   https://github.com/pingdotgg/t3code/pull/18110
 #   https://github.com/pingdotgg/t3code/pull/20796
@@ -29,6 +33,12 @@
 #   https://github.com/pingdotgg/t3code/pull/15539
 #   https://github.com/pingdotgg/t3code/pull/15501
 #   https://github.com/pingdotgg/t3code/pull/22504
+#   https://github.com/pingdotgg/t3code/pull/27847
+#   https://github.com/pingdotgg/t3code/pull/22044
+#   https://github.com/pingdotgg/t3code/pull/27466
+#   https://github.com/pingdotgg/t3code/pull/28278
+#   https://github.com/pingdotgg/t3code/pull/24655
+#   https://github.com/pingdotgg/t3code/pull/27992
 
 @mc
 Feature: Provider setup, updates and sign-in
@@ -150,6 +160,28 @@ Feature: Provider setup, updates and sign-in
     Then the update is offered through mise
     And the native updater is not run
 
+  # Upstream #27466: a claude on the path that is a mise command wrapper ran Claude's own updater,
+  # which declined to update a package-managed install and still reported success.
+  @backlog @priority-low
+  Scenario: A provider behind a mise command wrapper is not updated by its own updater
+    Given Claude's executable on the path is a mise command wrapper
+    When the user opens Claude's update details
+    Then no update command is offered for Claude
+
+  # Upstream #28278: OpenCode's own upgrade asked "Install anyways?" and waited forever, or failed,
+  # for installs it could not identify, so the update spun until it timed out.
+  @backlog @plugin-opencode
+  Scenario Outline: OpenCode's own upgrade is offered only where OpenCode's installer put it
+    Given OpenCode's executable is <location>
+    When the user opens OpenCode's update details
+    Then <offer>
+
+    Examples:
+      | location                                      | offer                                                |
+      | in OpenCode's own install folder              | the update command runs OpenCode's own upgrade       |
+      | a launcher script no installer claims         | no update command is offered for OpenCode            |
+      | a distribution package the MC cannot identify | no update command is offered for OpenCode            |
+
   @backlog @mc
   Scenario: A provider's own updater targets the home that instance uses
     Given Codex was installed by its own installer
@@ -169,6 +201,22 @@ Feature: Provider setup, updates and sign-in
     And npm already has a release that Homebrew has not published yet
     When the MC checks provider versions
     Then Codex is compared against the version Homebrew would install
+
+  # Upstream #22941: a Chocolatey Claude was compared with npm and offered Update now, which
+  # installed a second, native copy and left the Chocolatey one behind.
+  @backlog @mc @plugin-claude @priority-low
+  Scenario Outline: A Chocolatey Claude on Windows is compared against Chocolatey and updated by hand
+    Given Claude was installed with Chocolatey on Windows
+    And Chocolatey <offers>
+    When the user opens Claude's update details
+    Then <outcome>
+    And the user is not offered to update Claude now
+
+    Examples:
+      | offers                                    | outcome                                                            |
+      | a newer Claude than the installed one     | the user can copy "choco upgrade claude-code"                      |
+      | the installed version, though npm has a newer one | Claude shows no update                                     |
+      | no answer to the version lookup           | Claude's latest version is unknown and npm is not asked             |
 
   # Upstream #21451: refreshing a provider reused cached Homebrew metadata; an explicit refresh now
   # rereads it, background checks keep the cache.
@@ -203,19 +251,49 @@ Feature: Provider setup, updates and sign-in
     Then Pi's update status is unknown
     And no update to a version called "latest" is offered
 
-  @backlog @mc @priority-low
+  @priority-low
   Scenario: Latest versions are looked up at most once an hour per package
     Given Codex was installed with npm
     When the MC checks provider versions twice within an hour
     Then the registry is asked for the latest Codex version once
 
-  @backlog @mc @priority-low
+  @priority-low
   Scenario: A registry that does not answer leaves the update status unknown
     Given Codex was installed with npm
     And the package registry does not answer within four seconds
     When the MC checks provider versions
-    Then Codex's update status is unknown
-    And no error is shown to the user
+    Then Codex's update status is unknown, with no message for the user
+
+  # Upstream #22044: the four-second deadline ended when headers arrived, not when the body did.
+  @priority-low
+  Scenario: A registry that stalls after it starts answering still ends the lookup at four seconds
+    Given Codex was installed with npm
+    And the package registry answers at once but stops sending before the version arrives
+    When the MC checks provider versions
+    Then after four seconds Codex's update status is unknown
+
+  # Upstream #27847: provider version checks went straight to the public npm registry. When
+  # npm cannot say, upstream logs it and leaves the status unknown, with no message.
+  @priority-high
+  Scenario Outline: Provider version checks go through the npm setup on the machine
+    Given Codex was installed with npm
+    And <setup>
+    When the MC checks provider versions
+    Then <outcome>
+
+    Examples:
+      | setup                                                     | outcome                                                                    |
+      | npm on the MC's path is configured for a company registry | the latest version comes from the company registry                         |
+      | npm on the MC's path fails to look the version up         | Codex's update status is unknown and the public registry is not asked      |
+      | npm is not installed on the machine                       | the latest version comes from the public npm registry                      |
+
+  # Upstream #27321: a provider whose settings put a version manager's Node on its PATH failed to
+  # update with "npm: NotFound", because the update ran with the server's PATH.
+  @backlog @mc
+  Scenario: A provider update runs with the PATH the provider's settings give it
+    Given Codex was installed with npm into a Node that only Codex's environment puts on the PATH
+    When the user updates Codex
+    Then the update finds npm on Codex's PATH and installs the latest Codex
 
   @backlog @mc @priority-low
   Scenario Outline: A provider that cannot be updated yet is not checked against the registry
@@ -229,18 +307,20 @@ Feature: Provider setup, updates and sign-in
       | not installed                    |
       | installed but reports no version |
 
-  # Codex's ChatGPT sign-in from HAL-C2 is @backlog in codex.feature ("Codex connects a
-  # ChatGPT account from HAL-C2"); this line describes today's behaviour and must be reconciled then.
+  # Codex here is on the Codex CLI's own login, its default. HAL-C2 signs in only a Codex
+  # whose ChatGPT account it connects (codex.feature "Codex connects a ChatGPT account from HAL-C2").
   # Upstream #18425: providers whose CLI owns setup declare they cannot be installed or signed in from the app.
   Scenario: Only providers that support it sign in from HAL-C2
     When the user tries to sign in to Codex from HAL-C2
     Then the user is told this provider does not sign in here
 
-  Scenario: A sign-in is shared by every client of the MC
+  # ProviderAuthFlow.ts (upstream beaeeff) keeps a running sign-in private to the client
+  # that started it; every client sees its progress, only that one sees where to sign in.
+  Scenario: Every client of the MC sees a sign-in's progress
     Given two clients are connected to the MC
     When the user starts signing in to an ACP agent on one client
     Then the other client shows the same sign-in in progress
-    And either client can finish or cancel it
+    And both clients see it finish when the client that started it completes it
 
   Scenario: Only one sign-in runs per provider instance
     Given a sign-in is in progress for an ACP agent
@@ -256,34 +336,28 @@ Feature: Provider setup, updates and sign-in
     When a sign-in fails
     Then the error shown to the user contains no sign-in code or return address
 
-  # ProviderAuthFlow.ts keeps a running sign-in private to the client that started it. This
-  # differs from "A sign-in is shared by every client of the MC" above; see the audit report.
-  @backlog @mc
   Scenario: Another client sees that a sign-in is running but not its address or code
     Given the user started a sign-in for an ACP agent on one client
     When another client looks at that provider
     Then it shows "Sign-in is in progress in another client."
     And it shows no sign-in address or interaction
 
-  @backlog @mc @priority-high
+  @priority-high
   Scenario: Only the client that started a sign-in can answer or cancel it
     Given the user started a sign-in for an ACP agent on one client
     When another client answers or cancels that sign-in
     Then the user is told "This sign-in is no longer active in this client."
     And the sign-in keeps running
 
-  @backlog @mc
   Scenario: A sign-in that expired cannot be answered
     Given a sign-in for an ACP agent expired after five minutes
-    When the user answers it
+    When the user answers the expired sign-in
     Then the user is told "This sign-in is no longer active in this client."
 
-  @backlog @mc
   Scenario: A sign-in method the provider does not offer is refused
     When the user starts a sign-in with a method the provider did not advertise
     Then the user is told "The provider did not advertise this sign-in method."
 
-  @backlog @mc
   Scenario Outline: A sign-in tells the user where it is
     Given the user started a sign-in for an ACP agent
     When <event>
@@ -296,9 +370,8 @@ Feature: Provider setup, updates and sign-in
       | the provider is checking the finished sign-in  | Checking provider sign-in.      |
       | the user cancels the sign-in                   | Sign-in cancelled.              |
       | the sign-in fails for no known reason          | Sign-in failed. Start again.    |
-      | five minutes pass without an answer            | Sign-in expired. Start again.   |
+      | five minutes pass with no answer from the user | Sign-in expired. Start again.   |
 
-  @backlog @mc
   Scenario: Signing out says whether it worked
     Given the user is signed in to an ACP agent
     When the user signs out and it succeeds
@@ -306,20 +379,17 @@ Feature: Provider setup, updates and sign-in
     When the user signs out and it fails
     Then the provider shows "Could not sign out. Try again."
 
-  @backlog @mc
   Scenario: Sign-in methods already known stay listed when a refresh fails
     Given an ACP agent's sign-in methods were listed
     When the MC cannot refresh them
     Then the earlier methods stay listed
     And the user is told why they could not be refreshed
 
-  @backlog @mc
   Scenario: A sign-in cannot start while the provider is signing out
     Given the provider is signing out
     When the user starts a sign-in
     Then the user is told "Provider setup is already in progress."
 
-  @backlog @mc
   Scenario: A second client cannot start a sign-in while another client's runs
     Given the user started a sign-in for an ACP agent on one client
     When another client starts a sign-in for the same instance
@@ -338,6 +408,31 @@ Feature: Provider setup, updates and sign-in
     When the user updates Codex
     Then Codex's update waits for the Claude update to finish
 
+  # Upstream #24763: an update of a provider already on the latest version still ran its installer.
+  Scenario: Updating a provider already on its latest version does not run the installer
+    Given a fresh check finds Claude installed at its latest version
+    When the user updates Claude
+    Then the update finishes with "Already up to date."
+    And Claude's installer is not run
+
+  # Upstream #24763: the version an update is checked against is the one the installer would fetch,
+  # not the hour's cached read of it.
+  Scenario: An update to a latest release that turned broken since the cached read is refused
+    Given a read within the hour found Claude behind a supported latest version
+    And the latest version has since been marked broken for this HAL-C2 release
+    When the user updates Claude
+    Then the update fails saying Claude's latest version is incompatible with this HAL-C2 release
+    And Claude's installer is not run
+
+  # Upstream #27992: an older provider list could be published after the update's final state,
+  # and open clients stayed on "Updating Claude" until reloaded.
+  @backlog @mc @shared
+  Scenario: Open clients see an update's final state
+    Given a client is open on Settings while Claude updates
+    When the update finishes without changing Claude's version
+    Then the client stops showing Claude as updating
+    And it shows what a client opened afterwards shows
+
   Scenario: An update that leaves the provider outdated is reported as unchanged
     When an update finishes but the provider still reports the old version
     Then the user is told the provider is still outdated
@@ -347,14 +442,12 @@ Feature: Provider setup, updates and sign-in
     When the user updates Codex
     Then the update fails asking the user to refresh and try again
 
-  @backlog @mc
   Scenario: An update that runs too long is stopped
     Given Codex is behind the latest version
     And its update command does not finish within five minutes
     When the user updates Codex
     Then the update fails as timed out
 
-  @backlog @mc
   Scenario: A failed update command reports its exit code and output
     Given Codex is behind the latest version
     And its update command exits with code 1 and prints an error
@@ -362,14 +455,13 @@ Feature: Provider setup, updates and sign-in
     Then the update fails naming exit code 1
     And the update's result carries the command's error output
 
-  @backlog @mc @priority-low
+  @priority-low
   Scenario: An update's output is capped
     Given Codex is behind the latest version
     And its update command prints far more than ten thousand characters
     When the user updates Codex
     Then the update's result carries only the first ten thousand characters of that output
 
-  @backlog @mc
   Scenario: An update to a version that is no longer recommended is refused
     Given the user asked to install the recommended "0.1.5" of Codex
     And "0.1.5" stopped being the recommended version before the update ran
@@ -377,7 +469,6 @@ Feature: Provider setup, updates and sign-in
     Then the update fails telling the user to refresh provider settings
     And no update command is run
 
-  @backlog @mc
   Scenario Outline: An update to a latest release that turned incompatible is refused when it runs
     Given Codex is behind the latest version
     And that latest release was marked <status> for this HAL-C2 release after the last check
@@ -390,18 +481,26 @@ Feature: Provider setup, updates and sign-in
       | unsupported |
       | broken      |
 
-  @backlog @mc
   Scenario: An update that cannot be verified is reported as unchanged
     Given Codex is behind the latest version
     And its update command succeeds but the provider's version cannot be read afterwards
     When the user updates Codex
     Then the user is told the update finished but the version could not be verified
 
-  @backlog @mc
   Scenario: A second update for the same provider is refused while one runs
     Given a Codex update is running
     When the user updates Codex again
     Then the second update is refused saying an update is already running for that provider
+
+  # Upstream #25235: accounts with their own Codex homes share one standalone Codex, which failed to
+  # find its install when updated with an account's home.
+  @backlog @mc @plugin-codex @priority-low
+  Scenario: A standalone Codex shared by accounts with their own homes updates from its own install
+    Given two Codex accounts with their own Codex homes run one standalone Codex
+    And Codex is behind the latest version
+    When the user updates Codex
+    Then Codex is updated where it is installed
+    And both accounts keep their own homes and sign-ins
 
   Scenario Outline: A provider version outside the supported range is flagged
     Given the installed provider version is <status> for this HAL-C2 release
@@ -446,6 +545,15 @@ Feature: Provider setup, updates and sign-in
     When the user cancels the installation
     Then the download stops and the previous runtime is unchanged
 
+  # Upstream #24655: a second Install pressed before the first had started got the first one's
+  # answer, so it looked started while nothing installed, and showed the first one's error.
+  @backlog @shared @plugin-antigravity
+  Scenario: Installing two provider instances at once starts both
+    Given the Antigravity instances "work" and "personal" are not installed
+    When the user installs "work" and then "personal" before "work" has started
+    Then both installations start
+    And an error installing "work" shows only on "work"
+
   @plugin-antigravity
   Scenario: A managed runtime can be removed and installed again
     Given Antigravity is enabled on that environment
@@ -473,7 +581,7 @@ Feature: Provider setup, updates and sign-in
     Then running threads sharing that sign-in stop
     And thread history is kept
 
-  @desktop @mobile @backlog-mobile @backlog-mc @priority-low
+  @desktop @mobile @backlog-mobile @backlog-mc @priority-low @backlog-desktop
   Scenario: The signed-in email is hidden until the user reveals it
     Given a provider is signed in as "me@example.com"
     When the user opens the provider

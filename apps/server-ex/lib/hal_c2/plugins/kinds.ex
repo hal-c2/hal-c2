@@ -54,6 +54,13 @@ defmodule HalC2.Plugins.ProviderAdapter do
   adapter's job: an adapter must replace a process serving a thread on one instance
   when a turn names another (the bundled adapters do).
 
+  A turn with `new_conversation: true` carries the thread in `turn.text` for a new
+  native conversation; the adapter must not add it to one its live process holds,
+  which already has part of the thread and may not have room for the rest. A turn the
+  provider took confirms its handoff as `TurnWriter.confirmed/2` says: an adapter
+  whose provider says it started the turn commits that, so a turn stopped before its
+  first output still goes on in its conversation.
+
   The manifest's `provider:` map declares the rest (atom keys, all optional):
 
     * `driver`: the driver instances name (default: the plugin id).
@@ -80,7 +87,11 @@ defmodule HalC2.Plugins.ProviderAdapter do
       there, and answers `{:ok, native_id}`. The thread's next run there gets
       `fork: %{thread: native_id, carried: true, fallback: context}` and branches a
       new session from the copy; when it cannot open it, it starts a new one with
-      `HalC2.Orchestration.Handoff.prompt(fallback, turn.text)`.
+      `HalC2.Orchestration.Handoff.ahead(turn, fallback)`.
+
+  A turn that names a `native_thread_id` the provider no longer has, and so goes on
+  in a new native conversation, is handed the whole thread first
+  (`HalC2.Orchestration.Handoff.fresh_start/2`).
 
   Without them, or when either fails, the thread moves and its next run there gets
   a summary of the conversation.
@@ -96,13 +107,20 @@ defmodule HalC2.Plugins.ProviderAdapter do
   only that run's adapter, so it leaves background work any adapter holds; a stop
   between turns reaches every adapter.
 
+  `await_background/3` (optional) marks or clears the mark on background work the
+  agent waits on (`hal_c2_background_wait`), named by the task ids the agent saw, and
+  answers `{:ok, matched}`, the ids that named running background work. An adapter
+  without it refuses the mark as unsupported; its commands and monitors never hold
+  the thread Working (`HalC2.Projection.BackgroundWork`).
+
   An adapter that declares `active_steering` implements `steer/3`: it hands
   `%{text, attachments}` (attachments shaped like a turn's) to the turn running as
   `run_id`, or answers `{:error, reason}` when the provider does not take it. The
   message is already recorded in the turn when `steer/3` is called and only an
   `{:error, _}` (or an exit) takes it back out, so an adapter whose own call times
-  out after the request reached the provider answers `:ok` itself; a timeout exit
-  out of `steer/3` counts as a refusal.
+  out after the request reached the provider answers `:held` itself (the provider
+  may still take it, but nobody heard it do so); a timeout exit out of `steer/3`
+  counts as a refusal.
   """
   use HalC2.Plugins.Kind
 
@@ -116,10 +134,16 @@ defmodule HalC2.Plugins.ProviderAdapter do
               run_id :: String.t(),
               message :: %{text: String.t(), attachments: [map]}
             ) ::
-              :ok | {:error, String.t()}
+              :ok | :held | {:error, String.t()}
   @callback respond(thread_id :: String.t(), request_id :: String.t(), response :: map) ::
               :ok | {:error, String.t()}
   @callback rollback(thread_id :: String.t(), plan :: map) :: {:ok, map} | {:error, String.t()}
+  @callback await_background(
+              thread_id :: String.t(),
+              task_ids :: [String.t()],
+              awaited :: boolean
+            ) ::
+              {:ok, [String.t()]}
   @callback providers(settings :: map) :: [map]
   @callback session_files(native_id :: String.t(), cwd :: String.t()) :: [{String.t(), Path.t()}]
   @callback place_session(
@@ -132,6 +156,7 @@ defmodule HalC2.Plugins.ProviderAdapter do
                       steer: 3,
                       respond: 3,
                       rollback: 2,
+                      await_background: 3,
                       providers: 1,
                       session_files: 2,
                       place_session: 3
@@ -325,6 +350,34 @@ defmodule HalC2.Plugins.Extension do
       offered to agents in HAL-C2's MCP server, as an MCP tool pack's are, when the
       plugin was granted `agentTools`. The context names the thread whose agent is
       asking, so a plugin can offer a tool to its own threads only.
+    * `observe(event, context)`: with `turns:observe`, what agents do in every
+      thread, as it happens (`HalC2.Plugins.observe/1`): `turn.started` (`"threadId",
+      "runId", "projectId", "instanceId", "provider", "model", "newConversation"`),
+      `turn.item` (a tool call or message that ended: `"threadId", "runId", "itemId",
+      "itemType", "tool"`, the provider's own name for the tool where it has one, `"title",
+      "status"` (`"completed"`, `"failed"`, `"interrupted"` or `"cancelled"`), `"input",
+      "output"` and an assistant message's `"text"`, each cut to its last 4,000
+      characters, `"exitCode"`, `"ordinal"`, its place in the thread, given as it
+      started, and, for a file change, the file's `"path"`) and
+      `turn.finished` (`"threadId", "runId", "status", "tokenUsage"`: the provider's
+      last report of the conversation's context, `%{"usedTokens", "inputTokens",
+      "cachedInputTokens", "outputTokens", "maxTokens"}` as far as it reports them, or
+      nil when it has not). Events reach the plugin one at a time, in the order
+      each thread's turns had them, in a process of the plugin's own. A plugin too slow
+      to keep up misses events rather than holding agents back: the next event it gets
+      counts what it missed in `"dropped"`, and in `"waiting"` the events queued behind
+      it then, which with it are all that may have come before the missed ones. What it missed while it was not running
+      stays in the threads (`HalC2.Plugins.Host.history/2`).
+    * `shape_run(run, context)`: with `runs:shape`, called as an agent starts a new
+      conversation, never for one it resumes, with `%{"threadId", "runId",
+      "projectId", "cwd", "instanceId", "provider", "model", "message", "toolUnit"}`.
+      It answers nil, or `%{"context" => text, "deniedTools" => [name]}` within 300 ms
+      (or is left out): `context` goes ahead of the conversation's first message, and
+      the conversation keeps `deniedTools` turned off for as long as it lasts, so its
+      tools never change under the provider's prompt cache. `toolUnit` says what
+      `deniedTools` names for the provider: `"tool"` (Claude's tool names, such as
+      `"WebFetch"`), `"capability"` (Codex's `"collaboration"`, `"goals"` and
+      `"image_media"`) or nil when the provider takes none.
 
   What else it may do goes through `HalC2.Plugins.Host`, checked against the
   permissions the user granted.
@@ -337,5 +390,11 @@ defmodule HalC2.Plugins.Extension do
   @callback agent_tools(context :: map) :: [map]
   @callback call_agent_tool(name :: String.t(), arguments :: map, context :: map) ::
               {:ok, term} | {:error, String.t()}
-  @optional_callbacks handle_event: 2, agent_tools: 1, call_agent_tool: 3
+  @callback observe(event :: map, context :: map) :: any
+  @callback shape_run(run :: map, context :: map) :: map | nil
+  @optional_callbacks handle_event: 2,
+                      agent_tools: 1,
+                      call_agent_tool: 3,
+                      observe: 2,
+                      shape_run: 2
 end

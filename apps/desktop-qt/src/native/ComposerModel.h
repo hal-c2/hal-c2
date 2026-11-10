@@ -34,6 +34,7 @@ struct Instance {
   bool available = false;
   bool requiresNewThreadForModelChange = false;
   bool showInteractionModeToggle = true;
+  bool canSetUp = false;  // setup.canInstall or setup.canAuthenticate
   QStringList runtimeModes;  // supportedRuntimeModes; empty: all
   QJsonArray models;
   QJsonArray slashCommands;
@@ -50,6 +51,11 @@ const Instance* find(const QList<Instance>& list, const QString& instanceId);
 QJsonObject findModel(const Instance& instance, const QString& model);
 // The model a thread starts on with this instance: its default one.
 QString defaultModel(const Instance& instance);
+// The slug on this instance that `model` (a slug, name or alias from another
+// account of the same driver) names, for falling back to this account: an
+// exact slug wins, then an alias or name of a built-in model. A custom model
+// is only ever itself, never the built-in it is named like. Empty when none.
+QString fallbackModelSlug(const Instance& instance, const QString& model);
 
 // This device's model settings: `favorites` and `providerModelPreferences`.
 struct ModelPrefs {
@@ -88,9 +94,42 @@ QVariantList shellOptions(const QJsonArray& descriptors);
 // The selections to keep after the user sets option `id`; nothing when the
 // value does not fit the option.
 std::optional<QJsonArray> applyOption(const QJsonArray& descriptors, const QString& id, const QVariant& value);
+// The choice one level up (`direction` > 0) or down from select `descriptor`'s
+// current value, wrapping; the values the prompt carries (Ultrathink) are
+// never stepped to. A value outside the list steps from the default, or
+// from the ends when none is marked. Nothing with fewer than two to step through.
+std::optional<QString> steppedChoice(const QJsonObject& descriptor, int direction);
+// The index of the model's effort among its option `descriptors`: the first
+// select that is the reasoning effort by its id or that its agent marks as
+// reasoning (`role`), else the first select; -1 with no select.
+qsizetype effortIndex(const QJsonArray& descriptors);
+// The effort as bars (upstream's resolveEffortGlyph): {count, filled,
+// special}, one bar per ordinary level filled up to `current`, an off level as
+// none filled. Max, Ultracode and the prompt's levels (Ultrathink) are named
+// instead: all bars filled and `special` their label. Nothing for a select that
+// is not the reasoning effort, has fewer than two levels or more than seven,
+// or a value it does not list.
+QVariantMap effortBars(const QJsonObject& descriptor, const QString& current);
+// Whether `text` asks for ultrathink in its own words, past the "Ultrathink:"
+// prefix a prompt can start with; the effort is then the prompt's (upstream's
+// isClaudeUltrathinkPrompt).
+bool ultrathinkInWords(const QString& text);
+// Whether a model picked in a thread's draft is what the thread already runs:
+// the same account, model and options, in any order, fast mode off counting
+// as unset (upstream's draftModelPickMatchesThread).
+bool pickMatchesThread(const QJsonObject& pick, const QJsonObject& thread);
 
 // `composer.runtimeModes`: [{value, label, description}].
 QVariantList runtimeModes(const Instance* instance);
+// What the composer shows as the permissions: `saved` when this instance
+// offers it, else Supervised (or the first mode it offers). The saved value
+// itself stays until the user chooses.
+QString shownRuntimeMode(const Instance* instance, const QString& saved);
+// What stands where the model would be when no provider can run a turn, as
+// a key the QML words and translates: "open-provider-settings" when the MC
+// says one can be set up, else "no-provider-available". Empty when some
+// provider is ready, or none has been reported yet.
+QString noProviderStandIn(const QList<Instance>& list);
 
 // `composer.enterIntents`: {singleLine, multiline}, each held-modifier set
 // ("ctrl+meta+alt+shift" order, "" for none) to what Enter sends.
@@ -101,12 +140,14 @@ QVariantMap enterIntents(const QList<keybindings::Binding>& bindings, bool mac, 
 QVariant pickerKey(const QList<keybindings::Binding>& bindings, bool mac, const QString& command);
 
 // What the text before the caret asks for: "path" (@), "skill" ($),
-// "slash-command" (/ at a line start) or "pull-request" (#).
+// "slash-command" (/) or "pull-request" (#). A slash after other text on its
+// line is `midLine`: it offers only what its word is the start of a name of.
 struct Trigger {
   QString kind;
   QString query;
   int start = 0;
   int end = 0;
+  bool midLine = false;
 };
 std::optional<Trigger> trigger(const QString& text, int cursor);
 
@@ -133,6 +174,11 @@ QString pathLink(const QString& path);
 QString emptyText(const QString& kind);
 // What the @ menu says when its search could not run, which is not "no match".
 QString pathSearchUnavailableText();
+// What the @ menu says while its search has not answered.
+QString pathSearchingText();
+// Whether a currency sign followed by `query` is a skill rather than a price:
+// a query led by a digit only when one of the instance's skills starts so.
+bool opensSkillMenu(const Instance* instance, const QString& query);
 
 // How well a value matches a query: lower is better, nothing is no match.
 std::optional<int> scoreQueryMatch(const QString& value, const QString& query, int exactBase, int prefixBase,

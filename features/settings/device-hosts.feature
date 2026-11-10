@@ -1,9 +1,16 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26706
+#   https://github.com/pingdotgg/t3code/pull/25259
 #   https://github.com/pingdotgg/t3code/pull/17440
 #   https://github.com/pingdotgg/t3code/pull/21842
 #   https://github.com/pingdotgg/t3code/pull/21843
 #   https://github.com/pingdotgg/t3code/pull/21844
 #   https://github.com/pingdotgg/t3code/pull/21846
+#   https://github.com/pingdotgg/t3code/pull/29912
+#   https://github.com/pingdotgg/t3code/pull/31652
+#   https://github.com/pingdotgg/t3code/pull/30941
+#   https://github.com/pingdotgg/t3code/pull/27763
+#   https://github.com/pingdotgg/t3code/pull/30159
 #   apps/web/src/components/settings/DeviceHostsSettings.tsx
 #   apps/web/src/components/settings/DeviceHostEditor.tsx
 #   apps/web/src/components/settings/deviceHostsSettings.logic.ts (updateDeviceHosts)
@@ -45,6 +52,14 @@ Feature: Device hosts
       Given "Mac mini" is listed as unavailable
       When the user retries "Mac mini"
       Then "Mac mini" is still unavailable
+
+    # Upstream #29912: a failed host check shows the server's message, not an error class and stack.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A failed device host test shows the MC's reason without a stack trace
+      Given a device host "Mac mini" with the SSH target "mac-mini"
+      When the user tests the connection to "Mac mini" and it fails
+      Then the error shown for "Mac mini" is the reason the MC gave
+      And it names no error type and shows no stack trace
 
   Rule: Managing SSH device hosts from settings
 
@@ -111,6 +126,25 @@ Feature: Device hosts
       Then the tunnel uses a connection of its own
       And closing it leaves no forwards behind
 
+    # Upstream #30941: a Windows machine signed in over SSH and then refused the device host's
+    # setup behind a generic error; it now says Windows cannot host devices over SSH and to run
+    # the app there instead. SSH device hosts are dropped; a Windows machine joins as its own MC.
+    @dropped @mc
+    Scenario: Testing a Windows SSH device host explains that Windows cannot host devices over SSH
+      Given the device host "Gaming PC" signs in over SSH and runs Windows
+      When the user tests its connection
+      Then the user is told Windows cannot host devices over SSH and to run HAL-C2 on it instead
+
+    # Upstream #30159: one slow health check on a loaded host tore down the SSH forward devices
+    # were using; it now takes three in a row. SSH device hosts are dropped; a remote machine's
+    # devices come from its own MC.
+    @dropped @mc
+    Scenario: An SSH device host reconnects only after three missed health checks
+      Given the MC forwards the device host "mac-mini" over SSH
+      When one health check of "mac-mini" times out and the next answers
+      Then the forward is kept
+      And it is reconnected only after three health checks in a row are missed
+
   # Upstream #21846: an EAS Simulator host runs iOS simulators in Expo's cloud for one
   # environment, which holds the Expo credential and starts the sessions. Sessions bill the
   # Expo account until they stop, so every session is bounded. Not an SSH host and not a
@@ -163,6 +197,25 @@ Feature: Device hosts
       When the MC signs in to Expo for the EAS Simulator host
       Then the sign-in is refused naming EXPO_TOKEN
       And the token is not shown
+
+    # Upstream #27763: the Expo access token can come from a secret provider instead of being pasted in.
+    @backlog @mc @shared @priority-low
+    Scenario: An EAS Simulator host's token can come from a secret provider
+      Given the 1Password secret provider "Work" is set up
+      When the user points the access token of "Cloud iPhone" at "op://vault/expo/token" in "Work"
+      Then settings keep only "Work" and the reference
+      And the Expo account check reads the token through the reference
+      And refreshing secrets reads the token again
+
+    # Upstream #27763: every EAS session bills the account behind the token, so an unreadable
+    # reference must not quietly sign in as another Expo account.
+    @backlog @mc @priority-high
+    Scenario: An EAS token that cannot be read never falls back to another Expo login
+      Given the access token of "Cloud iPhone" is a reference to "Work", which cannot be read
+      And EXPO_TOKEN and an "eas login" session are available
+      When the MC signs in to Expo for the EAS Simulator host
+      Then the sign-in fails saying the token could not be read from the secret provider
+      And neither EXPO_TOKEN nor the "eas login" session is used
 
     # Upstream #21843: without a project on the host, sessions run under the EAS project the
     # thread's app config names.
@@ -232,3 +285,133 @@ Feature: Device hosts
       Given the environment "Old" runs an MC that does not know EAS Simulator hosts
       When the user opens the Integrations settings for "Old"
       Then no EAS Simulator section is shown
+
+  # Upstream #25259: a Simlock pool leases iOS simulators and Android emulators from a gateway the
+  # user runs; HAL-C2 never installs Simlock. It is an alpha behind Labs.
+  @priority-low
+  Rule: Simlock pool hosts
+
+    # Upstream #25259: the Simlock source is hidden until Labs turns it on.
+    @backlog @desktop @mobile
+    Scenario: A Simlock pool can be added only once Labs turns it on
+      Given Simlock is off in Labs
+      When the user adds a device source
+      Then a Simlock pool is not offered
+      And once the user turns Simlock on in Labs, it is offered
+
+    # Upstream #25259: the source holds a gateway URL, one agent token per environment, a device limit and a lease age limit.
+    @backlog @desktop @mobile
+    Scenario: A Simlock pool is added with a token per environment and its limits
+      When the user adds a Simlock pool at "https://pool.example/v1/agent-device" with at most 2 devices leased for at most 60 minutes
+      Then the pool is listed with those limits
+      And each environment holds its own agent token for it
+
+    # Upstream #26706: the editor saves with an environment's token left blank.
+    @backlog @desktop @mobile
+    Scenario: A Simlock pool saves with an environment's token left blank
+      Given the user leaves the agent token for "Build box" blank
+      When the user saves the Simlock pool
+      Then it is saved
+
+    # Upstream #26706: a blank token uses the machine's own agent-device token, only for the gateway it names.
+    @backlog @mc
+    Scenario Outline: A blank Simlock token uses the machine's own agent-device token only for its gateway
+      Given the machine's agent-device settings name the gateway "https://pool.example/v1/agent-device" with a token
+      And the Simlock pool on that environment has no token saved
+      When the pool's URL is "<url>"
+      Then the MC <outcome>
+
+      Examples:
+        | url                                   | outcome                                             |
+        | https://pool.example/v1/agent-device  | leases with the machine's token, which never leaves it |
+        | https://other.example/v1/agent-device | asks for a token for the pool                        |
+
+    # Upstream #31652: a Simlock agent token can come from a secret provider, read each time it is
+    # needed, so an unlocked or rotated secret works without a restart.
+    @backlog @mc @shared
+    Scenario: A Simlock agent token can come from a secret provider
+      Given the 1Password secret provider "Work" is set up
+      When the user points the Simlock pool's agent token for "Build box" at "op://vault/simlock/token" in "Work"
+      Then settings keep only "Work" and the reference
+      And the token is checked against the gateway through the reference
+      And a rotated token in 1Password is used on the next lease without a restart
+
+    # Upstream #31652: an unreadable reference is not a blank token.
+    @backlog @mc @priority-high
+    Scenario: A Simlock token that cannot be read never falls back to the machine's own token
+      Given the Simlock pool's agent token is a reference to "Work", which cannot be read
+      And the machine's agent-device settings hold a token for the pool's gateway
+      When an agent asks to lease a device from the pool
+      Then the lease fails saying the credential could not be read from the secret provider
+      And the machine's token is not used
+      But a device leased before the secret became unreadable can still be released
+
+    # Upstream #26706: a saved token is only ever sent to the gateway it was saved for.
+    @backlog @mc @priority-high
+    Scenario: Changing a Simlock pool's URL never sends its token to the new gateway
+      Given a Simlock pool has a token saved for "https://pool.example"
+      When the user changes the pool's URL to "https://other.example"
+      Then the saved token is not sent to "https://other.example"
+
+    # Upstream #26706: each token is checked against the gateway as it is entered.
+    @backlog @mc @desktop @mobile
+    Scenario Outline: The Simlock editor checks each environment's token
+      When the user enters a token the gateway <answer>
+      Then the editor says <shown>
+
+      Examples:
+        | answer                                  | shown                                         |
+        | accepts as "cups"                       | "Accepted as cups"                            |
+        | does not get, so the machine's is used  | "Using this machine's agent-device token (cups)" |
+        | refuses                                 | the gateway refused the token                 |
+        | cannot be reached for                   | the gateway could not be reached              |
+        | knows as a token without the agent role | the token is not an agent token               |
+
+    # Upstream #26706: platform availability comes from the pool's catalog, not a fixed answer.
+    @backlog @mc @desktop @mobile
+    Scenario: A Simlock pool says which platforms it has devices for
+      Given the Simlock pool has iPhones but no Android devices
+      When the user looks at the pool's platforms
+      Then iOS reads as available
+      And Android reads "The pool has no Android devices."
+
+    # Upstream #26706: an incomplete catalog is not cached, so workers reconnecting do not hide devices for a minute.
+    @backlog @mc
+    Scenario: Devices of a pool whose workers are reconnecting are listed on the next look
+      Given the pool's Android workers were reconnecting when the MC last listed its devices
+      When an agent lists devices again once they are back
+      Then the pool's Android devices are listed
+
+    # Upstream #25259: an open device's lease is renewed while it is used and released at the age limit.
+    @backlog @mc
+    Scenario: A leased Simlock device is kept while open and released at the age limit
+      Given the user opened a device from the Simlock pool with a lease age limit of 60 minutes
+      When the device stays open
+      Then its lease is renewed while it is open
+      And the lease is returned to the pool after 60 minutes
+
+    # Upstream #25259: closing the device or removing the source returns the lease to the pool.
+    @backlog @mc
+    Scenario Outline: A Simlock lease returns to the pool when it is no longer used
+      Given a device is leased from the Simlock pool
+      When the user <action>
+      Then the lease is returned to the pool
+
+      Examples:
+        | action                  |
+        | closes the device       |
+        | removes the Simlock pool |
+
+    # Upstream #25259: a pool refuses a lease past its device limit.
+    @backlog @mc
+    Scenario: A Simlock pool refuses a device past its limit
+      Given the Simlock pool allows 2 devices and 2 are leased
+      When another thread opens a device from the pool
+      Then the user is told the pool's device limit is reached
+
+    # Upstream #25259: a Simlock device offers only the controls the pool serves.
+    @backlog @desktop @mobile
+    Scenario: A Simlock device offers only the controls the pool serves
+      Given the user opened an Android emulator from the Simlock pool
+      Then they can go Home, Back and to Recents
+      And rotation, appearance, text size and screenshots are not offered

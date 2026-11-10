@@ -45,6 +45,9 @@ bool modelPickerLists(World& world, const QString& name, bool listed);
 bool modelPickerShows(World& world, const QString& name, const QString& reason);
 // "the user chooses X": the row named X of the open model picker.
 bool modelPickerChooses(World& world, const QString& name);
+// "the user chooses it" while the model picker offers a provider's setup:
+// clicks that offer and returns true.
+bool modelPickerChoosesSetup(World& world);
 // "the conversation says X" while something is dragged over the composer's
 // conversation: checks that its drop hint says X and returns true. False
 // leaves the step to its own domain (the worktree setup card).
@@ -58,3 +61,11 @@ bool composerMessageReceived(World& world, const QString& text);
 bool connectSecondComposerEnvironment(World& world);
 // "the model picker is open" as an outcome: the picker of the composer on screen.
 bool modelPickerShownOpen(World& world);
+// The composer's model control (the model picker with the model's efforts
+// and options beside it), opened from its trigger when it is shut.
+QQuickItem* openModelControl(World& world);
+// The model control's part `objectName` once it is on screen
+// ("modelControlEffort:high", "modelPickerPermissions").
+QQuickItem* modelControlPart(World& world, const QString& objectName);
+// The open model control's effort rows, in order ("modelControlEffort:<id>").
+QList<QQuickItem*> modelControlEfforts(World& world);

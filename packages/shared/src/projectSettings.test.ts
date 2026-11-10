@@ -322,7 +322,9 @@ describe("resolveWorktreeCleanup", () => {
       },
     });
     expect(resolveWorktreeCleanup(off, projectId)).toEqual({
+      worktreeKeepWhen: "any-local-files",
       worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
       worktreeOnDelete: false,
       worktreeOnMerge: false,
       worktreeUnchanged: false,
@@ -355,7 +357,9 @@ describe("resolveWorktreeCleanup", () => {
       worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
     });
     expect(resolveWorktreeCleanup(edited, null)).toEqual({
+      worktreeKeepWhen: "any-local-files",
       worktreeAfterDays: 15,
+      worktreeSettledAfterDays: null,
       worktreeOnDelete: true,
       worktreeOnMerge: true,
       worktreeUnchanged: false,

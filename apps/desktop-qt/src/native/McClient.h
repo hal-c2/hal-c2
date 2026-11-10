@@ -62,6 +62,9 @@ public:
   // / "disconnected" when the socket was not there to carry it. A cluster
   // member the MC cannot reach is "<name> is not connected." (environmentNames).
   using Reply = std::function<void(const QJsonValue& result, const std::optional<QString>& error)>;
+  // Whether `error` says the MC could not reach the cluster member the call
+  // was for (the call never got there), however it was worded for the user.
+  static bool unreachable(const QString& error);
 
   explicit McClient(QObject* parent = nullptr);
   ~McClient() override;
@@ -150,7 +153,8 @@ public:
   void post(QObject* context, const QString& path, const QJsonObject& body, Reply reply);
   // POSTs `bytes` to a signed URL the MC handed out (`relativeUrl`, as
   // `attachments.createUploadUrl`'s): the URL is its own authorization.
-  void upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply);
+  void upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply,
+              std::function<void(qint64 sent, qint64 total)> progress = {});
   // GETs a signed URL the MC handed out (`assets.createUrl`'s `relativeUrl`)
   // and gives its bytes, or why it could not be read.
   using Bytes = std::function<void(const QByteArray& bytes, const std::optional<QString>& error)>;

@@ -2,6 +2,7 @@
 #   https://github.com/pingdotgg/t3code/pull/19336
 #   https://github.com/pingdotgg/t3code/pull/18168
 #   https://github.com/pingdotgg/t3code/pull/11368
+#   https://github.com/pingdotgg/t3code/pull/27760
 #   docs/user/usage.md (CLIProxyAPI hub)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources.ex (reading hubs, errors, refresh)
 #   apps/server-ex/lib/hal_c2/usage_limit_sources/cliproxy.ex (accounts, reset credit redemption)
@@ -35,6 +36,23 @@ Feature: Usage limit sources
     When a client reads the settings
     Then the settings hold only a marker in place of the key
     And saving the settings back with the marker keeps the key
+
+  # Upstream #27760: teams keeping credentials in 1Password had to paste the management key in.
+  @backlog @mc @shared
+  Scenario: A hub's management key can come from a secret provider
+    Given the 1Password secret provider "Work" is set up
+    When the user adds a hub whose management key is "op://vault/hub/key" in "Work"
+    Then settings keep only "Work" and the reference, shown to clients as written
+    And the MC reads the key through the reference each time it reads the hub
+    And refreshing secrets reads the key again
+
+  # Upstream #27760: an unreadable reference is reported, not sent as an empty key.
+  @backlog @mc
+  Scenario: A hub whose key reference cannot be read says so
+    Given a hub's management key is a reference to "Work", which cannot be read
+    When the MC reads its usage sources
+    Then the hub reports that its key could not be read from the secret provider
+    And the hub is not asked for anything with an empty key
 
   @mc
   Scenario: A hub that cannot be read keeps its place with an error

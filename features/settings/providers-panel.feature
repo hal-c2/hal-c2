@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29627
+#   https://github.com/pingdotgg/t3code/pull/26823
+#   https://github.com/pingdotgg/t3code/pull/23183
 #   https://github.com/pingdotgg/t3code/pull/20446
 #   https://github.com/pingdotgg/t3code/pull/17676
 #   https://github.com/pingdotgg/t3code/pull/19145
@@ -38,6 +41,11 @@
 #   https://github.com/pingdotgg/t3code/pull/25753
 #   https://github.com/pingdotgg/t3code/pull/25475
 #   https://github.com/pingdotgg/t3code/pull/21402
+#   https://github.com/pingdotgg/t3code/pull/27891
+#   https://github.com/pingdotgg/t3code/pull/23168
+#   https://github.com/pingdotgg/t3code/pull/29894
+#   https://github.com/pingdotgg/t3code/pull/28928
+#   https://github.com/pingdotgg/t3code/pull/29480
 
 Feature: Providers settings panel
   The Providers page lists the agent providers configured on one environment. The user adds
@@ -142,6 +150,28 @@ Feature: Providers settings panel
       Then the MC reads each provider's installation, sign-in and models again
       And every connected client receives the new provider list
 
+    # Upstream #29894: a probe of the old instance that finished after the user changed the
+    # provider replaced the new instance's status, and could bring back a removed provider.
+    @backlog @mc
+    Scenario Outline: A provider changed while it is refreshed keeps its new status
+      Given the user refreshed provider status and the "codex" check is still running
+      When the user <change> before the check finishes
+      Then <outcome>
+
+      Examples:
+        | change                     | outcome                                                     |
+        | changes its binary path    | "codex" shows the status read from the new binary path       |
+        | removes "codex"            | "codex" stays removed                                       |
+
+    # Upstream #29627: a refresh whose sign-in check finished first was overwritten by the
+    # "checking in the background" status the refresh started with, so no sign-in was offered.
+    @backlog @mc
+    Scenario: A refresh keeps the sign-in status its background check found
+      Given an ACP Registry agent that needs sign-in checks its sign-in in the background
+      When the user refreshes provider status and that check ends before the refresh does
+      Then the agent shows that it needs sign-in and offers to sign in
+      And it is not shown as available while still checking
+
     @desktop
     Scenario: The panel says when providers were last checked
       Given Codex was checked 10 minutes ago and Claude 2 minutes ago
@@ -169,6 +199,17 @@ Feature: Providers settings panel
       When the user adds a "Claude" provider labelled "Work"
       Then an instance with the id "claudeAgent_work" is listed
       And the user is told the instance was added
+
+    # Upstream #28928: the phone's Providers settings left Claude out, so another Claude config
+    # folder, already signed in on the machine, could not be added from the phone.
+    @backlog @mobile
+    Scenario: The phone adds, edits and removes Claude instances
+      Given a second Claude config folder is signed in on "Build box"
+      When the user adds a "Claude" provider labelled "Work" with that config folder on the phone
+      Then "Work" is listed among the Claude instances of "Build box"
+      And it can be picked in the model picker
+      And the user can edit it or remove it after confirming
+      And a phone session that may not manage providers is offered none of these
 
     @desktop
     Scenario: A taken instance id gets a number
@@ -628,6 +669,22 @@ Feature: Providers settings panel
       Then "OPENAI_KEY" asks for a new value instead of showing a stored secret
       And the secret stored for "API_KEY" is forgotten
 
+    # Upstream #23168: renaming a stored secret, or making it plain text, quietly emptied it and the
+    # provider lost its key. Upstream asks for a new value first; the passing scenario above
+    # still renames and forgets the secret until the desktop follows.
+    @backlog @shared @priority-high
+    Scenario Outline: A stored secret keeps its value until the user enters a new one
+      Given the instance keeps "API_KEY" as a stored secret
+      When the user tries to <change> without entering a new value
+      Then the user cannot until they enter a new value
+      And the user is told to enter a new value to rename it or make it plain text
+      And "API_KEY" still holds its stored value
+
+      Examples:
+        | change                     |
+        | rename it to "OPENAI_KEY"  |
+        | make it plain text         |
+
     # Upstream #20446: any provider setting entered like a password is treated as a secret.
     @backlog @mc @desktop @priority-high
     Scenario: A provider setting entered like a password is stored as a secret
@@ -662,6 +719,28 @@ Feature: Providers settings panel
     Scenario: Deleting an instance
       When the user deletes the "Claude Work" instance
       Then it is no longer listed
+
+    # Upstream #29480: the reset and delete buttons removed the instance's saved settings at once.
+    @backlog @shared
+    Scenario Outline: <Action> an instance asks before its saved settings go
+      Given <instance> has the binary path "/opt/custom/bin/codex"
+      When the user chooses to <action> it
+      Then the user is asked to confirm that its saved settings, the binary path included, will be removed
+      When the user cancels
+      Then <instance> keeps the binary path "/opt/custom/bin/codex"
+
+      Examples:
+        | Action    | action | instance                |
+        | Resetting | reset  | the built-in "codex"    |
+        | Deleting  | delete | the custom "Codex Work" |
+
+    # Upstream #29480: when resetting a provider that is off by default would turn it off, the
+    # confirmation says so.
+    @backlog @shared @priority-low
+    Scenario: Resetting a provider that is off by default says it will turn off
+      Given Antigravity, which is off by default, is turned on and edited
+      When the user chooses to reset it
+      Then the confirmation says Antigravity will be turned off
 
     @desktop
     Scenario: Deleting an instance whose managed files remain is reported
@@ -1111,6 +1190,13 @@ Feature: Providers settings panel
       Then clients are sent its newest line at most once a second
       And the line has no colour codes and is cut to 200 characters
 
+    # Upstream #26823: an updater redrawing its spinner in place had every frame joined into one long line.
+    @backlog @mc @priority-low
+    Scenario: An updater that redraws its line in place shows only the latest frame
+      Given a provider updater redraws "Upgrading" with a spinner by moving back to the start of the line
+      When the user updates that provider
+      Then the update shows only the latest frame, such as "Updating · Upgrading ⠋"
+
     @backlog @desktop @mobile
     Scenario: A failed provider update says why where the user started it
       Given updating "Claude" fails with "npm exited with status 1"
@@ -1208,6 +1294,20 @@ Feature: Providers settings panel
       Given Claude reports a model with fast mode, thinking and reasoning options
       When the user opens Claude's models
       Then that model is labelled "Fast mode", "Thinking" and "Reasoning"
+
+    # Upstream #27891: with nearly every model reasoning, the list labels the exception instead.
+    # Replaces the labels of the scenario above once the desktop carries it.
+    @backlog @desktop
+    Scenario Outline: Only a model without reasoning is labelled for it
+      Given Codex reports <model>
+      When the user opens Codex's models
+      Then <label>
+
+      Examples:
+        | model                                                                | label                                 |
+        | a built-in model with no reasoning levels beside ones that have them | that model is labelled "No reasoning" |
+        | a built-in model with reasoning levels                               | it has no reasoning label             |
+        | a custom model, or the provider's own default alias                  | it has no reasoning label             |
 
     @desktop
     Scenario: A long models list can be filtered and counted
@@ -1377,3 +1477,13 @@ Feature: Providers settings panel
     When the user presses Update all next to Refresh
     Then each outdated provider is updated on each connected environment
     And a machine that refuses shows as a failure line without stopping the rest
+
+  # Upstream #23183: Update all and the sidebar's update summary counted environments whose
+  # session may not manage providers, and the update then failed for a missing scope.
+  @backlog @shared
+  Scenario: Update all leaves out environments the user may not manage providers on
+    Given "laptop" and "server" both have an outdated Codex
+    And the user's session on "server" may not manage providers
+    Then Update all and the update summary count only the Codex on "laptop"
+    When the user presses Update all next to Refresh
+    Then only "laptop" is asked to update Codex

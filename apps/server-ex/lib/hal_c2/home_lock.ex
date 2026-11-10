@@ -48,6 +48,30 @@ defmodule HalC2.HomeLock do
     end
   end
 
+  @doc """
+  Runs `fun` holding the home's lock and lets it go after, as a tool that must have
+  the home to itself does (`HalC2.Doctor`): `{:error, :held}` while an MC holds it,
+  this node included.
+  """
+  # The lock's path is the home's, from this MC's configuration or the operator's command.
+  # sobelow_skip ["Traversal.FileModule"]
+  def with_lock(path \\ path(), fun) do
+    File.mkdir_p!(Path.dirname(path))
+
+    case if(held?(path), do: :held, else: try_lock(path)) do
+      {:ok, db} ->
+        try do
+          fun.()
+        after
+          # Closing the connection rolls the transaction back, which lets go of the lock.
+          Sqlite3.close(db)
+        end
+
+      :held ->
+        {:error, :held}
+    end
+  end
+
   @doc "Whether this node holds the lock at `path`."
   def held?(path \\ path()), do: :persistent_term.get({__MODULE__, path}, nil) != nil
 

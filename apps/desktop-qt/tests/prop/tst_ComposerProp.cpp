@@ -1,13 +1,19 @@
 // The composer as the user drives it across threads and a new thread's draft,
 // against a fake MC that accepts, refuses or holds each send
 // (ComposerController, DraftController): typing, images, the model and
-// permissions picked, sends and follow-ups while a turn runs, the stash, the
+// permissions picked, sends and follow-ups while a turn runs, the stash (and a
+// stash that cannot be written), the
 // connection dropping and the app restarting, with sends in flight that the MC
 // did or did not get: each reaches the thread once or comes back to its draft,
 // unless a newer user message is in the thread by then. A thread names no
 // provider until the MC records one, and a model of another provider than the
 // one it names moves the thread to it; a thread naming none is not moved. The
 // interaction mode picked goes before the message, and a provider change between.
+// A model picked for a thread is the thread's own again once the thread runs
+// it, so a model recorded later from elsewhere shows.
+// A thread holds a provider session per instance it ran on, steering or
+// not, and a switch keeps the old one: only the current instance's session
+// decides whether a follow-up steers or queues.
 // A Space page's prompt keeps a draft of its own: plain words write a block,
 // and words starting with @agent ask an agent, which the MC takes, refuses or
 // holds; a refused ask keeps every word and image. A Space's images have a
@@ -31,6 +37,7 @@
 #include "SpaceController.h"
 #include "ThreadStore.h"
 #include "TimelineModel.h"
+#include "SlowRequestController.h"
 #include "ToastController.h"
 
 namespace prop = halc2::prop;
@@ -84,6 +91,9 @@ struct Target {
   QString model;  // picked, else the default
   int pending = 0;  // of a page's images, the first ones, those its ask on its way carries
   QString interaction;  // the interaction mode picked, else the thread's
+  // The draft's model and interaction came with a new thread, not from a pick
+  // here, so the next new thread brings its own.
+  bool carried = false;
 };
 
 // A page's ask whose answer the MC holds; whether it will refuse it.
@@ -153,6 +163,9 @@ struct Model {
   QMap<QString, QString> recorded;
   // Each thread's interaction mode at the MC, default until a change reaches it.
   QMap<QString, QString> interactions;
+  // Each thread's provider sessions, by instance: whether each steers. A
+  // switch keeps the old instance's session beside the new one's.
+  QMap<QString, QMap<QString, bool>> sessions;
   // The sends a restart or a drop cut off that the MC never got, by thread,
   // until the thread is open again.
   QMap<QString, QList<Send>> limbo;
@@ -199,6 +212,24 @@ struct Model {
   QString provider(const QString& thread) const {
     const QString model = recorded.value(thread);
     return model.isEmpty() ? QString() : instanceOf(model);
+  }
+  // Whether a follow-up can steer the running turn: the session of the
+  // instance the thread names decides, an old instance's does not. A thread
+  // naming none is bound by every session it holds.
+  bool canSteer(const QString& thread) const {
+    const QString instance = provider(thread);
+    for (auto it = sessions.value(thread).cbegin(); it != sessions.value(thread).cend(); ++it) {
+      if (!instance.isEmpty() && it.key() != instance) continue;
+      if (!it.value()) return false;
+    }
+    return true;
+  }
+  // A thread's pick that the thread now runs is its own again, so a later
+  // change from elsewhere shows.
+  void settle(const QString& thread) {
+    if (!isThread(thread) || !targets.contains(thread)) return;
+    Target& target = targets[thread];
+    if (!target.model.isEmpty() && target.model == recorded.value(thread)) target.model.clear();
   }
   QString selected(const QString& target) const {
     const QString picked = targets.value(target).model;
@@ -266,7 +297,10 @@ void answerPick(Model& m, const HeldPick& pick) {
 // and a mode change sets its mode.
 void took(Model& m, const QString& thread, const QStringList& commands) {
   for (const QString& command : commands) {
-    if (command.startsWith(QLatin1String("provider|"))) m.recorded[thread] = command.section(u'|', 2);
+    if (command.startsWith(QLatin1String("provider|"))) {
+      m.recorded[thread] = command.section(u'|', 2);
+      m.settle(thread);
+    }
     if (command.startsWith(QLatin1String("interaction|"))) m.interactions[thread] = command.section(u'|', 1);
   }
 }
@@ -444,6 +478,8 @@ struct Sut {
   int edit = 0;
   // Each thread's user messages, as its stream sends them, and the stream's offset.
   QMap<QString, QList<QJsonObject>> messages;
+  // Each thread's provider sessions, as its stream sends them.
+  QMap<QString, QList<QJsonObject>> sessions;
   int seq = 0;
   // While set, the MC is slow to send threads: each `sub` to one waits here.
   bool slow = false;
@@ -609,6 +645,9 @@ struct Sut {
     for (const QJsonObject& message : messages.value(shape.value(QLatin1String("stream")).toString())) {
       rows.append(QJsonArray{QStringLiteral("message"), message.value(QLatin1String("id")), message});
     }
+    for (const QJsonObject& session : sessions.value(shape.value(QLatin1String("stream")).toString())) {
+      rows.append(QJsonArray{QStringLiteral("provider-session"), session.value(QLatin1String("id")), session});
+    }
     mc.send({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("id"), id}, {QStringLiteral("part"), 0},
              {QStringLiteral("rows"), rows}, {QStringLiteral("done"), true}, {QStringLiteral("offset"), seq},
              {QStringLiteral("floor"), QJsonValue::Null}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
@@ -681,6 +720,8 @@ struct Sut {
     native->controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("config/preferences.json")));
     // Toasts stay until the user closes them.
     native->controller<ToastController>()->setClock([] { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); });
+    // A request the MC holds through a slow run is never "slow": that warning's toast is not the composer's.
+    native->controller<SlowRequestController>()->setClock([] { return QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC); });
     // The blocks a page's prompt writes, which SpacePage would put on the page.
     QObject::connect(bridge.get(), &ShellBridge::actionRequested, [this](const QString& action, const QVariant& payload) {
       if (action != QLatin1String("space.prompt.write")) return;
@@ -707,6 +748,31 @@ struct Sut {
       mc.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), sub}, {QStringLiteral("offset"), seq},
                {QStringLiteral("events"), QJsonArray{QJsonArray{seq, QStringLiteral("message"), id,
                                                                 QJsonObject{{QStringLiteral("s"), message}}, at}}}});
+    }
+  }
+
+  // A provider session reaches the thread, replacing its instance's own, and
+  // whoever follows the thread hears.
+  void addSession(const QString& thread, const QString& instance, bool steers) {
+    ++seq;
+    const QString at = QDateTime(QDate(2026, 9, 23), QTime(10, 0), QTimeZone::UTC).addSecs(seq).toString(Qt::ISODateWithMs);
+    const QJsonObject session{
+        {QStringLiteral("id"), QStringLiteral("provider-session:%1:%2").arg(instance, thread)},
+        {QStringLiteral("providerInstanceId"), instance},
+        {QStringLiteral("status"), QStringLiteral("ready")},
+        {QStringLiteral("capabilities"),
+         QJsonObject{{QStringLiteral("turns"), QJsonObject{{QStringLiteral("supportsActiveSteering"), steers}}}}}};
+    QList<QJsonObject>& held = sessions[thread];
+    held.removeIf([&](const QJsonObject& other) { return other.value(QLatin1String("id")) == session.value(QLatin1String("id")); });
+    held.append(session);
+    if (!mc.connected()) return;
+    for (const int sub : mc.subscribers(QStringLiteral("stream"))) {
+      if (mc.shapeOf(sub).value(QLatin1String("stream")).toString() != thread) continue;
+      if (std::any_of(waiting.cbegin(), waiting.cend(), [sub](const auto& wait) { return wait.first == sub; })) continue;
+      mc.send({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("id"), sub}, {QStringLiteral("offset"), seq},
+               {QStringLiteral("events"), QJsonArray{QJsonArray{seq, QStringLiteral("provider-session"),
+                                                                session.value(QLatin1String("id")),
+                                                                QJsonObject{{QStringLiteral("s"), session}}, at}}}});
     }
   }
 
@@ -884,6 +950,17 @@ void verify(const Model& m, Sut& sut) {
   if (m.isThread(m.open)) {
     RC_ASSERT(shown.value(QStringLiteral("runtimeMode")).toString() == m.runtime(m.open));
     RC_ASSERT(shown.value(QStringLiteral("interactionMode")).toString() == m.interaction(m.open));
+    // Its sessions are known once its stream is: only the current
+    // instance's decides whether a follow-up can steer.
+    if (m.loaded.contains(m.open)) {
+      RC_ASSERT(prop::until([&] {
+        return sut.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("canSteer")).toBool() ==
+               m.canSteer(m.open);
+      }));
+    }
+  }
+  if (m.open == kDraft) {
+    RC_ASSERT(shown.value(QStringLiteral("interactionMode")).toString() == (m.targets.value(kDraft).interaction.isEmpty() ? QStringLiteral("default") : m.targets.value(kDraft).interaction));
   }
   QList<bool> toasts;
   for (const Toast& toast : m.toasts) toasts.append(toast.restore);
@@ -963,7 +1040,12 @@ struct RemoveImage : Command {
 
 struct PickModel : Command {
   QString model = pick(kModels);
-  void apply(Model& m) const override { m.targets[m.open].model = model; }
+  void apply(Model& m) const override {
+    Target& target = m.targets[m.open];
+    target.model = model;
+    target.carried = false;
+    m.settle(m.open);
+  }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.model.select"),
                          QVariantMap{{QStringLiteral("instanceId"), instanceOf(model)}, {QStringLiteral("model"), model}});
@@ -972,19 +1054,58 @@ struct PickModel : Command {
   void show(std::ostream& os) const override { os << "PickModel(" << model.toStdString() << ")"; }
 };
 
-// Plan or default for the open thread's next sends: it goes to the MC with the
-// next message, before it.
+// Plan or default for the open thread's next sends (it goes to the MC with the
+// next message, before it), or the draft's first.
 struct PickInteraction : Command {
   QString mode = pick(kInteractionModes);
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open)); }
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open) || m.open == kDraft); }
   void apply(Model& m) const override {
-    if (mode != m.interaction(m.open)) m.targets[m.open].interaction = mode;
+    if (mode == m.interaction(m.open)) return;
+    Target& target = m.targets[m.open];
+    target.interaction = mode;
+    target.carried = false;
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "PickInteraction(" << mode.toStdString() << ")"; }
+};
+
+// New thread from an open thread: the project's draft opens again. A draft
+// with nothing of its own (just made after the user discarded the last one,
+// never written or picked in, or holding only what the last new thread
+// brought) takes the thread's interaction mode and model (the project names
+// no default here); one the user wrote in or picked in keeps its own.
+struct NewThread : Command {
+  bool fresh = *rc::gen::arbitrary<bool>();
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.isThread(m.open) && m.loaded.contains(m.open));
+    RC_PRE(!m.lagging);
+  }
+  void apply(Model& m) const override {
+    const QString from = m.open;
+    m.open = kDraft;
+    const Target kept = m.targets.value(kDraft);
+    const bool own = !kept.carried && (!kept.model.isEmpty() || !kept.interaction.isEmpty());
+    if (!fresh && (!kept.text.isEmpty() || kept.images > 0 || own)) return;
+    Target draft;
+    draft.carried = true;
+    draft.interaction = m.interaction(from);
+    const QString picked = m.targets.value(from).model;
+    draft.model = picked.isEmpty() ? m.recorded.value(from) : picked;
+    m.targets[kDraft] = draft;
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    auto* drafts = sut.native->controller<DraftController>();
+    if (fresh) drafts->remove(sut.draftId);
+    sut.bridge->dispatch(QStringLiteral("thread.new"), QVariantMap{});
+    const QString opened = sut.native->controller<NavigationController>()->route().draftId;
+    RC_ASSERT((opened != sut.draftId) == fresh);
+    sut.draftId = opened;
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "NewThread(" << (fresh ? "after the draft was discarded" : "the project's draft again") << ")"; }
 };
 
 // The MC records a model for a thread after its sends, as it does when a run
@@ -997,7 +1118,10 @@ struct Recorded : Command {
   void checkPreconditions(const Model& m) const override {
     RC_PRE(!m.lagging && !m.queues.contains(thread) && !m.limbo.contains(thread));
   }
-  void apply(Model& m) const override { m.recorded[thread] = model; }
+  void apply(Model& m) const override {
+    m.recorded[thread] = model;
+    m.settle(thread);
+  }
   void run(const Model& m0, Sut& sut) const override {
     QJsonObject row = sut.mc.threads.value(thread);
     row.insert(QStringLiteral("modelSelection"), Sut::selectionOf(model));
@@ -1082,8 +1206,8 @@ struct Submit : Command {
     Target& target = m.targets[m.open];
     if (target.text.trimmed().isEmpty() && target.images == 0) return;
     const QString delivery = !m.running.contains(m.open) ? QStringLiteral("auto")
-                             : alternate                  ? QStringLiteral("queue")
-                                                          : QStringLiteral("steer");
+                             : alternate || !m.canSteer(m.open) ? QStringLiteral("queue")
+                                                                : QStringLiteral("steer");
     QList<Send>& queue = m.queues[m.open];
     Send send{target.text, target.images, m.selected(m.open), delivery};
     // Only a thread that names a provider is moved off it.
@@ -1157,6 +1281,29 @@ struct Stash : Command {
   void show(std::ostream& os) const override { os << "Stash"; }
 };
 
+// The stash cannot be written (its file is a folder for the moment): the
+// prompt stays in the composer, the stash and the file as they were, and an
+// error toast says so.
+struct StashUnwritable : Command {
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.open != kImages);
+    const Target& target = m.targets.value(m.open);
+    RC_PRE(!target.text.trimmed().isEmpty() || target.images > 0);
+  }
+  void apply(Model& m) const override { m.toasts.prepend({m.open, QString()}); }
+  void run(const Model& m0, Sut& sut) const override {
+    const QString path = sut.home.filePath(QStringLiteral("data/shell-composer.json"));
+    const QString aside = path + QStringLiteral(".aside");
+    const bool kept = QFile::rename(path, aside);
+    RC_ASSERT(QDir().mkpath(path));
+    sut.bridge->dispatch(QStringLiteral("composer.stash"));
+    RC_ASSERT(QDir(path).removeRecursively());
+    if (kept) RC_ASSERT(QFile::rename(aside, path));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "StashUnwritable"; }
+};
+
 // "Restore prompt" on the newest toast offering it: the prompt comes back
 // into its thread's draft if that is empty, and the thread opens.
 struct RestorePrompt : Command {
@@ -1212,6 +1359,24 @@ struct SetRunning : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "SetRunning(" << thread.toStdString() << ", " << on << ")"; }
+};
+
+// A provider session for the thread, of its own instance, another's it ran
+// on before a switch, or a third's: only its own instance's decides steering.
+struct Session : Command {
+  QString thread = pick(kThreads);
+  QString instance = pick(QStringList{QStringLiteral("codex"), QStringLiteral("claudeAgent"), QStringLiteral("antigravity")});
+  bool steers = *rc::gen::arbitrary<bool>();
+  // One still on its way in would decide a send the composer has not seen it for.
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.waiting.contains(thread)); }
+  void apply(Model& m) const override { m.sessions[thread][instance] = steers; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.addSession(thread, instance, steers);
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override {
+    os << "Session(" << thread.toStdString() << ", " << instance.toStdString() << ", " << steers << ")";
+  }
 };
 
 // The MC's rows start to lag behind its answers.
@@ -1553,9 +1718,9 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.4, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, Open, Type, Type, Type, Attach, RemoveImage, PickModel, PickRuntime,
-                                                   PickInteraction, Submit, Submit, Submit, Stash, RestorePrompt, SetRunning,
-                                                   SetRunning, Hold, Refuse, AnswerHeld, Drop, Hold, Elsewhere, Restart, Slow,
-                                                   Load, Recorded>()));
+                                                   PickInteraction, Submit, Submit, Submit, Stash, StashUnwritable, RestorePrompt,
+                                                   SetRunning, SetRunning, Session, Session, Hold, Refuse, AnswerHeld, Drop, Hold,
+                                                   Elsewhere, Restart, Slow, Load, Recorded, NewThread>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
@@ -1632,7 +1797,8 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, PickModel, PickModel, PickModel, PickInteraction, Prompt, Prompt, Prompt,
-                                                   SetRunning, Hold, AnswerHeld, Refuse, Restart, Drop, Recorded, Recorded>()));
+                                                   SetRunning, Session, Session, Hold, AnswerHeld, Refuse, Restart, Drop, Recorded,
+                                                   Recorded>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

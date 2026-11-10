@@ -23,7 +23,14 @@ defmodule HalC2.Plugins.Package do
     "threads:create" => "Start threads that run agents",
     "threads:organize" =>
       "Settle and stop threads it started, and show or hide them in the thread list",
-    "agentTools" => "Offer tools to agents"
+    "agentTools" => "Offer tools to agents",
+    "turns:observe" =>
+      "See what agents do in every thread: the tools they call, what those return, and the tokens turns use",
+    "runs:shape" =>
+      "Add context to agents starting a new conversation, and turn some of their tools off",
+    "threads:steer" => "Send messages to agents while they work",
+    "threads:notice" => "Show notices in threads, with a button to stop the agent",
+    "textGeneration" => "Ask your text generation model to write for it"
   }
 
   @setting_types ~w(text longText secret boolean number choice list object)
@@ -56,7 +63,8 @@ defmodule HalC2.Plugins.Package do
             "permissions" => {:list, {:map, %{"id" => :text, "reason" => :text}, %{}}},
             "settings" =>
               {:list, {:map, %{"key" => :text}, %{"label" => :text, "description" => :string}}},
-            "contributes" => @contributes
+            "contributes" => @contributes,
+            "threadsStay" => :bool
           }}
   # `PackagePath`'s pattern: never absolute, never `..`.
   @path ~r/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[\w.\/-]+$/
@@ -97,6 +105,136 @@ defmodule HalC2.Plugins.Package do
   end
 
   @doc """
+  Whether the package `id` installed here declares that its threads never leave the
+  machine (`"threadsStay"` in its `plugin.json`). It is read from the package on disk,
+  so it holds with the plugin off and with no plugin host running (an export from the
+  command line); a plugin that is not installed declares nothing. `HalC2.Plugins.threads_stay?/1`
+  also asks the version loaded.
+
+  It fails closed: a package that is there (its directory, or the copy set aside) but
+  whose `plugin.json` is missing, unreadable, not valid JSON or not a JSON object is
+  taken to declare it, since the declaration cannot be read and a thread from before
+  the mark would otherwise leave when the plugin host starts with the manifest broken.
+  Its threads stay until the manifest is fixed or the package is uninstalled.
+
+  While `replace/3` replaces the package, which takes two renames (`aside_dir/2`), the
+  manifest moved aside speaks for it. The installed package is
+  read, then the one aside, then the installed one again: absent at the first read,
+  the package was aside then, and absent aside too, the replacement is in place by
+  the next read. A few rounds cover installs one after another.
+  """
+  def threads_stay?(id) when is_binary(id) do
+    if Regex.match?(~r/\A[\w.-]+\z/, id) and id not in [".", ".."] do
+      plugins = Path.join(HalC2.Paths.data_dir(), "plugins")
+      declared(Path.join(plugins, id), aside_dir(plugins, id), 3)
+    else
+      false
+    end
+  end
+
+  def threads_stay?(_id), do: false
+
+  defp declared(installed, aside, rounds) do
+    case manifest_at(installed) do
+      :absent -> declared_aside(installed, aside, rounds)
+      found -> stays?(found)
+    end
+  end
+
+  defp declared_aside(installed, aside, rounds) do
+    case manifest_at(aside) do
+      :absent when rounds > 1 -> declared(installed, aside, rounds - 1)
+      :absent -> false
+      found -> stays?(found)
+    end
+  end
+
+  # Only a `threadsStay` that is absent or `false` frees the threads. Any other value fails
+  # the manifest's validation, and like an unreadable manifest it keeps them where they are.
+  defp stays?({:ok, json}), do: Map.get(json, "threadsStay", false) != false
+  defp stays?(:unreadable), do: true
+
+  # The manifest of the package at `dir`: `:absent` when there is no such package, and
+  # `:unreadable` when there is one whose manifest says nothing, or when the disk cannot
+  # say whether there is one (the plugins directory cannot be read, say).
+  defp manifest_at(dir) do
+    with :present <- presence(dir) do
+      with {:ok, text} <- File.read(Path.join(dir, "plugin.json")),
+           {:ok, %{} = json} <- JSON.decode(text),
+           do: {:ok, json},
+           else: (_ -> with(:present <- presence(dir), do: :unreadable))
+    end
+  end
+
+  defp presence(dir) do
+    case File.lstat(dir) do
+      {:ok, _} -> :present
+      {:error, reason} when reason in [:enoent, :enotdir] -> :absent
+      {:error, _} -> :unreadable
+    end
+  end
+
+  @doc """
+  Where `replace/3` copies a new version of package `id` before it goes into `plugins`, beside that directory, where a scan does not see it.
+  """
+  def staged_dir(plugins, id), do: Path.join(Path.dirname(plugins), ".plugin-#{id}.partial")
+
+  @doc """
+  Where `replace/3` moves the installed package `id` aside, between
+  renaming it away and renaming its replacement (`staged_dir/2`) into its place, and
+  then removes it. `threads_stay?/1` reads it.
+  """
+  def aside_dir(plugins, id), do: Path.join(Path.dirname(plugins), ".plugin-#{id}.old")
+
+  @doc """
+  Replaces package `id` in `plugins` with the one `fill` writes into the directory it is
+  given (`staged_dir/2`), or installs it there, as `mix hal_c2.plugins.install` does: the
+  installed package goes aside (`aside_dir/2`), the new one into its place, and the one
+  aside is removed.
+
+  Cut off at any point (a crash, a kill, a full disk), it leaves the package installed
+  or aside, so `threads_stay?/1` always has a manifest to read and a plugin's threads
+  never read as those of a plugin that was uninstalled. An install cut off between its
+  two renames left the package aside with nothing in its place: the next one puts it
+  back before it stages, and removes what is aside only with a package in place.
+  """
+  def replace(plugins, id, fill) do
+    staged = staged_dir(plugins, id)
+    aside = aside_dir(plugins, id)
+    target = Path.join(plugins, id)
+
+    if presence(target) == :absent, do: put_back(aside, target)
+    File.rm_rf!(staged)
+    if presence(target) == :present, do: File.rm_rf!(aside)
+
+    fill.(staged)
+
+    if presence(target) == :present, do: File.rename!(target, aside)
+    File.rename!(staged, target)
+    File.rm_rf!(aside)
+    :ok
+  end
+
+  # Nothing aside is a first install. Any other failure stops the install with the
+  # package still aside, where `threads_stay?/1` reads it.
+  defp put_back(aside, target) do
+    case File.rename(aside, target) do
+      :ok ->
+        :ok
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        raise File.RenameError,
+          reason: reason,
+          action: "rename",
+          source: aside,
+          destination: target
+    end
+  end
+
+  @doc """
   A file of the package at `dir` as `PluginFileResult` fields, or an error when the
   path leaves the package or names no file.
   """
@@ -126,16 +264,22 @@ defmodule HalC2.Plugins.Package do
 
   @doc """
   Copies the package at `dir` to `to`: the files it can serve, without its `.git`
-  checkout or what a link in it leads to outside it.
+  checkout or what a link in it leads to outside it. A file it cannot copy (one an
+  install removed meanwhile, or one it cannot read) is `{:error, message}`.
   """
   def copy(dir, to) do
-    for file <- files(dir) do
-      target = Path.join(to, Path.relative_to(file, dir))
-      File.mkdir_p!(Path.dirname(target))
-      File.cp!(file, target)
-    end
+    Enum.reduce_while(files(dir), :ok, fn file, :ok ->
+      path = Path.relative_to(file, dir)
+      target = Path.join(to, path)
 
-    :ok
+      with :ok <- File.mkdir_p(Path.dirname(target)),
+           :ok <- File.cp(file, target) do
+        {:cont, :ok}
+      else
+        {:error, reason} ->
+          {:halt, {:error, "#{path} could not be copied: #{:file.format_error(reason)}"}}
+      end
+    end)
   end
 
   # The files the package can serve. Hidden files count; a `.git` checkout of the
@@ -155,9 +299,19 @@ defmodule HalC2.Plugins.Package do
     |> Enum.reduce(:crypto.hash_init(:sha256), fn file, acc ->
       acc
       |> :crypto.hash_update(Path.relative_to(file, dir))
-      |> :crypto.hash_update(File.read!(file))
+      |> :crypto.hash_update(contents(file))
     end)
     |> :crypto.hash_final()
+  end
+
+  # A file that cannot be read (gone since the listing, as when an install replaces the
+  # package under a scan) hashes as its error, so the next scan reads it again. A file
+  # that can hashes as it always did: an upgrade leaves the packages' hashes as they were.
+  defp contents(file) do
+    case File.read(file) do
+      {:ok, bytes} -> bytes
+      {:error, reason} -> "\0could not be read: #{reason}"
+    end
   end
 
   defp decode(text) do
@@ -246,6 +400,8 @@ defmodule HalC2.Plugins.Package do
 
   defp misshapen(value, :string, _at) when is_binary(value), do: nil
   defp misshapen(value, :int, _at) when is_integer(value), do: nil
+  defp misshapen(value, :bool, _at) when is_boolean(value), do: nil
+  defp misshapen(_value, :bool, at), do: "#{at} must be true or false"
   defp misshapen(_value, {:map, _, _}, at), do: "#{at} must be an object"
   defp misshapen(_value, {:list, _}, at), do: "#{at} must be a list"
   defp misshapen(_value, :int, at), do: "#{at} must be a whole number"

@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26195
+#   https://github.com/pingdotgg/t3code/pull/27327
+#   https://github.com/pingdotgg/t3code/pull/26112
 #   https://github.com/pingdotgg/t3code/pull/24610
 #   https://github.com/pingdotgg/t3code/pull/15163
 #   https://github.com/pingdotgg/t3code/pull/20808
@@ -51,6 +54,18 @@
 #   https://github.com/pingdotgg/t3code/pull/24760
 #   https://github.com/pingdotgg/t3code/pull/24723
 #   https://github.com/pingdotgg/t3code/pull/25636
+#   https://github.com/pingdotgg/t3code/pull/25284
+#   https://github.com/pingdotgg/t3code/pull/21039
+#   https://github.com/pingdotgg/t3code/pull/26387
+#   https://github.com/pingdotgg/t3code/pull/26391
+#   https://github.com/pingdotgg/t3code/pull/26463
+#   https://github.com/pingdotgg/t3code/pull/26392
+#   https://github.com/pingdotgg/t3code/pull/28169
+#   https://github.com/pingdotgg/t3code/pull/28179
+#   https://github.com/pingdotgg/t3code/pull/28605
+#   https://github.com/pingdotgg/t3code/pull/22887
+#   https://github.com/pingdotgg/t3code/pull/31269
+#   https://github.com/pingdotgg/t3code/pull/27231
 
 Feature: The thread list
   The thread list shows every thread the user can act on, grouped by how much attention
@@ -71,6 +86,16 @@ Feature: The thread list
     When the user looks at the thread list
     Then "Beta" is listed above "Alpha"
 
+  # Upstream #27231: opening Settled with two or more projects in the project filter made the list
+  # loop until the app crashed, and it crashed again on every start since the shelf stayed open.
+  @backlog @desktop @mobile @priority-high
+  Scenario: The settled section opens with several projects filtered
+    Given the project filter holds "shop" and "docs"
+    And "docs" has only settled threads older than the rest of the list
+    When the user opens the settled section
+    Then the settled threads of "shop" and "docs" are listed
+    And the list stays still
+
   @desktop @mobile @backlog-mobile
   Scenario: Settled threads are listed by when they settled
     Given "Alpha" settled after "Beta"
@@ -84,7 +109,7 @@ Feature: The thread list
     When the user looks at the settled section
     Then the rows for "Alpha" and "Beta" count their ages from when they settled
 
-  @desktop @tui
+  @desktop @tui @backlog-desktop
   Scenario: Collapsing and expanding a shelf
     Given the settled section is expanded
     When the user collapses the settled section
@@ -135,13 +160,14 @@ Feature: The thread list
 
   # Upstream #24723: a first connect sent every settled thread, 93% of the snapshot, though
   # they sit in a collapsed shelf; older ones now come on demand.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A first connect brings only the newest settled threads
     Given "shop" has 900 settled threads, one of them pinned and one snoozed
     When a client connects for the first time
     Then it is sent the 25 newest settled threads and the pinned and snoozed ones
     And it is told how many settled threads of "shop" were left out
 
+  # Upstream #24723: the settled shelf's label counts the threads a connect left out, and they load a page at a time.
   @backlog @shared
   Scenario: The settled section counts and pages the threads a connect left out
     Given a client was sent 25 of the 900 settled threads of "shop"
@@ -149,12 +175,14 @@ Feature: The thread list
     When the user shows more settled threads
     Then the next 25 older settled threads are read from the MC and listed below the others
 
+  # Upstream #24723: a search that matches an older settled thread brings it in with its family.
   @backlog @shared
   Scenario: Search finds settled threads a connect left out
     Given a client was not sent the older settled thread "Old billing fix"
     When the user searches threads for "billing"
     Then "Old billing fix" is among the results
 
+  # Upstream #24723: opening an old thread (link, notification, search) brings in that thread's family.
   @backlog @shared
   Scenario: A link to a settled thread a connect left out opens it
     Given a client was not sent the older settled thread "Old billing fix"
@@ -225,7 +253,7 @@ Feature: The thread list
     When the user opens "Review 1"
     Then "Review 1" is among the settled threads
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: Moving through the list with the keyboard
     Given the thread list has keyboard focus on "Beta"
     When the user presses <key>
@@ -240,13 +268,13 @@ Feature: The thread list
       | Enter     | "Beta" opens                |
       | Shift+F10 | the menu for "Beta" opens   |
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Enter on a shelf header folds the shelf
     Given the thread list has keyboard focus on the settled section header
     When the user presses Enter
     Then the settled section collapses
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: A thread row keeps its place while the list updates
     Given the user is pointing at "Beta"
     When the list is republished with a new thread above "Beta"
@@ -270,7 +298,7 @@ Feature: The thread list
     When the user scopes the thread list to all projects
     Then threads from "shop" and "docs" are listed
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario: Adding a project from the thread list
     When the user adds a project from the thread list
     Then the user can choose a project to add
@@ -282,7 +310,7 @@ Feature: The thread list
     When the user shows the thread list
     Then the thread list is back
 
-  @desktop
+  @desktop @backlog-desktop
   Scenario Outline: Empty thread lists explain themselves
     Given <state>
     When the user looks at the thread list
@@ -293,7 +321,7 @@ Feature: The thread list
       | state                                 | message              |
       | the environment has not published yet | Waiting for the app… |
       | the environment has no projects       | No projects yet      |
-      | the scoped project has no threads     | No threads yet       |
+      | no project has threads                | No threads yet       |
 
   @desktop @mobile @backlog-mobile
   Scenario: Projects are ordered by recent use unless arranged by hand
@@ -324,6 +352,17 @@ Feature: The thread list
     Given the user held the thread jump modifier and let go
     When the user holds it again
     Then the jump numbers show only after the same short delay
+
+  # Upstream #26112: the hint floated between the time and the provider icon, its ⌘ drawn too
+  # small to read.
+  @backlog @desktop @priority-low
+  Scenario: A jump hint takes the row's status place while the modifier is held
+    Given the user hovers a thread that is working
+    When the user holds the thread jump modifier
+    Then the row's status and its hover actions give way to its jump number, drawn like other shortcut hints
+    And a long hint shortens the project name rather than covering it
+    When the user lets go
+    Then the row shows its status and hover actions again
 
   @desktop @mobile @backlog-mobile @priority-high
   Scenario: The list catches up after a reconnect
@@ -404,6 +443,39 @@ Feature: The thread list
     Then only the projects matching "doc" are offered
     And the choice to show all projects is not offered
 
+  # Upstream #27327: the list kept its old scroll, so narrowing landed on a project's oldest
+  # threads and widening back landed mid-list.
+  @backlog @desktop
+  Scenario Outline: Changing the project filter starts the list at the top
+    Given the user scrolled to the bottom of the thread list
+    When the user <changes> the project filter
+    Then the list shows its first threads
+
+    Examples:
+      | changes                                         |
+      | picks "Alpha" in                                |
+      | shift-clicks "Alpha" in                         |
+      | chooses "Filter by project" on a thread to set  |
+
+  # Upstream #27327
+  @backlog @desktop @priority-low
+  Scenario: Opening a thread outside the project filter still scrolls to that thread
+    Given the thread list is filtered to "Alpha"
+    When the user opens a thread of "Beta" from a link
+    Then the list widens to show "Beta" and scrolls to that thread
+
+  # Upstream #28605: a pick put focus back on the filter, lighting its focus ring and tooltip.
+  @backlog @desktop
+  Scenario Outline: Choosing in the project filter returns the focus only when the keyboard closed it
+    When the user <how>
+    Then the focus <where>
+
+    Examples:
+      | how                                           | where                         |
+      | picks a project in the filter with the pointer | is not put back on the filter |
+      | picks a project in the filter with Enter       | is back on the filter         |
+      | closes the project filter with Escape          | is back on the filter         |
+
   @backlog @desktop
   Scenario: A project filter search that matches nothing says so
     When the user opens the project filter and types "zzz"
@@ -440,13 +512,13 @@ Feature: The thread list
     Then the filter closes
     And the settings for "docs" open
 
-  @backlog @desktop
+  @desktop
   Scenario: The project filter is remembered across restarts
     Given the user scoped the list to "docs"
     When the user restarts the app
     Then the list is scoped to "docs"
 
-  @backlog @desktop
+  @desktop
   Scenario: A remembered project filter waits until every environment has reported
     Given the user scoped the list to "docs" before closing the app
     When the app starts and the environment "work" has not reported its projects yet
@@ -454,11 +526,52 @@ Feature: The thread list
     When every environment has reported and "docs" is gone
     Then the list shows every project
 
+  # Upstream #28179: with the local environment turned off the projects never counted as
+  # reported, so a filter on a deleted project stayed with nothing selected.
   @backlog @desktop
+  Scenario: A remembered filter on a deleted project is dropped with the local environment off
+    Given the local environment is turned off and the app uses only remote environments
+    And the user scoped the list to "docs" before closing the app
+    When the app starts, every remote environment reports and "docs" is gone
+    Then the list shows every project
+    And the project filter shows all projects as chosen
+
+  @desktop
   Scenario: Leaving the thread list for settings keeps the project filter
     Given the user scoped the list to "docs"
     When the user opens settings and then returns to the threads
     Then the list is still scoped to "docs"
+
+  # Upstream #25284: the project filter holds several projects. Adding one keeps the filter open;
+  # a plain pick still scopes to that one project and "All projects" clears the selection.
+  @backlog @desktop @tui
+  Scenario: Scoping the list to several projects at once
+    Given the environment also has the project "infra"
+    When the user opens the project filter
+    And the user adds "docs" and "infra" to the filter
+    Then the filter is still open
+    And only threads from "docs" and "infra" are listed
+    When the user chooses only "shop"
+    Then the filter closes
+    And only threads from "shop" are listed
+    When the user chooses all projects
+    Then threads from "shop", "docs" and "infra" are listed
+
+  # Upstream #25284: search, the older settled threads and the draft count follow the whole selection.
+  @backlog @desktop @tui
+  Scenario: Search, settled threads and drafts follow a filter of several projects
+    Given the user scoped the list to "docs" and "infra"
+    When the user searches threads for "cart"
+    Then only matching threads from "docs" and "infra" are found
+    And the settled section and the draft count hold only threads from "docs" and "infra"
+
+  # Upstream #25284: the selection is saved, and a filter saved before it could hold several carries over.
+  @backlog @desktop @tui @priority-low
+  Scenario: A filter of several projects is remembered and names its projects
+    Given the user scoped the list to "docs" and "infra"
+    When the user restarts the app
+    Then the list is scoped to "docs" and "infra"
+    And the project filter names "docs" and "infra"
 
   @backlog @desktop @priority-low
   Scenario: The project filter shows the project it is scoped to
@@ -466,14 +579,16 @@ Feature: The thread list
     When the user looks at the project filter
     Then it names "docs" and shows the project's icon
 
-  @backlog @desktop
+  # Proved by tst_Sidebar.qml (test_emptyListMessage).
+  @desktop @backlog-desktop
   Scenario: An empty project is named in the empty list
     Given the user scoped the list to "docs"
     And "docs" has no threads
     When the user looks at the thread list
     Then the list says "No threads in docs yet"
 
-  @backlog @desktop
+  # Proved by tst_Sidebar.qml (test_emptyListAddsAProject).
+  @desktop @backlog-desktop
   Scenario: Adding a project from an empty list
     Given the environment has no projects
     When the user looks at the thread list
@@ -578,7 +693,7 @@ Feature: The thread list
     When the checkout switches to another branch
     Then the row for "Beta" no longer shows pull request 12
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: A thread with unsent text in its composer is marked on its row
     Given the user typed a message in the composer of "Beta" and did not send it
     And "Alpha" is the open thread
@@ -602,24 +717,26 @@ Feature: The thread list
 
   # The legacy per-project tree: the user's switch to it is the "Sidebar (legacy)" setting.
   # Keep-or-drop is the maintainers' call; see the audit report.
-  # Likely already implemented: apps/desktop-qt/qml/HalC2/Bricks/js/settingsRows.js (legacySidebarEnabled)
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: The user can switch the thread list to one tree of threads per project
-    Given the user has not turned on the legacy sidebar
+    Given "shop" has 2 threads
+    And "docs" has 2 threads
+    And the user has not turned on the legacy sidebar
     When the user turns on "Sidebar (legacy)" in settings
     Then the thread list shows each project with its own threads beneath it
-    When the user turns it off
+    When the user turns off "Sidebar (legacy)" in settings
     Then the thread list is grouped by attention again
 
-  @backlog @desktop
+  @desktop
   Scenario: A project in the tree folds and unfolds its threads
     Given the user has turned on the legacy sidebar
+    And "shop" has 2 threads
     When the user folds "shop" in the thread list
     Then the threads of "shop" are hidden
     When the user unfolds "shop"
     Then the threads of "shop" are shown again
 
-  @backlog @desktop
+  @desktop
   Scenario: A project in the tree shows a few threads and offers the rest
     Given the user has turned on the legacy sidebar
     And "shop" has 10 threads and the list shows 6 threads per project
@@ -632,9 +749,10 @@ Feature: The thread list
     When the user asks to show less
     Then only 6 threads of "shop" are shown
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario Outline: The number of threads a project shows is limited to a sensible range
     Given the user has turned on the legacy sidebar
+    And "shop" has 20 threads
     When the user sets the visible thread count to <typed>
     Then each project shows <shown> threads before offering more
 
@@ -644,10 +762,11 @@ Feature: The thread list
       | 8     | 8     |
       | 40    | 15    |
 
-  # Likely already implemented: apps/desktop-qt/src/native/SidebarController.cpp (sidebarProjectSortOrder, sidebarThreadSortOrder)
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: The user chooses how projects and threads are sorted
     Given the user has turned on the legacy sidebar
+    And "shop", "docs" and "blog" have threads started and written at different times
+    And the user once arranged the projects "blog", "shop" and "docs" by hand
     When the user sorts <what> by "<order>"
     Then <what> are listed <result>
 
@@ -659,17 +778,17 @@ Feature: The thread list
       | threads  | Last user message | by the latest message the user sent in each     |
       | threads  | Created at        | by when each thread was started                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: Projects are dragged into place only when they are sorted by hand
     Given the user has turned on the legacy sidebar
     And projects are sorted "Manual"
-    When the user drags "docs" above "shop"
-    Then "docs" is listed above "shop"
+    When the user drags "shop" above "docs"
+    Then "shop" is listed above "docs"
     And the user's order is remembered
     When the user sorts projects by "Created at"
     Then dragging a project does not move it
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Renaming a project from its menu
     Given the user has turned on the legacy sidebar
     When the user renames "shop" from its menu to "<title>"
@@ -681,17 +800,18 @@ Feature: The thread list
       | shop       | nothing is sent and the dialog closes                        |
       |            | the user is told "Project title cannot be empty"             |
 
-  @backlog @desktop @priority-low
+  @desktop @priority-low
   Scenario: A project rename the environment refuses is reported
     Given the user has turned on the legacy sidebar
     And the environment refuses to rename "shop"
     When the user renames "shop" from its menu to "store"
     Then the user is told "Failed to rename project"
 
-  # Likely already implemented: apps/desktop-qt/src/native/SidebarController.cpp (sidebarProjectGroupingOverrides)
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario Outline: A project chooses how it is grouped regardless of the device's default
     Given the user has turned on the legacy sidebar
+    And "shop" sits in the repository folder "acme", as "shop-copy" does in another copy of it
+    And the device groups projects by repository path
     When the user groups "shop" by "<choice>" from its menu
     Then "shop" is grouped <result>
 
@@ -751,7 +871,7 @@ Feature: The thread list
     When the user looks at the thread list
     Then the folder is grouped by that repository
 
-  @backlog @desktop @priority-high
+  @desktop @priority-high
   Scenario: Removing a project that still has threads asks first
     Given the user has turned on the legacy sidebar
     And "shop" has 3 threads
@@ -854,7 +974,7 @@ Feature: The thread list
     When a screen reader moves through the sidebar from its first thread
     Then "one" and then "two" are reached before the settled shelf and its footer
 
-  @backlog @desktop @mobile
+  @desktop @mobile @backlog-mobile
   Scenario: The Working section folds away busy threads
     Given Working section is on in General settings
     When threads are working, connecting or monitoring
@@ -863,16 +983,35 @@ Feature: The thread list
     And drag reordering in the inbox is off while it is on
 
   # Upstream #25190: the Working section was off unless turned on; it now starts on.
-  @backlog @desktop @mobile @priority-low
+  @desktop @mobile @backlog-mobile @priority-low
   Scenario: The Working section is on until the user turns it off
     Given the user never changed whether the Working section is on
     When threads are working
     Then they move into the Working section
     And restoring the setting's default turns the Working section back on
 
+  # Upstream #26195: a thread on an environment that stopped answering kept its last running
+  # state and stayed hidden in the collapsed Working section.
+  # Dropped: upstream reverted it in #31269. Threads left the Working section while their rows
+  # still said "Working 39m", so the list contradicted itself; see the scenario below.
+  @dropped @desktop @mobile
+  Scenario: A thread whose environment stopped answering leaves the Working section
+    Given the Working section is on and collapsed
+    And "Fix login" is working on an environment that then stops answering
+    Then "Fix login" is listed in the inbox where the user can see it
+    And it goes back into the Working section once the environment reconnects and reports it working
+    And threads keep their place while their environment is connecting for the first time
+
+  # Upstream #31269: reverts #26195; the Working section follows the thread's working state only.
+  @backlog @desktop @mobile
+  Scenario: A working thread stays in the Working section while its environment is disconnected
+    Given the Working section is on
+    And "Fix login" is working on an environment that then stops answering
+    Then "Fix login" stays in the Working section while it still says it is working
+
   # Upstream #24610: background shells never held a thread in Working and monitors always did,
   # but either can be a wait or a process left running, and only the agent knows which.
-  @backlog @mc @shared @priority-high
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario Outline: Only background work the agent waits on keeps a finished thread Working
     Given the Working section is on
     And "Fix login" ended its turn leaving <work> running
@@ -883,20 +1022,30 @@ Feature: The thread list
       | a background command the agent waits on      | stays in the Working section  |
       | a monitor the agent waits on                 | stays in the Working section  |
       | a subagent                                   | stays in the Working section  |
-      | a pull request watch                         | stays in the Working section  |
       | a background command the agent did not mark  | moves to the inbox            |
       | a monitor the agent did not mark             | moves to the inbox            |
 
-  @backlog @mc @plugin-claude
+    # The MC watches every link of an unsettled thread and has no explicit watch to
+    # hold on yet (source-control/pull-request-threads.feature, watch_pull_request).
+    @backlog
+    Examples:
+      | work                                         | outcome                       |
+      | a pull request watch                         | stays in the Working section  |
+
+  # Upstream #24610: Claude implements the mark on its background-task roster; other providers return unsupported.
+  @mc @plugin-claude
   Scenario: A Claude agent marks the background work it waits on and can clear the mark
     Given Claude left the background commands "tests" and "dev server" running in "Fix login"
     When Claude marks "tests" as work it waits on
     Then "Fix login" stays Working until "tests" ends
-    When Claude clears the mark on "tests"
-    Then "tests" no longer holds "Fix login"
     And marking a command that is not running reports it as unmatched and changes nothing
+    When Claude marks "dev server" as work it waits on
+    Then "dev server" holds "Fix login"
+    When Claude clears the mark on "dev server"
+    Then "dev server" no longer holds "Fix login"
 
-  @backlog @mc
+  # Upstream #24610: other providers return "unsupported" for the wait mark and keep today's behaviour.
+  @mc
   Scenario: Agents that cannot mark their waits keep holding only for subagents
     Given a Codex thread asks to mark a background command as work it waits on
     Then the mark is refused as unsupported
@@ -908,7 +1057,7 @@ Feature: The thread list
     Then the sidebar sorts projects that way
     And Restore defaults resets it
 
-  @backlog @shared @priority-high
+  @shared @backlog-mobile @backlog-tui @priority-high
   Scenario: Working threads keep their order while agents finish and wake
     Given several threads are in the Working section
     When an agent run ends, or a subagent result or pull request watch wakes a thread
@@ -916,7 +1065,8 @@ Feature: The thread list
 
   # Upstream #24760: a thread that stops working waits two seconds in Working, so a run that
   # continues or a settle that follows does not flash it through the inbox.
-  @backlog @desktop @mobile
+  # Upstream #28169: on the phone a finished thread stayed in Working until another update came.
+  @desktop @mobile @backlog-mobile
   Scenario Outline: A thread that stops working waits briefly before it leaves Working
     Given the Working section is on
     And "Fix login" is in the Working section
@@ -936,14 +1086,17 @@ Feature: The thread list
     Then releasing applies the action to every row swept in that section
     And Escape or losing focus cancels it, and a plain click keeps its single-row action
 
-  @backlog @shared
+  @shared @backlog-mobile @backlog-tui
   Scenario: A thread's status has a spoken name
     When a screen reader reaches a thread's status marker
     Then it announces Working, Awaiting input or Pending approval
 
-  @backlog @desktop @mobile @priority-high
+  # Upstream #22887: a reorder among keyless rows tried to write an order to an offline machine
+  # and failed partway; offline rows now keep their order and are not written.
+  @desktop @mobile @backlog-mobile @priority-high
   Scenario: A drop in the sidebar sticks when another machine is offline
-    Given the sidebar shows rows from a machine that is offline or asleep
+    Given the Working section is off
+    And the sidebar shows rows from a machine that is offline or asleep
     When the user drops a thread among rows that have no order yet
     Then the thread lands where it was dropped
     And rows that cannot store an order are not written
@@ -957,3 +1110,122 @@ Feature: The thread list
     Then the sidebar lists "Fix cart" but not the subagent thread
     And "shop" does not move up because of the subagent's activity
     And moving to the next thread from "Fix cart" skips the subagent thread
+
+  # Upstream #21039: an opt-in "Boring sidebar (group by project)" setting puts active threads in a
+  # folder per project, between the pinned threads and the snoozed and settled shelves. It replaced
+  # the legacy per-project tree upstream; users who had that on land in this mode.
+  @backlog @desktop
+  Scenario: The user can group active threads into a folder per project
+    Given "shop" and "docs" each have active threads and "shop" has a pinned thread
+    When the user turns on "Boring sidebar (group by project)"
+    Then the pinned thread is listed first
+    And the active threads are listed in a folder for "shop" and a folder for "docs", in project order
+    And the snoozed and settled sections follow the folders
+    When the user turns it off
+    Then the thread list is grouped by attention again
+
+  # Upstream #21039: a closed folder counts its threads and says when a hidden one needs the user.
+  @backlog @desktop
+  Scenario: A closed project folder says what it hides
+    Given the user groups the thread list by project
+    And a thread in "shop" is waiting for an approval
+    When the user closes the folder for "shop"
+    Then the folder's threads are hidden
+    And the folder shows how many threads it holds and that one needs the user
+    When the user opens the folder for "shop"
+    Then its threads are shown again
+
+  # Upstream #21039: each folder starts a thread in its project and has a menu of New thread,
+  # Copy path and Project settings.
+  @backlog @desktop
+  Scenario Outline: A project folder acts on its project
+    Given the user groups the thread list by project
+    When the user chooses "<action>" from the folder for "docs"
+    Then <result>
+
+    Examples:
+      | action           | result                                         |
+      | New thread       | a new thread starts in "docs"                  |
+      | Copy path        | the folder of "docs" is on the clipboard       |
+      | Project settings | the settings for "docs" open                   |
+
+  # Upstream #21039: folders are part of the keyboard tree.
+  @backlog @desktop
+  Scenario Outline: Moving through project folders with the keyboard
+    Given the user groups the thread list by project
+    And the thread list has keyboard focus on <start>
+    When the user presses <key>
+    Then <result>
+
+    Examples:
+      | start                         | key   | result                                       |
+      | the open folder for "shop"    | Left  | the folder for "shop" closes                 |
+      | the closed folder for "shop"  | Right | the folder for "shop" opens                  |
+      | the open folder for "shop"    | Right | the first thread of "shop" is focused        |
+      | the first thread of "shop"    | Left  | the folder for "shop" is focused             |
+
+  # Upstream #21039: a filter of several projects shows one folder for each.
+  @backlog @desktop
+  Scenario: A filter of several projects shows a folder for each
+    Given the user groups the thread list by project
+    When the user scopes the thread list to "shop" and "docs"
+    Then the list shows a folder for "shop" and a folder for "docs" and no other
+
+  # Upstream #21039: dragging and the Working section are off while threads are grouped by project.
+  @backlog @desktop @priority-low
+  Scenario: Grouping by project turns off dragging and the Working section
+    Given the user groups the thread list by project
+    When the user looks at the thread list
+    Then there is no Working section
+    And threads cannot be dragged into place
+
+  # Upstream #26387: a project gets a folder only while it has active threads, unless the user
+  # filtered to it, so a thread can still be started there.
+  @backlog @desktop
+  Scenario: A project without active threads has no folder unless the user filtered to it
+    Given the user groups the thread list by project
+    And "docs" has only settled threads
+    When the user looks at the thread list
+    Then there is no folder for "docs"
+    When the user scopes the thread list to "docs"
+    Then the list shows an empty folder for "docs"
+
+  # Upstream #26387: settling a project's last active thread takes its folder away.
+  @backlog @desktop
+  Scenario: Settling a project's last active thread removes its folder
+    Given the user groups the thread list by project
+    And "Fix docs" is the only active thread in "docs"
+    When the user settles "Fix docs"
+    Then there is no folder for "docs"
+
+  # Upstream #26391: inside a folder, threads follow the user's latest message; agent turns and
+  # wakes do not move them.
+  @backlog @desktop
+  Scenario: A project folder lists the thread the user last wrote to first
+    Given the user groups the thread list by project
+    And "Alpha", "Bravo" and "Charlie" in "shop" were started in that order
+    When the user sends a message to "Alpha"
+    Then "Alpha" is listed first in the folder for "shop"
+    When the agent in "Bravo" wakes and replies
+    Then "Alpha" is still listed first in the folder for "shop"
+
+  # Upstream #26463: an opt-in "Two-line folder rows" setting shows a folder thread's branch,
+  # pull request, terminals and agent on a second line; a row with none of them stays one line.
+  @backlog @desktop @priority-low
+  Scenario: Folder threads can show their branch and pull request on a second line
+    Given the user groups the thread list by project
+    And "Alpha" in "shop" works on the branch "feature/cart" and "Bravo" has no branch
+    When the user turns on "Two-line folder rows"
+    Then the row for "Alpha" shows "feature/cart" below its title
+    And the row for "Bravo" is one line
+    When the user turns off "Two-line folder rows"
+    Then the row for "Alpha" is one line
+
+  # Upstream #26392: settling from the list moved focus to the settled shelf and scrolled the
+  # list to the bottom, away from the next thread.
+  @backlog @desktop @tui
+  Scenario: Settling a thread from the list keeps the list where it was
+    Given there are 30 active threads and the user is viewing "Active 1" at the top of the list
+    When the user settles "Active 1" from the thread list
+    Then the thread list stays at the top
+    And the next thread is shown and in view

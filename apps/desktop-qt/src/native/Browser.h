@@ -10,6 +10,7 @@
 
 #include <functional>
 
+#include "PagePermissions.h"
 #include "ThreadPreviews.h"
 
 class BrowserPage;
@@ -34,6 +35,8 @@ class Browser : public QObject {
   Q_PROPERTY(bool devicesView READ devicesView WRITE setDevicesView NOTIFY devicesViewChanged)
   Q_PROPERTY(QStringList devicesPresetIds READ devicesPresetIds WRITE setDevicesPresetIds NOTIFY devicesViewChanged)
   Q_PROPERTY(bool devices3d READ devices3d WRITE setDevices3d NOTIFY devicesViewChanged)
+  // What pages may ask for, and the question the user is being asked.
+  Q_PROPERTY(PagePermissions* permissions READ permissions CONSTANT)
 
 public:
   static Browser* instance();
@@ -60,6 +63,8 @@ public:
   // Where the DevTools and Devices view layout are kept: read now, written on each change.
   void setStore(std::function<QVariant(const QString&)> read, std::function<void(const QString&, const QVariant&)> write);
 
+  PagePermissions* permissions() { return &m_permissions; }
+
   // The page showing MC tab `tabId`, or null while none does.
   static BrowserPage* page(const QString& tabId);
   static QList<BrowserPage*> pages();
@@ -83,6 +88,7 @@ private:
   bool m_devices3d = false;
   std::function<void(const QString&, const QVariant&)> m_write;
   QHash<QString, QPointer<BrowserPage>> m_pages;
+  PagePermissions m_permissions;
 };
 
 // One browser tab's page, made by its brick (BrowserPanel) beside the
@@ -90,11 +96,15 @@ private:
 // tab (ThreadPreviews) and tells the MC what the page does.
 //
 // What the view did comes in through report(); the MC hears it as
-// `preview.reportStatus`. The MC's tab moving to an address the page did not
+// `preview.reportStatus`; one the MC refuses takes the page back to its tab,
+// one the connection could not carry goes again once the MC lists the tabs.
+// The MC's tab moving to an address the page did not
 // report (an agent's `preview.navigate`, another window) asks the view to load
 // it (loadRequested). The device size is the MC's (`viewport`): setViewport
-// shows the new size at once and sends `preview.resize`; refused or timed
-// out, the size the MC has comes back unless a newer one was picked since.
+// shows the new size at once (`resizing` until the MC answers) and sends
+// `preview.resize`; refused or timed out, the size the MC has is the size;
+// taken, the size picked is, until the MC's tab says otherwise. One size at a
+// time: setViewport does nothing while `resizing`.
 // Zoom, appearance, mute and DevTools are the page's own, not the MC's.
 //
 // For drivers in C++: `view` is the WebEngineView (a QQuickItem; call its
@@ -111,6 +121,8 @@ class BrowserPage : public QObject {
   Q_PROPERTY(bool exists READ exists NOTIFY tabChanged)
   // {_tag: "fill"} or {_tag: "preset"|"freeform", width, height, presetId?}.
   Q_PROPERTY(QVariantMap viewport READ viewport NOTIFY viewportChanged)
+  // A size was picked (setViewport) and the MC has not confirmed it yet.
+  Q_PROPERTY(bool resizing READ resizing NOTIFY resizingChanged)
   Q_PROPERTY(qreal zoom READ zoom WRITE setZoom NOTIFY zoomChanged)
   // system, light or dark: the page's prefers-color-scheme.
   Q_PROPERTY(QString appearance READ appearance WRITE setAppearance NOTIFY appearanceChanged)
@@ -133,6 +145,7 @@ public:
   QString status() const;
   bool exists() const { return !m_tab.isEmpty(); }
   QVariantMap viewport() const;
+  bool resizing() const { return m_outstanding.contains(m_tabId); }
   qreal zoom() const { return m_zoom; }
   void setZoom(qreal zoom);
   QString appearance() const { return m_appearance; }
@@ -170,6 +183,7 @@ signals:
   void tabIdChanged();
   void tabChanged();
   void viewportChanged();
+  void resizingChanged();
   void zoomChanged();
   void appearanceChanged();
   void mutedChanged();
@@ -192,7 +206,12 @@ signals:
 private:
   void follow();
   void refresh();
-  void went(const QString& url);
+  void went(const QString& url, quint64 owner);
+  // The report `owner` will not be said back: its echoes go, the rest stay.
+  void forget(const QString& url, quint64 owner);
+  void send();
+  // The wait on tab `tabId`'s pick `pick` is over, if it is still the one waited on.
+  void settle(const QString& tabId, int pick);
 
   QPointer<ThreadPreviews> m_previews;
   QString m_tabId;
@@ -201,10 +220,29 @@ private:
   // Where the view is, and the addresses it went to that the MC has not said
   // back yet, oldest first: saying them back is no news, anything else is.
   QString m_at;
-  QStringList m_echoes;
+  // The reports behind each: an address several reports (or a navigation,
+  // owner 0) went to is one echo, kept while any of them may still be heard.
+  struct Echo {
+    QString url;
+    QList<quint64> owners;
+  };
+  QList<Echo> m_echoes;
+  quint64 m_reports = 0;
   QJsonObject m_lastReport;
-  // A size picked and not yet confirmed, and which pick it was.
+  // The last report never reached the MC (the connection was down): it goes
+  // again once the MC lists the tabs, unless its tab has moved on since.
+  bool m_unsent = false;
+  // A report is on its way to the MC, and a newer one waits for its answer.
+  bool m_reporting = false;
+  bool m_reportQueued = false;
+  // A size picked that the MC's tab does not show yet, whether the MC is yet
+  // to answer it, and which pick it was.
   QJsonObject m_pendingViewport;
+  // A newer listing showed another size while the pick waited for its answer.
+  bool m_superseded = false;
+  // The tabs the MC is yet to answer a size for, and which pick: kept when the
+  // page moves to another tab, so back on that one a second request waits.
+  QHash<QString, int> m_outstanding;
   int m_viewportPick = 0;
   qreal m_zoom = 1.0;
   QString m_appearance = QStringLiteral("system");

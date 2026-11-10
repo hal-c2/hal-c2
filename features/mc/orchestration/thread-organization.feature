@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/26035
 #   https://github.com/pingdotgg/t3code/pull/14887
 #   https://github.com/pingdotgg/t3code/pull/17258
 #   packages/contracts/src/orchestrationV2.ts (thread.settle, thread.settled, thread.unsettle,
@@ -292,6 +293,15 @@ Feature: Organizing threads in the engine
     And a client unsettles "t1" before the MC's settle is applied
     When the MC's automatic settle is applied
     Then the command fails with "thread t1 changed before automatic settlement"
+
+  # Upstream #26035: a subagent copied its parent's pin and opt-out of automatic settling, so it never settled.
+  @backlog @mc
+  Scenario: A subagent does not inherit its parent's pin or opt-out of automatic settling
+    Given thread "t1" is pinned and kept from settling automatically
+    When "t1" starts a subagent
+    Then the subagent's thread is not pinned
+    And it settles automatically once it completes
+    And "t1" stays pinned and kept from settling automatically
 
   # A delegated task's result only wakes the agent; it is not the user's work.
   @mc

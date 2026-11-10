@@ -140,6 +140,9 @@ defmodule HalC2.Steps.Providers.ProviderInstancesCustom do
        %{args: [id]} = context do
     context = World.fake_providers(context)
     Mc.ensure(HalC2.Plugins)
+    # The plugins' rows are written by the scan `init/1` continues into; a call
+    # is answered only after it, so the list below sees the running plugins.
+    :sys.get_state(HalC2.Plugins)
     Acp.put_instance(id, @acme)
     Map.put(context, :instance, id)
   end

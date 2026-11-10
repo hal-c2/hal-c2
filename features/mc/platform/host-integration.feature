@@ -1,5 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/14519
+#   https://github.com/pingdotgg/t3code/pull/27176
 #   https://github.com/pingdotgg/t3code/pull/21299
+#   https://github.com/hal-c2/hal-c2/issues/1480 (ending a session's scope in HAL-C2)
 #   https://github.com/pingdotgg/t3code/pull/22826
 #   https://github.com/pingdotgg/t3code/pull/18329
 #   https://github.com/pingdotgg/t3code/pull/18549
@@ -26,6 +29,9 @@
 #   packages/contracts/src/rpc.ts (shell.openInEditor, filesystem.browse, subscribeDiscoveredLocalServers)
 #   docs/internals/composer-editors.md
 #   Shared domain: files/ owns opening files from the explorer; preview/ owns server suggestions.
+#   https://github.com/pingdotgg/t3code/pull/28566
+#   https://github.com/pingdotgg/t3code/pull/23913
+#   https://github.com/pingdotgg/t3code/pull/29432
 
 Feature: The MC working with its host machine
   An MC opens editors on its own machine, lists folders for adding projects, finds
@@ -40,6 +46,26 @@ Feature: The MC working with its host machine
     When a client reads the MC's server config
     Then the available editors include Cursor and Zed
     And the file manager is listed last
+
+  # Upstream #14519: every connect ran editor, file manager, remote target and address discovery
+  # one after another, up to 5 seconds each, which could use up a client's whole connect time.
+  @backlog @mc
+  Scenario: A client's server config does not wait on slow host discovery
+    Given the MC has read the host's editors and addresses before
+    And each discovery now takes 5 seconds
+    When a client connects and reads the MC's server config
+    Then the server config is answered at once with what the MC found before
+    And the discoveries run again together in the background
+    And a first read with nothing found before waits for the discoveries together, not one after another
+
+  # Upstream #29432: the first server config waited about two seconds on Tailscale's status and
+  # HTTPS check before a client could start.
+  @backlog @mc
+  Scenario: A client's first server config does not wait on Tailscale
+    Given Tailscale takes two seconds to report the MC's HTTPS address
+    When a client connects and reads the MC's server config
+    Then the server config is answered at once with the addresses the MC listens on and any it checked before
+    And the HTTPS address reaches the client once it is checked, without reconnecting
 
   # Upstream #7079: the agy command is Google's Antigravity CLI, not the Antigravity IDE.
   @backlog @mc @plugin-antigravity @priority-low
@@ -282,6 +308,16 @@ Feature: The MC working with its host machine
     When the host's codex answers with version "1.2.3"
     And a client reads the MC's server config again
     Then Codex is listed with version "1.2.3"
+
+  # Upstream #28566: the first config waited seconds on an unavailable Tailscale daemon while it
+  # looked for remote machines; the machines it finds now follow the config.
+  @backlog @mc @priority-low
+  Scenario: Looking for remote machines does not hold up the first server config
+    Given the host's Tailscale never answers
+    When a client subscribes to the MC's server config
+    Then the client gets the config at once
+    When the remote machines are found later
+    Then the client receives them without losing settings or keybindings changed meanwhile
 
   @mc
   Scenario: A Codex CLI that stays hung is asked again only after a minute
@@ -729,6 +765,24 @@ Feature: The MC working with its host machine
     Then that agent is killed and its turn fails with "Killed: out of memory."
     And the MC and the other agent keep running
 
+  # Upstream #23913: rootless kind in an agent's session failed, asking for "Delegate=yes".
+  @backlog @mc @priority-low
+  Scenario: An agent on Linux can manage the cgroups under its own scope
+    Given the MC runs on Linux under a systemd user manager with cgroup v2
+    When an agent or a terminal of a thread starts a tool that makes its own cgroups, such as rootless kind
+    Then the tool may create them under that agent's scope
+    And the scope keeps its memory limit
+
+  # Upstream #27176: agents that filled their memory limit slowed the server too, since they had
+  # an equal share of CPU, the whole task budget and the same reclaim as the server.
+  @backlog @mc @priority-low
+  Scenario: Busy agents on Linux leave the MC its share of the machine
+    Given the MC runs on Linux under a systemd user manager
+    When its agents use all the CPU they can and start processes as fast as they can
+    Then the MC gets ten times the agents' share of CPU
+    And the agents may use at most a quarter of the machine's processes, so the MC can still start git and providers
+    And the background service asks the kernel to reclaim the agents' memory before the MC's
+
   @backlog @mc @priority-low
   Scenario: Where there is no systemd user manager agents start as before
     Given the MC runs on macOS or in a container without a systemd user manager
@@ -736,8 +790,11 @@ Feature: The MC working with its host machine
     Then the agent starts directly, with no scope around it
 
   # Upstream #21299: agent-browser and Chrome left by an agent called setsid, escaped its process
-  # group and outlived it.
-  @backlog @mc
+  # group and outlived it. Upstream's Stop ended the session; HAL-C2's Stop interrupts the turn,
+  # and what that does to detached helpers waits on hal-c2/hal-c2#483's question, in
+  # mc/platform/agent-containment.feature. hal-c2/hal-c2#1480 adds force stop, stop session and
+  # delete.
+  @backlog @mc @priority-high
   Scenario Outline: An agent's detached helpers end with it on Linux
     Given the MC runs on Linux under a systemd user manager
     And a <provider> agent started a browser that detached from it
@@ -746,12 +803,15 @@ Feature: The MC working with its host machine
 
     Examples:
       | provider | ending                                               |
-      | Claude   | the user stops the thread                            |
+      | Claude   | the user force stops the thread                      |
+      | Claude   | the user stops the session of the thread             |
+      | Claude   | the user deletes the thread                          |
       | Claude   | a model change restarts the agent                    |
       | Pi       | the agent exits on its own                           |
       | Muse     | the agent is released after 30 minutes idle          |
       | ACP      | the session ends while a helper still holds its pipe |
 
+  # Upstream #21299: servers shared by several agents keep their helpers when one session ends.
   @backlog @mc @priority-low
   Scenario: Agents that share one server keep their helpers when a session ends
     Given Codex and OpenCode serve several threads from one server

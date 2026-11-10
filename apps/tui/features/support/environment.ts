@@ -100,6 +100,8 @@ export interface Environment {
   settingsVersion: number;
   /** A move carries the agent's own session; otherwise the agent gets a summary. */
   sessionCarried: boolean;
+  /** The plugin that keeps a thread on its machine, by thread id (HalC2.ThreadArchive.stays). */
+  kept: Record<string, string>;
   connected: boolean;
   created: number;
   /** `ServerConfig.keybindings`, as the server resolves them (project action shortcuts). */
@@ -132,6 +134,7 @@ export function env(ctx: World): Environment {
       settings: {},
       settingsVersion: 0,
       sessionCarried: true,
+      kept: {},
       connected: false,
       created: 0,
       keybindings: [],
@@ -376,8 +379,16 @@ function installClient(ctx: World): void {
       thread.session = { status: "ready" };
     }),
   );
+  // A thread its plugin keeps is refused before anything else is asked.
+  const refuseKept = (id: string) => {
+    const plugin = environment.kept[id];
+    if (plugin === undefined) return;
+    const title = environment.threads.find((candidate) => candidate.id === id)?.title ?? id;
+    throw new Error(`${title} was started by ${plugin}, which keeps it on this machine.`);
+  };
   // The MC that holds a thread moves it, under the rules of HalC2.ThreadMove.
   fake.override("moveDestinations", async (id) => {
+    refuseKept(id);
     const thread = environment.threads.find((candidate) => candidate.id === id);
     const title = environment.projects.find((project) => project.id === thread?.projectId)?.title;
     return environment.machines
@@ -434,6 +445,7 @@ function installClient(ctx: World): void {
     return true;
   });
   fake.override("moveThread", async ({ threadId, machine: to }) => {
+    refuseKept(threadId);
     const thread = environment.threads.find((candidate) => candidate.id === threadId);
     // By environment id, or by a label only one machine has (HalC2.ThreadMove's destination).
     const named = environment.machines.filter((candidate) => candidate.id === to);

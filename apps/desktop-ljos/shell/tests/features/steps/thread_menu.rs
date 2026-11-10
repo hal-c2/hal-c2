@@ -411,6 +411,7 @@ fn item_id(phrase: &str) -> String {
     match phrase {
         "regenerate title" => "regenerate-title",
         "mark unread" => "mark-unread",
+        "auto-settle behavior" => "auto-settle",
         "project settings" => "project-settings",
         "create page from thread" => "page-from-thread",
         other => other,

@@ -2,8 +2,9 @@ defmodule HalC2.PullRequests do
   @moduledoc """
   Pull requests for this MC's projects (`pullRequests.*`). A project's repository is
   its checkout's primary remote; GitHub repositories are read and changed through `gh`
-  (`HalC2.PullRequests.GitHub`). Projects on other hosts are counted in the listing, GitLab
-  ones previewed through `glab`, and otherwise answered with
+  (`HalC2.PullRequests.GitHub`). The listing also reads GitLab, Forgejo, Azure DevOps
+  and Bitbucket projects (`HalC2.PullRequests.Hosts`) and GitLab ones are previewed
+  through `glab`; other operations on those hosts are answered with
   `PullRequestUnavailableError` (`provider-unsupported`).
 
   A reference names a project and a repository. The project's own repository is
@@ -19,12 +20,14 @@ defmodule HalC2.PullRequests do
   require Logger
 
   alias HalC2.GitHub.Limits
-  alias HalC2.PullRequests.{Branches, GitHub, Held, Refreshes}
+  alias HalC2.PullRequests.{Branches, GitHub, Held, Hosts, Refreshes}
   alias HalC2.SourceControl.ChangeRequests
+  alias HalC2.SourceControl.Cli
 
   @default_limit 99
   @viewer_ttl 600_000
   @viewers {__MODULE__, :viewers}
+  @ssh_hosts {__MODULE__, :ssh_hosts}
 
   @requirements %{
     missing:
@@ -50,13 +53,54 @@ defmodule HalC2.PullRequests do
       "You need write access on this repository to stop it being merged for you once it is ready.",
     "revert" => "You need write access on this repository to open a revert pull request.",
     "approve-workflows" =>
-      "You need write access on this repository to approve workflows from a fork pull request."
+      "You need write access on this repository to approve workflows from a fork pull request.",
+    "allow-maintainer-edits" =>
+      "Only the author of a pull request from a fork can let maintainers edit its branch.",
+    "stop-maintainer-edits" =>
+      "Only the author of a pull request from a fork can stop maintainers editing its branch."
   }
 
-  @verdict_labels %{"approve" => "approve", "request-changes" => "request changes on"}
+  @auto_merge_refusal "Auto-merge is not available here: this repository has it switched off, " <>
+                        "or the pull request can be merged now."
+
+  @verdict_labels %{
+    "approve" => "approve",
+    "request-changes" => "request changes on",
+    "comment" => "comment on"
+  }
 
   @reviewer_refusal "You need write access on this repository to ask for a review."
   @label_refusal "You need triage access on this repository to change its labels."
+
+  # What a host cannot do at all, said as the user is told it (`PullRequestCapabilities`
+  # of the removed server's providers): Azure DevOps writes no remark of any kind,
+  # Forgejo has no thread replies or resolution, Bitbucket and Azure DevOps have no
+  # reactions, and a host no provider claims cannot be rewritten on. A host that can
+  # do a thing but has no MC provider yet still answers `provider-unsupported`.
+  @host_capabilities %{
+    "azure-devops" => %{
+      comment: false,
+      inline: false,
+      reply: false,
+      resolve: false,
+      reactions: false,
+      verdicts: [],
+      edit_comment: false
+    },
+    "bitbucket" => %{reactions: false},
+    "forgejo" => %{reply: false, resolve: false},
+    "unknown" => %{edit_change_request: false, edit_comment: false}
+  }
+
+  @host_refusal_details %{
+    comment: "This host cannot post a comment on a change request.",
+    inline: "This host cannot comment on a line of a change request.",
+    reply: "This host cannot reply to a review conversation.",
+    resolve: "This host cannot resolve a review conversation.",
+    reactions: "This host has no reactions.",
+    edit_change_request: "This host cannot rewrite a change request.",
+    edit_comment: "This host cannot rewrite a comment."
+  }
 
   @methods %{
     "list" => :list,
@@ -119,6 +163,7 @@ defmodule HalC2.PullRequests do
     with {:ok, cursors} <- decode_cursors(input["cursors"]) do
       {github, others} = input |> workspace() |> Enum.split_with(&(&1.kind == "github"))
       {hosted, others} = Enum.split_with(others, &HalC2.Plugins.git_host(&1.host))
+      {driven, others} = Enum.split_with(others, &Hosts.kind?(&1.kind))
       plugged = if cursors, do: plugin_listing([]), else: plugin_listing(hosted)
 
       identities =
@@ -127,12 +172,25 @@ defmodule HalC2.PullRequests do
         |> Task.async_stream(&{&1.host, identity(&1)}, timeout: :infinity)
         |> Map.new(fn {:ok, pair} -> pair end)
 
-      viewers = for {host, {:ok, %{"login" => login}}} <- identities, into: %{}, do: {host, login}
+      # Who is signed in on each other host a driver here can read.
+      driven_viewers =
+        driven
+        |> Enum.uniq_by(& &1.host)
+        |> Task.async_stream(&{&1.host, Hosts.viewer(&1)}, timeout: :infinity)
+        |> Map.new(fn {:ok, pair} -> pair end)
+
+      viewers =
+        Map.merge(
+          for({host, {:ok, login}} <- driven_viewers, into: %{}, do: {host, login}),
+          for({host, {:ok, %{"login" => login}}} <- identities, into: %{}, do: {host, login})
+        )
+
       counts = Enum.frequencies_by(github, & &1.host)
 
       providers =
         for({host, identity} <- identities, do: provider(host, counts[host], identity)) ++
           plugged.providers ++
+          driven_providers(driven, driven_viewers) ++
           for {host, [first | _] = on_host} <- Enum.group_by(others, & &1.host) do
             %{
               "host" => host,
@@ -150,19 +208,35 @@ defmodule HalC2.PullRequests do
       {readable, unreadable} = Enum.split_with(selected, &Map.has_key?(viewers, &1.host))
       result = %{"viewers" => viewers, "providers" => providers}
 
+      driven_selected =
+        if cursors, do: Enum.filter(driven, &Map.has_key?(cursors, key(&1))), else: driven
+
+      driven_batches =
+        driven_selected
+        |> Task.async_stream(
+          &read_driven(&1, driven_viewers[&1.host], input, cursors && cursors[key(&1)]),
+          max_concurrency: 12,
+          timeout: :infinity
+        )
+        |> Enum.map(fn {:ok, batch} -> batch end)
+
       if readable == [] do
         failures =
           for p <- Enum.uniq_by(selected, & &1.host), {:error, e} <- [identities[p.host]], do: e
 
         case Enum.find(failures, &(elem(&1, 0) in [:missing, :unauthenticated])) ||
                List.first(failures) do
-          failure when failure == nil or hosted != [] ->
+          failure when failure == nil or hosted != [] or driven_batches != [] ->
+            batches = driven_batches
+
             {:ok,
              Map.merge(result, %{
-               "entries" => plugged.entries,
-               "errors" => plugged.errors,
-               "truncated" => false,
-               "nextCursors" => %{}
+               "entries" => listed(Enum.flat_map(batches, & &1.entries) ++ plugged.entries),
+               "errors" =>
+                 Enum.map(unreadable, &unreadable(&1, identities[&1.host])) ++
+                   Enum.flat_map(batches, & &1.errors) ++ plugged.errors,
+               "truncated" => Enum.any?(batches, & &1.truncated),
+               "nextCursors" => for(b <- batches, b.next, into: %{}, do: {b.key, b.next})
              })}
 
           failure ->
@@ -178,11 +252,11 @@ defmodule HalC2.PullRequests do
           )
           |> Enum.map(fn {:ok, batch} -> batch end)
 
+        batches = batches ++ driven_batches
+
         {:ok,
          Map.merge(result, %{
-           "entries" =>
-             (Enum.flat_map(batches, & &1.entries) ++ plugged.entries)
-             |> Enum.sort_by(& &1["updatedAt"], :desc),
+           "entries" => listed(Enum.flat_map(batches, & &1.entries) ++ plugged.entries),
            "errors" =>
              Enum.map(unreadable, &unreadable(&1, identities[&1.host])) ++
                Enum.flat_map(batches, & &1.errors) ++ plugged.errors,
@@ -228,6 +302,124 @@ defmodule HalC2.PullRequests do
       errors: for({project, _, {:error, _} = error} <- reads, do: unreadable(project, error))
     }
   end
+
+  # Hosts a driver here can read, once signed in; one that is not is listed as
+  # not configured, the way a host with no driver is.
+  defp driven_providers(driven, viewers) do
+    for {host, [first | _] = on_host} <- Enum.group_by(driven, & &1.host) do
+      configured = match?({:ok, _}, viewers[host])
+
+      %{
+        "host" => host,
+        "kind" => first.kind,
+        "searchesOnHost" => first.kind in ["gitlab", "bitbucket"],
+        "projectCount" => length(on_host),
+        "configured" => configured,
+        "detail" =>
+          if configured do
+            nil
+          else
+            case viewers[host] do
+              {:error, {reason, _detail}} when reason in [:missing, :unauthenticated] ->
+                "This host cannot be browsed here yet."
+
+              {:error, {_reason, detail}} ->
+                detail
+
+              _ ->
+                "This host cannot be browsed here yet."
+            end
+          end
+      }
+    end
+  end
+
+  # One driven host's repository: the host was asked for the state (and its own
+  # text search where it has one); involvement and the row filters are applied
+  # here, and the same boundary cursor as GitHub's carries the list on. The
+  # cursor's boundary goes into the host read itself, so a continuation starts
+  # where the last page ended instead of re-reading the newest pages.
+  defp read_driven(project, {:ok, viewer}, input, cursor) do
+    state = input["state"] || "open"
+    limit = input["limit"] || @default_limit
+    before = cursor && cursor.boundary
+
+    case Hosts.list(project, %{state: state, query: input["query"], before: before}) do
+      {:ok, %{items: items, more: more}} ->
+        kept =
+          for item <- items,
+              state == "all" or item["state"] == state,
+              involved?(item, input["involvement"] || "all", viewer),
+              GitHub.row_match?(item, input["filters"], viewer, true),
+              do: item
+
+        fetched =
+          if cursor,
+            do: Enum.filter(kept, &no_newer?(cursor_at(&1), cursor.boundary)),
+            else: kept
+
+        after_seen =
+          if cursor,
+            do:
+              Enum.reject(
+                fetched,
+                &(same_instant?(cursor_at(&1), cursor.boundary) and
+                    &1["number"] in cursor.seen)
+              ),
+            else: fetched
+
+        slice = Enum.take(after_seen, limit)
+        truncated = more or length(after_seen) > limit
+
+        # A page emptied by the filters above still carries on from the oldest
+        # row the host read, when that moves the boundary; if it cannot move,
+        # the list stops claiming more rather than offering a dead end.
+        next =
+          cond do
+            truncated and slice != [] -> next_cursor(cursor, slice, length(slice))
+            truncated and advances?(cursor, items) -> next_cursor(cursor, items, 0)
+            true -> nil
+          end
+
+        at = System.system_time(:millisecond)
+
+        %{
+          key: key(project),
+          entries: for(item <- slice, do: entry(project, item, viewer, at)),
+          errors: [],
+          truncated: truncated and next != nil,
+          next: next
+        }
+
+      {:error, _} = error ->
+        failed(project, unreadable(project, error))
+    end
+  end
+
+  defp read_driven(project, {:error, {reason, _detail}}, _input, _cursor)
+       when reason in [:missing, :unauthenticated] do
+    %{key: key(project), entries: [], errors: [], truncated: false, next: nil}
+  end
+
+  defp read_driven(project, {:error, _} = error, _input, _cursor),
+    do: failed(project, unreadable(project, error))
+
+  defp read_driven(project, _viewer, _input, _cursor),
+    do: %{key: key(project), entries: [], errors: [], truncated: false, next: nil}
+
+  defp involved?(item, "authored", viewer),
+    do:
+      item["author"] != nil and
+        String.downcase(item["author"]["login"]) == String.downcase(viewer)
+
+  defp involved?(item, "reviewing", viewer),
+    do:
+      Enum.any?(
+        item["reviewRequestLogins"] || [],
+        &(String.downcase(&1) == String.downcase(viewer))
+      )
+
+  defp involved?(_item, _involvement, _viewer), do: true
 
   defp provider(host, count, identity) do
     %{
@@ -283,7 +475,8 @@ defmodule HalC2.PullRequests do
             do:
               Enum.reject(
                 page.items,
-                &(&1["updatedAt"] == cursor.boundary and &1["number"] in cursor.seen)
+                &(same_instant?(&1["updatedAt"], cursor.boundary) and
+                    &1["number"] in cursor.seen)
               ),
             else: page.items
 
@@ -418,12 +611,16 @@ defmodule HalC2.PullRequests do
       ~w(number title url headBranch baseBranch state isDraft mergeability additions deletions createdAt updatedAt labels)
     )
     |> Map.merge(%{
-      "provider" => "github",
+      "provider" => project.kind,
       "host" => project.host,
       "projectId" => project.id,
       "projectTitle" => project.title,
       "repository" => project.repository,
-      "author" => GitHub.with_avatar(item["author"], project.host),
+      "author" =>
+        if(project.kind == "github",
+          do: GitHub.with_avatar(item["author"], project.host),
+          else: item["author"]
+        ),
       "observedAt" => at,
       "viewerReviewRequested" =>
         author != me and Enum.any?(item["reviewRequestLogins"], &(String.downcase(&1) == me))
@@ -431,6 +628,19 @@ defmodule HalC2.PullRequests do
     |> put_present("headSha", item["headSha"])
     |> put_present("reviewDecision", item["reviewDecision"])
     |> put_present("checksState", item["checksState"])
+    |> put_present("stack", item["stack"])
+    # Carried only until `listed/1` sorts the merged page; dropped there.
+    |> put_present("cursorAt", item["cursorAt"])
+  end
+
+  # The merged page, newest first by the instant each row is ordered and
+  # carried on by (`cursor_at/1`), so loading more never brings in a row
+  # that belongs before one already shown; the instant itself is the
+  # listing's own and is dropped before the rows go to a client.
+  defp listed(entries) do
+    entries
+    |> Enum.sort_by(&instant_key(cursor_at(&1)), :desc)
+    |> Enum.map(&Map.delete(&1, "cursorAt"))
   end
 
   # A continuation is `<instant>|<rows delivered>|<numbers already sent at it>`: the
@@ -459,12 +669,86 @@ defmodule HalC2.PullRequests do
     end)
   end
 
+  # Instants are compared as instants, not as text: hosts write fractions
+  # of a second at different precisions (and a cursor may carry another
+  # host's spelling), where text order and time order disagree.
+  defp instant(text) do
+    case DateTime.from_iso8601(text) do
+      {:ok, at, _offset} -> at
+      _ -> nil
+    end
+  end
+
+  defp same_instant?(left, right) do
+    case {instant(left), instant(right)} do
+      {%DateTime{} = at, %DateTime{} = other} -> DateTime.compare(at, other) == :eq
+      _ -> left == right
+    end
+  end
+
+  defp no_newer?(text, boundary) do
+    case {instant(text), instant(boundary)} do
+      {%DateTime{} = at, %DateTime{} = limit} -> DateTime.compare(at, limit) != :gt
+      _ -> text <= boundary
+    end
+  end
+
+  defp older?(text, boundary) do
+    case {instant(text), instant(boundary)} do
+      {%DateTime{} = at, %DateTime{} = limit} -> DateTime.compare(at, limit) == :lt
+      _ -> text < boundary
+    end
+  end
+
+  # The instant a row is ordered and carried on by: its update time, except
+  # where the host pages by another (Azure, by creation; see
+  # `HalC2.PullRequests.Hosts`). Internal to the listing: `entry/4` does
+  # not carry it to clients.
+  defp cursor_at(item), do: item["cursorAt"] || item["updatedAt"]
+
+  defp oldest(items),
+    do:
+      items
+      |> Enum.min_by(&{instant_key(cursor_at(&1)), cursor_at(&1)})
+      |> cursor_at()
+
+  defp instant_key(text) do
+    case instant(text) do
+      %DateTime{} = at -> DateTime.to_unix(at, :microsecond)
+      nil -> 0
+    end
+  end
+
+  # Whether a cursor built from `items` would move past `previous`: an older
+  # boundary, or the same one with a number at it that was not already sent.
+  defp advances?(nil, items), do: items != []
+
+  defp advances?(_previous, []), do: false
+
+  defp advances?(previous, items) do
+    boundary = oldest(items)
+
+    older?(boundary, previous.boundary) or
+      (same_instant?(boundary, previous.boundary) and
+         Enum.any?(
+           items,
+           &(same_instant?(cursor_at(&1), boundary) and
+               &1["number"] not in previous.seen)
+         ))
+  end
+
   defp next_cursor(_previous, [], _count), do: nil
 
   defp next_cursor(previous, fetched, count) do
-    boundary = fetched |> Enum.map(& &1["updatedAt"]) |> Enum.min()
-    kept = if previous && previous.boundary == boundary, do: previous.seen, else: []
-    seen = kept ++ for(item <- fetched, item["updatedAt"] == boundary, do: item["number"])
+    boundary = oldest(fetched)
+
+    kept =
+      if previous && same_instant?(previous.boundary, boundary), do: previous.seen, else: []
+
+    seen =
+      kept ++
+        for(item <- fetched, same_instant?(cursor_at(item), boundary), do: item["number"])
+
     "#{boundary}|#{((previous && previous.delivered) || 0) + count}|#{Enum.join(seen, ",")}"
   end
 
@@ -673,6 +957,13 @@ defmodule HalC2.PullRequests do
 
   def activity(ref), do: read(ref, "activity", fn _project, ctx -> GitHub.activity(ctx) end)
 
+  @doc """
+  Who stands behind a pull request and who asked for its review (`GitHub.trust/2`),
+  for a plugin deciding whether to act on it. `ref` may carry the `label` whose last
+  adder to read. Not a client method: only `HalC2.Plugins.Host` calls it.
+  """
+  def trust(ref), do: read(ref, "trust", fn _project, ctx -> GitHub.trust(ctx, ref["label"]) end)
+
   def thread_comments(input),
     do:
       read(input, "threadComments", fn _project, ctx ->
@@ -748,6 +1039,30 @@ defmodule HalC2.PullRequests do
 
   # --- changes ----------------------------------------------------------------------
 
+  # A writer is refused enabling auto-merge only where GitHub would not wait.
+  defp refusal("enable-auto-merge", viewer) do
+    if "merge" in viewer["actions"],
+      do: @auto_merge_refusal,
+      else: @action_refusals["enable-auto-merge"]
+  end
+
+  # The toggle offered follows the current state, so a request that already holds
+  # (the page was stale) is answered as such, not as a lack of rights.
+  defp refusal("allow-maintainer-edits", %{"actions" => actions} = viewer) do
+    if "stop-maintainer-edits" in actions,
+      do: "Maintainers can already edit this branch.",
+      else: refusal_default("allow-maintainer-edits", viewer)
+  end
+
+  defp refusal("stop-maintainer-edits", %{"actions" => actions} = viewer) do
+    if "allow-maintainer-edits" in actions,
+      do: "Maintainers already can't edit this branch.",
+      else: refusal_default("stop-maintainer-edits", viewer)
+  end
+
+  defp refusal(action, viewer), do: refusal_default(action, viewer)
+  defp refusal_default(action, _viewer), do: @action_refusals[action]
+
   @doc """
   `pullRequests.runAction`: refused when GitHub cannot do it or this account may not,
   asked of the host fresh. Stack actions are not served.
@@ -782,13 +1097,17 @@ defmodule HalC2.PullRequests do
           # update-branch button on this one.
           stack_rebase = input["stackNumber"] != nil and action == "update-branch"
 
-          with {:ok, viewer} <- GitHub.viewer_permissions(ctx, action == "update-branch") do
+          with {:ok, viewer} <-
+                 GitHub.viewer_permissions(
+                   ctx,
+                   action == "update-branch"
+                 ) do
             cond do
               if(stack_rebase,
                 do: viewer["stackRebase"] != true,
                 else: action not in viewer["actions"]
               ) ->
-                refuse("runAction", @action_refusals[action])
+                refuse("runAction", refusal(action, viewer))
 
               (not stack_rebase and input["updateMethod"]) &&
                   input["updateMethod"] not in (viewer["updateMethods"] || []) ->
@@ -810,29 +1129,37 @@ defmodule HalC2.PullRequests do
   # Rewriting is left to the host to allow: whoever wrote something may rewrite it,
   # and no host reports that as a permission.
   def update(input) do
-    change(input, "update", fn _project, ctx ->
-      case Map.take(input, ["title", "body"]) do
-        fields when fields == %{} -> refuse("update", "Nothing was changed.")
-        fields -> GitHub.update(ctx, fields)
-      end
-    end)
+    host_refusal(input, "update", :edit_change_request) ||
+      change(input, "update", fn _project, ctx ->
+        case Map.take(input, ["title", "body"]) do
+          fields when fields == %{} -> refuse("update", "Nothing was changed.")
+          fields -> GitHub.update(ctx, fields)
+        end
+      end)
   end
 
   def comment(input) do
     unless_blank(input["body"], "comment", "A comment cannot be empty.", fn ->
-      change(input, "comment", fn _project, ctx -> GitHub.comment(ctx, input["body"]) end)
+      host_refusal(input, "comment", :comment) ||
+        change(input, "comment", fn _project, ctx -> GitHub.comment(ctx, input["body"]) end)
     end)
   end
 
   def update_comment(input) do
     unless_blank(input["body"], "updateComment", "A comment cannot be empty.", fn ->
-      change(input, "updateComment", fn _project, ctx ->
-        GitHub.update_comment(ctx, input["commentId"], input["kind"], input["body"])
-      end)
+      host_refusal(input, "updateComment", :edit_comment) ||
+        change(input, "updateComment", fn _project, ctx ->
+          GitHub.update_comment(ctx, input["commentId"], input["kind"], input["body"])
+        end)
     end)
   end
 
   def submit_review(input) do
+    review_refusal(input) ||
+      submit_review_on_host(input)
+  end
+
+  defp submit_review_on_host(input) do
     change(input, "submitReview", fn _project, ctx ->
       verdict = input["verdict"]
       comments = input["comments"] || []
@@ -857,13 +1184,19 @@ defmodule HalC2.PullRequests do
 
   def reply_to_thread(input) do
     unless_blank(input["body"], "replyToThread", "A reply cannot be empty.", fn ->
-      change(input, "replyToThread", fn _project, ctx ->
-        GitHub.reply(ctx, input["threadId"], input["body"])
-      end)
+      host_refusal(input, "replyToThread", :reply) ||
+        change(input, "replyToThread", fn _project, ctx ->
+          GitHub.reply(ctx, input["threadId"], input["body"])
+        end)
     end)
   end
 
   def set_thread_resolution(input) do
+    host_refusal(input, "setThreadResolution", :resolve) ||
+      set_thread_resolution_on_host(input)
+  end
+
+  defp set_thread_resolution_on_host(input) do
     change(input, "setThreadResolution", fn _project, ctx ->
       with {:ok, viewer} <- GitHub.viewer_permissions(ctx) do
         if viewer["resolve"],
@@ -879,9 +1212,10 @@ defmodule HalC2.PullRequests do
 
   # Anyone who can read a pull request may react to it.
   def set_reaction(input) do
-    change(input, "setReaction", fn _project, ctx ->
-      GitHub.react(ctx, input["subjectId"], input["content"], input["reacted"])
-    end)
+    host_refusal(input, "setReaction", :reactions) ||
+      change(input, "setReaction", fn _project, ctx ->
+        GitHub.react(ctx, input["subjectId"], input["content"], input["reacted"])
+      end)
   end
 
   @doc "Who a review may be asked of, only for someone who may ask."
@@ -925,6 +1259,7 @@ defmodule HalC2.PullRequests do
   def invalidate(input) do
     if input["filesViewedOnly"] != true do
       if input["reference"] == nil, do: :persistent_term.erase(@viewers)
+      if input["reference"] == nil, do: :persistent_term.erase(@ssh_hosts)
       forget(input["reference"])
       # A reader asking for fresh host state wants the thread links it feeds to follow.
       if input["reference"], do: HalC2.PullRequests.Sync.request(input["reference"])
@@ -1160,7 +1495,147 @@ defmodule HalC2.PullRequests do
              do: {name, url}
            ),
          {_, url} <- List.keyfind(remotes, "origin", 0) || List.first(remotes) do
-      parse_remote(url)
+      url |> parse_remote() |> resolve_ssh_alias()
+    else
+      _ -> nil
+    end
+  end
+
+  # A remote spelled as an SSH alias (`git@work-gitlab:acme/infra.git`) names no
+  # host the kind rules know; the alias's `HostName` in `~/.ssh/config` does, so
+  # the project is read as that host's kind. An alias that resolves to nothing
+  # recognisable stays unknown.
+  defp resolve_ssh_alias(%{kind: "unknown", host: host} = remote) do
+    case ssh_hostname(host) do
+      nil -> remote
+      hostname -> %{remote | host: hostname, kind: kind(hostname)}
+    end
+  end
+
+  defp resolve_ssh_alias(remote), do: remote
+
+  # Resolving an alias can start `ssh` (and evaluate the user's config), and
+  # `projects/0` asks once per project on unrecognised hosts on every list
+  # read, so an answer is held per alias until the configs it came from
+  # change: keyed on the newest modification time of the two configs, their
+  # conventional `Include` directories (`config.d`, `ssh_config.d`, whose own
+  # time moves when a file in them is added or removed) and the files in
+  # them, and forgotten with the signed-in accounts on `invalidate/1`. An
+  # edit to a file included from anywhere else needs that refresh. Answers
+  # held under an older stamp are dropped when a new one is stored. A host that resolves to
+  # nothing is held too, so a self-hosted forge under an unrecognised name
+  # does not pay for `ssh` on every read either.
+  defp ssh_hostname(alias_name) do
+    config = ssh_config()
+    stamp = ssh_config_stamp(config)
+    held = :persistent_term.get(@ssh_hosts, %{})
+    key = {config, stamp, String.downcase(alias_name)}
+
+    case Map.fetch(held, key) do
+      {:ok, :none} ->
+        nil
+
+      {:ok, hostname} ->
+        hostname
+
+      :error ->
+        hostname = ssh_g_hostname(alias_name, config) || ssh_config_hostname(alias_name, config)
+        current = for {{^config, ^stamp, _} = k, v} <- held, into: %{}, do: {k, v}
+        :persistent_term.put(@ssh_hosts, Map.put(current, key, hostname || :none))
+        hostname
+    end
+  end
+
+  defp ssh_config,
+    do: Path.join([System.get_env("HOME") || System.user_home() || "", ".ssh", "config"])
+
+  defp ssh_config_stamp(config) do
+    dirs = [config <> ".d", "/etc/ssh/ssh_config.d"]
+
+    included =
+      for dir <- dirs,
+          {:ok, names} <- [File.ls(dir)],
+          name <- names,
+          do: Path.join(dir, name)
+
+    [config, "/etc/ssh/ssh_config" | dirs ++ included]
+    |> Enum.map(fn path ->
+      case File.stat(path, time: :posix) do
+        {:ok, stat} -> stat.mtime
+        _ -> 0
+      end
+    end)
+    |> Enum.max()
+  end
+
+  # How `ssh` itself resolves the alias (`ssh -G` prints the effective
+  # configuration without connecting), which follows `Include`s, `Host=`
+  # spellings and wildcard patterns the way a real connection would. The
+  # alias comes from a git remote, so only a plain host name is ever
+  # handed to `ssh`: nothing that could be read as one of its options.
+  # Evaluating the config is `ssh`'s own work on the user's own config,
+  # the same a `git` transport through this alias would do.
+  defp ssh_g_hostname(alias_name, config) do
+    if alias_name =~ ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/ do
+      # `ssh` reads the config under the account's home, not `$HOME`, so
+      # name the config under the MC's home when there is one there.
+      args =
+        if File.regular?(config), do: ["-G", "-F", config, alias_name], else: ["-G", alias_name]
+
+      case Cli.run("ssh", args, timeout: 5_000) do
+        {:ok, out, _} ->
+          Enum.find_value(String.split(out, ~r/\r?\n/), fn line ->
+            case Regex.run(~r/^hostname\s+(\S+)$/i, String.trim(line)) do
+              [_, hostname] ->
+                hostname = String.downcase(hostname)
+                if hostname != String.downcase(alias_name), do: hostname
+
+              _ ->
+                nil
+            end
+          end)
+
+        _ ->
+          nil
+      end
+    end
+  end
+
+  # The plain reading of the config file, for a machine with no `ssh` to
+  # ask: only the one config under the MC's own home, the same file named
+  # to `ssh -G` above (under `$HOME` when it is set, else the account's
+  # home, which is where `ssh` itself looks).
+  # sobelow_skip ["Traversal.FileModule"]
+  defp ssh_config_hostname(alias_name, path) do
+    with {:ok, text} <- File.read(path) do
+      text
+      |> String.split(~r/\r?\n/)
+      |> Enum.chunk_while(
+        nil,
+        fn line, block ->
+          if line =~ ~r/^\s*Host\s+/i,
+            do: {:cont, block, [line]},
+            else: {:cont, (block || []) ++ [line]}
+        end,
+        fn block -> {:cont, block, nil} end
+      )
+      |> Enum.find_value(fn
+        [head | rest] ->
+          names =
+            head |> String.trim() |> String.split(~r/\s+/) |> tl() |> Enum.map(&String.downcase/1)
+
+          if alias_name in names do
+            Enum.find_value(rest, fn line ->
+              case Regex.run(~r/^\s*HostName\s+(\S+)/i, line) do
+                [_, hostname] -> String.downcase(hostname)
+                _ -> nil
+              end
+            end)
+          end
+
+        _ ->
+          nil
+      end)
     else
       _ -> nil
     end
@@ -1356,6 +1831,49 @@ defmodule HalC2.PullRequests do
   # Markdown keeps its whitespace, so a body of nothing but whitespace is refused here.
   defp unless_blank(body, operation, detail, fun) do
     if String.trim(body || "") == "", do: refuse(operation, detail), else: fun.()
+  end
+
+  # The kind of the host a reference names, from its project's checkout (or the
+  # host it names), without asking that host anything.
+  defp ref_kind(ref) do
+    project = Enum.find(projects(), &(&1.id == ref["projectId"]))
+
+    cond do
+      project -> project.kind
+      is_binary(ref["host"]) -> kind(String.downcase(String.trim(ref["host"])))
+      true -> nil
+    end
+  end
+
+  # `refuse/2` for a thing the reference's host cannot do at all
+  # (`@host_capabilities`), or nil where it can — or where no provider here
+  # claims the host either way, which `project_for/2` then answers for.
+  defp host_refusal(ref, operation, capability) do
+    capabilities = @host_capabilities[ref_kind(ref)] || %{}
+
+    if capabilities[capability] == false,
+      do: refuse(operation, @host_refusal_details[capability])
+  end
+
+  # As `host_refusal/3`, for a review: a line comment on a host without them is
+  # refused for that first, then a verdict the host does not take.
+  defp review_refusal(input) do
+    capabilities = @host_capabilities[ref_kind(input)] || %{}
+    verdict = input["verdict"]
+
+    cond do
+      not Map.has_key?(@verdict_labels, verdict) ->
+        refuse("submitReview", "A review needs a verdict: approve, request changes or comment.")
+
+      (input["comments"] || []) != [] and capabilities[:inline] == false ->
+        refuse("submitReview", @host_refusal_details.inline)
+
+      is_list(capabilities[:verdicts]) and verdict not in capabilities.verdicts ->
+        refuse("submitReview", "This host cannot #{@verdict_labels[verdict]} a change request.")
+
+      true ->
+        nil
+    end
   end
 
   defp provider_error(_operation, {:missing, _}), do: unavailable("cli-missing", "github")

@@ -233,6 +233,91 @@ defmodule HalC2.Steps.Orchestration.ComposerContext do
     context
   end
 
+  step "a message of {int},{int} characters is sent to {string}",
+       %{args: [thousands, ones, thread]} = context do
+    # Lines of digits, so a cut in the wrong place shows in what the provider got.
+    chars = thousands * 1000 + ones
+    line = String.duplicate("0123456789", 9) <> "\n"
+
+    text =
+      line
+      |> String.duplicate(div(chars, String.length(line)) + 1)
+      |> String.slice(0, chars)
+
+    context
+    |> send_message(thread, text)
+    |> Map.merge(%{long: text, thread: thread})
+  end
+
+  step "the provider receives the message's first 8,000 and last 2,000 characters around a note of the {int},{int} cut",
+       %{args: [thousands, ones]} = context do
+    cut = thousands * 1000 + ones
+
+    note =
+      "\n\n[... #{cut} characters cut here; the whole message is in the attached message.txt ...]\n\n"
+
+    [start, rest] = String.split(context.received, note, parts: 2)
+    assert start == String.slice(context.long, 0, 8_000)
+    assert String.slice(rest, 0, 2_000) == String.slice(context.long, -2_000, 2_000)
+    context
+  end
+
+  step "the provider is told the whole message is saved at the path of {string}",
+       %{args: [name]} = context do
+    [_, path] =
+      Regex.run(
+        ~r/\[Attached file "#{Regex.escape(name)}" is saved at: ([^\]]+)\]/,
+        context.received
+      )
+
+    Map.put(context, :saved, path)
+  end
+
+  step "{string} holds the whole message", context do
+    assert File.read!(context.saved) == context.long
+    context
+  end
+
+  step "the thread shows the message as the agent was sent it, with {string} attached",
+       %{args: [name]} = context do
+    message = user_message(context)
+    assert String.starts_with?(context.received, message["text"])
+    assert String.length(message["text"]) < 10_100
+
+    assert [
+             %{
+               "type" => "file",
+               "name" => ^name,
+               "mimeType" => "text/plain",
+               "source" => %{"_tag" => "pasted-text"}
+             } = file
+           ] =
+             message["attachments"]
+
+    assert file["sizeBytes"] == byte_size(context.long)
+    context
+  end
+
+  step "the provider receives the whole message", context do
+    assert context.received == context.long
+    context
+  end
+
+  step "the message has no attachments", context do
+    assert (user_message(context)["attachments"] || []) == []
+    context
+  end
+
+  defp user_message(context) do
+    [message] =
+      context
+      |> World.state(context.thread)
+      |> HalC2.StreamState.list("message")
+      |> Enum.filter(&(&1["role"] == "user"))
+
+    message
+  end
+
   # Sends `text` with context `records` and waits until the provider has the turn;
   # `context.received` is the text it was given.
   defp send_message(context, thread, text, records \\ nil, fields \\ %{}) do

@@ -29,6 +29,15 @@ defmodule HalC2.Web.WireTest do
     client
   end
 
+  test "cut text fits the limit with its marker, and cutting it again changes nothing" do
+    long = item(String.duplicate("あ", 20_000))
+    cut = Wire.entity("turn-item", long)["progress"]
+    assert String.valid?(cut)
+    assert byte_size(cut) <= @limit
+    assert String.ends_with?(cut, "… output truncated for transport")
+    assert Wire.entity("turn-item", item(cut))["progress"] == cut
+  end
+
   test "progress that grows past the limit by appends is the cut a snapshot shows" do
     chunk = String.duplicate("é", 5_000)
     suffixes = List.duplicate(chunk, 6)
@@ -168,5 +177,35 @@ defmodule HalC2.Web.WireTest do
 
     command = %{"id" => "i", "type" => "command_execution"}
     assert Wire.replay_patch("turn-item", %{"s" => %{"output" => "x"}}, command) == nil
+  end
+
+  describe "an MCP app's tool result" do
+    @big String.duplicate("x", 20_000)
+    defp app_item(result),
+      do: %{
+        "id" => "i",
+        "type" => "dynamic_tool",
+        "mcpApp" => %{"attachmentId" => "a", "toolResult" => result}
+      }
+
+    test "is bounded as an output is, in a snapshot and in a patch" do
+      assert %{"mcpApp" => %{"toolResult" => %{"truncated" => true}, "attachmentId" => "a"}} =
+               Wire.entity("turn-item", app_item(%{"content" => @big}))
+
+      patch =
+        Wire.patch(
+          "turn-item",
+          %{"s" => %{"mcpApp" => app_item(@big)["mcpApp"]}},
+          "dynamic_tool",
+          nil
+        )
+
+      assert %{"truncated" => true} = patch["s"]["mcpApp"]["toolResult"]
+    end
+
+    test "a result within the limit goes through whole" do
+      item = app_item(%{"content" => "Sunny"})
+      assert Wire.entity("turn-item", item) == item
+    end
   end
 end

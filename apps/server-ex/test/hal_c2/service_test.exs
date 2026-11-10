@@ -4,6 +4,7 @@ defmodule HalC2.ServiceTest do
 
   alias HalC2.Service
   alias HalC2.Test.Storage
+  alias HalC2.Test.SystemdUnit
 
   @moduletag :tmp_dir
 
@@ -95,6 +96,26 @@ defmodule HalC2.ServiceTest do
     assert %{"current" => true, "problems" => []} = Service.status()
   end
 
+  test "a start clears restart-pending only on the version it names or a later one" do
+    pending = fn -> "restart-pending" in Service.status()["problems"] end
+    {:ok, _} = Service.install()
+
+    Service.mark_restart_pending("1.4.0")
+    Service.started("1.3.9")
+    assert pending.()
+    Service.started("1.4.0")
+    refute pending.()
+
+    Service.mark_restart_pending("1.4.0")
+    Service.started("1.10.0")
+    refute pending.()
+
+    # A marker no version compares with stands only for what is installed, which runs.
+    Service.mark_restart_pending("latest")
+    Service.started("1.3.0")
+    refute pending.()
+  end
+
   # The programs a leaving MC kept, under the home it runs on now.
   defp kept_program(thread) do
     {:ok, sub} = HalC2.Subprocess.start(["sh", "-c", "while read l; do :; done"], durable: thread)
@@ -102,6 +123,18 @@ defmodule HalC2.ServiceTest do
     :detached = HalC2.Subprocess.stop(sub)
     HalC2.Orchestration.Recovery.leaving(false)
     {sub.durable.dir, HalC2.Subprocess.os_pid(sub)}
+  end
+
+  # systemd reads a single quote as a quote in Environment= and ExecStart=, as it
+  # does a double one, so a value with only an apostrophe in it is quoted too.
+  describe "unit_value/2" do
+    test "a value with an apostrophe reads back as written" do
+      for value <- ["/home/o'brien/hal-c2", "it's", "'", "a'b'c"] do
+        assert SystemdUnit.exec(Service.unit_value(value, :exec)) == [value]
+        assert SystemdUnit.env("X=" <> Service.unit_value(value, :env)) == {"X", value}
+        assert SystemdUnit.path(Service.unit_value(value, :path)) == value
+      end
+    end
   end
 
   describe "uninstall" do
@@ -137,6 +170,28 @@ defmodule HalC2.ServiceTest do
 
       {:ok, %{"unitPath" => path}} = Service.install()
       assert String.ends_with?(path, ".plist")
+      {service_dir, service_pid} = kept_program("t1")
+      Application.put_env(:hal_c2, :home, other)
+
+      assert {:ok, "Background service removed."} = Service.command(["uninstall"])
+      refute File.exists?(service_dir)
+      assert HalC2.Subprocess.Orphans.gone?(service_pid)
+    end
+
+    # systemd expands `%` in a unit's log path; uninstall reads the home back from it.
+    test "finds a home with systemd's special characters in its path",
+         %{tmp_dir: dir, other: other} do
+      Application.put_env(:hal_c2, :home, Path.join(dir, "mc %i dir"))
+      {:ok, %{"unitPath" => path}} = Service.install()
+      unit = File.read!(path)
+
+      for key <- ["StandardOutput", "StandardError"] do
+        assert ["append:" <> log] = SystemdUnit.values(unit, key)
+
+        assert SystemdUnit.path(log) ==
+                 Path.join([HalC2.Paths.state_dir(), "logs", "boot-service.log"])
+      end
+
       {service_dir, service_pid} = kept_program("t1")
       Application.put_env(:hal_c2, :home, other)
 

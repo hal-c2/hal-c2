@@ -36,7 +36,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
 
   step "it prints a WebSocket URL on loopback with the MC's own access token", context do
     assert [_, port, token] =
-             Regex.run(~r{ws://127\.0\.0\.1:(\d+)/ws\?token=(\S+)$}, context.printed),
+             Regex.run(~r{ws://127\.0\.0\.1:(\d+)/ws\?protocol=3&token=(\S+)$}, context.printed),
            "printed #{inspect(context.printed)}"
 
     assert String.to_integer(port) == context.mc.port

@@ -1,5 +1,15 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27660 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/30324 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/27442 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/27354
+#   https://github.com/pingdotgg/t3code/pull/24679 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/26538
 #   https://github.com/pingdotgg/t3code/pull/24104 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/25931 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/26369 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/26366 (dropped)
+#   https://github.com/pingdotgg/t3code/pull/26323 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/24636 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/22171 (dropped)
 #   https://github.com/pingdotgg/t3code/pull/22172 (dropped)
@@ -67,6 +77,15 @@
 #   packages/client-runtime/src/errors/network.ts (the filtering-network hint)
 #   Shared domain: settings/connections.feature holds the desktop link switch;
 #   mobile/pairing-and-environments.feature holds phone onboarding, relayed environments and deregistering.
+#   https://github.com/pingdotgg/t3code/pull/28105
+#   https://github.com/pingdotgg/t3code/pull/27197
+#   https://github.com/pingdotgg/t3code/pull/27998
+#   https://github.com/pingdotgg/t3code/pull/21706
+#   https://github.com/pingdotgg/t3code/pull/22747
+#   https://github.com/pingdotgg/t3code/pull/23738
+#   https://github.com/pingdotgg/t3code/pull/29794
+#   https://github.com/pingdotgg/t3code/pull/24485
+#   https://github.com/pingdotgg/t3code/pull/24946
 
 # HAL-C2 Connect was removed: the MC is reached over the LAN or a tailnet, and
 # machines share one sidebar through the cluster (connections/cluster.feature).
@@ -221,6 +240,15 @@ Feature: HAL-C2 Connect
     When the user switches it on
     Then the MC is relinked with its tunnel
 
+  # Upstream #24485: the MC that hosts Connect keeps a rotating log of what its tunnel connector
+  # reports, so an outage leaves a record. Dropped with Connect.
+  @dropped @mc
+  Scenario: The tunnel connector keeps a log of its own
+    Given a linked MC with its tunnel up
+    When the tunnel connector registers, warns, exits or backs off
+    Then the MC writes it to the connector's log in its logs folder
+    And the log rolls over at 1 MiB, keeping two older copies
+
   @dropped @mc
   Scenario: The connector's token never reaches the logs
     Given a linked MC with its tunnel up
@@ -361,6 +389,8 @@ Feature: HAL-C2 Connect
     Then it prints the saved authorization and link settings
     And does not test reachability
 
+  # Upstream #30324: unlinking after the server died uncleanly warned about, and tried to reach,
+  # a server that was gone. Dropped with the rest of Connect.
   @dropped @mc
   Scenario: Unlinking from the command line keeps the sign-in
     Given a linked MC
@@ -760,6 +790,34 @@ Feature: HAL-C2 Connect
     Then the user is told the relay refused the link because of the limit
     And is told to unlink an environment to free one up
 
+  # Upstream #25931: linking a paid T3 Chat account raises the tunnel limit of 3 to 10 with Pro
+  # and 100 with Premier; #26366 documents it. Dropped with HAL-C2 Connect.
+  # Upstream #26366: documents the tunnel limits by plan.
+  @dropped @mc @shared
+  Scenario: A linked paid chat account raises the account's tunnel limit
+    Given the user linked a Pro chat account to their HAL-C2 Connect account
+    When the user links a fourth environment
+    Then the link is accepted, up to ten environments
+
+  # Upstream #26369: the Connect settings show how many tunnels are in use, and a link refused at
+  # the limit offers to link or upgrade the chat account. Dropped with HAL-C2 Connect.
+  @dropped @desktop
+  Scenario: Connect settings show the tunnels in use and how to get more at the limit
+    Given the account uses 3 of its 3 tunnels
+    When the user opens the HAL-C2 Connect settings
+    Then they say 3 of 3 tunnels are in use
+    And a link refused at the limit offers Tailscale or linking a chat account instead of the raw error
+
+  # Upstream #27442: the tunnel meter worked out the cap from the chat plan and ignored a cap set by
+  # hand for the account. Dropped with HAL-C2 Connect.
+  @dropped @desktop
+  Scenario: Connect settings show a tunnel cap set by hand for the account
+    Given the account's tunnel cap was raised by hand to 5
+    And the account uses 4 tunnels
+    When the user opens the HAL-C2 Connect settings
+    Then they say 4 of 5 tunnels are in use
+    And they offer no chat plan upgrade for more tunnels
+
   # Legacy: packages/client-runtime/src/relay/errorPresentation.ts (dpopFailureMessage, DPOP_CLOCK_HINT)
   @dropped @desktop @mobile
   Scenario Outline: A rejected proof of the device's key points to the clock only when that is the reason
@@ -1030,6 +1088,15 @@ Feature: HAL-C2 Connect
     When the MC opens its relay tunnel
     Then cloudflared is found and the tunnel opens
 
+  # Upstream #24679: long CJK titles pushed a Live Activity update past APNs' 4096 bytes and the
+  # card stopped updating. Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A Live Activity update with long titles is shortened to fit
+    Given five agents whose project and thread titles are 120 CJK characters each
+    When the relay sends their Live Activity update
+    Then the titles and the alert text are shortened until the update fits in 4096 bytes
+    And the lowest-priority row is left out if shortening alone does not fit
+
   # Upstream #11013: a device still loading its Connect sign-in reported "Your cloud sign-in
   # changed" and stopped retrying. Dropped with HAL-C2 Connect.
   @dropped @shared
@@ -1056,6 +1123,23 @@ Feature: HAL-C2 Connect
     When thirty such stalls happen within five minutes
     Then the tunnel switches to HTTP/2 until the MC restarts
     And a transport the user set explicitly is kept
+
+  # Upstream #28105: the HTTP/2 fallback is remembered across restarts for 24 hours.
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: The relay tunnel remembers its HTTP/2 fallback for a day across restarts
+    Given the MC's relay tunnel fell back to HTTP/2 an hour ago
+    When the MC restarts
+    Then the tunnel starts on HTTP/2
+    And once the fallback is 24 hours old the next start tries QUIC again
+
+  # Upstream #27197: a managed policy can turn Connect off; the server then unlinks at startup.
+  # Dropped with HAL-C2 Connect.
+  @dropped @mc
+  Scenario: A managed policy that turns Connect off unlinks the host
+    Given the machine's managed policy does not allow Connect
+    When the MC starts
+    Then the host is unlinked from Connect and cannot be linked again
 
   # Upstream #14581: a relay provisioning failure names the stage that failed.
   # Dropped with HAL-C2 Connect.
@@ -1113,3 +1197,90 @@ Feature: HAL-C2 Connect
     Given the user shared the thread "Fix login" with a guest link
     When the guest opens the link and sends "Can you check the logout path too?"
     Then the guest's message waits in "Fix login" until the user sends or dismisses it
+  # Upstream #26538: a guest could read a file change's patch and file contents by its id,
+  # though guests are not shown diffs. Dropped with guest links.
+  @dropped @mc
+  Scenario: A guest link never returns a file change's diff or file contents
+    Given the user shared the thread "Fix login" with a guest link
+    When the guest asks for a file change in "Fix login" by its id
+    Then the answer leaves out the change's patch and its old and new file contents
+    And the guest still gets command and tool output
+
+  # Upstream #26323: a guest saw "image unavailable" for a screenshot the agent showed from the
+  # host. Dropped with guest links.
+  @dropped @mc
+  Scenario: A guest sees an image the agent showed in a reply, and no other file
+    Given the user shared the thread "Fix login" with a guest link
+    And an agent reply in "Fix login" shows the image "/home/me/shot.png"
+    When the guest's page asks for "/home/me/shot.png" and for "/etc/passwd"
+    Then the guest gets the image and is refused the other file
+
+  # Upstream #29794: a guest of a forked thread could not open files on the messages it inherited
+  # from its source. Dropped with guest links.
+  @dropped @mc
+  Scenario: A guest of a forked thread opens the files on the messages it inherited
+    Given the user shared "Fix login (fork)", a fork of "Fix login", with a guest link
+    And a message the fork shows from "Fix login" has the image "shot.png" attached
+    When the guest opens "shot.png"
+    Then the guest sees the image
+
+  # Upstream #27354: a guest saw only the last 20 turns of a shared thread and could load nothing
+  # older. Dropped with guest links.
+  @dropped @mc @shared
+  Scenario: A guest can load a shared thread's earlier turns
+    Given the user shared a thread of 60 turns with a guest link
+    When the guest asks for earlier turns
+    Then the earlier turns are shown before the opening ones, still without diffs
+
+  # Upstream #27998: a Connect socket closed when its hour-long access token expired; the client now
+  # renews a live socket's token and the MC moves it to the newer session. Dropped: HAL-C2 Connect
+  # is not supported yet.
+  @dropped @mc @shared
+  Scenario: A Connect connection stays open across its hourly token renewal
+    Given a device is connected to the MC through HAL-C2 Connect
+    When the device's Connect access token reaches its last minute
+    Then the device renews it on the open connection
+    And the connection stays open without resubscribing
+
+  # Upstream #21706: removing a Connect environment said whether it stayed on the user's account.
+  # Dropped: HAL-C2 Connect is not supported yet.
+  @dropped @shared
+  Scenario: Removing a Connect environment says whether it stays on the account
+    Given "server" was added through HAL-C2 Connect
+    When the user asks to remove "server"
+    Then the user is told whether "server" stays registered on their Connect account
+
+  # Upstream #22747: a relay client download stopped by quitting the app left an install that
+  # never recovered. Dropped: HAL-C2 Connect is not supported yet.
+  @dropped @desktop
+  Scenario: A relay client install stopped by quitting recovers at the next launch
+    Given the app was quit while it downloaded the Connect relay client
+    When the app starts again
+    Then the relay client is downloaded afresh and installs
+
+  # Upstream #23738: the Connect command asked about installing a service even with no terminal
+  # to answer. Dropped: HAL-C2 Connect is not supported yet.
+  @dropped @mc
+  Scenario: Connecting without a terminal skips the service question
+    Given the Connect command runs with no terminal attached
+    When it connects the environment
+    Then it does not ask whether to install a background service
+
+  # Upstream #27660: an unlinked server's fix told desktop users to restart a background service
+  # they do not run, and Settings kept showing "not linked" after the tunnel came up.
+  # Dropped: HAL-C2 Connect is not supported yet.
+  @dropped @mc
+  Scenario: The fix for an unlinked environment fits how its server runs
+    Given the environment's server is not linked to Connect
+    When the user checks whether it is reachable
+    Then the fix says to connect it and restart the server the way it runs
+    And once linked, the stale "not linked" result is no longer shown
+
+  # Upstream #24946: after a host's IPv6 prefix changed, cloudflared still reported ready
+  # connections while the edge refused them, and the connector was never replaced. Dropped:
+  # HAL-C2 Connect is not supported yet, and the relay is upstream's hosted service.
+  @dropped @mc
+  Scenario: A tunnel client the edge no longer reaches is replaced
+    Given the environment's tunnel client reports ready connections
+    And the relay has answered that the environment is unreachable for two minutes
+    Then the tunnel client is replaced

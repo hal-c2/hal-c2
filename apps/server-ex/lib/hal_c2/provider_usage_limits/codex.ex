@@ -16,12 +16,7 @@ defmodule HalC2.ProviderUsageLimits.Codex do
   @week 7 * 24 * 60
   @month 30 * 24 * 60
 
-  def command(instance \\ "codex"),
-    do:
-      HalC2.Settings.instance_command(
-        instance,
-        Application.get_env(:hal_c2, :codex_command, ["codex", "app-server"])
-      )
+  def command(instance \\ "codex"), do: HalC2.Codex.Installation.command(instance)
 
   def installed?(instance \\ "codex") do
     case command(instance) do
@@ -93,8 +88,19 @@ defmodule HalC2.ProviderUsageLimits.Codex do
 
   defp reset_credits(_), do: nil
 
-  @doc "The plan as the Codex provider labels it (`ChatGPT Pro 20x Subscription`), or nil."
+  @doc """
+  The plan as the Codex provider labels it (`ChatGPT Pro 200 Subscription`), by
+  the name OpenAI currently gives it. A plan a newer Codex names and this
+  release does not know keeps its own name, so its account still reads as
+  signed in on that plan; no plan at all labels nothing.
+  """
   def plan_label(plan) do
+    known_plan_label(plan) ||
+      if(is_binary(plan) and String.trim(plan) != "", do: plan)
+  end
+
+  @doc "The label of a plan this release knows, or nil (no plan, or an unknown one)."
+  def known_plan_label(plan) do
     case plan do
       "free" ->
         "ChatGPT Free Subscription"
@@ -106,15 +112,21 @@ defmodule HalC2.ProviderUsageLimits.Codex do
         "ChatGPT Plus Subscription"
 
       "pro" ->
-        "ChatGPT Pro 20x Subscription"
+        "ChatGPT Pro 200 Subscription"
 
       "prolite" ->
-        "ChatGPT Pro 5x Subscription"
+        "ChatGPT Pro 100 Subscription"
+
+      "promax" ->
+        "ChatGPT Pro 500 Subscription"
 
       "team" ->
-        "ChatGPT Team Subscription"
+        "ChatGPT Business Subscription"
 
-      p when p in ~w(self_serve_business_prolite self_serve_business_usage_based business) ->
+      "self_serve_business_prolite" ->
+        "ChatGPT Business Premium Subscription"
+
+      p when p in ~w(self_serve_business_usage_based business) ->
         "ChatGPT Business Subscription"
 
       p when p in ~w(ent26 enterprise_cbp_automation enterprise_cbp_usage_based enterprise) ->
@@ -147,8 +159,12 @@ defmodule HalC2.ProviderUsageLimits.Codex do
     with_app_server(instance, fn conn ->
       read = call(conn, "account/read", %{}, 10_000)
 
-      with {:ok, %{"account" => %{} = account}} <- read,
-           do: Limits.remember_account(instance, account(account))
+      managed? = HalC2.Codex.ChatGpt.managed?(instance)
+
+      with {:ok, %{"account" => %{} = account}} <- read do
+        if managed?, do: HalC2.Codex.ChatGpt.seen(instance, account)
+        Limits.remember_account(instance, account(account))
+      end
 
       case read do
         {:ok, %{"account" => %{"type" => "apiKey"}}} ->
@@ -157,16 +173,24 @@ defmodule HalC2.ProviderUsageLimits.Codex do
         {:ok, %{"account" => nil, "requiresOpenaiAuth" => true}} ->
           Limits.remember_account(instance, %{
             "status" => "unauthenticated",
-            "message" => "Codex CLI is not authenticated. Run `codex login` and try again."
+            "message" =>
+              if(managed?,
+                do: HalC2.Codex.ChatGpt.seen(instance, nil),
+                else: "Codex CLI is not authenticated. Run `codex login` and try again."
+              )
           })
 
           Limits.unavailable(checked_at, "probeFailed")
 
-        {:ok, _} ->
+        {:ok, %{} = read_ok} ->
           # Usage is an enrichment with its own short deadline.
           case call(conn, "account/rateLimits/read", nil, 3_000) do
-            {:ok, %{} = response} -> limits(response, checked_at)
-            failure -> Limits.unavailable(checked_at, "probeFailed", failure(failure))
+            {:ok, %{} = response} ->
+              remember_usage_plan(instance, read_ok["account"] || %{}, response)
+              limits(response, checked_at)
+
+            failure ->
+              Limits.unavailable(checked_at, "probeFailed", failure(failure))
           end
 
         failure ->
@@ -175,6 +199,23 @@ defmodule HalC2.ProviderUsageLimits.Codex do
     end) ||
       Limits.unavailable(checked_at, "probeFailed", "Codex could not be started to read usage.")
   end
+
+  # The plan in Codex's cached login can lag a downgrade: a plan its usage read
+  # names (and this release knows) is the account's plan. A usage read naming
+  # none, or one unknown here, leaves the login's label as it was.
+  defp remember_usage_plan(instance, %{"type" => "chatgpt"} = acct, response) do
+    snapshot = get_in(response, ["rateLimitsByLimitId", "codex"]) || response["rateLimits"]
+
+    case snapshot && known_plan_label(snapshot["planType"]) do
+      label when is_binary(label) ->
+        Limits.remember_account(instance, Map.put(account(acct), "label", label))
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp remember_usage_plan(_instance, _account, _response), do: :ok
 
   @doc false
   # `auth` fields for the signed-in account.
@@ -205,40 +246,40 @@ defmodule HalC2.ProviderUsageLimits.Codex do
     end) || {:error, :spawn}
   end
 
-  # Runs `fun` against a fresh, initialized app-server of `instance` (its executable
-  # and its variables, such as CODEX_HOME); nil when it cannot start.
+  # Runs `fun` against a fresh, initialized app-server of `instance` (its executable,
+  # its home, as its sessions run in, and its variables); nil when it cannot start.
   defp with_app_server(instance, fun) do
     Process.flag(:trap_exit, true)
-    env = Enum.to_list(HalC2.Settings.instance_env(instance))
+    env = HalC2.Codex.Provider.app_server_env(HalC2.Codex.Home.instance_env(instance))
 
-    case Connection.start_link(cmd: command(instance), handler: self(), env: env) do
-      {:ok, conn} ->
-        try do
-          with {:ok, _} <-
-                 call(
-                   conn,
-                   "initialize",
-                   %{
-                     "clientInfo" => %{
-                       "name" => "hal_c2_desktop",
-                       "title" => "HAL-C2 Desktop",
-                       "version" => "0.1.0"
-                     },
-                     "capabilities" => %{"experimentalApi" => true}
+    with {:ok, home} <- HalC2.Codex.Home.env(instance),
+         {:ok, conn} <-
+           Connection.start_link(cmd: command(instance), handler: self(), env: home ++ env) do
+      try do
+        with {:ok, _} <-
+               call(
+                 conn,
+                 "initialize",
+                 %{
+                   "clientInfo" => %{
+                     "name" => "hal_c2_desktop",
+                     "title" => "HAL-C2 Desktop",
+                     "version" => "0.1.0"
                    },
-                   15_000
-                 ) do
-            Connection.notify(conn, "initialized", nil)
-            fun.(conn)
-          else
-            _ -> nil
-          end
-        after
-          stop(conn)
+                   "capabilities" => %{"experimentalApi" => true}
+                 },
+                 15_000
+               ) do
+          Connection.notify(conn, "initialized", nil)
+          fun.(conn)
+        else
+          _ -> nil
         end
-
-      _ ->
-        nil
+      after
+        stop(conn)
+      end
+    else
+      _ -> nil
     end
   end
 

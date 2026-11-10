@@ -121,7 +121,14 @@ defmodule HalC2.Orchestration.Rollback do
           |> StreamState.list("provider-turn")
           |> Enum.filter(&(&1["providerThreadId"] == provider_thread["id"]))
 
-        dropped = Enum.filter(turns, &MapSet.member?(ordinals, &1["ordinal"]))
+        # A turn whose native ref is null left nothing in the provider's
+        # conversation (a Pi command, or a rewind Pi made): nothing to drop.
+        dropped =
+          Enum.filter(
+            turns,
+            &(MapSet.member?(ordinals, &1["ordinal"]) and
+                not (Map.has_key?(&1, "nativeTurnRef") and &1["nativeTurnRef"] == nil))
+          )
 
         head =
           Enum.find_value(turns, fn turn ->
@@ -259,10 +266,22 @@ defmodule HalC2.Orchestration.Rollback do
         undo(plan, undo)
 
         case error do
-          {:error, {_status, detail}} -> {:error, "Could not restore the checkpoint: #{detail}"}
-          {:error, reason} -> {:error, "Could not restore the checkpoint: #{inspect(reason)}"}
+          {:error, {_status, detail}} ->
+            {:error, "Could not restore the checkpoint: #{restore_detail(detail)}"}
+
+          {:error, reason} ->
+            {:error, "Could not restore the checkpoint: #{inspect(reason)}"}
         end
     end
+  end
+
+  # A restore another git process blocks says so, instead of leaving the user
+  # to read git's lock complaint.
+  defp restore_detail(detail) do
+    if detail =~ "index.lock",
+      do:
+        "git's index lock (index.lock) is held by another git process; try again once it is free.",
+      else: detail
   end
 
   defp settle(state, plan, patch) do
@@ -277,7 +296,7 @@ defmodule HalC2.Orchestration.Rollback do
         |> Map.merge(patch)
         |> then(&if(plan.fork && patch != %{}, do: Map.delete(&1, "carriedSession"), else: &1))
         |> Map.merge(%{
-          "lastRunOrdinal" => if(plan.target > 0, do: plan.target),
+          "lastRunOrdinal" => settled_last_run_ordinal(state, plan),
           "status" => "idle",
           "updatedAt" => at
         })
@@ -315,8 +334,60 @@ defmodule HalC2.Orchestration.Rollback do
         ]
       end)
 
+    forks =
+      for id <- reopened_forks(state, MapSet.new(plan.runs, & &1["id"]), patch),
+          do: Orchestration.upsert(state, "context-transfer", id, &reopen(&1, at))
+
     # An upsert that changes nothing is nil.
-    Enum.reject([provider_thread | stale ++ turns ++ runs], &is_nil/1)
+    Enum.reject([provider_thread | stale ++ turns ++ runs ++ forks], &is_nil/1)
+  end
+
+  # Where the provider thread's latest run stands once settled: the rewind's
+  # target, unless a message decided while the rewind ran already named a
+  # later run as its latest. That run resumes the rewound conversation, so
+  # settling must not move the marker back under it. Only a run that started
+  # counts: one still queued, or cancelled from the queue, is above the
+  # target too, but the provider never saw it, so the marker must not claim
+  # it did.
+  defp settled_last_run_ordinal(state, plan) do
+    rolled = MapSet.new(plan.runs, & &1["id"])
+
+    decided =
+      for run <- StreamState.list(state, "run"),
+          run["ordinal"] > plan.target,
+          not MapSet.member?(rolled, run["id"]),
+          run["status"] in @active,
+          do: run["ordinal"]
+
+    case Enum.max([plan.target | decided]) do
+      0 -> nil
+      latest -> latest
+    end
+  end
+
+  @doc """
+  The native forks a rewind gives back: a fork transfer a rolled-back run consumed
+  natively, when the provider's rewind left it no conversation (`patch` clears
+  `nativeThreadRef`). Pending again, it has the next run fork the source at the same
+  point, so the fork keeps the history it was made with rather than starting empty.
+  """
+  @spec reopened_forks(StreamState.t(), MapSet.t(String.t()), map) :: [String.t()]
+  def reopened_forks(state, rolled_run_ids, patch) do
+    if Map.has_key?(patch, "nativeThreadRef") and patch["nativeThreadRef"] == nil do
+      for transfer <- StreamState.list(state, "context-transfer"),
+          transfer["type"] == "fork" and transfer["status"] == "consumed",
+          get_in(transfer, ["resolution", "strategy"]) == "native_fork",
+          MapSet.member?(rolled_run_ids, transfer["targetRunId"]),
+          do: transfer["id"]
+    else
+      []
+    end
+  end
+
+  defp reopen(transfer, at) do
+    transfer
+    |> Map.drop(["targetRunId", "consumedAt", "resolution"])
+    |> Map.merge(%{"status" => "pending", "updatedAt" => at})
   end
 
   defp check_isolated(%{restore: false}), do: :ok

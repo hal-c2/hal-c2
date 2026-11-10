@@ -8,8 +8,9 @@ defmodule HalC2.TextGeneration do
   Commits, pull requests, and branch names are written by the project's source
   control writer model when its provider is usable, otherwise by its text
   generation model, which also writes titles (`model_selection/2`). A selection
-  whose provider is disabled, not installed, or has no runner here falls back to
-  the first usable provider, with that provider's default model.
+  whose provider is disabled, not installed, signed out, failed its last check,
+  or has no runner here falls back to the first usable provider, with that
+  provider's default model; a provider still being checked keeps its selection.
 
   Claude runs `claude -p` with a JSON schema and no tools; Codex runs `codex exec`
   in a read-only sandbox; Grok, OpenCode, Cursor, and Antigravity answer one ACP
@@ -17,6 +18,8 @@ defmodule HalC2.TextGeneration do
   (Antigravity fails outright on one); Pi answers one prompt in an ephemeral
   `pi --mode rpc --no-session` without extensions or tools.
   """
+
+  require Logger
 
   alias HalC2.Acp.Antigravity
   alias HalC2.Acp.Antigravity.Session, as: AntigravitySession
@@ -31,10 +34,13 @@ defmodule HalC2.TextGeneration do
   }
   @default_models %{
     "codex" => "gpt-6-luna",
-    "claudeAgent" => "claude-haiku-4-5",
+    # Upstream #18781: Claude's default writer moved from Haiku 4.5 to Haiku 5.5;
+    # a model the user saved is kept (it only names the fallback's model).
+    "claudeAgent" => "claude-haiku-5-5",
     "cursor" => "composer-2",
     "grok" => "grok-build",
-    "opencode" => "openai/gpt-5",
+    # Upstream #22442: many OpenCode users have no access to "openai/gpt-5".
+    "opencode" => "opencode/big-pickle",
     # Pi's and Antigravity's own default model.
     "pi" => "default",
     "antigravity" => "antigravity-default"
@@ -53,7 +59,7 @@ defmodule HalC2.TextGeneration do
 
   @doc """
   A commit message for the staged changes: `%{"subject", "body"}`, and a
-  `feature/…` `"branch"` when asked for. Options: `:policy` (`HalC2.TextGeneration.Style`).
+  branch name (under the namespace the writer chose, else `feature/`) when asked for. Options: `:policy` (`HalC2.TextGeneration.Style`).
   """
   def commit_message(
         cwd,
@@ -68,12 +74,15 @@ defmodule HalC2.TextGeneration do
 
     keys = if include_branch, do: ~w(subject body branch), else: ~w(subject body)
 
-    with {:ok, out} <- generate(cwd, :writer, prompt, Map.new(keys, &{&1, :string})) do
+    with {:ok, out} <-
+           generate(cwd, :writer, prompt, Map.new(keys, &{&1, :string}),
+             operation: "a commit message"
+           ) do
       result = %{"subject" => commit_subject(out["subject"]), "body" => String.trim(out["body"])}
 
       {:ok,
        if(include_branch,
-         do: Map.put(result, "branch", "feature/" <> feature_fragment(out["branch"])),
+         do: Map.put(result, "branch", namespaced_branch(out["branch"])),
          else: result
        )}
     end
@@ -92,10 +101,14 @@ defmodule HalC2.TextGeneration do
         diff_stat,
         diff_patch,
         opts[:template],
-        opts[:policy] || %{}
+        opts[:policy] || %{},
+        opts[:thread_history]
       )
 
-    with {:ok, out} <- generate(cwd, :writer, prompt, %{"title" => :string, "body" => :string}) do
+    with {:ok, out} <-
+           generate(cwd, :writer, prompt, %{"title" => :string, "body" => :string},
+             operation: "pull request content"
+           ) do
       title =
         case out["title"] |> String.trim() |> String.split(~r/\r?\n/) |> hd() |> String.trim() do
           "" -> "Update project changes"
@@ -118,19 +131,32 @@ defmodule HalC2.TextGeneration do
   @doc """
   A thread title: `%{"title", "needsRefinement"}`. From the first message, or,
   with `:previous_title`, from the thread's contents (`Prompts.thread_context/1`).
-  Options: `:previous_title`, `:attachments`. GitHub pull requests and issues
-  linked in the message are looked up for the model.
+  Options: `:previous_title`, `:attachments`, `:pull_requests` (the thread's pull
+  request links). The thread's GitHub pull requests, then the GitHub pull requests
+  and issues linked in the message, are looked up for the model.
   """
   def thread_title(cwd, message, opts \\ []) do
     attachments = opts[:attachments] || []
     schema = %{"title" => :string, "needsRefinement" => :boolean}
 
     with {:ok, selection} <- usable_selection(cwd, :text),
-         linked = linked_context(cwd, message),
-         prompt = Prompts.thread_title(message, opts[:previous_title], linked, attachments),
+         linked = linked_context(cwd, message, opts[:pull_requests] || []),
+         prompt =
+           Prompts.thread_title(
+             message,
+             opts[:previous_title],
+             linked,
+             attachments,
+             settings(cwd)["threadTitleInstructions"]
+           ),
          # Titles need only the prompt, not the checkout's configuration.
          {:ok, out} <-
-           run(selection, cwd, prompt, schema, isolate: true, images: images(attachments)) do
+           run(selection, cwd, prompt, schema,
+             isolate: true,
+             images: images(attachments),
+             attachments: attachments,
+             operation: "a thread title"
+           ) do
       {:ok,
        %{"title" => title(out["title"]), "needsRefinement" => out["needsRefinement"] == true}}
     end
@@ -197,6 +223,47 @@ defmodule HalC2.TextGeneration do
     end)
   end
 
+  @doc """
+  What a plugin asks the user's text model (`HalC2.Plugins.Host.generate/3`): an object
+  with `schema`'s keys, written from the global settings in an empty directory, and
+  what writing it used: `{:ok, out, %{"instanceId", "model", "inputTokens",
+  "cachedInputTokens", "outputTokens", "costUsd", "estimated"}}`. A provider that
+  reports nothing is estimated at four characters a token, with no cost.
+  """
+  def for_plugin(prompt, schema) do
+    in_dir(nil, fn dir ->
+      case usable_selection(dir, :text) do
+        {:ok, selection} ->
+          with {:ok, out, reported} <-
+                 measured_run(selection, dir, prompt, schema, isolate: true, operation: "text") do
+            {:ok, out, usage(selection, prompt, out, reported)}
+          end
+
+        {:error, message} ->
+          {:error, {:unavailable, message}}
+      end
+    end)
+  end
+
+  @doc false
+  def usage(selection, prompt, out, reported) do
+    base = %{"instanceId" => selection["instanceId"], "model" => selection["model"]}
+
+    case reported do
+      %{} ->
+        Map.merge(base, Map.put(reported, "estimated", false))
+
+      nil ->
+        Map.merge(base, %{
+          "inputTokens" => div(String.length(prompt) + 3, 4),
+          "cachedInputTokens" => 0,
+          "outputTokens" => div(String.length(JSON.encode!(out)) + 3, 4),
+          "costUsd" => nil,
+          "estimated" => true
+        })
+    end
+  end
+
   # --- model selection ---------------------------------------------------------------
 
   @doc "The settings that apply to `cwd`: its project's, when it is in one."
@@ -215,16 +282,40 @@ defmodule HalC2.TextGeneration do
     cond do
       kind == :writer and is_map(writer) and usable?(settings, writer) -> writer
       usable?(settings, text) -> text
+      # Never written by another provider in its place; `usable_selection/2` says why.
+      registry?(text) -> text
       true -> fallback(settings) || text
     end
   end
 
   defp fallback(settings) do
     Enum.find_value(@fallback_order, fn driver ->
-      selection = %{"instanceId" => driver, "model" => @default_models[driver]}
+      selection =
+        custom_default(settings, driver) ||
+          %{"instanceId" => driver, "model" => @default_models[driver]}
+
       if usable?(settings, selection), do: selection
     end)
   end
+
+  # A Claude or Codex instance whose default thread model is one the user added
+  # (`customModels`) is written with that model and its options: the built-in default may
+  # be refused where only the custom one is allowed. A built-in default model is not used.
+  defp custom_default(settings, driver) when driver in ["claudeAgent", "codex"] do
+    with %{"instanceId" => ^driver, "model" => model} = default when is_binary(model) <-
+           settings["defaultModelSelection"],
+         custom =
+           get_in(settings, ["providerInstances", driver, "config", "customModels"]) ||
+             get_in(settings, ["providers", driver, "customModels"]),
+         true <-
+           Enum.any?(List.wrap(custom), &(&1 == model or (is_map(&1) and &1["slug"] == model))) do
+      Map.take(default, ["instanceId", "model", "options"])
+    else
+      _ -> nil
+    end
+  end
+
+  defp custom_default(_settings, _driver), do: nil
 
   @doc "The provider driver of a model selection or an instance id."
   def driver(%{"instanceId" => id}), do: driver(id)
@@ -238,23 +329,57 @@ defmodule HalC2.TextGeneration do
   @doc "Whether a selection's provider is enabled and installed under `settings`."
   def usable?(settings, %{"instanceId" => id}) when is_binary(id) do
     case driver(id) do
-      "codex" -> enabled?(settings, id) and executable?(codex_command(id))
-      "claudeAgent" -> enabled?(settings, id) and executable?(claude_command(id))
-      "pi" -> HalC2.Acp.enabled?(id) and executable?(HalC2.Acp.binary_path(id) || "pi")
-      driver when driver in @acp_drivers -> HalC2.Acp.enabled?(id) and acp_installed?(id)
+      "codex" ->
+        enabled?(settings, id) and executable?(codex_command(id)) and healthy?(id, "codex")
+
+      "claudeAgent" ->
+        enabled?(settings, id) and executable?(claude_command(id)) and
+          healthy?(id, "claudeAgent")
+
+      "pi" ->
+        acp_on?(settings, id) and executable?(HalC2.Acp.binary_path(id) || "pi")
+
+      driver when driver in @acp_drivers ->
+        acp_on?(settings, id) and acp_installed?(id) and healthy?(id, driver)
+
       # A text-generation backend plugin (`HalC2.Plugins.TextGeneration`) by its id.
-      _ -> HalC2.Plugins.text_backend?(id)
+      _ ->
+        HalC2.Plugins.text_backend?(id)
     end
   end
 
   def usable?(_settings, _selection), do: false
 
+  # What the provider's last check found, read without starting a new one
+  # (upstream #29607): a check that failed, or an account a probe found signed
+  # out, cannot write; a provider still being checked keeps its selection, so
+  # titles at startup are not handed to another provider on a guess.
+  defp healthy?(id, "codex") do
+    HalC2.Codex.Provider.check_state(id) != :failed and
+      HalC2.ProviderUsageLimits.account_status(id) != "unauthenticated"
+  end
+
+  defp healthy?(id, "claudeAgent") do
+    HalC2.Claude.Provider.health_state(id) != :failed and
+      HalC2.ProviderUsageLimits.account_status(id) != "unauthenticated"
+  end
+
+  defp healthy?(id, driver) when driver in @acp_drivers,
+    do: not HalC2.Acp.unauthenticated?(id)
+
+  defp healthy?(_id, _driver), do: true
+
   # Codex and Claude are on unless turned off.
-  defp enabled?(settings, id) do
-    case get_in(settings, ["providerInstances", id]) do
-      %{} = instance -> instance["enabled"] != false
-      _ -> get_in(settings, ["providers", id, "enabled"]) != false
-    end
+  defp enabled?(settings, id), do: HalC2.Settings.provider_on?(settings, nil, id)
+
+  # An ACP agent is off until turned on (`HalC2.Acp.enabled?/1`); a project's own
+  # switch, which `settings` carries where it differs from the environment's, wins.
+  defp acp_on?(settings, id) do
+    on = HalC2.Settings.switch(settings, id)
+
+    if is_boolean(on) and on != HalC2.Settings.switch(HalC2.Settings.settings(), id),
+      do: on,
+      else: HalC2.Acp.enabled?(id)
   end
 
   defp acp_installed?(id) do
@@ -268,22 +393,78 @@ defmodule HalC2.TextGeneration do
 
   defp usable_selection(cwd, kind) do
     selection = model_selection(cwd, kind)
+    settings = settings(cwd)
 
-    if usable?(settings(cwd), selection),
-      do: {:ok, selection},
-      else:
+    cond do
+      usable?(settings, selection) ->
+        {:ok, selection}
+
+      registry?(selection) ->
+        {:error, "ACP Registry instances do not provide application text generation."}
+
+      message = missing_cli(settings, selection) ->
+        {:error, message}
+
+      true ->
         {:error,
          "No text generation provider is available. Install Claude Code or Codex, or enable another provider."}
+    end
   end
+
+  # Why the provider the user chose for text cannot write, when nothing else can:
+  # its CLI is not on PATH, or Cursor is signed out.
+  defp missing_cli(settings, %{"instanceId" => id}) do
+    chosen = settings["textGenerationModelSelection"]
+
+    if match?(%{"instanceId" => ^id}, chosen) do
+      case driver(id) do
+        "codex" ->
+          enabled?(settings, id) && missing_cli_message("Codex", codex_command(id))
+
+        "claudeAgent" ->
+          enabled?(settings, id) && missing_cli_message("Claude", claude_command(id))
+
+        "cursor" ->
+          acp_on?(settings, id) && acp_installed?(id) && signed_out_cursor(id)
+
+        _ ->
+          nil
+      end
+    end
+  end
+
+  defp missing_cli(_settings, _selection), do: nil
+
+  # Cursor is not asked to write without a sign-in or key.
+  defp signed_out_cursor(id) do
+    if HalC2.Acp.unauthenticated?(id),
+      do:
+        "Cursor is not signed in. Sign in with Cursor or add CURSOR_API_KEY in provider settings."
+  end
+
+  defp missing_cli_message(label, command) do
+    unless executable?(command),
+      do: "#{label} CLI (`#{command}`) is required but not available on PATH."
+  end
+
+  # A registry agent only runs threads (`HalC2.Acp`'s `supportsTextGeneration`).
+  defp registry?(%{"instanceId" => id}) when is_binary(id), do: driver(id) == "acpRegistry"
+  defp registry?(_selection), do: false
 
   # --- running ----------------------------------------------------------------------
 
-  defp generate(cwd, kind, prompt, schema, opts \\ []) do
+  defp generate(cwd, kind, prompt, schema, opts) do
     with {:ok, selection} <- usable_selection(cwd, kind),
          do: run(selection, cwd, prompt, schema, opts)
   end
 
   defp run(selection, cwd, prompt, schema, opts) do
+    with {:ok, out, _reported} <- measured_run(selection, cwd, prompt, schema, opts),
+         do: {:ok, out}
+  end
+
+  # `run/5`, and what the provider reported it used, or nil when it reports nothing.
+  defp measured_run(selection, cwd, prompt, schema, opts) do
     json_schema = %{
       "type" => "object",
       "properties" => Map.new(schema, fn {key, type} -> {key, %{"type" => to_string(type)}} end),
@@ -294,25 +475,38 @@ defmodule HalC2.TextGeneration do
     {label, result} =
       case driver(selection) do
         "claudeAgent" ->
-          {"Claude", claude(cwd, prompt, json_schema, selection, opts[:isolate])}
+          {"Claude", claude(cwd, prompt, json_schema, selection, opts)}
 
         "codex" ->
-          {"Codex", codex(cwd, prompt, json_schema, selection, opts[:images] || [])}
+          {"Codex", codex(cwd, prompt, json_schema, selection, opts)}
 
         "pi" ->
           {"Pi", pi(selection, if(opts[:isolate], do: nil, else: cwd), prompt)}
 
         driver when driver in @acp_drivers ->
           label = HalC2.Acp.label(selection["instanceId"])
-          {label, acp(selection, prompt, label)}
+
+          {label,
+           acp(
+             selection,
+             prompt,
+             label,
+             if(driver(selection) == "opencode", do: opts[:attachments] || [], else: [])
+           )}
 
         plugin ->
           {plugin, HalC2.Plugins.generate(plugin, prompt, json_schema)}
       end
 
+    {result, reported} =
+      case result do
+        {:ok, out, reported} -> {{:ok, out}, reported}
+        other -> {other, nil}
+      end
+
     with {:ok, out} <- result do
       if valid?(out, schema),
-        do: {:ok, out},
+        do: {:ok, out, reported},
         else: {:error, "#{label} returned invalid structured output."}
     end
   end
@@ -327,13 +521,15 @@ defmodule HalC2.TextGeneration do
   defp valid?(_out, _schema), do: false
 
   defp option(selection, id) do
-    Enum.find_value(selection["options"] || [], fn
-      %{"id" => ^id, "value" => value} -> value
+    # An off switch (`false`) is a choice too, so it cannot come from `find_value`.
+    case Enum.find(List.wrap(selection["options"]), &match?(%{"id" => ^id}, &1)) do
+      %{"value" => value} -> value
       _ -> nil
-    end)
+    end
   end
 
-  defp claude(cwd, prompt, schema, selection, isolate) do
+  defp claude(cwd, prompt, schema, selection, opts) do
+    isolate = opts[:isolate]
     thinking = option(selection, "thinking")
 
     settings =
@@ -345,32 +541,52 @@ defmodule HalC2.TextGeneration do
         &if(option(selection, "fastMode") == true, do: Map.put(&1, "fastMode", true), else: &1)
       )
 
+    # An effort the model has no option for is left out.
+    model = selection["model"] || @default_models["claudeAgent"]
+    instance = selection["instanceId"] || "claudeAgent"
     effort = option(selection, "effort")
+    effort = if HalC2.Claude.Provider.offers_option?(model, "effort", instance), do: effort
 
     args =
       ~w(-p --output-format json --json-schema) ++
-        [JSON.encode!(schema), "--model", selection["model"] || @default_models["claudeAgent"]] ++
+        [JSON.encode!(schema), "--model", model] ++
         if(is_binary(effort), do: ["--effort", effort], else: []) ++
         ["--settings", JSON.encode!(settings), "--tools", ""] ++
         ["--disable-slash-commands", "--strict-mcp-config", "--permission-mode", "dontAsk"]
 
     # The instance's own env and config folder, as its sessions get them.
+
     env =
-      Enum.to_list(HalC2.Settings.instance_env(selection["instanceId"])) ++
-        case HalC2.Claude.Provider.home_path(selection["instanceId"]) do
-          nil -> []
-          home -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(home)}]
-        end
+      (Enum.to_list(HalC2.Settings.instance_env(instance)) ++
+         case HalC2.Claude.Provider.home_path(instance) do
+           nil -> []
+           home -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(home)}]
+         end)
+      |> then(&HalC2.Claude.Provider.spawn_env(instance, &1))
+
+    command =
+      HalC2.Claude.Provider.scrubbed_command(
+        [claude_command(selection["instanceId"]) | args],
+        instance
+      )
 
     in_dir(if(isolate, do: nil, else: cwd), fn dir ->
-      with {:ok, out} <-
-             run_cli([claude_command(selection["instanceId"]) | args], dir, prompt, env: env),
-           {:ok, decoded} <- JSON.decode(out),
-           %{} = result <- structured(decoded) do
-        {:ok, result}
-      else
-        {:error, reason} when is_binary(reason) -> {:error, reason}
-        _ -> {:error, "Claude returned invalid structured output."}
+      cli = [label: "Claude", unexpected: unexpected(opts), env: env]
+
+      case exec_cli(command, dir, prompt, cli) do
+        {:ok, out} ->
+          with {:ok, decoded} <- JSON.decode(out),
+               %{} = result <- structured(decoded) do
+            {:ok, result, claude_usage(final_result(decoded))}
+          else
+            _ -> {:error, claude_reported(out) || "Claude returned invalid structured output."}
+          end
+
+        {:failed, out, message} ->
+          {:error, claude_reported(out) || message}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end)
   end
@@ -378,16 +594,83 @@ defmodule HalC2.TextGeneration do
   # `--output-format json` is one result object, or a list of messages ending in one.
   defp structured(%{"structured_output" => %{} = out}), do: out
 
-  defp structured(list) when is_list(list),
-    do: list |> Enum.reverse() |> Enum.find_value(&structured/1)
+  # Only the final result counts: an earlier one that had an answer does not stand in.
+  defp structured(list) when is_list(list) do
+    case list |> Enum.reverse() |> Enum.find(&match?(%{"type" => "result"}, &1)) do
+      nil -> nil
+      result -> structured(result)
+    end
+  end
 
   defp structured(_), do: nil
 
-  defp codex(cwd, prompt, schema, selection, images) do
-    effort = option(selection, "reasoningEffort") || "low"
+  # What Claude itself reported when its final result is an error: the result text,
+  # or the strings of its error list (upstream #30331), never the JSON or the
+  # diagnostic entries. A wrapper's notice on stderr is not it.
+  defp claude_reported(out) do
+    with {:ok, decoded} <- JSON.decode(out),
+         %{"is_error" => true} = result <- final_result(decoded) do
+      case result do
+        %{"result" => text} when is_binary(text) and text != "" ->
+          String.trim(text)
+
+        %{"errors" => [_ | _] = errors} ->
+          case for(error <- errors, is_binary(error) and error != "", do: String.trim(error)) do
+            [] -> nil
+            lines -> Enum.join(lines, "\n")
+          end
+
+        _ ->
+          nil
+      end
+    else
+      _ -> nil
+    end
+  end
+
+  # What the final result says the call used, as `for_plugin/2` reports it.
+  defp claude_usage(%{"usage" => %{} = usage} = result) do
+    %{
+      "inputTokens" =>
+        (usage["input_tokens"] || 0) + (usage["cache_creation_input_tokens"] || 0) +
+          (usage["cache_read_input_tokens"] || 0),
+      "cachedInputTokens" => usage["cache_read_input_tokens"] || 0,
+      "outputTokens" => usage["output_tokens"] || 0,
+      "costUsd" => result["total_cost_usd"]
+    }
+  end
+
+  defp claude_usage(_result), do: nil
+
+  defp final_result(list) when is_list(list),
+    do: list |> Enum.reverse() |> Enum.find(&match?(%{"type" => "result"}, &1))
+
+  defp final_result(%{} = result), do: result
+  defp final_result(_), do: nil
+
+  # What a failure that is not the CLI's own output says: the operation, no details.
+  defp unexpected(opts), do: "Failed to generate #{opts[:operation] || "text"}"
+
+  defp codex(cwd, prompt, schema, selection, opts) do
+    images = opts[:images] || []
+
+    {model, fallback?} =
+      codex_model(
+        selection["instanceId"] || "codex",
+        selection["model"] || @default_models["codex"]
+      )
+
+    # A model swapped in because the account did not list the default runs with
+    # that model's own defaults, not options chosen for another one.
+    effort = if(fallback?, do: nil, else: option(selection, "reasoningEffort") || "low")
 
     tier =
-      option(selection, "serviceTier") || if(option(selection, "fastMode") == true, do: "fast")
+      if(fallback?,
+        do: nil,
+        else:
+          option(selection, "serviceTier") ||
+            if(option(selection, "fastMode") == true, do: "fast")
+      )
 
     in_dir(nil, fn dir ->
       schema_path = Path.join(dir, "schema.json")
@@ -401,39 +684,214 @@ defmodule HalC2.TextGeneration do
           {:error, _} -> []
         end
 
-      args =
-        ["exec"] ++
-          launch ++
-          ~w(--ephemeral --skip-git-repo-check -s read-only) ++
-          ["--model", selection["model"] || @default_models["codex"]] ++
-          ["--config", ~s(model_reasoning_effort="#{effort}")] ++
-          if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++
-          ["--output-schema", schema_path, "--output-last-message", output_path] ++
-          Enum.flat_map(images, &["--image", &1]) ++ ["-"]
+      with {:ok, isolation, env, launch} <-
+             codex_isolation(selection["instanceId"], launch, cwd, dir) do
+        args =
+          ["exec"] ++
+            launch ++
+            isolation ++
+            ~w(--ephemeral --skip-git-repo-check -s read-only) ++
+            ["--model", model] ++
+            if(is_binary(effort),
+              do: ["--config", ~s(model_reasoning_effort="#{effort}")],
+              else: []
+            ) ++
+            if(is_binary(tier), do: ["--config", ~s(service_tier="#{tier}")], else: []) ++
+            ["--output-schema", schema_path, "--output-last-message", output_path] ++
+            Enum.flat_map(images, &["--image", &1]) ++ ["-"]
 
-      with {:ok, _} <- run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt),
-           {:ok, text} <- File.read(output_path),
-           {:ok, %{} = result} <- JSON.decode(text) do
-        {:ok, result}
-      else
-        {:error, reason} when is_binary(reason) -> {:error, reason}
-        _ -> {:error, "Codex returned invalid structured output."}
+        # The instance's home and variables reach the Codex that writes text as they
+        # reach its sessions: a connected ChatGPT account writes with its own login. A
+        # scratch Codex home (`env`) replaces the home they name.
+        instance = selection["instanceId"] || "codex"
+
+        with {:ok, home} <- HalC2.Codex.Home.env(instance),
+             cli = [
+               label: "Codex",
+               unexpected: unexpected(opts),
+               env: run_env(home ++ HalC2.Codex.Home.instance_env(instance), env)
+             ],
+             {:ok, _} <-
+               run_cli([codex_command(selection["instanceId"]) | args], cwd, prompt, cli),
+             {:ok, text} <- File.read(output_path),
+             {:ok, %{} = result} <- JSON.decode(text) do
+          {:ok, result}
+        else
+          {:error, reason} when is_binary(reason) -> {:error, reason}
+          _ -> {:error, "Codex returned invalid structured output."}
+        end
       end
     end)
+  end
+
+  # The instance's variables, minus its `CODEX_HOME` when the run has a scratch home of its own.
+  defp run_env(instance_env, []), do: instance_env
+
+  defp run_env(instance_env, scratch),
+    do: Enum.reject(instance_env, &match?({"CODEX_HOME", _}, &1)) ++ scratch
+
+  # What keeps the user's tools out of a Codex that only writes text: each MCP server its
+  # configuration enables is switched off, and plugins and apps are disabled. The servers
+  # come from `codex mcp list`. When it cannot answer, the run gets a scratch Codex home
+  # with the account's login and no configuration, and the launch arguments lose their
+  # `mcp_servers` overrides, so no MCP server is enabled at all.
+  # Returns `{:ok, args, env, launch}`, the run using the returned `launch`; the scratch
+  # home is made inside `dir`, so it goes with the run's folder, also when the caller is
+  # killed. `{:error, message}` when the account's login cannot reach that home.
+  defp codex_isolation(instance, launch, cwd, dir) do
+    list = [codex_command(instance) | launch] ++ ["mcp", "list", "--json"]
+
+    # The listing runs in the environment `codex exec` will, so it names the servers of the
+    # home the run loads, not the MC's own.
+    with {:ok, home} <- HalC2.Codex.Home.env(instance),
+         cli = [
+           label: "Codex",
+           timeout: 10_000,
+           env: run_env(home ++ HalC2.Codex.Home.instance_env(instance), [])
+         ],
+         {:ok, out} <- run_cli(list, cwd, "", cli),
+         {:ok, entries} when is_list(entries) <- JSON.decode(out) do
+      servers =
+        for %{"name" => name} when is_binary(name) <- entries,
+            do: ["--config", "mcp_servers.#{toml_key(name)}.enabled=false"]
+
+      {:ok, List.flatten(servers) ++ ~w(--disable plugins --disable apps), [], launch}
+    else
+      _ ->
+        with {:ok, home} <- bare_codex_home(instance, dir) do
+          {:ok, ~w(--disable plugins --disable apps), [{"CODEX_HOME", home}],
+           without_mcp_overrides(launch)}
+        end
+    end
+  end
+
+  # The launch arguments without the `--config mcp_servers...` overrides: a server the
+  # instance defines there would reach `codex exec` even from a home with no configuration.
+  defp without_mcp_overrides([flag, value | rest]) when flag in ~w(--config -c) do
+    if mcp_override?(value),
+      do: without_mcp_overrides(rest),
+      else: [flag, value | without_mcp_overrides(rest)]
+  end
+
+  defp without_mcp_overrides([arg | rest]) do
+    if String.starts_with?(arg, ["--config=", "-c="]) and
+         mcp_override?(arg |> String.split("=", parts: 2) |> List.last()),
+       do: without_mcp_overrides(rest),
+       else: [arg | without_mcp_overrides(rest)]
+  end
+
+  defp without_mcp_overrides([]), do: []
+
+  defp mcp_override?(value), do: String.trim_leading(value) =~ ~r/\Amcp_servers\b/
+
+  # The home whose login a run of `instance` uses, by the precedence a normal run has: a
+  # `CODEX_HOME` in the instance's environment of an unmanaged instance (`Home.shared/1`
+  # returns exactly that variable, `~` expanded, when it is set), else its shadow home (a
+  # connected ChatGPT account's own, over that variable) or home setting, else the MC's own
+  # `CODEX_HOME`, else `~/.codex`. A shadow home that cannot be made is an
+  # error, as for a normal run (`Codex.ThreadRuntime`): the shared home's `auth.json` is
+  # another account's login, and text generation must not sign in as that account.
+  defp account_home(instance) do
+    default = System.get_env("CODEX_HOME") || Path.join(HalC2.Paths.user_home(), ".codex")
+
+    if env_home?(instance) and not HalC2.Codex.ChatGpt.managed?(instance) do
+      {:ok, HalC2.Codex.Home.shared(instance)}
+    else
+      case HalC2.Codex.Home.env(instance) do
+        {:ok, [{"CODEX_HOME", home}]} -> {:ok, home}
+        {:ok, []} -> {:ok, default}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp env_home?(instance) do
+    case HalC2.Settings.instance_env(instance)["CODEX_HOME"] do
+      home when is_binary(home) -> home != ""
+      _ -> false
+    end
+  end
+
+  # A Codex home inside `dir` holding only the instance's login (`auth.json`) and an empty
+  # config. Codex keeps a login in the OS credential store under a key of the home's path,
+  # so a different home cannot reach it: an account without an `auth.json` cannot run here,
+  # and the error says how to get one (docs/user/providers-codex.md).
+  defp bare_codex_home(instance, dir) do
+    case account_home(instance) do
+      {:ok, account} ->
+        copy_codex_login(Path.join(account, "auth.json"), dir)
+
+      {:error, reason} ->
+        {:error, "Failed to materialize the Codex shadow home. #{reason}"}
+    end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  defp copy_codex_login(source, dir) do
+    home = Path.join(dir, "codex-home")
+    target = Path.join(home, "auth.json")
+    File.mkdir_p!(home)
+    # The login is a secret: the home is the owner's alone and the copy is made 0600 before
+    # it is filled, whatever mode the source has (`File.cp` keeps the source's mode).
+    File.chmod!(home, 0o700)
+    File.write!(Path.join(home, "config.toml"), "")
+
+    with :ok <- File.write(target, ""),
+         :ok <- File.chmod(target, 0o600),
+         :ok <- File.cp(source, target),
+         :ok <- File.chmod(target, 0o600) do
+      {:ok, home}
+    else
+      {:error, reason} ->
+        File.rm(target)
+
+        {:error,
+         "Codex text generation could not copy the login from #{source} " <>
+           "(#{:file.format_error(reason)}). Its MCP servers could not be listed, so it needs " <>
+           "a file-based login (auth.json); an account on the OS credential store cannot be used."}
+    end
+  end
+
+  defp toml_key(name),
+    do: if(name =~ ~r/\A[A-Za-z0-9_-]+\z/, do: name, else: JSON.encode!(name))
+
+  # The model Codex is run with, resolved against the list its last check read
+  # (nil when none was read: the name stands). A listed name stands; a family
+  # name takes the family's first listed model; the built-in default an account
+  # does not list takes the account's default, or else its first model, and says
+  # so (`true`) so the caller drops options chosen for the default. Any other
+  # name is a model the user typed and goes as written.
+  defp codex_model(instance, model) do
+    model = HalC2.Codex.Provider.current_slug(model)
+
+    case HalC2.Codex.Provider.listed_models(instance) do
+      [_ | _] = listed ->
+        slugs = Enum.map(listed, & &1["slug"])
+
+        cond do
+          model in slugs ->
+            {model, false}
+
+          family = Enum.find(slugs, &String.starts_with?(&1, model <> "-")) ->
+            {family, false}
+
+          model == @default_models["codex"] ->
+            default = Enum.find(listed, & &1["isDefault"]) || hd(listed)
+            {default["slug"], true}
+
+          true ->
+            {model, false}
+        end
+
+      _ ->
+        {model, false}
+    end
   end
 
   # Runs `fun` in `dir`, or in a new temporary directory it removes afterwards.
   defp in_dir(dir, fun) when is_binary(dir), do: fun.(dir)
 
-  defp in_dir(nil, fun) do
-    dir = HalC2.Scratch.dir("hal-c2-text")
-
-    try do
-      fun.(dir)
-    after
-      File.rm_rf(dir)
-    end
-  end
+  defp in_dir(nil, fun), do: HalC2.Scratch.with_dir("hal-c2-text", fun)
 
   # The images a Codex prompt takes by path.
   defp images(attachments) do
@@ -445,43 +903,61 @@ defmodule HalC2.TextGeneration do
   end
 
   # One ACP prompt in its own process, which outlives neither the agent nor the timeout.
-  defp acp(selection, prompt, label) do
+  # A Cursor run its sandbox stopped is retried once without the sandbox, and
+  # only that run: `retried` carries the retry's mode.
+  defp acp(selection, prompt, label, attachments, retried \\ nil),
+    do: in_dir(nil, &run_acp(&1, selection, prompt, label, attachments, retried))
+
+  # The folder is made here, not in the task, so a run that times out and is killed
+  # still has it removed.
+  defp run_acp(dir, selection, prompt, label, attachments, retried) do
     id = selection["instanceId"]
     antigravity = driver(id) == "antigravity"
+    cursor = driver(id) == "cursor"
 
     task =
       Task.async(fn ->
         Process.flag(:trap_exit, true)
 
+        # Who asked for the text: only its exit is a cancellation. The task
+        # is also linked to the agent connection and to the prompt task, and
+        # their exits are failures to report, not the user cancelling.
+        caller = List.first(Process.get(:"$callers") || [])
+
         try do
-          in_dir(nil, fn dir ->
-            cond do
-              driver(id) == "cursor" and
-                  File.exists?(Path.join(HalC2.Paths.user_home(), ".cursor/sandbox.json")) ->
-                # Cursor's own sandbox settings could widen what the agent may write.
-                {:error,
-                 "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
+          cond do
+            driver(id) == "cursor" and
+                File.exists?(Path.join(HalC2.Paths.user_home(), ".cursor/sandbox.json")) ->
+              # Cursor's own sandbox settings could widen what the agent may write.
+              {:error,
+               "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider."}
 
-              antigravity ->
-                antigravity(id, dir, selection["model"], prompt)
+            antigravity ->
+              antigravity(id, dir, selection["model"], prompt, caller)
 
-              driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
-                  not provider_model?(selection["model"]) ->
-                {:error,
-                 "OpenCode model '#{selection["model"]}' must use the provider/model format."}
+            driver(id) == "opencode" and selection["model"] not in [nil, "", "default"] and
+                not provider_model?(selection["model"]) ->
+              {:error,
+               "OpenCode model '#{selection["model"]}' must use the provider/model format."}
 
-              true ->
-                # Cursor plans read-only there, without the user's Cursor settings or tools.
-                mode = if driver(id) == "cursor", do: "text-generation"
+            true ->
+              # Cursor plans read-only there, without the user's Cursor settings or tools.
+              mode =
+                cond do
+                  driver(id) != "cursor" -> nil
+                  retried -> retried
+                  true -> "text-generation"
+                end
 
-                HalC2.Acp.with_agent(
-                  id,
-                  dir,
-                  fn conn, _init -> acp_prompt(conn, dir, selection["model"], prompt) end,
-                  mode
-                )
-            end
-          end)
+              HalC2.Acp.with_agent(
+                id,
+                dir,
+                fn conn, _init ->
+                  acp_prompt(conn, dir, selection["model"], prompt, false, attachments, caller)
+                end,
+                mode
+              )
+          end
         catch
           _kind, reason -> {:error, reason}
         end
@@ -494,11 +970,48 @@ defmodule HalC2.TextGeneration do
           _ -> {:error, "#{label} returned invalid structured output."}
         end
 
-      {:ok, {:error, reason}} when is_binary(reason) ->
-        {:error, reason}
+      # Cursor's run that ended badly gives nothing, whatever it printed first.
+      {:ok, {:error, "The request was cancelled."}} when cursor ->
+        {:error, "Cursor SDK request was cancelled."}
 
-      {:ok, {:error, %{"message" => message}}} ->
-        {:error, "#{label} request failed: #{message}"}
+      # The user text stays generic; what Cursor said is only for the log.
+      {:ok, {:error, %{} = reason}} when cursor ->
+        message = reason["message"]
+
+        cond do
+          # A sandbox stop is retried unsandboxed; a usage limit is said plainly.
+          is_binary(message) and cursor_sandbox_retry?(selection, retried, message) ->
+            acp(selection, prompt, label, attachments, "text-generation-unsandboxed")
+
+          is_binary(message) and String.contains?(String.downcase(message), "usage limit") ->
+            {:error, "#{label} request failed: #{message}"}
+
+          true ->
+            Logger.warning("Cursor text generation ended with an error: #{inspect(reason)}")
+            {:error, "Cursor SDK request finished with an error."}
+        end
+
+      {:ok, {:error, reason}} when is_binary(reason) ->
+        if cursor_sandbox_retry?(selection, retried, reason),
+          do: acp(selection, prompt, label, attachments, "text-generation-unsandboxed"),
+          else: {:error, reason}
+
+      {:ok, {:error, %{"message" => message} = error}} ->
+        cond do
+          cursor_sandbox_retry?(selection, retried, message) ->
+            acp(selection, prompt, label, attachments, "text-generation-unsandboxed")
+
+          driver(id) == "opencode" ->
+            {:error, opencode_failure(error)}
+
+          true ->
+            {:error, "#{label} request failed: #{message}"}
+        end
+
+      {:ok, {:error, %{} = error}} ->
+        if driver(id) == "opencode",
+          do: {:error, opencode_failure(error)},
+          else: {:error, "#{label} request failed: #{inspect(error)}"}
 
       {:ok, {:error, reason}} ->
         {:error, "#{label} request failed: #{inspect(reason)}"}
@@ -507,19 +1020,82 @@ defmodule HalC2.TextGeneration do
         {:error, "Antigravity text generation timed out."}
 
       nil ->
-        {:error, "#{label} request timed out."}
+        if driver(id) == "opencode",
+          do: {:error, "OpenCode did not finish generating in time."},
+          else: {:error, "#{label} request timed out."}
     end
   end
 
-  defp acp_prompt(conn, dir, model, prompt, antigravity \\ false) do
+  # Only Cursor's first, sandboxed attempt is retried, and only when its
+  # sandbox is what stopped it.
+  defp cursor_sandbox_retry?(selection, retried, message) do
+    retried == nil && driver(selection["instanceId"]) == "cursor" &&
+      String.contains?(String.downcase(message), "sandbox")
+  end
+
+  # An OpenCode generation the model provider failed, in fixed plain words: the
+  # provider's own text (sometimes only "<none>") never reaches the user.
+  defp opencode_failure(error) do
+    message = String.downcase(to_string(error["message"] || ""))
+    data = if is_map(error["data"]), do: error["data"], else: %{}
+    status = data["statusCode"] || data["status"]
+    name = String.downcase(to_string(data["errorName"] || ""))
+
+    cond do
+      status in [401, 403] or name =~ "auth" or
+          message =~ ~r/unauthor|invalid (api )?key|credential|sign[ -]?in|authentication/ ->
+        "The model provider rejected the credentials. Check the provider's sign-in or API key in OpenCode."
+
+      status == 429 or name =~ "rate" or name =~ "quota" or
+          message =~ ~r/rate.?limit|too many requests|quota/ ->
+        "The model provider's usage or rate limit was reached. Try again later."
+
+      message =~ ~r/context|too long|too large/ ->
+        "The prompt is too long for the selected model's context window."
+
+      message =~ "abort" or name =~ "abort" ->
+        "OpenCode stopped the generation."
+
+      is_integer(status) ->
+        "The model provider failed the request (HTTP #{status})."
+
+      true ->
+        "OpenCode could not generate the text."
+    end
+  end
+
+  defp acp_prompt(conn, dir, model, prompt, antigravity, attachments, caller) do
     with {:ok, %{"sessionId" => session_id} = session} <-
            Connection.call(conn, "session/new", %{"cwd" => dir, "mcpServers" => []}, 60_000),
          :ok <- acp_mode(conn, session_id, antigravity),
          :ok <- acp_model(conn, session_id, session, model, antigravity) do
-      params = %{"sessionId" => session_id, "prompt" => [%{"type" => "text", "text" => prompt}]}
+      blocks = [%{"type" => "text", "text" => prompt} | acp_images(attachments)]
+      params = %{"sessionId" => session_id, "prompt" => blocks}
       task = Task.async(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
-      acp_collect(conn, task.ref, [], antigravity)
+      result = acp_collect(conn, task.ref, [], antigravity, caller)
+      delete_session(conn, session_id)
+      result
     end
+  end
+
+  # Only the images that can be opened go with the prompt; any other attachment is
+  # described in its text, never sent.
+  @acp_image_types ~w(image/gif image/jpeg image/png image/webp)
+  defp acp_images(attachments) do
+    for %{"type" => "image", "mimeType" => mime} = attachment <- attachments,
+        mime in @acp_image_types,
+        {:ok, bytes} <- [HalC2.Attachments.read(attachment)],
+        do: %{"type" => "image", "mimeType" => mime, "data" => Base.encode64(bytes)}
+  end
+
+  # A generation's throwaway session is deleted again, so titles and commit
+  # messages leave nothing in the agent's session history. Best effort: an
+  # agent without `session/delete` just says so.
+  defp delete_session(conn, session_id) do
+    Connection.call(conn, "session/delete", %{"sessionId" => session_id}, 2_000)
+    :ok
+  catch
+    :exit, _ -> :ok
   end
 
   # Antigravity runs in its default (asking) mode, never a thread's access mode.
@@ -561,7 +1137,7 @@ defmodule HalC2.TextGeneration do
 
   # Other agents have their tool and permission requests refused and go on. Antigravity
   # fails at the first one, or at tool work it reports: its global hooks could act first.
-  defp acp_collect(conn, ref, text, antigravity) do
+  defp acp_collect(conn, ref, text, antigravity, caller) do
     receive do
       {:json_rpc, ^conn,
        {:notification, "session/update",
@@ -574,7 +1150,7 @@ defmodule HalC2.TextGeneration do
         if antigravity and
              String.length(IO.iodata_to_binary([text, chunk])) > @antigravity_max_output,
            do: {:error, "Antigravity text generation exceeded the output limit."},
-           else: acp_collect(conn, ref, [text, chunk], antigravity)
+           else: acp_collect(conn, ref, [text, chunk], antigravity, caller)
 
       {:json_rpc, ^conn,
        {:notification, "session/update", %{"update" => %{"sessionUpdate" => update}}}}
@@ -586,7 +1162,7 @@ defmodule HalC2.TextGeneration do
 
         if antigravity,
           do: {:error, "Antigravity text generation requested a tool permission or user input."},
-          else: acp_collect(conn, ref, text, antigravity)
+          else: acp_collect(conn, ref, text, antigravity, caller)
 
       {:json_rpc, ^conn, {:request, id, method, _params}} ->
         Connection.respond(
@@ -597,7 +1173,7 @@ defmodule HalC2.TextGeneration do
 
         cond do
           not antigravity ->
-            acp_collect(conn, ref, text, antigravity)
+            acp_collect(conn, ref, text, antigravity, caller)
 
           method == "elicitation/create" ->
             {:error, "Antigravity text generation requested user input."}
@@ -605,6 +1181,16 @@ defmodule HalC2.TextGeneration do
           true ->
             {:error, "Antigravity text generation requested a tool or user input."}
         end
+
+      # The caller that asked for the text went away (the user cancelled):
+      # the generation stops with it instead of running on unattended. Any
+      # other linked exit (the connection, the prompt task) is not this:
+      # the prompt's own answer, or its DOWN just below, reports it.
+      {:EXIT, ^caller, _reason} ->
+        {:error, "The request was cancelled."}
+
+      {:DOWN, ^ref, :process, _pid, reason} ->
+        {:error, reason}
 
       {^ref, reply} ->
         Process.demonitor(ref, [:flush])
@@ -630,13 +1216,13 @@ defmodule HalC2.TextGeneration do
         end
 
       _other ->
-        acp_collect(conn, ref, text, antigravity)
+        acp_collect(conn, ref, text, antigravity, caller)
     end
   end
 
   # Antigravity signs in with the instance's own login, answers in an empty directory,
   # and leaves neither files there nor its session in the profile.
-  defp antigravity(id, dir, model, prompt) do
+  defp antigravity(id, dir, model, prompt, caller) do
     if antigravity_available?(Antigravity.profile(id)) do
       prompt =
         "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.\n" <>
@@ -645,17 +1231,38 @@ defmodule HalC2.TextGeneration do
       result =
         HalC2.Acp.with_agent(id, dir, fn conn, _init ->
           with :ok <- AntigravitySession.authenticate(conn, id),
-               do: acp_prompt(conn, dir, model, prompt, true)
+               do: acp_prompt(conn, dir, model, prompt, true, [], caller)
         end)
 
       remove_antigravity_session(id, dir)
 
-      if File.ls!(dir) == [],
+      if antigravity_left_nothing?(dir),
         do: result,
         else: {:error, "Antigravity wrote files during text generation."}
     else
       {:error,
        "Antigravity text generation is unavailable for profiles with global hooks or MCP configuration. Select another system model."}
+    end
+  end
+
+  # The empty skill folders Antigravity makes when its session starts
+  # (upstream #27191) are not files it wrote; anything else left behind is.
+  @antigravity_start_dirs ~w(.agents .agents/skills .gemini .gemini/skills)
+
+  defp antigravity_left_nothing?(dir), do: antigravity_clean?(dir, "")
+
+  defp antigravity_clean?(dir, rel) do
+    case File.ls(Path.join(dir, rel)) do
+      {:ok, names} ->
+        Enum.all?(names, fn name ->
+          child = if rel == "", do: name, else: rel <> "/" <> name
+
+          child in @antigravity_start_dirs and
+            File.dir?(Path.join(dir, child)) and antigravity_clean?(dir, child)
+        end)
+
+      _ ->
+        false
     end
   end
 
@@ -739,9 +1346,11 @@ defmodule HalC2.TextGeneration do
       try do
         with :ok <- pi_model(conn, model),
              {:ok, _} <- Connection.call(conn, "prompt", %{"message" => prompt}, :infinity),
-             :ok <- pi_settled(conn),
+             {:ok, failure} <- pi_settled(conn),
              {:ok, data} <- Connection.call(conn, "get_last_assistant_text", %{}, 60_000) do
           case String.trim((is_map(data) && is_binary(data["text"]) && data["text"]) || "") do
+            # An empty reply Pi ended with a turn error names that error.
+            "" when is_binary(failure) -> {:error, "Pi could not generate text: #{failure}"}
             "" -> {:error, "Pi returned empty output."}
             text -> {:ok, text}
           end
@@ -764,8 +1373,28 @@ defmodule HalC2.TextGeneration do
     case String.split(model, "/", parts: 2) do
       [provider, model_id] when provider != "" and model_id != "" ->
         case Connection.call(conn, "set_model", %{"provider" => provider, "modelId" => model_id}) do
-          {:ok, _} -> :ok
-          error -> error
+          {:ok, _} ->
+            :ok
+
+          # Pi answered with an error: the bare Pi that writes text loads no
+          # extensions, so a model only an extension provides cannot load
+          # here however good the slug is. A transport failure (Pi exited)
+          # is passed through as it came.
+          {:error, reason} when is_binary(reason) or is_map(reason) ->
+            detail =
+              cond do
+                is_binary(reason) -> reason
+                is_binary(reason["message"]) -> reason["message"]
+                true -> inspect(reason)
+              end
+
+            {:error,
+             "Pi could not load the model '#{model}': #{detail}. " <>
+               "Extensions are not loaded when Pi writes titles and commit messages, " <>
+               "so a model only an extension provides cannot be used for them."}
+
+          {:error, _reason} = error ->
+            error
         end
 
       _ ->
@@ -773,10 +1402,24 @@ defmodule HalC2.TextGeneration do
     end
   end
 
-  defp pi_settled(conn) do
+  # Waits for the prompt's turn to settle, remembering a model error it ended
+  # with (`{:ok, message | nil}`), which an empty reply then names.
+  defp pi_settled(conn, failure \\ nil) do
     receive do
-      {:json_rpc, ^conn, {:notification, "agent_settled", _event}} -> :ok
-      {:EXIT, ^conn, reason} -> {:error, reason}
+      {:json_rpc, ^conn, {:notification, "agent_settled", _event}} ->
+        {:ok, failure}
+
+      {:json_rpc, ^conn,
+       {:notification, "message_end",
+        %{"message" => %{"stopReason" => "error", "errorMessage" => message}}}}
+      when is_binary(message) ->
+        pi_settled(conn, failure || message)
+
+      {:json_rpc, ^conn, {:notification, _type, _event}} ->
+        pi_settled(conn, failure)
+
+      {:EXIT, ^conn, reason} ->
+        {:error, reason}
     end
   end
 
@@ -809,39 +1452,70 @@ defmodule HalC2.TextGeneration do
 
   @doc """
   Runs a provider CLI in `cwd` with `input` on stdin: `{:ok, stdout}` or `{:error,
-  message}`. Options: `:timeout` (default `timeout/0`), `:env`.
+  message}`. Options: `:timeout` (default `timeout/0`), `:env`, `:label` (the CLI's
+  name in a failure: "Claude CLI command failed: …") and `:unexpected` (what a
+  failure that is not the CLI's own output says, instead of its details).
   """
-  def run_cli([command | args], cwd, input, opts \\ []) do
+  def run_cli(argv, cwd, input, opts \\ []) do
+    case exec_cli(argv, cwd, input, opts) do
+      {:failed, _out, message} -> {:error, message}
+      other -> other
+    end
+  end
+
+  # As `run_cli/4`, but a CLI that exited with a failure gives its stdout too:
+  # `{:failed, stdout, message}`.
+  defp exec_cli([command | args], cwd, input, opts) do
     task =
       Task.async(fn ->
-        [command | args]
-        |> Exile.stream(
-          cd: cwd,
-          input: if(input == "", do: [], else: [input]),
-          stderr: :consume,
-          ignore_epipe: true,
-          env: opts[:env] || []
-        )
-        |> Enum.reduce({[], [], nil}, fn
-          {:stdout, data}, {out, err, status} -> {[out, data], err, status}
-          {:stderr, data}, {out, err, status} -> {out, [err, data], status}
-          {:exit, status}, {out, err, _} -> {out, err, status}
-        end)
+        try do
+          [command | args]
+          |> Exile.stream(
+            cd: cwd,
+            input: if(input == "", do: [], else: [input]),
+            stderr: :consume,
+            ignore_epipe: true,
+            env: opts[:env] || []
+          )
+          |> Enum.reduce({[], [], nil}, fn
+            {:stdout, data}, {out, err, status} -> {[out, data], err, status}
+            {:stderr, data}, {out, err, status} -> {out, [err, data], status}
+            {:exit, status}, {out, err, _} -> {out, err, status}
+          end)
+        rescue
+          error -> {:raised, error}
+        end
       end)
 
     case Task.yield(task, opts[:timeout] || timeout()) || Task.shutdown(task, :brutal_kill) do
       {:ok, {out, _err, {:status, 0}}} ->
         {:ok, IO.iodata_to_binary(out)}
 
-      {:ok, {_out, err, status}} ->
-        {:error, "#{Path.basename(command)} failed (#{inspect(status)}): #{failure(err)}"}
+      {:ok, {out, err, status}} ->
+        out = IO.iodata_to_binary(out)
+        {:failed, out, failure_message(command, opts[:label], failure(err), status)}
+
+      {:ok, {:raised, error}} ->
+        # The user sees only the general failure; a bad binary path or a vanished
+        # working folder is for the log.
+        if opts[:unexpected],
+          do: Logger.warning("#{command} could not run: #{Exception.message(error)}")
+
+        {:error, opts[:unexpected] || Exception.message(error)}
 
       nil ->
-        {:error, "#{Path.basename(command)} timed out"}
+        {:error, "#{opts[:label] || Path.basename(command)} timed out"}
     end
-  rescue
-    error -> {:error, Exception.message(error)}
   end
+
+  defp failure_message(command, nil, detail, status),
+    do: "#{Path.basename(command)} failed (#{inspect(status)}): #{detail}"
+
+  defp failure_message(_command, label, "", {:status, code}),
+    do: "#{label} CLI command failed with code #{code}."
+
+  defp failure_message(_command, label, detail, _status),
+    do: "#{label} CLI command failed: #{detail}"
 
   # CLIs print a banner first and the reason last; keep the error lines when there are any.
   defp failure(err) do
@@ -856,7 +1530,13 @@ defmodule HalC2.TextGeneration do
   # The CLI an instance writes text with: its binary path in settings, else the one on PATH.
   defp claude_command(instance), do: cli(instance, :text_claude_command, "claude")
   @doc false
-  def codex_command(instance), do: cli(instance, :text_codex_command, "codex")
+  def codex_command(instance),
+    do:
+      hd(
+        HalC2.Codex.Installation.command(instance, [
+          Application.get_env(:hal_c2, :text_codex_command, "codex")
+        ])
+      )
 
   defp cli(instance, key, default),
     do:
@@ -864,29 +1544,47 @@ defmodule HalC2.TextGeneration do
 
   # --- linked pull requests and issues -----------------------------------------------
 
-  # What the first two GitHub pull request or issue links in a message are about:
-  # each link with its title and body, or marked unavailable.
-  defp linked_context(cwd, message) do
-    links =
+  # What the first two of the thread's pull requests and the GitHub or GitLab pull
+  # request, merge request or issue links in its message are about: each with its title and body, or marked
+  # unavailable. A pull request on another host gives the title it was last synced with.
+  defp linked_context(cwd, message, pull_requests) do
+    linked =
+      Enum.flat_map(pull_requests, fn
+        %{"host" => "github.com", "repository" => repository, "number" => number}
+        when is_binary(repository) and is_integer(number) and number > 0 ->
+          if Regex.match?(~r{^[\w.-]+/[\w.-]+$}, repository),
+            do: [
+              {"https://github.com/#{repository}/pull/#{number}",
+               {:github, "repos/#{repository}/issues/#{number}"}}
+            ],
+            else: []
+
+        %{"url" => url, "snapshot" => %{"title" => title}}
+        when is_binary(url) and is_binary(title) ->
+          [{url, {:synced, title}}]
+
+        _ ->
+          []
+      end)
+
+    mentioned =
       Regex.scan(~r{https://[^\s<>"')\]`]+}, message)
-      |> Enum.map(fn [url] -> URI.parse(String.replace(url, ~r/[.,;!?]+$/, "")) end)
+      # Sentence punctuation and markdown emphasis after a link are not part of
+      # it (upstream #29656): "…/pull/12: the tests fail", "**…/pull/12**".
+      |> Enum.map(fn [url] -> URI.parse(String.replace(url, ~r/[.,;!?:*]+$/, "")) end)
       |> Enum.flat_map(fn uri ->
-        with %URI{host: "github.com", userinfo: nil, path: path} when is_binary(path) <- uri,
-             [_, owner, repo, number] <-
-               Regex.run(~r{^/([\w.-]+)/([\w.-]+)/(?:pull|issues)/([1-9]\d*)(?:/.*)?$}, path) do
-          [
-            {URI.to_string(%{uri | query: nil, fragment: nil}),
-             "repos/#{owner}/#{repo}/issues/#{number}"}
-          ]
+        with %URI{host: host, userinfo: nil, path: path} when is_binary(path) <- uri,
+             {:ok, endpoint} <- link_endpoint(host, path) do
+          [{URI.to_string(%{uri | query: nil, fragment: nil}), endpoint}]
         else
           _ -> []
         end
       end)
-      |> Enum.uniq_by(&elem(&1, 0))
-      |> Enum.take(2)
 
     subjects =
-      links
+      (linked ++ mentioned)
+      |> Enum.uniq_by(&elem(&1, 0))
+      |> Enum.take(2)
       |> Task.async_stream(fn {url, endpoint} -> subject(cwd, url, endpoint) end,
         timeout: 3_000,
         on_timeout: :kill_task,
@@ -900,8 +1598,50 @@ defmodule HalC2.TextGeneration do
     if subjects != [], do: Enum.join(subjects, "\n\n")
   end
 
-  # Only github.com: ambient `gh` credentials never go to a host named in message text.
-  defp subject(cwd, url, endpoint) do
+  # What a link looks up: a GitHub pull request or issue, or a GitLab merge request or
+  # issue (in a group of any depth, with or without the newer "/-/" before the kind).
+  # Only these two hosts: ambient credentials never go
+  # to a host named in message text.
+  defp link_endpoint("github.com", path) do
+    case Regex.run(~r{^/([\w.-]+)/([\w.-]+)/(?:pull|issues)/([1-9]\d*)(?:/.*)?$}, path) do
+      [_, owner, repo, number] -> {:ok, {:github, "repos/#{owner}/#{repo}/issues/#{number}"}}
+      _ -> :error
+    end
+  end
+
+  defp link_endpoint("gitlab.com", path) do
+    case Regex.run(
+           ~r{^/([\w.-]+(?:/(?!-/)[\w.-]+)+)(?:/-)?/(merge_requests|issues)/([1-9]\d*)(?:/.*)?$},
+           path
+         ) do
+      [_, project, kind, number] ->
+        {:ok, {:gitlab, "projects/#{URI.encode_www_form(project)}/#{kind}/#{number}"}}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp link_endpoint(_host, _path), do: :error
+
+  defp subject(_cwd, url, {:synced, title}),
+    do: "#{url}\n" <> ~s({"title":#{JSON.encode!(String.slice(title, 0, 300))}})
+
+  defp subject(cwd, url, {:gitlab, endpoint}) do
+    with {:ok, out, _} <-
+           HalC2.SourceControl.Cli.run("glab", ["api", "--hostname", "gitlab.com", endpoint],
+             cd: cwd,
+             timeout: 3_000
+           ),
+         {:ok, %{"title" => title} = subject} when is_binary(title) <- JSON.decode(out) do
+      body = if is_binary(subject["description"]), do: subject["description"], else: ""
+      subject_text(url, title, body)
+    else
+      _ -> "#{url}: unavailable"
+    end
+  end
+
+  defp subject(cwd, url, {:github, endpoint}) do
     with {:ok, out} <-
            HalC2.GitHub.gh(
              cwd,
@@ -909,15 +1649,18 @@ defmodule HalC2.TextGeneration do
            ),
          {:ok, %{"title" => title} = subject} when is_binary(title) <- JSON.decode(out) do
       body = if is_binary(subject["body"]), do: subject["body"], else: ""
-
-      "#{url}\n" <>
-        ~s({"title":#{JSON.encode!(String.slice(title, 0, 300))},"body":#{JSON.encode!(String.slice(body, 0, 1_200))}})
+      subject_text(url, title, body)
     else
       _ -> "#{url}: unavailable"
     end
   rescue
     _ -> "#{url}: unavailable"
   end
+
+  defp subject_text(url, title, body),
+    do:
+      "#{url}\n" <>
+        ~s({"title":#{JSON.encode!(String.slice(title, 0, 300))},"body":#{JSON.encode!(String.slice(body, 0, 1_200))}})
 
   # --- output ----------------------------------------------------------------------
 
@@ -952,9 +1695,24 @@ defmodule HalC2.TextGeneration do
     |> then(&if(&1 == "", do: "update", else: &1))
   end
 
-  # A fragment for `feature/…`, keeping a `feature/` prefix the model already gave.
-  defp feature_fragment(raw),
-    do: raw |> branch_fragment() |> String.replace_prefix("feature/", "")
+  # Namespaces a writer may choose; any other leading word is part of the name.
+  @branch_namespaces ~w(feat feature fix bugfix hotfix chore docs refactor test perf ci build style release)
+
+  @doc """
+  A branch name under the namespace the writer chose (`fix/…`) when it is one of
+  `@branch_namespaces`; any other name goes under `feature/`, its slashes flattened
+  (`add login/logout page` is `feature/add-login-logout-page`).
+  """
+  def namespaced_branch(raw) do
+    {namespace, rest} =
+      case String.split(branch_fragment(raw), "/", parts: 2) do
+        [namespace, rest] when namespace in @branch_namespaces -> {namespace, rest}
+        [fragment] -> {"feature", fragment}
+        [first, rest] -> {"feature", first <> "/" <> rest}
+      end
+
+    namespace <> "/" <> (rest |> String.replace("/", "-") |> String.replace(~r/-+/, "-"))
+  end
 
   # Prompts ask for under 40 characters; 120 only stops a runaway model.
   defp title(raw) do

@@ -1,7 +1,9 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/25193
 #   https://github.com/pingdotgg/t3code/pull/18444
 #   https://github.com/pingdotgg/t3code/pull/9221
 #   https://github.com/pingdotgg/t3code/pull/17181
+#   https://github.com/pingdotgg/t3code/pull/24352
 #   docs/user/terminal.md (server-owned sessions, scrollback limits)
 #   docs/internals/terminal-runtime.md (bounded restore, query stripping, 512 KiB client buffer)
 #   packages/contracts/src/terminal.ts (TerminalAttachInput, TerminalAttachStreamEvent, TerminalMetadataStreamEvent, history limits)
@@ -18,6 +20,10 @@
 #   apps/tui/src/connection.ts (subscribeTerminal, subscribeTerminalMetadata)
 #   apps/web/src/components/TerminalEventSync.tsx
 #   Cross-domain: connections/ owns remote transport; mc/ owns cluster routing.
+#   https://github.com/pingdotgg/t3code/pull/21654
+#   https://github.com/pingdotgg/t3code/pull/29604
+#   https://github.com/pingdotgg/t3code/pull/29649
+#   https://github.com/pingdotgg/t3code/pull/29696
 
 Feature: Reattaching to terminals
   A terminal outlives the client that opened it. Any client, on any device, can attach later
@@ -37,6 +43,25 @@ Feature: Reattaching to terminals
       Given two clients attached to the same terminal
       When one client runs "date"
       Then both clients receive the date
+
+    # Upstream #24352: a desktop and a phone of different sizes resized one shared terminal without
+    # telling each other, clipping a full-screen program on one of them.
+    @backlog @mc @priority-high
+    Scenario: A shared terminal is as large as its smallest attached client
+      Given a desktop with room for 130 columns and 40 rows is attached to a terminal
+      When a phone with room for 50 columns and 15 rows attaches to it
+      Then the running program sees 50 columns and 15 rows
+      And both clients are told the terminal is 50 columns and 15 rows
+      When the phone leaves
+      Then the running program sees 130 columns and 40 rows
+
+    # Upstream #24352: each client draws the shared size, clamped to the room it has.
+    @backlog @desktop @mobile @tui
+    Scenario: A client draws a shared terminal at the size its program sees
+      Given a terminal is shared at 50 columns and 15 rows
+      When the user opens it on a client with room for more
+      Then the client draws 50 columns and 15 rows, with nothing of the program cut off
+      And opening the phone's keyboard tells the MC the room the phone has left
 
     @mc
     Scenario: Two pages of one client attached to one terminal each see its output
@@ -85,6 +110,15 @@ Feature: Reattaching to terminals
       When the terminal's MC is back
       Then the client is asked to attach again
       And attaching again follows the terminal's output
+
+    # Upstream #29696: after the connection dropped and came back, the MC sized the terminal as when
+    # it was first opened and the client never sent its size again.
+    @backlog @mc @desktop @mobile @tui
+    Scenario: A terminal fits its pane again after the client reconnects
+      Given a client attached to a running terminal and then made its pane larger
+      When the client's connection drops and comes back
+      Then the terminal is sized to the pane as it is now
+      And not to the size it had when it was first opened
 
     # Upstream #18444: opening a closed terminal again on purpose still starts a new shell.
     # Legacy: apps/server/src/terminal/Manager.test.ts (keeps attach streams live when a terminal id is
@@ -157,6 +191,16 @@ Feature: Reattaching to terminals
       When a client closes the terminal without deleting its history
       And later opens the long terminal again
       Then its history contains "long id build"
+
+    # Upstream #21654: on an encrypted home whose file names stop at 143 bytes, a delegated
+    # thread's long ids made its terminal history unreadable and its worktree setup failed.
+    @backlog @mc @priority-low
+    Scenario: A terminal of a thread with a long id keeps its history where file names are short
+      Given the MC's home is on a filesystem that allows file names of at most 143 bytes
+      And a delegated thread whose id and terminal id together are 200 characters long
+      When the thread's setup terminal starts and prints "installing"
+      And a client opens that terminal again
+      Then its history contains "installing"
 
     @mc
     Scenario: Closing a terminal with history deletion removes its saved output
@@ -235,6 +279,41 @@ Feature: Reattaching to terminals
       Given the shell prints a colour change whose bytes arrive in two reads
       When a client attaches and the history is replayed
       Then the colour change is applied and no stray characters appear
+    # Upstream #25193: a cancelled control sequence swallowed the output after it from saved history.
+    @mc @backlog
+    Scenario Outline: Output after a cancelled control sequence survives the replay
+      Given the shell starts <sequence>, cancels it with <cancel> and then prints "build done"
+      When a client attaches and the history is replayed
+      Then the replay shows "build done"
+
+      Examples:
+        | sequence                 | cancel |
+        | a colour change          | CAN    |
+        | a window title           | SUB    |
+        | a device control string  | CAN    |
+
+    # Upstream #29604: an OSC, DCS, PM or APC string with no terminator held back every later
+    # output from saved history; the live terminal ends such a string at the next ESC.
+    @mc @backlog
+    Scenario Outline: Output after an unterminated <string> survives the replay
+      Given the shell prints <string> with no terminator, then coloured "build done", and exits
+      When a client attaches and the history is replayed
+      Then the replay shows "build done" in its colour, as the live terminal did
+
+      Examples:
+        | string                  |
+        | a hyperlink cut short   |
+        | a window title          |
+        | a device control string |
+
+    # Upstream #29649: text with a character in U+0080 to U+009F, common in double-encoded text, was
+    # read as the start of a control string and held back every later output from saved history.
+    @mc @backlog
+    Scenario: Output after text with a C1 character survives the replay
+      Given the shell prints a file holding the double-encoded text "â€\u009d" and then "build done"
+      When a client attaches and the history is replayed
+      Then the replay shows that text and "build done", as the live terminal did
+
 
     @mc
     Scenario: Invalid bytes in the output become replacement characters

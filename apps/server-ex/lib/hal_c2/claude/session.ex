@@ -11,6 +11,15 @@ defmodule HalC2.Claude.Session do
   payload}}` and is answered with `answer_dialog/3`. `control/3` sends any control request
   (`"interrupt"`, `"set_model"`, `"set_permission_mode"`, ...) and waits for its reply.
 
+  With `:mcp` (`%{url, authorization}`) the session hands Claude HAL-C2's MCP server
+  over stdin right after `initialize` (`mcp_set_servers`), and holds the user's
+  messages until Claude has answered it. A control sent after a held message waits
+  behind it, so an interrupt reaches Claude after the message it stops, and is answered
+  `:held` at once; questions about the session (`mcp_status`, `get_usage`) are asked
+  at once. A server Claude refuses or cannot reach leaves the session without HAL-C2's
+  tools; no answer in 90 s ends the session. What is held goes in the durable
+  checkpoint, so an adopted session sends it once Claude answers.
+
   With `:durable` (a thread id) the CLI outlives the MC: the handler gets
   `{:claude, session, {:checkpoint, checkpoint}}` after each batch to save with its state
   (`HalC2.Subprocess.Durable.save/3`), and `:adopt` starts a session on a CLI an earlier
@@ -19,8 +28,14 @@ defmodule HalC2.Claude.Session do
 
   use GenServer
 
+  require Logger
+
   alias HalC2.Claude.{McpConfig, Protocol}
   alias HalC2.Subprocess
+
+  @mcp_deadline_ms 90_000
+  # Controls that ask about the session rather than act on its conversation: never held.
+  @questions ["mcp_status", "get_usage"]
 
   @state_version 1
 
@@ -43,12 +58,18 @@ defmodule HalC2.Claude.Session do
   def answer_permission(session, request_id, decision),
     do: GenServer.cast(session, {:answer_permission, request_id, decision})
 
+  @doc "Answers an MCP elicitation with its action and content."
+  @spec answer_elicitation(GenServer.server(), String.t(), map) :: :ok
+  def answer_elicitation(session, request_id, answer),
+    do: GenServer.cast(session, {:answer_elicitation, request_id, answer})
+
   @doc "Answers a dialog with the user's choice, or `:cancelled` for the dialog's default."
   @spec answer_dialog(GenServer.server(), String.t(), {:completed, term} | :cancelled) :: :ok
   def answer_dialog(session, request_id, result),
     do: GenServer.cast(session, {:answer_dialog, request_id, result})
 
-  @spec control(GenServer.server(), String.t(), map, timeout) :: {:ok, map} | {:error, term}
+  @spec control(GenServer.server(), String.t(), map, timeout) ::
+          {:ok, map} | :held | {:error, term}
   def control(session, subtype, params \\ %{}, timeout \\ 30_000),
     do: GenServer.call(session, {:control, subtype, params}, timeout)
 
@@ -56,8 +77,13 @@ defmodule HalC2.Claude.Session do
   def init(opts) do
     Process.flag(:trap_exit, true)
 
-    with {:ok, sub, config_dir} <- subprocess(opts) do
+    with {:ok, sub, mcp_wait} <- subprocess(opts) do
       channel = get_in(opts, [:adopt, :channel]) || %{next_id: 1, permissions: %{}}
+      # A CLI an earlier MC left waiting on its servers still owes that answer.
+      mcp_wait = mcp_wait or Map.get(channel, :mcp_wait, false)
+      # `:mcp_deadline` (ms) shortens the wait, in tests.
+      deadline = Keyword.get(opts, :mcp_deadline, @mcp_deadline_ms)
+      if mcp_wait, do: Process.send_after(self(), :mcp_deadline, deadline)
 
       {:ok,
        %{
@@ -70,7 +96,10 @@ defmodule HalC2.Claude.Session do
          # Tool input is echoed back on "allow", so keep it until the prompt is answered.
          permissions: channel.permissions,
          log: Keyword.get(opts, :log),
-         mcp_config_dir: config_dir
+         # Waiting on Claude's answer to `mcp_set_servers`, with the user messages held
+         # until then, oldest first.
+         mcp_wait: mcp_wait,
+         held: Map.get(channel, :held, [])
        }}
     else
       {:error, reason} -> {:stop, reason}
@@ -80,51 +109,56 @@ defmodule HalC2.Claude.Session do
   defp subprocess(opts) do
     case opts[:adopt] do
       %{dir: dir, offset: offset} ->
-        with {:ok, sub} <- Subprocess.adopt(dir, offset), do: {:ok, sub, nil}
+        with {:ok, sub} <- Subprocess.adopt(dir, offset), do: {:ok, sub, false}
 
       nil ->
         # `:command` replaces the `claude` executable (with its own leading args), e.g. in tests.
         executable = Keyword.get(opts, :command, [Keyword.get(opts, :executable, "claude")])
-        config_dir = if opts[:mcp], do: McpConfig.new_dir()
+        cmd = fn _durable_dir -> executable ++ Protocol.cli_args(opts) end
 
-        cmd = fn durable_dir ->
-          opts =
-            if opts[:mcp] do
-              dir = if durable_dir, do: Path.join(durable_dir, "mcp"), else: config_dir
-              path = McpConfig.write!(opts[:mcp], dir)
-              Keyword.put(opts, :mcp_config_path, path)
-            else
-              opts
-            end
+        with {:ok, sub} <-
+               Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable, :sandbox])) do
+          HalC2.ProviderLog.options(Keyword.get(opts, :log), opts)
 
-          executable ++ Protocol.cli_args(opts)
-        end
+          init =
+            Protocol.control_request("init", "initialize", %{
+              "supportedDialogKinds" => @dialog_kinds
+            })
 
-        case Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable])) do
-          {:ok, sub} ->
-            case Subprocess.write_line(
-                   sub,
-                   Protocol.control_request("init", "initialize", %{
-                     "supportedDialogKinds" => @dialog_kinds
-                   })
-                 ) do
-              :ok ->
-                {:ok, sub, config_dir}
+          servers =
+            if opts[:mcp],
+              do: [
+                Protocol.control_request("mcp", "mcp_set_servers", %{
+                  "servers" => Protocol.mcp_servers(opts[:mcp])
+                })
+              ],
+              else: []
 
-              {:error, _reason} = error ->
-                Subprocess.stop(sub)
-                McpConfig.remove(config_dir)
-                error
-            end
+          case Enum.reduce_while([init | servers], :ok, fn line, :ok ->
+                 case Subprocess.write_line(sub, line) do
+                   :ok -> {:cont, :ok}
+                   error -> {:halt, error}
+                 end
+               end) do
+            :ok ->
+              {:ok, sub, servers != []}
 
-          {:error, _reason} = error ->
-            McpConfig.remove(config_dir)
-            error
+            {:error, _reason} = error ->
+              Subprocess.stop(sub)
+              error
+          end
         end
     end
   end
 
   @impl true
+  def handle_call({:control, subtype, params}, _from, %{held: [_ | _]} = state)
+      when subtype not in @questions do
+    id = "hal-c2-#{state.next_id}"
+    line = Protocol.control_request(id, subtype, params)
+    {:reply, :held, checkpoint(%{state | next_id: state.next_id + 1, held: state.held ++ [line]})}
+  end
+
   def handle_call({:control, subtype, params}, from, state) do
     id = "hal-c2-#{state.next_id}"
     :ok = Subprocess.write_line(state.sub, Protocol.control_request(id, subtype, params))
@@ -136,6 +170,12 @@ defmodule HalC2.Claude.Session do
   @impl true
   def handle_cast({:user_message, content}, state),
     do: handle_cast({:user_message, content, []}, state)
+
+  # Saved at once, as a message written is: lost, the restored turn would never end.
+  def handle_cast({:user_message, content, opts}, %{mcp_wait: true} = state),
+    do:
+      {:noreply,
+       checkpoint(%{state | held: state.held ++ [Protocol.user_message(content, opts)]})}
 
   def handle_cast({:user_message, content, opts}, state) do
     :ok = Subprocess.write_line(state.sub, Protocol.user_message(content, opts))
@@ -153,6 +193,11 @@ defmodule HalC2.Claude.Session do
     end
   end
 
+  def handle_cast({:answer_elicitation, id, answer}, state) do
+    :ok = Subprocess.write_line(state.sub, Protocol.elicitation_reply(id, answer))
+    {:noreply, checkpoint(state)}
+  end
+
   def handle_cast({:answer_dialog, id, result}, state) do
     :ok = Subprocess.write_line(state.sub, Protocol.dialog_reply(id, result))
     {:noreply, checkpoint(state)}
@@ -167,6 +212,9 @@ defmodule HalC2.Claude.Session do
 
   def handle_info({:subprocess_offset, _reader, offset}, state),
     do: {:noreply, checkpoint(%{state | offset: offset}, false)}
+
+  def handle_info(:mcp_deadline, %{mcp_wait: true} = state),
+    do: {:stop, :mcp_servers_unanswered, state}
 
   def handle_info({:subprocess_eof, _reader}, state), do: {:stop, :normal, state}
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
@@ -183,7 +231,8 @@ defmodule HalC2.Claude.Session do
     end
   end
 
-  # Durable configs belong to the durable directory, whose final stop removes them.
+  # A session from an MC that still wrote Claude's MCP config to a file
+  # (`HalC2.Claude.McpConfig`); durable ones go with their durable directory.
   defp cleanup_config(%{sub: %{durable: nil}} = state),
     do: McpConfig.remove(Map.get(state, :mcp_config_dir))
 
@@ -195,7 +244,8 @@ defmodule HalC2.Claude.Session do
       {:ok,
        state
        |> Map.put_new(:offset, 0)
-       |> Map.put_new(:mcp_config_dir, nil)
+       |> Map.put_new(:mcp_wait, false)
+       |> Map.put_new(:held, [])
        |> Map.put(:v, @state_version)}
 
   # After what the CLI wrote and after what it was sent.
@@ -209,7 +259,12 @@ defmodule HalC2.Claude.Session do
          dir: dir,
          wrote: wrote,
          offset: state.offset,
-         channel: %{next_id: state.next_id, permissions: state.permissions}
+         channel: %{
+           next_id: state.next_id,
+           permissions: state.permissions,
+           mcp_wait: state.mcp_wait,
+           held: state.held
+         }
        }}
     )
 
@@ -225,6 +280,9 @@ defmodule HalC2.Claude.Session do
       {:control_response, "init", reply} ->
         notify(state, {:initialized, reply})
         state
+
+      {:control_response, "mcp", reply} ->
+        mcp_answered(state, reply)
 
       {:control_response, id, reply} ->
         {from, pending} = Map.pop(state.pending, id)
@@ -242,6 +300,10 @@ defmodule HalC2.Claude.Session do
       {:control_request, id, %{"subtype" => "request_user_dialog", "dialog_kind" => kind} = r}
       when kind in @dialog_kinds ->
         notify(state, {:dialog, id, kind, r["payload"] || %{}})
+        state
+
+      {:control_request, id, %{"subtype" => "elicitation"} = request} ->
+        notify(state, {:elicitation, id, request})
         state
 
       {:control_request, id, request} ->
@@ -267,6 +329,24 @@ defmodule HalC2.Claude.Session do
       {:invalid, _} ->
         state
     end
+  end
+
+  # Claude has HAL-C2's server, or runs without it: the held messages go in now.
+  # Only server names are logged, as an error's text can echo the header.
+  defp mcp_answered(state, reply) do
+    refused =
+      case reply do
+        {:ok, %{"errors" => %{} = errors}} -> Map.keys(errors)
+        {:ok, _} -> []
+        {:error, _} -> ["hal-c2"]
+      end
+
+    if refused != [],
+      do:
+        Logger.warning("Claude runs without MCP servers it refused: #{Enum.join(refused, ", ")}")
+
+    for line <- state.held, do: :ok = Subprocess.write_line(state.sub, line)
+    checkpoint(%{state | mcp_wait: false, held: []})
   end
 
   defp notify(state, event), do: send(state.handler, {:claude, self(), event})

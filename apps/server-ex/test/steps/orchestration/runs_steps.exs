@@ -361,6 +361,170 @@ defmodule HalC2.Steps.Orchestration.Runs do
     end
   end
 
+  # --- reasoning and held-back text stream by the same rules --------------------------
+
+  step "the provider streams reasoning text", context do
+    stream_witnessed(context, "reason-t", "item/reasoning/textDelta", "One.\n\nTw")
+  end
+
+  step "the reasoning is written a paragraph at a time, at most every 400 ms", context do
+    assert text(context, "reason-t") == "One.\n\n"
+    observed = System.monotonic_time(:millisecond)
+    context = notify(context, "item/reasoning/textDelta", delta("reason-t", "o.\n\nThr"))
+    await_text(context, "reason-t", "One.\n\nTwo.\n\n")
+    assert System.monotonic_time(:millisecond) - observed >= 300
+    context
+  end
+
+  step "by {string} it is written only when the reasoning is finished",
+       %{args: [mode]} = context do
+    # A fresh turn under the other mode: the mode is the turn's, taken at its start.
+    context =
+      notify(context, "turn/completed", %{
+        "turn" => %{"id" => native_turn(context), "status" => "completed"}
+      })
+
+    await_status(context, context.running, "completed")
+    id = World.project(context, "demo").id
+
+    World.update_settings(context, %{
+      "projectSettingsOverrides" => %{id => %{"responseStreamingMode" => mode}}
+    })
+
+    context = World.running_turn(context, context.thread)
+    context = stream_witnessed(context, "reason-u", "item/reasoning/textDelta", "One.\n\nTw")
+    assert text(context, "reason-u") == ""
+
+    context = notify(context, "item/completed", item("reasoning", "reason-u"))
+    await_text(context, "reason-u", "One.\n\nTw")
+    context
+  end
+
+  # What each held-back shape streams, and what of it is written before the reply ends.
+  @held_back %{
+    "a paragraph and half of the next line" => {"One.\n\nTw", "One.\n\n"},
+    "a paragraph and an opened code block with blank lines" =>
+      {"One.\n\n```\ncode\n\nmore\n", "One.\n\n"},
+    "a code block nested in a list item, then its close" =>
+      {"- item\n\n  ```\n  code\n  ```\nAfter", "- item\n\n  ```\n  code\n  ```\n"},
+    "a first paragraph with no blank line after it yet" => {"One.", ""}
+  }
+
+  step ~r/^the provider has streamed (?<so_far>.+)$/, %{args: [so_far]} = context do
+    {streamed, _written} = Map.fetch!(@held_back, so_far)
+    context = notify(context, "item/started", item("agentMessage", "msg-t"))
+
+    context
+    |> stream_witnessed("msg-t", "item/agentMessage/delta", streamed)
+    |> Map.put(:held_back, so_far)
+  end
+
+  step ~r/^(only the paragraph is written|nothing inside the open code block is written|the text up to and including the close is written|nothing is written)$/,
+       context do
+    {_streamed, written} = Map.fetch!(@held_back, context.held_back)
+    assert text(context, "msg-t") == written
+    context
+  end
+
+  step "the provider streamed a reply that ends without a blank line", context do
+    context = World.running_turn(context, context.thread)
+    context = notify(context, "item/started", item("agentMessage", "msg-t"))
+
+    context
+    |> stream_witnessed("msg-t", "item/agentMessage/delta", "One.\n\nTwo")
+    |> tap(fn context -> assert text(context, "msg-t") == "One.\n\n" end)
+  end
+
+  step "the provider finishes the reply", context do
+    # No text of its own: what shows is what the finish flushed.
+    notify(context, "item/completed", item("agentMessage", "msg-t"))
+  end
+
+  step "the whole reply is written at once, whatever was held back", context do
+    await_text(context, "msg-t", "One.\n\nTwo")
+
+    appends =
+      for %{kind: "turn-item", entity: "turn-item:codex:msg-t", patch: %{"a" => %{"text" => t}}} <-
+            World.events(context, context.thread),
+          do: t
+
+    assert appends == ["One.\n\n", "Two"]
+    context
+  end
+
+  # --- a held-back reply cut off by a steer ------------------------------------------
+
+  step "the agent's reply is partly held back", context do
+    context = World.running_turn(context, context.thread)
+    context = notify(context, "item/started", item("agentMessage", "msg-t"))
+
+    context
+    |> stream_witnessed("msg-t", "item/agentMessage/delta", "One.\n\nTw")
+    |> tap(fn context -> assert text(context, "msg-t") == "One.\n\n" end)
+  end
+
+  step "the user steers the turn before the reply finishes", context do
+    context =
+      World.dispatch_message(context, context.thread, "Focus on the tests", %{
+        "deliveryIntent" => "steer"
+      })
+
+    assert {:ok, _} = context.reply
+
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["type"] == "user_message" and &1["text"] == "Focus on the tests")
+      )
+    end)
+
+    # What followed the steer: the provider's answer to it, under the same turn.
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["text"] == "steered: Focus on the tests")
+      )
+    end)
+
+    context
+  end
+
+  step "the turn ends and the held-back reply is written", context do
+    await_status(context, context.running, "completed")
+    context
+  end
+
+  step "the reply appears before the steer and what followed it, where the agent said it",
+       context do
+    items =
+      context
+      |> World.entities(context.thread, "turn-item")
+      |> Enum.sort_by(& &1["ordinal"])
+
+    held = Enum.find(items, &(&1["id"] == "turn-item:codex:msg-t"))
+
+    steer =
+      Enum.find(items, &(&1["type"] == "user_message" and &1["text"] == "Focus on the tests"))
+
+    after_steer = Enum.find(items, &(&1["text"] == "steered: Focus on the tests"))
+
+    assert held["text"] == "One.\n\nTw"
+    assert held["ordinal"] < steer["ordinal"]
+    assert steer["ordinal"] < after_steer["ordinal"]
+    context
+  end
+
+  # --- force stop is the user's alone -------------------------------------------------
+
+  step "an agent looks for a way to force stop a thread through HAL-C2's tools", context do
+    Map.put(context, :tool_names, Enum.map(HalC2.Mcp.Tools.list(), & &1["name"]))
+  end
+
+  step "none is offered", context do
+    refute Enum.any?(context.tool_names, &String.contains?(&1, "force"))
+    context
+  end
+
   step "a command the agent runs prints output", context do
     context
     |> notify("item/started", item("commandExecution", "cmd-o", %{"command" => "make"}))
@@ -454,6 +618,179 @@ defmodule HalC2.Steps.Orchestration.Runs do
     World.await_state(context, thread, fn state ->
       match?([%{"status" => "running"}], HalC2.StreamState.list(state, "subagent"))
     end)
+
+    context
+  end
+
+  # The same spawn, with work of its own still running in the subagent's thread.
+  step "{string} has a running turn with a provider subagent still at work",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    {_, runtime} = World.codex_runtime(context, thread)
+
+    context =
+      notify(
+        context,
+        "item/started",
+        item("collabAgentToolCall", "collab-1", %{
+          "tool" => "spawnAgent",
+          "prompt" => "List the modules in lib",
+          "senderThreadId" => runtime.native_thread_id,
+          "receiverThreadIds" => ["native-child-1"],
+          "status" => "inProgress",
+          "agentsStates" => %{"native-child-1" => %{"status" => "running"}}
+        })
+      )
+
+    state =
+      World.await_state(context, thread, fn state ->
+        match?([%{"status" => "running"}], HalC2.StreamState.list(state, "subagent"))
+      end)
+
+    [subagent] = HalC2.StreamState.list(state, "subagent")
+
+    context =
+      World.codex_notify(context, thread, "item/started", %{
+        "threadId" => "native-child-1",
+        "turnId" => "native-child-turn-1",
+        "item" => %{
+          "type" => "commandExecution",
+          "id" => "cmd-sub",
+          "command" => "mix test --listen",
+          "status" => "inProgress"
+        }
+      })
+
+    context =
+      context
+      |> put_in([:threads, "native-child"], subagent["childThreadId"])
+      |> Map.put(:subagent_child, subagent["childThreadId"])
+
+    await_child_item(context, "running")
+    context
+  end
+
+  step ~r/^the turn ends because (?<cause>the user interrupts it|its provider process exits|its thread is deleted|the MC cannot record it or its subagent's thread until storage recovers|it completes while the MC cannot record it and its provider process exits before storage recovers)$/,
+       %{args: [cause]} = context do
+    {context, status} =
+      case cause do
+        "the user interrupts it" ->
+          {World.command(context, %{
+             "type" => "run.interrupt",
+             "threadId" => World.thread_id(context, context.thread),
+             "runId" => context.running
+           }), "interrupted"}
+
+        # The app-server goes, and its event stream with it, so nothing can report the
+        # subagent again. A failure Codex itself reports leaves the subagent to carry on
+        # in its own thread (`codex_turn_end_test.exs`).
+        "its provider process exits" ->
+          {_, runtime} = World.codex_runtime(context, context.thread)
+          os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+          {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+          {context, "failed"}
+
+        "its thread is deleted" ->
+          {World.command(context, %{
+             "type" => "thread.delete",
+             "threadId" => World.thread_id(context, context.thread)
+           }), "cancelled"}
+
+        # The runtime's end of the subagent is refused with the rest; the run's end that
+        # TurnWatch records once the store recovers ends it (hal-c2#1398).
+        "the MC cannot record it or its subagent's thread until storage recovers" ->
+          World.put_app_env(:unrecorded_retry_ms, 20)
+          World.put_app_env(:store_hook, {__MODULE__, :refuse_every, []})
+          context = deliver(context, :item)
+          assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+          HalC2.Test.Machines.refuse_changes(nil)
+          {context, "failed"}
+
+        # The app-server takes the subagent with it, and the runtime, unable to record
+        # that, goes too; TurnWatch, holding the run's end, ends them with it.
+        "it completes while the MC cannot record it and its provider process exits before storage recovers" ->
+          World.put_app_env(:unrecorded_retry_ms, 20)
+          World.put_app_env(:store_hook, {__MODULE__, :refuse_every, []})
+          context = deliver(context, {:turn, "completed"})
+          assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+          {pid, runtime} = World.codex_runtime(context, context.thread)
+          ref = Process.monitor(pid)
+          os_pid = HalC2.Subprocess.os_pid(:sys.get_state(runtime.conn).sub)
+          {_, 0} = System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+          assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+          HalC2.Test.Machines.refuse_changes(nil)
+          {context, "failed"}
+      end
+
+    await_status(context, context.running, status)
+    Map.put(context, :ended_as, status)
+  end
+
+  # Codex completes the turn; the run's end TurnWatch records once the store recovers
+  # leaves the subagent to carry on, as the turn's recorded end would have.
+  step "the turn completes while the MC cannot record it, until storage recovers", context do
+    World.put_app_env(:unrecorded_retry_ms, 20)
+    World.put_app_env(:store_hook, {__MODULE__, :refuse_every, []})
+    context = deliver(context, {:turn, "completed"})
+    assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+    HalC2.Test.Machines.refuse_changes(nil)
+    await_status(context, context.running, "failed")
+    context
+  end
+
+  step "the run is failed while the subagent, its item on the turn and the work in its own thread run on",
+       context do
+    assert [%{"status" => "running"}] = World.entities(context, context.thread, "subagent")
+
+    assert Enum.any?(
+             World.entities(context, context.thread, "turn-item"),
+             &(&1["type"] == "subagent" and &1["status"] == "running")
+           )
+
+    await_child_item(context, "running")
+    context
+  end
+
+  step "the subagent, its item on the turn and the work in its own thread end as {word}",
+       %{args: [status]} = context do
+    state =
+      World.await_state(context, context.thread, fn state ->
+        match?(
+          [%{"status" => ^status}],
+          HalC2.StreamState.list(state, "subagent")
+        ) and
+          Enum.any?(
+            HalC2.StreamState.list(state, "turn-item"),
+            &(&1["type"] == "subagent" and &1["status"] == status)
+          )
+      end)
+
+    assert Enum.any?(
+             HalC2.StreamState.list(state, "turn-item"),
+             &(&1["type"] == "subagent" and &1["status"] == status)
+           )
+
+    await_child_item(context, status)
+    context
+  end
+
+  step "nothing of the subagent is left streaming", context do
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.subagent_child))
+
+    items =
+      Enum.filter(
+        World.entities(context, context.thread, "turn-item"),
+        &(&1["type"] == "subagent")
+      ) ++
+        HalC2.StreamState.list(child, "turn-item")
+
+    for item <- items do
+      assert item["streaming"] != true, inspect(item["id"])
+      assert item["status"] != "running", inspect(item["id"])
+    end
+
+    for message <- HalC2.StreamState.list(child, "message"),
+        do: assert(message["streaming"] != true, inspect(message["id"]))
 
     context
   end
@@ -560,6 +897,101 @@ defmodule HalC2.Steps.Orchestration.Runs do
     context
   end
 
+  step "the provider is retrying a failed request during a turn of {string}",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+
+    context =
+      notify(context, "error", %{
+        "error" => %{
+          "message" => "Reconnecting... 1/5",
+          "codexErrorInfo" => %{"responseStreamDisconnected" => %{"httpStatusCode" => nil}},
+          "additionalDetails" => "stream disconnected before completion"
+        },
+        "willRetry" => true,
+        "turnId" => native_turn(context)
+      })
+
+    World.await_state(context, thread, fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["retry"]["attempt"] == 1))
+    end)
+
+    context
+  end
+
+  step "the retry succeeds", context do
+    notify(context, "turn/completed", %{
+      "turn" => %{"id" => native_turn(context), "status" => "completed"}
+    })
+  end
+
+  step "the provider gives up", context do
+    context
+    |> notify("error", %{
+      "error" => %{"message" => "stream disconnected before completion"},
+      "willRetry" => false,
+      "turnId" => native_turn(context)
+    })
+    |> notify("turn/completed", %{
+      "turn" => %{
+        "id" => native_turn(context),
+        "status" => "failed",
+        "error" => %{"message" => "stream disconnected before completion"}
+      }
+    })
+  end
+
+  step "the provider gives up on its usage limit", context do
+    context
+    |> notify("error", %{
+      "error" => %{
+        "message" => "You've hit your usage limit.",
+        "codexErrorInfo" => %{"usageLimitExceeded" => nil}
+      },
+      "willRetry" => false,
+      "turnId" => native_turn(context)
+    })
+    |> notify("turn/completed", %{
+      "turn" => %{"id" => native_turn(context), "status" => "failed"}
+    })
+  end
+
+  step "the user stops the turn while it is retrying", context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => context.running
+    })
+  end
+
+  step "the retry's entry in the turn's work log reads {string}",
+       %{args: [title]} = context do
+    state =
+      World.await_state(context, context.thread, fn state ->
+        state.entities["run"][context.running]["status"] not in ~w(starting running)
+      end)
+
+    entries =
+      for item <- HalC2.StreamState.list(state, "turn-item"),
+          String.contains?(item["id"], "terminal-failure:"),
+          do: item
+
+    assert [%{"title" => ^title}] = entries
+    Map.put(context, :retry_entries, entries)
+  end
+
+  step "the turn has only that one entry for the failure", context do
+    assert length(context.retry_entries) == 1
+
+    errors =
+      for item <- World.entities(context, context.thread, "turn-item"),
+          item["type"] == "error",
+          do: item
+
+    assert errors == context.retry_entries
+    context
+  end
+
   step "the provider session's last error is {string}", %{args: [message]} = context do
     assert session(context, context.thread, "codex")["lastError"] == message
     context
@@ -599,6 +1031,27 @@ defmodule HalC2.Steps.Orchestration.Runs do
   step "the run is failed with {string}", %{args: [message]} = context do
     run = World.await_latest_run(context, context.thread, "failed")
     assert session(context, context.thread, "codex")["lastError"] == message
+    Map.put(context, :failed_run, run["id"])
+  end
+
+  # --- compacting an empty thread ----------------------------------------------------
+
+  step "{string} has no conversation yet", %{args: [thread]} = context do
+    assert World.entities(context, thread, "run") == []
+    Map.put(context, :thread, thread)
+  end
+
+  step "the run fails with {string} and {string}", %{args: [title, message]} = context do
+    run = World.await_latest_run(context, context.thread, "failed")
+
+    error =
+      Enum.find(
+        World.entities(context, context.thread, "turn-item"),
+        &(&1["type"] == "error" and &1["title"] == title)
+      )
+
+    assert error != nil, "no error item titled #{inspect(title)}"
+    assert error["failure"]["message"] == message
     Map.put(context, :failed_run, run["id"])
   end
 
@@ -682,8 +1135,8 @@ defmodule HalC2.Steps.Orchestration.Runs do
     :erlang.trace(runtime, true, [:receive])
     failure = HalC2.Orchestration.TurnWriter.start_failure(nil, :closed)
     HalC2.Orchestration.TurnWriter.abandon(id, first["id"], "failed", failure)
+    # The second run waits behind the first's start in the same session.
     assert_receive {:trace, ^runtime, :receive, {:"$gen_call", _, {:start_turn, _}}}, 5_000
-    :erlang.trace(runtime, false, [:receive])
     Map.merge(context, %{thread: thread, runtime: runtime, watch: watch})
   end
 
@@ -695,9 +1148,46 @@ defmodule HalC2.Steps.Orchestration.Runs do
   step "the first run of {string} stays failed and the second runs alone",
        %{args: [thread]} = context do
     World.await_runs(context, thread, ["failed", "running"])
-    # The first turn's end, which Codex sends as the runtime lets go of it, is not the second's.
-    :ok = GenServer.call(context.runtime, :settle)
-    World.await_runs(context, thread, ["failed", "running"])
+    # The first turn ends as the session stops it; that end is not the second's.
+    runtime = context.runtime
+
+    assert_receive {:trace, ^runtime, :receive,
+                    {:json_rpc, _, {:notification, "turn/completed", %{"turn" => turn} = ended}}},
+                   5_000
+
+    assert turn["status"] == "interrupted"
+    _ = :sys.get_state(runtime)
+    :erlang.trace(runtime, false, [:receive])
+
+    statuses =
+      World.entities(context, thread, "run")
+      |> Enum.sort_by(& &1["ordinal"])
+      |> Enum.map(& &1["status"])
+
+    assert statuses == ["failed", "running"]
+    Map.put(context, :first_turn, %{thread: ended["threadId"], turn: turn["id"]})
+  end
+
+  step "the second run starts a new Codex conversation", context do
+    assert [_, _] = World.codex_requests(context, "thread/start")
+    context
+  end
+
+  # Codex reports the stopped turn's usage after the second turn began.
+  step "the first turn's usage leaves the context meter of {string} alone",
+       %{args: [thread]} = context do
+    World.codex_notify(context, thread, "thread/tokenUsage/updated", %{
+      "threadId" => context.first_turn.thread,
+      "turnId" => context.first_turn.turn,
+      "tokenUsage" => %{"last" => %{"totalTokens" => 150_000}, "modelContextWindow" => 200_000}
+    })
+
+    # Handled in order: the report is through once the runtime answers.
+    _ = :sys.get_state(context.runtime)
+
+    assert [nil] =
+             for(t <- World.entities(context, thread, "provider-thread"), do: t["contextUsage"])
+
     context
   end
 
@@ -1097,6 +1587,69 @@ defmodule HalC2.Steps.Orchestration.Runs do
     })
   end
 
+  # With no run going (the thread is between turns) the stop names none.
+  step "the user presses Stop", context do
+    command = %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "stopDelegated" => true
+    }
+
+    World.command(
+      context,
+      Map.merge(
+        command,
+        Map.take(context, [:running]) |> Map.new(fn {_, run} -> {"runId", run} end)
+      )
+    )
+  end
+
+  step "an agent stops it through HAL-C2's tools", context do
+    agent_interrupt(context, %{})
+  end
+
+  step "an agent stops it through HAL-C2's tools with {string}",
+       %{args: [reason]} = context do
+    agent_interrupt(context, %{"reason" => reason})
+  end
+
+  # The run whose outcome is read is the delegated child's, cancelled by the
+  # agent of "t1" (whose own turn is the scenario's running turn).
+  step "an agent cancels its delegated task", context do
+    assert {:ok, %{"taskId" => task_id}} =
+             World.mcp_tool(context, context.thread, "delegate_task", %{
+               "task" => "wait for it",
+               "mode" => "async"
+             })
+
+    state =
+      World.await_state(context, context.thread, fn state ->
+        Enum.any?(HalC2.StreamState.list(state, "subagent"), &(&1["id"] == task_id))
+      end)
+
+    task = Enum.find(HalC2.StreamState.list(state, "subagent"), &(&1["id"] == task_id))
+
+    context = put_in(context, [:threads, "delegated-child"], task["childThreadId"])
+
+    child =
+      World.await_state(context, "delegated-child", fn state ->
+        Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "running"))
+      end)
+
+    run = Enum.find(HalC2.StreamState.list(child, "run"), &(&1["status"] == "running"))
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             World.mcp_tool(context, context.thread, "task_cancel", %{"taskId" => task_id})
+
+    context |> Map.put(:thread, "delegated-child") |> Map.put(:running, run["id"])
+  end
+
+  step "the provider ends the run with no stop asked for", context do
+    notify(context, "turn/completed", %{
+      "turn" => %{"id" => native_turn(context), "status" => "interrupted"}
+    })
+  end
+
   step "the run records an item titled {string} saying {string}",
        %{args: [title, message]} = context do
     assert {:ok, _} = context.reply
@@ -1106,14 +1659,12 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
   step "once the provider stops, an item titled {string} saying {string}",
        %{args: [title, message]} = context do
-    World.await_state(context, context.thread, fn state ->
-      Enum.any?(
-        HalC2.StreamState.list(state, "turn-item"),
-        &(&1["runId"] == context.running and &1["title"] == title and &1["message"] == message)
-      )
-    end)
+    await_interrupt_item(context, title, message)
+  end
 
-    context
+  step "once the provider stops, an item titled {string} says {string}",
+       %{args: [title, message]} = context do
+    await_interrupt_item(context, title, message)
   end
 
   # --- stopping a run nothing drives ------------------------------------------------------
@@ -1237,7 +1788,15 @@ defmodule HalC2.Steps.Orchestration.Runs do
       {~s(bad OPENAI_API_KEY=sk-abc client_secret=c5 body {"refresh_token":"r7"}),
        ~s(bad OPENAI_API_KEY=[REDACTED] client_secret=[REDACTED] body {"refresh_token":"[REDACTED]"})},
     "a URL that cannot be read" =>
-      {"could not reach http://[::1 broken", "could not reach [REDACTED_URL] broken"}
+      {"could not reach http://[::1 broken", "could not reach [REDACTED_URL] broken"},
+    # The compound-key outline names its provider text and what is shown outright.
+    "client_secret=abc refresh_token=def" =>
+      {"client_secret=abc refresh_token=def", "client_secret=[REDACTED] refresh_token=[REDACTED]"},
+    ~s({"client_secret":"abc"}) =>
+      {~s({"client_secret":"abc"}), ~s({"client_secret":"[REDACTED]"})},
+    "clientSecret: abc" => {"clientSecret: abc", "clientSecret: [REDACTED]"},
+    "max_tokens=4096 input_tokens: 12" =>
+      {"max_tokens=4096 input_tokens: 12", "max_tokens=4096 input_tokens: 12"}
   }
 
   step ~r/^the provider fails a turn of "(?<thread>[^"]+)" with a message holding (?<secret>.+)$/,
@@ -1262,7 +1821,8 @@ defmodule HalC2.Steps.Orchestration.Runs do
     {message, expected} = Map.fetch!(@secrets, context.secret)
     recorded = session(context, context.thread, "codex")["lastError"]
     assert recorded == expected
-    refute recorded == message
+    # A message with nothing to hide (token counts) is recorded as it came.
+    if expected != message, do: refute(recorded == message)
 
     for %{"failure" => %{"message" => text}} <-
           World.entities(context, context.thread, "turn-item"),
@@ -1410,6 +1970,17 @@ defmodule HalC2.Steps.Orchestration.Runs do
     Map.put(context, :reply, reply)
   end
 
+  defp await_interrupt_item(context, title, message) do
+    World.await_state(context, context.thread, fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["runId"] == context.running and &1["title"] == title and &1["message"] == message)
+      )
+    end)
+
+    context
+  end
+
   defp interrupt_item(context, title, message) do
     Enum.find(
       World.entities(context, context.thread, "turn-item"),
@@ -1435,6 +2006,31 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
   defp native_turn(context),
     do: elem(World.codex_runtime(context, context.thread), 1).turn.native_turn_id
+
+  # `hal_c2_thread_interrupt` from another thread of the project, as an agent's
+  # own stop arrives. The caller needs a run of its own, as a calling agent has.
+  defp agent_interrupt(context, extra) do
+    target = context.thread
+    running = context.running
+    context = World.running_turn(context, "agent-caller")
+
+    arguments = Map.merge(%{"threadId" => World.thread_id(context, target)}, extra)
+
+    assert {:ok, %{"interrupted" => true}} =
+             World.mcp_tool(context, "agent-caller", "hal_c2_thread_interrupt", arguments)
+
+    context |> Map.put(:thread, target) |> Map.put(:running, running)
+  end
+
+  # The subagent's own command item, in its child thread ("native-child").
+  defp await_child_item(context, status) do
+    World.await_state(context, "native-child", fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "turn-item"),
+        &(&1["status"] == status and String.ends_with?(&1["id"], "cmd-sub"))
+      )
+    end)
+  end
 
   defp notify(context, method, params),
     do: World.codex_notify(context, context.thread, method, params)
@@ -1496,6 +2092,22 @@ defmodule HalC2.Steps.Orchestration.Runs do
         "plan" => [%{"step" => "Read", "status" => "inProgress"}]
       })
 
+  # Streams `text` for `native` by `method`, then a command's output: both flush
+  # together, so the output landing shows the prose write has had its chance.
+  defp stream_witnessed(context, native, method, text) do
+    cmd = "cmd-w#{System.unique_integer([:positive])}"
+
+    context
+    |> notify(method, delta(native, text))
+    |> notify("item/started", item("commandExecution", cmd, %{"command" => "ls"}))
+    |> notify("item/commandExecution/outputDelta", delta(cmd, "a.txt\n"))
+    |> tap(fn context ->
+      World.await_state(context, context.thread, fn state ->
+        state.entities["turn-item"]["turn-item:codex:#{cmd}"]["outputSize"] == 6
+      end)
+    end)
+  end
+
   # A paragraph and a half of assistant text, then a command's output: both are
   # flushed together, so the output being written shows what the text write held back.
   defp stream_text(context) do
@@ -1506,7 +2118,7 @@ defmodule HalC2.Steps.Orchestration.Runs do
     |> notify("item/commandExecution/outputDelta", delta("cmd-t", "a.txt\n"))
     |> tap(fn context ->
       World.await_state(context, context.thread, fn state ->
-        state.entities["turn-item"]["turn-item:codex:cmd-t"]["output"] == "a.txt\n"
+        state.entities["turn-item"]["turn-item:codex:cmd-t"]["outputSize"] == 6
       end)
     end)
   end
@@ -1534,10 +2146,20 @@ defmodule HalC2.Steps.Orchestration.Runs do
     end)
   end
 
+  # Output stays off the thread's stream: the item carries its size, the text is the
+  # running command's tail.
   defp await_output(context, output) do
-    World.await_state(context, context.thread, fn state ->
-      state.entities["turn-item"]["turn-item:codex:cmd-o"]["output"] == output
-    end).entities["turn-item"]["turn-item:codex:cmd-o"]
+    state =
+      World.await_state(context, context.thread, fn state ->
+        state.entities["turn-item"]["turn-item:codex:cmd-o"]["outputSize"] == byte_size(output)
+      end)
+
+    assert HalC2.Orchestration.CommandTail.get(
+             World.thread_id(context, context.thread),
+             "turn-item:codex:cmd-o"
+           ) == output
+
+    state.entities["turn-item"]["turn-item:codex:cmd-o"]
   end
 
   defp await_status(context, run_id, status) do
@@ -1574,5 +2196,685 @@ defmodule HalC2.Steps.Orchestration.Runs do
 
     :erlang.trace(watch, false, [:receive])
     runtime
+  end
+
+  # --- a turn the store cannot record (`HalC2.Orchestration.Unrecorded`) ------------
+
+  # The thread's next `n` changes are refused inside the store's append transaction,
+  # as a full disk refuses them (`:store_hook`); `:until_recovered` refuses them all
+  # until "the database recovers".
+  def refuse_writes(left, id, :append_change, id) do
+    if self() == Process.whereis(HalC2.Store) and :counters.get(left, 1) > 0 do
+      :counters.sub(left, 1, 1)
+      raise "the disk is full"
+    end
+
+    :ok
+  end
+
+  def refuse_writes(_left, _id, _stage, _stream_id), do: :ok
+
+  # Every stream's changes are refused, its subagents' threads too.
+  def refuse_every(:append_change, _stream_id) do
+    if self() == Process.whereis(HalC2.Store), do: raise("the disk is full"), else: :ok
+  end
+
+  def refuse_every(_stage, _stream_id), do: :ok
+
+  step "the MC fails to record the turn's events", context do
+    context |> refuse(1) |> deliver(:item) |> await_unrecorded_end()
+  end
+
+  # The store refuses the command's start; its end is decided on in dry mode, against
+  # the command the runtime could not record.
+  step "the MC fails to record a command the turn starts and ends", context do
+    command = %{"command" => "ls", "status" => "inProgress"}
+
+    done = %{
+      "command" => "ls",
+      "status" => "completed",
+      "aggregatedOutput" => "",
+      "exitCode" => 0
+    }
+
+    context
+    |> refuse(1)
+    |> notify("item/started", item("commandExecution", "cmd-unrecorded", command))
+    |> notify("item/completed", item("commandExecution", "cmd-unrecorded", done))
+    |> await_unrecorded_end()
+  end
+
+  step "the MC fails to record the turn's events and then fails to record the run's failure",
+       context do
+    World.put_app_env(:unrecorded_retry_ms, 20)
+    HalC2.Test.Machines.refuse_changes(World.thread_id(context, context.thread))
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Test.Machines.refuse_changes(nil) end)
+    deliver(context, :item)
+
+    # The run's end waited for the provider turn's, then the store refused it.
+    assert {:unrecorded, at} = HalC2.Orchestration.TurnWatch.attempted(context.running)
+    assert [%{"status" => "running"}] = World.entities(context, context.thread, "run")
+    Map.put(context, :failed_at, at)
+  end
+
+  step "the database recovers", context do
+    HalC2.Test.Machines.refuse_changes(nil)
+    Map.put(context, :recovered_at, HalC2.Orchestration.Entities.now())
+  end
+
+  step "the run is recorded as failed at the time it failed", context do
+    context = await_unrecorded_end(context)
+    run = unrecorded_run(context)
+    assert run["completedAt"] == context.failed_at
+    assert run["completedAt"] <= context.recovered_at
+    context
+  end
+
+  step "{string} no longer shows a running turn", %{args: [thread]} = context do
+    World.await_latest_run(context, thread, "failed")
+    assert Enum.all?(World.entities(context, thread, "run"), &(&1["status"] == "failed"))
+
+    assert Enum.all?(
+             World.entities(context, thread, "provider-turn"),
+             &(&1["status"] != "running")
+           )
+
+    context
+  end
+
+  step "the run is failed and the provider turn is interrupted together", context do
+    run = unrecorded_run(context)
+    assert run["failure"] =~ "The turn could not be saved"
+    assert %{"status" => "interrupted"} = turn = provider_turn(context)
+    assert turn["completedAt"] == run["completedAt"]
+    context
+  end
+
+  step "{string} can take its next message in the same provider conversation",
+       %{args: [thread]} = context do
+    context |> next_message(thread) |> same_conversation()
+  end
+
+  step "an earlier run of {string} failed while its provider turn kept running",
+       %{args: [thread]} = context do
+    context = World.running_turn(context, thread)
+    context = context |> unstoppable() |> refuse(1) |> deliver(:item) |> await_unrecorded_end()
+    assert %{"status" => "running"} = provider_turn(context)
+    context
+  end
+
+  step "the user sends {string} another message", %{args: [thread]} = context do
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    next_message(context, thread)
+  end
+
+  step "the left-over provider turn is interrupted first", context do
+    assert ["turn/interrupt" | _] = context.methods_since
+    assert "turn/start" in context.methods_since
+    assert %{"status" => "interrupted"} = provider_turn(context, context.leftover)
+    context
+  end
+
+  step "the user sends {string} another message and Codex keeps the left-over turn running",
+       %{args: [thread]} = context do
+    context = World.dispatch_message(context, thread, "Next")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_runs(context, thread, ["failed", "failed"])
+
+    Map.put(
+      context,
+      :methods_since,
+      Enum.drop(World.codex_methods(context), context.methods_before)
+    )
+  end
+
+  step "the user sends {string} another message and the left-over turn reports before it ends",
+       %{args: [thread]} = context do
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    File.write!(Path.join(context.mc.home, "ignore-interrupt-reports"), "")
+    next_message(context, thread)
+  end
+
+  step "the new run records nothing the left-over turn reported", context do
+    entities = &World.entities(context, context.thread, &1)
+    refute Enum.any?(entities.("message"), &(&1["text"] =~ "Left over"))
+    refute Enum.any?(entities.("runtime-request"), &(&1["id"] =~ "cmd-leftover"))
+    refute Enum.any?(entities.("turn-item"), &(&1["id"] =~ "leftover"))
+    context
+  end
+
+  step "the new run fails because the previous turn is still running", context do
+    assert ["turn/interrupt"] = context.methods_since
+
+    assert [_, %{"failure" => "The previous turn is still running." <> _}] =
+             World.runs(context, context.thread)
+
+    context
+  end
+
+  # Codex ends the turn it kept running past the stop, with nothing held for it, while
+  # the store refuses the thread's writes.
+  step "Codex ends the left-over turn while the MC cannot record it", context do
+    {pid, runtime} = World.codex_runtime(context, context.thread)
+    unrecordable(context)
+
+    context
+    |> notify("turn/completed", leftover_end(runtime))
+    |> tap(fn _ -> :sys.get_state(pid) end)
+  end
+
+  # Codex keeps the left-over turn past the follow-up's stop, so the follow-up is held
+  # for its end (`stop_leftover/1`), which comes while the store refuses the writes.
+  step "the user sends {string} another message and the left-over turn ends while the MC cannot record it",
+       %{args: [thread]} = context do
+    World.put_app_env(:codex_interrupt_deadline_ms, 10_000)
+    watch = Process.whereis(HalC2.Orchestration.TurnWatch)
+    :erlang.trace(watch, true, [:receive])
+    context = World.dispatch_message(context, thread, "Next")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+
+    assert_receive {:trace, ^watch, :receive, {:"$gen_call", {pid, _}, {:claim, _, _, held}}},
+                   5_000
+
+    :erlang.trace(watch, false, [:receive])
+    unrecordable(context)
+    context = notify(context, "turn/completed", leftover_end(:sys.get_state(pid)))
+    assert {:unrecorded, _} = HalC2.Orchestration.TurnWatch.attempted(held)
+    context
+  end
+
+  step "the new run fails because it could not be saved", context do
+    World.await_runs(context, context.thread, ["failed", "failed"])
+    assert [_, %{"failure" => failure}] = World.runs(context, context.thread)
+    assert failure =~ "The turn could not be saved"
+    context
+  end
+
+  step "the left-over provider turn reads as interrupted", context do
+    World.await_state(context, context.thread, fn state ->
+      match?(%{"status" => "interrupted"}, state.entities["provider-turn"][context.leftover])
+    end)
+
+    context
+  end
+
+  step "the left-over provider turn still reads as running", context do
+    assert %{"status" => "running"} = provider_turn(context, context.leftover)
+    context
+  end
+
+  step "the new turn runs in the same provider conversation", context do
+    same_conversation(context)
+  end
+
+  step "the provider turn of {string} had already completed", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> Map.put(:ending, {:turn, "completed"})
+  end
+
+  # Codex completes the turn with the thread's goal still active, so the run waits for
+  # Codex's next turn toward it, which never comes.
+  step "the provider turn of {string} had already completed toward a Codex goal",
+       %{args: [thread]} = context do
+    goal = %{"objective" => "Ship the fix", "status" => "active"}
+    World.put_env("FAKE_CODEX_GOAL", JSON.encode!(goal))
+    World.put_env("FAKE_CODEX_GOAL_STALL", "1")
+    context = World.running_turn(context, thread)
+    {pid, runtime} = World.codex_runtime(context, thread)
+    params = %{"threadId" => runtime.native_thread_id, "goal" => goal}
+    World.codex_notify(context, thread, "thread/goal/updated", params)
+    assert %{goal: %{"status" => "active"}} = :sys.get_state(pid)
+    Map.put(context, :ending, {:turn, "completed"})
+  end
+
+  step "the provider turn of {string} had already failed", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> Map.put(:ending, {:turn, "failed"})
+  end
+
+  step "the provider turn of {string} was still running", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> Map.put(:ending, :item)
+  end
+
+  step "the provider turn of {string} could not be interrupted", %{args: [thread]} = context do
+    context |> World.running_turn(thread) |> unstoppable() |> Map.put(:ending, :item)
+  end
+
+  step "the MC fails to record the turn's events and interrupts the provider turn", context do
+    context |> refuse(1) |> deliver(context.ending) |> await_unrecorded_end()
+  end
+
+  step "the provider turn reads as {word}", %{args: [status]} = context do
+    assert %{"status" => ^status} = provider_turn(context)
+    context
+  end
+
+  step "the provider turn reads as running, so the next message stops it first", context do
+    assert %{"status" => "running"} = provider_turn(context)
+    File.rm!(Path.join(context.mc.home, "ignore-interrupt"))
+    context = next_message(context, context.thread)
+    assert ["turn/interrupt" | _] = context.methods_since
+    assert %{"status" => "interrupted"} = provider_turn(context, context.leftover)
+    context
+  end
+
+  # --- the same on Muse Code, whose stop can end the turn inside the call -------------
+
+  step "a Muse Code turn is running on a Muse that keeps its turn when the MC stops it",
+       context do
+    Mc.ensure(HalC2.Mcp)
+
+    turns = [
+      %{
+        "match" => "a long task",
+        "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]
+      }
+    ]
+
+    context =
+      context
+      |> HalC2.Test.FakeAcp.install_muse(%{"interruptIgnored" => true},
+        enabled: true,
+        turns: turns
+      )
+      |> HalC2.Test.FakeAcp.thread("Muse")
+      |> HalC2.Test.FakeAcp.send_message("a long task")
+
+    World.await_stream(World.thread_id(context, "Muse"), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["text"] == "Working on it."))
+    end)
+
+    [run] = World.entities(context, "Muse", "run")
+    Map.put(context, :running, run["id"])
+  end
+
+  # Muse's next event fails to record; the MC's stop of the turn reaches Muse, which
+  # answers it and goes on, so the run's end waits on the turn's.
+  step "the MC fails to record the Muse Code turn's events", context do
+    context = refuse(context, 1)
+    [{pid, _}] = Registry.lookup(HalC2.Muse.Registry, World.thread_id(context, "Muse"))
+    %{conn: conn, session: session} = :sys.get_state(pid)
+    todos = %{"sessionId" => session, "items" => [%{"text" => "Save", "status" => "inProgress"}]}
+    send(pid, {:json_rpc, conn, {:notification, "session/todoListChanged", todos}})
+    assert %{unrecorded: %{run: run}} = :sys.get_state(pid)
+    assert run == context.running
+    assert [%{"status" => "running"}] = World.entities(context, "Muse", "run")
+    context
+  end
+
+  step "Muse Code has half a second to end a turn the MC stopped", context do
+    World.put_app_env(:muse_interrupt_timeout_ms, 500)
+    context
+  end
+
+  # Muse answered the stop and keeps the turn: once its time is out the MC closes its
+  # host and ends the turn there.
+  step "Muse Code does not end the turn the MC stopped", context do
+    World.await_runs(context, "Muse", ["failed"])
+    context
+  end
+
+  step "the next message to Muse Code runs and its reply is recorded", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", &Map.delete(&1, "interruptIgnored"))
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Muse")
+    World.await_runs(context, "Muse", ["failed", "completed"])
+    run = World.entities(context, "Muse", "run") |> Enum.max_by(& &1["ordinal"])
+
+    assert Enum.any?(
+             World.entities(context, "Muse", "message"),
+             &(&1["runId"] == run["id"] and &1["text"] =~ "Reply to Next")
+           )
+
+    context
+  end
+
+  # --- the same on an ACP agent (Grok), which never answers the MC's stop -------------
+
+  step "a Grok turn is running on a Grok that never answers the MC's stop", context do
+    context |> unanswering_grok() |> long_grok_turn()
+  end
+
+  step "a Grok turn is running on a Grok that never answers the MC's stop, after a turn that left a command running in the background",
+       context do
+    context = unanswering_grok(context)
+    context = HalC2.Test.FakeAcp.send_message(context, "Start the dev server in the background")
+    World.await_row(World.thread_id(context, "Grok"), &(&1["runningBackgroundTasks"] != []))
+    World.await_runs(context, "Grok", ["completed"])
+
+    background =
+      for %{"status" => "running", "id" => id} <- World.entities(context, "Grok", "turn-item"),
+          do: id
+
+    assert background != []
+    context |> Map.put(:background, background) |> long_grok_turn()
+  end
+
+  # Grok's background shell (task-sh), as `fake_acp.py` starts one.
+  @grok_background [
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call",
+        "toolCallId" => "sh-1",
+        "title" => "npm run dev",
+        "kind" => "execute",
+        "status" => "in_progress",
+        "rawInput" => %{"command" => "npm run dev"}
+      }
+    },
+    %{
+      "update" => %{
+        "sessionUpdate" => "tool_call_update",
+        "toolCallId" => "sh-1",
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "Started."}}
+        ],
+        "rawOutput" => %{
+          "type" => "BackgroundTaskStarted",
+          "task_id" => "task-sh",
+          "command" => "npm run dev"
+        }
+      }
+    }
+  ]
+
+  defp unanswering_grok(context) do
+    turns = [
+      %{"match" => "a long task", "steps" => [%{"text" => "Working on it."}, %{"hang" => true}]},
+      %{"match" => "in the background", "steps" => @grok_background}
+      | HalC2.Test.FakeAcp.turns()
+    ]
+
+    # The scripted agent, not the plain fake this feature's MC gives Grok.
+    World.put_app_env(
+      :acp_commands,
+      Map.delete(Application.get_env(:hal_c2, :acp_commands), "grok")
+    )
+
+    context =
+      context
+      |> HalC2.Test.FakeAcp.install("grok", %{"configOptions" => [], "turns" => turns},
+        enabled: true
+      )
+      |> HalC2.Test.FakeAcp.thread("Grok")
+  end
+
+  defp long_grok_turn(context) do
+    context = HalC2.Test.FakeAcp.send_message(context, "a long task")
+    run = World.await_latest_run(context, "Grok", "running")
+
+    # Its text streams into the message as the turn goes.
+    World.await_stream(World.thread_id(context, "Grok"), fn state ->
+      Enum.any?(
+        HalC2.StreamState.list(state, "message"),
+        &(&1["role"] == "assistant" and &1["runId"] == run["id"])
+      )
+    end)
+
+    Map.put(context, :running, run["id"])
+  end
+
+  step "Grok has half a second to answer a stop", context do
+    World.put_app_env(:antigravity_cancel_timeout_ms, 500)
+    context
+  end
+
+  # Grok's task list fails to record; the MC's stop of the turn reaches Grok, which
+  # never answers it, so the run's end waits on the turn's.
+  step "the MC fails to record the Grok turn's events", context do
+    context = refuse(context, 1)
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, "Grok"))
+    %{conn: conn, session_id: session} = :sys.get_state(pid)
+    entry = %{"content" => "Save", "status" => "in_progress", "priority" => "medium"}
+    update = %{"sessionUpdate" => "plan", "entries" => [entry]}
+
+    params = %{"sessionId" => session, "update" => update}
+    send(pid, {:json_rpc, conn, {:notification, "session/update", params}})
+    assert %{unrecorded: %{run: run}, interrupted: true} = :sys.get_state(pid)
+    assert run == context.running
+    assert %{"status" => "running"} = grok_run(context)
+    context
+  end
+
+  step "the Grok run is failed because it could not be saved", context do
+    World.await_thread(context, "Grok", fn state ->
+      HalC2.StreamState.get(state, "run")[context.running]["status"] == "failed"
+    end)
+
+    assert grok_run(context)["failure"] =~ "The turn could not be saved"
+    context
+  end
+
+  # Stopping Grok's process, for the turn it never stopped, took the earlier turn's
+  # background shell with it.
+  step "the earlier Grok turn's background command is failed", context do
+    items = World.entities(context, "Grok", "turn-item")
+
+    assert for(%{"id" => id, "status" => status} <- items, id in context.background, do: status) ==
+             Enum.map(context.background, fn _ -> "failed" end)
+
+    assert Enum.filter(
+             items ++ World.entities(context, "Grok", "node"),
+             &(&1["status"] == "running")
+           ) ==
+             []
+
+    context
+  end
+
+  defp grok_run(context),
+    do: Enum.find(World.entities(context, "Grok", "run"), &(&1["id"] == context.running))
+
+  step "the next message to Grok runs and its reply is recorded", context do
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Grok")
+    World.await_runs(context, "Grok", ["failed", "completed"])
+    run = World.entities(context, "Grok", "run") |> Enum.max_by(& &1["ordinal"])
+
+    assert Enum.any?(
+             World.entities(context, "Grok", "message"),
+             &(&1["runId"] == run["id"] and &1["text"] =~ "Hello from the fake agent")
+           )
+
+    context
+  end
+
+  # --- the same on Pi, which goes on with a turn it has shown output for -------------
+
+  step "a Pi turn that has shown output is running on a Pi that ignores the MC's abort",
+       context do
+    turns = [
+      %{"match" => "a long task", "steps" => [%{"text" => "Working on it."}, %{"hang" => true}]}
+      | HalC2.Test.FakeAcp.pi_turns()
+    ]
+
+    context =
+      context
+      |> HalC2.Test.FakeAcp.install_pi(%{}, enabled: true, turns: turns)
+      |> HalC2.Test.FakeAcp.thread("Pi")
+      |> HalC2.Test.FakeAcp.send_message("a long task")
+
+    # Pi's reply starts in the stream once it has shown output for the turn.
+    World.await_stream(World.thread_id(context, "Pi"), fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "message"), &(&1["role"] == "assistant"))
+    end)
+
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, World.thread_id(context, "Pi"))
+    assert %{turn_active: true} = :sys.get_state(pid)
+    [run] = World.entities(context, "Pi", "run")
+    Map.put(context, :running, run["id"])
+  end
+
+  step "Pi has half a second to end a turn the MC aborted", context do
+    World.put_app_env(:pi_abort_deadline_ms, 500)
+    context
+  end
+
+  # Pi's next tool fails to record; the MC's abort of the turn reaches Pi, which goes
+  # on, so the run's end waits on the turn's.
+  step "the MC fails to record the Pi turn's events", context do
+    context = refuse(context, 1)
+    [{pid, _}] = Registry.lookup(HalC2.Pi.Registry, World.thread_id(context, "Pi"))
+    %{conn: conn} = :sys.get_state(pid)
+
+    tool = %{
+      "toolCallId" => "tool-unrecorded",
+      "toolName" => "bash",
+      "args" => %{"command" => "ls"}
+    }
+
+    send(pid, {:json_rpc, conn, {:notification, "tool_execution_start", tool}})
+    assert %{unrecorded: %{run: run}, interrupted: true} = :sys.get_state(pid)
+    assert run == context.running
+    assert [%{"status" => "running"}] = World.entities(context, "Pi", "run")
+    context
+  end
+
+  step "the Pi run is failed because it could not be saved", context do
+    World.await_runs(context, "Pi", ["failed"])
+    [run] = World.entities(context, "Pi", "run")
+    assert run["failure"] =~ "The turn could not be saved"
+    context
+  end
+
+  step "the next message to Pi runs and its reply is recorded", context do
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Pi")
+    World.await_runs(context, "Pi", ["failed", "completed"])
+    run = World.entities(context, "Pi", "run") |> Enum.max_by(& &1["ordinal"])
+
+    assert Enum.any?(
+             World.entities(context, "Pi", "message"),
+             &(&1["runId"] == run["id"] and &1["role"] == "assistant")
+           )
+
+    context
+  end
+
+  # Muse refuses the user's stop, so the MC closes its host and ends the turn there.
+  step "the user stops the Muse Code turn and Muse refuses", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", &Map.put(&1, "interruptFails", true))
+    id = World.thread_id(context, "Muse")
+    assert {:ok, _} = HalC2.Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => id})
+    World.await_runs(context, "Muse", ["failed"])
+    context
+  end
+
+  step "the Muse Code run is failed because it could not be saved", context do
+    [run] = World.entities(context, "Muse", "run")
+    assert run["status"] == "failed"
+    assert run["failure"] =~ "The turn could not be saved"
+    context
+  end
+
+  # Muse answers the resume under another session, so the run fails in the runtime's
+  # start, before Muse takes the turn: with Muse's reason, not the earlier run's.
+  step "the next message to Muse Code fails to open its session", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", fn config ->
+      config
+      |> Map.drop(~w(interruptFails interruptIgnored))
+      |> Map.put("mismatch", "session/resume")
+    end)
+
+    context = HalC2.Test.FakeAcp.send_message(context, "out of step", "Muse")
+    World.await_runs(context, "Muse", ["failed", "failed"])
+    context
+  end
+
+  step "that run fails with Muse Code's own reason", context do
+    [_, run] = Enum.sort_by(World.entities(context, "Muse", "run"), & &1["ordinal"])
+    assert run["failure"] =~ "Muse resumed another session"
+    refute run["failure"] =~ "could not be saved"
+    context
+  end
+
+  step "the message after it runs and its reply is recorded", context do
+    HalC2.Test.FakeAcp.configure(context, "muse", &Map.delete(&1, "mismatch"))
+    context = HalC2.Test.FakeAcp.send_message(context, "Next", "Muse")
+    World.await_runs(context, "Muse", ["failed", "failed", "completed"])
+    run = World.entities(context, "Muse", "run") |> Enum.max_by(& &1["ordinal"])
+    assert run["failure"] == nil
+
+    assert Enum.any?(
+             World.entities(context, "Muse", "message"),
+             &(&1["runId"] == run["id"] and &1["text"] =~ "Reply to Next")
+           )
+
+    context
+  end
+
+  # The store refuses the thread's writes until "the database recovers".
+  defp unrecordable(context) do
+    World.put_app_env(:unrecorded_retry_ms, 20)
+    HalC2.Test.Machines.refuse_changes(World.thread_id(context, context.thread))
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Test.Machines.refuse_changes(nil) end)
+  end
+
+  # Codex's end of the turn left over, as it reports a turn it stopped.
+  defp leftover_end(%{leftover: %{turn: turn, thread: thread}}),
+    do: %{"threadId" => thread, "turn" => %{"id" => turn, "status" => "interrupted"}}
+
+  defp refuse(context, n) do
+    left = :counters.new(1, [])
+    :counters.put(left, 1, n)
+    id = World.thread_id(context, context.thread)
+    World.put_app_env(:store_hook, {__MODULE__, :refuse_writes, [left, id]})
+    context
+  end
+
+  # Codex acknowledges a stop and goes on with the turn; the MC's wait for it is short.
+  defp unstoppable(context) do
+    World.put_app_env(:codex_interrupt_deadline_ms, 100)
+    File.write!(Path.join(context.mc.home, "ignore-interrupt"), "")
+    context
+  end
+
+  # What the provider says next, which the store then fails to record: an item of
+  # the running turn, or the turn's own end.
+  defp deliver(context, :item) do
+    context
+    |> notify("item/started", item("agentMessage", "msg-unrecorded"))
+    |> notify("item/agentMessage/delta", delta("msg-unrecorded", "Working on it."))
+  end
+
+  defp deliver(context, {:turn, status}) do
+    error = if status == "failed", do: %{"message" => "rate limited"}
+    turn = %{"id" => native_turn(context), "status" => status, "error" => error}
+    notify(context, "turn/completed", %{"turn" => turn})
+  end
+
+  # The run's end, once TurnWatch recorded it, with the provider turn it ran.
+  defp await_unrecorded_end(context) do
+    World.await_runs(context, context.thread, ["failed"])
+    [turn] = World.entities(context, context.thread, "provider-turn")
+
+    context
+    |> Map.put(:leftover, turn["id"])
+    |> Map.put(:methods_before, length(World.codex_methods(context)))
+  end
+
+  defp unrecorded_run(context),
+    do: Enum.find(World.entities(context, context.thread, "run"), &(&1["id"] == context.running))
+
+  defp provider_turn(context, id \\ nil) do
+    id = id || context.leftover
+    Enum.find(World.entities(context, context.thread, "provider-turn"), &(&1["id"] == id))
+  end
+
+  defp next_message(context, thread) do
+    context = World.dispatch_message(context, thread, "Next")
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_runs(context, thread, ["failed", "completed"])
+
+    Map.put(
+      context,
+      :methods_since,
+      Enum.drop(World.codex_methods(context), context.methods_before)
+    )
+  end
+
+  # One provider conversation: started once, never resumed or started again.
+  defp same_conversation(context) do
+    methods = World.codex_methods(context)
+    assert Enum.count(methods, &(&1 == "thread/start")) == 1
+    refute "thread/resume" in methods
+    assert Enum.count(methods, &(&1 == "turn/start")) == 2
+    context
   end
 end

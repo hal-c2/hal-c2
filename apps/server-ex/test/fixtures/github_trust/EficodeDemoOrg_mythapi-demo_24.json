@@ -1,0 +1,27 @@
+{
+  "data": {
+    "viewer": {
+      "login": "olafura"
+    },
+    "repository": {
+      "pullRequest": {
+        "author": {
+          "__typename": "User",
+          "login": "ghost"
+        },
+        "authorAssociation": "NONE",
+        "isCrossRepository": false,
+        "headRefOid": "8b100ad7c7ae2f5ce5369219679e4bf05d849bd6",
+        "headRepositoryOwner": {
+          "login": "EficodeDemoOrg"
+        },
+        "comments": {
+          "nodes": []
+        },
+        "timelineItems": {
+          "nodes": []
+        }
+      }
+    }
+  }
+}

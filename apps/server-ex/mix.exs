@@ -70,12 +70,16 @@ defmodule HalC2.MixProject do
       {:erlexec, "~> 2.5"},
       {:exile, "~> 0.15"},
       {:exqlite, "~> 0.41"},
+      # The OpenShell gateway's gRPC API (HalC2.OpenShell.Client), over Mint with mTLS.
+      {:grpc, "~> 1.0"},
       {:mint_web_socket, "~> 1.0"},
       # The security ratchet in CI (`mix deps.audit`, `mix sobelow.check`), never
       # compiled into a release.
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       # GPL-3.0, for the property tests in prop/ only: never compiled into the MC.
       {:propcheck, "~> 1.5", only: :prop},
+      # The messages generated from OpenShell's proto/ (lib/hal_c2/open_shell/proto).
+      {:protobuf, "~> 0.17"},
       # The Slack connection plugins borrow (HalC2.Slack): the Web API.
       {:slack_elixir, "~> 1.2"},
       {:sobelow, "~> 0.18.1", only: [:dev, :test], runtime: false},
@@ -90,7 +94,9 @@ defmodule HalC2.MixProject do
   # The Cursor sidecar (packages/cursor-acp) ships in the release's priv/, bundled to
   # plain JavaScript so any Node 22+ runs it, including an Electron binary. Its SDK is
   # installed flat by npm (no symlinks, this platform's native package only), so the
-  # tree survives copying into an app bundle and code signing.
+  # tree survives copying into an app bundle and code signing. Workspace packages the
+  # sidecar imports (bundled in by esbuild) therefore stay in its devDependencies:
+  # `dependencies` below is copied verbatim for npm, which knows no `workspace:`.
   defp stage_cursor_acp(release) do
     root = Path.expand("../..", __DIR__)
     package = Path.join(root, "packages/cursor-acp")

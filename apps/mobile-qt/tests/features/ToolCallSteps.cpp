@@ -906,7 +906,7 @@ const Steps steps([] {
 
   // A turn's diff from its reply, in the Diff tab that takes the phone's screen.
   step(S("a turn changed two files"), [](World& world, const Captures&, const Table&) { twoTurns(world, {S("src/cart.ts"), S("src/checkout.ts")}); });
-  step(S("a turn changed %1 and %1").arg(q, q), [](World& world, const Captures& c, const Table&) { twoTurns(world, {c[0], c[1]}); });
+  step(S("a turn changed %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) { twoTurns(world, {c[0], c[1]}); });
   step(S("the user opens that turn's changes"), [](World& world, const Captures&, const Table&) { world.tap(drawn(world, S("openTurnDiff"))); });
   step(S("the diff shows only what that turn changed, split per file"), [](World& world, const Captures&, const Table&) {
     expectDiffOf(world, {S("src/cart.ts"), S("src/checkout.ts")});

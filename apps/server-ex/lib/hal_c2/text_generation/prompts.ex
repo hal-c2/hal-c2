@@ -9,7 +9,6 @@ defmodule HalC2.TextGeneration.Prompts do
 
   @omitted "[Earlier content truncated]\n\n"
   @truncated "\n[Content truncated]\n"
-
   @initial_title """
   Generate a title that will help the user recognize this HAL-C2 thread weeks later.
   Return JSON with keys title and needsRefinement.
@@ -107,7 +106,7 @@ defmodule HalC2.TextGeneration.Prompts do
   end
 
   @doc "The change request prompt, following the repository's template when there is one."
-  def pr(base, head, commits, diff_stat, diff_patch, template, policy) do
+  def pr(base, head, commits, diff_stat, diff_patch, template, policy, thread \\ nil) do
     template = String.trim(template || "")
 
     body_rules =
@@ -152,10 +151,22 @@ defmodule HalC2.TextGeneration.Prompts do
           "",
           "Diff patch:",
           limit_section(diff_patch, 40_000)
-        ],
+        ] ++ thread_history(thread),
       "\n"
     )
   end
+
+  # What the thread did (`Handoff.transcript/2`), already fitted to its budget by the caller, so
+  # the writer can say which checks ran and how they ended instead of "not run".
+  defp thread_history(history) when is_binary(history) and history != "" do
+    [
+      "",
+      "Thread history (the work this thread did, in order; its checks and their results are real):",
+      history
+    ]
+  end
+
+  defp thread_history(_history), do: []
 
   @doc "The branch name prompt for the work a message asks for."
   def branch(message, attachments) do
@@ -229,7 +240,7 @@ defmodule HalC2.TextGeneration.Prompts do
   from the thread's contents (`thread_context/1`). `linked` is what the links in
   the message point to, when they could be looked up.
   """
-  def thread_title(message, previous_title, linked, attachments) do
+  def thread_title(message, previous_title, linked, attachments, instructions \\ "") do
     head =
       if previous_title == nil do
         String.trim_trailing(@initial_title, "\n") <>
@@ -253,7 +264,15 @@ defmodule HalC2.TextGeneration.Prompts do
         lines -> "\n\nAttachment metadata:\n" <> limit_section(lines, 4_000)
       end
 
-    head <> linked <> attachments
+    head <> title_instructions(instructions) <> linked <> attachments
+  end
+
+  # The user's own rules for titles; with none the prompt is the one it always was.
+  defp title_instructions(text) do
+    case String.trim(text || "") do
+      "" -> ""
+      text -> "\n\nAdditional title instructions from the user (follow them):\n" <> text
+    end
   end
 
   @doc "Asks how to draw a chart, from `HalC2.Space.Visualize`'s page text and counts."
@@ -356,7 +375,11 @@ defmodule HalC2.TextGeneration.Prompts do
       for {message, index} <- Enum.with_index(messages),
           message["role"] not in ["system", "reasoning"],
           String.trim(message["text"] || "") != "" or (message["attachments"] || []) != [] do
-        text = String.trim(message["text"] || "")
+        text =
+          message["text"]
+          |> Kernel.||("")
+          |> HalC2.ComposerContext.plain_citations()
+          |> String.trim()
 
         names = Enum.map_join(message["attachments"] || [], ", ", & &1["name"])
 

@@ -22,7 +22,8 @@ defmodule HalC2.Vcs do
   status cannot be read, report `isRepo: false`.
   """
   def local_status(cwd) do
-    case read_local_status(cwd) do
+    # A held `index.lock` does not stop `git status`, so a locked checkout is still one.
+    case read_local_status(cwd, false) do
       {:ok, status} -> status
       {:error, _reason} -> not_a_repo()
     end
@@ -33,20 +34,42 @@ defmodule HalC2.Vcs do
   @status_timeout 30_000
   @status_max_bytes 50_000_000
 
-  # `{:ok, status}`, or `{:error, reason}` when git could not be started, ran past
-  # its time limit or printed more than the limit (`:vcs_status_limits` overrides them).
-  defp read_local_status(cwd) do
+  @index_locked "Git index is locked. Status will resume when the index lock is removed."
+
+  @doc """
+  `{:ok, status}`, or `{:error, reason}` when the index is locked by another git, git ran
+  past its time limit or printed more than the limit (`:vcs_status_limits` overrides
+  them). A folder that is no repository, or a machine without git, is `{:ok, not a repo}`.
+  """
+  def read_status(cwd), do: read_local_status(cwd, true)
+
+  @doc "The message for a checkout whose index another git holds, or nil."
+  def lock_error(cwd) do
+    if File.dir?(cwd) and index_locked?(cwd, 5_000), do: @index_locked
+  end
+
+  defp read_local_status(cwd, check_lock?) do
     limits = Application.get_env(:hal_c2, :vcs_status_limits, [])
     max = limits[:max_bytes] || @status_max_bytes
 
     result =
-      File.dir?(cwd) &&
-        Git.run(cwd, ~w(status --porcelain=2 --branch -z --untracked-files=all),
-          timeout: limits[:timeout] || @status_timeout,
-          max_bytes: max
-        )
+      if File.dir?(cwd) do
+        if check_lock? and index_locked?(cwd, limits[:timeout] || 5_000) do
+          {:error, @index_locked}
+        else
+          Git.run(cwd, ~w(status --porcelain=2 --branch -z --untracked-files=all),
+            timeout: limits[:timeout] || @status_timeout,
+            max_bytes: max
+          )
+        end
+      end
 
     case result do
+      # No git on this machine: a folder with no `.git` in it is no repository, and
+      # says so; one that has it is a checkout git cannot be started for.
+      {:error, "git could not be started" <> _} = error ->
+        if git_marker?(cwd), do: error, else: {:ok, not_a_repo()}
+
       {:ok, %{truncated: true}} ->
         {:error, "git status produced too much output (more than #{max} bytes)"}
 
@@ -61,28 +84,43 @@ defmodule HalC2.Vcs do
     end
   end
 
+  defp git_marker?(dir) do
+    File.exists?(Path.join(dir, ".git")) or
+      (Path.dirname(dir) != dir and git_marker?(Path.dirname(dir)))
+  end
+
+  # Another git holds the index while its `index.lock` exists.
+  defp index_locked?(cwd, timeout) do
+    case Git.ok(cwd, ~w(rev-parse --git-path index.lock), timeout: timeout) do
+      {:ok, path} -> File.exists?(Path.expand(String.trim(path), cwd))
+      _ -> false
+    end
+  end
+
   defp local_status(cwd, status) do
-    branch = parse_branch(status)
+    branch = parse_branch(status, cwd)
     changed = changed_paths(status)
     stats = numstat(cwd)
     default = default_branch(cwd)
 
     # Untracked and binary files have no line counts but are still changes.
+    untracked = MapSet.new(untracked_paths(status))
+
+    # Reading untracked files is bounded (`@untracked_budget`): past it they count none.
+    {others, _spent} =
+      changed
+      |> Enum.reject(&Map.has_key?(stats, &1))
+      |> Enum.map_reduce({0, 0}, fn path, budget ->
+        untracked_file(cwd, path, MapSet.member?(untracked, path), budget)
+      end)
+
     files =
-      (for(
-         {path, {ins, del}} <- stats,
-         do: %{"path" => path, "insertions" => ins, "deletions" => del}
-       ) ++
-         for(
-           path <- changed,
-           not Map.has_key?(stats, path),
-           do: %{"path" => path, "insertions" => 0, "deletions" => 0}
-         ))
+      (for({path, {ins, del, previous}} <- stats, do: file(path, ins, del, previous)) ++ others)
       |> Enum.sort_by(& &1["path"])
 
     %{
       "isRepo" => true,
-      "hasPrimaryRemote" => Git.primary_remote(cwd) == "origin",
+      "hasPrimaryRemote" => Git.primary_remote(cwd) != nil,
       "isDefaultRef" => default_ref?(branch.head, default),
       "refName" => branch.head,
       "hasWorkingTreeChanges" => changed != [],
@@ -92,6 +130,51 @@ defmodule HalC2.Vcs do
         "deletions" => Enum.sum_by(files, & &1["deletions"])
       }
     }
+  end
+
+  defp file(path, ins, del, nil), do: %{"path" => path, "insertions" => ins, "deletions" => del}
+
+  defp file(path, ins, del, previous),
+    do: file(path, ins, del, nil) |> Map.put("previousPath", previous)
+
+  # An untracked text file counts its lines as all inserted; other changes without line
+  # counts (binary, mode only) count none. Files past a megabyte are not read.
+  # `path` is one git listed under `cwd`, and a link is never followed (`lstat`).
+  @untracked_read_limit 1_000_000
+  # A read stops for good once 500 files or 8 MB have been read (upstream #16771: counting
+  # thousands of untracked files pegged the CPU); `budget` is `{files, bytes}` spent.
+  @untracked_budget {500, 8_000_000}
+  # sobelow_skip ["Traversal.FileModule"]
+  defp untracked_file(cwd, path, true, {files, bytes} = budget) do
+    {max_files, max_bytes} = @untracked_budget
+    full = Path.join(cwd, path)
+
+    with true <- files < max_files and bytes < max_bytes,
+         {:ok, %{type: :regular, size: size}} when size <= @untracked_read_limit <-
+           File.lstat(full),
+         {:ok, data} <- File.read(full) do
+      # A binary file was read as much as a text one: it spends the budget too.
+      budget = {files + 1, bytes + byte_size(data)}
+      untracked_lines(path, data, budget)
+    else
+      _ -> {file(path, 0, 0, nil), budget}
+    end
+  end
+
+  defp untracked_file(_cwd, path, false, budget), do: {file(path, 0, 0, nil), budget}
+
+  defp untracked_lines(path, data, budget) do
+    if String.contains?(data, <<0>>) do
+      {file(path, 0, 0, nil), budget}
+    else
+      lines =
+        data
+        |> :binary.matches("\n")
+        |> length()
+        |> Kernel.+(if data == "" or String.ends_with?(data, "\n"), do: 0, else: 1)
+
+      {file(path, lines, 0, nil), budget}
+    end
   end
 
   # Without a known default branch, main and master count as the default.
@@ -119,14 +202,17 @@ defmodule HalC2.Vcs do
   def remote_status(cwd, opts \\ []) do
     with true <- File.dir?(cwd),
          {:ok, %{status: 0, out: status}} <- Git.run(cwd, ~w(status --porcelain=2 --branch -z)) do
-      branch = parse_branch(status)
+      branch = parse_branch(status, cwd)
 
       branch =
         if opts[:fetch] && branch.upstream do
-          [remote | _] = String.split(branch.upstream, "/", parts: 2)
-          Git.run(cwd, ["fetch", "--quiet", "--no-tags", remote], max_bytes: 64 * 1024)
+          # A branch tracking a local branch has no remote to fetch.
+          with %{remote: remote} when is_binary(remote) <- Git.upstream(cwd, branch.head) do
+            Git.run(cwd, ["fetch", "--quiet", "--no-tags", remote], max_bytes: 64 * 1024)
+          end
+
           {:ok, %{out: status}} = Git.run(cwd, ~w(status --porcelain=2 --branch -z))
-          parse_branch(status)
+          parse_branch(status, cwd)
         else
           branch
         end
@@ -156,7 +242,7 @@ defmodule HalC2.Vcs do
   git could not give (it would not start, ran too long, printed too much) is an error.
   """
   def refresh_status(%{"cwd" => cwd}) do
-    with {:ok, local} <- read_local_status(cwd) do
+    with {:ok, local} <- read_local_status(cwd, true) do
       remote = remote_status(cwd, fetch: true, pr: :fresh)
       HalC2.Vcs.Watch.publish(cwd, local, remote)
       {:ok, Map.merge(local, remote || empty_remote())}
@@ -192,7 +278,7 @@ defmodule HalC2.Vcs do
   defp github_pull_request(cwd, branch, fresh?) do
     case HalC2.PullRequests.Branches.pull_request(cwd, branch, fresh: fresh?) do
       {:ok, %{} = pr} ->
-        Map.take(pr, ~w(number title url baseRef headRef state isDraft updatedAt))
+        Map.take(pr, ~w(number title url baseRef headRef headSha state isDraft updatedAt))
 
       _ ->
         nil
@@ -216,6 +302,14 @@ defmodule HalC2.Vcs do
 
   defp empty_remote,
     do: %{"hasUpstream" => false, "aheadCount" => 0, "behindCount" => 0, "pr" => nil}
+
+  # With a tag of the same name git prints the branch as "heads/<name>" here.
+  defp parse_branch(status, cwd) do
+    case parse_branch(status) do
+      %{head: "heads/" <> _} = branch -> %{branch | head: Git.current_branch(cwd)}
+      branch -> branch
+    end
+  end
 
   defp parse_branch(status) do
     status
@@ -251,6 +345,10 @@ defmodule HalC2.Vcs do
     |> Enum.uniq()
   end
 
+  defp untracked_paths(status) do
+    for "? " <> path <- String.split(status, <<0>>, trim: true), do: path
+  end
+
   defp parse_changed([], acc), do: acc
   defp parse_changed(["#" <> _ | rest], acc), do: parse_changed(rest, acc)
 
@@ -278,7 +376,7 @@ defmodule HalC2.Vcs do
         Map.merge(
           numstat_of(cwd, ~w(diff --numstat -z)),
           numstat_of(cwd, ~w(diff --cached --numstat -z)),
-          fn _, {a, b}, {c, d} -> {a + c, b + d} end
+          fn _, {a, b, p}, {c, d, q} -> {a + c, b + d, p || q} end
         )
     end
   end
@@ -291,15 +389,18 @@ defmodule HalC2.Vcs do
   end
 
   defp parse_numstat(out) do
-    for %{"path" => path, "additions" => ins, "deletions" => del} <-
+    for %{"path" => path, "additions" => ins, "deletions" => del} = stat <-
           HalC2.Review.numstat(out),
         into: %{},
-        do: {path, {ins, del}}
+        do: {path, {ins, del, stat["previousPath"]}}
   end
 
   defp default_branch(cwd) do
-    case Git.ok(cwd, ~w(symbolic-ref refs/remotes/origin/HEAD)) do
-      {:ok, "refs/remotes/origin/" <> branch} -> String.trim(branch)
+    with remote when is_binary(remote) <- Git.primary_remote(cwd),
+         prefix = "refs/remotes/#{remote}/",
+         {:ok, ^prefix <> branch} <- Git.ok(cwd, ["symbolic-ref", prefix <> "HEAD"]) do
+      String.trim(branch)
+    else
       _ -> nil
     end
   end
@@ -322,6 +423,7 @@ defmodule HalC2.Vcs do
          {:ok, root} <- Git.ok(cwd, ~w(rev-parse --show-toplevel)) do
       root = String.trim(root)
       remotes = remotes(cwd)
+      primary = Git.primary_remote(cwd)
       default = default_branch(cwd)
       worktrees = worktree_branches(cwd)
       current = Git.current_branch(cwd)
@@ -364,7 +466,7 @@ defmodule HalC2.Vcs do
             "name" => name,
             "current" => false,
             "isRemote" => true,
-            "isDefault" => remote == "origin" and branch == default,
+            "isDefault" => remote == primary and branch == default,
             "worktreePath" => nil
           }
           |> then(&if(remote, do: Map.put(&1, "remoteName", remote), else: &1))
@@ -377,8 +479,11 @@ defmodule HalC2.Vcs do
           do: remote_refs,
           else:
             Enum.reject(remote_refs, fn ref ->
-              ref["remoteName"] == "origin" and
-                MapSet.member?(local_names, String.replace_prefix(ref["name"], "origin/", ""))
+              primary != nil and ref["remoteName"] == primary and
+                MapSet.member?(
+                  local_names,
+                  String.replace_prefix(ref["name"], primary <> "/", "")
+                )
             end)
 
       query = input["query"] && String.downcase(input["query"])
@@ -410,7 +515,7 @@ defmodule HalC2.Vcs do
        %{
          "refs" => page,
          "isRepo" => true,
-         "hasPrimaryRemote" => "origin" in remotes,
+         "hasPrimaryRemote" => primary != nil,
          "nextCursor" => if(cursor + length(page) < total, do: cursor + length(page)),
          "totalCount" => total
        }}
@@ -691,43 +796,148 @@ defmodule HalC2.Vcs do
         true -> nil
       end
 
-    if base, do: Git.run(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+    # A branch made again from its own fetched copy is not its own base. The record is
+    # optional: without it the base is the default branch (`Git.base_branch/2`).
+    if base && base != branch,
+      do: write_config(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+  end
+
+  # Every worktree of a repository shares its one config file, which git locks while it
+  # writes it and refuses to write while another holds it. Writes from this MC take
+  # turns per repository; one that finds another program holding the lock tries again
+  # a few times.
+  @folder_max 40
+  @config_tries 5
+  defp write_config(cwd, args) do
+    in_turn(cwd, fn -> retry_locked(fn -> Git.ok(cwd, args, stop_children: cwd) end) end)
+  end
+
+  defp retry_locked(fun, tries \\ @config_tries) do
+    case fun.() do
+      {:error, {_status, err}} = error when tries > 1 ->
+        if err =~ "could not lock config file" do
+          Process.sleep(50 * (@config_tries - tries + 1))
+          retry_locked(fun, tries - 1)
+        else
+          error
+        end
+
+      result ->
+        result
+    end
+  end
+
+  # Runs `fun` while no other caller of this MC changes the repository `cwd` belongs to.
+  defp in_turn(cwd, fun) do
+    repo =
+      case Git.ok(cwd, ~w(rev-parse --path-format=absolute --git-common-dir)) do
+        {:ok, dir} -> String.trim(dir)
+        _ -> Path.expand(cwd)
+      end
+
+    :global.trans({{__MODULE__, repo}, self()}, fun, [node()])
+  end
+
+  @doc """
+  Makes the worktree of `branch` at `path` again after its folder was deleted: on
+  `branch` when it is still there, else on a new `branch` started from its fetched
+  `origin/<branch>` (which it then tracks), the checkout's current branch, the remote's
+  default branch, or the checkout's commit, the first there is.
+  """
+  def restore_worktree(cwd, branch, path) do
+    Git.run(cwd, ~w(worktree prune))
+
+    if branch?(cwd, branch) do
+      create_worktree(%{"cwd" => cwd, "refName" => branch, "path" => path})
+    else
+      start = restore_start(cwd, branch)
+      input = %{"cwd" => cwd, "refName" => start, "newRefName" => branch, "path" => path}
+
+      with {:ok, _} = created <- create_worktree(input) do
+        if start == "origin/#{branch}",
+          do: Git.run(cwd, ["branch", "--set-upstream-to=#{start}", branch])
+
+        created
+      end
+    end
+  end
+
+  defp restore_start(cwd, branch) do
+    cond do
+      ref?(cwd, "refs/remotes/origin/#{branch}") -> "origin/#{branch}"
+      current = Git.current_branch(cwd) -> current
+      default = default_branch(cwd) -> "origin/#{default}"
+      true -> "HEAD"
+    end
   end
 
   @doc """
   Renames the branch `old` of the checkout `cwd` to `new`, or to `new-1` through
   `new-100` when that is taken: `{:ok, name}`, or `{:error, message}` leaving it as it was.
+  A `new` under a branch's path (`hal-c2/fix` with a branch `hal-c2`), which git cannot
+  make, is flattened first (`hal-c2-fix`).
   `on_name` hears the name before git takes it; `Git.stop_children(cwd)` stops the rename.
   """
   def rename_branch(cwd, old, new, on_name \\ fn _name -> :ok end) do
-    candidates = [new | Enum.map(1..100, &"#{new}-#{&1}")]
+    # Picking the free name and taking it is one turn, so two renames at once in one
+    # repository do not pick the same name.
+    in_turn(cwd, fn ->
+      new = if under_branch?(cwd, new), do: String.replace(new, "/", "-"), else: new
+      candidates = [new | Enum.map(1..100, &"#{new}-#{&1}")]
 
-    case Enum.find(candidates, &branch_free?(cwd, &1)) do
-      nil ->
-        {:error, "Could not find an available branch name for '#{new}'."}
+      case Enum.find(candidates, &branch_free?(cwd, &1)) do
+        nil ->
+          {:error, "Could not find an available branch name for '#{new}'."}
 
-      name ->
-        on_name.(name)
+        name ->
+          on_name.(name)
 
-        case Git.ok(cwd, ["branch", "-m", "--", old, name], stop_children: cwd) do
-          {:ok, _} -> {:ok, name}
-          {:error, {_status, err}} -> {:error, err}
-          {:error, reason} -> {:error, reason}
-        end
-    end
+          case Git.ok(cwd, ["branch", "-m", "--", old, name], stop_children: cwd) do
+            {:ok, _} ->
+              {:ok, name}
+
+            # Git moves the branch before its config section; a config another program
+            # holds locked leaves the branch renamed all the same, without its records.
+            {:error, {_status, err}} ->
+              if branch?(cwd, name) and not branch?(cwd, old),
+                do: {:ok, name},
+                else: {:error, err}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+      end
+    end)
+  end
+
+  # Whether a branch sits at one of the folders `name` would be made in.
+  defp under_branch?(cwd, name) do
+    parents = name |> String.split("/") |> Enum.drop(-1) |> Enum.scan(&"#{&2}/#{&1}")
+    Enum.any?(parents, &ref?(cwd, "refs/heads/#{&1}"))
   end
 
   defp branch_free?(cwd, name),
     do: not ref?(cwd, "refs/heads/#{name}") and not Git.branch_path_taken?(cwd, name)
 
-  @doc "Where a new worktree of `cwd` on `branch` goes when no path is given."
+  @doc """
+  Where a new worktree of `cwd` on `branch` goes when no path is given: a folder named
+  for the branch, slashes and all in one name. A name past #{@folder_max} characters
+  keeps its start and ends in a hash of the whole branch, so it stays short of the
+  filesystem's limit and two long branches alike at the start still differ.
+  """
   def worktree_path(cwd, branch) do
-    Path.join([
-      HalC2.Paths.data_dir(),
-      "worktrees",
-      Path.basename(cwd),
-      String.replace(branch, "/", "-")
-    ])
+    Path.join([HalC2.Paths.data_dir(), "worktrees", Path.basename(cwd), folder_name(branch)])
+  end
+
+  defp folder_name(branch) do
+    name = String.replace(branch, "/", "-")
+
+    if String.length(name) > @folder_max do
+      hash = :crypto.hash(:sha256, branch) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+      String.slice(name, 0, @folder_max - 9) <> "-" <> hash
+    else
+      name
+    end
   end
 
   @doc """

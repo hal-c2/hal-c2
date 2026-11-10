@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/19712 (covered: Cursor's automatic review in auto)
 #   https://github.com/pingdotgg/t3code/pull/19635
+#   https://github.com/pingdotgg/t3code/pull/23698
 #   https://github.com/pingdotgg/t3code/pull/2829 (Codex interaction mode after resume, Grok permission mode)
 #   docs/user/permission-modes.md
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (runtime mode map, approval decisions, plan capture)
@@ -133,6 +134,7 @@ Feature: Permission modes
     Given a Codex thread waiting on a command approval
     When the user interrupts the turn
     Then the approval is closed as cancelled
+    And the running turn is interrupted
 
   Scenario: Dismissing a Claude question tells Claude it was dismissed
     Given Claude asked the user a question
@@ -167,6 +169,7 @@ Feature: Permission modes
     Then the child thread runs in auto-accept edits and plan mode
 
   # Upstream #19712: Cursor threads in Auto use Cursor's Auto-review
+  # Upstream #23698: Antigravity in Auto approved every request instead of asking.
   Scenario Outline: Auto uses the provider's automatic review where it has one
     Given a <provider> thread in auto
     When the agent runs a routine action

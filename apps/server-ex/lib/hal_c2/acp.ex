@@ -12,6 +12,8 @@ defmodule HalC2.Acp do
   is connected to; it is read once, at boot or when the agent is first enabled.
   """
 
+  require Logger
+
   alias HalC2.JsonRpc.Connection
 
   @agents %{
@@ -87,6 +89,17 @@ defmodule HalC2.Acp do
   end
 
   @doc """
+  Whether `instance` runs GitHub Copilot CLI from the registry. Cancelling its prompt
+  also kills the background agents it started (upstream #26715).
+  """
+  def copilot?(instance) do
+    case instance(instance) do
+      {@registry, entry} -> get_in(entry, ["config", "agentId"]) == "github-copilot-cli"
+      _ -> false
+    end
+  end
+
+  @doc """
   A driver setting of an instance: its own `config` value, else the driver's in
   `providers.<driver>`; blank strings count as unset.
   """
@@ -126,10 +139,14 @@ defmodule HalC2.Acp do
              do: {:ok, command, env ++ instance_env(instance)}
 
       {"cursor", _entry} ->
+        migrate_cursor_credentials(instance)
         credentials = cursor_credentials(instance)
 
         {:ok, [node_command(), cursor_script(), "--mode", runtime_mode || "approval-required"],
-         [{"HAL_C2_CURSOR_CREDENTIALS", credentials} | instance_env(instance)]}
+         [
+           {"HAL_C2_CURSOR_CREDENTIALS", credentials},
+           {"HAL_C2_CURSOR_PLATFORM", cursor_platform()} | instance_env(instance)
+         ]}
 
       {"pi", entry} ->
         {:ok, [binary("pi", entry, "pi"), "--mode", "rpc"], instance_env(instance)}
@@ -142,12 +159,32 @@ defmodule HalC2.Acp do
 
       {driver, entry} ->
         binary = binary(driver, entry, @agents[driver].binary)
-        {:ok, [binary | args(driver, runtime_mode)], instance_env(instance)}
+        {:ok, [binary | args(driver, runtime_mode)], spawn_env(driver, instance)}
 
       nil ->
         {:error, "unknown ACP agent #{instance}"}
     end
   end
+
+  # Grok is told HAL-C2 started it (`GROK_OAUTH2_REFERRER`); a health probe
+  # (`read/3` sets `:acp_probe`) also turns its own updater off, so checking
+  # Grok never starts an update nobody asked for. Sessions and text
+  # generation keep the caller's environment.
+  defp spawn_env("grok", instance) do
+    env =
+      instance
+      |> instance_env()
+      |> put_env("GROK_OAUTH2_REFERRER", "hal-c2")
+
+    if Process.get(:acp_probe),
+      do: put_env(env, "GROK_DISABLE_AUTOUPDATER", "1"),
+      else: env
+  end
+
+  defp spawn_env(_driver, instance), do: instance_env(instance)
+
+  defp put_env(env, name, value),
+    do: Enum.reject(env, fn {key, _} -> key == name end) ++ [{name, value}]
 
   defp cursor_script do
     released = Application.app_dir(:hal_c2, "priv/cursor-acp/main.mjs")
@@ -213,10 +250,15 @@ defmodule HalC2.Acp do
   def entry(id) do
     with {driver, instance} <- instance(id),
          {:ok, base} <- base_entry(id, driver, instance) do
+      {unready, base} = Map.pop(base, "unready", false)
       enabled = enabled?(id)
+      # Off on this MC but on for some project, it is read as an enabled one is, so
+      # that project's turns can run on it.
+      checked? = enabled or HalC2.Settings.provider_on_in_a_project?(id)
       models = :persistent_term.get({__MODULE__, id, :models}, nil)
-      failure = :persistent_term.get({__MODULE__, id, :error}, nil)
-      if enabled and models == nil and failure == nil, do: load_once(id)
+      # An agent that cannot run yet says why, not how its last start failed.
+      failure = if not unready, do: :persistent_term.get({__MODULE__, id, :error}, nil)
+      if checked? and models == nil and failure == nil and not unready, do: load_once(id)
 
       Map.merge(
         %{
@@ -228,8 +270,8 @@ defmodule HalC2.Acp do
           "version" => :persistent_term.get({__MODULE__, id, :version}, nil),
           "status" =>
             cond do
-              not enabled -> "disabled"
-              failure -> "error"
+              not checked? -> "disabled"
+              unready or failure -> "error"
               empty_catalog?(driver, models) -> "warning"
               true -> "ready"
             end,
@@ -240,7 +282,7 @@ defmodule HalC2.Acp do
           "showInteractionModeToggle" => false,
           "auth" => %{"status" => "authenticated"},
           "checkedAt" => HalC2.Orchestration.Entities.now(),
-          "models" => custom_models(models || [], instance, driver),
+          "models" => custom_models(named_models(driver, models), instance, driver),
           "slashCommands" => [],
           "skills" => []
         },
@@ -326,38 +368,121 @@ defmodule HalC2.Acp do
         k == "CURSOR_API_KEY" and String.trim(v) != ""
       end)
 
+  # The platform the Cursor sidecar runs for, in Node's words: the MC's own
+  # (`:os_type` stands in for it in tests, as elsewhere). Cursor's sandbox
+  # does not exist on Windows, which the sidecar decides from this.
+  defp cursor_platform do
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} -> "win32"
+      {:unix, :darwin} -> "darwin"
+      _ -> "linux"
+    end
+  end
+
+  @doc "How long a stopped Cursor turn waits for Cursor to confirm before it ends anyway."
+  def cursor_cancel_timeout,
+    do: Application.get_env(:hal_c2, :cursor_cancel_timeout_ms, 10_000)
+
+  # An older Cursor login lives in the SDK's own file (`~/.cursor/sdk/auth.json`):
+  # it is copied into this instance's sign-in once, when this instance has none
+  # it can read. The SDK's file stays where it was — other SDK clients (and a
+  # T3 Code install on the default store) may still sign in from it, and a
+  # second Cursor instance copies it too. A marker beside the sign-in remembers
+  # the copy, so signing out does not bring the old login back.
+  # Both paths are fixed: the SDK's file under the user's home and this
+  # instance's sign-in under the MC's data directory.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp migrate_cursor_credentials(instance) do
+    target = cursor_credentials(instance)
+    marker = Path.join(Path.dirname(target), "legacy-migrated")
+    legacy = Path.join([HalC2.Paths.user_home(), ".cursor", "sdk", "auth.json"])
+
+    if legacy != target && !File.exists?(marker) && File.regular?(legacy) do
+      try do
+        copied? =
+          if not cursor_credentials_valid?(target) && cursor_credentials_valid?(legacy) do
+            File.mkdir_p!(Path.dirname(target))
+            File.cp!(legacy, target)
+            File.chmod!(target, 0o600)
+            true
+          else
+            false
+          end
+
+        # Remembered only once this instance holds a sign-in it can read: a
+        # legacy file that could not be copied is tried again next start.
+        if copied? || cursor_credentials_valid?(target) do
+          File.mkdir_p!(Path.dirname(target))
+          File.write!(marker, "")
+        end
+      rescue
+        error ->
+          require Logger
+
+          Logger.warning(
+            "Could not migrate legacy Cursor credentials: #{Exception.message(error)}"
+          )
+      end
+    end
+
+    :ok
+  end
+
+  # Reads only the two credential paths `migrate_cursor_credentials/1` named.
+  # sobelow_skip ["Traversal.FileModule"]
+  defp cursor_credentials_valid?(path) do
+    with {:ok, text} <- File.read(path),
+         {:ok, %{"apiKey" => key}} <- JSON.decode(text),
+         true <- is_binary(key) && key != "" do
+      true
+    else
+      _ -> false
+    end
+  end
+
   @doc false
   # Each instance keeps its own Cursor sign-in, owner-only, in the MC's data.
   def cursor_credentials(id),
     do: Path.join([HalC2.Paths.data_dir(), "provider-auth", id, "cursor.json"])
 
-  # A registry agent is installed when first used, so it counts as available.
+  # A registry agent that cannot run yet is listed with why, and never started.
   defp base_entry(id, @registry, instance) do
-    agent_id = get_in(instance, ["config", "agentId"])
+    case HalC2.Acp.Catalog.readiness(instance["config"] || %{}) do
+      :ok ->
+        registry_entry(id, instance)
 
-    case HalC2.Acp.Catalog.describe(agent_id) do
-      nil ->
-        :error
-
-      agent ->
+      {:error, message} ->
         {:ok,
          %{
-           "displayName" => instance["displayName"] || agent.name,
-           "iconUrl" => "https://cdn.agentclientprotocol.com/registry/v1/latest/#{agent_id}.svg",
-           "version" => :persistent_term.get({__MODULE__, id, :version}, agent.version)
-         }
-         |> then(
-           &if(agent.website,
-             do: Map.put(&1, "setup", %{"documentationUrl" => agent.website}),
-             else: &1
-           )
-         )}
+           "displayName" => instance["displayName"] || label(id),
+           "installed" => false,
+           "availability" => "unavailable",
+           "message" => message,
+           "unready" => true
+         }}
     end
   end
 
   # Pi is offered where Pi is installed; its adapter installs when first used.
-  defp base_entry(_id, "pi", instance) do
-    if System.find_executable(binary("pi", instance, "pi")), do: {:ok, %{}}, else: :error
+  # One the user enabled stays listed, and its load says it is missing, so the
+  # client never waits on an entry that will not come.
+  defp base_entry(id, "pi", instance) do
+    cond do
+      System.find_executable(binary("pi", instance, "pi")) ->
+        {:ok, %{}}
+
+      enabled?(id, "pi", instance) ->
+        {:ok,
+         %{
+           "installed" => false,
+           "status" => "error",
+           "availability" => "unavailable",
+           "auth" => %{"status" => "unknown"}
+         }}
+
+      true ->
+        :error
+    end
   end
 
   # Muse is offered where Muse is installed. One the user enabled stays listed, and its
@@ -381,18 +506,101 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Grok is offered where the grok command is installed. An enabled one whose
+  # binary can no longer be resolved stays listed with the version it last
+  # reported, so it is shown behind with no update command (updated by hand)
+  # instead of vanishing.
+  defp base_entry(id, "grok", instance) do
+    cond do
+      found?(id) ->
+        {:ok, %{}}
+
+      enabled?(id, "grok", instance) and
+          :persistent_term.get({__MODULE__, id, :version}, nil) not in [nil, "unknown"] ->
+        {:ok, %{"installed" => false, "availability" => "unavailable"}}
+
+      true ->
+        :error
+    end
+  end
+
   # Antigravity is always listed: its entry says how to install or sign in.
   defp base_entry(_id, "antigravity", instance) do
     {:ok, if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
   end
 
+  # An enabled OpenCode whose command is missing stays listed, saying so: the
+  # user turned it on, so its absence is the thing to fix, not a reason to
+  # hide it (as with Muse above).
+  defp base_entry(id, "opencode", instance) do
+    cond do
+      found?(id) ->
+        {:ok, opencode_name(instance)}
+
+      enabled?(id, "opencode", instance) ->
+        {:ok,
+         %{
+           "installed" => false,
+           "status" => "error",
+           "availability" => "unavailable",
+           "auth" => %{"status" => "unknown"}
+         }}
+
+      true ->
+        :error
+    end
+  end
+
   defp base_entry(id, _driver, instance) do
-    with {:ok, [executable | _], _env} <- command(id),
-         path when is_binary(path) <- System.find_executable(executable) do
+    if found?(id) do
       {:ok,
        if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})}
     else
-      _ -> :error
+      :error
+    end
+  end
+
+  defp opencode_name(instance),
+    do: if(instance["displayName"], do: %{"displayName" => instance["displayName"]}, else: %{})
+
+  defp overridden?(id), do: Map.has_key?(Application.get_env(:hal_c2, :acp_commands, %{}), id)
+
+  # Whether the command that would start the instance's agent resolves, so a
+  # test's `:acp_commands` override counts the same as the configured binary.
+  defp found?(id) do
+    case command(id) do
+      {:ok, [executable | _], _env} -> System.find_executable(executable) != nil
+      _ -> false
+    end
+  end
+
+  # A registry agent is installed when first used, so it counts as available. One run
+  # from an executable override is a local copy of no known version.
+  defp registry_entry(id, instance) do
+    agent_id = get_in(instance, ["config", "agentId"])
+    override? = get_in(instance, ["config", "commandPath"]) not in [nil, ""]
+
+    case HalC2.Acp.Catalog.describe(agent_id) do
+      nil ->
+        :error
+
+      agent ->
+        {:ok,
+         %{
+           "displayName" => instance["displayName"] || agent.name,
+           "iconUrl" => "https://cdn.agentclientprotocol.com/registry/v1/latest/#{agent_id}.svg",
+           "version" =>
+             if(override?,
+               do: nil,
+               else: :persistent_term.get({__MODULE__, id, :version}, agent.version)
+             )
+         }
+         |> then(
+           &if(agent.website,
+             do: Map.put(&1, "setup", %{"documentationUrl" => agent.website}),
+             else: &1
+           )
+         )}
     end
   end
 
@@ -444,7 +652,7 @@ defmodule HalC2.Acp do
   def load do
     # Apart, so one agent waiting on a sign-in does not hold up the others.
     instances()
-    |> Enum.filter(&enabled?/1)
+    |> Enum.filter(&(enabled?(&1) and ready?(&1)))
     |> Task.async_stream(
       fn id -> read(id, locked(id, fn -> start_read(id) end), :disk) end,
       timeout: :infinity,
@@ -523,31 +731,54 @@ defmodule HalC2.Acp do
   # Antigravity answers it from the installed runtime on disk, launching
   # nothing, where other agents are still read from a throwaway session. A
   # manual `reload/1` reads with `:spawn`.
-  defp read(id, generation, mode \\ :spawn) do
+  defp read(id, generation, mode, kept \\ nil) do
     dir = HalC2.Scratch.dir("hal-c2-acp")
 
     Process.put(staged_key(id), [])
+    Process.put(read_stage_key(id), :probe)
+    Process.put(:acp_probe, true)
     Process.put(:antigravity_disk_check, mode == :disk)
 
     try do
       result = read_agent(id, dir)
       # Worked out before the lock, which only `:persistent_term` work may run under.
       error = error_message(id, result)
-      locked(id, fn -> publish(id, generation, result, error) end)
+      if error, do: Logger.warning("reading #{label(id)} (#{id}) failed: #{error}")
+      locked(id, fn -> publish(id, generation, result, error, kept) end)
     catch
+      # The agent never answered at all: say so, instead of leaving the
+      # instance unchecked until something forgets it. Only a timeout before
+      # the session work began is the probe's own; a held session is not.
+      :exit, {:timeout, _} ->
+        reason =
+          if Process.get(read_stage_key(id)) == :session,
+            do: :read_timeout,
+            else: :probe_timeout
+
+        error = error_message(id, {:error, reason})
+        Logger.warning("reading #{label(id)} (#{id}) failed: #{error}")
+        locked(id, fn -> publish(id, generation, {:error, reason}, error, kept) end)
+        :ok
+
       _, _ ->
         # This read published nothing. While its generation is still current,
         # clear `:loading` so the next `entry/1` starts another read instead
         # of leaving the instance with neither models nor an error until a
         # forget. (A superseded read leaves `:loading` to its successor.)
         locked(id, fn ->
-          if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation,
-            do: :persistent_term.erase({__MODULE__, id, :loading})
+          if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
+            :persistent_term.erase({__MODULE__, id, :loading})
+            keep_models(id, kept)
+          end
         end)
 
         :ok
     after
       Process.delete(staged_key(id))
+      Process.delete(read_stage_key(id))
+      Process.delete(:acp_probe)
+      Process.delete({:grok_previous_models, id})
+      Process.delete({:grok_previous_version, id})
       File.rm_rf(dir)
       HalC2.Settings.notify_providers()
     end
@@ -559,18 +790,35 @@ defmodule HalC2.Acp do
   defp error_message(_id, {:error, :antigravity_health_failed}),
     do: "Antigravity could not complete its local health check."
 
+  defp error_message(_id, {:error, :cursor_catalog_failed}),
+    do: "Cursor SDK catalog request failed. Check server logs for details."
+
+  defp error_message(_id, {:error, :cursor_catalog_timeout}),
+    do: "Cursor SDK catalog request timed out. Check your connection and try again."
+
+  defp error_message(id, {:error, :probe_timeout}),
+    do: "#{label(id)} CLI version probe timed out."
+
+  defp error_message(id, {:error, :read_timeout}),
+    do: "#{label(id)} did not answer in time."
+
   defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
   defp error_message(_id, {:error, reason}), do: describe(reason)
   defp error_message(_id, _result), do: nil
 
-  defp publish(id, generation, result, error) do
+  defp publish(id, generation, result, error, kept) do
     if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
       for {key, value} <- Enum.reverse(Process.get(staged_key(id), [])),
           do: publish_staged(id, key, value)
 
+      keep_models(id, kept)
+
       case result do
         :ok ->
           :persistent_term.erase({__MODULE__, id, :error})
+          # A started agent ends the failure streak: the next failed read
+          # diagnoses its binary afresh instead of reusing the last answer.
+          :persistent_term.erase({__MODULE__, :start_diagnosis, id})
 
         {:error, :unauthenticated} ->
           :persistent_term.put({__MODULE__, id, :error}, error)
@@ -595,6 +843,22 @@ defmodule HalC2.Acp do
 
   defp staged_key(id), do: {__MODULE__, :staged, id}
 
+  # How far a read got, for naming a timeout: `:probe` until the agent has
+  # answered and session work begins (`read_stage/2`), then `:session`.
+  defp read_stage_key(id), do: {__MODULE__, :read_stage, id}
+
+  defp read_stage(id, stage) do
+    Process.put(read_stage_key(id), stage)
+    :ok
+  end
+
+  defp staged_value(id, key) do
+    case List.keyfind(Process.get(staged_key(id), []), key, 0) do
+      {^key, value} -> value
+      nil -> nil
+    end
+  end
+
   # What a read learned, kept until `load/1` publishes it. Returns `:ok` like the
   # `:persistent_term.put/2` it replaces, so a read ending in `stage/3` still
   # counts as a success in `publish/4`. Keyed per instance so a nested read of
@@ -612,8 +876,17 @@ defmodule HalC2.Acp do
   # A probe's call, answering the agent meanwhile: a sign-in page it asks for waits
   # for a user (`HalC2.Acp.UrlAuth`), so the call may take as long as that allows.
   defp call_serving(conn, id, method, params) do
-    task = Task.async(fn -> Connection.call(conn, method, params, :timer.minutes(11)) end)
+    task = Task.async(fn -> call_open(conn, method, params, :timer.minutes(11)) end)
     serve(conn, id, task)
+  end
+
+  # An agent that dies at once (an OpenCode macOS refuses) can stop its connection
+  # before a call reaches it; that call has met a closed connection, not a crash.
+  # Caught here because `Connection.call/4` stays a tail call (see there).
+  defp call_open(conn, method, params, timeout) do
+    Connection.call(conn, method, params, timeout)
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal] -> {:error, :closed}
   end
 
   defp serve(conn, id, task) do
@@ -633,6 +906,20 @@ defmodule HalC2.Acp do
         Connection.respond(conn, rpc_id, {:error, %{"code" => -32601, "message" => method}})
         serve(conn, id, task)
 
+      {:json_rpc, ^conn, {:notification, "session/update", params}} ->
+        # A server still starting settles its model list with a config update
+        # before the session answers; the read that asked takes the settled
+        # options over the first, partial ones.
+        case get_in(params || %{}, ["update", "sessionUpdate"]) do
+          "config_option_update" ->
+            Process.put({__MODULE__, :settled, id}, params["update"]["configOptions"])
+
+          _ ->
+            :ok
+        end
+
+        serve(conn, id, task)
+
       {:json_rpc, ^conn, _notification} ->
         serve(conn, id, task)
     end
@@ -646,9 +933,22 @@ defmodule HalC2.Acp do
     {driver, entry} = instance(id)
 
     case driver == "opencode" && setting(id, "serverUrl") do
-      url when is_binary(url) -> read_server(id, url, setting(id, "serverPassword"))
+      url when is_binary(url) -> read_server(id, url, server_password(id, driver, entry))
       _ -> read_agent(id, dir, driver, entry)
     end
+  end
+
+  # The instance's own server password, else the driver's, read back from the secret
+  # store when sealed (HalC2.ProviderSecrets.seal_server_passwords/2).
+  defp server_password(id, driver, entry) do
+    HalC2.ProviderSecrets.server_password(
+      {:instance, id},
+      get_in(entry, ["config", "serverPassword"])
+    ) ||
+      HalC2.ProviderSecrets.server_password(
+        {:provider, driver},
+        get_in(HalC2.Settings.settings(), ["providers", driver, "serverPassword"])
+      )
   end
 
   # Antigravity's agent unpacks about a gigabyte per launch, so a status
@@ -691,18 +991,23 @@ defmodule HalC2.Acp do
   # offers "Pi default"; refused launch arguments are the provider's error.
   defp read_agent(id, dir, "pi", entry) do
     with :ok <- check_version(id, "pi", entry),
-         {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")) do
+         {:ok, args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")),
+         :ok <- read_stage(id, :session) do
       stage(id, :capabilities, %{})
 
       case HalC2.Pi.discover(id, dir) do
         {:ok, %{models: models, commands: commands, skills: skills}} ->
           stage(id, :models, [@pi_default | models])
+          stage(id, :pi_last_models, {binary_path(id), [@pi_default | models]})
           stage(id, :commands, commands)
           stage(id, :skills, skills)
           stage(id, :pi_signed_out, models == [])
+          pi_pinned_model_notice(id, args, models)
 
         {:error, _} ->
-          stage(id, :models, [@pi_default])
+          # A discovery that fails or does not finish keeps the models the last
+          # successful one offered for this same Pi binary.
+          stage(id, :models, pi_last_models(id))
 
           stage(
             id,
@@ -719,6 +1024,7 @@ defmodule HalC2.Acp do
   # protocol says nothing of sign-in: an empty catalog is the only sign.
   defp read_agent(id, dir, "muse", entry) do
     with :ok <- check_version(id, "muse", entry),
+         :ok <- read_stage(id, :session),
          {:ok, models} <- HalC2.Muse.discover(id, dir) do
       stage(id, :models, models)
       stage(id, :muse_signed_out, models == [])
@@ -726,41 +1032,272 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Grok's probe is the generic one, with two Grok rules: a signed-out answer is
+  # checked once more (Grok refreshes an expired sign-in inside the probe that
+  # first reports it), and a probe that cannot report models keeps the last
+  # known ones with a warning instead of emptying the picker. A completed
+  # probe replaces the models outright, gateway models included.
+  @grok_probe_warning "Grok CLI is installed but ACP initialize failed. Model options may be incomplete."
+  defp read_agent(id, dir, "grok", entry) do
+    # A test's `:acp_commands` override is not a Grok CLI: it has no version
+    # to ask for, and the check must not reach a real `grok` on PATH instead.
+    case if(overridden?(id), do: :ok, else: check_version(id, "grok", entry)) do
+      # A binary that can no longer run keeps the version it last reported,
+      # so the entry stays listed (behind, updated by hand).
+      {:error, _} = error ->
+        if version = Process.get({:grok_previous_version, id}),
+          do: stage(id, :version, version)
+
+        error
+
+      :ok ->
+        read_grok(id, dir)
+    end
+  end
+
   defp read_agent(id, dir, driver, entry) do
-    with :ok <- check_version(id, driver, entry) do
-      with_agent(id, dir, fn conn, init ->
-        stage(
-          id,
-          :version,
-          get_in(init, ["agentInfo", "version"]) || "unknown"
-        )
+    with :ok <- check_version(id, driver, entry),
+         :ok <- check_installed(id) do
+      probe_session(id, dir, driver)
+    end
+  end
 
-        stage(id, :capabilities, init["agentCapabilities"] || %{})
-        stage(id, :auth_methods, length(init["authMethods"] || []))
-        stage(id, :meta, init["_meta"] || %{})
+  defp probe_session(id, dir, driver) do
+    with_agent(id, dir, fn conn, init ->
+      stage(
+        id,
+        :version,
+        get_in(init, ["agentInfo", "version"]) || "unknown"
+      )
 
-        # Antigravity's models come from its sign-in and sessions
-        # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
-        case if(driver == "antigravity",
-               do: {:ok, %{}},
-               else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
-             ) do
-          {:ok, session} ->
-            stage(id, :config, session["configOptions"] || [])
-            stage(id, :models, models(session))
-            # Antigravity skips `session/new`, so its success proves no sign-in;
-            # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
-            if driver != "antigravity", do: stage(id, :unauthenticated, false)
-            :ok
+      stage(id, :capabilities, init["agentCapabilities"] || %{})
+      stage(id, :auth_methods, length(init["authMethods"] || []))
+      stage(id, :meta, init["_meta"] || %{})
 
-          # ACP's "authentication required".
-          {:error, %{"code" => -32000}} ->
-            {:error, :unauthenticated}
+      read_stage(id, :session)
 
-          {:error, _} = error ->
-            error
+      # Antigravity's models come from its sign-in and sessions
+      # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
+      case if(driver == "antigravity",
+             do: {:ok, %{}},
+             else: new_probe_session(conn, id, dir, driver)
+           ) do
+        {:ok, session} ->
+          session =
+            case Process.delete({__MODULE__, :settled, id}) do
+              [_ | _] = settled -> Map.put(session, "configOptions", settled)
+              _ -> session
+            end
+
+          stage(id, :config, session_config(session))
+          stage(id, :models, models(session))
+          # Antigravity skips `session/new`, so its success proves no sign-in;
+          # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
+          if driver != "antigravity", do: stage(id, :unauthenticated, false)
+
+          # Cursor's agent says who its key belongs to, and whether the
+          # catalog itself failed, on the session it opened.
+          if driver == "cursor" && is_map(get_in(session, ["_meta", "account"])),
+            do: stage(id, :account, get_in(session, ["_meta", "account"]))
+
+          case {driver, get_in(session, ["_meta", "catalogError"])} do
+            {"cursor", "timeout"} -> {:error, :cursor_catalog_timeout}
+            {"cursor", "failed"} -> {:error, :cursor_catalog_failed}
+            _ -> :ok
+          end
+
+        # ACP's "authentication required".
+        {:error, %{"code" => -32000}} ->
+          {:error, :unauthenticated}
+
+        {:error, _} = error ->
+          error
+      end
+    end)
+    |> case do
+      {:error, reason} -> {:error, start_failure(id, reason)}
+      other -> other
+    end
+  end
+
+  # Grok may refresh an expired sign-in inside the probe that first reports it
+  # signed out, so that answer is checked once more before it stands.
+  defp new_probe_session(conn, id, dir, driver) do
+    # A Cursor probe says so in `_meta`: its sidecar then also reads who the key
+    # belongs to (and may fail saying it cannot), which a real thread's session
+    # must never wait on or fail for.
+    params =
+      if driver == "cursor",
+        do: %{"cwd" => dir, "mcpServers" => [], "_meta" => %{"probe" => true}},
+        else: %{"cwd" => dir, "mcpServers" => []}
+
+    case call_serving(conn, id, "session/new", params) do
+      {:error, %{"code" => -32000}} = first when driver == "grok" ->
+        case call_serving(conn, id, "session/new", params) do
+          {:ok, _} = ok -> ok
+          _ -> first
         end
-      end)
+
+      result ->
+        result
+    end
+  end
+
+  defp read_grok(id, dir) do
+    previous =
+      Process.get({:grok_previous_models, id}) ||
+        :persistent_term.get({__MODULE__, id, :models}, nil)
+
+    result = probe_session(id, dir, "grok")
+    staged = staged_value(id, :models)
+
+    cond do
+      result == {:error, :unauthenticated} ->
+        result
+
+      result == :ok and staged not in [nil, []] ->
+        stage(id, :notice, nil)
+        :ok
+
+      true ->
+        if previous not in [nil, []], do: stage(id, :models, previous)
+        stage(id, :notice, @grok_probe_warning)
+        :ok
+    end
+  end
+
+  defp pi_last_models(id) do
+    case :persistent_term.get({__MODULE__, id, :pi_last_models}, nil) do
+      {bin, models} when is_list(models) ->
+        if bin == binary_path(id), do: models, else: [@pi_default]
+
+      _ ->
+        [@pi_default]
+    end
+  end
+
+  # A launch-argument model Pi does not offer has no credentials behind it:
+  # discovery lists only models Pi can actually run, so "Pi default" would
+  # fail every turn without saying why.
+  defp pi_pinned_model_notice(id, args, models) do
+    pinned =
+      Enum.find_value(args, fn
+        "--model=" <> value -> value
+        _ -> nil
+      end) ||
+        args
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.find_value(fn
+          ["--model", value] -> value
+          _ -> nil
+        end)
+
+    # Pi resolves a bare id against its own models, so the id part of a
+    # discovered `provider/id` slug counts as offered too.
+    offered? = fn slug ->
+      slug == pinned or slug |> to_string() |> String.split("/") |> List.last() == pinned
+    end
+
+    if is_binary(pinned) and models != [] and
+         not Enum.any?(models, &offered?.(&1["slug"])) do
+      stage(
+        id,
+        :notice,
+        "Pi's launch arguments pin the model #{pinned}, but its provider has no credentials in Pi, so Pi does not offer it. Pi's other models remain available."
+      )
+    end
+
+    :ok
+  end
+
+  # The command a read would run, present on this machine. A registry agent
+  # installs on first use, so it is never missing in this sense.
+  defp check_installed(id) do
+    case command(id) do
+      {:ok, [executable | _], _env} ->
+        if driver(id) == @registry or System.find_executable(executable) do
+          :ok
+        else
+          {:error,
+           "#{label(id)} CLI (`#{Path.basename(executable)}`) is not installed or not on PATH."}
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # Why an OpenCode that would not start would not start, when its own version
+  # run says: macOS refusing the binary (a bad code signature, quarantine)
+  # leaves nothing over ACP but a closed connection. Only a process that died
+  # before answering is diagnosed, and only OpenCode's: an auth refusal or an
+  # error the agent itself sent means it started. (Diagnosing every driver's
+  # failed read would run `--version` on binaries that serve ACP on stdin,
+  # which then wait out the whole diagnosis deadline — a signed-out Grok read
+  # took five seconds that way and starved the providers frame.)
+  defp start_failure(id, reason) do
+    if driver(id) == "opencode" and not started?(reason),
+      do: diagnose_start(id, reason),
+      else: reason
+  end
+
+  defp started?(:closed), do: false
+
+  defp started?(%{"message" => message}) when is_binary(message),
+    do: not String.contains?(message, "exited with code")
+
+  defp started?(_reason), do: true
+
+  # The answer is kept for that binary as last modified, so one failure
+  # streak runs it once, on its first failed read, not on every interval;
+  # a successful read ends the streak (`publish/4`).
+  defp diagnose_start(id, reason) do
+    with {:ok, [executable | _], _env} <- command(id),
+         path when is_binary(path) <- System.find_executable(executable) do
+      diagnosis(id, path) || reason
+    else
+      _ -> reason
+    end
+  end
+
+  defp diagnosis(id, path) do
+    key = {__MODULE__, :start_diagnosis, id}
+    mtime = with {:ok, %{mtime: mtime}} <- File.stat(path), do: mtime
+
+    case :persistent_term.get(key, nil) do
+      {^path, ^mtime, diagnosis} ->
+        diagnosis
+
+      _ ->
+        diagnosis = run_version(id, path)
+        :persistent_term.put(key, {path, mtime, diagnosis})
+        diagnosis
+    end
+  end
+
+  # Runs only the agent's own configured binary, found on PATH, with a fixed argument.
+  # sobelow_skip ["CI.System"]
+  defp run_version(id, path) do
+    output =
+      with task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
+           {:ok, {out, _status}} <- Task.yield(task, 5_000) || Task.shutdown(task) do
+        String.downcase(out)
+      else
+        _ -> ""
+      end
+
+    name = label(id)
+    binary = id |> binary_path() |> to_string() |> Path.basename()
+
+    cond do
+      output =~ "signature" ->
+        "macOS killed the #{name} process due to an invalid code signature. The binary may be corrupted — try reinstalling #{name}."
+
+      output =~ "quarantine" ->
+        "macOS is blocking the #{name} binary (quarantine). Run `xattr -d com.apple.quarantine $(which #{binary})` to fix this."
+
+      true ->
+        nil
     end
   end
 
@@ -831,15 +1368,28 @@ defmodule HalC2.Acp do
               "slug" => "#{provider}/#{model["id"] || model_id}",
               "name" => String.trim(model["name"]),
               "isCustom" => false,
-              "capabilities" => nil
+              "capabilities" => nil,
+              # A provider the list cannot name (or names with nothing) bills
+              # under its own id, until it is named.
+              "subProvider" =>
+                case entry["name"] do
+                  name when is_binary(name) ->
+                    if String.trim(name) == "", do: provider, else: name
+
+                  _ ->
+                    provider
+                end
             }
-            |> then(&if(entry["name"], do: Map.put(&1, "subProvider", entry["name"]), else: &1))
           end
 
         stage(id, :models, Enum.sort_by(models, & &1["name"]))
+        stage(id, :unauthenticated, false)
         :ok
 
       {:ok, status, _} when status in [401, 403] ->
+        # Signed out as far as that server is concerned; the failure standing in
+        # for the read keeps later listings from probing it again unasked.
+        stage(id, :unauthenticated, true)
         {:error, "OpenCode server rejected authentication. Check the server URL and password."}
 
       {:ok, status, _} ->
@@ -851,28 +1401,43 @@ defmodule HalC2.Acp do
     end
   end
 
-  # HAL-C2 drives Pi #{@pi_minimum} or newer (`pi --version`).
+  # HAL-C2 drives Pi #{@pi_minimum} or newer (`pi --version`): its health states,
+  # missing, unusable, slow or broken, each say so. The check is given ten
+  # seconds: a healthy CLI that starts slowly is not unavailable.
   defp check_version(id, "pi", entry) do
-    output =
-      with path when is_binary(path) <- System.find_executable(binary("pi", entry, "pi")),
-           task = Task.async(fn -> System.cmd(path, ["--version"], stderr_to_stdout: true) end),
-           {:ok, {out, 0}} <- Task.yield(task, 10_000) || Task.shutdown(task) do
-        out
-      else
-        _ -> ""
-      end
+    bin = binary("pi", entry, "pi")
 
-    case Regex.run(~r/\d+\.\d+\.\d+/, output) do
-      [version] ->
-        stage(id, :version, version)
-
-        if Version.compare(version, @pi_minimum) == :lt,
-          do: {:error, "Pi #{version} is unsupported. Update to Pi #{@pi_minimum} or newer."},
-          else: :ok
-
+    case System.find_executable(bin) do
       nil ->
-        {:error,
-         "HAL-C2 could not determine the Pi version. Pi #{@pi_minimum} or newer is required."}
+        if File.exists?(bin),
+          do: {:error, "Failed to execute Pi CLI health check."},
+          else:
+            {:error,
+             "Pi CLI (`pi`) is not installed or not on PATH. Install with `npm install -g @earendil-works/pi-coding-agent`."}
+
+      path ->
+        task =
+          Task.async(fn ->
+            try do
+              {:ok, System.cmd(path, ["--version"], stderr_to_stdout: true)}
+            rescue
+              _ -> :cannot_run
+            end
+          end)
+
+        case Task.yield(task, 10_000) || Task.shutdown(task) do
+          {:ok, {:ok, {output, 0}}} ->
+            pi_version(id, output)
+
+          {:ok, {:ok, {_output, _status}}} ->
+            {:error, "Pi CLI is installed but failed to run."}
+
+          {:ok, :cannot_run} ->
+            {:error, "Failed to execute Pi CLI health check."}
+
+          _ ->
+            {:error, "Pi CLI is installed but timed out while running `pi --version`."}
+        end
     end
   end
 
@@ -911,28 +1476,164 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Grok's health starts with `grok --version`, its own updater off. Ten
+  # seconds: a healthy CLI behind a shim or a virus scan can take eight.
+  defp check_version(id, "grok", entry) do
+    timeout = Application.get_env(:hal_c2, :grok_version_timeout_ms, 10_000)
+
+    env =
+      instance_env(id)
+      |> put_env("GROK_OAUTH2_REFERRER", "hal-c2")
+      |> put_env("GROK_DISABLE_AUTOUPDATER", "1")
+
+    result =
+      with path when is_binary(path) <- System.find_executable(binary("grok", entry, "grok")) do
+        grok_version(path, env, timeout)
+      else
+        _ -> :failed
+      end
+
+    case result do
+      {:ok, out} ->
+        version =
+          case Regex.run(~r/\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?/, out) do
+            [version] -> version
+            nil -> "unknown"
+          end
+
+        stage(id, :version, version)
+        :ok
+
+      :timeout ->
+        {:error, "Grok CLI is installed but timed out while running `grok --version`."}
+
+      :failed ->
+        {:error, "Grok CLI is installed but failed to run."}
+    end
+  end
+
   defp check_version(_id, _driver, _entry), do: :ok
+
+  defp pi_version(id, output) do
+    case Regex.run(~r/\d+\.\d+\.\d+/, output) do
+      [version] ->
+        stage(id, :version, version)
+
+        if Version.compare(version, @pi_minimum) == :lt,
+          do: {:error, "Pi #{version} is unsupported. Update to Pi #{@pi_minimum} or newer."},
+          else: :ok
+
+      nil ->
+        {:error,
+         "HAL-C2 could not determine the Pi version. Pi #{@pi_minimum} or newer is required."}
+    end
+  end
+
+  # Runs `grok --version` under erlexec so a hang past the timeout kills the
+  # OS process too, not only the Elixir task waiting on it.
+  defp grok_version(path, env, timeout) do
+    options = [:stdout, {:stderr, :stdout}, :monitor, {:env, env}, {:kill_timeout, 1}]
+
+    case :exec.run([path, "--version"], options) do
+      {:ok, _pid, os_pid} ->
+        deadline = System.monotonic_time(:millisecond) + timeout
+        grok_version_output(os_pid, deadline, "")
+
+      _ ->
+        :failed
+    end
+  end
+
+  defp grok_version_output(os_pid, deadline, out) do
+    left = deadline - System.monotonic_time(:millisecond)
+
+    if left <= 0 do
+      kill_version(os_pid)
+    else
+      receive do
+        {:stdout, ^os_pid, data} ->
+          grok_version_output(os_pid, deadline, out <> IO.iodata_to_binary(data))
+
+        {:DOWN, ^os_pid, :process, _pid, :normal} ->
+          {:ok, out}
+
+        {:DOWN, ^os_pid, :process, _pid, _reason} ->
+          :failed
+      after
+        left -> kill_version(os_pid)
+      end
+    end
+  end
+
+  # Hard-kills the hung process and takes its DOWN, so no stray message is
+  # left for the caller.
+  defp kill_version(os_pid) do
+    :exec.kill(os_pid, 9)
+
+    receive do
+      {:stdout, ^os_pid, _data} -> kill_version(os_pid)
+      {:DOWN, ^os_pid, :process, _pid, _reason} -> :timeout
+    after
+      500 -> :timeout
+    end
+  end
 
   # --- per-driver fields --------------------------------------------------------
 
   defp driver_fields(entry, "grok", id, _instance) do
     meta = :persistent_term.get({__MODULE__, id, :meta}, nil) || %{}
+    path = HalC2.ProviderUpdates.executable("grok", id)
+    notice = :persistent_term.get({__MODULE__, id, :notice}, nil)
 
     entry
     |> Map.merge(%{
       # Grok cannot rewind its own conversation.
       "supportsConversationRollback" => false,
-      "slashCommands" => grok_commands(meta["availableCommands"])
+      "slashCommands" => grok_commands(meta["availableCommands"]),
+      "versionAdvisory" => HalC2.ProviderUpdates.advisory("grok", path, entry["version"], id)
     })
     |> Map.update!("models", &grok_reasoning(&1, get_in(meta, ["modelState", "availableModels"])))
     |> Map.update!("auth", &grok_auth(&1, id))
+    |> then(fn entry ->
+      cond do
+        # A probe that kept the last known models warns; chats still run.
+        notice && entry["status"] == "ready" ->
+          Map.put(entry, "status", "warning")
+
+        # The first look, before any probe has answered.
+        entry["enabled"] && entry["version"] == nil && loading?(id) &&
+            entry["status"] != "error" ->
+          Map.put(entry, "message", "Checking Grok CLI availability...")
+
+        true ->
+          entry
+      end
+    end)
   end
 
   defp driver_fields(entry, "opencode", id, instance) do
     config = :persistent_term.get({__MODULE__, id, :config}, [])
 
+    path = HalC2.ProviderUpdates.executable("opencode", id)
+
     entry
+    |> Map.merge(%{
+      "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
+      "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
+    })
+    |> opencode_unchecked(id)
     |> Map.update!("models", &opencode_options(&1, config))
+    |> then(
+      &if(path,
+        do:
+          Map.put(
+            &1,
+            "versionAdvisory",
+            HalC2.ProviderUpdates.advisory("opencode", path, &1["version"], id)
+          ),
+        else: &1
+      )
+    )
     |> opencode_version(id, instance)
   end
 
@@ -945,16 +1646,41 @@ defmodule HalC2.Acp do
         "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
       })
 
-    if entry["status"] == "ready" and
-         :persistent_term.get({__MODULE__, id, :pi_signed_out}, false),
-       do:
-         Map.merge(entry, %{
-           "status" => "warning",
-           "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
-           "message" =>
-             "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
-         }),
-       else: entry
+    entry =
+      case HalC2.Pi.workspaces(id) do
+        [] -> entry
+        snapshots -> Map.put(entry, "workspaceSnapshots", snapshots)
+      end
+
+    entry =
+      case HalC2.ProviderUpdates.executable("pi", id) do
+        nil ->
+          entry
+
+        path ->
+          advisory = HalC2.ProviderUpdates.advisory("pi", path, entry["version"], id)
+          Map.put(entry, "versionAdvisory", advisory)
+      end
+
+    cond do
+      entry["status"] == "ready" and
+          :persistent_term.get({__MODULE__, id, :pi_signed_out}, false) ->
+        Map.merge(entry, %{
+          "status" => "warning",
+          "auth" => Map.put(entry["auth"], "status", "unauthenticated"),
+          "message" =>
+            "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
+        })
+
+      # A read is under way and nothing is known yet.
+      entry["enabled"] and :persistent_term.get({__MODULE__, id, :loading}, false) and
+        :persistent_term.get({__MODULE__, id, :models}, nil) == nil and
+          not Map.has_key?(entry, "message") ->
+        Map.put(entry, "message", "Checking Pi CLI availability...")
+
+      true ->
+        entry
+    end
   end
 
   # Muse maps two access modes (`promptUnmatched`, `allowAll`), cannot rewind or fork
@@ -989,18 +1715,101 @@ defmodule HalC2.Acp do
     do: HalC2.Acp.Antigravity.entry_fields(entry, id)
 
   # Cursor has a plan mode of its own, which the thread's plan toggle chooses.
-  defp driver_fields(entry, "cursor", _id, _instance),
-    do: Map.put(entry, "showInteractionModeToggle", true)
+  # Its account (who the key belongs to) comes from the probe's session, and
+  # before any probe has answered the entry says it is still checking.
+  defp driver_fields(entry, "cursor", id, _instance) do
+    entry =
+      entry
+      |> Map.put("showInteractionModeToggle", true)
+      |> Map.put("workspaceSnapshots", HalC2.Acp.CursorSkills.workspaces(id))
 
-  # What a registry agent's running session advertises (`put_commands/2`).
+    account = :persistent_term.get({__MODULE__, id, :account}, nil)
+
+    entry =
+      if is_map(account) && entry["auth"]["status"] == "authenticated" do
+        auth =
+          entry["auth"]
+          |> then(
+            &if(is_binary(account["email"]),
+              do: Map.put(&1, "email", account["email"]),
+              else: &1
+            )
+          )
+          |> then(
+            &if(is_binary(account["label"]),
+              do: Map.put(&1, "label", account["label"]),
+              else: &1
+            )
+          )
+
+        Map.put(entry, "auth", auth)
+      else
+        entry
+      end
+
+    if entry["enabled"] &&
+         :persistent_term.get({__MODULE__, id, :models}, nil) == nil &&
+         :persistent_term.get({__MODULE__, id, :error}, nil) == nil &&
+         not Map.has_key?(entry, "message") do
+      Map.put(entry, "message", "Checking Cursor SDK availability...")
+    else
+      entry
+    end
+  end
+
+  # What a registry agent's running session advertises (`put_commands/2`), and its
+  # session options with every model (`session_options/1`).
   defp driver_fields(entry, "acpRegistry", id, _instance) do
-    Map.merge(entry, %{
+    options = session_options(id)
+
+    entry
+    |> Map.merge(%{
       "slashCommands" => :persistent_term.get({__MODULE__, id, :commands}, []),
       "skills" => :persistent_term.get({__MODULE__, id, :skills}, [])
     })
+    |> Map.update!("models", &with_options(&1, options))
   end
 
   defp driver_fields(entry, _driver, _id, _instance), do: entry
+
+  # Enabled but never read in this session (its first read is still under way):
+  # the listing says so, as Codex's and Claude's do, instead of looking ready.
+  # Off, it says the server URL it keeps for when it is turned back on.
+  defp opencode_unchecked(entry, id) do
+    cond do
+      entry["enabled"] == false ->
+        if setting(id, "serverUrl"),
+          do:
+            Map.put(
+              entry,
+              "message",
+              "OpenCode is disabled in HAL-C2 settings. A server URL is configured."
+            ),
+          else: entry
+
+      :persistent_term.get({__MODULE__, id, :models}, nil) == nil and
+          :persistent_term.get({__MODULE__, id, :error}, nil) == nil ->
+        Map.merge(entry, %{
+          "status" => "warning",
+          "message" => "OpenCode provider status has not been checked in this session yet."
+        })
+
+      true ->
+        entry
+    end
+  end
+
+  # An OpenCode that said no version when it started (staged as "unknown") cannot be
+  # told apart from one too old to run.
+  defp opencode_version(%{"version" => "unknown", "status" => status} = entry, _id, _instance)
+       when status in ["ready", "warning"] do
+    Map.merge(entry, %{
+      "status" => "error",
+      "models" => [],
+      "message" =>
+        "HAL-C2 could not determine the OpenCode version. OpenCode v#{@opencode_minimum} or newer is required."
+    })
+  end
 
   defp opencode_version(entry, id, _instance) do
     case stable_version(entry["version"]) do
@@ -1050,9 +1859,17 @@ defmodule HalC2.Acp do
           do: variants,
           else: ~w(low medium high xhigh)
 
+      # A model whose variants name no default HAL-C2 knows keeps OpenCode's
+      # own default as its choice, so its reasoning label is never blank.
+      {variants, default} =
+        case default_variant(provider, variants) do
+          nil -> {["default" | variants], "default"}
+          default -> {variants, default}
+        end
+
       descriptors =
         [
-          select("variant", "Reasoning", variants, default_variant(provider, variants)),
+          select("variant", "Reasoning", variants, default),
           agents != [] &&
             select("agent", "Agent", agents, if("build" in agents, do: "build", else: hd(agents)))
         ]
@@ -1147,10 +1964,14 @@ defmodule HalC2.Acp do
     [compact | Enum.reject(offered, &(&1["name"] == "compact"))]
   end
 
+  @max_name 128
+  @max_description 1024
+
+  # A description an agent advertises, trimmed and cut to `@max_description` characters.
   defp put_text(map, key, value) when is_binary(value) do
     case String.trim(value) do
       "" -> map
-      text -> Map.put(map, key, text)
+      text -> Map.put(map, key, String.slice(text, 0, @max_description))
     end
   end
 
@@ -1189,6 +2010,7 @@ defmodule HalC2.Acp do
           []
       end)
       |> Enum.uniq_by(&elem(&1, 0))
+      |> sort_efforts()
 
     current =
       if Enum.any?(options, &(elem(&1, 0) == meta["reasoningEffort"])),
@@ -1224,6 +2046,16 @@ defmodule HalC2.Acp do
     end
   end
 
+  @effort_rank ~w(none minimal low medium high xhigh max)
+
+  # Grok advertises its strongest level first; the pickers and effort bars read lowest
+  # to highest. Levels outside the known rank keep the order Grok gave.
+  defp sort_efforts(options) do
+    if Enum.all?(options, &(elem(&1, 0) in @effort_rank)),
+      do: Enum.sort_by(options, &Enum.find_index(@effort_rank, fn r -> r == elem(&1, 0) end)),
+      else: options
+  end
+
   defp stable_version(version) when is_binary(version) do
     case Regex.run(~r/^v?(\d+\.\d+\.\d+)$/, String.trim(version)) do
       [_, stable] -> stable
@@ -1243,7 +2075,13 @@ defmodule HalC2.Acp do
          {:ok, conn} <-
            Connection.start_link(cmd: command, handler: self(), cd: cwd, env: env, dialect: :v2) do
       try do
-        with {:ok, init} <- Connection.call(conn, "initialize", initialize_params()),
+        with {:ok, init} <-
+               call_open(
+                 conn,
+                 "initialize",
+                 initialize_params(),
+                 Application.get_env(:hal_c2, :acp_initialize_timeout, 30_000)
+               ),
              do: fun.(conn, init)
       after
         Connection.stop(conn)
@@ -1278,35 +2116,28 @@ defmodule HalC2.Acp do
   @skill_mention ~r/(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u
 
   @doc """
-  `text` with each `$name` that mentions one of Cursor's skills in `cwd` written as
-  Cursor takes it, `/name`. Other
-  mentions, and amounts of money, are left as they are.
+  `text` with each `$name` that mentions one of instance `instance`'s Cursor
+  skills in `cwd` written as Cursor takes it, `/name`. Other mentions, and
+  amounts of money, are left as they are. The entry's workspace snapshot for
+  `cwd` names the skills when one was read; only a send with no snapshot yet
+  pays for a discovery scan.
   """
-  def cursor_skill_mentions(text, cwd) do
-    names = cursor_skills(cwd)
+  def cursor_skill_mentions(text, instance, cwd, home \\ nil) do
+    names =
+      case Enum.find(HalC2.Acp.CursorSkills.workspaces(instance), &(&1["cwd"] == cwd)) do
+        %{"skills" => skills} ->
+          MapSet.new(skills, & &1["name"])
+
+        _ ->
+          skills =
+            HalC2.Acp.CursorSkills.discover(cwd, home || HalC2.Acp.CursorSkills.home(instance))
+
+          MapSet.new(skills, & &1["name"])
+      end
 
     Regex.replace(@skill_mention, text, fn match, prefix, name ->
       if MapSet.member?(names, name), do: prefix <> "/" <> name, else: match
     end)
-  end
-
-  # The names of the skills Cursor loads in `cwd`: each folder with a SKILL.md under
-  # the project's and the user's `.cursor`, `.agents`, `.codex` and `.claude` skills,
-  # by its frontmatter `name`, else the folder's.
-  defp cursor_skills(cwd) do
-    for base <- [cwd, HalC2.Paths.user_home()],
-        is_binary(base),
-        root <- ~w(.cursor .agents .codex .claude),
-        dir = Path.join([base, root, "skills"]),
-        {:ok, entries} <- [File.ls(dir)],
-        entry <- entries,
-        {:ok, body} <- [File.read(Path.join([dir, entry, "SKILL.md"]))],
-        into: MapSet.new() do
-      case Regex.run(~r/\A---\s*\n.*?^name:\s*["']?([^"'\n]+?)["']?\s*$/ms, body) do
-        [_, name] -> String.trim(name)
-        _ -> entry
-      end
-    end
   end
 
   @doc """
@@ -1330,22 +2161,113 @@ defmodule HalC2.Acp do
     # Forgotten and started in one step, so no listing in between starts a read of
     # its own that would supersede this one (#459). A settings change that disables
     # the instance meanwhile forgets it after, which drops this read's generation.
-    enabled = enabled?(id)
+    # A registry agent that cannot run yet is not started (`entry/1` says why).
+    enabled = (enabled?(id) or HalC2.Settings.provider_on_in_a_project?(id)) and ready?(id)
+
+    # Pi being read for the first time already is left to finish: its entry
+    # says it is still being checked meanwhile, and a settings change forgets
+    # the read first.
+    if enabled and driver(id) == "pi" and loading?(id) and
+         :persistent_term.get({__MODULE__, id, :models}, nil) == nil and
+         :persistent_term.get({__MODULE__, id, :error}, nil) == nil do
+      :ok
+    else
+      reload_now(id, enabled)
+    end
+  end
+
+  defp reload_now(id, enabled) do
+    # A Grok refresh that finds no models keeps these (see the Grok read).
+    if driver(id) == "grok" do
+      Process.put(
+        {:grok_previous_models, id},
+        :persistent_term.get({__MODULE__, id, :models}, nil)
+      )
+
+      Process.put(
+        {:grok_previous_version, id},
+        :persistent_term.get({__MODULE__, id, :version}, nil)
+      )
+    end
 
     case locked(id, fn ->
+           kept = kept_models(id)
            forget_now(id)
-           if enabled, do: start_read(id)
+           if enabled, do: {start_read(id), kept}
          end) do
       nil -> :ok
-      generation -> read(id, generation)
+      {generation, kept} -> read(id, generation, :spawn, kept)
     end
 
     :ok
   end
 
-  @doc "Forgets what was read from an instance's agent, so it is probed again."
+  defp ready?(id) do
+    case instance(id) do
+      {@registry, instance} -> HalC2.Acp.Catalog.readiness(instance["config"] || %{}) == :ok
+      _ -> true
+    end
+  end
+
+  # The models a registry instance offered before a check: a check that fails
+  # leaves them offered, where one that completes replaces them.
+  defp kept_models(id) do
+    if driver(id) == @registry, do: :persistent_term.get({__MODULE__, id, :models}, nil)
+  end
+
+  # Under the lock, once a current read is done: what it read stands, else the
+  # models kept from before it.
+  defp keep_models(_id, nil), do: :ok
+
+  defp keep_models(id, kept) do
+    if :persistent_term.get({__MODULE__, id, :models}, nil) == nil,
+      do: :persistent_term.put({__MODULE__, id, :models}, kept)
+
+    :ok
+  end
+
+  @doc """
+  Forgets what was read from an instance's agent, so it is probed again. Workspace
+  snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
+  the user already saw for a folder, and only the next workspace refresh replaces
+  them. `drop/1` is for an instance that is gone.
+  """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
+  end
+
+  @doc "Forgets an instance that was removed: `forget/1`, and its workspace snapshots too."
+  def drop(id) do
+    locked(id, fn ->
+      forget_now(id)
+      :persistent_term.erase({__MODULE__, id, :workspaces})
+      :persistent_term.put({__MODULE__, id, :workspaces_epoch}, workspaces_epoch(id) + 1)
+      :ok
+    end)
+  end
+
+  @doc """
+  The count of times `drop/1` has erased the instance's workspace snapshots. A refresh
+  reads it before scanning and hands it to `put_workspace/4`, so a scan that outlived
+  its instance cannot write a snapshot back.
+  """
+  def workspaces_epoch(id), do: :persistent_term.get({__MODULE__, id, :workspaces_epoch}, 0)
+
+  @doc """
+  Keeps `snapshot` as the instance's snapshot for `cwd`, under the instance's lock so
+  two refreshes of different folders both stay. `:dropped` (nothing kept) when the
+  instance was dropped since `epoch` was read. Callers scan and notify outside it.
+  """
+  def put_workspace(id, cwd, snapshot, epoch) do
+    locked(id, fn ->
+      if workspaces_epoch(id) == epoch do
+        key = {__MODULE__, id, :workspaces}
+        :persistent_term.put(key, Map.put(:persistent_term.get(key, %{}), cwd, snapshot))
+        :ok
+      else
+        :dropped
+      end
+    end)
   end
 
   defp forget_now(id) do
@@ -1359,6 +2281,7 @@ defmodule HalC2.Acp do
           :loading,
           :meta,
           :notice,
+          :account,
           :config,
           :commands,
           :skills,
@@ -1371,6 +2294,7 @@ defmodule HalC2.Acp do
     # never equals a read's ref, and a forgotten (or deleted) instance leaves
     # no generation entry behind.
     :persistent_term.erase({__MODULE__, id, :generation})
+    :persistent_term.erase({__MODULE__, :start_diagnosis, id})
     :ok
   end
 
@@ -1383,6 +2307,10 @@ defmodule HalC2.Acp do
     HalC2.Settings.notify_providers()
   end
 
+  @doc "Whether instance `id` is recorded signed out, as its entry's auth says."
+  def unauthenticated?(id),
+    do: :persistent_term.get({__MODULE__, id, :unauthenticated}, false) == true
+
   @doc """
   Replaces an instance's models with those of a session's `configOptions`, as an
   agent reports them mid-session, and tells subscribed clients.
@@ -1391,26 +2319,253 @@ defmodule HalC2.Acp do
     if Enum.any?(config_options, &(&1["id"] == "model")) do
       models = models(%{"configOptions" => config_options})
 
-      locked(id, fn -> :persistent_term.put({__MODULE__, id, :models}, models) end)
+      # As in `put_commands/2`: an unchanged list neither rewrites the
+      # catalog (a `:persistent_term` put is a global GC pass) nor
+      # rebroadcasts the provider list to every client.
+      changed =
+        :persistent_term.get({__MODULE__, id, :models}, nil) != models and
+          locked(id, fn ->
+            changed = :persistent_term.get({__MODULE__, id, :models}, nil) != models
+            if changed, do: :persistent_term.put({__MODULE__, id, :models}, models)
+            changed
+          end)
 
+      if changed, do: HalC2.Settings.notify_providers()
+    end
+
+    :ok
+  end
+
+  @doc """
+  A session's `configOptions` with its older ACP session modes (`modes`, set through
+  `session/set_mode`) as one "Mode" option. That needs two or more modes, and no
+  option that is already `mode` or offers the same choices (upstream's
+  `AcpSessionConfig.ts`). The option it adds has `"setBy" => "session/set_mode"`.
+  """
+  def session_config(session) do
+    options = session["configOptions"] |> List.wrap() |> Enum.filter(&is_map/1)
+
+    case legacy_modes(session["modes"]) do
+      nil ->
+        options
+
+      mode ->
+        values = &MapSet.new(choices(&1), fn c -> c["value"] end)
+
+        if Enum.any?(options, &(&1["id"] == "mode" or values.(&1) == values.(mode))),
+          do: options,
+          else: options ++ [mode]
+    end
+  end
+
+  defp legacy_modes(%{"availableModes" => available} = modes) when is_list(available) do
+    listed =
+      for(
+        %{"id" => id} = mode when is_binary(id) and id != "" <- available,
+        do: %{"value" => id, "name" => text(mode["name"]) || id}
+      )
+      |> Enum.uniq_by(& &1["value"])
+
+    if length(listed) >= 2 do
+      %{
+        "id" => "mode",
+        "name" => "Mode",
+        "category" => "mode",
+        "type" => "select",
+        "currentValue" => modes["currentModeId"],
+        "options" => listed,
+        "setBy" => "session/set_mode"
+      }
+    end
+  end
+
+  defp legacy_modes(_modes), do: nil
+
+  @doc """
+  Keeps the `configOptions` a registry agent's session reports, as `put_models/2`
+  keeps its models, so its session options follow what it last offered.
+  """
+  def put_config(id, config_options) when is_list(config_options) do
+    if driver(id) == "acpRegistry" and
+         :persistent_term.get({__MODULE__, id, :config}, nil) != config_options do
+      locked(id, fn -> :persistent_term.put({__MODULE__, id, :config}, config_options) end)
       HalC2.Settings.notify_providers()
     end
 
     :ok
   end
 
-  @max_commands 200
+  def put_config(_id, _config_options), do: :ok
+
+  @doc "Records `value` as what the registry session option `option` now holds."
+  def put_option(id, option, value) do
+    {__MODULE__, id, :config}
+    |> :persistent_term.get([])
+    |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
+    |> then(&put_config(id, &1))
+  end
+
+  @max_options 16
+  @max_choices 64
 
   @doc """
-  Replaces a registry instance's commands with those its session advertises (ACP's
+  The session options (ACP `configOptions`) a registry instance offers with each of
+  its models, as option descriptors: at most #{@max_options}, each with at most
+  #{@max_choices} choices, grouped choices in one list, duplicate choices and empty
+  ones that are not the default dropped. The model option is the model picker's and
+  a mode option offering `plan` or `architect` is the plan toggle's
+  (`HalC2.Acp.ThreadRuntime`), so neither is offered here.
+  """
+  def session_options(id) when is_binary(id),
+    do: id |> then(&:persistent_term.get({__MODULE__, &1, :config}, [])) |> session_options()
+
+  # An option the agent names twice is the one it named first, whether or not that one
+  # is offered.
+  def session_options(config) when is_list(config) do
+    config
+    |> Enum.filter(&is_map/1)
+    |> Enum.uniq_by(& &1["id"])
+    |> Enum.reject(&(&1["id"] == "model" or &1["category"] == "model" or plan_option?(&1)))
+    |> Enum.flat_map(&option_descriptor/1)
+    |> Enum.take(@max_options)
+  end
+
+  def session_options(_config), do: []
+
+  @doc """
+  Checks a value a client picked for a registry session option against the option
+  `session_options/1` offers: `:ok`, `:skip` for an option the session does not
+  offer, or `{:error, message}`.
+  """
+  def check_option(options, id, value) do
+    case Enum.find(options, &(&1["id"] == id)) do
+      nil ->
+        :skip
+
+      %{"type" => "boolean"} when is_boolean(value) ->
+        :ok
+
+      %{"type" => "boolean"} ->
+        {:error, invalid_option(id, value, "boolean")}
+
+      %{"options" => choices} when is_binary(value) ->
+        values = Enum.map(choices, & &1["id"])
+
+        if value in values,
+          do: :ok,
+          else: {:error, invalid_option(id, value, "one of " <> Enum.join(values, ", "))}
+
+      _ ->
+        {:error, invalid_option(id, value, "string")}
+    end
+  end
+
+  defp invalid_option(id, value, expected),
+    do:
+      "Invalid value #{Jason.encode!(value)} for session config option #{Jason.encode!(id)}: expected #{expected}"
+
+  defp plan_option?(%{"category" => category} = option)
+       when category in ["mode", "collaboration_mode"] do
+    option
+    |> choices()
+    |> Enum.any?(&(&1["value"] in ["plan", "architect"]))
+  end
+
+  defp plan_option?(_option), do: false
+
+  # A select's choices, those of its groups included.
+  defp choices(option) do
+    option["options"]
+    |> List.wrap()
+    |> Enum.filter(&is_map/1)
+    |> Enum.flat_map(&if(is_list(&1["options"]), do: &1["options"], else: [&1]))
+    |> Enum.filter(&is_map/1)
+  end
+
+  defp option_descriptor(%{"id" => id, "type" => "boolean"} = option)
+       when is_binary(id) and id != "" do
+    [
+      %{"id" => id, "label" => option_label(option), "type" => "boolean"}
+      |> then(
+        &if(is_boolean(option["currentValue"]),
+          do: Map.put(&1, "currentValue", option["currentValue"]),
+          else: &1
+        )
+      )
+    ]
+  end
+
+  defp option_descriptor(%{"id" => id} = option) when is_binary(id) and id != "" do
+    current = option["currentValue"]
+    listed = choices(option)
+    # An empty value is a choice only as the default: the current one, or the first
+    # listed (Copilot's default agent, "", upstream #19330).
+    default = if current == "" or match?([%{"value" => ""} | _], listed), do: ""
+
+    choices =
+      for %{"value" => value} = choice when is_binary(value) <- listed,
+          value != "" or value == default do
+        %{"id" => value, "label" => text(choice["name"]) || value}
+        |> then(&if(value == current, do: Map.put(&1, "isDefault", true), else: &1))
+      end
+      |> Enum.uniq_by(& &1["id"])
+      |> Enum.take(@max_choices)
+
+    if choices == [] do
+      []
+    else
+      [
+        %{"id" => id, "label" => option_label(option), "type" => "select", "options" => choices}
+        |> then(
+          &if(is_binary(current) and Enum.any?(choices, fn c -> c["id"] == current end),
+            do: Map.put(&1, "currentValue", current),
+            else: &1
+          )
+        )
+      ]
+    end
+  end
+
+  defp option_descriptor(_option), do: []
+
+  defp option_label(option), do: text(option["name"]) || option["id"]
+
+  defp with_options(models, []), do: models
+
+  defp with_options(models, options) do
+    Enum.map(models, fn model ->
+      own = get_in(model, ["capabilities", "optionDescriptors"]) || []
+      Map.put(model, "capabilities", %{"optionDescriptors" => own ++ taken(options, model)})
+    end)
+  end
+
+  @doc """
+  Of a registry agent's session options (`session_options/1`), those offered with
+  `model` (a model map, or nil): a descriptor of the model's own wins on a shared id.
+  """
+  def taken(options, model) do
+    own =
+      MapSet.new(get_in(model || %{}, ["capabilities", "optionDescriptors"]) || [], & &1["id"])
+
+    Enum.reject(options, &MapSet.member?(own, &1["id"]))
+  end
+
+  @max_commands 128
+
+  @doc """
+  Replaces an instance's commands with those its session advertises (ACP's
   `available_commands_update`), and tells subscribed clients. A name starting with
-  `$` is a skill of the agent's; the rest are its slash commands.
+  `$` is a skill of the agent's; the rest are its slash commands. OpenCode
+  advertises the commands and skills it read for the session's project, and a
+  registry agent its own; other drivers' commands come from their own reads.
   """
   def put_commands(id, commands) when is_list(commands) do
-    if driver(id) == "acpRegistry" do
+    if driver(id) in ["acpRegistry", "opencode"] do
       offered =
         for(%{"name" => name} = command when is_binary(name) <- commands, do: command)
-        |> Enum.map(&Map.put(&1, "name", String.trim(&1["name"])))
+        |> Enum.map(
+          &Map.put(&1, "name", &1["name"] |> String.trim() |> String.slice(0, @max_name))
+        )
         |> Enum.reject(&(&1["name"] in ["", "$"]))
         |> Enum.uniq_by(&String.downcase(&1["name"]))
         |> Enum.take(@max_commands)
@@ -1476,6 +2631,21 @@ defmodule HalC2.Acp do
   # One without options of its own takes the agent's, which its models share.
   # A custom model without capabilities of its own gets the catalog's first model's,
   # except Muse's, whose catalog describes each model apart: those get Muse's usual efforts.
+  # A registry agent that names no models runs on its own default, offered as one
+  # model "Default" (`set_model/2` in `HalC2.Acp.ThreadRuntime` leaves it to the agent).
+  defp named_models(@registry, []),
+    do: [
+      %{
+        "slug" => "default",
+        "name" => "Default",
+        "isCustom" => false,
+        "isDefault" => true,
+        "capabilities" => nil
+      }
+    ]
+
+  defp named_models(_driver, models), do: models || []
+
   defp custom_models(models, instance, driver) do
     known = MapSet.new(models, & &1["slug"])
 
@@ -1617,6 +2787,8 @@ defmodule HalC2.Acp do
 
   defp text(_value), do: nil
 
+  @max_models 256
+
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do
     option =
@@ -1625,11 +2797,19 @@ defmodule HalC2.Acp do
 
     current = option["currentValue"]
 
-    for %{"value" => slug} = model <- option["options"] || [] do
+    for %{"value" => slug} = model <- Enum.take(option["options"] || [], @max_models) do
       {sub, name} =
-        case String.split(model["name"] || slug, "/", parts: 2) do
-          [sub, name] -> {sub, name}
-          [name] -> {nil, name}
+        case String.split(String.slice(model["name"] || slug, 0, @max_name), "/", parts: 2) do
+          [sub, name] ->
+            {sub, name}
+
+          [name] ->
+            # A name with no provider in it (OpenCode 2's) still groups under
+            # the provider its slug names.
+            case String.split(slug, "/", parts: 2) do
+              [sub, _] -> {sub, name}
+              _ -> {nil, name}
+            end
         end
 
       %{

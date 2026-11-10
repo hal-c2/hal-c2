@@ -24,7 +24,7 @@ defmodule HalC2.Rpc do
   def handle("orchestration." <> _ = method, payload),
     do: HalC2.Orchestration.handle(method, payload)
 
-  def handle("projects.mutate", mutation), do: HalC2.Projects.mutate(mutation)
+  def handle("projects.mutate", mutation), do: HalC2.Projects.mutate_for_client(mutation)
   def handle("server.getSettings", _input), do: {:ok, HalC2.Settings.settings()}
 
   # A client applies settings patches itself and writes the whole document back
@@ -88,6 +88,26 @@ defmodule HalC2.Rpc do
     end)
   end
 
+  # A thread's history in bounded pages (`HalC2.Projection.History`): the newest user
+  # turns, or the page before the `cursor` an earlier answer gave.
+  def handle("hal-c2.threadHistory", %{"threadId" => thread_id} = input) do
+    HalC2.Streams.read(thread_id, fn state ->
+      if input["cursor"] == nil,
+        do: {:ok, HalC2.Projection.History.snapshot(state)},
+        else: HalC2.Projection.History.page(state, input["cursor"])
+    end)
+  end
+
+  # A thread's family as shell rows (`HalC2.Shell.family/1`): what a client whose
+  # shell snapshot left out idle subagents reads when the thread is opened.
+  def handle("hal-c2.threadFamily", %{"threadId" => thread_id}) do
+    rows =
+      for {mc, id, kind, row} <- HalC2.Shell.family(thread_id),
+          do: [Atom.to_string(mc), id, kind, row]
+
+    {:ok, %{"rows" => rows}}
+  end
+
   # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding
   # one that moved.
   def handle("hal-c2.moveThread", %{"threadId" => id, "machine" => machine} = input),
@@ -143,6 +163,7 @@ defmodule HalC2.Rpc do
   def handle("projectClone.retry", input), do: HalC2.ProjectClones.retry(input)
   def handle("projectClone.cancel", input), do: HalC2.ProjectClones.cancel(input)
   def handle("server.getProcessDiagnostics", input), do: HalC2.Diagnostics.processes(input)
+  def handle("server.getOpenShellStatus", _input), do: HalC2.OpenShell.Command.settings_status()
   def handle("server.signalProcess", input), do: HalC2.Diagnostics.signal(input)
   def handle("server.getTraceDiagnostics", input), do: HalC2.Diagnostics.traces(input)
   def handle("server.getHostResources", input), do: HalC2.Diagnostics.host(input)
@@ -211,6 +232,10 @@ defmodule HalC2.Rpc do
   def handle("attachments.createUploadUrl", input), do: HalC2.Attachments.create_upload_url(input)
   def handle("attachments.delete", input), do: HalC2.Attachments.delete(input)
   def handle("assets.createUrl", input), do: HalC2.Attachments.create_url(input)
+  def handle("mcpApps.callTool", input), do: HalC2.McpApps.call_tool(input)
+  def handle("mcpApps.toolInfo", input), do: HalC2.McpApps.tool_info(input)
+  def handle("mcpApps.readResource", input), do: HalC2.McpApps.read_resource(input)
+  def handle("mcpApps.updateModelContext", input), do: HalC2.McpApps.update_model_context(input)
   def handle("worktreeSetup.cancel", input), do: HalC2.WorktreeSetup.cancel(input)
   def handle("worktreeSetup.retry", input), do: HalC2.WorktreeSetup.retry(input)
   def handle("assets.persistChatAttachments", input), do: HalC2.Attachments.persist(input)
@@ -239,13 +264,10 @@ defmodule HalC2.Rpc do
   def handle("provider.auth.cancel", input), do: HalC2.ProviderAuth.cancel(input)
   def handle("provider.auth.logout", input), do: HalC2.ProviderAuth.logout(input)
   def handle("provider.auth.complete", input), do: HalC2.ProviderAuth.complete(input)
-  def handle("provider.install.start", input), do: HalC2.Acp.Antigravity.Installation.start(input)
-
-  def handle("provider.install.cancel", input),
-    do: HalC2.Acp.Antigravity.Installation.cancel(input)
-
-  def handle("provider.install.remove", input),
-    do: HalC2.Acp.Antigravity.Installation.remove(input)
+  def handle("provider.chatgpt.move", input), do: HalC2.Codex.ChatGpt.move(input)
+  def handle("provider.install.start", input), do: installer(input).start(input)
+  def handle("provider.install.cancel", input), do: installer(input).cancel(input)
+  def handle("provider.install.remove", input), do: installer(input).remove(input)
 
   def handle("agentSessions.scan", input), do: HalC2.AgentSessions.scan(input)
   def handle("agentSessions.import", input), do: HalC2.AgentSessions.import_project(input)
@@ -372,6 +394,15 @@ defmodule HalC2.Rpc do
     end
   end
 
+  # The managed installer of the instance's driver.
+  defp installer(%{"instanceId" => instance}) do
+    if HalC2.Codex.Installation.instance?(instance),
+      do: HalC2.Codex.Installation,
+      else: HalC2.Acp.Antigravity.Installation
+  end
+
+  defp installer(_input), do: HalC2.Acp.Antigravity.Installation
+
   defp cluster({:ok, _} = ok), do: ok
 
   defp cluster({:error, reason}),
@@ -406,18 +437,20 @@ defmodule HalC2.Rpc do
   # changes something.
   @reads ~w(
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
+    orchestration.getCommandOutput
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
+    hal-c2.threadHistory hal-c2.threadFamily
     hal-c2.placeThread hal-c2.registerPush hal-c2.unregisterPush
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
-    server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
+    server.getProcessDiagnostics server.getOpenShellStatus server.getHostResources server.getProcessResourceHistory
     server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates
     server.reportClientActivity server.getBackgroundPolicy server.searchAcpRegistry
     server.listAcpRegistrySessions server.listAcpRegistryProviders scheduledTasks.list
     sourceControl.lookupRepository projects.listEntries projects.readFile
     projects.searchContents projects.searchEntries filesystem.browse files.localPath
     agentSessions.scan
-    assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
+    assets.createUrl mcpApps.toolInfo mcpApps.readResource vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
     slack.status slack.manifest space.list space.files.list space.page.exportMarkdown space.page.history
     space.page.version space.image.providers mermaid.render
   )

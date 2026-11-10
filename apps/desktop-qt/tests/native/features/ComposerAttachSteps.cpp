@@ -574,6 +574,48 @@ const Steps steps([] {
     expect(shown && shown->isVisible(), QStringLiteral("the answer does not show %1").arg(c[1]));
   });
   step(QStringLiteral("submits the answer"), [submit](World& world, const Captures&, const Table&) { submit(world); });
+  const auto attachToAnswer = [answerFiles](World& world, const QString& name) {
+    QQuickItem* requests = composerPart(world, QStringLiteral("turnRequests"));
+    QMetaObject::invokeMethod(requests, "attachTo", Q_ARG(QVariant, QStringLiteral("database")), Q_ARG(QVariant, QVariant(QVariantList{plainFile(world, name)})));
+    world.waitFor([&] { return answerFiles(world).size() == 1; }, [&] { return QStringLiteral("%1 to be attached; the answer carries %2").arg(name, show(answerFiles(world))); });
+  };
+  step(QStringLiteral("the answer to %1 has a file that has not finished uploading").arg(q), [typeAnswer, attachToAnswer, answerFiles](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("uploads"));
+    typeAnswer(world, QStringLiteral("use this schema"));
+    attachToAnswer(world, QStringLiteral("schema.sql"));
+    expect(answerFiles(world).first().toMap().value(QStringLiteral("status")) == QLatin1String("uploading"), QStringLiteral("the answer carries %1").arg(show(answerFiles(world))));
+  });
+  step(QStringLiteral("the user submits the answers"), [submit](World& world, const Captures&, const Table&) { submit(world); });
+  step(QStringLiteral("the question stays open with what the user wrote"), [answerFiles](World& world, const Captures&, const Table&) {
+    expect(commandsOf(world, QStringLiteral("runtime-request.respond")).isEmpty(), QStringLiteral("the answer was sent: %1").arg(world.describeCommands()));
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-database"));
+    expect(field && field->isVisible() && field->property("text") == QLatin1String("use this schema") && answerFiles(world).size() == 1,
+           QStringLiteral("the answer reads \"%1\" with %2").arg(field ? field->property("text").toString() : QString(), show(answerFiles(world))));
+  });
+  step(QStringLiteral("the user typed %1 and attached %1").arg(q), [typeAnswer, attachToAnswer, answerFiles](World& world, const Captures& c, const Table&) {
+    typeAnswer(world, c[0]);
+    attachToAnswer(world, c[1]);
+    world.waitFor([&] { return answerFiles(world).first().toMap().value(QStringLiteral("status")).toString().isEmpty(); },
+                  [&] { return QStringLiteral("%1 to upload; the answer carries %2").arg(c[1], show(answerFiles(world))); });
+  });
+  step(QStringLiteral("the user submits the answer and the agent has not taken it yet"), [submit](World& world, const Captures&, const Table&) {
+    world.mc.hold(QStringLiteral("answers"));
+    submit(world);
+    world.waitFor([&] { return !commandsOf(world, QStringLiteral("runtime-request.respond")).isEmpty(); }, QStringLiteral("the answer to be on its way"));
+  });
+  step(QStringLiteral("%1 cannot be removed from the answer").arg(q), [answerFiles](World& world, const Captures& c, const Table&) {
+    Brick& brick = composerBrick(world);
+    QQuickItem* chip = composerPart(world, QStringLiteral("attachment:") + c[0]);
+    expect(chip && chip->isVisible(), QStringLiteral("the answer does not show %1").arg(c[0]));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(chip));
+    world.sync();
+    expect(answerFiles(world).size() == 1, QStringLiteral("the answer carries %1").arg(show(answerFiles(world))));
+  });
+  step(QStringLiteral("the question cannot be dismissed"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* dismiss = composerPart(world, QStringLiteral("questionDismiss"));
+    expect(dismiss && !dismiss->isEnabled(), QStringLiteral("the question can still be dismissed"));
+    world.mc.dropHeld();
+  });
   step(QStringLiteral("the agent receives %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QList<QJsonObject> answers = commandsOf(world, QStringLiteral("runtime-request.respond"));
     expect(answers.size() == 1, QStringLiteral("the MC has %1").arg(world.describeCommands()));
@@ -632,6 +674,51 @@ const Steps steps([] {
     const QString text = world.native().controller<ComposerController>()->draft(world.native().controller<NavigationController>()->threadKey());
     expect(!text.isEmpty() && text == world.mc.part<Typed>().text && composerEditor(world)->property("text") == text,
            QStringLiteral("the draft reads \"%1\"").arg(text));
+  });
+
+  // Stashing what a draft carries (editors-and-keys.feature).
+  // Stashes `text` with the images and files named, each kept or uploaded first.
+  const auto stashWith = [](World& world, const QString& text, const QStringList& images, const QStringList& files) {
+    world.bridge().dispatch(QStringLiteral("composer.text.set"),
+                            QVariantMap{{QStringLiteral("target"), world.native().controller<NavigationController>()->threadKey()},
+                                        {QStringLiteral("text"), text}, {QStringLiteral("cursor"), text.size()}});
+    composerBrick(world);
+    QList<QUrl> urls;
+    for (const QString& name : images) urls.append(imageFile(world, name));
+    for (const QString& name : files) urls.append(plainFile(world, name));
+    choose(world, urls);
+    world.waitFor([&] { return carried(world) == images + files; }, [&] { return QStringLiteral("the draft to carry them; it carries %1").arg(carried(world).join(u", ")); });
+    for (const QString& name : files) waitForUpload(world, name, QString());
+    world.bridge().dispatch(QStringLiteral("composer.stash"));
+    world.sync();
+  };
+  step(QStringLiteral("the user stashed %1 with an image").arg(q), [stashWith](World& world, const Captures& c, const Table&) {
+    stashWith(world, c[0], {QStringLiteral("sketch.png")}, {});
+  });
+  step(QStringLiteral("the user stashed (two images|one image|one file|one image, one file) and no text"), [stashWith](World& world, const Captures& c, const Table&) {
+    QStringList images;
+    QStringList files;
+    if (c[0] == QLatin1String("two images")) images = {QStringLiteral("before.png"), QStringLiteral("after.png")};
+    if (c[0].startsWith(QLatin1String("one image"))) images = {QStringLiteral("sketch.png")};
+    if (c[0].endsWith(QLatin1String("one file"))) files = {QStringLiteral("schema.sql")};
+    stashWith(world, QString(), images, files);
+  });
+  step(QStringLiteral("the app is restarted"), [](World& world, const Captures&, const Table&) {
+    world.restart();
+    world.connect();
+    world.sync();
+  });
+  step(QStringLiteral("the stash lists %1 with its image").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto entries = [&] { return world.state(QStringLiteral("composerStash")).toMap().value(QStringLiteral("entries")).toList(); };
+    world.waitFor([&] { return entries().size() == 1 && entries().constFirst().toMap().value(QStringLiteral("snippet")) == c[0]; },
+                  [&] { return QStringLiteral("the stash holds %1").arg(show(entries())); });
+    // Its image comes back with it.
+    world.bridge().dispatch(QStringLiteral("composer.stash.restore"), QVariantMap{{QStringLiteral("id"), entries().constFirst().toMap().value(QStringLiteral("id"))}});
+    world.sync();
+    world.waitFor([&] { return carried(world) == QStringList{QStringLiteral("sketch.png")}; },
+                  [&] { return QStringLiteral("the restored draft to carry sketch.png; it carries %1").arg(carried(world).join(u", ")); });
+    const QString text = world.native().controller<ComposerController>()->draft(world.native().controller<NavigationController>()->threadKey());
+    expect(text == c[0], QStringLiteral("the restored draft reads \"%1\"").arg(text));
   });
 });
 

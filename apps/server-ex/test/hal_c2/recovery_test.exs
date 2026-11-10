@@ -60,6 +60,69 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert Recovery.settle("t1") == {0, nil}
   end
 
+  # The boot ends a cut-off run, so its `completedAt` counts the time the MC was down.
+  test "a cut-off run keeps when it was last seen working" do
+    {:ok, _} =
+      HalC2.Streams.commit("t4", :thread, [
+        {"thread", "t4", %{"s" => %{"id" => "t4", "title" => "Cut"}}},
+        {"run", "r1",
+         %{
+           "s" => %{
+             "id" => "r1",
+             "ordinal" => 1,
+             "status" => "running",
+             "activeAttemptId" => "a1",
+             "requestedAt" => "2026-09-23T10:00:00.000Z",
+             "startedAt" => "2026-09-23T10:00:01.000Z"
+           }
+         }},
+        {"run-attempt", "a1",
+         %{
+           "s" => %{
+             "id" => "a1",
+             "status" => "running",
+             "updatedAt" => "2026-09-23T10:00:02.000Z"
+           }
+         }},
+        {"turn-item", "done",
+         %{
+           "s" => %{
+             "id" => "done",
+             "runId" => "r1",
+             "status" => "completed",
+             "ordinal" => 0,
+             "updatedAt" => "2026-09-23T10:00:40.000Z"
+           }
+         }},
+        {"turn-item", "busy",
+         %{
+           "s" => %{
+             "id" => "busy",
+             "runId" => "r1",
+             "status" => "running",
+             "ordinal" => 1,
+             "updatedAt" => "2026-09-23T10:01:30.000Z"
+           }
+         }},
+        {"turn-item", "other",
+         %{
+           "s" => %{
+             "id" => "other",
+             "runId" => "r0",
+             "status" => "completed",
+             "ordinal" => 2,
+             "updatedAt" => "2026-09-23T11:00:00.000Z"
+           }
+         }}
+      ])
+
+    assert {_, nil} = Recovery.settle("t4")
+    run = StreamState.get(HalC2.Streams.state("t4"), "run")["r1"]
+    assert run["status"] == "interrupted"
+    assert run["lastActivityAt"] == "2026-09-23T10:01:30.000Z"
+    assert run["completedAt"] != run["lastActivityAt"]
+  end
+
   # An MC from before recovery settled runs could leave a message streaming, or a steer
   # on it, in a run that has since gone to disk with the thread's older runs.
   test "a message left streaming in an older run on disk is settled too" do
@@ -165,7 +228,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
       ])
 
     assert_receive {:hal_c2_shell,
-                    {:rows, _, [{"t2", {"thread", %{"pendingBackgroundTasks" => [_]}}}]}},
+                    {:rows, _, [{"t2", {"thread", %{"runningBackgroundTasks" => [_]}}}]}},
                    1_000
 
     assert Recovery.run() == ["t2"]
@@ -173,7 +236,52 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert %{"status" => "interrupted"} = StreamState.get(state, "subagent")["s1"]
     assert %{"status" => "interrupted"} = StreamState.get(state, "turn-item")["i1"]
     assert %{"status" => "completed"} = StreamState.get(state, "run")["r1"]
-    assert {"thread", %{"pendingBackgroundTasks" => []}} = HalC2.Shell.row(node(), "t2")
+    assert {"thread", %{"runningBackgroundTasks" => []}} = HalC2.Shell.row(node(), "t2")
+  end
+
+  # Review of #1398: a subagent the last turn resumed is that turn's background work,
+  # though an earlier run started it (`NativeSubagent.run/1`).
+  test "the note at boot names a subagent the last turn resumed" do
+    :ok = HalC2.Shell.subscribe(self())
+    at = "2026-09-23T10:00:00.000Z"
+    run = &%{"s" => %{"id" => &1, "ordinal" => &2, "status" => "completed", "completedAt" => at}}
+    open = %{"runId" => "r1", "status" => "running"}
+
+    {:ok, _} =
+      HalC2.Streams.commit("t2", :thread, [
+        {"thread", "t2",
+         %{"s" => %{"id" => "t2", "title" => "Quiet", "createdAt" => at, "updatedAt" => at}}},
+        {"run", "r1", run.("r1", 1)},
+        {"run", "r2", run.("r2", 2)},
+        {"subagent", "s1",
+         %{
+           "s" =>
+             Map.merge(open, %{
+               "id" => "s1",
+               "origin" => "provider_native",
+               "resumedRunId" => "r2"
+             })
+         }},
+        {"turn-item", "turn-item:subagent:s1",
+         %{
+           "s" =>
+             Map.merge(open, %{
+               "id" => "turn-item:subagent:s1",
+               "type" => "subagent",
+               "nodeId" => "s1",
+               "title" => "Review the diff",
+               "ordinal" => 0
+             })
+         }}
+      ])
+
+    assert_receive {:hal_c2_shell,
+                    {:rows, _, [{"t2", {"thread", %{"runningBackgroundTasks" => [_]}}}]}},
+                   1_000
+
+    assert Recovery.run() == ["t2"]
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure("t2"))
+    assert StreamState.get(state, "thread")["t2"]["restartNote"] =~ "Review the diff"
   end
 
   test "a delegated task is left running at boot, as it settles with its own thread" do
@@ -203,7 +311,7 @@ defmodule HalC2.Orchestration.RecoveryTest do
       ])
 
     assert_receive {:hal_c2_shell,
-                    {:rows, _, [{"t3", {"thread", %{"pendingBackgroundTasks" => [_]}}}]}},
+                    {:rows, _, [{"t3", {"thread", %{"runningBackgroundTasks" => [_]}}}]}},
                    1_000
 
     assert Recovery.run() == []

@@ -1,4 +1,10 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29879
+#   https://github.com/pingdotgg/t3code/pull/24744
+#   https://github.com/pingdotgg/t3code/pull/31819
+#   https://github.com/pingdotgg/t3code/pull/22939
+#   https://github.com/pingdotgg/t3code/pull/22503
+#   https://github.com/pingdotgg/t3code/pull/23164
 #   https://github.com/pingdotgg/t3code/pull/20175
 #   https://github.com/pingdotgg/t3code/pull/19605
 #   https://github.com/pingdotgg/t3code/pull/19181
@@ -22,6 +28,9 @@
 #   https://github.com/pingdotgg/t3code/pull/15532
 #   https://github.com/pingdotgg/t3code/pull/15441
 #   https://github.com/pingdotgg/t3code/pull/22848
+#   https://github.com/pingdotgg/t3code/pull/29580
+#   https://github.com/pingdotgg/t3code/pull/28275
+#   https://github.com/pingdotgg/t3code/pull/29126
 
 Feature: Committing with written or generated messages
   The user reviews what goes into a commit, may leave the message to the writer model,
@@ -83,6 +92,15 @@ Feature: Committing with written or generated messages
     Then the commit holds only "src/cart.ts"
     And "src/tax.ts" is still changed in the working tree
 
+  # Upstream #28275: a failed index reset before committing picked files was ignored, so the commit
+  # could hold files the user left out; the commit now stops with the reset's error.
+  @backlog @mc
+  Scenario: Committing picked files stops when the index cannot be reset
+    Given another git process holds the index lock of "shop"
+    When the user leaves "src/tax.ts" out of the commit and commits
+    Then the commit fails with the error of resetting the index
+    And nothing is committed
+
   # Upstream #20175: in a project nested inside its repository the picked files resolved against
   # the wrong folder.
   @backlog @mc @desktop @priority-high
@@ -91,6 +109,15 @@ Feature: Committing with written or generated messages
     When the user leaves "src/tax.ts" out of the commit and commits
     Then the commit holds only "apps/shop/src/cart.ts"
     And opening "src/cart.ts" in the editor opens "apps/shop/src/cart.ts"
+
+  # Upstream #24744: picking files during a merge ended the merge and made a commit with one parent.
+  @backlog @mc @priority-high
+  Scenario: A merge in progress commits all its files or none
+    Given the project is in the middle of a merge
+    When the user leaves "src/tax.ts" out of the commit and commits
+    Then the commit is refused because a merge must be committed whole
+    And the merge, the files and the branch are as they were
+    And committing every file finishes the merge with both of its parents
 
   @desktop
   Scenario: Leaving every file out disables committing
@@ -158,6 +185,32 @@ Feature: Committing with written or generated messages
     When the user commits without writing a message
     Then the writer model sees the conventions once
 
+  # Upstream #29580: with log.showSignature on, "No signature" lines were read as commit subjects.
+  @backlog @mc @priority-low
+  Scenario: Signature lines from git log never reach the writer model
+    Given the user's git config shows commit signatures in git log
+    And the writing style is Repository conventions
+    When the user commits, pushes and opens a pull request without writing any text
+    Then the recent commit subjects and the pull request's commits the writer model sees hold no signature lines
+
+  # Upstream #29126: with color.ui=always the staged patch, log and diff stat reached the writer
+  # model as colored output, and the color codes used up its byte limits.
+  @backlog @mc @priority-low
+  Scenario: Git's color setting never reaches the writer model
+    Given the user's git config sets color.ui to always
+    When the user commits, pushes and opens a pull request without writing any text
+    Then the patch, commit log and diff stat the writer model sees hold no color codes
+
+  # Upstream #29879: with diff.relative on, a project in a subfolder showed the writer model only
+  # the changes inside that folder, though the commit and the pull request carried the rest too.
+  @backlog @mc @priority-low
+  Scenario: A subfolder project's writer sees changes outside the folder when diff.relative is set
+    Given "shop" is the folder "apps/shop" of a larger repository
+    And the user's git config sets diff.relative
+    And the change also touches "packages/tax/rate.ts"
+    When the user commits, pushes and opens a pull request without writing any text
+    Then the patch, diff stat and pull request changes the writer model sees include "packages/tax/rate.ts"
+
   @mc
   Scenario Outline: A generated pull request follows the writing style
     Given the project's source control writing style is <style>
@@ -174,6 +227,15 @@ Feature: Committing with written or generated messages
   Scenario: A pull request title the writer leaves empty falls back to a generic title
     When the writer model answers the pull request title with nothing
     Then the pull request title is "Update project changes"
+
+  # Upstream #31819: a later request in the conversation, such as babysitting the pull request,
+  # was followed by the writer and published a status message as the title and body.
+  @backlog @mc
+  Scenario: The writer of a pull request is not steered by unrelated requests in the conversation
+    Given the thread's conversation ends with the user asking the agent to watch the pull request's checks
+    When the user opens a pull request without writing its text
+    Then the title and description describe the branch's changes
+    And a description that only reports a status is not accepted
 
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: findOpenPr before generating)
   @mc @backlog
@@ -250,6 +312,22 @@ Feature: Committing with written or generated messages
     When the user runs "Create PR" for a branch based on "main"
     Then the writer is given the commits and changes since "origin/main"
 
+  # Upstream #22503: the writer was given the
+  # output of the repository's text conversion diff driver, which git also ran to make it.
+  # Upstream #23164: same change as #22503.
+  @mc @backlog
+  Scenario Outline: The writer of a <text> is given the source lines, not a text conversion's output
+    Given the repository shows "notes.doc" through a text conversion diff driver
+    And the change being written up edits the line "source line" in "notes.doc"
+    When <text> is generated
+    Then the writer is given "source line" as it is in the file
+    And the text conversion command does not run
+
+    Examples:
+      | text                |
+      | commit message      |
+      | pull request text   |
+
   # Legacy: apps/server/src/git/GitManager.ts (runPrStep: limitContext 20,000 / 20,000 / 60,000)
   @mc @backlog @priority-low
   Scenario Outline: The writer is given a bounded view of a large pull request
@@ -297,6 +375,8 @@ Feature: Committing with written or generated messages
     When the user commits
     Then the action reports the hook starting, that line as its output and the hook finishing
 
+  # Upstream #22939: git's hook exit records carry no hook class, so hooks never reported their
+  # real finish or exit code.
   @mc
   Scenario: A failing commit hook's output and exit code are reported before the commit fails
     Given the repository has a pre-commit hook that prints "lint failed" without a newline and exits with 3

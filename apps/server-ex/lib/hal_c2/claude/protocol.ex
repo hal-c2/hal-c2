@@ -51,7 +51,7 @@ defmodule HalC2.Claude.Protocol do
       if(opts[:thinking_display], do: ["--thinking-display", "summarized"], else: []) ++
       if(opts[:tools] in [nil, []], do: [], else: ["--tools", Enum.join(opts[:tools], ",")]) ++
       Enum.flat_map(List.wrap(opts[:add_dirs]), &["--add-dir", &1]) ++
-      mcp_args(opts[:mcp], opts[:disallowed_tools] not in [nil, []], opts) ++
+      mcp_args(opts[:mcp], opts[:workers_only] == true, opts) ++
       if(opts[:disallowed_tools] in [nil, []],
         do: [],
         else: ["--disallowedTools", Enum.join(opts[:disallowed_tools], ",")]
@@ -59,8 +59,30 @@ defmodule HalC2.Claude.Protocol do
       List.wrap(opts[:extra_args])
   end
 
-  # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.
-  defp mcp_args(nil, _workers_only, _opts), do: []
+  # Only Claude can mark its background work awaited (`hal_c2_background_wait`).
+  @background_wait_note """
+
+  ### Background work you wait on
+
+  A background command or monitor keeps this thread Working only while you mark it with `hal_c2_background_wait`. Mark the background work whose result you need before you are done (tests, a build, a deploy you watch) with its task id; leave dev servers, watchers and other processes left running unmarked. Pass `waiting: false` when you stop waiting on it.
+  """
+
+  # HAL-C2's tools allowed without a prompt, and what they are for. The server
+  # itself, with its credential, goes over stdin (`mcp_servers/1`).
+  # Instructions appended in the instance's launch arguments follow HAL-C2's
+  # own in the one `--append-system-prompt` (a second flag would lose one of
+  # them); without HAL-C2's tools they are the whole of it.
+  defp mcp_args(nil, _workers_only, opts) do
+    case appended(opts) do
+      "" -> []
+      text -> ["--append-system-prompt", text]
+    end
+  end
+
+  # A sandboxed review's broker (`HalC2.OpenShell.Broker`) has its one report tool,
+  # which is all the agent is allowed and nothing it is told about orchestration.
+  defp mcp_args(%{url: _url, authorization: _authorization, report: true}, _workers_only, opts),
+    do: ["--allowedTools", "mcp__hal-c2"] ++ mcp_args(nil, false, opts)
 
   defp mcp_args(%{url: _url, authorization: _authorization}, workers_only, opts) do
     # A read-only run pre-approves only HAL-C2's reading tools, so it cannot
@@ -72,8 +94,6 @@ defmodule HalC2.Claude.Protocol do
       end
 
     [
-      "--mcp-config",
-      Keyword.fetch!(opts, :mcp_config_path),
       "--allowedTools",
       allowed,
       "--append-system-prompt",
@@ -82,12 +102,42 @@ defmodule HalC2.Claude.Protocol do
       # model and the effort this session runs with.
       HalC2.Mcp.Instructions.for_session(
         runtime: %{harness: "Claude Code", model: opts[:model], effort: opts[:effort]}
-      ) <> if(workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
+      ) <>
+        @background_wait_note <>
+        if(workers_only, do: HalC2.Mcp.workers_only_note(), else: "") <>
+        case appended(opts) do
+          "" -> ""
+          text -> "\n\n" <> text
+        end
     ]
+  end
+
+  defp appended(opts) do
+    opts[:appended]
+    |> List.wrap()
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
   end
 
   defp flag(_name, nil), do: []
   defp flag(name, value), do: [name, to_string(value)]
+
+  @doc """
+  HAL-C2's own MCP server as `mcp_set_servers` names it. It reaches Claude on stdin,
+  so no command line, environment or file holds its credential: commands, hooks and
+  local MCP servers Claude starts cannot read it (upstream #17898), and the header
+  is no `${VAR}` that Claude's subprocess environment scrub would empty.
+  """
+  @spec mcp_servers(%{url: String.t(), authorization: String.t()}) :: map
+  def mcp_servers(%{url: url, authorization: authorization}),
+    do: %{
+      "hal-c2" => %{
+        "type" => "http",
+        "url" => url,
+        "headers" => %{"Authorization" => authorization}
+      }
+    }
 
   @spec control_request(String.t(), String.t(), map) :: iodata
   def control_request(request_id, subtype, params),
@@ -158,6 +208,10 @@ defmodule HalC2.Claude.Protocol do
 
   def dialog_reply(request_id, :cancelled),
     do: control_success(request_id, %{"behavior" => "cancelled"})
+
+  @doc "The reply to an MCP `elicitation`: its action (`accept`, `decline` or `cancel`) and content."
+  @spec elicitation_reply(String.t(), map) :: iodata
+  def elicitation_reply(request_id, answer), do: control_success(request_id, answer)
 
   @spec control_success(String.t(), map) :: iodata
   def control_success(request_id, body),

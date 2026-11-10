@@ -191,16 +191,140 @@ Item {
             verify(requests.pending, "the card shows");
             const submit = findChild(requests, "questionSubmit");
             verify(submit.mapToItem(root, 0, submit.height).y <= root.height, "the answer button is inside the window");
+            const position = findChild(requests, "questionPosition");
+            compare(position.text, "1/3");
+            // A pick moves on to the next question by itself.
             mouseClick(findChild(requests, "questionOption-First 0 (Recommended)"));
+            tryCompare(position, "text", "2/3");
             mouseClick(findChild(requests, "questionOption-Second 1"));
+            tryCompare(position, "text", "3/3");
             verify(!submit.enabled, "one question is still open");
+            // The last pick sends every answer.
             mouseClick(findChild(requests, "questionOption-First 2 (Recommended)"));
-            verify(submit.enabled);
-            mouseClick(submit);
-            compare(lastAction().action, "composer.question.answer");
+            tryVerify(() => lastAction()?.action === "composer.question.answer");
             compare(lastAction().payload.answers[ids[0]], "First 0 (Recommended)");
             compare(lastAction().payload.answers[ids[1]], "Second 1");
             compare(lastAction().payload.answers[ids[2]], "First 2 (Recommended)");
+        }
+
+        // The terminal drawer handles its own keys and has no cursor: its
+        // digits are the shell's.
+        function test_digitsTypedElsewhereAreNotPicks() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            const terminal = createTemporaryQmlObject("import QtQuick; Item { property string got: \"\"; focus: true; Keys.onPressed: event => { got += event.text; event.accepted = true; } }", root);
+            Shell.publishTurn({ questions: [question(false)] });
+            waitForRendering(root);
+            terminal.forceActiveFocus();
+            keyClick(Qt.Key_2);
+            verify(!findChild(requests, "questionOption-SQLite").checked, "the terminal's 2 picked an option");
+            verify(!requests.advancing, "the terminal's 2 is about to send an answer");
+            compare(terminal.got, "2");
+        }
+
+        // A pick on the last question goes back to one skipped, not nowhere.
+        function test_lastPickGoesBackToASkippedQuestion() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            waitForRendering(root);
+            const title = findChild(requests, "questionTitle");
+            mouseClick(findChild(requests, "questionNext"));
+            compare(title.text, "Which cache?");
+            mouseClick(findChild(requests, "questionOption-Redis"));
+            tryVerify(() => !requests.advancing);
+            compare(title.text, "Which database?");
+            verify(lastAction()?.action !== "composer.question.answer", "half the answers were sent");
+        }
+
+        // Answers are kept while their request may still be pending, and no longer.
+        function test_keptAnswersGoOnceTheirRequestIsAnswered() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [question(false)] });
+            waitForRendering(root);
+            requests.type(requests.current, "DuckDB");
+            // Off to another thread and back: kept, then restored.
+            Shell.publishComposerTarget("thread-b", "", 0);
+            Shell.publishTurn({});
+            verify(requests.kept["request-q"] !== undefined, "the answer left behind is not kept");
+            Shell.publishComposerTarget("thread-a", "", 0);
+            Shell.publishTurn({ questions: [question(false)] });
+            compare(findChild(requests, "questionAnswer-database").text, "DuckDB");
+            compare(Object.keys(requests.kept).length, 0);
+            // Left again, and answered elsewhere meanwhile: the next request on
+            // its thread drops it.
+            Shell.publishComposerTarget("thread-b", "", 0);
+            Shell.publishTurn({});
+            Shell.publishComposerTarget("thread-a", "", 0);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            compare(Object.keys(requests.kept).length, 0, "an answered request is still kept");
+            // Replaced on the thread shown: the one answered is not kept.
+            requests.type(requests.current, "Postgres");
+            Shell.publishTurn({ questions: [question(false)] });
+            compare(Object.keys(requests.kept).length, 0, "the request replaced is kept");
+            compare(findChild(requests, "questionAnswer-database").text, "");
+        }
+
+        function twoQuestions() {
+            const asked = (id, text, labels) => ({
+                    id: id,
+                    header: id,
+                    question: text,
+                    options: labels.map(label => ({ label: label, description: "" })),
+                    multiSelect: false,
+                    allowCustomAnswer: true
+                });
+            return {
+                requestId: "request-two",
+                questions: [asked("database", "Which database?", ["Postgres", "SQLite"]), asked("cache", "Which cache?", ["Redis", "Memcached"])],
+                canRespond: true,
+                responding: false,
+                problem: ""
+            };
+        }
+
+        // Moving by hand right after a pick is not moved again (upstream #17364).
+        function test_movingByHandCancelsTheMoveAfterAPick() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            waitForRendering(root);
+            const title = findChild(requests, "questionTitle");
+            compare(title.text, "Which database?");
+            verify(!findChild(requests, "questionPrevious").enabled, "the first question has none before it");
+            mouseClick(findChild(requests, "questionOption-Postgres"));
+            verify(requests.advancing);
+            mouseClick(findChild(requests, "questionNext"));
+            verify(!requests.advancing, "the move by hand cancels the one after the pick");
+            compare(title.text, "Which cache?");
+            mouseClick(findChild(requests, "questionPrevious"));
+            compare(title.text, "Which database?");
+            verify(findChild(requests, "questionOption-Postgres").checked, "the first answer is kept");
+        }
+
+        function test_foldedQuestionShowsOnlyItsTitle() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [twoQuestions()] });
+            waitForRendering(root);
+            mouseClick(findChild(requests, "questionFold"));
+            verify(findChild(requests, "questionTitle").visible);
+            for (const name of ["questionOption-Postgres", "questionAnswer-database", "questionSubmit", "questionNext"])
+                verify(!findChild(requests, name).visible, name + " is folded away");
+            mouseClick(findChild(requests, "questionFold"));
+            verify(findChild(requests, "questionOption-Postgres").visible);
+        }
+
+        function test_numberKeyPicksUnlessTyping() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ questions: [question(true)] });
+            waitForRendering(root);
+            // A click on the card takes the keyboard to it.
+            mouseClick(findChild(requests, "questionTitle"));
+            keyClick(Qt.Key_2);
+            verify(findChild(requests, "questionOption-SQLite").checked, "2 picks the second option");
+            const field = findChild(requests, "questionAnswer-database");
+            field.forceActiveFocus();
+            keyClick(Qt.Key_3);
+            compare(field.text, "3");
+            verify(!findChild(requests, "questionOption-MySQL").checked, "typing picks nothing");
+            verify(!findChild(requests, "questionOption-SQLite").checked, "typing lets go of the pick");
         }
 
         function test_questionCanBeDismissed() {
@@ -220,11 +344,11 @@ Item {
             compare(lastAction().action, "composer.plan.implement");
         }
 
-        function test_queuedMessageIsSteeredOrRemoved() {
+        function test_queuedMessageIsSentNowOrRemoved() {
             const requests = createTemporaryObject(requestsComponent, root);
             Shell.publishTurn({ queue: [{ runId: "run-2", text: "check the logs" }, { runId: "run-3", text: "update the docs" }] });
             waitForRendering(root);
-            mouseClick(findChild(requests, "queueSteer-run-3"));
+            mouseClick(findChild(requests, "queueSendNow-run-3"));
             compare(lastAction().action, "composer.queue.steer");
             compare(lastAction().payload.runId, "run-3");
             mouseClick(findChild(requests, "queueRemove-run-2"));

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23174
 #   https://github.com/pingdotgg/t3code/pull/18309
 #   https://github.com/pingdotgg/t3code/pull/24899
 #   https://github.com/pingdotgg/t3code/pull/16750
@@ -14,6 +15,9 @@
 #   docs/user/providers-claude.md, docs/user/providers-codex.md, docs/user/providers-opencode.md,
 #   docs/user/providers-pi.md, docs/user/providers-muse.md, docs/user/providers-antigravity.md, docs/user/providers-acp.md, docs/user/cursor.md
 #   https://github.com/pingdotgg/t3code/pull/14542
+#   https://github.com/pingdotgg/t3code/pull/29605
+#   https://github.com/pingdotgg/t3code/pull/28409
+#   packages/provider-acp/src/server/sessionConfig.ts (acpProviderOptionDescriptors, upstream)
 
 @mc
 Feature: Provider capabilities
@@ -62,10 +66,10 @@ Feature: Provider capabilities
     When the user switches the thread to Claude and sends a message
     Then Claude receives a transcript of the history ahead of the message
 
-  Scenario: A long transcript keeps its newest part
+  Scenario: A long transcript keeps every request and condenses the older work
     Given a thread whose history is longer than a provider's handover limit
     When the thread moves to another provider
-    Then the transcript keeps the newest history and drops the oldest
+    Then the transcript keeps every request whole, the newest work first, and condenses the older
 
   Scenario: Merging a fork back hands the fork's new work to the parent
     Given a fork with two turns the parent has not seen
@@ -189,6 +193,29 @@ Feature: Provider capabilities
     Then the diff shows the replaced lines
     And the diff is not empty just because the agent sent no patch
 
+  # Upstream #29605: the ACP reader threw away text after the last newline when the agent's output
+  # closed, so an answer written without one failed its request with "ACP input stream ended".
+  @backlog @priority-high
+  Scenario: An ACP agent's last message without a trailing newline is still read
+    Given an ACP agent answers a pending request without a trailing newline and then closes its output
+    When the MC reads the agent's output
+    Then the request receives the agent's answer
+    And it does not fail as though the agent's output ended unanswered
+
+  # Upstream #28409 (acpProviderOptionDescriptors): an ACP agent's own session options are its
+  # models' options, and the one in the thought_level category is the effort. The MC publishes only
+  # an ACP session's model list, so an agent's thinking levels, modes and switches never reach the
+  # composer.
+  @backlog
+  Scenario: An ACP agent's own session options are offered with its models
+    Given an ACP agent's session offers its own thinking levels, a mode and an on or off option
+    When the MC lists the agent's models
+    Then each model offers the agent's options under the agent's own ids and names
+    And the thinking levels are marked as the model's effort
+    And the on or off option is a switch
+    And the agent's session modes are one Mode option, unless the agent already offers them as an option
+    And the model and collaboration-mode options are left to the model and plan controls
+
   @backlog @priority-low
   Scenario: A registry agent declares its capabilities through its plugin
     Given a registry agent that declares it can be steered
@@ -217,6 +244,16 @@ Feature: Provider capabilities
       | age        | outcome                                                     |
       | 6 minutes  | "api" is scanned again and the dollar menu offers "deploy"  |
       | 2 minutes  | "api" is not scanned again and "deploy" is not offered yet  |
+
+  # Upstream #23174: a failed rescan that hands back the stale scan no longer counts as fresh
+  # for five minutes; the composer asks again after its ten-second wait, up to three times.
+  @backlog @shared @priority-low
+  Scenario: A rescan that fails and returns the stale skills is tried again shortly
+    Given the skills of folder "api" are stale
+    And rescanning "api" fails, so the stale skills are returned
+    When the user keeps editing the draft for more than ten seconds
+    Then "api" is asked for again, up to three times in all
+    And once a rescan succeeds the dollar menu offers the skills it found
 
   # Upstream #18309: a folder's skill scan is published even while the provider's health
   # check fails; commands it cannot read keep the last known ones instead of going empty.

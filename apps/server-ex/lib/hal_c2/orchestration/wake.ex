@@ -24,11 +24,13 @@ defmodule HalC2.Orchestration.Wake do
   Sends the wake `message` (`text`, `notification` and the like, merged into the
   `message.dispatch`) to `thread_id` in a task of its own. Its run is on the model of
   the latest run on provider instance `opts[:instance]`, the one that woke, or of the
-  latest run when it has none. `opts[:on_dropped]` runs, in that task, when no wake
-  will be sent: the thread was put away, or every try failed.
+  latest run when it has none. `opts[:message_id]` is the message's id, which is its
+  run's (`turn.ids.message`), so the caller can tell that run apart; a new one by
+  default. `opts[:on_dropped]` runs, in that task, when no wake will be sent: the
+  thread was put away, or every try failed.
   """
   def deliver(thread_id, message, opts \\ []) do
-    message_id = Entities.new_id("message")
+    message_id = opts[:message_id] || Entities.new_id("message")
 
     wake = %{
       thread_id: thread_id,

@@ -65,12 +65,12 @@ default, 12-hour or 24-hour) and locale. Each function takes a `Date`, an ISO
 8601 string or milliseconds since the epoch, and returns `""` for a missing or
 invalid time.
 
-| Function                | Gives                                   |
-| ----------------------- | --------------------------------------- |
-| `Format.time(at)`       | `18:05`, `6:05 PM`                      |
-| `Format.date(at)`       | `9/20`, or `9/20/2025` in another year  |
-| `Format.dateTime(at)`   | `9/20 18:05`                            |
-| `Format.relative(at)`   | `just now`, `5m ago`, `in 2h`, `3d ago` |
+| Function              | Gives                                   |
+| --------------------- | --------------------------------------- |
+| `Format.time(at)`     | `18:05`, `6:05 PM`                      |
+| `Format.date(at)`     | `9/20`, or `9/20/2025` in another year  |
+| `Format.dateTime(at)` | `9/20 18:05`                            |
+| `Format.relative(at)` | `just now`, `5m ago`, `in 2h`, `3d ago` |
 
 ```qml
 import HalC2.Bricks
@@ -116,10 +116,51 @@ What a running plugin adds reaches every app connected to that machine:
 - **Threads it starts** carry its mark in the thread list and its header above
   the conversation. A plugin can keep its threads out of the list and show them
   on its page instead. They stay on their machine while the plugin runs there.
-  Turn the plugin off and they are ordinary threads again, free to move.
+  Turn the plugin off and they are ordinary threads again, free to move, unless
+  the plugin keeps its threads on their machine for good, as Code Review does.
+  The threads it starts from then on cannot be moved or exported, even once the
+  plugin is off or removed. The ones it started before stay too, but only while
+  the plugin is installed.
 - **Settings** open from the plugin's entry in **Settings → Plugins**. What the
   plugin refuses stays unsaved, with its reason. A plugin that failed can be
   restarted there.
+
+### Plugins that watch your agents
+
+Some plugins help agents work: they cut wasted tokens, catch an agent going in
+circles, or keep notes across turns. What they ask for when you turn them on
+says how far they reach:
+
+- **See what agents do** lets a plugin follow every thread on the machine: the
+  tools agents call, what those return, and the tokens each turn uses. It can
+  also read the turns a thread ran before.
+- **Add context and turn tools off** lets it put a note ahead of the first
+  message of a new conversation and turn some of the agent's tools off. It is
+  asked once as the conversation starts, and the conversation keeps that answer
+  to its end. Claude turns off tools by name and Codex by capability; other
+  agents get the note alone.
+- **Send messages to agents** lets it steer a turn while that turn works, as if
+  you had typed into the composer.
+- **Show notices** lets it put a notice in a thread. A notice can offer
+  **Stop**, which stops the turn it is about while that turn works.
+- **Use your text model** lets it ask the **Text generation model** (**Settings
+  → General**) to write for it, on your account with that provider.
+
+### TokenEconomizer's micro-skills
+
+TokenEconomizer's micro-skills learn short facts about each project's
+environment from its turns: if agents in a project keep finding `pytest`
+missing and running the tests through `python -m pytest`, that becomes one
+line ("`pytest …` fails here with command not found; `python -m pytest …`
+works"). Once a fact has recurred often enough, a new conversation in the
+project is told it up front, so its agent skips the failing first attempt. A
+fact the evidence turns against -- the plain command starts working -- stops
+being stated on its own.
+
+Learning is per project and needs no model. It is off until you turn it on:
+under the plugin's **Settings**, set **Micro-skills** to **Learn environment
+facts**. Two settings there bound what a new conversation is told: **Most
+facts stated** and the facts' **token budget**.
 
 ## Connect Slack for plugins
 

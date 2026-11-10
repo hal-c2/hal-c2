@@ -16,8 +16,9 @@ defmodule HalC2.Web.Wire do
   rules starts over.
   """
 
-  @version 2
+  @version 4
   @max_detail 32_768
+  @truncated "\n… output truncated for transport"
   @cut_keys ~w(prompt progress result)
   @max_dynamic 16_384
   @dropped %{
@@ -150,25 +151,35 @@ defmodule HalC2.Web.Wire do
 
   # --- turn items ----------------------------------------------------------------
 
-  defp turn_item(%{"type" => "command_execution"} = item) do
+  defp turn_item(item), do: item |> turn_item_type() |> app_result()
+
+  # An MCP app's tool result is the tool's whole output, so it is bounded as an
+  # output is. The stored item keeps it whole.
+  defp app_result(%{"mcpApp" => %{"toolResult" => result} = app} = item),
+    do: %{item | "mcpApp" => %{app | "toolResult" => summarize(result)}}
+
+  defp app_result(item), do: item
+
+  defp turn_item_type(%{"type" => "command_execution"} = item) do
     item |> Map.delete("output") |> failed(item["exitCode"], item["outputIndicatesFailure"])
   end
 
-  defp turn_item(%{"type" => "file_change"} = item), do: Map.drop(item, @dropped["file_change"])
+  defp turn_item_type(%{"type" => "file_change"} = item),
+    do: Map.drop(item, @dropped["file_change"])
 
-  defp turn_item(%{"type" => "subagent"} = item) do
+  defp turn_item_type(%{"type" => "subagent"} = item) do
     Enum.reduce(@cut_keys, item, fn key, item ->
       if is_binary(item[key]), do: Map.put(item, key, cut(item[key])), else: item
     end)
   end
 
-  defp turn_item(%{"type" => "dynamic_tool"} = item) do
+  defp turn_item_type(%{"type" => "dynamic_tool"} = item) do
     Enum.reduce(~w(input output), item, fn key, item ->
       if Map.has_key?(item, key), do: Map.put(item, key, summarize(item[key])), else: item
     end)
   end
 
-  defp turn_item(item), do: item
+  defp turn_item_type(item), do: item
 
   defp turn_item_patch(type, patch, _was) when is_map_key(@dropped, type) do
     patch = drop(patch, @dropped[type])
@@ -178,25 +189,35 @@ defmodule HalC2.Web.Wire do
       else: patch
   end
 
-  # Sets are cut first: `cut_appends/2` measures an append against the set it follows
-  # as the client holds it, so a set past the limit leaves nothing to append to.
+  # Appends are measured against the set they follow as stored, before it is cut:
+  # a set past the limit leaves nothing to append to, and its cut form (which fits
+  # the limit, marker included) would say otherwise. The sets are cut after.
   defp turn_item_patch("subagent", patch, was) do
     patch
-    |> map_set(@cut_keys, &if(is_binary(&1), do: cut(&1), else: &1))
     |> cut_appends(was)
+    |> map_set(@cut_keys, &if(is_binary(&1), do: cut(&1), else: &1))
   end
 
-  defp turn_item_patch("dynamic_tool", patch, _was),
-    do: map_set(patch, ~w(input output), &summarize/1)
+  # A Codex MCP app item is a `dynamic_tool` that also carries the app's `mcpApp`.
+  defp turn_item_patch("dynamic_tool", patch, _was) do
+    patch
+    |> map_set(~w(input output), &summarize/1)
+    |> map_set(["mcpApp"], &app_result_field/1)
+  end
 
-  defp turn_item_patch(_type, patch, _was), do: patch
+  defp turn_item_patch(_type, patch, _was), do: map_set(patch, ["mcpApp"], &app_result_field/1)
+
+  defp app_result_field(%{"toolResult" => _} = app),
+    do: app_result(%{"mcpApp" => app}) |> Map.fetch!("mcpApp")
+
+  defp app_result_field(app), do: app
 
   # The client holds a subagent's text cut, as a snapshot has it. An append that keeps
   # the text under the limit goes through; one that takes it past is the cut text,
   # sent as a set; one to text already past it adds nothing, as the cut text is the
   # same first bytes whatever follows. The text appended to is the one the rest of
   # the patch leaves, as `HalC2.Patch.apply/2` has it: a delete or an unset empties
-  # it, a set (cut before this) replaces it.
+  # it, a set (still as stored here, cut after this) replaces it.
   defp cut_appends(%{"a" => appended} = patch, was) when is_map(appended) do
     Enum.reduce(appended, patch, fn
       {key, suffix}, patch when key in @cut_keys and is_binary(suffix) ->
@@ -272,11 +293,13 @@ defmodule HalC2.Web.Wire do
 
   defp cut(text) when byte_size(text) <= @max_detail, do: text
 
+  # The marker is part of the limit, so cut text fits it whole and cutting it
+  # again (a snapshot of what a live client already holds) changes nothing.
   defp cut(text) do
-    prefix = binary_part(text, 0, @max_detail)
+    prefix = binary_part(text, 0, @max_detail - byte_size(@truncated))
     # Never end mid-character.
     prefix = String.replace_invalid(prefix, "") |> String.trim_trailing(<<0xFFFD::utf8>>)
-    prefix <> "\n… output truncated for transport"
+    prefix <> @truncated
   end
 
   # A value past the limit becomes the first line of it, marked as cut.

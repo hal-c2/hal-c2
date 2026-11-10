@@ -6,7 +6,10 @@
 #include <QString>
 #include <QUrl>
 
+#include "PreviewHistory.h"
+
 #include <functional>
+#include <optional>
 #include <utility>
 
 class McClient;
@@ -23,7 +26,8 @@ class McClient;
 // from `suggestions`: the web servers
 // listening on the MC's machine (its `localServers` shape, followed only
 // while the list shows), the project's configured preview addresses and the
-// pages this device opened last. navigate(tabId, url) is `preview.navigate`,
+// pages this device visited last in the project's tabs (PreviewHistory: each
+// page a tab of the thread shown loads, whether or not the tab is drawn). navigate(tabId, url) is `preview.navigate`,
 // and opens the page in the browser.
 //
 // A page opens with openAddress(): a dev server's loopback address on a
@@ -46,8 +50,9 @@ class ThreadPreviews : public QAbstractListModel {
   // idle, loading, ready or failed: the list itself, not its tabs.
   Q_PROPERTY(QString status READ status NOTIFY statusChanged)
   Q_PROPERTY(QString message READ message NOTIFY statusChanged)
-  // What an empty tab offers: [{url, label, kind}], kind "server",
-  // "configured" or "recent"; each address once.
+  // What an empty tab offers: [{url, label, kind, title, detail}], kind
+  // "server", "configured" or "recent", a recent page also with `visitedAt`
+  // (ms since the epoch); each page once, whatever its anchor.
   Q_PROPERTY(QVariantList suggestions READ suggestions NOTIFY suggestionsChanged)
   // The first tab with no page yet (what `suggestions` would fill), or "".
   Q_PROPERTY(QString emptyTab READ emptyTab NOTIFY emptyTabChanged)
@@ -66,9 +71,9 @@ public:
 
   using Notify = std::function<void(const QString& type, const QString& title, const QString& description)>;
   using Open = std::function<void(const QUrl& url)>;
-  // The pages this device opened last, newest first: read, and written.
-  using Recents = std::function<QStringList()>;
-  using Remember = std::function<void(const QStringList& urls)>;
+  // The device's PreviewHistory as it keeps it (toVariant): read, and written.
+  using History = std::function<QVariant()>;
+  using Keep = std::function<void(const QVariant& history)>;
   // Whether the MC the shell is connected to runs on this machine.
   using Here = std::function<bool()>;
   static constexpr int maxRecents = 10;
@@ -91,7 +96,9 @@ public:
   void setSuggesting(bool suggesting);
   // The preview addresses the thread's project configures (its scripts' previewUrl).
   void setConfigured(const QStringList& urls);
-  void setRecents(Recents read, Remember write);
+  void setHistory(History read, Keep write);
+  // The project the thread is in, whose history the suggestions show and visits join.
+  void setProject(const QString& project);
   // Only a connected MC on this machine forwards to this machine's loopback;
   // without one every MC counts as here.
   void setConnectedHere(Here here) { m_connectedHere = std::move(here); }
@@ -104,6 +111,8 @@ public:
   Q_INVOKABLE void reload();
   // Opens the tab's page in the browser.
   Q_INVOKABLE void open(const QString& tabId);
+  // Takes the page off the project's recent pages.
+  Q_INVOKABLE void forget(const QString& url);
   Q_INVOKABLE void close(const QString& tabId);
   // An empty tab on the MC.
   Q_INVOKABLE void newTab();
@@ -121,12 +130,25 @@ public:
   Q_INVOKABLE void show(const QString& tabId);
   // The tab as the MC last said, or {} when there is none.
   QJsonObject tab(const QString& tabId) const;
+  // The kind of MC event ("navigated", "resized", ...) that last changed the
+  // tab, empty when a list did: what a page reads to tell a report's echo from
+  // news that is not about its address.
+  QString lastEvent(const QString& tabId) const { return m_lastEvent.value(tabId); }
+  // Why the MC did not take a report: it said no (Refused), the connection
+  // was down so it never went (Unsent), or the answer did not come (the
+  // connection dropped, the cluster member was unreachable, the call timed
+  // out), so the MC may have it anyway (Dropped). Heard: it took it.
+  enum class Unheard { Refused, Unsent, Dropped, Heard };
   // What the page showing the tab did: `preview.reportStatus`, navStatus a
-  // PreviewNavStatus.
-  void report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward);
+  // PreviewNavStatus. `unheard` runs when the call is answered, with why not
+  // when the MC did not say it took it; false (and it never runs) when no
+  // call was made.
+  bool report(const QString& tabId, const QJsonObject& navStatus, bool canGoBack, bool canGoForward,
+              std::function<void(Unheard)> unheard = {});
   // The size the tab's page is shown at: `preview.resize`, viewport a
-  // PreviewViewportSetting. `failed` runs when the MC refused it.
-  void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const QString&)> failed = {});
+  // PreviewViewportSetting. `done` runs once the MC answers, with why it
+  // refused; the tab changes with the MC's event.
+  void resizeTab(const QString& tabId, const QJsonObject& viewport, std::function<void(const std::optional<QString>&)> done = {});
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -139,6 +161,9 @@ signals:
   void emptyTabChanged();
   // The MC said something new of the tab, or it went.
   void tabChanged(const QString& tabId);
+  // The MC listed the thread's tabs (on showing, a reload, a reconnect); the
+  // rows that changed said so first.
+  void listed();
   // Embedded: the tab is to be shown: the user asked (show, newTab,
   // openAddress), or someone opened it just now (an agent, another window).
   void showRequested(const QString& tabId);
@@ -155,6 +180,10 @@ private:
   void openThroughTab(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc,
                       const QList<QJsonObject>& tabs);
   void onEvent(const QJsonObject& event);
+  // Files the pages the snapshots show under the project: as visits when the
+  // tabs `loaded` them just now, else as PreviewHistory::seen.
+  void remember(const QList<QJsonObject>& snapshots, bool loaded);
+  void keep(const std::function<bool(PreviewHistory&)>& change);
   void setStatus(const QString& status, const QString& message = {});
   int rowOf(const QString& tabId) const;
   void upsert(const QJsonObject& snapshot);
@@ -173,9 +202,12 @@ private:
   int m_subscription = -1;
   // Replies for another thread (or an older load) are dropped.
   int m_generation = 0;
+  // A report found the thread's environment out of reach; its next event relists.
+  bool m_unreached = false;
   QString m_epoch;
   qint64 m_revision = -1;
   QList<QJsonObject> m_rows;
+  QHash<QString, QString> m_lastEvent;
   // Tabs being closed: their events do not bring them back.
   QSet<QString> m_closing;
   // A list is on its way; the thread's events since it was asked for, which it may predate.
@@ -185,8 +217,11 @@ private:
   // The MC's machine's web servers: {url, processName}.
   QList<QJsonObject> m_serverList;
   QStringList m_configured;
-  Recents m_readRecents;
-  Remember m_writeRecents;
+  History m_readHistory;
+  Keep m_writeHistory;
+  QString m_project;
+  // The newest `updatedAt` the thread's MC sent, ms: when a page taken off was taken off.
+  qint64 m_newestStamp = 0;
   QString m_status = QStringLiteral("idle");
   QString m_message;
 };

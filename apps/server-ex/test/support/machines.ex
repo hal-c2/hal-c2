@@ -291,6 +291,17 @@ defmodule HalC2.Test.Machines do
     HalC2.Checkpoint.turn_diff(state, id, from, to, false)
   end
 
+  @doc """
+  A checkout of one repository at `root`: a thread move picks the destination project by
+  the origin, and git must not find an origin above the scratch folders (the suite sets a
+  git ceiling).
+  """
+  def shop_checkout(root) do
+    File.mkdir_p!(root)
+    HalC2.Test.Mc.World.git!(root, ~w(init -q -b main))
+    HalC2.Test.Mc.World.git!(root, ~w(remote add origin https://github.com/acme/shop.git))
+  end
+
   @doc "Creates a project on this MC and waits until its row is stored."
   def create_project(id, title, root) do
     {:ok, _} =
@@ -409,9 +420,19 @@ defmodule HalC2.Test.Machines do
     Application.put_env(:hal_c2, :acp_commands, Map.put(commands, instance, command))
     HalC2.Acp.forget(instance)
 
-    # The registry lists the agent, as if it had been fetched just now.
+    # The registry lists the agent, as if it had been fetched just now, with a build for
+    # this machine so the instance is ready (`HalC2.Acp.Catalog.readiness/1`); the
+    # override above is what runs.
     if agent_id do
-      agent = %{"id" => agent_id, "name" => agent_id, "version" => "1.0.0", "distribution" => %{}}
+      build = %{HalC2.Acp.Catalog.platform() => %{"archive" => "unused", "cmd" => "./agent"}}
+
+      agent = %{
+        "id" => agent_id,
+        "name" => agent_id,
+        "version" => "1.0.0",
+        "distribution" => %{"binary" => build}
+      }
+
       now = System.system_time(:millisecond)
       :persistent_term.put({HalC2.Acp.Catalog, :index}, {now, [agent]})
     end
@@ -469,6 +490,7 @@ defmodule HalC2.Test.Machines do
         "env",
         "FAKE_CLAUDE_ARGV_LOG=" <> Path.join(home, "claude-argv.jsonl"),
         "FAKE_CLAUDE_INPUT_LOG=" <> Path.join(home, "claude-inputs.jsonl"),
+        "FAKE_CLAUDE_MCP_LOG=" <> Path.join(home, "claude-mcp.jsonl"),
         "python3",
         "-u",
         fake.("fake_claude.py")

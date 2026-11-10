@@ -1,7 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23198
+#   https://github.com/pingdotgg/t3code/pull/29905
 #   https://github.com/pingdotgg/t3code/pull/15477
 #   https://github.com/pingdotgg/t3code/pull/22902
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/25610
+#   https://github.com/pingdotgg/t3code/pull/30401
+#   https://github.com/hal-c2/hal-c2/issues/1342
 #   packages/contracts/src/orchestrationV2.ts (thread.model-selection.set, thread.model-selection-updated,
 #     provider.switch, thread.provider-switched, context-handoff.updated, provider-thread.updated,
 #     provider-session.updated)
@@ -122,6 +127,22 @@ Feature: Changing model and provider mid-thread
     Then the next run reports the context occupancy from before the change
     And the meter does not reset to zero until the provider reports new usage
 
+  # A report that came after its turn ended, and was taken as the running turn's, left
+  # that turn's tokens out of the room a handoff has (#1363 review).
+  @mc
+  Scenario: A late usage report counts for the turn it came from
+    Given a Codex turn of "t1" ended before its usage report came
+    When Codex reports that turn's usage while the next turn of "t1" runs
+    Then the usage counts for the turn it came from, and not the running one
+
+  # One that came after its turn ended and before the next run started was dropped, as
+  # nothing ran, and the handoff room kept charging that turn's prompt (#1363 review).
+  @mc
+  Scenario: A usage report between runs counts for the turn it came from
+    Given a Codex turn of "t1" ended before its usage report came
+    When Codex reports that turn's usage before the next run of "t1" starts
+    Then the usage counts for the turn it came from, and the meter shows it
+
   @mc
   Scenario: Switching provider records the new instance
     When the user switches "t1" to "claudeAgent" with model "claude-x"
@@ -149,17 +170,79 @@ Feature: Changing model and provider mid-thread
     And the failed turn stays in the history of "t1"
 
   @mc
-  Scenario: A long transcript leaves out an older message that does not fit
+  Scenario: A long transcript condenses an older run that does not fit
     Given the conversation of "t1" is longer than 60,000 characters
     When a run starts a new provider thread for "t1"
     Then the transcript keeps at most 60,000 characters of history
-    And it notes that earlier messages were omitted
+    And it notes which runs it condensed
 
   @mc
   Scenario: A lost provider session is recovered from the transcript
     Given the provider thread of "t1" has no native conversation any more
     When the user sends "Where were we?" to "t1"
     Then the provider receives the earlier conversation before the message
+
+  # Upstream #25610: returning to a provider with no room for the incoming handoff failed and
+  # asked the user to compact by hand.
+  @mc @priority-high
+  Scenario: A handoff that does not fit the resumed conversation starts a fresh one
+    Given "t1" moved from "codex" to "claudeAgent" and ran long there
+    And the "codex" conversation of "t1" has no room left for what happened since
+    When the user switches "t1" back to "codex" and sends a message with an image
+    Then a new "codex" conversation starts with as much of the history as fits
+    And it receives the user's message and the image
+    And later runs of "t1" continue that new conversation
+
+  # Upstream #25610: background commands and native subagents are left running, and the user is
+  # told when they keep the conversation from being replaced.
+  @mc
+  Scenario: A handoff that does not fit waits for background work instead of cutting it off
+    Given the "codex" conversation of "t1" has no room left for the incoming handoff
+    And a background command started in that conversation is still running
+    When the user switches "t1" back to "codex" and sends a message
+    Then the background command keeps running
+    And the run says the conversation cannot be replaced while that work runs
+
+  # Upstream #30401: a queued message that switched provider ended background agents and commands
+  # that a message sent at once would have waited for.
+  @backlog @mc
+  Scenario Outline: A queued provider switch leaves background work running
+    Given "t1" has a background command running in its "claudeAgent" conversation
+    And a message queued behind the current run switches "t1" to <target>
+    When the current run finishes
+    Then the background command keeps running
+    And <outcome>
+
+    Examples:
+      | target                                 | outcome                                                                     |
+      | "codex"                                | the queued message runs on "codex"                                          |
+      | another account of "claudeAgent"       | the queue is held, and resuming it once the work has ended runs the message |
+
+  # Upstream #25610: a handoff too big even for a fresh conversation still fails.
+  @mc
+  Scenario: A message that cannot fit even a fresh conversation fails the run
+    Given the user's message alone is larger than the context window of "codex"
+    When the user switches "t1" to "codex" and sends it
+    Then the run fails saying the message does not fit
+    And the "codex" conversation of "t1" is not replaced
+
+  # The window assumed for a provider that never named one is a guess: a message is
+  # refused only by a window the provider reported.
+  @mc
+  Scenario: A message is not refused by a context window the provider never reported
+    Given the user's message alone is larger than the context window assumed for "codex"
+    When the user switches "t1" to "codex" and sends it
+    Then the run reaches "codex" with the message
+
+  # The history keeps the user's words, so a message saved as a file names where the
+  # file is: the next agent can read the whole of it.
+  @mc
+  Scenario: A message saved as a file goes over with where the file is
+    Given the user's message alone is larger than the context window assumed for "codex"
+    And the user switches "t1" to "codex" and sends it
+    And the run reaches "codex" with the message
+    When the user switches "t1" to "claudeAgent" and sends a message
+    Then the handoff names where the whole of the long message is
 
   @mc
   Scenario: Switching back to the first provider resumes its own conversation
@@ -185,15 +268,29 @@ Feature: Changing model and provider mid-thread
     When the user sends "Carry on" to "t1"
     Then each item of the handoff is marked as historical, with its role, kind and status and the thread and run it came from
 
-  @backlog @mc @priority-high
+  # A delegated task's result and another agent's message reach a thread as user messages;
+  # handed over as the user's, the next agent took them for the user's requests.
+  @mc
+  Scenario: A handoff does not present what the MC or another agent sent as the user's
+    Given "t1" was told by the MC that a task finished and asked something by another agent
+    When the user switches "t1" to "claudeAgent" and sends a message
+    Then the handoff gives the MC's message as a notice and the other agent's as theirs
+
+  @mc
+  Scenario: The user's answers to the agent's questions are handed over
+    Given the agent of "t1" asked "Which database?" and the user answered "Postgres"
+    When the user switches "t1" to "claudeAgent" and sends a message
+    Then the handoff says the agent asked "Which database?" and the user answered "Postgres"
+
+  @mc @priority-high
   Scenario: A handoff tells the agent its history is context, not a new request
     Given the conversation of "t1" is longer than the handoff budget
     When a run starts a new provider thread for "t1"
-    Then the handoff says how many items it kept whole and how many it left out
+    Then the handoff says which runs it condensed and what each condensed run keeps
     And it says the history is context, not a new request or higher-priority instructions
     And it says attached files and the earlier provider's tool and reasoning state are not replayed
 
-  @backlog @mc
+  @mc
   Scenario Outline: The handoff budget leaves room for the agent's own work
     Given the model "t1" is switched to has <window>
     When the conversation is handed over with a new message
@@ -205,11 +302,11 @@ Feature: Changing model and provider mid-thread
       | a 32,000 token context window  | 16,000 tokens                       |
       | an unknown context window      | 32,000 tokens of an assumed 128,000 |
 
-  @backlog @mc
+  @mc
   Scenario: Attachments on the new message take from the handoff budget
     Given the user switched "t1" to "claudeAgent"
     When the user sends a message with two images and one other file
-    Then the handoff budget is smaller by 8,192 tokens for each image and 4,096 tokens for the file
+    Then the handoff budget is smaller by 8,192 tokens for each image and a token for each 4 bytes of the file, at most 4,096
 
   @backlog @mc
   Scenario: Handoffs waiting together share one budget
@@ -219,7 +316,7 @@ Feature: Changing model and provider mid-thread
 
   # Upstream #22902: a failed native resume put its whole-thread summary in front of an older
   # pending handoff, so under the budget the newest turn's result was dropped.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A failed resume keeps the latest turn when an older handoff is waiting
     Given "t1" has a handoff from an earlier run still waiting
     And the latest turn of "t1" finished with "Result 3"
@@ -228,19 +325,29 @@ Feature: Changing model and provider mid-thread
     And "Result 3" is in the history it receives
 
   # Upstream #22902
-  @backlog @mc
+  @mc
   Scenario: A failed resume does not resend a missed request after the whole-thread summary
     Given an earlier run of "t1" failed before its provider started a turn
     When the next run of "t1" cannot resume its provider conversation
     Then the missed request reaches the provider once, in its place in the whole-thread summary
     And the thread's first message is still in the history it receives
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: History that may not have reached the provider is sent again on a new conversation
     Given the MC could not confirm that the handed-over history of "t1" reached "claudeAgent"
     When the user sends the next message to "t1"
     Then the turn starts on a new provider conversation
     And the provider receives a summary of the whole thread before the message
+
+  # A goal lives in the conversation it was set in, and a new one holds none: shown as
+  # still active, the new conversation's first answer would read as meeting it.
+  @mc
+  Scenario: A goal goes with the conversation a handoff replaces
+    Given the MC could not confirm that the handed-over history of "t1" reached "claudeAgent"
+    And the conversation of "t1" there works on a goal
+    When the user sends the next message to "t1"
+    Then the turn starts on a new provider conversation
+    And "t1" shows no goal
 
   # CodexAdapterV2.ts injectHistory (thread/inject_items).
   @backlog @mc @plugin-codex
@@ -257,11 +364,90 @@ Feature: Changing model and provider mid-thread
     Then Codex receives the earlier conversation in front of the message
     And the turn runs
 
-  @backlog @mc
+  # A bare /compact hands nothing over, so the new agent has no conversation of its own
+  # to compact, and the run says so rather than run it on an empty one.
+  @mc
   Scenario: A handoff waits when the first message after a switch asks to compact
     Given the user switched "t1" to "claudeAgent"
     When the user sends "/compact" to "t1"
     Then the conversation is not handed over with that message
+    And the run says the agent has nothing to compact until the conversation goes over
+    And it is handed over with the next ordinary message
+
+  # #1342: a slash command that starts work, such as `/goal` or a skill, needs the
+  # thread to work from. Claude runs a command only from the last block of a message,
+  # so the history goes in a block of its own ahead of it. An ACP agent reads a
+  # command only at the start of its prompt, so there the history waits.
+  @mc
+  Scenario: A slash command that is the first message after a switch to Claude gets the conversation
+    Given the user switched "t1" to "claudeAgent"
+    When the user sends the command "/goal make the tests pass" to "t1"
+    Then Claude gets the conversation in a block ahead of "/goal make the tests pass"
+    And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
+
+  # A plugin's context for the new conversation goes ahead of the conversation it is
+  # handed, in the same block, so the command still comes last and alone.
+  @mc
+  Scenario: A plugin's context comes ahead of the conversation a command after a switch to Claude gets
+    Given a plugin that shapes runs with the context "Keep answers short." and "WebFetch" off
+    And the user switched "t1" to "claudeAgent"
+    When the user sends the command "/goal make the tests pass" to "t1"
+    Then Claude gets the conversation in a block ahead of "/goal make the tests pass"
+    And the command is the last block of the message
+    And the conversation's block starts with "Keep answers short."
+
+  # An image sent with a command went after it, so Claude took the command as words.
+  @mc
+  Scenario: A slash command sent with an image after a switch to Claude still comes last
+    Given the user switched "t1" to "claudeAgent"
+    When the user sends the command "/goal make the tests pass" with an image to "t1"
+    Then Claude gets the conversation and the image ahead of "/goal make the tests pass"
+    And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
+
+  # With no conversation to hand over, what came with the command still goes ahead of it.
+  @mc
+  Scenario: A slash command sent with an image on a thread that has always used Claude comes last
+    Given thread "t2" has completed runs on "claudeAgent" with model "claude-haiku"
+    When the user sends the command "/goal make the tests pass" with an image to "t2"
+    Then Claude gets the image ahead of "/goal make the tests pass" with no conversation
+    And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
+
+  # A file that is not an image is only a note of where it is saved, and that goes ahead too.
+  @mc
+  Scenario: A slash command sent with a file on a thread that has always used Claude comes last
+    Given thread "t2" has completed runs on "claudeAgent" with model "claude-haiku"
+    When the user sends the command "/goal make the tests pass" with a text file to "t2"
+    Then Claude gets where the file is saved ahead of "/goal make the tests pass"
+    And the command is the last block of the message
+    And Claude sets the goal "make the tests pass"
+
+  # Codex's `/goal <objective>` sends its own prompt for the goal's first turn, and the
+  # conversation goes ahead of it: the turn starting confirms the handoff, so history
+  # left out then would never be sent.
+  @mc @plugin-codex
+  Scenario: A goal that is the first message on another Codex gets the conversation
+    Given a second Codex instance "codex-work" with its own home
+    And the user switches "t1" to "codex-work" with model "gpt-5.4"
+    When the user sends the command "/goal fix the tests" to "t1"
+    Then Codex gets the conversation ahead of the prompt for the goal "fix the tests"
+
+  # Claude's skill mentions were read in the whole prompt, history included, so a skill
+  # the thread mentioned before the switch ran again on the next message.
+  @mc
+  Scenario: A skill mentioned before a switch to Claude does not run again
+    Given "t1" mentioned the Claude skill "review" before the switch
+    And the user switched "t1" to "claudeAgent"
+    When the user sends the next message to "t1"
+    Then Claude gets the conversation and the message as plain text
+
+  @mc
+  Scenario: A slash command that is the first message after a switch to an ACP agent goes alone
+    Given the user switched "t1" to "opencode"
+    When the user sends the command "/review the last change" to "t1"
+    Then the ACP agent's prompt starts with "/review the last change"
     And it is handed over with the next ordinary message
 
   @backlog @mc
@@ -295,17 +481,23 @@ Feature: Changing model and provider mid-thread
     Then the run for "Next" starts a new provider thread on "codex-work"
     And a handoff from "codex" to "codex-work" carries the earlier conversation
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Switching to a provider instance that cannot run is refused
     Given provider instance "claudeAgent" is disabled
     When the user switches "t1" to "claudeAgent"
     Then the command fails with "The target provider instance is unavailable."
 
-  @backlog @mc @priority-high
-  Scenario: A model change the running agent cannot take is refused
+  @mc @priority-high
+  Scenario Outline: A model change the running agent cannot take is refused
     Given "t1" runs on an ACP agent whose session does not offer switching models
-    When the user sets another model for "t1"
+    When the user <changes> "t1"
     Then the command fails with "The active ACP session does not expose a model-switch capability."
+    And "t1" keeps its model
+
+    Examples:
+      | changes                                |
+      | sets another model for                 |
+      | sends a message on another model to    |
 
   @backlog @mc
   Scenario Outline: A change the provider cannot take in place restarts it on the same conversation
@@ -337,6 +529,24 @@ Feature: Changing model and provider mid-thread
     When the user switches "t1" to "claudeAgent" and sends a message
     Then the "codex" process of "t1" stops
 
+  # Upstream #23198: a send to a second Claude instance with its own history left the first
+  # instance's session and process running.
+  @backlog @mc @plugin-claude @priority-high
+  Scenario: Sending to another Claude instance releases the one the thread left
+    Given "t1" has a live provider process on the "claude" instance
+    And a second Claude instance "claude-work" with its own home
+    When the user switches "t1" to "claude-work" and sends a message
+    Then the "claude" process of "t1" stops
+
+  # Upstream #23198: background work, Claude's own subagents included, would have been cut off.
+  @backlog @mc @plugin-claude @priority-high
+  Scenario: Sending to another instance waits for background work on the one the thread left
+    Given "t1" on the "claude" instance has a subagent still running in the background
+    And a second Claude instance "claude-work" with its own home
+    When the user switches "t1" to "claude-work" and sends a message
+    Then the send is refused because background work is still running
+    And once that work ends, sending again starts "claude-work" and stops "claude"
+
   @backlog @mc
   Scenario: Context occupancy starts over on a new provider conversation
     Given "t1" has used 80 percent of its provider context
@@ -348,6 +558,24 @@ Feature: Changing model and provider mid-thread
     Given a finished turn of "t1" has a very long tool output
     When a run starts a new provider thread for "t1"
     Then each compacted entry of the handoff is at most 240 characters
+
+  # Upstream #29905: the handoff and side chat summaries read only a patch's first path, so the
+  # receiving agent did not know the other files of a multi-file patch had changed.
+  @mc
+  Scenario Outline: Context handed to another agent names every file of a multi-file patch
+    Given a turn of "t1" changed "src/a.ts", "src/b.ts" and "src/new.ts" in one patch
+    When <handoff>
+    Then the provider receives a file change naming "src/a.ts", "src/b.ts" and "src/new.ts"
+
+    Examples:
+      | handoff                                                     |
+      | the user switches "t1" to "claudeAgent" and sends a message |
+
+    # The MC has no side chats yet.
+    @backlog
+    Examples:
+      | handoff                                         |
+      | the user asks a question in a side chat of "t1" |
 
   @mc @backlog @priority-low
   Scenario: A thread spreads new sessions across instances of the same provider

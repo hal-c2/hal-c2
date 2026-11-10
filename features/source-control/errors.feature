@@ -185,6 +185,7 @@ Feature: When source control goes wrong
     And the remaining lookups fail as rate limited without being sent
     And Bitbucket is asked again once its Retry-After has passed, or after 30 seconds doubling to at most 15 minutes
 
+  # Upstream #23889: a user's own Bitbucket action goes out while background reads are paused.
   @backlog @mc
   Scenario: A user's own Bitbucket action goes out while background reads are paused
     Given the MC's background reads of Bitbucket are paused by a rate limit

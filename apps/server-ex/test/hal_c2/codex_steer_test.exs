@@ -15,7 +15,7 @@ defmodule HalC2.CodexSteerTest do
   end
 
   # A definite refusal is not a delivery, however long the runtime then takes to
-  # settle: only the steer call's own timeout may be answered `:ok`.
+  # settle: only the steer call's own timeout may be answered `:held`.
   test "a refused steer whose settle is held still answers the refusal" do
     Application.put_env(:hal_c2, :codex_steer_settle_timeout_ms, 50)
     stand_in("thread-1", {:error, "turn moved on"})
@@ -28,11 +28,11 @@ defmodule HalC2.CodexSteerTest do
     Application.put_env(:hal_c2, :codex_steer_timeout_ms, 50)
     stand_in("thread-1", :hold)
 
-    assert :ok = ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []})
+    assert :held = ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []})
   end
 
   # A timeout from the provider call nested inside the runtime kills the
-  # runtime with that inner call's exit; it must not be answered `:ok`.
+  # runtime with that inner call's exit; it must not be answered `:held`.
   test "a steer whose runtime dies on its nested provider call is not held" do
     stand_in("thread-1", :inner_timeout)
 

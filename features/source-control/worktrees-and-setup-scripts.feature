@@ -1,4 +1,8 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27778
+#   https://github.com/pingdotgg/t3code/pull/28373
+#   https://github.com/pingdotgg/t3code/pull/25212
+#   https://github.com/pingdotgg/t3code/pull/27815
 #   https://github.com/pingdotgg/t3code/pull/15833
 #   https://github.com/pingdotgg/t3code/pull/21032
 #   https://github.com/pingdotgg/t3code/pull/11773
@@ -12,6 +16,8 @@
 #   https://github.com/pingdotgg/t3code/pull/13314
 #   https://github.com/pingdotgg/t3code/pull/21099
 #   https://github.com/pingdotgg/t3code/pull/18359
+#   https://github.com/pingdotgg/t3code/pull/25700
+#   https://github.com/pingdotgg/t3code/pull/26758
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
 #   packages/contracts/src/worktreeSetup.ts (WorktreeSetupSnapshot, stages, phases)
@@ -32,6 +38,9 @@
 #   apps/server/src/vcs/GitVcsDriverCore.ts (renameBranch, resolveAvailableBranchName)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (createWorktree: checkout progress, timeouts, base ref, folder name)
 #   apps/server/src/project/ProjectSetupScriptRunner.ts, WorktreeSetupTracker.ts (output cleaning and caps)
+#   https://github.com/pingdotgg/t3code/pull/23576
+#   https://github.com/pingdotgg/t3code/pull/29645
+#   https://github.com/pingdotgg/t3code/pull/23241
 
 Feature: Worktrees and setup scripts
   A thread can start in its own worktree. The MC creates it from a base ref, runs the
@@ -62,6 +71,22 @@ Feature: Worktrees and setup scripts
     When the user starts a thread in a new worktree based on "release/2"
     Then the worktree starts from "release/2"
 
+  # Upstream #23241: a base picked before the branch had loaded stayed at "main" (or a stale
+  # branch); until the user edits it, the base now follows the branch the checkout is on.
+  @backlog @shared
+  Scenario: An untouched worktree base follows the branch once it loads
+    Given the user is choosing a new worktree before the checkout's branch has loaded
+    When the checkout's branch loads as "release/stable"
+    Then the new worktree's base is "release/stable"
+
+  # Upstream #23241: a base the user edited is kept, even cleared.
+  @backlog @shared @priority-low
+  Scenario: A worktree base the user edited is kept when the branch loads
+    Given the user is choosing a new worktree before the checkout's branch has loaded
+    And the user has cleared the base
+    When the checkout's branch loads as "release/stable"
+    Then the new worktree's base is still empty
+
   @mc
   Scenario: A new worktree is made under the HAL-C2 home by default
     When a worktree is created for the branch "feature/tax" with no path given
@@ -75,7 +100,7 @@ Feature: Worktrees and setup scripts
 
   # Upstream #21032: a new worktree fetched origin even when its base branch tracks another
   # remote; it now fetches the base's own upstream, and a base that tracks nothing still uses origin.
-  @backlog @mc
+  @mc
   Scenario: A new worktree starts from the remote its base branch tracks
     Given the project starts worktrees from origin and "shop" has the remotes "origin" and "upstream"
     And the base branch "main" tracks "upstream/main"
@@ -83,7 +108,7 @@ Feature: Worktrees and setup scripts
     Then "upstream/main" is fetched and the worktree starts from it
 
   # Upstream #21032: a base whose remote branch was deleted starts from the local branch.
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A base whose remote branch is gone starts from the local branch
     Given the project starts worktrees from origin
     And the base branch "feature/tax" tracks a remote branch that was deleted
@@ -91,13 +116,25 @@ Feature: Worktrees and setup scripts
     Then the worktree starts from the local "feature/tax"
     And no stale remote-tracking ref is used
 
-  @backlog @mc
+  @mc
   Scenario: A fetch that loses a ref race with another fetch is tried again
     Given the project starts worktrees from origin
     And a background fetch of "origin" holds "origin/main" while the worktree's fetch runs
     When git reports it could not update "refs/remotes/origin/main"
     Then the worktree's fetch is tried once more and the worktree is made
     And a lock failure that persists tells the user a local reference could not be updated
+
+  # Upstream #25700: worktrees share one Git config, and parallel launches lost the race for its
+  # lock: branches without worktrees, renames that failed, lost base records and upstreams.
+  # The MC gives a new branch no upstream (a branch started from origin/main must not push to main),
+  # so of upstream's records only the base is kept here.
+  @mc @priority-high
+  Scenario: Threads launched in new worktrees of one repository at once all get their worktrees
+    Given the project starts worktrees from origin
+    When 12 threads are launched in new worktrees of the project at the same moment
+    Then each thread has its own worktree on its own branch
+    And each branch records the base it started from
+    And each temporary branch is renamed from its thread's first message
 
   @mc
   Scenario: Without a remote the fetch stage is skipped
@@ -117,6 +154,20 @@ Feature: Worktrees and setup scripts
     Given the branch "feature/add-tax" already exists
     When the temporary branch of a new worktree is renamed to "feature/add-tax"
     Then the worktree's branch is "feature/add-tax-1"
+
+  # Upstream #27815: with a branch named like the prefix, git refused every nested generated name
+  # and the thread stayed on its temporary branch with only a logged warning.
+  @mc
+  Scenario Outline: A generated name blocked by a branch at its parent path is flattened
+    Given the branch "<existing>" already exists
+    When the temporary branch of a new worktree is renamed to "hal-c2/fix-login"
+    Then the worktree's branch is "<result>"
+
+    Examples:
+      | existing                              | result               |
+      | hal-c2                                | hal-c2-fix-login     |
+      | hal-c2 and hal-c2-fix-login           | hal-c2-fix-login-1   |
+      | hal-c2 and hal-c2-fix-login/child     | hal-c2-fix-login-1   |
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (resolveAvailableBranchName: 100 candidates)
   @mc
@@ -194,6 +245,26 @@ Feature: Worktrees and setup scripts
     And nothing is still writing where the worktree was
     And neither the worktree nor its new branch is left in "shop"
 
+  # Upstream #28373: a worktree that git could not add, as when its folder already existed, left
+  # its new branch behind, so a retry with the same name failed on the branch.
+  @backlog @mc
+  Scenario: A worktree git cannot add leaves no new branch behind
+    Given the folder for the new worktree of "shop" already exists
+    When the user sends the first message of a thread in a new worktree
+    Then the setup fails with git's own error
+    And the new branch is not left in "shop"
+    And trying again with the same branch name is not refused for the branch
+
+  # Upstream #27778: git commands whose errors the MC reads forced the C locale on the hooks they
+  # ran, so a hook that needs UTF-8 failed only inside HAL-C2.
+  @backlog @mc
+  Scenario: A worktree's checkout hook runs in the user's locale
+    Given "shop" has a post-checkout hook that fails unless the locale is UTF-8
+    And the user's locale is UTF-8
+    When the user sends the first message of a thread in a new worktree
+    Then the hook passes and the worktree is ready
+    And an existing branch of the same name is still reported as already existing
+
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (WORKTREE_ADD_TIMEOUT_MS, WORKTREE_REMOVE_TIMEOUT_MS)
   @mc
   Scenario Outline: Creating and removing a worktree is given minutes, not seconds
@@ -235,6 +306,21 @@ Feature: Worktrees and setup scripts
   Scenario: A branch with slashes gets a single folder name
     When a worktree is created for the branch "feature/tax/rates" with no path given
     Then its folder under the repository's name is "feature-tax-rates"
+  # Upstream #25212: a long branch name made a folder past the filesystem's limit, so checkout failed.
+  @mc
+  Scenario: A long branch gets a short folder name of its own
+    Given two branches of 280 characters that share their first 200
+    When a worktree is created for each with no path given
+    Then each folder name is 40 characters: the start of the branch and a hash of the whole name
+    And the two folders differ
+    And each branch keeps its full name
+
+  # Upstream #25212: names cut short never split a character.
+  @mc @priority-low
+  Scenario: A long branch name is never cut through a character
+    When a worktree is created with no path given for a long branch whose 40th character is an emoji
+    Then its folder name holds whole characters only
+
 
   @mc
   Scenario: Submodule initialization is its own setup stage
@@ -297,6 +383,34 @@ Feature: Worktrees and setup scripts
       | prints a line that looks like a completion mark |
       | is a few lines long with a here-document        |
       | has a syntax error on its last line             |
+
+  # Upstream #23576: the script's end was written for the configured shell, not the one that
+  # started, so a fish fallback never saw its end and setup kept waiting.
+  @mc
+  Scenario Outline: The end of a setup script is noticed in the shell that actually started
+    Given the environment's shell setting is <configured>
+    And the shell that starts is <started>
+    When the user sends the first message of a thread in a new worktree
+    Then the setup script stage ends with the script's own exit status
+
+    Examples:
+      | configured                  | started                     |
+      | a shell that is not there   | the system's fallback shell |
+
+    # The runners have neither fish nor PowerShell.
+    @backlog
+    Examples:
+      | configured                  | started                     |
+      | "/usr/bin/fish --login"     | fish                        |
+      | PowerShell by its full path | PowerShell                  |
+
+  # Upstream #23576: cmd.exe cannot report a script's end.
+  @backlog @mc
+  Scenario: A setup script is refused when only cmd.exe starts
+    Given the only shell that starts on the Windows environment is cmd.exe
+    When the user sends the first message of a thread in a new worktree
+    Then the setup script stage fails saying the shell is not supported
+    And the idle setup terminal is closed
 
   # Legacy: apps/server/src/project/ProjectSetupScriptRunner.ts (observeTerminalCompletion), ThreadLaunchService.ts
   @mc
@@ -410,7 +524,7 @@ Feature: Worktrees and setup scripts
 
   # Upstream #11773: writing the new branch's base into git's config is optional; a locked config
   # no longer fails a worktree git already made.
-  @mc @backlog
+  @mc
   Scenario: A locked git config does not fail a worktree git has made
     Given another program holds the lock on the git config of "shop"
     When the user sends the first message of a thread in a new worktree
@@ -600,6 +714,20 @@ Feature: Worktrees and setup scripts
     When the agent asks for its worktree status
     Then it learns it is attached, with the worktree path, branch and project root
 
+  # Upstream #29645: once storage cleanup removed a thread's worktree, listing its branches said
+  # the project had no repository and no branches.
+  @backlog @mc
+  Scenario Outline: The agent lists the branches of a thread whose worktree folder is out of reach
+    Given the thread "t2" in "shop" worked in a worktree on "feature/tax"
+    And its worktree folder <state>
+    When the agent lists the branches and worktrees of "t2"
+    Then <outcome>
+
+    Examples:
+      | state                                   | outcome                                                                 |
+      | was removed by storage cleanup          | the branches of "shop" are listed from the project root                 |
+      | cannot be looked at for lack of access  | the listing fails saying why, rather than listing from the project root |
+
   @desktop
   Scenario Outline: The workspace choice is named for what it is
     Given the user is writing the first message of a new thread in "shop" <where>
@@ -687,13 +815,13 @@ Feature: Worktrees and setup scripts
     When the user opens a new thread in "shop"
     Then that thread's worktree starts from origin
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A new worktree honors the submodule setting
     Given the submodule setting is "skip" and the project has no worktree script of its own
     When a worktree is created
     Then submodules are not initialized
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario Outline: A temporary worktree branch gets its name from the prefix
     Given <state>
     When a worktree thread is provisioned
@@ -714,23 +842,39 @@ Feature: Worktrees and setup scripts
     And storage cleanup accepts both the default and the custom folder
 
   # Upstream #18359: a thread whose worktree was deleted could never start another turn.
-  @backlog @mc @shared @priority-high
+  # Upstream #26758: a deleted thread branch is restored from its fetched copy before the project's
+  # branch is used, and a detached project checkout no longer breaks the recovery.
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui @priority-high
   Scenario Outline: A thread whose worktree was deleted gets it back on its next message
     Given the thread "Fix checkout" worked in its own worktree on "feature/cart"
     And the worktree was deleted and <branch>
-    When the user sends the next message
+    When the user sends the next message in "Fix checkout"
     Then the worktree is made again <from>
     And the turn runs in it
 
     Examples:
-      | branch                         | from                                                          |
-      | "feature/cart" still exists    | on "feature/cart"                                             |
-      | "feature/cart" was deleted too | with "feature/cart" started from the project's current branch |
+      | branch                                                              | from                                                                                                   |
+      | "feature/cart" still exists                                         | on "feature/cart"                                                                                      |
+      | "feature/cart" was deleted but "origin/feature/cart" was fetched    | with "feature/cart" started from "origin/feature/cart"                                                 |
+      | "feature/cart" was deleted too                                      | with "feature/cart" started from the project's current branch                                          |
+      | "feature/cart" was deleted too and the project checkout is detached | with "feature/cart" started from the project's remote default branch, or its commit when there is none |
 
-  @backlog @mc @shared
+  # Upstream #18359: a thread whose worktree could not be made again stops before the agent starts.
+  @mc @shared @backlog-desktop @backlog-mobile @backlog-tui
   Scenario: A worktree that cannot be made again stops before the agent starts
     Given the thread "Fix checkout" lost its worktree and making it again fails
-    When the user sends the next message
+    When the user sends the next message in "Fix checkout"
     Then the agent is not started
     And the thread says the worktree could not be made, naming the branch and the path, without raw git output
     And the user can send again to retry
+
+  # Each would only fail the same way, so the rest of the queue waits, as it does behind a usage limit.
+  # A message sent now would wait behind them too, so the error says to resume the queue, not to send again.
+  @mc
+  Scenario: Messages queued behind a worktree that cannot be made again wait for the user
+    Given the agent is working in the worktree of "Fix checkout" with two messages queued behind it
+    And the worktree was deleted and making it again fails
+    When the agent's turn ends
+    Then the first queued message fails, saying the worktree could not be made and to resume the queue
+    And the other one waits in the queue instead of starting
+    And it starts once the worktree can be made and the user resumes the queue

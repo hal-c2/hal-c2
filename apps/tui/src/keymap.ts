@@ -29,8 +29,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       {
         keys: "^X …",
         description:
-          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files · p Spaces",
-        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b", "p"],
+          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files · p Spaces · q resume queue",
+        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b", "p", "q"],
       },
     ],
   },
@@ -69,6 +69,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       { keys: "^O", description: "Runtime access picker", chords: ["ctrl+o"] },
       { keys: "Ctrl+Shift+M", description: "Model picker", chords: ["ctrl+shift+m"] },
       { keys: "Ctrl+Shift+E", description: "Effort picker", chords: ["ctrl+shift+e"] },
+      {
+        keys: "unbound",
+        description:
+          "Step the effort up / down: bind composer.increaseEffort / composer.decreaseEffort in keymap.json",
+      },
       { keys: "^Y", description: "Implement the proposed plan", chords: ["ctrl+y"] },
       { keys: "^A / ^R", description: "Approve / decline a request", chords: ["ctrl+a", "ctrl+r"] },
       {
@@ -258,6 +263,7 @@ export const LEADER_ACTIONS: ReadonlyArray<{
   { key: "s", title: "Settings", action: "settings.open" },
   { key: "b", title: "Browse files", action: "files.open" },
   { key: "p", title: "Spaces", action: "space.open" },
+  { key: "q", title: "Resume the queue", action: "composer.queue.resume" },
 ];
 
 const LEADER_LAYER: KeymapLayer = {

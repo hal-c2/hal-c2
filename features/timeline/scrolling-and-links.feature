@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29245
 #   https://github.com/pingdotgg/t3code/pull/19201
 #   https://github.com/pingdotgg/t3code/pull/16191
 #   https://github.com/pingdotgg/t3code/pull/17065
@@ -48,6 +49,13 @@
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (load earlier activity control and its error)
 #   https://github.com/pingdotgg/t3code/pull/15059
 #   https://github.com/pingdotgg/t3code/pull/25371
+#   https://github.com/pingdotgg/t3code/pull/26239
+#   https://github.com/pingdotgg/t3code/pull/26240
+#   https://github.com/pingdotgg/t3code/pull/26485
+#   https://github.com/pingdotgg/t3code/pull/25754
+#   https://github.com/pingdotgg/t3code/pull/27131
+#   https://github.com/pingdotgg/t3code/pull/30367
+#   https://github.com/pingdotgg/t3code/pull/26806
 
 Feature: Moving through a thread and following links
   A long thread stays easy to read while the agent writes. The view follows new output
@@ -58,20 +66,20 @@ Feature: Moving through a thread and following links
     And the user is looking at a long thread in "shop"
 
   # TUI: apps/tui/qml/HalC2/Tui/Timeline.qml
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: The view follows new output while the user is at the end
     Given the user is at the end of the thread
     When the agent writes more of its reply
     Then the new text stays in view
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: The end of the thread holds still while nothing new is written
     Given the user is at the end of the thread
     And a reply with a table sits just above the end
     When nothing new is written
     Then the view does not move
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: Scrolling away stops the view from following
     Given the agent is writing its reply
     When the user scrolls up to an earlier message
@@ -86,7 +94,7 @@ Feature: Moving through a thread and following links
     When the user scrolls up with the pointer over the page
     Then the view stays where the user scrolled while the reply grows
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: The user returns to the end of the thread
     Given the user has scrolled away from the end while the agent writes
     When the user scrolls to the end
@@ -113,7 +121,7 @@ Feature: Moving through a thread and following links
     Then the other thread shows its latest output
 
   # Upstream #19663: a long thread opened from an empty or loading pane stopped well above its end.
-  @shared @backlog-mobile @priority-high
+  @shared @backlog-desktop @priority-high
   Scenario: Another thread opens at its end however far the last was scrolled
     Given the user has scrolled away from the end of the thread
     When the user opens another thread
@@ -122,7 +130,7 @@ Feature: Moving through a thread and following links
 
   # Upstream #24622: a tall reply that arrived while the user was away left the switched thread,
   # and "Scroll to end", hundreds of pixels short of the end.
-  @shared @backlog @priority-high
+  @shared @backlog-desktop @backlog-tui @priority-high
   Scenario Outline: <action> lands on the real end of a thread with a tall new reply
     Given "Fix checkout" got a long reply while the user was in another thread
     When <action>
@@ -134,14 +142,14 @@ Feature: Moving through a thread and following links
       | the user presses "Scroll to end" in "Fix checkout"   |
 
   # Upstream #13530: a running thread's placeholder row used to count as content, so its list opened at the start.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-desktop @priority-high
   Scenario: A running thread opens at its latest output while its messages are still loading
     Given the user opens a thread whose agent is still working
     When the thread's messages arrive
     Then the view shows the latest output at the end, not the start of the thread
 
   # Upstream #21560: switching threads never shows the previous thread's messages.
-  @shared @backlog-desktop @backlog-mobile @priority-high
+  @shared @backlog-desktop @priority-high
   Scenario: Switching threads shows only the chosen thread's messages
     Given the user is reading "Tax fix"
     When the user switches to "Docs" while its messages are still loading
@@ -196,7 +204,7 @@ Feature: Moving through a thread and following links
     When the agent starts running tool calls
     Then the view moves to the end and follows the new output
 
-  @shared @backlog-mobile @backlog-tui @priority-high
+  @shared @backlog-tui @priority-high
   Scenario: A long thread opens as its newest turns
     Given the thread has more turns than a client loads at once
     When the user opens it again
@@ -204,18 +212,51 @@ Feature: Moving through a thread and following links
     And only those turns are sent and shown
 
   # TUI: apps/tui/qml/HalC2/Tui/Timeline.qml
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: Earlier turns load when the user reaches the top
     Given the thread has more turns than are loaded
     When the user loads earlier turns
     Then the user sees that earlier turns are loading
     And the earlier turns appear above without moving the message being read
 
-  @shared @backlog-mobile @priority-high
+  @shared @priority-high
   Scenario: A thread that does not fill the view loads earlier turns by itself
     Given the thread has more turns than are loaded
     When what is loaded leaves room in the view
     Then the earlier turns are loaded without the user scrolling
+
+  # Upstream #26240: long tool histories filled the first window before the latest user message,
+  # so that prompt was missing. The latest user message is always loaded, large finished work
+  # groups load when expanded, and loading earlier pages on until it reaches a user message.
+  @backlog @mc @shared @priority-high
+  Scenario: A thread whose last turn ran many tools opens with the user's last message
+    Given the last turn of "Fix login" ran 600 tool calls after the user's message
+    When the user opens "Fix login"
+    Then the user's last message is shown
+    And the turn's work is shown folded, with up to 150 of its items loaded
+
+  # Upstream #26240
+  @backlog @shared
+  Scenario: A large folded work group loads its items when it is expanded
+    Given a finished turn of "Fix login" holds more work items than were loaded
+    When the user expands its work
+    Then the user sees that its items are loading
+    And its items are shown once they arrive
+    And a failed load can be retried
+
+  # Upstream #26240
+  @backlog @shared
+  Scenario: Loading earlier turns goes on until it reaches a user message
+    Given the turns loaded in "Fix login" start in the middle of a long run of tool calls
+    When the user loads earlier turns once
+    Then earlier history keeps loading, a bounded page at a time, until the user message that started the run
+
+  # Upstream #25754: on a remote connection, loading older history held up Send and Stop.
+  @backlog @shared
+  Scenario: Send and Stop do not wait for earlier turns to load
+    Given the user is loading earlier turns of "Fix login" over a slow connection
+    When the user stops the running turn and sends "try again"
+    Then the stop and the message reach the MC without waiting for the earlier turns
 
   @backlog @mobile
   Scenario: Earlier turns that fail to load say why and can be asked for again
@@ -224,7 +265,7 @@ Feature: Moving through a thread and following links
     Then the user is told why the earlier turns could not be loaded
     And the user can ask for the earlier turns again
 
-  @backlog @mobile
+  @mobile
   Scenario: Nothing is offered once every turn is loaded
     Given every turn of the thread is loaded
     Then no way to load earlier turns is offered
@@ -297,6 +338,19 @@ Feature: Moving through a thread and following links
     Then the turn index marks the third and fourth turns and no other
     And moving to the next turn shows the fifth
 
+  # Upstream #26806: on a touch screen the turn index hid even when the conversation left it room.
+  @desktop @mobile @backlog @priority-low
+  Scenario Outline: The turn index stays shown on a touch screen that has room for it
+    Given the thread has ten turns
+    And the conversation leaves <room> beside it for the turn index
+    When the user switches from a mouse to touch
+    Then the turn index <shown>
+
+    Examples:
+      | room            | shown                                        |
+      | room            | stays shown                                  |
+      | too little room | shows only while it is pointed at or focused |
+
   @desktop @backlog
   Scenario: The turn index can be driven from the keyboard
     Given the thread has ten turns
@@ -363,7 +417,7 @@ Feature: Moving through a thread and following links
     Then the thread scrolls instead
 
   # TUI: implemented in apps/tui/src/timelineLinks.ts
-  @shared @backlog-mobile
+  @shared
   Scenario: A bare web address in a message can be opened
     When the agent writes "see https://example.com/docs"
     Then "https://example.com/docs" can be opened as a link
@@ -456,11 +510,37 @@ Feature: Moving through a thread and following links
     When the user follows the link
     Then "notes.md" opens at line 3
 
-  @shared @backlog-mobile @backlog-tui
+  # Upstream #29245: a Linux link to "a\b.txt" opened the different file "a/b.txt", because every
+  # backslash was taken for a separator.
+  @backlog @shared @priority-low
+  Scenario: On Linux a file link with a backslash in its name opens that file
+    Given the MC runs on Linux and "shop" holds both "a\b.txt" and "a/b.txt"
+    And the agent's reply links to "a\b.txt"
+    When the user follows the link
+    Then "a\b.txt" opens, not "a/b.txt"
+
+  @shared @backlog-tui
   Scenario: The user cites part of a reply in the next message
     When the user selects a sentence in the agent's reply and cites it
     Then the composer holds a citation of that sentence
     And the user can add a comment to the citation
+
+  # Upstream #30367: a quote of 64 characters or more could end its chip in half of an emoji, also
+  # in the label read to screen readers and searched by find.
+  @backlog @desktop @priority-low
+  Scenario: A long citation's chip is cut before an emoji, not through it
+    Given the user's message cites 80 characters of a reply with an emoji at the 64th
+    When the message is shown
+    Then the citation's chip is cut before the emoji and ends in "…"
+
+  # Upstream #27131: with an open file being searched, selecting reply text and citing it lost the
+  # selection, because the file kept moving the caret back to its matches.
+  @backlog @desktop
+  Scenario: A reply can be cited while an open file is being searched
+    Given the user has an open file searched with matches showing
+    When the user selects a sentence in the agent's reply and cites it
+    Then the composer holds a citation of that sentence
+    And the selection in the reply is kept until the citation is made
 
   @shared @backlog
   Scenario Outline: Following a citation to its source
@@ -500,6 +580,7 @@ Feature: Moving through a thread and following links
     And the user can go to the quoted reply from there
 
   # Upstream #17017: a thread link holds the thread's id; its label is the thread's title now.
+  # Upstream #26485: on the phone every thread link read "Thread no longer available".
   @shared @backlog
   Scenario Outline: A thread link in a message shows the thread's title now
     Given a reply links to thread "t2" with the label "Old name"
@@ -531,6 +612,37 @@ Feature: Moving through a thread and following links
     And a reply on "laptop" links to thread "t9", which lives on "server"
     When the user follows the link
     Then thread "t9" on "server" opens
+
+  # Upstream #26239: the thread links an agent is given name the environment that holds the
+  # thread and carry no title; an agent mentions a thread only by that link.
+  @backlog @mc
+  Scenario: A thread link an agent is given names the thread's environment and no title
+    Given the agent in "Fix login" on "laptop" delegated a task that runs on "server"
+    When the agent reads the task's result
+    Then its link names "server" and the task's thread, and no title
+
+  # Upstream #26239: a link names its environment, so it opens exactly that thread, and one the
+  # client cannot reach says so instead of going nowhere. Links of the old form still resolve.
+  @backlog @shared
+  Scenario Outline: A thread link that names its environment opens only that thread
+    Given a reply links to thread "t9" on "<environment>"
+    And <state>
+    When the user looks at the reply
+    Then the link <result>
+
+    Examples:
+      | environment | state                                         | result                                                 |
+      | server      | the client is connected to "server"           | reads the current title of "t9" and opens it on "server" |
+      | server      | the client is not connected to "server"       | reads "Thread on another machine" and opens nothing     |
+      | laptop      | "t9" was deleted from the reply's environment | reads "Thread no longer available" and opens nothing    |
+
+  # Upstream #26239
+  @backlog @shared @priority-low
+  Scenario: A thread link of the old form without an environment still resolves
+    Given a reply on "laptop" links to thread "t2" without naming an environment
+    And "t2" lives on "laptop"
+    When the user follows the link
+    Then thread "t2" on "laptop" opens
 
   @desktop @backlog @priority-low
   Scenario: A selection too long to cite says so

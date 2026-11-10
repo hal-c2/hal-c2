@@ -2,6 +2,8 @@
 #   https://github.com/pingdotgg/t3code/pull/24766
 #   https://github.com/pingdotgg/t3code/pull/18381
 #   https://github.com/pingdotgg/t3code/pull/9356
+#   https://github.com/pingdotgg/t3code/pull/25758
+#   https://github.com/pingdotgg/t3code/pull/25861
 #   apps/mobile/src/features/settings/SettingsRouteScreen.tsx (HAL-C2 Account row, sections)
 #   apps/mobile/src/features/settings/SettingsAuthRouteScreen.tsx (sign in, profile, sign out)
 #   apps/mobile/app.config.ts (Apple and Google sign-in configuration)
@@ -140,6 +142,19 @@ Feature: Settings that belong to the phone
     Scenario: Material You is not offered when the phone has no system colours
       Given the phone provides no system colours
       Then the theme "Material You" is not offered
+
+    # Upstream #25758: a floating navigation like Samsung's beside Android's usual one.
+    @backlog @mobile @priority-low
+    Scenario Outline: An Android phone's navigation follows the One UI or Material style
+      Given the app runs on <phone> and the user has not chosen a navigation style
+      Then the navigation uses the <style> style
+      When the user chooses the other style under Appearance
+      Then the navigation changes at once and stays so after the app restarts
+
+      Examples:
+        | phone                      | style    |
+        | a Samsung phone            | One UI   |
+        | another maker's phone      | Material |
 
     @backlog @mobile @priority-low
     Scenario: The text size changes the size of every message
@@ -414,6 +429,20 @@ Feature: Settings that belong to the phone
       Given "My MacBook" has no provider that can sign in from the app
       When the user opens provider accounts
       Then "My MacBook" says a provider with in-app sign-in has to be configured from the desktop settings
+
+    # Upstream #25861: a provider turned off or not installed showed "Connect this provider."
+    # over a dimmed Sign in that could not work.
+    @backlog @mobile
+    Scenario Outline: A provider that cannot sign in says why instead of offering to
+      Given "Cursor" on "My MacBook" is <state>
+      When the user opens provider accounts
+      Then "Cursor" reads "<status>"
+      And it offers no way to sign in
+
+      Examples:
+        | state         | status        |
+        | turned off    | Turned off    |
+        | not installed | Not installed |
 
     @backlog @mobile
     Scenario: Provider accounts asks for an environment when none is chosen

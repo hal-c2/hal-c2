@@ -102,6 +102,7 @@ void ProjectController::activate() {
   commands->setTerms(kAdd, {QStringLiteral("add project"), QStringLiteral("folder"), QStringLiteral("directory"),
                             QStringLiteral("browse"), QStringLiteral("environment")});
   publish();
+  publishRename();
 }
 
 QString ProjectController::browseStart(const QString& environmentId) const {
@@ -120,6 +121,12 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
     const QString path = map.value(QStringLiteral("path")).toString();
     // Without a folder, the palette's Add project.
     if (path.isEmpty()) return NativeShell::of(this)->controller<KeybindingController>()->commands()->run(kAdd);
+    // A path typed for the environment's own machine (the phone's Add project):
+    // the MC checks it, not this device.
+    if (map.value(QStringLiteral("onEnvironment")).toBool()) {
+      addOnEnvironment(path);
+      return true;
+    }
     // Where this machine's folders are not the MC's (an MC elsewhere),
     // nothing opens.
     if (!m_bridge->localFolders()) return true;
@@ -138,6 +145,22 @@ bool ProjectController::handle(const QString& action, const QVariant& payload) {
       }
     }
     askToRemove(key);
+    return true;
+  }
+  if (action == QLatin1String("project.rename")) {
+    const QString key = map.value(QStringLiteral("projectKey")).toString();
+    if (!m_store->project(key)) return true;
+    m_renaming = key;
+    publishRename();
+    return true;
+  }
+  if (action == QLatin1String("project.rename.submit")) {
+    submitRename(map.value(QStringLiteral("title")).toString().trimmed());
+    return true;
+  }
+  if (action == QLatin1String("project.rename.cancel")) {
+    m_renaming.clear();
+    publishRename();
     return true;
   }
   if (action == QLatin1String("project.remove.confirm")) {
@@ -165,6 +188,16 @@ void ProjectController::openFolder(const QString& path, bool newThread) {
     return;
   }
   addFolder(own, folder.canonicalFilePath(), QStringLiteral("Could not open folder"), newThread);
+}
+
+void ProjectController::addOnEnvironment(const QString& path) {
+  const QString own = m_store->environmentOf(m_client->mc());
+  if (!m_client->isReady() || own.isEmpty()) {
+    NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Could not open folder"),
+                                                                QStringLiteral("The environment is not connected."));
+    return;
+  }
+  addFolder(own, path, QStringLiteral("Could not open folder"), false);
 }
 
 // A scoped list follows the project the user just added or opened, so its
@@ -204,8 +237,21 @@ void ProjectController::addFolder(const QString& environmentId, const QString& r
       {QStringLiteral("workspaceRoot"), root},
   };
   m_client->call(this, environmentId, QStringLiteral("projects.mutate"), command,
-                 [this, environmentId, projectId, failureTitle](const QJsonValue&, const std::optional<QString>& error) {
+                 [this, environmentId, projectId, failureTitle, newThread](const QJsonValue& detail, const std::optional<QString>& error) {
                    if (error) {
+                     // The folder, written another way than the project's own, is that
+                     // project's: the MC names it, and it opens like the folder typed
+                     // the same way would have.
+                     const QString owner = detail.toObject().value(QLatin1String("projectId")).toString();
+                     if (!owner.isEmpty() && m_store->project(environmentId + QLatin1Char(':') + owner)) {
+                       if (newThread) {
+                         followInSidebar(environmentId, owner);
+                         NativeShell::of(this)->controller<DraftController>()->start(environmentId, owner);
+                       } else {
+                         openProject(environmentId, owner);
+                       }
+                       return;
+                     }
                      NativeShell::of(this)->controller<ToastController>()->error(failureTitle, *error);
                      return;
                    }
@@ -257,6 +303,55 @@ void ProjectController::askToRemove(const QStringList& keys, const QString& kind
   if (keys.isEmpty()) return;
   m_removal = Removal{keys, kind, title};
   publish();
+}
+
+void ProjectController::submitRename(const QString& title) {
+  const auto project = m_store->project(m_renaming);
+  if (!project) {
+    m_renaming.clear();
+    publishRename();
+    return;
+  }
+  auto* toasts = NativeShell::of(this)->controller<ToastController>();
+  if (title.isEmpty()) {
+    toasts->show(QStringLiteral("warning"), QStringLiteral("Project title cannot be empty"));
+    return;
+  }
+  if (title == project->title) {
+    m_renaming.clear();
+    publishRename();
+    return;
+  }
+  const QJsonObject command{
+      {QStringLiteral("type"), QStringLiteral("project.update")},
+      {QStringLiteral("projectId"), project->id},
+      {QStringLiteral("title"), title},
+  };
+  m_client->call(this, project->environmentId, QStringLiteral("projects.mutate"), command,
+                 [this, key = m_renaming](const QJsonValue&, const std::optional<QString>& error) {
+                   if (error) {
+                     NativeShell::of(this)->controller<ToastController>()->error(QStringLiteral("Failed to rename project"), *error);
+                     return;
+                   }
+                   if (m_renaming != key) return;
+                   m_renaming.clear();
+                   publishRename();
+                 });
+}
+
+void ProjectController::publishRename() {
+  if (!m_active) return;
+  const auto project = m_renaming.isEmpty() ? std::nullopt : m_store->project(m_renaming);
+  if (!project) {
+    m_bridge->publish(QStringLiteral("projectRename"), QVariant::fromValue(nullptr));
+    return;
+  }
+  m_bridge->publish(QStringLiteral("projectRename"),
+                    QVariantMap{
+                        {QStringLiteral("projectKey"), project->key()},
+                        {QStringLiteral("title"), project->title},
+                        {QStringLiteral("environment"), m_store->environment(project->environmentId).value(QLatin1String("label")).toString()},
+                    });
 }
 
 void ProjectController::confirmRemoval() {

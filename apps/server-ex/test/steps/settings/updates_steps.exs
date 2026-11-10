@@ -618,19 +618,22 @@ defmodule HalC2.Steps.Settings.Updates do
   defp setup_providers(context) do
     Mc.ensure(HalC2.Settings)
 
+    # A native Claude install is compared with its release channel, not npm, so
+    # the channel's newest is read already too.
+    channels =
+      for channel <- ["latest", "stable"], do: {HalC2.ProviderUpdates, :claude_channel, channel}
+
     keys =
       [{HalC2.Codex.Provider, :version}, {HalC2.Claude.Provider, :version}] ++
+        channels ++
         for driver <- Map.values(@drivers), do: {HalC2.ProviderUpdates, driver}
 
     Enum.each(keys, &:persistent_term.erase/1)
     ExUnit.Callbacks.on_exit(fn -> Enum.each(keys, &:persistent_term.erase/1) end)
 
-    for driver <- Map.values(@drivers),
-        do:
-          :persistent_term.put(
-            {HalC2.ProviderUpdates, driver},
-            {@latest, System.monotonic_time(:millisecond)}
-          )
+    for key <-
+          channels ++ for(driver <- Map.values(@drivers), do: {HalC2.ProviderUpdates, driver}),
+        do: :persistent_term.put(key, {@latest, System.monotonic_time(:millisecond)})
 
     context
   end
@@ -695,10 +698,12 @@ defmodule HalC2.Steps.Settings.Updates do
   defp update_command(context, "Claude"),
     do: "#{Path.join([context.mc.home, "local", "bin", "claude"])} update"
 
-  @doc "Asks the MC for Codex's status again; the providers land in `context.providers`."
+  @doc "Asks the MC for the scenario's provider status again; the providers land in `context.providers`."
   def check(context) do
     {result, context} =
-      World.call!(context, "server.refreshProviders", %{"instanceId" => "codex"})
+      World.call!(context, "server.refreshProviders", %{
+        "instanceId" => context[:provider] || "codex"
+      })
 
     Map.put(context, :providers, result["providers"])
   end

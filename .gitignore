@@ -38,3 +38,6 @@ node_modules/
 # tracked, and both were landing in HAL-C2 checkpoints (18 GB of them).
 target/
 .xdg-data/
+
+# Python bytecode the test fakes leave when imported.
+__pycache__/

@@ -41,6 +41,21 @@ defmodule HalC2.ClusterTest do
 
   defp code_path_args, do: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
 
+  # A plugin that defers to its peers learns that an MC from before `Host.peer/3`
+  # named its machine does not run it, rather than counting it as out of reach.
+  test "an older MC that does not run a plugin says so to its peers", %{b: b} do
+    old = """
+    defmodule HalC2.Plugins.Host do
+      def peer(_id, _function, _args), do: :none
+    end
+    """
+
+    :erpc.call(b, Code, :compile_string, [old])
+
+    answers = HalC2.Plugins.Host.peers("code-review", :version, [])
+    assert %{"result" => :none, "node" => to_string(b)} in answers
+  end
+
   test "a subscriber on another MC is fed through a relay, which the stream never waits for",
        %{b: b} do
     alias HalC2.Streams
@@ -236,7 +251,7 @@ defmodule HalC2.ClusterTest do
   # answer is seen as that process sends it: a suspended process's receive trace waits
   # until something makes it handle its signals.
   test "a client whose follow is answered as the MCs part and meet again is told it failed",
-       %{tmp_dir: dir, port: port} do
+       %{tmp_dir: dir, port: port, b: b} do
     {peer, c} = member(dir)
     true = Node.connect(c)
     {:ok, _} = :peer.call(peer, HalC2.Streams, :commit, ["split-th", :thread, [note("n1")]])
@@ -274,6 +289,13 @@ defmodule HalC2.ClusterTest do
 
     {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2), 30_000)
     assert %{"t" => "error", "id" => 2} = error
+
+    # Parting here alone leaves b connected to c, which `global` repairs by cutting
+    # the overlap, sometimes after the reconnect above. The three meet in full and
+    # `global` settles before the follow is asked again, or it can be cut again.
+    true = :erpc.call(b, Node, :connect, [c])
+    for node <- [node(), b, c], do: :ok = :erpc.call(node, :global, :sync, [])
+    true = c in Node.list() and c in :erpc.call(b, Node, :list, [])
 
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
     {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)

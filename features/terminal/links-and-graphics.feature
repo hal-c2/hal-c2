@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23527
+#   https://github.com/pingdotgg/t3code/pull/24013
 #   https://github.com/pingdotgg/t3code/pull/15020
 #   https://github.com/pingdotgg/t3code/pull/22872
 #   https://github.com/pingdotgg/t3code/pull/21199
@@ -21,6 +23,9 @@
 #   Cross-domain: tui/appearance.feature owns inline images and graphics detection in the terminal
 #   client itself; settings/integrations.feature owns the "Open links in" preference and
 #   navigation/appearance.feature owns terminal fonts.
+#   https://github.com/pingdotgg/t3code/pull/28189
+#   https://github.com/pingdotgg/t3code/pull/30603
+#   https://github.com/pingdotgg/t3code/pull/30526
 
 Feature: Links and rendering inside terminals
   A terminal shows the program's colours faithfully and turns web addresses and file paths in
@@ -68,6 +73,20 @@ Feature: Links and rendering inside terminals
     Scenario: A link after wide characters still lines up with its text
       Given the shell prints Chinese text followed by a web address
       Then the link covers exactly the address
+    # Upstream #24013: a wide character's second cell read as a space, which ended the link.
+    @desktop @backlog
+    Scenario Outline: A link holding wide characters opens in full
+      Given the shell prints <output>
+      Then the whole of it is underlined, both cells of its last character included
+      And following it opens <opens>
+
+      Examples:
+        | output                                    | opens                                     |
+        | "https://ja.wikipedia.org/wiki/日本語"     | "https://ja.wikipedia.org/wiki/日本語"     |
+        | the path "docs/日本語/notes.md"            | "docs/日本語/notes.md"                     |
+        | "https://example.com/party/🎉"            | "https://example.com/party/🎉"            |
+        | "https://example.com/a b"                 | "https://example.com/a", as a real space still ends a link |
+
 
     @tui
     Scenario Outline: Oversized output is not turned into links
@@ -144,6 +163,42 @@ Feature: Links and rendering inside terminals
       Then "src/app.ts" opens in the user's editor at line 12, column 4
       And the path is resolved against the terminal's folder
 
+    # Upstream #30526: a branch name cut short in the output looked like a file path and opened a file that did not exist.
+    @backlog @desktop
+    Scenario Outline: A file path in the output is a link only when it exists where the thread works
+      Given the shell prints "<text>"
+      And "<text>" <exists> in the thread's environment
+      When the user follows "<text>" in the terminal
+      Then <result>
+
+      Examples:
+        | text           | exists               | result                 |
+        | src/app.ts     | is a file            | "src/app.ts" opens     |
+        | src            | is a folder          | the folder "src" opens |
+        | feature/checko | is no file or folder | nothing is opened      |
+
+    # Upstream #30603: a relative path broke at "@ + $ [ ] ( )" after its first slash, so route files
+    # and pnpm stack frames got no link at all.
+    @backlog @desktop @priority-low
+    Scenario Outline: A route or package path in the output is one link
+      Given the shell prints "<output>" and "<file>" exists
+      When the user follows that path
+      Then "<file>" opens in the user's editor
+
+      Examples:
+        | output                                                           | file                                                        |
+        | src/app/[id]/page.tsx:3:10                                       | src/app/[id]/page.tsx                                       |
+        | src/routes/(app)/+page.svelte:12:4                               | src/routes/(app)/+page.svelte                               |
+        | node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5 | node_modules/.pnpm/react@18.3.1/node_modules/react/index.js |
+        | app/routes/posts.$id.tsx:5                                       | app/routes/posts.$id.tsx                                    |
+
+    # Upstream #30603: the parentheses of a compiler's "(line,column)" still end the path.
+    @backlog @desktop @priority-low
+    Scenario: A compiler's line and column in parentheses are not part of the path
+      Given the shell prints "src/foo.ts(3,10): error"
+      When the user follows that path
+      Then "src/foo.ts" opens in the user's editor
+
     # Upstream #21199: relative backslash paths and quoted paths with spaces are file links,
     # keeping a line and column given inside or outside the quotes.
     @backlog @desktop @priority-low
@@ -158,6 +213,15 @@ Feature: Links and rendering inside terminals
         | .\src\index.ts:12                                              | src\index.ts                       |
         | C:\Users\Jane Doe\project\index.ts:12 wrapped in double quotes | C:\Users\Jane Doe\project\index.ts |
         | C:\Users\Jane Doe\project\index.ts in double quotes, then :12  | C:\Users\Jane Doe\project\index.ts |
+
+    # Upstream #23527: PowerShell's prompt prints its folder unquoted, so a folder with a space split
+    # into two links.
+    @backlog @desktop @priority-low
+    Scenario: A PowerShell prompt's folder with a space is one link
+      Given the shell prints the prompt "PS C:\dev\ai-test\dir 1\test>"
+      When the user follows "dir 1" in the terminal
+      Then the link followed is "C:\dev\ai-test\dir 1\test"
+      And no separate link covers "1\test"
 
     # git status prints a branch and its upstream as "## main...origin/main".
     @desktop
@@ -177,6 +241,28 @@ Feature: Links and rendering inside terminals
         | line                                         | route                               |
         | GET /api/trpc/post.list,user.me?batch=1 200  | /api/trpc/post.list,user.me?batch=1 |
         | proxying /api/users?page=2 to localhost:4000 | /api/users?page=2                   |
+
+    # Upstream #28189: the Windows drive rule matched the last letter of a URL scheme, so
+    # "redis://..." became a link to a file that does not exist.
+    @backlog @desktop
+    Scenario Outline: An address with a scheme other than http is not a file path
+      Given the shell prints "<line>"
+      When the user follows "<text>" in the terminal
+      Then nothing is opened
+
+      Examples:
+        | line                                               | text                                  |
+        | Connected to redis://127.0.0.1:6379/0              | s://127.0.0.1:6379/0                  |
+        | postgres://app@localhost:5432/shop                 | s://app@localhost:5432/shop           |
+        | uploaded to s3://bucket/key                        | //bucket/key                          |
+        | at main (file:///Users/me/app/src/index.mjs:3:7)   | e:///Users/me/app/src/index.mjs:3:7   |
+
+    # Upstream #28189
+    @backlog @desktop
+    Scenario: A file path beside a non-web address is still a link
+      Given the shell prints "src/config.ts:12 uses redis://127.0.0.1:6379/0"
+      When the user follows "src/config.ts:12" in the terminal
+      Then "src/config.ts" opens in the editor at line 12
 
     @desktop
     Scenario Outline: The terminal's menu opens or copies the link under the pointer

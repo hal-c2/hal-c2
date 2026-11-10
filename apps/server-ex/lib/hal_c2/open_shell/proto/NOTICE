@@ -1,0 +1,18 @@
+The modules in this directory are generated from the protocol buffer
+definitions of NVIDIA OpenShell (https://github.com/NVIDIA/OpenShell),
+release v0.1.7 (tag commit 5d25211b25a8fc887e8d5c606d57d6ab22f1d76c),
+files proto/openshell.proto, proto/datamodel.proto, proto/sandbox.proto and
+proto/options.proto.
+
+Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under the Apache License, Version 2.0; see LICENSE in this
+directory. The generated code is unmodified apart from the module prefix
+HalC2.OpenShell.Proto.
+
+Regenerate them at a new pinned release (HalC2.OpenShell.Manifest) with
+protoc-gen-elixir from the protobuf hex package, from apps/server-ex:
+
+  protoc -I <OpenShell>/proto -I /usr/include \
+    --elixir_out=plugins=grpc,package_prefix=hal_c2.open_shell.proto:lib/hal_c2/open_shell/proto \
+    <OpenShell>/proto/openshell.proto <OpenShell>/proto/datamodel.proto \
+    <OpenShell>/proto/sandbox.proto <OpenShell>/proto/options.proto

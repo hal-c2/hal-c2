@@ -24,6 +24,16 @@ defmodule HalC2.VcsTest do
     %{repo: repo, other: other}
   end
 
+  # `tmp` sits inside the checkout: without `GIT_CEILING_DIRECTORIES` (test_helper.exs) git
+  # would find the checkout from a scratch folder, and a git action there would commit
+  # and push the developer's work.
+  test "a scratch folder under tmp is not the checkout around it", %{tmp_dir: dir} do
+    plain = Path.join(dir, "plain")
+    File.mkdir_p!(plain)
+    refute Vcs.local_status(plain)["isRepo"]
+  end
+
+  # An untracked text file counts its lines as inserted, as a staged one does.
   test "local status lists every change with its line counts", %{repo: repo} do
     File.write!(Path.join(repo, "a.txt"), "one\ntwo\n")
     File.write!(Path.join(repo, "staged.txt"), "s\n")
@@ -36,12 +46,12 @@ defmodule HalC2.VcsTest do
              "isDefaultRef" => true,
              "hasPrimaryRemote" => true,
              "hasWorkingTreeChanges" => true,
-             "workingTree" => %{"files" => files, "insertions" => 2, "deletions" => 0}
+             "workingTree" => %{"files" => files, "insertions" => 3, "deletions" => 0}
            } = Vcs.local_status(repo)
 
     assert Enum.map(files, &{&1["path"], &1["insertions"]}) == [
              {"a.txt", 1},
-             {"new file.txt", 0},
+             {"new file.txt", 1},
              {"staged.txt", 1}
            ]
 
@@ -52,6 +62,50 @@ defmodule HalC2.VcsTest do
     File.mkdir_p!(plain)
     on_exit(fn -> File.rm_rf!(plain) end)
     assert %{"isRepo" => false} = Vcs.local_status(plain)
+  end
+
+  test "a locked index leaves the checkout a repository, and the watcher's first snapshot too",
+       %{repo: repo} do
+    File.write!(Path.join(repo, ".git/index.lock"), "")
+
+    assert %{"isRepo" => true, "refName" => "main"} = Vcs.local_status(repo)
+    assert {:error, "Git index is locked" <> _} = Vcs.read_status(repo)
+
+    assert %{"_tag" => "snapshot", "local" => %{"isRepo" => true, "refName" => "main"}} =
+             HalC2.Vcs.Watch.subscribe(repo, self())
+  end
+
+  test "untracked files are read only up to a budget", %{repo: repo} do
+    for n <- 1..520,
+        do: File.write!(Path.join(repo, "u#{String.pad_leading("#{n}", 3, "0")}.txt"), "x\n")
+
+    assert %{"workingTree" => %{"files" => files, "insertions" => 500}} = Vcs.local_status(repo)
+    assert length(files) == 520
+    assert Enum.count(files, &(&1["insertions"] == 0)) == 20
+  end
+
+  test "binary files spend the untracked budget as text files do", %{repo: repo} do
+    for n <- 1..520,
+        do: File.write!(Path.join(repo, "b#{String.pad_leading("#{n}", 3, "0")}.bin"), <<0, 1>>)
+
+    File.write!(Path.join(repo, "z-text.txt"), "x\n")
+
+    assert %{"workingTree" => %{"insertions" => 0}} = Vcs.local_status(repo)
+  end
+
+  test "a pull request found late does not roll back newer counts", %{repo: repo} do
+    HalC2.Vcs.Watch.subscribe(repo, self())
+    [{pid, _}] = Registry.lookup(HalC2.Vcs.Registry, repo)
+
+    File.write!(Path.join(repo, "c.txt"), "c\n")
+    git!(repo, ~w(add c.txt))
+    commit!(repo, "local")
+    :ok = HalC2.Vcs.Watch.refresh(repo)
+    assert %{remote: %{"aheadCount" => 1}} = :sys.get_state(pid)
+
+    stale = %{"aheadCount" => 0, "pr" => %{"number" => 42}}
+    GenServer.cast(pid, {:pr_found, "main", stale})
+    assert %{remote: %{"aheadCount" => 1, "pr" => %{"number" => 42}}} = :sys.get_state(pid)
   end
 
   test "ahead and behind, after a fetch", %{repo: repo, other: other} do
@@ -138,6 +192,28 @@ defmodule HalC2.VcsTest do
     assert {:ok, nil} = Vcs.remove_worktree(%{"cwd" => repo, "path" => path})
   end
 
+  test "a long branch's folder keeps its start, whole characters, and a hash of the branch",
+       %{repo: repo} do
+    long = &(String.duplicate("a", 45) <> &1)
+    one = Path.basename(Vcs.worktree_path(repo, long.("/one")))
+    two = Path.basename(Vcs.worktree_path(repo, long.("/two")))
+
+    assert String.length(one) == 40 and String.length(two) == 40
+    assert String.starts_with?(one, String.duplicate("a", 31) <> "-")
+    assert one != two
+
+    emoji = Path.basename(Vcs.worktree_path(repo, "a" <> String.duplicate("😀", 60)))
+    assert String.valid?(emoji) and String.length(emoji) == 40
+    assert Path.basename(Vcs.worktree_path(repo, "fix/cart")) == "fix-cart"
+  end
+
+  test "a rename under an existing branch's path is flattened", %{repo: repo} do
+    git!(repo, ~w(branch hal-c2))
+    git!(repo, ~w(branch temp))
+    assert {:ok, "hal-c2-fix-cart"} = Vcs.rename_branch(repo, "temp", "hal-c2/fix-cart")
+    assert {:ok, "feature/cart"} = Vcs.rename_branch(repo, "hal-c2-fix-cart", "feature/cart")
+  end
+
   test "watchers get a snapshot, then only what changed", %{repo: repo} do
     assert %{"_tag" => "snapshot", "local" => %{"hasWorkingTreeChanges" => false}} =
              HalC2.Vcs.Watch.subscribe(repo, self())
@@ -199,6 +275,20 @@ defmodule HalC2.VcsTest do
              })
 
     assert git!(repo, ~w(branch --list kept)) =~ "kept"
+  end
+
+  test "refs answer for a primary remote that is not called origin", %{repo: repo} do
+    git!(repo, ~w(remote rename origin github))
+
+    assert {:ok, %{"hasPrimaryRemote" => true, "refs" => refs}} =
+             Vcs.list_refs(%{
+               "cwd" => repo,
+               "refKind" => "remote",
+               "includeMatchingRemoteRefs" => true
+             })
+
+    assert %{"remoteName" => "github", "isDefault" => true} =
+             Enum.find(refs, &(&1["name"] == "github/main"))
   end
 
   defp commit!(repo, message),

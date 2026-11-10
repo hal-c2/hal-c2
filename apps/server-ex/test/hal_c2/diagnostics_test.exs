@@ -84,4 +84,22 @@ defmodule HalC2.DiagnosticsTest do
 
     assert total > 0 and available > 0 and available <= total
   end
+
+  test "a history request is held to a window of up to an hour and buckets of a second or more" do
+    assert HalC2.Diagnostics.history_bounds(3 * 3_600_000, 60_000) == {3_600_000, 60_000}
+    assert HalC2.Diagnostics.history_bounds(100, 100) == {1_000, 1_000}
+    assert HalC2.Diagnostics.history_bounds(600_000, 3_600_000) == {600_000, 600_000}
+    assert HalC2.Diagnostics.history_bounds(600_000, 10) == {600_000, 1_000}
+  end
+
+  test "a counter adds what it moved, but not backwards or across a long gap" do
+    assert HalC2.Diagnostics.counter_delta(100, 160, 5_000) == 60
+    assert HalC2.Diagnostics.counter_delta(160, 100, 5_000) == 0
+    assert HalC2.Diagnostics.counter_delta(100, 160, 90_000) == 0
+  end
+
+  test "a history request with a fractional or non-numeric size is truncated, not crashed on" do
+    assert HalC2.Diagnostics.history_bounds(600_000.9, 1_500.7) == {600_000, 1_500}
+    assert HalC2.Diagnostics.history_bounds("x", nil) == {1_000, 1_000}
+  end
 end

@@ -1,4 +1,5 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { McpAppReference } from "./mcpApps.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -491,11 +492,18 @@ export const OrchestrationV2Run = Schema.Struct({
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
-  /** Restart recovery holds the queue until the user explicitly resumes it. */
+  /**
+   * A held queued run waits for the user: restart recovery, a usage limit, a Stop, or a
+   * worktree that could not be set up holds it until they resume the queue or send.
+   */
   queueHeld: Schema.optional(Schema.Boolean),
+  /** A run that set up the thread's worktree as it started. */
+  workspacePreparation: Schema.optional(Schema.Struct({ type: Schema.String })),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** A run a restart cut off: when it was last seen working, before the MC went down. */
+  lastActivityAt: Schema.optional(Schema.DateTimeUtc),
   checkpointId: Schema.NullOr(CheckpointId),
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
@@ -509,6 +517,8 @@ export const OrchestrationV2Run = Schema.Struct({
     }),
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
+  /** A failed run's own failure text, as its provider gave it. */
+  failure: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -582,6 +592,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
+  // The run that last resumed a provider subagent, whose runtime drives it now.
+  resumedRunId: Schema.optional(RunId),
   parentNodeId: NodeId,
   origin: Schema.Literals(["provider_native", "app_owned"]),
   createdBy: OrchestrationV2Actor,
@@ -671,6 +683,8 @@ export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
   taskId: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   taskType: Schema.optional(TrimmedNonEmptyString),
+  /** The agent marked this command or monitor as work it waits on, so it holds the thread Working. */
+  awaited: Schema.optional(Schema.Literal(true)),
 });
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
@@ -683,6 +697,22 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
 });
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;
+
+export const OrchestrationV2ProviderThreadGoal = Schema.Struct({
+  objective: Schema.String,
+  status: Schema.Literals([
+    "active",
+    "paused",
+    "blocked",
+    "usage_limited",
+    "budget_limited",
+    "complete",
+  ]),
+  tokensUsed: NonNegativeInt,
+  tokenBudget: Schema.NullOr(NonNegativeInt),
+  timeUsedSeconds: NonNegativeInt,
+});
+export type OrchestrationV2ProviderThreadGoal = typeof OrchestrationV2ProviderThreadGoal.Type;
 
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
@@ -712,6 +742,10 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   nativeMetadata: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadNativeMetadata)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  // The provider's own goal for the thread (Codex's `/goal`); null when it has none.
+  goal: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadGoal)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   createdAt: Schema.DateTimeUtc,
@@ -783,6 +817,8 @@ export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff
 export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   usedTokens: NonNegativeInt,
   maxTokens: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  /** Where the provider compacts on its own, when that is before `maxTokens`. */
+  autoCompactThreshold: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
@@ -917,11 +953,15 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
       label: TrimmedNonEmptyString,
       description: TrimmedNonEmptyString,
       value: Schema.optional(Schema.String),
+      /** What the option would produce, as Markdown; kept as the provider sent it. */
+      preview: Schema.optional(Schema.String),
     }),
   ),
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
   required: Schema.optional(Schema.Boolean),
+  /** The text a free answer starts from (a Pi editor dialog's current value), kept exactly. */
+  initialAnswer: Schema.optional(Schema.String),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
 
@@ -939,6 +979,8 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
     ...OrchestrationV2PlanArtifactBaseFields,
     kind: Schema.Literal("proposed_plan"),
     markdown: Schema.String,
+    // The message that implemented the plan, once one has.
+    implementedByMessageId: Schema.optional(MessageId),
   }),
   Schema.Struct({
     ...OrchestrationV2PlanArtifactBaseFields,
@@ -1088,6 +1130,8 @@ const OrchestrationV2TurnItemBaseFields = {
   /** Why the item ended as it did, when something other than its provider ended it. */
   statusDetail: Schema.optional(Schema.String),
   title: Schema.NullOr(Schema.String),
+  /** The provider's own name for the tool the item ran, where that names it (Claude's). */
+  providerToolName: Schema.optional(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
@@ -1178,6 +1222,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** Bytes printed so far; set while the output is held off the thread. */
+    outputSize: Schema.optional(Schema.Int),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
   }),
@@ -1203,6 +1249,13 @@ export const OrchestrationV2TurnItem = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The provider's own reason for asking, when it says more than the prompt. */
+    reason: Schema.optional(Schema.String),
+    /**
+     * Why a Full access thread still asked: one of the provider's own safety checks
+     * no setting skips, or an ask rule in the user's provider permissions.
+     */
+    fullAccessOverride: Schema.optional(Schema.Literals(["provider_check", "ask_rule"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1215,6 +1268,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    // Who asked for the stop, so its outcome can say so; absent on older items.
+    stoppedBy: Schema.optional(Schema.Literals(["user", "agent"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1225,6 +1280,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    /** The plugin that showed the notice (`Host.notice`), absent on the MC's own. */
+    pluginId: Schema.optional(Schema.String),
+    /** What the notice offers while its run works: `interrupt` stops the run. */
+    actions: Schema.optional(Schema.Array(Schema.Literal("interrupt"))),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1304,6 +1363,12 @@ export const OrchestrationV2TurnItem = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** The MCP app the tool returned, shown in the thread in place of its output. */
+    mcpApp: Schema.optional(McpAppReference),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
@@ -1554,6 +1619,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  /** True when the latest run was an automatic wake (the agent resuming on its own); omitted otherwise. */
+  latestRunAutomatic: Schema.optional(Schema.Boolean),
   activeRunId: Schema.NullOr(RunId),
   /** Start of the activity-owning run; request time while it is preparing. */
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1563,14 +1630,24 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   status: OrchestrationV2ShellThreadStatus,
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
+  // The provider's own code for the error, such as a ChatGPT plan's sharing limit.
+  lastErrorCode: Schema.optional(Schema.NullOr(Schema.String)),
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
+  // The latest message the user typed: not an agent's, a schedule's, a wake's or a
+  // delegated result, which share the user role. Absent from older MCs.
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   hasActionableProposedPlan: Schema.Boolean,
-  // Normalized post-settlement background work for sidebar Waiting pills.
+  // Normalized post-settlement background work that holds the thread Working (sidebar
+  // Waiting pills): subagents, and commands or monitors the agent marked as awaited.
   // Empty when the latest root run is still active or no pending work remains.
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  // All post-settlement background work still running, held or not (a dev server, say).
+  runningBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   // Distinct provider instances that have owned a root provider thread here,
@@ -1912,6 +1989,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("command_execution"),
     input: Schema.String,
     output: Schema.optional(Schema.String),
+    /** Bytes printed so far; set while the output is held off the thread. */
+    outputSize: Schema.optional(Schema.Int),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
   }),
@@ -1937,6 +2016,13 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** The provider's own reason for asking, when it says more than the prompt. */
+    reason: Schema.optional(Schema.String),
+    /**
+     * Why a Full access thread still asked: one of the provider's own safety checks
+     * no setting skips, or an ask rule in the user's provider permissions.
+     */
+    fullAccessOverride: Schema.optional(Schema.Literals(["provider_check", "ask_rule"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -1949,6 +2035,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
+    stoppedBy: Schema.optional(Schema.Literals(["user", "agent"])),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -1959,6 +2046,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    /** The plugin that showed the notice (`Host.notice`), absent on the MC's own. */
+    pluginId: Schema.optional(Schema.String),
+    /** What the notice offers while its run works: `interrupt` stops the run. */
+    actions: Schema.optional(Schema.Array(Schema.Literal("interrupt"))),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2035,6 +2126,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     viewedImagePath: Schema.optional(TrimmedNonEmptyString),
     input: Schema.Unknown,
     output: Schema.optional(Schema.Unknown),
+    /** Images the tool returned, stored with the thread like a message's. */
+    attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    /** The tool's structured results, as the provider reported them. */
+    details: Schema.optional(Schema.Unknown),
   }),
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
@@ -2097,6 +2192,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummaryJson),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummaryJson),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  latestUserAuthoredMessageAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   createdAt: Schema.DateTimeUtcFromString,
   updatedAt: Schema.DateTimeUtcFromString,
   archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -2589,6 +2685,10 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
     reason: Schema.optional(Schema.String),
+    /** A user's Stop holds the queue behind the run (the default); cleanup sends false. */
+    holdQueue: Schema.optional(Schema.Boolean),
+    // The user's Stop: also stops the subagents still working on what the thread delegated.
+    stopDelegated: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-message.promote-to-steer"),
@@ -2601,6 +2701,13 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("queue.resume"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  /** Send a queued message now on a thread with no turn running, ahead of the rest of the queue. */
+  Schema.Struct({
+    type: Schema.Literal("queued-run.start"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.reorder"),
@@ -2728,6 +2835,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getCommandOutput: "orchestration.getCommandOutput",
   searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -2817,6 +2925,9 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  // For a steer: false when the provider's runtime did not answer in time. The message
+  // stays in the turn, since the runtime may still hand it on, but nobody heard it taken.
+  confirmed: Schema.optional(Schema.Boolean),
   // For an access change: the version of the MC's shell rows that holds it.
   shell: Schema.optional(
     Schema.Struct({ mc: Schema.String, epoch: Schema.String, rev: NonNegativeInt }),
@@ -2842,6 +2953,18 @@ export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
   /** Requests a marker between initial catch-up and live delivery. */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Sent as `settledLimit` on the MC's shell `sub` frame: whenever an MC's rows come
+   * whole (the first subscribe, or a `reset`), they hold only the `settledLimit` newest
+   * settled threads of each of its projects (by `settledAt`) and the older ones that
+   * are pinned or snoozed. That MC's entry in the `shell` frame, or the `shell.rows`
+   * reset, then carries `settledLeftOut`: `{ [projectId]: count }` of the settled
+   * threads it did not send, as of that send. Later changes come as usual, a left-out
+   * thread's included: the count still holds such a thread, so a client subtracts one
+   * for each settled row of that project it later receives that the full send left out.
+   * Without it every row is sent.
+   */
+  settledLimit: Schema.optionalKey(PositiveInt),
 });
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
@@ -2957,6 +3080,25 @@ export const OrchestrationV2RpcError = Schema.Union([
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
+/**
+ * A command's output is not part of the thread a client holds: the item says how much
+ * it has printed (`outputSize`) and a client that shows the output asks for it. While
+ * the command runs that is its last 64K bytes; once it ends, what the thread kept,
+ * at most the last 256 KiB.
+ */
+export const OrchestrationV2GetCommandOutputInput = Schema.Struct({
+  threadId: ThreadId,
+  itemId: TurnItemId,
+});
+export type OrchestrationV2GetCommandOutputInput = typeof OrchestrationV2GetCommandOutputInput.Type;
+
+export const OrchestrationV2GetCommandOutputResult = Schema.Struct({
+  output: Schema.String,
+  running: Schema.Boolean,
+});
+export type OrchestrationV2GetCommandOutputResult =
+  typeof OrchestrationV2GetCommandOutputResult.Type;
+
 export const OrchestrationV2GetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   /** Absolute path from the workflow's runHandles.scriptPath. The server
@@ -3019,6 +3161,10 @@ export const OrchestrationV2RpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  getCommandOutput: {
+    input: OrchestrationV2GetCommandOutputInput,
+    output: OrchestrationV2GetCommandOutputResult,
   },
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),

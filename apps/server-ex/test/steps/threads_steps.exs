@@ -6,7 +6,7 @@ defmodule HalC2.Steps.Threads do
   alias HalC2.Orchestration.{LimitRecovery, Settlement}
   alias HalC2.Projection.JS
   alias HalC2.Test.Mc
-  alias HalC2.Test.Mc.World
+  alias HalC2.Test.Mc.{Terminal, World}
 
   # --- settle.feature ------------------------------------------------------------------
 
@@ -504,7 +504,211 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # An automatic wake the thread has queued: the message the MC sent for the agent, and the
+  # queued run that carries it.
+  step ~r/^"(?<thread>[^"]+)" has (?<wake>a notification wake|the completion of a task it delegated) queued$/,
+       %{args: [thread, wake]} = context do
+    extra =
+      if wake == "a notification wake",
+        do: %{"notification" => %{"source" => "provider", "outcome" => "completed"}},
+        else: %{"delegatedCompletion" => %{"taskId" => "task-1"}}
+
+    message_id = "msg-wake-#{System.unique_integer([:positive])}"
+
+    context
+    |> World.add_message(
+      thread,
+      "user",
+      "The task finished",
+      nil,
+      Map.put(extra, "id", message_id)
+    )
+    |> World.add_run(thread, "queued", nil, %{"userMessageId" => message_id, "startedAt" => nil})
+    |> Map.put(:wake_message, message_id)
+  end
+
+  # The wake sends its message and the run it started, after the snooze, ends.
+  step ~r/^(?<wake>a background task finishing|a monitor the agent set|a pull request watch|the completion of a task it delegated) sends "(?<thread>[^"]+)" a message and its run finishes$/,
+       %{args: [wake, thread]} = context do
+    extra =
+      if wake == "the completion of a task it delegated",
+        do: %{"delegatedCompletion" => %{"taskId" => "task-1"}},
+        else: %{"notification" => %{"source" => "provider", "outcome" => "completed"}}
+
+    message_id = "msg-wake-#{System.unique_integer([:positive])}"
+    at = World.iso_from_now(1_000)
+
+    context
+    |> World.add_message(
+      thread,
+      "user",
+      "The task finished",
+      nil,
+      Map.put(extra, "id", message_id)
+    )
+    |> World.add_run(thread, "completed", at, %{"userMessageId" => message_id})
+  end
+
+  step ~r/^"(?<thread>[^"]+)" stays snoozed until tomorrow$/, %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["snoozedUntil"] == World.local_time(context, "tomorrow")
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
+    context
+  end
+
+  step "the user snoozes {string} until tomorrow", %{args: [thread]} = context do
+    until = World.local_time(context, "tomorrow")
+    id = World.thread_id(context, thread)
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "thread.snooze",
+        "threadId" => id,
+        "snoozedUntil" => until
+      })
+
+    if match?({:ok, _}, reply), do: World.await_row(id, &(&1["snoozedUntil"] == until))
+    Map.put(context, :reply, reply)
+  end
+
+  step "the wake stays queued", context do
+    runs = World.runs(context, "Refactor cart")
+
+    assert Enum.any?(
+             runs,
+             &(&1["userMessageId"] == context.wake_message and &1["status"] == "queued")
+           )
+
+    context
+  end
+
+  # A run that began before the snooze ends after it: the earlier run's failure.
+  step "a run that started before the snooze reports a failure", context do
+    snoozed_at = World.thread(context, "Refactor cart")["snoozedAt"]
+    before = DateTime.add(DateTime.from_iso8601(snoozed_at) |> elem(1), -60, :second)
+    started = DateTime.to_iso8601(before)
+
+    context
+    |> World.add_run("Refactor cart", "failed", started, %{"completedAt" => World.iso_from_now(0)})
+    |> await_failed("Refactor cart")
+  end
+
+  step ~r/^"(?<thread>[^"]+)" stays snoozed$/, %{args: [thread]} = context do
+    row = World.row(context, thread)
+    assert row["snoozedUntil"] != nil
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
+    context
+  end
+
+  # The MC marks no wake; a thread is woke when settlement finds it awake, so not woke is
+  # the snooze left in force and settlement still seeing it parked.
+  step "it is not marked as woke", context do
+    row = World.row(context, "Refactor cart")
+    assert row["snoozedUntil"] != nil and row["snoozedAt"] != nil
+    assert Settlement.blocker(row, System.os_time(:millisecond)) == "snoozed"
+    context
+  end
+
+  step "the MC syncs the state of its pull request", context do
+    context =
+      snooze_command(context, "thread.pull-request.link", pr_key(), %{"source" => "manual"})
+
+    snooze_command(context, "thread.pull-request-link.sync", pr_key(), %{
+      "snapshot" => %{"state" => "merged", "title" => "PR", "syncedAt" => World.iso_from_now(0)},
+      "stack" => nil
+    })
+  end
+
+  step "a pull request is linked to it", context do
+    snooze_command(context, "thread.pull-request.link", pr_key(), %{"source" => "manual"})
+  end
+
+  step "the user renames it", context do
+    snooze_command(context, "thread.metadata.update", %{"title" => "Refactor the cart"})
+  end
+
+  step "the user reorders the threads", context do
+    snooze_command(context, "thread.active.reorder", %{"orderKey" => "a0"})
+  end
+
+  defp pr_key,
+    do: %{
+      "host" => "github.com",
+      "repository" => "acme/app",
+      "number" => 7,
+      "url" => "https://github.com/acme/app/pull/7"
+    }
+
+  defp snooze_command(context, type, fields, more \\ %{}) do
+    id = World.thread_id(context, "Refactor cart")
+
+    context =
+      World.command(
+        context,
+        Map.merge(%{"type" => type, "threadId" => id}, Map.merge(fields, more))
+      )
+
+    assert {:ok, _} = context.reply
+    :ok = HalC2.Streams.flush_shell(id)
+    context
+  end
+
+  defp await_failed(context, thread) do
+    World.await_row(World.thread_id(context, thread), &(&1["status"] == "failed"))
+    context
+  end
+
   # --- unread-and-status.feature ---------------------------------------------------
+
+  # The shell sits at its prompt after forking a subshell that waits, as a prompt theme's
+  # helper does: a child in the shell's own process group (job control is off for it).
+  step "{string} has one terminal waiting at an idle prompt", %{args: [thread]} = context do
+    {context, fifo} = open_terminal(context, thread)
+    {_, context} = Terminal.run(context, "default", "set +m; { (read _ < #{fifo}) & }")
+    Map.put(context, :idle_thread, World.thread_id(context, thread))
+  end
+
+  # A command of the user's that is a copy of the shell: the shell run through itself.
+  step "{string} has one terminal running a script through its own shell",
+       %{args: [thread]} = context do
+    {context, fifo} = open_terminal(context, thread)
+    n = System.unique_integer([:positive])
+
+    context =
+      Terminal.write(context, "default", "sh -c 'echo started''_#{n}; read _ < #{fifo}'\n")
+
+    {_, _, context} = Terminal.await_output(context, "default", "started_#{n}")
+    Map.put(context, :idle_thread, World.thread_id(context, thread))
+  end
+
+  defp open_terminal(context, thread) do
+    id = World.thread_id(context, thread)
+    {_, context} = Terminal.open!(context, %{"threadId" => id, "terminalId" => "term-1"})
+    {_, context} = Terminal.attach!(context, "default", Map.delete(context.terminal, "cwd"))
+    fifo = Terminal.folder(context, "/prompt-helper")
+    File.mkdir_p!(Path.dirname(fifo))
+    {_, 0} = System.cmd("mkfifo", [fifo])
+    {context, fifo}
+  end
+
+  step "{string} is not shown as busy", context do
+    assert %{"hasRunningSubprocess" => false} = terminal_after_look(context)
+    context
+  end
+
+  step "{string} is shown as busy", context do
+    assert %{"hasRunningSubprocess" => true} = terminal_after_look(context)
+    context
+  end
+
+  # The hub looks at the shell's children when asked; its answer is the receipt that it did.
+  defp terminal_after_look(context) do
+    :ok = HalC2.Terminal.Hub.refresh()
+    # The terminal tells the hub of what it found after the hub told it.
+    [{session, _}] = Registry.lookup(HalC2.Terminal.Registry, {context.idle_thread, "term-1"})
+    _ = :sys.get_state(session)
+    Enum.find(HalC2.Terminal.Hub.summaries(), &(&1["threadId"] == context.idle_thread))
+  end
 
   step "{string} finished work the user has not seen", %{args: [thread]} = context do
     context = World.add_run(context, thread, "completed")
@@ -793,7 +997,7 @@ defmodule HalC2.Steps.Threads do
     :ok =
       Exqlite.Sqlite3.execute(
         db,
-        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_typed'"
+        "DELETE FROM messages; DELETE FROM meta WHERE key = 'messages_typed_2'"
       )
 
     :ok = Exqlite.Sqlite3.close(db)
@@ -810,7 +1014,7 @@ defmodule HalC2.Steps.Threads do
   step "the old threads are indexed once and can be searched", context do
     context = search(context, "invoices table")
     assert [_] = matches(context, "Old work")
-    assert HalC2.Store.meta(HalC2.Store.path(), "messages_typed") == "1"
+    assert HalC2.Store.meta(HalC2.Store.path(), "messages_typed_2") == "1"
     context
   end
 
@@ -1377,7 +1581,13 @@ defmodule HalC2.Steps.Threads do
   # the step names.
 
   step "a connected environment with the thread {string} on Claude", %{args: [title]} = context do
+    # Files the fake Claude looks for once its turns are under way (see fake_claude.py).
+    flags = Path.join(System.tmp_dir!(), "limit-flags-#{System.unique_integer([:positive])}")
+    World.put_env("FAKE_CLAUDE_STOP_LIMIT_FILE", flags <> ".stop")
+    World.put_env("FAKE_CLAUDE_REJECT_RESUME_FILE", flags <> ".reject")
+
     context
+    |> Map.put(:limit_flags, flags)
     |> World.agents()
     |> World.create_project("shop")
     |> World.create_thread(title, nil, %{
@@ -1449,6 +1659,27 @@ defmodule HalC2.Steps.Threads do
     continues(context, thread, at)
   end
 
+  step ~r/^"(?<thread>[^"]+)" does not continue on its own at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    assert resumes(context, thread, next_clock(time)) == []
+    refute continued?(context, thread)
+    context
+  end
+
+  step ~r/^Claude stops "(?<thread>[^"]+)" at (?<now>\d{1,2}:\d{2}) on a usage limit that reset at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _now, _time]} = context do
+    # The window reported has already reset five minutes before the stop.
+    reset = System.system_time(:millisecond) - 300_000
+
+    {{:ok, _}, context} =
+      World.send_message(context, thread, "usage limit until #{div(reset, 1000)}")
+
+    World.await_runs(context, thread, ["failed"])
+    World.await_row(World.thread_id(context, thread), &(&1["lastErrorClass"] == "usage_limit"))
+
+    Map.merge(context, %{limit_reset: reset, limit_time: "00:00", current: thread, thread: thread})
+  end
+
   step ~r/^"(?<thread>[^"]+)" does not continue at (?<time>\d{1,2}:\d{2})$/,
        %{args: [thread, time]} = context do
     assert resumes(context, thread, next_clock(time)) == []
@@ -1513,7 +1744,8 @@ defmodule HalC2.Steps.Threads do
   end
 
   # The message is queued while a turn works; stopping that turn starts the limited
-  # message, and the stop holds the queue behind it.
+  # message, and the limit holds the queue behind it. The stop lets the queue run, as
+  # the MC's own stops do: a user's Stop would hold the limited message too.
   step ~r/^"(?<thread>[^"]+)" stopped on a usage limit that resets at (?<time>\d{1,2}:\d{2}) with "(?<text>[^"]+)" queued behind it$/,
        %{args: [thread, time, text]} = context do
     reset = next_clock(time)
@@ -1535,7 +1767,8 @@ defmodule HalC2.Steps.Threads do
       World.dispatch(context, %{
         "type" => "run.interrupt",
         "commandId" => "cmd-#{System.unique_integer([:positive])}",
-        "threadId" => id
+        "threadId" => id,
+        "holdQueue" => false
       })
 
     World.await_runs(context, thread, ["interrupted", "failed", "queued"])
@@ -1592,6 +1825,389 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # --- limited-threads.feature: stops, rejections and refusals -----------------------
+
+  step "the provider rejects the automatic resume", context do
+    File.write!(context.limit_flags <> ".reject", "1")
+    thread = World.current(context)
+    at = context.limit_reset + 60_000
+    assert [%{"type" => "message.dispatch"}] = resumes(context, thread, at)
+    World.await_runs(context, thread, ["failed", "failed"])
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" still records (?<time>\d{1,2}:\d{2}) as its reset time$/,
+       %{args: [thread, time]} = context do
+    # The sidebar row follows the stream: it is read once it shows the rejected run.
+    id = World.thread_id(context, thread)
+    runs = HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "run")
+    last = Enum.max_by(runs, & &1["ordinal"])["id"]
+
+    row =
+      World.await_row(
+        id,
+        &(&1["latestRunId"] == last and &1["lastErrorClass"] == "usage_limit")
+      )
+
+    assert JS.epoch_ms(row["usageLimitResetAt"]) == next_clock(time)
+    context
+  end
+
+  step ~r/^Claude stopped "(?<thread>[^"]+)" on a usage limit that resets at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    context = limit_stop(context, thread, time)
+    # The sweep arms the resume the setting asks for.
+    assert [%{"type" => "thread.metadata.update"}] =
+             recoveries(context, thread, System.system_time(:millisecond))
+
+    row =
+      World.await_row(
+        World.thread_id(context, thread),
+        &(&1["limitRecovery"]["autoResume"] == true)
+      )
+
+    Map.put(context, :snoozed_before, row["snoozedUntil"])
+  end
+
+  step ~r/^"(?<thread>[^"]+)" does not continue on its own at (?<time>\d{1,2}:\d{2}), nor after a restart$/,
+       %{args: [thread, time]} = context do
+    at = next_clock(time)
+    assert resumes(context, thread, at) == []
+    context = Map.put(context, :mc, Mc.restart(context.mc))
+    assert resumes(context, thread, at) == []
+    refute continued?(context, thread)
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" is snoozed until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    row = World.await_row(World.thread_id(context, thread), &(&1["snoozedUntil"] != nil))
+    assert JS.epoch_ms(row["snoozedUntil"]) == next_clock(time)
+    context
+  end
+
+  step "it does not continue on its own", context do
+    assert resumes(context, World.current(context), System.system_time(:millisecond)) == []
+    refute continued?(context, World.current(context))
+    context
+  end
+
+  step "the thread no longer shows a scheduled resume", context do
+    World.await_row(
+      World.thread_id(context, World.current(context)),
+      &(&1["limitRecovery"]["autoResume"] == false)
+    )
+
+    context
+  end
+
+  step "a snooze the thread had is kept", context do
+    assert World.row(context, World.current(context))["snoozedUntil"] == context.snoozed_before
+    context
+  end
+
+  step "Claude is running {string}", %{args: [thread]} = context do
+    {{:ok, _}, context} = World.send_message(context, thread, "wait for it")
+
+    World.await_thread(
+      context,
+      thread,
+      &Enum.any?(HalC2.StreamState.list(&1, "run"), fn run -> run["status"] == "running" end)
+    )
+
+    Map.put(context, :current, thread)
+  end
+
+  step ~r/^(?<who>the user|the parent agent cancelling its task) stops "(?<thread>[^"]+)" and Claude reports a usage limit that resets at (?<time>\d{1,2}:\d{2}) as the run ends$/,
+       %{args: [who, thread, time]} = context do
+    reset = next_clock(time)
+    File.write!(context.limit_flags <> ".stop", Integer.to_string(div(reset, 1000)))
+    id = World.thread_id(context, thread)
+
+    if who == "the user" do
+      {{:ok, _}, context} =
+        World.dispatch(context, %{
+          "type" => "run.interrupt",
+          "commandId" => "cmd-#{System.unique_integer([:positive])}",
+          "threadId" => id
+        })
+
+      finish_stop(context, thread, reset, time)
+    else
+      assert {:ok, _} = HalC2.Mcp.Tools.interrupt(id, %{}, "parent-agent")
+      finish_stop(context, thread, reset, time)
+    end
+  end
+
+  defp finish_stop(context, thread, reset, time) do
+    id = World.thread_id(context, thread)
+    World.await_row(id, &(&1["lastErrorClass"] == "usage_limit"))
+    Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread, thread: thread})
+  end
+
+  step ~r/^the user stops "(?<thread>[^"]+)" (?<where>mid-reply|during a tool) after Claude reported a usage limit that resets at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, where, time]} = context do
+    reason = if where == "mid-reply", do: "aborted_streaming", else: "aborted_tools"
+    File.write!(context.limit_flags <> ".stop", "#{div(next_clock(time), 1000)} #{reason}")
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    World.await_runs(context, thread, ["interrupted"])
+    Map.put(context, :current, thread)
+  end
+
+  step "the run is shown as stopped, not failed", context do
+    thread = World.current(context)
+    assert [%{"status" => "interrupted"}] = World.runs(context, thread)
+    row = World.row(context, thread)
+    refute row["lastErrorClass"]
+    refute row["lastError"]
+    context
+  end
+
+  step "the user can still choose to resume it at the reset", context do
+    thread = World.current(context)
+    context = choose_recovery(context, thread, %{"autoResume" => true})
+
+    assert [%{"usageLimitContinuationOfRunId" => _}] =
+             resumes(context, thread, context.limit_reset)
+
+    context
+  end
+
+  step ~r/^the user stopped "(?<thread>[^"]+)" after it stopped on a usage limit that resets at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    context
+    |> limit_stop(thread, time)
+    |> then(
+      &World.dispatch(&1, %{"type" => "run.interrupt", "threadId" => World.thread_id(&1, thread)})
+    )
+    |> elem(1)
+  end
+
+  step "Claude stopped {string} on a usage limit that reset four days ago",
+       %{args: [thread]} = context do
+    reset = System.system_time(:millisecond) - 4 * 86_400_000
+    id = World.thread_id(context, thread)
+
+    {{:ok, _}, context} =
+      World.send_message(context, thread, "usage limit until #{div(reset, 1000)}")
+
+    World.await_runs(context, thread, ["failed"])
+    World.await_row(id, &(&1["lastErrorClass"] == "usage_limit"))
+    Map.merge(context, %{limit_reset: reset, limit_time: "00:00", current: thread})
+  end
+
+  step "no resume was ever scheduled for it", context do
+    refute World.row(context, World.current(context))["limitRecovery"]
+    context
+  end
+
+  step "{string} is not scheduled to resume", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    LimitRecovery.sweep()
+    row = World.row(context, thread)
+    refute row["limitRecovery"] && row["limitRecovery"]["autoResume"]
+    assert id
+    context
+  end
+
+  step "a limit stop whose reset passed an hour ago is still scheduled to resume", context do
+    row = World.row(context, World.current(context))
+    now = System.system_time(:millisecond)
+
+    thread =
+      Map.merge(row, %{
+        "usageLimitResetAt" =>
+          DateTime.to_iso8601(DateTime.from_unix!(now - 3_600_000, :millisecond)),
+        "latestRunCompletedAt" =>
+          DateTime.to_iso8601(DateTime.from_unix!(now - 7_200_000, :millisecond)),
+        "limitRecovery" => nil
+      })
+
+    assert %{"type" => "thread.metadata.update", "limitRecovery" => %{"autoResume" => true}} =
+             LimitRecovery.command(thread, true, now)
+
+    context
+  end
+
+  step "a newer turn has run on {string} since", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    stale = World.row(context, thread)
+    {{:ok, _}, context} = World.send_message(context, thread, "Let's try something else")
+    World.await_runs(context, thread, ["failed", "completed"])
+    World.await_row(id, &(&1["status"] != "failed"))
+    Map.put(context, :stale_row, stale)
+  end
+
+  step "the user settled {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {{:ok, _}, context} = World.dispatch(context, %{"type" => "thread.settle", "threadId" => id})
+    World.await_row(id, &(&1["settledOverride"] == "settled"))
+    context
+  end
+
+  step "the choice names a reset time other than {word}", context do
+    Map.put(context, :other_reset, true)
+  end
+
+  step ~r/^the choice is refused with "(?<message>[^"]+)"$/, %{args: [message]} = context do
+    assert {:error, ^message, _} = context.reply
+    context
+  end
+
+  # --- limited-threads.feature: the automatic resume ---------------------------------
+
+  step ~r/^"(?<thread>[^"]+)" receives the user message "(?<text>[^"]+)" written by the server$/,
+       %{args: [_thread, text]} = context do
+    assert [%{"text" => ^text, "creationSource" => "server", "createdBy" => "user"}] =
+             context.resumed
+
+    context
+  end
+
+  step "its turn starts at once", context do
+    thread = World.current(context)
+
+    World.await_thread(context, thread, fn state ->
+      length(HalC2.StreamState.list(state, "run")) == 2
+    end)
+
+    context
+  end
+
+  step ~r/^the user snoozed "(?<thread>[^"]+)" until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    id = World.thread_id(context, thread)
+    until = DateTime.to_iso8601(DateTime.from_unix!(clock_at(context, time), :millisecond))
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.snooze",
+        "threadId" => id,
+        "snoozedUntil" => until
+      })
+
+    World.await_row(id, &(&1["snoozedUntil"] != nil))
+    Map.put(context, :snooze_end, clock_at(context, time))
+  end
+
+  step "{string} does not continue", %{args: [thread]} = context do
+    assert context.resumed == []
+    refute continued?(context, thread)
+    context
+  end
+
+  step ~r/^it continues on its own once the snooze ends at (?<time>\d{1,2}:\d{2})$/,
+       %{args: [time]} = context do
+    continues(context, World.current(context), clock_at(context, time))
+  end
+
+  step ~r/^the user switched "(?<thread>[^"]+)" to another agent before (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _time]} = context do
+    id = World.thread_id(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "provider.switch",
+        "threadId" => id,
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}
+      })
+
+    World.await_row(id, &(&1["modelSelection"]["instanceId"] == "codex"))
+    context
+  end
+
+  step ~r/^"(?<thread>[^"]+)" (?:started waiting|is waiting) on an approval(?: before (?<time>\d{1,2}:\d{2}))?$/,
+       %{args: [thread | _]} = context do
+    id = "request-#{System.unique_integer([:positive])}"
+
+    context =
+      World.put_entity(context, thread, "runtime-request", id, %{
+        "s" => %{
+          "id" => id,
+          "threadId" => World.thread_id(context, thread),
+          "status" => "pending",
+          "kind" => "command_execution_approval",
+          "createdAt" => World.iso_from_now(0)
+        }
+      })
+
+    World.await_row(World.thread_id(context, thread), &(&1["pendingRuntimeRequest"] != nil))
+    context
+  end
+
+  step ~r/^the user deleted "(?<thread>[^"]+)" before (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _time]} = context do
+    id = World.thread_id(context, thread)
+    {{:ok, _}, context} = World.dispatch(context, %{"type" => "thread.delete", "threadId" => id})
+    context
+  end
+
+  step "{string} was snoozed until its limit resets at {word}",
+       %{args: [thread, time]} = context do
+    context = limit_stop(context, thread, time)
+    context = choose_recovery(context, thread, %{"snooze" => true, "autoResume" => false})
+    assert World.row(context, thread)["snoozedUntil"] != nil
+    context
+  end
+
+  step ~r/^the user then snoozed "(?<thread>[^"]+)" until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, time]} = context do
+    id = World.thread_id(context, thread)
+    until = DateTime.to_iso8601(DateTime.from_unix!(clock_at(context, time), :millisecond))
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.snooze",
+        "threadId" => id,
+        "snoozedUntil" => until
+      })
+
+    World.await_row(id, &(JS.epoch_ms(&1["snoozedUntil"]) == clock_at(context, time)))
+    Map.put(context, :hand_snooze, clock_at(context, time))
+  end
+
+  step "the user turns off snoozing until the reset for {string}", %{args: [thread]} = context do
+    choose_recovery(context, thread, %{"snooze" => false, "autoResume" => false})
+  end
+
+  step ~r/^"(?<thread>[^"]+)" stays snoozed until (?<time>\d{1,2}:\d{2})$/,
+       %{args: [thread, _time]} = context do
+    assert JS.epoch_ms(World.row(context, thread)["snoozedUntil"]) == context.hand_snooze
+    context
+  end
+
+  step "the user also snoozes {string} until the reset without naming the resume option",
+       %{args: [thread]} = context do
+    row = World.row(context, thread)
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.metadata.update",
+        "threadId" => row["id"],
+        "limitRecovery" => %{
+          "runId" => row["latestRunId"],
+          "resetAt" => row["usageLimitResetAt"],
+          "snooze" => true
+        }
+      })
+
+    context
+  end
+
+  step "it is still scheduled to resume at {word}", %{args: [time]} = context do
+    row = World.row(context, World.current(context))
+    assert row["limitRecovery"]["autoResume"] == true
+    assert JS.epoch_ms(row["limitRecovery"]["resetAt"]) == next_clock(time)
+    context
+  end
+
   # Every command a sweep at `at` dispatches for the thread.
   defp recoveries(context, thread, at) do
     id = World.thread_id(context, thread)
@@ -1607,26 +2223,34 @@ defmodule HalC2.Steps.Threads do
 
     World.await_runs(context, thread, ["failed"])
     World.await_row(World.thread_id(context, thread), &(&1["lastErrorClass"] == "usage_limit"))
-    Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread})
+    Map.merge(context, %{limit_reset: reset, limit_time: time, current: thread, thread: thread})
   end
 
+  # The choice names the stop as the thread shows it, or the one a newer turn has since
+  # replaced, or a reset time that is not the stop's.
   defp choose_recovery(context, thread, choice) do
-    row = World.row(context, thread)
+    row = context[:stale_row] || World.row(context, thread)
 
-    {{:ok, _}, context} =
+    reset =
+      if context[:other_reset],
+        do: shifted(row["usageLimitResetAt"]),
+        else: row["usageLimitResetAt"]
+
+    {reply, context} =
       World.dispatch(context, %{
         "type" => "thread.metadata.update",
         "threadId" => row["id"],
-        "limitRecovery" =>
-          Map.merge(
-            %{"runId" => row["latestRunId"], "resetAt" => row["usageLimitResetAt"]},
-            choice
-          )
+        "limitRecovery" => Map.merge(%{"runId" => row["latestRunId"], "resetAt" => reset}, choice)
       })
 
-    World.await_row(row["id"], &(&1["limitRecovery"]["autoResume"] == choice["autoResume"]))
-    context
+    if match?({:ok, _}, reply),
+      do: World.await_row(row["id"], &(&1["limitRecovery"]["autoResume"] == choice["autoResume"]))
+
+    Map.put(context, :reply, reply)
   end
+
+  defp shifted(iso),
+    do: DateTime.to_iso8601(DateTime.from_unix!(JS.epoch_ms(iso) + 3_600_000, :millisecond))
 
   # The continuation messages a sweep at `at` sends to the thread.
   defp resumes(context, thread, at) do
@@ -1860,23 +2484,123 @@ defmodule HalC2.Steps.Threads do
     Map.merge(context, %{where: reply, fork_state: state})
   end
 
-  step "the first request and the newest messages are kept whole", context do
+  step "the first request and the newest work are kept whole", context do
     assert context.where =~ "history True"
 
-    assert [%{"summaryText" => "[earlier messages omitted]\n\n" <> kept}] =
+    assert [%{"summaryText" => summary}] =
              HalC2.StreamState.list(context.fork_state, "context-handoff")
 
-    assert kept =~ ~r/\AUser: hello\n\n/
+    assert "[This history is condensed to fit." <> _ = summary
+    assert String.length(summary) <= 60_000
+    assert summary =~ ~r/^## Run 1[^\n]*\n\nUser: hello\n/m
 
-    assert kept =~
+    assert summary =~
              ~r/User: newest work\n\n(Command: [^\n]+\n[^\n]+\n[^\n]+\n\n)?Assistant: [^\n]+\z/
 
-    Map.put(context, :kept, kept)
+    Map.put(context, :kept, summary)
   end
 
-  step "the message that does not fit is left out", context do
-    refute context.kept =~ "User: oldest"
-    assert String.length(context.kept) < 1_000
+  step "the request that does not fit is cut in its middle where it says so", context do
+    assert [request] =
+             for(
+               block <- String.split(context.kept, "\n\n"),
+               block =~ ~r/\AUser: oldest /,
+               do: block
+             )
+
+    assert_kept_or_cut(request, "User: oldest " <> String.duplicate("x", 70_000))
+    assert request =~ "characters cut here"
+    context
+  end
+
+  step "the first message of {string} has the file {string} attached",
+       %{args: [title, name]} = context do
+    [message | _] = messages(context, title)
+
+    id =
+      "#{HalC2.Attachments.thread_segment(World.thread_id(context, title))}-#{HalC2.Environment.uuid4()}"
+
+    File.mkdir_p!(HalC2.Attachments.dir())
+    File.write!(Path.join(HalC2.Attachments.dir(), id <> Path.extname(name)), "the notes")
+
+    file = %{
+      "type" => "file",
+      "id" => id,
+      "name" => name,
+      "mimeType" => "text/plain",
+      "sizeBytes" => 9
+    }
+
+    # As a send writes it: on the message, and on the turn item the timeline shows.
+    item = "turn-item:user:#{message["id"]}"
+
+    assert World.stream(context, title)
+           |> HalC2.StreamState.get("turn-item")
+           |> Map.has_key?(item)
+
+    context
+    |> World.put_entity(title, "message", message["id"], %{"s" => %{"attachments" => [file]}})
+    |> World.put_entity(title, "turn-item", item, %{"s" => %{"attachments" => [file]}})
+    |> Map.put(:attached, file)
+  end
+
+  # The timeline reads a message's files from its turn item.
+  step "{string} still opens from the timeline of {string}", %{args: [name, fork]} = context do
+    assert [file] =
+             for(
+               %{"type" => "user_message"} = item <-
+                 HalC2.StreamState.list(World.stream(context, fork), "turn-item"),
+               file <- item["attachments"] || [],
+               do: file
+             )
+
+    assert file["name"] == name
+
+    assert String.starts_with?(
+             file["id"],
+             HalC2.Attachments.thread_segment(World.thread_id(context, fork)) <> "-"
+           )
+
+    assert File.read!(HalC2.Attachments.path(file)) == "the notes"
+    context
+  end
+
+  # A full disk: neither a link nor a copy can be made.
+  step "the disk takes no more files", context do
+    dir = HalC2.Attachments.dir()
+    File.chmod!(dir, 0o555)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(dir, 0o755) end)
+    context
+  end
+
+  step "the fork is rejected because the files its messages carry could not be copied",
+       context do
+    assert {:error, "The fork could not copy the files its messages carry: " <> _, _} =
+             context.reply
+
+    target = HalC2.Streams.Server.state(HalC2.Streams.ensure(context.fork_id))
+    assert HalC2.StreamState.list(target, "thread") == []
+    context
+  end
+
+  step "no copy of {string} is left behind", context do
+    File.chmod!(HalC2.Attachments.dir(), 0o755)
+    prefix = HalC2.Attachments.thread_segment(context.fork_id) <> "-"
+    assert Enum.filter(File.ls!(HalC2.Attachments.dir()), &String.starts_with?(&1, prefix)) == []
+    assert HalC2.Attachments.path(context.attached)
+    context
+  end
+
+  step "{string} in {string} still holds what was attached", %{args: [name, fork]} = context do
+    assert [file] =
+             for(
+               message <- messages(context, fork),
+               file <- message["attachments"] || [],
+               do: file
+             )
+
+    assert file["name"] == name
+    assert File.read!(HalC2.Attachments.path(file)) == "the notes"
     context
   end
 
@@ -2319,7 +3043,8 @@ defmodule HalC2.Steps.Threads do
     assert final["phase"] == "done"
     ran = ["checkout", "agent" | if(context.skipped == "fetch", do: ["setup-script"], else: [])]
     assert Map.take(statuses(final), ran) |> Map.values() |> Enum.all?(&(&1 == "done"))
-    World.await_runs(context, World.current(context), ["completed"])
+    # A ceiling for a whole fake turn on a busy machine, not a wait.
+    World.await_runs(context, World.current(context), ["completed"], 30_000)
     context
   end
 
@@ -2337,13 +3062,19 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # Also the source-control scenarios', which follow their setup with `World.await_setup/3`.
   step "the worktree starts from the local {string}", %{args: [branch]} = context do
-    {final, context} = await_setup(context, &(&1["phase"] != "running"))
+    settled = &(&1["phase"] != "running")
+
+    {final, context} =
+      if Map.has_key?(context, :snapshots),
+        do: await_setup(context, settled),
+        else: World.await_setup(context, settled)
+
     assert %{"phase" => "done", "worktreePath" => path} = final
     assert statuses(final)["fetch"] == "done"
     root = World.project(context).root
-    World.git!(root, ~w(commit -q --allow-empty -m local-only))
-    assert World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ["rev-parse", "#{branch}~1"])
+    assert World.git!(path, ~w(rev-parse HEAD)) == World.git!(root, ["rev-parse", branch])
     context
   end
 
@@ -2366,7 +3097,19 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # The Background's script waits for a line once it has printed, so its terminal is
+  # still there to open (a script that went well closes it).
   step "the setup script starts", context do
+    context =
+      if context[:startup_question],
+        do: context,
+        else:
+          put_in(
+            context,
+            [:setup_script, "command"],
+            "echo installing packages && echo linking && read go"
+          )
+
     {snapshot, context} = context |> prepare() |> await_setup(&(&1["setupScript"] != nil))
     Map.merge(context, %{started: snapshot, worktree_path: snapshot["worktreePath"]})
   end
@@ -2410,6 +3153,9 @@ defmodule HalC2.Steps.Threads do
         client
       end
 
+    id = World.thread_id(context, World.current(context))
+    write = %{"threadId" => id, "terminalId" => context.setup_terminal, "data" => "\n"}
+    assert {:ok, _} = HalC2.Terminal.write(write)
     World.put_client(context, client)
   end
 
@@ -2491,6 +3237,315 @@ defmodule HalC2.Steps.Threads do
 
   # Launches the thread in a new worktree once, with the script the Givens chose,
   # watching its setup from the test process.
+  # --- a shell startup that asks something -----------------------------------------
+
+  # `sh -i` reads `$ENV` as it starts: this one asks its question and waits for a line.
+  step "the user's shell startup asks {string}", %{args: [question]} = context do
+    path = Path.join(Mc.tmp_dir(context.mc, "startup"), "env.sh")
+
+    File.write!(path, """
+    printf '%s ' '#{question}'
+    read answer
+    echo "startup read: $answer"
+    """)
+
+    World.put_env("SHELL", "/bin/sh")
+    World.put_env("ENV", path)
+
+    context
+    |> put_in([:setup_script, "command"], "echo ran > setup-ran.txt")
+    |> Map.put(:startup_question, question)
+  end
+
+  step "the setup command is not typed while that question is open", context do
+    {snapshot, context} =
+      await_setup(
+        context,
+        &(script_tail(&1) |> Enum.any?(fn l -> l =~ context.startup_question end))
+      )
+
+    assert snapshot["phase"] == "running"
+    assert statuses(snapshot)["setup-script"] == "running"
+    assert statuses(snapshot)["agent"] == "pending"
+    refute File.exists?(Path.join(context.worktree_path, "setup-ran.txt"))
+    Map.put(context, :asking, snapshot)
+  end
+
+  step "the setup output shows the question, and the user can open the setup terminal to answer it",
+       context do
+    assert List.last(script_tail(context.asking)) =~ context.startup_question
+    id = World.thread_id(context, World.current(context))
+    assert [_] = Registry.lookup(HalC2.Terminal.Registry, {id, "setup"})
+    context
+  end
+
+  step "the user answers the startup question", context do
+    id = World.thread_id(context, World.current(context))
+
+    assert {:ok, _} =
+             HalC2.Terminal.write(%{"threadId" => id, "terminalId" => "setup", "data" => "n\n"})
+
+    context
+  end
+
+  step "the setup script runs and its completion is reported", context do
+    {snapshot, context} = await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    stage = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+    assert %{"status" => "done", "detail" => "exited with 0"} = stage
+    # The startup read the user's answer, not the setup command.
+    assert File.read!(Path.join(snapshot["worktreePath"], "setup-ran.txt")) == "ran\n"
+    refute Enum.any?(stage["tail"] || [], &(&1 =~ context.startup_question))
+    World.await_runs(context, World.current(context), ["completed"], 30_000)
+    context
+  end
+
+  # The script waits for a line, so its shell is caught running before it ends.
+  step "the setup script ran in the terminal {string} and exited with 0",
+       %{args: [terminal]} = context do
+    {snapshot, context} =
+      context
+      |> put_in([:setup_script, "command"], "read go && echo went")
+      |> prepare()
+      |> await_setup(&(&1["setupScript"] != nil))
+
+    id = World.thread_id(context, World.current(context))
+    assert snapshot["setupScript"]["terminalId"] == terminal
+    [{shell, _}] = Registry.lookup(HalC2.Terminal.Registry, {id, terminal})
+    write = %{"threadId" => id, "terminalId" => terminal, "data" => "\n"}
+    assert {:ok, _} = HalC2.Terminal.write(write)
+
+    {snapshot, context} = await_setup(context, &(statuses(&1)["setup-script"] in ~w(done failed)))
+    assert statuses(snapshot)["setup-script"] == "done"
+    Map.put(context, :setup_shell, shell)
+  end
+
+  # The script's stage is done only once its shell is gone.
+  step "the {string} terminal is closed", context do
+    refute Process.alive?(context.setup_shell)
+    context
+  end
+
+  step "the setup shell exits before it is ready for a command", context do
+    path = Path.join(Mc.tmp_dir(context.mc, "startup"), "env.sh")
+    File.write!(path, "echo 'startup gave up'\nexit 3\n")
+    World.put_env("SHELL", "/bin/sh")
+    World.put_env("ENV", path)
+    put_in(context, [:setup_script, "command"], "echo ran > setup-ran.txt")
+  end
+
+  step "the setup script was about to start", context do
+    {snapshot, context} = context |> prepare() |> await_setup(&(&1["phase"] != "running"))
+    Map.put(context, :ended, snapshot)
+  end
+
+  step "nothing is typed and the setup reports no exit code", context do
+    stage = Enum.find(context.ended["stages"], &(&1["id"] == "setup-script"))
+    assert %{"status" => "failed", "detail" => "exited with no exit code"} = stage
+    # What the startup said before it exited stays, as the reason.
+    assert stage["tail"] == ["startup gave up"]
+    refute File.exists?(Path.join(context.ended["worktreePath"], "setup-ran.txt"))
+    context
+  end
+
+  # --- the first turn and what is sent while the setup runs ---------------------------
+
+  step "a new worktree thread whose setup script runs alongside the agent", context do
+    put_in(context, [:setup_script, "async"], true)
+  end
+
+  step "the agent starts its first turn", context do
+    {snapshot, context} = context |> prepare() |> await_setup(&(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    Map.put(context, :final, snapshot)
+  end
+
+  step "the thread stays on its worktree and branch", context do
+    title = World.current(context)
+    path = context.final["worktreePath"]
+    World.await_runs(context, title, ["completed"], 30_000)
+    thread = World.thread(context, title)
+    assert thread["worktreePath"] == path and File.dir?(path)
+    assert thread["branch"] == World.git!(path, ~w(branch --show-current))
+    assert List.last(World.codex_requests(context, "thread/start"))["cwd"] == path
+    context
+  end
+
+  step "the first turn completes", context do
+    World.await_runs(context, World.current(context), ["completed"], 30_000)
+    assert [_] = World.codex_requests(context, "turn/start")
+    context
+  end
+
+  # The setup script waits for a line, so the setup is caught before the agent starts.
+  step "a new worktree thread is still checking out its worktree or running a setup script it must wait for",
+       context do
+    {snapshot, context} =
+      context
+      |> put_in([:setup_script, "command"], "read go && echo set up")
+      |> prepare()
+      |> await_setup(&(statuses(&1)["setup-script"] == "running"))
+
+    Map.put(context, :worktree_path, snapshot["worktreePath"])
+  end
+
+  step("the user sends a follow-up", context, do: send_follow_up(context))
+  step("the follow-up is queued", context, do: queued_follow_up(context))
+
+  step "it starts by itself after the first turn finishes", context do
+    id = World.thread_id(context, World.current(context))
+    write = %{"threadId" => id, "terminalId" => "setup", "data" => "\n"}
+    assert {:ok, _} = HalC2.Terminal.write(write)
+    follows_first_turn(context)
+  end
+
+  # The fetch the setup starts with waits on a fifo that `origin`'s upload-pack reads
+  # first, so the follow-up is queued before the worktree is made.
+  step "a follow-up is queued behind a worktree thread's setup", context do
+    root = World.project(context).root
+    dir = Mc.tmp_dir(context.mc, "origin")
+    origin = Path.join(dir, "origin.git")
+    World.git!(dir, ["init", "-q", "--bare", "-b", "main", origin])
+    World.git!(root, ["remote", "add", "origin", origin])
+    World.git!(root, ~w(push -q origin main))
+    gate = Path.join(dir, "gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    pack = Path.join(dir, "upload-pack.sh")
+    File.write!(pack, "#!/bin/sh\nread _ < '#{gate}'\nexec git-upload-pack \"$@\"\n")
+    File.chmod!(pack, 0o755)
+    World.git!(root, ["config", "remote.origin.uploadpack", pack])
+
+    {_snapshot, context} =
+      context
+      |> put_in([:setup, "startFromOrigin"], true)
+      |> prepare()
+      |> await_setup(&(statuses(&1)["fetch"] == "running"))
+
+    context
+    |> Map.put(:gate, gate)
+    |> send_follow_up()
+    |> queued_follow_up()
+  end
+
+  step ~r/^the setup (?<ends>is cancelled|fails) before the worktree exists$/,
+       %{args: [ends]} = context do
+    root = World.project(context).root
+    gate = context.gate
+
+    case ends do
+      "is cancelled" ->
+        id = World.thread_id(context, World.current(context))
+        {reply, context} = World.call(context, "worktreeSetup.cancel", %{"threadId" => id})
+        assert {:ok, %{"cancelled" => true}} = reply
+        # The fetch may be gone with the setup; its gate is opened apart for one that is not.
+        spawn_link(fn -> File.write!(gate, "go\n") end)
+        Map.put(context, :ended, "cancelled")
+
+      "fails" ->
+        File.rename!(Path.join(root, ".git"), Path.join(root, ".git-away"))
+        File.write!(gate, "go\n")
+        {snapshot, context} = await_setup(context, &(&1["phase"] != "running"))
+        assert %{"phase" => "failed", "worktreePath" => nil} = snapshot
+        File.rename!(Path.join(root, ".git-away"), Path.join(root, ".git"))
+        World.git!(root, ~w(config --unset remote.origin.uploadpack))
+        Map.put(context, :ended, "failed")
+    end
+  end
+
+  step "the follow-up is held instead of running in the project's own checkout", context do
+    ended = context.ended
+
+    assert [%{"status" => ^ended}, %{"status" => "queued", "queueHeld" => true}] =
+             World.runs(context, World.current(context))
+
+    assert World.codex_requests(context, "turn/start") == []
+    assert World.codex_requests(context, "thread/start") == []
+    context
+  end
+
+  step "the user retries the setup", context do
+    id = World.thread_id(context, World.current(context))
+    context = %{context | snapshots: []}
+    {reply, context} = World.call(context, "worktreeSetup.retry", %{"threadId" => id})
+    assert {:ok, %{"retried" => true}} = reply
+    {snapshot, context} = await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    Map.put(context, :worktree_path, snapshot["worktreePath"])
+  end
+
+  step("the follow-up goes after the first turn, in the new worktree", context,
+    do: follows_first_turn(context)
+  )
+
+  defp send_follow_up(context) do
+    title = World.current(context)
+    context = World.command(context, World.message_command(context, title, "Also show the tax"))
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  defp queued_follow_up(context) do
+    assert [%{"status" => "preparing"}, %{"status" => "queued"}] =
+             World.runs(context, World.current(context))
+
+    assert World.codex_requests(context, "turn/start") == []
+    context
+  end
+
+  # Both turns ran, the follow-up second, in the worktree.
+  defp follows_first_turn(context) do
+    World.await_runs(context, World.current(context), ["completed", "completed"], 30_000)
+    assert [first, second] = World.codex_requests(context, "turn/start")
+    refute inspect(first) =~ "Also show the tax"
+    assert inspect(second) =~ "Also show the tax"
+    path = context.worktree_path
+    assert Enum.all?(World.codex_requests(context, "thread/start"), &(&1["cwd"] == path))
+    context
+  end
+
+  # --- cancelling while the branch is being named ------------------------------------
+
+  # The writer model never answers, so the rename is still asking for a name while the
+  # setup script runs; `HalC2.WorktreeSetup` holds the rename's process.
+  step "the temporary branch is still being renamed from the first message", context do
+    World.put_env("FAKE_TEXT_HANG", "1")
+
+    {snapshot, context} =
+      context
+      |> put_in([:setup_script, "command"], "echo installing packages && sleep 60")
+      |> prepare()
+      |> await_setup(&(statuses(&1)["setup-script"] == "running"))
+
+    id = World.thread_id(context, World.current(context))
+    naming = :sys.get_state(HalC2.WorktreeSetup).setups[id].naming
+    assert is_pid(naming) and Process.alive?(naming)
+
+    Map.merge(context, %{
+      worktree_path: snapshot["worktreePath"],
+      temporary: snapshot["branch"],
+      naming: {naming, Process.monitor(naming)}
+    })
+  end
+
+  step "the rename is stopped before the worktree is removed", context do
+    assert {:ok, %{"cancelled" => true}} = context.reply
+    {naming, ref} = context.naming
+    # The cancel answers once the worktree is gone, and stops the rename before that.
+    assert_received {:DOWN, ^ref, :process, ^naming, _}
+    refute File.exists?(context.worktree_path)
+    context
+  end
+
+  step "the thread is left with no worktree and no renamed branch", context do
+    World.await_runs(context, World.current(context), ["cancelled"])
+    thread = World.thread(context, World.current(context))
+    assert thread["worktreePath"] == nil
+    assert thread["branch"] == nil
+    root = World.project(context).root
+    assert World.git!(root, ["branch", "--format=%(refname:short)"]) == "main"
+    context
+  end
+
   defp prepare(%{launched: true} = context), do: context
 
   defp prepare(context) do
@@ -2538,6 +3593,9 @@ defmodule HalC2.Steps.Threads do
   end
 
   defp statuses(snapshot), do: Map.new(snapshot["stages"], &{&1["id"], &1["status"]})
+
+  defp script_tail(snapshot),
+    do: Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))["tail"] || []
 
   defp stage_id("fetch"), do: "fetch"
   defp stage_id("setup script"), do: "setup-script"
@@ -2958,12 +4016,17 @@ defmodule HalC2.Steps.Threads do
       VALUES ('thread', ?1, 'message.sent', ?2, '2026-09-01T12:00:00.000Z', 2)
       """)
 
+    # One transaction: thousands of commits, each synced to disk, outlast the test on a
+    # busy disk.
+    :ok = Exqlite.Sqlite3.execute(db, "BEGIN")
+
     for k <- 1..n do
       payload = if k == n, do: "{", else: JSON.encode!(t3_more_message(id, k))
       :ok = Exqlite.Sqlite3.bind(stmt, [id, payload])
       :done = Exqlite.Sqlite3.step(db, stmt)
     end
 
+    :ok = Exqlite.Sqlite3.execute(db, "COMMIT")
     :ok = Exqlite.Sqlite3.release(db, stmt)
     :ok = Exqlite.Sqlite3.close(db)
     Map.put(context, :t3_more, n)
@@ -3486,7 +4549,7 @@ defmodule HalC2.Steps.Threads do
   step "Claude receives the whole conversation ahead of the message", context do
     prompt = List.last(World.claude_prompts(context))
     assert prompt =~ ~r/^<conversation_history>\n/
-    refute prompt =~ "[earlier messages omitted]"
+    refute prompt =~ "[This history is condensed"
 
     for line <- ["User: sum the cart totals", "User: now add the discount", "Assistant: "],
         do: assert(prompt =~ line)
@@ -3543,7 +4606,7 @@ defmodule HalC2.Steps.Threads do
 
   step "the new agent receives each command with its exit code and output", context do
     assert handed_history(context) =~
-             ~r/\AUser: check this screenshot\n\nCommand: ls\nExit code: 0\na\.txt\n\nAssistant: [^\n]+\z/
+             ~r/\A## Run 1 \(codex\)\n\nUser: check this screenshot\n\nCommand: ls\nExit code: 0\na\.txt\n\nAssistant: [^\n]+\z/
 
     context
   end
@@ -3555,7 +4618,7 @@ defmodule HalC2.Steps.Threads do
     for block <- String.split(history, "\n\n"),
         do:
           assert(
-            String.starts_with?(block, ["User: ", "Assistant: ", "Command: "]),
+            String.starts_with?(block, ["## Run ", "User: ", "Assistant: ", "Command: "]),
             "neither a message nor a command: #{block}"
           )
 
@@ -3572,18 +4635,29 @@ defmodule HalC2.Steps.Threads do
     |> World.finished_turns(title, ["the original request"] ++ texts ++ ["the newest request"])
   end
 
-  # Parts 2 and 3 fit beside the original request and the newest turn; part 1 does not.
-  # The fake Codex names its answer and its command the same in every turn, so only the
-  # newest turn has them.
-  step "Claude receives the original request, the recent turns and command outcomes", context do
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
-    assert String.length(kept) <= 60_000
+  # The three parts alone are over the budget, so each is cut in its middle; every
+  # request is still there, and the newest turn is whole.
+  step "Claude receives every request, the long ones cut in their middle, and the newest turn whole",
+       context do
+    history = handed_history(context)
+    assert "[This history is condensed to fit." <> _ = history
+    assert String.length(history) <= 60_000
+    assert history =~ ~r/^User: the original request$/m
 
-    assert ["User: the original request", "User: part 2 " <> _, "User: part 3 " <> _ | newest] =
-             String.split(kept, "\n\n")
+    for n <- 1..3 do
+      assert [request] =
+               for(
+                 block <- String.split(history, "\n\n"),
+                 block =~ ~r/\AUser: part #{n} /,
+                 do: block
+               )
 
-    assert ["User: the newest request", "Command: ls\nExit code: 0\na.txt", "Assistant: " <> _] =
-             newest
+      assert_kept_or_cut(request, long_part(n))
+      assert request =~ "characters cut here"
+    end
+
+    assert history =~
+             ~r/User: the newest request\n\nCommand: ls\nExit code: 0\na\.txt\n\nAssistant: [^\n]+\z/
 
     context
   end
@@ -3607,29 +4681,29 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the agent receives at most 60,000 characters of history", context do
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
-    assert String.length(kept) in 50_000..60_000
+    history = handed_history(context)
+    assert "[This history is condensed to fit." <> _ = history
+    assert String.length(history) in 50_000..60_000
 
-    assert kept =~
+    assert history =~
              ~r/User: the newest request\n\nCommand: ls\n[^\n]+\n[^\n]+\n\nAssistant: [^\n]+\z/
 
-    Map.put(context, :kept, kept)
+    Map.put(context, :kept, history)
   end
 
-  # The first request and the newest long one, with the one between them left out.
-  step "every message it receives is whole", context do
+  # Every part is there, each its own start and end around a mark saying how much of
+  # its middle was cut.
+  step "every request it receives is whole or says where it is cut", context do
     requests = for "User: part " <> _ = block <- String.split(context.kept, "\n\n"), do: block
+    assert length(requests) == 3
 
-    assert requests ==
-             for(
-               n <- [1, 3],
-               do: String.trim("User: part #{n} " <> String.duplicate("cart ", 5_000))
-             )
+    for {request, n} <- Enum.with_index(requests, 1),
+        do: assert_kept_or_cut(request, long_part(n))
 
     context
   end
 
-  step "parts of the conversation did not fit in the handoff", context do
+  step "parts of the conversation were cut to fit the handoff", context do
     texts = for n <- 1..3, do: "part #{n} " <> String.duplicate("cart ", 5_000)
 
     context =
@@ -3638,15 +4712,20 @@ defmodule HalC2.Steps.Threads do
       |> World.finished_turns("Alpha", texts ++ ["the newest request"])
       |> switch_and_ask("Alpha")
 
-    # The first request and the newest two fit; the one between them does not.
-    assert "[earlier messages omitted]\n\n" <> kept = handed_history(context)
-    assert kept =~ "part 1 "
-    refute kept =~ "part 2 "
+    # The three parts alone are over the budget, so each is cut in its middle.
+    assert [part] =
+             for(
+               block <- String.split(handed_history(context), "\n\n"),
+               block =~ ~r/\AUser: part 2 /,
+               do: block
+             )
+
+    assert part =~ "characters cut here"
     Map.put(context, :left_out, Enum.at(texts, 1))
   end
 
   # Claude, now the thread's agent, pages to the thread's second request with the MC's tool.
-  step "the agent needs one of the left-out parts", context do
+  step "the agent needs the whole of a cut part", context do
     read =
       World.mcp_tool(
         context,
@@ -3748,12 +4827,28 @@ defmodule HalC2.Steps.Threads do
   end
 
   # The history block of the prompt the last Claude turn was sent.
+  # `block` is `whole`, or its start and end around a mark counting what was cut between.
+  defp assert_kept_or_cut(block, whole) do
+    case Regex.run(~r/\A(.*)\n\[\.\.\. (\d+) characters cut here \.\.\.\]\n(.*)\z/s, block) do
+      nil ->
+        assert block == whole
+
+      [_, start, cut, ending] ->
+        assert String.starts_with?(whole, start) and String.ends_with?(whole, ending)
+
+        assert String.length(start) + String.to_integer(cut) + String.length(ending) ==
+                 String.length(whole)
+    end
+  end
+
+  defp long_part(n), do: String.trim("User: part #{n} " <> String.duplicate("cart ", 5_000))
+
   defp handed_history(context) do
     prompt = List.last(World.claude_prompts(context))
 
     assert [_, history] =
              Regex.run(
-               ~r/\A<conversation_history>\nThis conversation started in another agent session\. Continue from it\.\n\n(.*)\n<\/conversation_history>\n\nwhere are we\z/s,
+               ~r/\A<conversation_history>\nThis conversation started in another agent session\. Continue from it\.[^\n]*\n\n(.*)\n<\/conversation_history>\n\nwhere are we\z/s,
                prompt
              )
 

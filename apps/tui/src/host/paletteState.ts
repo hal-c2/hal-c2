@@ -54,6 +54,8 @@ export interface PaletteContext {
   readonly threadId: string | null;
   readonly interactionMode: "default" | "plan";
   readonly hasProposedPlan: boolean;
+  /** A Stop held the selected thread's queue. */
+  readonly queueHeld: boolean;
   readonly attachmentCount: number;
   readonly referenceCount: number;
 }
@@ -123,6 +125,19 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
         keywords: "effort thinking",
         action: "composer.effortPicker.toggle",
       },
+      // Unbound by default, as on the desktop: keymap.json gives them keys.
+      {
+        id: "effort-up",
+        title: "Increase reasoning effort",
+        keywords: "effort thinking step composer.increaseEffort",
+        action: "composer.increaseEffort",
+      },
+      {
+        id: "effort-down",
+        title: "Decrease reasoning effort",
+        keywords: "effort thinking step composer.decreaseEffort",
+        action: "composer.decreaseEffort",
+      },
       {
         id: "options",
         title: "Change model options",
@@ -147,6 +162,15 @@ export function buildPaletteCommands(context: PaletteContext): PaletteCommand[] 
   }
   if (context.threadId !== null && context.hasProposedPlan) {
     list.push({ id: "implement", title: "Implement plan", hint: "^Y", action: "plan.implement" });
+  }
+  if (context.threadId !== null && context.queueHeld) {
+    list.push({
+      id: "resume-queue",
+      title: "Resume the queue",
+      hint: "^X q",
+      keywords: "held queued messages continue",
+      action: "composer.queue.resume",
+    });
   }
   if (composing && context.referenceCount > 0) {
     list.push({

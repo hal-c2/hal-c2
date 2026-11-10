@@ -233,8 +233,17 @@ defmodule HalC2.ThreadMove do
     end
   end
 
-  # `after_turn`: the thread's own agent asked, so its running turn is expected.
+  # A plugin that declared its threads stay (`ThreadArchive.stays/1`) refuses for good,
+  # whatever the thread is doing.
   defp movable(state, thread, after_turn \\ false) do
+    case ThreadArchive.stays(thread) do
+      :ok -> movable_now(state, thread, after_turn)
+      {:error, message} -> error(:thread_not_movable, message)
+    end
+  end
+
+  # `after_turn`: the thread's own agent asked, so its running turn is expected.
+  defp movable_now(state, thread, after_turn) do
     title = thread["title"]
     runs = StreamState.list(state, "run")
     requests = StreamState.list(state, "runtime-request")
@@ -372,6 +381,11 @@ defmodule HalC2.ThreadMove do
   defp begin(id, dest, archive, have) do
     at = Orchestration.Entities.now()
     move = Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
+    # The process moving the thread may die anywhere from here (its client went away);
+    # this process then settles the move at once rather than leave the thread read-only
+    # until the destination comes back. Watched before the thread is marked, so a settle
+    # that finds the move finds its mover too (`mover?/1`).
+    watch(id, move)
 
     marked =
       Streams.transact(id, :thread, fn state ->
@@ -395,20 +409,36 @@ defmodule HalC2.ThreadMove do
         end
       end)
 
-    with {:ok, unchanged?, moving} <- marked do
-      Streams.flush_shell(id)
-      # The process moving the thread may die anywhere from here (its client went
-      # away); this process then settles the move at once rather than leave the thread
-      # read-only until the destination comes back.
-      GenServer.cast(__MODULE__, {:watch, self(), id, move})
+    case marked do
+      {:ok, unchanged?, moving} ->
+        Streams.flush_shell(id)
 
-      with {:ok, archive} <-
-             if(unchanged?,
-               do: {:ok, archive},
-               else: with_release(id, move, fn -> build(id, have: have) end)
-             ),
-           do: {:ok, archive, moving}
+        with {:ok, archive} <-
+               if(unchanged?,
+                 do: {:ok, archive},
+                 else: with_release(id, move, fn -> build(id, have: have) end)
+               ),
+             do: {:ok, archive, moving}
+
+      error ->
+        GenServer.cast(__MODULE__, {:done, id, move})
+        error
     end
+  end
+
+  defp watch(id, move) do
+    GenServer.call(__MODULE__, {:watch, self(), id, move})
+  catch
+    # Restarting: the moves it finds marked it settles as cut off.
+    :exit, _ -> :ok
+  end
+
+  # Whether the process moving the thread in the move `move` lives: the move is not cut
+  # off, and settles once it ends (`{:done, ...}`, or its mover dying).
+  defp mover?(move) do
+    GenServer.call(__MODULE__, {:mover?, move})
+  catch
+    :exit, _ -> false
   end
 
   # How long the destination gets to take a thread: the time its files take over a slow
@@ -956,12 +986,15 @@ defmodule HalC2.ThreadMove do
     {:reply, :ok, put_in(state, [:after_turn, id], {to, opts})}
   end
 
+  def handle_call({:watch, pid, id, move}, _from, state),
+    do: {:reply, :ok, put_in(state, [:movers, Process.monitor(pid)], {id, move})}
+
+  def handle_call({:mover?, move}, _from, state),
+    do: {:reply, Enum.any?(state.movers, &match?({_, {_, ^move}}, &1)), state}
+
   @impl true
   def handle_cast({:removed, environment}, state),
     do: {:noreply, settle_later(state, {:removed, environment})}
-
-  def handle_cast({:watch, pid, id, move}, state),
-    do: {:noreply, put_in(state, [:movers, Process.monitor(pid)], {id, move})}
 
   # The transfer of the move ended, however it did: it settles if it was cut off.
   def handle_cast({:done, id, move}, state) do
@@ -1069,7 +1102,8 @@ defmodule HalC2.ThreadMove do
   from the cluster (`{:removed, environment_id}`), or all (`:all`); a member that comes
   back also settles the moves to removed machines. A thread marked `moving` becomes a
   forwarding record if its move arrived, and is released if the destination is
-  reachable and says it did not. A destination removed from the cluster (as
+  reachable and says it did not, unless the process moving it lives: that move is not
+  cut off, and the destination may still be staging it. A destination removed from the cluster (as
   `{:removed, environment_id}` says, or `HalC2.Cluster.removed?/1`) cannot say, so the
   other members are asked: the move arrived if one holds it, and is released once all
   say it did not. Returns the threads to settle again: those a destination is still
@@ -1110,8 +1144,11 @@ defmodule HalC2.ThreadMove do
           true -> false
         end
 
+      # Not arrived, and not taking it yet. A move whose mover lives is not cut off, and
+      # the destination may be staging it still: a settle asked by an earlier move's
+      # timer, a destination coming back or an operator must not call it off.
       _ ->
-        not release(id, moving)
+        not mover?(moving["id"]) and not release(id, moving)
     end
   end
 

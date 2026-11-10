@@ -8,6 +8,7 @@ SavedEnvironmentsGroup 1.0 SavedEnvironmentsGroup.qml
 Composer 1.0 Composer.qml
 ComposerAttachment 1.0 ComposerAttachment.qml
 ModelPicker 1.0 ModelPicker.qml
+EffortBars 1.0 EffortBars.qml
 ProviderIcon 1.0 ProviderIcon.qml
 ComposerVimKeys 1.0 ComposerVimKeys.qml
 ConversationDrop 1.0 ConversationDrop.qml
@@ -29,6 +30,7 @@ ConnectionNotice 1.0 ConnectionNotice.qml
 UsageModelPrices 1.0 UsageModelPrices.qml
 ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
+ContextWindowMeter 1.0 ContextWindowMeter.qml
 RedactedText 1.0 RedactedText.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml
 ServerUpdateAction 1.0 ServerUpdateAction.qml
@@ -56,6 +58,7 @@ ShellToolTip 1.0 ShellToolTip.qml
 ShellEmptyState 1.0 ShellEmptyState.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
+SidebarProjectHeader 1.0 SidebarProjectHeader.qml
 HalC2Wordmark 1.0 HalC2Wordmark.qml
 StagePill 1.0 StagePill.qml
 TerminalDrawer 1.0 TerminalDrawer.qml
@@ -79,13 +82,17 @@ ThemeImportDialog 1.0 ThemeImportDialog.qml
 ThemeInspector 1.0 ThemeInspector.qml
 TurnRequests 1.0 TurnRequests.qml
 ProjectRemovalDialog 1.0 ProjectRemovalDialog.qml
+ProjectRenameDialog 1.0 ProjectRenameDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 CustomSnoozeDialog 1.0 CustomSnoozeDialog.qml
 PullRequestThreadDialog 1.0 PullRequestThreadDialog.qml
 EditFromHereDialog 1.0 EditFromHereDialog.qml
 WorktreeSetupCard 1.0 WorktreeSetupCard.qml
 LimitRecoveryBanner 1.0 LimitRecoveryBanner.qml
+ThreadErrorBanner 1.0 ThreadErrorBanner.qml
+ProviderStatusBanner 1.0 ProviderStatusBanner.qml
 ThreadNotice 1.0 ThreadNotice.qml
+NoticeStackPeek 1.0 NoticeStackPeek.qml
 ProviderUpdateNotice 1.0 ProviderUpdateNotice.qml
 ThreadLineage 1.0 ThreadLineage.qml
 CentreHost 1.0 CentreHost.qml
@@ -146,6 +153,7 @@ SourceControlSettings 1.0 SourceControlSettings.qml
 IntegrationsSettings 1.0 IntegrationsSettings.qml
 SettingsScopeSentence 1.0 SettingsScopeSentence.qml
 StorageSettings 1.0 StorageSettings.qml
+SandboxSettings 1.0 SandboxSettings.qml
 ProjectSettings 1.0 ProjectSettings.qml
 DevicePanel 1.0 DevicePanel.qml
 DeviceToolsPanel 1.0 DeviceToolsPanel.qml
@@ -178,5 +186,7 @@ PairingSettings 1.0 PairingSettings.qml
 MaintenanceSettings 1.0 MaintenanceSettings.qml
 BrowserPanel 1.0 BrowserPanel.qml
 BrowserDevicesView 1.0 BrowserDevicesView.qml
+BrowserDeviceToolbar 1.0 BrowserDeviceToolbar.qml
+BrowserResizeHandles 1.0 BrowserResizeHandles.qml
 DevicesPicker 1.0 DevicesPicker.qml
 AgentCue 1.0 AgentCue.qml

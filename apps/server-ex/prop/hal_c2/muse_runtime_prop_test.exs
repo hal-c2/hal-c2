@@ -10,7 +10,11 @@ defmodule HalC2.MuseRuntimePropTest do
   answer the question; switch the running turn's access, which on full access answers its
   open command prompt; interrupt the
   turn; crash the runtime mid-turn; have `muse serve` exit under it, idle or mid-turn;
-  release the idle thread's session as IdleSessions does.
+  release the idle thread's session as IdleSessions does; send a message whose turn
+  Muse reports its context usage for only as the next turn starts; have the store
+  refuse one of a waiting turn's writes (a full disk, hal-c2#1285) while Muse ignores
+  the stop that sends, so the turn runs on unrecorded and Muse refuses the user's stop
+  of it after, or the time Muse has to end that turn runs out.
 
   Turns run on the fake `muse serve` in `test/support/fake_muse_msp.py`, which keeps
   its sessions on disk. A turn that replies names every message Muse's session has
@@ -20,7 +24,9 @@ defmodule HalC2.MuseRuntimePropTest do
   runs the command ended) and compares the runs, the pending request, the replies and
   the thread's subagents with the model: a subagent a turn started ends with that turn,
   whatever ended it (the interim #447 records changing for completed turns, whose
-  subagents upstream keeps as background work; the model changes with it).
+  subagents upstream keeps as background work; the model changes with it). Only a turn
+  Muse reported that late usage for carries it; whether the report lands depends on the
+  process living on to the next turn, so the model names where it may.
   """
 
   use ExUnit.Case, async: false
@@ -35,6 +41,7 @@ defmodule HalC2.MuseRuntimePropTest do
   @fake_muse Path.expand("../../test/support/fake_muse_msp.py", __DIR__)
   @active ~w(preparing starting running waiting)
   @wait_ms 10_000
+  @late_tokens 4321
 
   @turns [
     %{"match" => "wait", "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]},
@@ -95,9 +102,34 @@ defmodule HalC2.MuseRuntimePropTest do
         %{"text" => "Ran it."}
       ]
     },
+    # Muse refuses the turn on the subscription quota (hal-c2#1287): the run fails as a
+    # usage limit and the thread reads its reset.
+    %{
+      "match" => "quota",
+      "steps" => [
+        %{
+          "fail" => %{
+            "kind" => "modelError",
+            "message" => "API error 429: quota exhausted (rate_limit_error)",
+            "quota" => %{"limitKind" => "tierLimit", "resetsAtMs" => 1_794_096_057_000}
+          }
+        }
+      ]
+    },
     %{
       "match" => "ask",
       "steps" => [%{"question" => %{"question" => "Pick", "options" => ~w(red green)}}]
+    },
+    # Muse reports this turn's context usage as the next turn starts.
+    %{
+      "match" => "count_late",
+      "steps" => [
+        %{"text" => "Counted."},
+        %{
+          "contextAfter" => %{"usedTokens" => @late_tokens, "windowTokens" => 200_000},
+          "late" => true
+        }
+      ]
     }
   ]
 
@@ -147,8 +179,11 @@ defmodule HalC2.MuseRuntimePropTest do
 
         create()
         :ok = HalC2.Streams.subscribe(@tid, self(), nil)
+        Application.put_env(:hal_c2, :muse_interrupt_timeout_ms, 3_600_000)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :muse_interrupt_timeout_ms)
+        HalC2.Test.Machines.refuse_changes(nil)
         HalC2.Acp.forget("muse")
 
         (result == :ok)
@@ -165,11 +200,13 @@ defmodule HalC2.MuseRuntimePropTest do
   # with its status (a :finish turn's already completed while the turn runs on);
   # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :hold | :finish | :shell | :ask, :guarded for a
   # command with two requirements (:shell once the first is approved), or :workflow for a
-  # workflow child's :guarded command;
+  # workflow child's :guarded command, or :dry for a :wait turn the store failed;
   # mode: the thread's runtime mode; full access runs every command without asking, and
   # switching a running :shell turn to it answers the open prompt;
+  # quota: the last run was refused on the quota, so the thread is limited;
   # history: what Muse's session has been sent, oldest first;
-  # replies: the replies naming that history, in order.
+  # replies: the replies naming that history, in order;
+  # late: the messages whose turns Muse reports usage for as the next turn starts.
   def initial_state,
     do: %{
       runs: [],
@@ -178,7 +215,9 @@ defmodule HalC2.MuseRuntimePropTest do
       history: [],
       replies: [],
       next: 1,
-      mode: "approval-required"
+      mode: "approval-required",
+      quota: false,
+      late: []
     }
 
   def command(%{turn: turn, next: next}) do
@@ -187,7 +226,22 @@ defmodule HalC2.MuseRuntimePropTest do
     idle = [
       {6,
        {:call, __MODULE__, :send,
-        [msg, oneof([:say, :wait, :delegate, :hold, :finish, :shell, :guarded, :workflow, :ask])]}},
+        [
+          msg,
+          oneof([
+            :say,
+            :quota,
+            :wait,
+            :delegate,
+            :hold,
+            :finish,
+            :shell,
+            :guarded,
+            :workflow,
+            :ask,
+            :count_late
+          ])
+        ]}},
       {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access)), false]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
@@ -208,7 +262,12 @@ defmodule HalC2.MuseRuntimePropTest do
               {3, {:call, __MODULE__, :steer, [msg]}},
               {1,
                {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access)), false]}}
-            ]
+            ] ++ if(kind == :wait, do: [{2, {:call, __MODULE__, :fail_write, []}}], else: [])
+
+          # Unrecorded: the run ends with the stop, a crash, the host going, or Muse
+          # not ending the turn it answered the stop of in time.
+          :dry ->
+            [{2, {:call, __MODULE__, :outlast, []}}]
 
           # Full access answers the command's open prompt, so the turn runs to its end.
           :shell ->
@@ -258,16 +317,25 @@ defmodule HalC2.MuseRuntimePropTest do
   def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:answer, :dismiss],
     do: match?(%{kind: :ask}, turn)
 
+  def precondition(%{turn: turn}, {:call, _, :fail_write, _}), do: match?(%{kind: :wait}, turn)
+  def precondition(%{turn: turn}, {:call, _, :outlast, _}), do: match?(%{kind: :dry}, turn)
   def precondition(_state, {:call, _, :host_exit, _}), do: true
   def precondition(%{turn: turn}, {:call, _, _, _}), do: turn != nil
 
   def next_state(state, _result, {:call, _, :send, [msg, kind]}) do
     text = "#{kind} #{msg}"
-    state = %{state | next: state.next + 1, history: state.history ++ [text]}
+    state = %{state | next: state.next + 1, history: state.history ++ [text], quota: false}
 
     case kind do
+      # The quota refusal fails the run at once, and the thread is limited until the reset.
+      :quota ->
+        %{state | runs: state.runs ++ [{msg, "failed"}], quota: true}
+
       kind when kind in [:shell, :guarded, :workflow] and state.mode == "full-access" ->
         %{state | runs: state.runs ++ [{msg, "completed"}]}
+
+      :count_late ->
+        %{state | runs: state.runs ++ [{msg, "completed"}], late: state.late ++ [msg]}
 
       :say ->
         reply = "Reply to #{text} after [#{Enum.join(state.history -- [text], " | ")}]"
@@ -307,6 +375,16 @@ defmodule HalC2.MuseRuntimePropTest do
       when fun in [:approve, :decline, :answer, :dismiss],
       do: end_turn(state, "completed")
 
+  # The store took nothing of the turn since, so the run still reads as running.
+  def next_state(state, _result, {:call, _, :fail_write, _}),
+    do: %{state | turn: %{state.turn | kind: :dry}}
+
+  # A turn the store failed fails, however it ends, and the next run records as usual.
+  def next_state(%{turn: %{kind: :dry}} = state, _result, {:call, _, :interrupt, _}),
+    do: end_turn(state, "failed")
+
+  def next_state(state, _result, {:call, _, :outlast, _}), do: end_turn(state, "failed")
+
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
   def next_state(state, _result, {:call, _, :crash, _}), do: end_turn(state, "failed")
   def next_state(state, _result, {:call, _, :release, _}), do: state
@@ -339,8 +417,10 @@ defmodule HalC2.MuseRuntimePropTest do
     }
   end
 
-  def postcondition(state, call, {reply, projection}) do
+  # A wait that timed out (`{:timeout, projection}`) fails it.
+  def postcondition(state, call, {reply, %{counted: counted} = projection}) do
     model = next_state(state, nil, call)
+    projection = Map.delete(projection, :counted)
 
     expected = %{
       runs: model.runs,
@@ -351,11 +431,14 @@ defmodule HalC2.MuseRuntimePropTest do
           _ -> nil
         end,
       replies: model.replies,
-      subs: model.subs
+      subs: model.subs,
+      limited: model.quota
     }
 
-    reply == :ok and projection == expected
+    reply == :ok and projection == expected and counted -- model.late == []
   end
+
+  def postcondition(_state, _call, _result), do: false
 
   # --- commands ---------------------------------------------------------------------
 
@@ -374,11 +457,13 @@ defmodule HalC2.MuseRuntimePropTest do
   end
 
   def send(msg, kind) do
+    configure(fn _config -> %{"turns" => @turns} end)
+
     result = Orchestration.dispatch(message(msg, "#{kind} #{msg}", "queue_after_active"))
     # A reply ends its run, as does a command in full access; the others stop where the
     # fake waits.
     ends? =
-      kind == :say or
+      kind in [:say, :quota, :count_late] or
         (kind in [:shell, :guarded, :workflow] and Process.get(:mode) == "full-access")
 
     reply(result, if(ends?, do: [run_of(msg)], else: []))
@@ -464,6 +549,33 @@ defmodule HalC2.MuseRuntimePropTest do
   def interrupt do
     ending = active_runs()
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => @tid}), ending)
+  end
+
+  # The store refuses the turn's next write, a todo list Muse sends, and Muse answers
+  # the stop the runtime sends for it but goes on with the turn. Returns once the
+  # runtime drives the turn dry and the store takes writes again; Muse refuses the
+  # user's stop from then on, so that stop ends the turn inside the runtime's call.
+  def fail_write do
+    configure(&Map.put(&1, "interruptIgnored", true))
+    [{runtime, _}] = Registry.lookup(HalC2.Muse.Registry, @tid)
+    %{conn: conn, session: session} = :sys.get_state(runtime)
+    todos = %{"sessionId" => session, "items" => [%{"text" => "Save", "status" => "inProgress"}]}
+    HalC2.Test.Machines.refuse_changes(@tid)
+    Kernel.send(runtime, {:json_rpc, conn, {:notification, "session/todoListChanged", todos}})
+    %{unrecorded: %{}} = :sys.get_state(runtime)
+    HalC2.Test.Machines.refuse_changes(nil)
+    configure(&Map.put(&1, "interruptFails", true))
+    reply({:ok, %{}}, [])
+  end
+
+  # The time Muse has to end a turn whose stop it answered runs out: the runtime ends
+  # the turn and closes the host. The property's bound is an hour, so only this ends it.
+  def outlast do
+    ending = active_runs()
+    [{runtime, _}] = Registry.lookup(HalC2.Muse.Registry, @tid)
+    %{turn: %{ids: %{run: run}}} = :sys.get_state(runtime)
+    Kernel.send(runtime, {:settle_interrupt, run})
+    reply({:ok, %{}}, ending)
   end
 
   # The runtime driving the turn dies, as a crash in the adapter would; its host goes
@@ -555,6 +667,11 @@ defmodule HalC2.MuseRuntimePropTest do
     bin
   end
 
+  defp configure(fun) do
+    path = Path.join(Process.get(:fake_dir), "config.json")
+    File.write!(path, JSON.encode!(fun.(JSON.decode!(File.read!(path)))))
+  end
+
   defp current, do: HalC2.Streams.Server.state(HalC2.Streams.ensure(@tid))
 
   defp runs(state), do: state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
@@ -640,6 +757,16 @@ defmodule HalC2.MuseRuntimePropTest do
           sub <- StreamState.list(state, "subagent"),
           sub["runId"] == run["id"],
           do: {run["userMessageId"], sub["status"]}
+        ),
+      limited: HalC2.Projection.Shell.thread_shell(state)["lastErrorClass"] == "usage_limit",
+      # The runs whose provider turns carry the usage Muse reports late.
+      counted:
+        for(
+          run <- runs(state),
+          {id, turn} <- StreamState.get(state, "provider-turn"),
+          String.ends_with?(id, run["id"]),
+          get_in(turn, ["tokenUsage", "usedTokens"]) == @late_tokens,
+          do: run["userMessageId"]
         )
     }
   end

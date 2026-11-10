@@ -9,7 +9,9 @@ defmodule HalC2.ProviderLog do
   A record larger than 64 KiB, with more than 1,024 fields or nested deeper than
   16 levels is written as a structural summary that keeps the routing ids,
   method, status and error fields. Logging never changes what the provider's
-  runtime receives.
+  runtime receives. Credentials never reach the file: a value that starts with `Bearer `, or
+  is under a key ending in authorization, apikey, token, password or secret (JSON carried as
+  text included), is logged as `[REDACTED]`.
   """
 
   require Logger
@@ -68,6 +70,7 @@ defmodule HalC2.ProviderLog do
   end
 
   defp write(thread_id, event) do
+    event = redact(event)
     payload = JSON.encode!(bound(event))
 
     payload =
@@ -84,6 +87,80 @@ defmodule HalC2.ProviderLog do
       IO.iodata_length(line),
       fn -> File.write!(path, line, [:append]) end
     )
+  end
+
+  @doc """
+  Logs how a provider session starts: the model, mode and working folder, and the names of the
+  MCP servers attached. Nothing else of its options is kept, so an environment or a server's
+  credentials cannot reach the log.
+  """
+  def options(thread_id, opts) do
+    # The names of the MCP servers attached, when the caller named them;
+    # HAL-C2's own server is the only one a Claude session attaches
+    # (`HalC2.Claude.Session`).
+    servers =
+      case opts[:mcp_servers] do
+        names when is_list(names) -> names
+        _ -> if opts[:mcp], do: ["hal-c2"], else: []
+      end
+
+    event =
+      %{
+        "kind" => "session-options",
+        "model" => opts[:model],
+        "permissionMode" => opts[:permission_mode],
+        "cwd" => opts[:cd],
+        "mcpServers" => servers
+      }
+
+    if enabled?() and thread_id, do: write(thread_id, event)
+    :ok
+  rescue
+    error -> Logger.warning("Failed to log a provider event: #{Exception.message(error)}")
+  end
+
+  @bearer ~r/\bBearer\s+[^\s"'\\,}]+/i
+  @credential_key ~r/(authorization|apikey|token|password|secret)$/i
+
+  @doc "The event with every credential replaced by `[REDACTED]`."
+  def redact(event), do: redact(event, nil)
+
+  # Whatever sits under a credential key is one, whatever its shape.
+  defp redact(value, key) do
+    if credential_key?(key), do: "[REDACTED]", else: redact_value(value)
+  end
+
+  defp redact_value(map) when is_map(map),
+    do: Map.new(map, fn {key, value} -> {key, redact(value, key)} end)
+
+  defp redact_value(list) when is_list(list), do: Enum.map(list, &redact(&1, nil))
+
+  defp redact_value("Bearer " <> _), do: "[REDACTED]"
+
+  # A bearer token anywhere else in a string, such as a command line or tool output.
+  defp redact_value(value) when is_binary(value) do
+    Regex.replace(@bearer, redact_text(value), "Bearer [REDACTED]")
+  end
+
+  defp redact_value(value), do: value
+
+  defp credential_key?(key) when is_binary(key),
+    do: Regex.match?(@credential_key, String.replace(key, ["_", "-"], ""))
+
+  defp credential_key?(_key), do: false
+
+  # JSON carried as text: redacted inside, and left alone when nothing in it was.
+  defp redact_text("{" <> _ = text), do: redact_json(text)
+  defp redact_text("[" <> _ = text), do: redact_json(text)
+  defp redact_text(text), do: text
+
+  defp redact_json(text) do
+    with {:ok, decoded} <- JSON.decode(text),
+         redacted when redacted != decoded <- redact(decoded) do
+      JSON.encode!(redacted)
+    else
+      _ -> text
+    end
   end
 
   @doc "Whether a native event belongs in the log: streaming deltas do not."

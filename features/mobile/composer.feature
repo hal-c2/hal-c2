@@ -1,4 +1,7 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/29717
+#   https://github.com/pingdotgg/t3code/pull/26739
+#   https://github.com/pingdotgg/t3code/pull/25573
 #   https://github.com/pingdotgg/t3code/pull/21352
 #   https://github.com/pingdotgg/t3code/pull/23096
 #   https://github.com/pingdotgg/t3code/pull/24363
@@ -33,6 +36,15 @@
 #   apps/mobile/src/lib/composerImages.ts (photo and file pickers, clipboard paste, photo conversion)
 #   apps/mobile/src/lib/composerFiles.test.ts (file size judged by the copied bytes, empty files, no partial copies, picker failures)
 #   apps/mobile/src/components/ProviderIcon.tsx, OverlayPortal.tsx, AndroidAnchoredMenu.tsx (provider icons, menus that keep the keyboard open)
+#   https://github.com/pingdotgg/t3code/pull/30139
+#   https://github.com/pingdotgg/t3code/pull/26452
+#   https://github.com/pingdotgg/t3code/pull/27489
+#   https://github.com/pingdotgg/t3code/pull/25847
+#   https://github.com/pingdotgg/t3code/pull/31317
+#   https://github.com/pingdotgg/t3code/pull/31182
+#   https://github.com/pingdotgg/t3code/pull/28983
+#   https://github.com/pingdotgg/t3code/pull/27682
+#   https://github.com/pingdotgg/t3code/pull/30308
 #   apps/mobile/src/lib/attachmentUpload.ts (pending upload reuse, expiry, release, missing local copy)
 #   apps/mobile/src/lib/composerAttachmentUploadQueue.ts (only a failed upload blocks sending)
 #   apps/mobile/src/state/edit-pending-thread-message.ts
@@ -60,7 +72,7 @@ Feature: Writing to an agent from a phone
     Given the phone is paired with "My MacBook"
     And the user is in the thread "Fix checkout"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The composer stays above the on-screen keyboard
     When the user starts typing a message
     Then the message being written stays visible above the keyboard
@@ -98,6 +110,47 @@ Feature: Writing to an agent from a phone
     When the app is closed and reopened
     Then the draft in "Fix checkout" still reads "add a test"
 
+  # Upstream #30139: on iOS, typing after in-app dictation showed in the composer but never reached
+  # the draft, so sending stayed unavailable until the user left the thread.
+  @mobile @priority-high
+  Scenario: Typing after dictation reaches the draft
+    Given the user dictated into the draft and dictation has finished
+    When the user types " and the tests"
+    Then the draft ends with " and the tests"
+    And the message can be sent
+
+  # Upstream #26452: on iOS, a correction the keyboard accepted on the send tap was sent uncorrected,
+  # then filled the composer back up with the corrected draft.
+  # Upstream #30308: a correction arriving after Send emptied the draft put the whole message back.
+  @backlog @mobile @priority-high
+  Scenario: Sending with a correction pending sends the corrected words and empties the composer
+    Given the user typed "fix teh" and the keyboard offers to correct it to "the"
+    When the user sends the message
+    Then "fix the" is sent
+    And the composer is empty afterwards
+
+  # Upstream #27489: Android autofill could write a one-time code from a text message into the draft.
+  @backlog @mobile @priority-low
+  Scenario: The composer is not filled in by the phone's autofill
+    Given the phone offers to fill in a verification code it received
+    When the user writes in the composer
+    Then autofill is not offered there
+    And nothing the user did not type or paste reaches the draft
+
+  # Upstream #25847: Android sometimes shows the keyboard without animating it, after split screen
+  # or a return to the app, and the app then believed it was hidden.
+  @backlog @mobile @priority-low
+  Scenario Outline: A keyboard that appears without animating is still followed
+    Given the user is writing in <input>
+    When Android shows the keyboard without animating it, as after <cause>
+    Then <input> is shown above the keyboard
+    And the keys that go with the keyboard are offered
+
+    Examples:
+      | input        | cause                      |
+      | the composer | entering split screen      |
+      | a terminal   | coming back to the app     |
+
   @backlog @mobile @priority-low
   Scenario Outline: The Return key does what the user chose on a hardware keyboard
     Given the user set the Return key to "<setting>"
@@ -122,8 +175,8 @@ Feature: Writing to an agent from a phone
       | run after the current turn    | the message waits until the current turn ends   |
       | steer now                     | the agent receives the message during the turn  |
 
-  # The composer has no way to restart a turn with a message yet; the MC does (features/mc/orchestration/queue-and-steering.feature).
-  @backlog @mobile @priority-high
+  # A long press on the send control offers it; the MC does the restart (features/mc/orchestration/queue-and-steering.feature).
+  @mobile @priority-high
   Scenario: A message sent while the agent works can restart the turn
     Given the agent is working on a turn
     When the user sends "also update docs" to restart the turn
@@ -141,14 +194,12 @@ Feature: Writing to an agent from a phone
       | the agent is working and the follow-up setting is steer             | Steer                  |
       | the user is editing a queued message                                | Update queued message  |
 
-  # A message written with no connection is not queued by the composer yet: it stays in the draft
-  # with a "Not connected" notice (see "A message written with no connection is sent once the connection returns").
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The send control reads Queue when the message must wait for a connection
     Given the agent is idle but the message must wait for a connection
     Then the send control reads "Queue"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: An agent that cannot take a steer is only offered the queue
     Given the agent is working on a turn
     And the agent's provider cannot steer a running turn
@@ -187,6 +238,21 @@ Feature: Writing to an agent from a phone
     When the save fails
     Then the user can type in the composer again
 
+  # Upstream #31317: switching from the edit draft back to the thread draft rebuilt the composer,
+  # which dropped the keyboard; a clear landing in another draft must not touch the one in use.
+  @backlog @mobile
+  Scenario Outline: The keyboard stays up when the user <ends> a queued message edit
+    Given the user is typing in the composer with the keyboard up
+    And the user is editing the queued message "also update docs"
+    When the user <ends> the edit
+    Then the composer shows the thread's draft and keeps the keyboard and focus
+    And what the user is typing is not undone by another draft being cleared
+
+    Examples:
+      | ends    |
+      | saves   |
+      | cancels |
+
   @mobile
   Scenario: The user cancels a queued message
     Given the message "also update docs" is waiting for the current turn
@@ -218,6 +284,17 @@ Feature: Writing to an agent from a phone
       | a 4 MB JPEG             | an image the agent sees                      |
       | a 12 MB PNG             | a file, still shown in the draft             |
       | a PNG the phone calls a generic file | an image the agent sees         |
+
+  # Upstream #28983: on Android a file named with brackets failed with "Illegal character in path".
+  @backlog @mobile
+  Scenario Outline: A file whose name has <character> attaches under its own name
+    When the user attaches "<file>" from the files app
+    Then it is attached as "<file>"
+
+    Examples:
+      | character | file               |
+      | brackets  | Report [draft].pdf |
+      | a caret   | Notes ^2.txt       |
 
   # Upstream #25376: a pick or paste still running lands in the draft it was started for.
   @backlog @mobile
@@ -356,19 +433,19 @@ Feature: Writing to an agent from a phone
     When the user chooses a file from the files app whose provider reports no name
     Then the file is attached named "file"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Upload progress is shown until the attachment is ready
     When the user attaches a large video
     Then the attachment shows how much has uploaded
     And only a failed upload stops the message from being sent
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A failed upload can be retried
     Given an attachment failed to upload
     When the user retries the upload
     Then the attachment uploads to "My MacBook"
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message sent while an attachment is still uploading goes out when the upload finishes
     Given the draft has a large video attached that is still uploading
     When the user sends the message
@@ -395,7 +472,7 @@ Feature: Writing to an agent from a phone
     When the user sends the message to a project on another environment
     Then "bug.png" is uploaded to that environment
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A waiting message the user deletes takes its uploads with it
     Given a message with "design.pdf" is waiting to send and its upload has started
     When the user deletes the waiting message
@@ -423,7 +500,7 @@ Feature: Writing to an agent from a phone
     When the user goes back to the home screen
     Then the upload still completes
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: The user removes an attachment from the draft
     Given the draft has a photo attached
     When the user opens the photo and removes it from the draft
@@ -537,6 +614,14 @@ Feature: Writing to an agent from a phone
     When the user deletes back to a draft that fits
     Then the composer is one row again
 
+  # Upstream #27682: Android rounded a one-line draft's width down, so a draft a fraction wider
+  # than the one-row slot switched the composer between one row and two over and over.
+  @backlog @mobile @priority-low
+  Scenario: A draft just too wide for one row stays on two without flickering
+    Given the user is on an Android phone
+    When the user types a draft a fraction wider than the composer's one row
+    Then the composer shows the draft above its controls and stays that way
+
   # Upstream #20812
   @backlog @mobile @priority-low
   Scenario: The model picker shows the model's name only while the draft is empty
@@ -572,7 +657,7 @@ Feature: Writing to an agent from a phone
 
   # Upstream #17492: with FUTO or HeliBoard, or a saved draft reopened, the editor stopped
   # following the caret after three lines.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario Outline: The composer keeps the caret in view as a prompt wraps past its height
     Given an Android phone using <keyboard>
     And <draft>
@@ -607,6 +692,27 @@ Feature: Writing to an agent from a phone
     When the user drops them
     Then the pictures are attached to the draft
     And nothing is inserted into the text
+
+  # Upstream #25573: on Android 11 and older an image dragged from Files focused the composer and attached nothing.
+  @backlog @mobile
+  Scenario: A picture dragged from another app in split screen on Android is attached
+    Given the user has Files and HAL-C2 side by side on an Android phone or tablet
+    When the user drags a picture from Files onto the composer and drops it
+    Then the picture is attached to the draft once
+    And the text already in the draft is kept
+
+  # Upstream #25573: a drop of mixed or unreadable image clips is refused, and images dropped into the Android composer attach.
+  @backlog @mobile @priority-low
+  Scenario: A dropped clip holding something besides pictures, or a picture that cannot be read, is refused
+    Given the user drags pictures and other files together from another app onto the composer
+    When the user drops them
+    Then nothing is attached and no address is inserted into the text
+
+  # Upstream #25573: ordinary text dropped into the composer is inserted as text.
+  @backlog @mobile @priority-low
+  Scenario: Text dropped onto the composer is inserted as text
+    When the user drags text from another app onto the composer and drops it
+    Then the text is inserted where it was dropped
 
   @backlog @mobile @priority-low
   Scenario: Nothing is dropped onto a composer that is read only
@@ -684,7 +790,7 @@ Feature: Writing to an agent from a phone
     Then "/plan" and "/default" are not offered
     And "/model" is still offered
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Another thread or a pull request is attached as context from the composer
     Given the environment has the thread "Auth refactor"
     When the user chooses "Auth refactor" after typing "@" in the composer
@@ -853,15 +959,34 @@ Feature: Writing to an agent from a phone
     Then "add a test" is back in the composer
     And the user is pointed to the project's provider settings rather than to setting the provider up
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message written with no connection is sent once the connection returns
     Given "My MacBook" is unreachable
     When the user sends "add a test"
     Then the message is shown as waiting to send
     When "My MacBook" becomes reachable
     Then the message is sent
+  # Upstream #26739: a delivered message left the loaded history of a long thread and came back
+  # at the bottom as waiting to send; the phone now knows by the thread's position in its history.
+  @mobile @priority-high
+  Scenario: A delivered message does not come back at the bottom of a long thread
+    Given the user sent "add a test" from the phone in a thread longer than the history the phone loads
+    And the MC has received it
+    When the thread goes on until "add a test" is no longer in the loaded history
+    Then "add a test" is not shown again at the bottom of the thread as waiting to send
 
-  @backlog @mobile @priority-high
+  # Upstream #31182: a delivered message was dropped only on the next send, so a long thread
+  # reopened from its start showed it again below the agent's latest reply.
+  @mobile @priority-high
+  Scenario: A delivered message does not come back when a long thread is reopened
+    Given the user sent "add a test" from the phone in a thread with more than 10 of their messages
+    And the thread has caught up to it
+    When the user leaves the thread and opens it again
+    Then "add a test" is shown once, in its place in the history
+    And it is not shown below the agent's latest reply
+
+
+  @mobile @priority-high
   Scenario: A usage limit is explained above the composer
     Given the provider has hit its usage limit for the thread
     Then the user is told when the limit resets
@@ -901,7 +1026,7 @@ Feature: Writing to an agent from a phone
     Then "also update docs" runs after the current turn
 
   # Upstream #21473: a queue holding only the agent's own wakes showed no way to resume on the phone.
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A queue held with only the agent's own wakes can be resumed on the phone
     Given the user stopped a turn while a delegated task result was queued in the thread
     And no message of the user's is queued
@@ -1010,14 +1135,14 @@ Feature: Writing to an agent from a phone
     Then nothing is sent
     And the user is told to wait for uploads to finish or retry failed uploads
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message with more attachments than one message can carry is not sent
     Given the draft has more than 100 attachments
     When the user sends the message
     Then nothing is sent
     And the user is told to remove attachments until there are at most 100
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message whose context is too large is not sent
     Given the draft carries more referenced context than a message can hold
     When the user sends the message
@@ -1031,14 +1156,14 @@ Feature: Writing to an agent from a phone
     Then the user is told to remove some context from the draft
     And the comment is not added
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A model that has not been set up cannot be sent to
     Given the thread uses an Antigravity model that "My MacBook" has not set up
     When the user sends "add a test"
     Then nothing is sent
     And the user is told to set Antigravity up on the desktop or choose another model
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: Attaching files is refused by an environment that takes none
     Given "My MacBook" does not accept file attachments
     When the user attaches a file
@@ -1123,6 +1248,22 @@ Feature: Writing to an agent from a phone
     When the draft starts uploading them
     Then at most three of them upload at once
     And the rest wait and start as earlier ones finish
+
+  # Upstream #29717: a draft key was split at its last colon, so drafts of threads whose ids hold
+  # colons (subagents, forks, launched threads, queued-message edits) named no environment and
+  # never started uploading.
+  @backlog @mobile
+  Scenario Outline: An attachment in the draft of <thread> uploads while the user writes
+    Given the user is writing in the draft of <thread> on "My MacBook"
+    When the user attaches "bug.png"
+    Then "bug.png" starts uploading to "My MacBook" before the message is sent
+
+    Examples:
+      | thread                                 |
+      | a delegated subagent's thread          |
+      | a thread an agent forked               |
+      | a thread an agent launched             |
+      | a queued message the user is editing   |
 
   @backlog @mobile
   Scenario: Uploads interrupted by a lost connection start again when it returns
@@ -1494,7 +1635,7 @@ Feature: Writing to an agent from a phone
     Then the menu is shown
     And the keyboard stays open
 
-  @backlog @mobile @priority-high
+  @mobile @priority-high
   Scenario: A message the MC rejects says why in the thread
     Given the MC refuses a sent message
     When the text returns to the composer

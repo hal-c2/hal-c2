@@ -18,6 +18,8 @@ QtObject {
     // The clipboard: its text and the files clipboardFiles reads.
     property string clipboard: ""
     property var clipboardAttachments: []
+    // Whether a paste is large enough to become a text file.
+    property bool pasteBecomesFile: false
 
     signal actionRequested(string action, var payload)
     signal windowCommandRequested(string command)
@@ -75,6 +77,7 @@ QtObject {
         localFolderImportEnabled = false;
         clipboard = "";
         clipboardAttachments = [];
+        pasteBecomesFile = false;
         dispatchedActions = [];
         dispatchCount = 0;
         openedExternally = [];
@@ -171,6 +174,6 @@ QtObject {
     }
 
     function pasteAttaches(text, promptLength) {
-        return false;
+        return pasteBecomesFile;
     }
 }

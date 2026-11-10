@@ -1417,6 +1417,7 @@ export function makeV3Session(input: {
       ...Object.fromEntries(
         [
           WS_METHODS.serverGetProcessDiagnostics,
+          WS_METHODS.serverGetOpenShellStatus,
           WS_METHODS.serverSignalProcess,
           WS_METHODS.serverGetTraceDiagnostics,
           WS_METHODS.serverGetHostResources,

@@ -201,6 +201,54 @@ defmodule HalC2.Steps.Providers.PermissionModes do
     Map.put(context, :request, request)
   end
 
+  # Claude withdraws a request: its CLI's `control_cancel_request`, which the
+  # session forwards to the runtime as `{:permission_cancelled, id}`.
+  defp claude_withdraws(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    native = String.replace_prefix(context.request["id"], "runtime-request:claudeAgent:", "")
+    send(pid, {:claude, :sys.get_state(pid).session, {:permission_cancelled, native}})
+    context
+  end
+
+  step "Claude withdraws the request before the user answers", context do
+    claude_withdraws(context)
+  end
+
+  step "the thread no longer says it needs approval", context do
+    World.await_value(context, @thread, fn state ->
+      not Enum.any?(StreamState.list(state, "runtime-request"), &(&1["status"] == "pending"))
+    end)
+
+    context
+  end
+
+  step "the user allows it as Claude stops waiting for the answer", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "decision" => "accept"
+      })
+
+    context = claude_withdraws(context)
+    # The withdrawal is in the runtime's hands before the outcome is read.
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    :sys.get_state(pid)
+    context
+  end
+
+  step "the approval is closed as allowed", context do
+    World.await_value(context, @thread, fn state ->
+      match?(
+        [%{"status" => "resolved", "decision" => "accept"}],
+        StreamState.list(state, "runtime-request")
+      )
+    end)
+
+    context
+  end
+
   step ~r/^the provider receives (?<received>accept|accept for the session|decline|allow|a denial saying "(?<message>[^"]*)"|its allow-always option|its reject-once option)$/,
        %{args: [received | rest]} = context do
     World.await_idle(context, @thread)
@@ -232,6 +280,9 @@ defmodule HalC2.Steps.Providers.PermissionModes do
     context
   end
 
+  # Closed as cancelled however it came about: an interrupted turn (whose run
+  # other steps see interrupted) or a request the provider withdrew, whose
+  # turn carries on.
   step "the approval is closed as cancelled", context do
     World.await_value(context, @thread, fn state ->
       match?(
@@ -240,7 +291,6 @@ defmodule HalC2.Steps.Providers.PermissionModes do
       )
     end)
 
-    World.await_runs(context, @thread, ["interrupted"])
     context
   end
 
@@ -486,9 +536,19 @@ defmodule HalC2.Steps.Providers.PermissionModes do
   # Shared with timeline/approvals-and-questions.feature, whose Claude scenario counts
   # the Claude processes started (`:claude_starts`).
   step "the user is asked again", context do
-    if Map.has_key?(context, :claude_starts),
-      do: HalC2.Steps.Timeline.ApprovalsAndQuestions.asked_again_by_new_claude_session(context),
-      else: asked_again_by_acp_agent(context)
+    cond do
+      Map.has_key?(context, :claude_starts) ->
+        HalC2.Steps.Timeline.ApprovalsAndQuestions.asked_again_by_new_claude_session(context)
+
+      context[:provider] == "pi" ->
+        request = HalC2.Test.FakeAcp.await_request(context)
+        assert request["status"] == "pending"
+        assert request["id"] != context.request["id"]
+        context
+
+      true ->
+        asked_again_by_acp_agent(context)
+    end
   end
 
   defp asked_again_by_acp_agent(context) do

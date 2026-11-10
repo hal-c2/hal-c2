@@ -17,6 +17,7 @@
 #   apps/mobile/src/components/ProjectFavicon.tsx
 #   packages/contracts/src/project.ts (ProjectIconOverride, icon colours)
 #   packages/contracts/src/rpc.ts (assets.createUrl)
+#   https://github.com/pingdotgg/t3code/pull/23569
 
 Feature: Project and environment identity
   Projects and environments are easy to tell apart at a glance. A project shows its own
@@ -42,7 +43,7 @@ Feature: Project and environment identity
 
     # Legacy: apps/server/src/project/ProjectFaviconResolver.ts (resolvePathUncached)
     # Likely already implemented: apps/server-ex/lib/hal_c2/project_favicon.ex
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario Outline: A project's icon is found in the usual places, in order
       Given the checkout of "shop" has <files>
       When a client asks for the icon of "shop"
@@ -76,25 +77,25 @@ Feature: Project and environment identity
 
     # Legacy: apps/server/src/project/ProjectFaviconResolver.ts (extractIconHref, resolveIconHref)
     # Likely already implemented: apps/server-ex/lib/hal_c2/project_favicon.ex
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: An icon the page or root route links to is used when no usual file exists
       Given the checkout of "shop" has "index.html" linking the icon "/brand/mark.png"
-      And "public/brand/mark.png" exists
+      And the checkout also has "public/brand/mark.png"
       When a client asks for the icon of "shop"
       Then "public/brand/mark.png" is served
 
     # Legacy: apps/server/src/project/ProjectFaviconResolver.ts (extractIconHref, ICON_SOURCE_FILES)
     # Likely already implemented: apps/server-ex/lib/hal_c2/project_favicon.ex
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: An icon declared in a root route's metadata is used like a linked one
       Given the checkout of "shop" has "src/routes/__root.tsx" declaring an icon with the address "/brand/mark.png"
-      And "public/brand/mark.png" exists
+      And the checkout also has "public/brand/mark.png"
       When a client asks for the icon of "shop"
       Then "public/brand/mark.png" is served
 
     # Legacy: apps/server/src/project/ProjectFaviconResolver.ts (findExistingFile)
     # Likely already implemented: apps/server-ex/lib/hal_c2/project_favicon.ex
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: An icon outside the checkout is never served unless the user saved it
       Given the checkout of "shop" has "hal-c2.json" naming "../../etc/logo.png" as its icon
       When a client asks for the icon of "shop"
@@ -103,7 +104,7 @@ Feature: Project and environment identity
 
     # Legacy: apps/server/src/project/ProjectFaviconResolver.ts (resolvePathUncached: saved path first)
     # Likely already implemented: apps/server-ex/lib/hal_c2/project_favicon.ex
-    @mc @backlog @priority-high
+    @mc @priority-high
     Scenario: A saved icon path that is missing on this checkout falls back to automatic discovery
       Given "shop" has the saved icon path "assets/brand.png"
       And this checkout has no "assets/brand.png" but has "public/favicon.svg"
@@ -111,7 +112,7 @@ Feature: Project and environment identity
       Then "public/favicon.svg" is served
 
     # Legacy: apps/server/src/project/ProjectFaviconResolver.ts (resolvePath re-stats a cached hit)
-    @mc @backlog
+    @mc
     Scenario: An icon file deleted from the checkout stops being served at once
       Given the icon of "shop" was served from "public/favicon.svg"
       When the user deletes "public/favicon.svg" and a client asks for the icon again
@@ -204,6 +205,14 @@ Feature: Project and environment identity
       Given the user set the icon of "shop" to the emoji "🛒"
       When the user resets the icon of "shop"
       Then "shop" shows its automatic icon
+
+    # Upstream #23569: a project with its own monogram, emoji or symbol still fetched its favicon.
+    @backlog @desktop @mobile @priority-low
+    Scenario: A project with a chosen icon never fetches its automatic one
+      Given the user set the icon of "shop" to the emoji "🛒"
+      When the user opens a client that has kept no icons
+      Then no automatic icon of "shop" is fetched, downloaded or kept
+      But once the user resets the icon of "shop" its automatic icon is fetched again
 
     # The MC signs an icon's link for half an hour or more and refuses it once it runs out.
     @desktop

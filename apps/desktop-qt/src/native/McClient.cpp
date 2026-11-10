@@ -29,6 +29,13 @@ void trace(QNetworkRequest& request, const QString& traceId) {
 
 }  // namespace
 
+// How an unreachable cluster member is told to the user: "<name> is not connected."
+static const QString kUnreachableSuffix = QStringLiteral(" is not connected.");
+
+bool McClient::unreachable(const QString& error) {
+  return error.endsWith(kUnreachableSuffix);
+}
+
 McClient::McClient(QObject* parent) : QObject(parent) {
   m_retryTimer.setSingleShot(true);
   connect(&m_retryTimer, &QTimer::timeout, this, &McClient::connectSocket);
@@ -83,7 +90,15 @@ void McClient::open(const QUrl& origin, const QString& token, const QString& env
   url.setPath(QStringLiteral("/ws"));
   QUrlQuery query;
   query.addQueryItem(QStringLiteral("token"), token);
+  query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
   url.setQuery(query);
+  // Another MC: what the last one said of itself is not this one's, and
+  // until it answers nothing names the one it left ("Connecting to …").
+  if (origin != m_origin) {
+    m_descriptor = {};
+    m_mc.clear();
+    m_environment.clear();
+  }
   m_origin = origin;
   m_url = url;
   m_token = token;
@@ -333,7 +348,8 @@ void McClient::sendPost(QObject* context, const QString& path, const QJsonObject
   });
 }
 
-void McClient::upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply) {
+void McClient::upload(QObject* context, const QString& relativeUrl, const QByteArray& bytes, const QString& mimeType, Reply reply,
+                      std::function<void(qint64, qint64)> progress) {
   if (m_closed || !m_origin.isValid()) {
     QTimer::singleShot(0, context, [reply = std::move(reply)] { reply(QJsonValue(), QStringLiteral("not connected")); });
     return;
@@ -344,6 +360,11 @@ void McClient::upload(QObject* context, const QString& relativeUrl, const QByteA
   QNetworkRequest request(url);
   request.setHeader(QNetworkRequest::ContentTypeHeader, mimeType.isEmpty() ? QStringLiteral("application/octet-stream") : mimeType);
   QNetworkReply* answer = m_http->post(request, bytes);
+  if (progress) {
+    connect(answer, &QNetworkReply::uploadProgress, this, [context = QPointer<QObject>(context), progress](qint64 sent, qint64 total) {
+      if (context) progress(sent, total);
+    });
+  }
   connect(answer, &QNetworkReply::finished, this, [answer, context = QPointer<QObject>(context), reply = std::move(reply)] {
     answer->deleteLater();
     if (!context) return;
@@ -536,6 +557,7 @@ void McClient::openSocket(const QString& ticket) {
   if (!ticket.isEmpty()) {
     QUrlQuery query;
     query.addQueryItem(QStringLiteral("wsTicket"), ticket);
+    query.addQueryItem(QStringLiteral("protocol"), QString::number(kProtocol));
     url.setQuery(query);
   }
   QNetworkRequest handshake(url);
@@ -590,7 +612,7 @@ void McClient::onMessage(const QString& text) {
         const QString environment = call.environment.isEmpty() ? m_environment : call.environment;
         QString name = m_names ? m_names(environment) : QString();
         if (name.isEmpty()) name = environment;
-        error = QStringLiteral("%1 is not connected.").arg(name);
+        error = QStringLiteral("%1%2").arg(name, kUnreachableSuffix);
       }
       reply(frame.value(QLatin1String("detail")), error);
     }

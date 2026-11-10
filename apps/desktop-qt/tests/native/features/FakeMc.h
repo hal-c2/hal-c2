@@ -103,7 +103,7 @@ public:
   void forget(int id) { m_live.remove(id); }
 
   // Named holds say which answers wait: `answers` holds commands and terminal
-  // calls; a domain may hold its own. Held answers are deferred until
+  // calls (`answers:<threadId>` one thread's commands); a domain may hold its own. Held answers are deferred until
   // answerHeld(), which lifts every hold.
   void hold(const QString& what) { m_holds.insert(what); }
   bool holding(const QString& what) const { return m_holds.contains(what); }
@@ -156,6 +156,8 @@ public:
   // Every call, in order, whoever answers it.
   QList<Rpc> calls;
   QHash<QString, QString> refusals;
+  // The `detail` a refusal carries, by the same key.
+  QHash<QString, QJsonObject> refusalDetails;
   // What an accepted command does to the MC's rows (the real MC's
   // projection), run before it is answered.
   QList<std::function<void(const QJsonObject& command)>> effects;
@@ -174,6 +176,8 @@ public:
       {QStringLiteral("pullRequests"), true},
       {QStringLiteral("threadPullRequests"), true},
       {QStringLiteral("threadPullRequestLinking"), true},
+      // As the MC's own descriptor has it (HalC2.Environment).
+      {QStringLiteral("fileAttachments"), QJsonObject{{QStringLiteral("maxUploadBytes"), 50 * 1024 * 1024}}},
   };
   bool holdSnapshot = false;
   // How long the MC takes to build its thread list: a shell `sub` is answered

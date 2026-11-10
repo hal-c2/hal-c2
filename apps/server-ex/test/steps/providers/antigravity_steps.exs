@@ -326,7 +326,16 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  # With `context.nothing_downloaded` (a fun of the context), that checks it: a
+  # registry agent's install in providers/acp-registry.feature.
   step "nothing is downloaded", context do
+    case context do
+      %{nothing_downloaded: check} when is_function(check, 1) -> check.(context)
+      _ -> nothing_fetched(context)
+    end
+  end
+
+  defp nothing_fetched(context) do
     refute_received :antigravity_downloaded
     previous_unchanged(context)
   end
@@ -758,7 +767,16 @@ defmodule HalC2.Steps.Providers.Antigravity do
     Map.merge(context, %{session_tmp: tmp, stale_tmp: stale, conversations: conversations})
   end
 
+  # With `context.end_session` (a fun of the context), that ends it: a registry
+  # agent's session in providers/acp-registry.feature.
   step "the session ends", context do
+    case context do
+      %{end_session: end_session} when is_function(end_session, 1) -> end_session.(context)
+      _ -> sign_in_ends(context)
+    end
+  end
+
+  defp sign_in_ends(context) do
     assert browser(context.flow, %{"code" => "google-code"}) =~ "Sign-in succeeded"
     await_auth(context, "succeeded")
   end
@@ -1457,8 +1475,21 @@ defmodule HalC2.Steps.Providers.Antigravity do
     skill
   end
 
+  # Whether the scenario runs a Cursor thread, whose skill list is the
+  # Cursor entry's snapshot and whose folders are named plainly (`.cursor/skills`).
+  defp cursor_feature?(context),
+    do: Path.basename(context[:feature_file] || "") == "cursor.feature"
+
   step ~r/^a skill "(?<name>[^"]+)" in (?<folder>.+)$/, %{args: [name, folder]} = context do
-    write_skill(skill_folder(context, folder), name)
+    if cursor_feature?(context) do
+      # `<folder> of the project or of the user's home`: in both, as named.
+      plain = String.trim_trailing(folder, " of the project or of the user's home")
+      write_skill(Path.join(World.project(context).root, plain), name)
+      write_skill(Path.join(HalC2.Test.Mc.Host.home(context), plain), name)
+    else
+      write_skill(skill_folder(context, folder), name)
+    end
+
     context
   end
 
@@ -1470,14 +1501,25 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step ~r/^"(?<name>[a-z0-9_-]+)" is offered$/, %{args: [name]} = context do
-    assert Enum.any?(listed_skills(context), &(&1["name"] == name)),
-           "#{name} not in #{inspect(Enum.map(listed_skills(context), & &1["name"]))}"
+    listed =
+      if cursor_feature?(context), do: cursor_listed_skills(context), else: listed_skills(context)
+
+    assert Enum.any?(listed, &(&1["name"] == name)),
+           "#{name} not in #{inspect(Enum.map(listed, & &1["name"]))}"
 
     context
   end
 
   step ~r/^"(?<name>[a-z0-9_-]+)" is not offered$/, %{args: [name]} = context do
-    refute Enum.any?(listed_skills(context), &(&1["name"] == name))
+    # A registry search leaves its agents in the reply; anything else here is
+    # about the skills an agent offered.
+    offered =
+      case context[:reply] do
+        {:ok, %{"agents" => agents}} -> Enum.map(agents, & &1["id"])
+        _ -> Enum.map(listed_skills(context), & &1["name"])
+      end
+
+    refute name in offered
     context
   end
 
@@ -1496,13 +1538,35 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  # The same words on a Cursor thread (`context.cursor_skill_name`): its skill
+  # list is the Cursor entry's snapshot for the project.
+  defp cursor_listed_skills(context) do
+    root = World.project(context).root
+    entry = Enum.find(context.providers || [], &(&1["instanceId"] == "cursor")) || %{}
+
+    case Enum.filter(entry["workspaceSnapshots"] || [], &(&1["cwd"] == root)) do
+      [%{"skills" => skills}] -> skills
+      _ -> []
+    end
+  end
+
   step "that skill is not offered", context do
-    refute Enum.any?(listed_skills(context), &String.contains?(&1["path"], "broken"))
+    if context[:cursor_skill_name] do
+      refute Enum.any?(cursor_listed_skills(context), &(&1["name"] == context.cursor_skill_name))
+    else
+      refute Enum.any?(listed_skills(context), &String.contains?(&1["path"], "broken"))
+    end
+
     context
   end
 
   step "the other skills are still offered", context do
-    assert Enum.any?(listed_skills(context), &(&1["name"] == "deploy"))
+    if context[:cursor_skill_name] do
+      assert Enum.any?(cursor_listed_skills(context), &(&1["name"] == "deploy"))
+    else
+      assert Enum.any?(listed_skills(context), &(&1["name"] == "deploy"))
+    end
+
     context
   end
 
@@ -1657,6 +1721,19 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step ~r/^"(?<name>[^"]+)" is offered once, from (?<dir>.+)$/, %{args: [name, dir]} = context do
+    if cursor_feature?(context) do
+      # Cursor's words name the place ("the project"), which the snapshot's
+      # scope and the skill's own description say.
+      assert [skill] = Enum.filter(cursor_listed_skills(context), &(&1["name"] == name))
+      assert skill["scope"] == "project"
+      assert skill["description"] == "from the project"
+      context
+    else
+      offered_once_from(context, name, dir)
+    end
+  end
+
+  defp offered_once_from(context, name, dir) do
     root = World.project(context).root
     skills = listed_skills(context)
     assert [skill] = Enum.filter(skills, &(&1["name"] == name))
@@ -2912,32 +2989,49 @@ defmodule HalC2.Steps.Providers.Antigravity do
 
   step ~r/^the turn (?<ending>is still running|is stopped by the user)$/,
        %{args: [ending]} = context do
-    case ending do
-      "is still running" ->
-        state =
-          World.await_stream(World.thread_id(context, context.thread), fn state ->
-            if Enum.any?(turn_items(state), &(&1["type"] == "subagent")), do: state
-          end)
+    # A Codex turn held by its scenario (`:codex_compaction` names its thread)
+    # stops the same way, without Antigravity's batch gate around it.
+    if ending == "is stopped by the user" and context[:codex_compaction] do
+      title = context.codex_compaction
 
-        context = Map.put(context, :run_state, state)
-        release_file(context, "release-batch")
-        context
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(%{
+          "type" => "run.interrupt",
+          "commandId" => "cmd-#{System.unique_integer([:positive])}",
+          "threadId" => World.thread_id(context, title),
+          "runId" => World.latest_run(context, title)["id"]
+        })
 
-      "is stopped by the user" ->
-        run =
+      World.await_runs(context, title, ["interrupted"])
+      context
+    else
+      case ending do
+        "is still running" ->
+          state =
+            World.await_stream(World.thread_id(context, context.thread), fn state ->
+              if Enum.any?(turn_items(state), &(&1["type"] == "subagent")), do: state
+            end)
+
+          context = Map.put(context, :run_state, state)
+          release_file(context, "release-batch")
           context
-          |> World.runs(context.thread)
-          |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
 
-        {:ok, _} =
-          HalC2.Orchestration.dispatch(%{
-            "type" => "run.interrupt",
-            "threadId" => World.thread_id(context, context.thread),
-            "runId" => run["id"]
-          })
+        "is stopped by the user" ->
+          run =
+            context
+            |> World.runs(context.thread)
+            |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
 
-        release_file(context, "release-batch")
-        Map.put(context, :run_state, FakeAcp.await_run(context, "interrupted"))
+          {:ok, _} =
+            HalC2.Orchestration.dispatch(%{
+              "type" => "run.interrupt",
+              "threadId" => World.thread_id(context, context.thread),
+              "runId" => run["id"]
+            })
+
+          release_file(context, "release-batch")
+          Map.put(context, :run_state, FakeAcp.await_run(context, "interrupted"))
+      end
     end
   end
 

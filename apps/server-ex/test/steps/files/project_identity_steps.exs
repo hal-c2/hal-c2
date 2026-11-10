@@ -15,11 +15,87 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
 
   # --- icons -------------------------------------------------------------------------
 
+  # Each file holds its own relative path, so what was served says which file it was.
   step "the checkout of {string} has {string}", %{args: [project, file]} = context do
-    path = Path.join(World.project(context, project).root, file)
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, ~s(<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>\n))
-    Map.put(context, :favicon, path)
+    put_icon(context, project, file)
+  end
+
+  step "the checkout of {string} has {string} and {string}",
+       %{args: [project, first, second]} = context do
+    context |> put_icon(project, first) |> then(&put_icon(&1, project, second))
+  end
+
+  step "the checkout of {string} has {string} only", %{args: [project, file]} = context do
+    put_icon(context, project, file)
+  end
+
+  step "the checkout of {string} has {string} linking the icon {string}",
+       %{args: [project, file, href]} = context do
+    write(context, project, file, ~s(<html><head><link rel="icon" href="#{href}"></head></html>))
+  end
+
+  step "the checkout of {string} has {string} declaring an icon with the address {string}",
+       %{args: [project, file, href]} = context do
+    write(
+      context,
+      project,
+      file,
+      ~s|export const Route = { head: () => ({ links: [{ rel: "icon", href: "#{href}" }] }) }|
+    )
+  end
+
+  step "the checkout of {string} has {string} naming {string} as its icon",
+       %{args: [project, file, icon]} = context do
+    write(context, project, file, JSON.encode!(%{"iconPath" => icon}))
+  end
+
+  step "{string} has the saved icon path {string}", %{args: [project, path]} = context do
+    %{id: id} = World.project(context, project)
+
+    {reply, context} =
+      World.call(context, "projects.mutate", %{
+        "type" => "project.update",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "projectId" => id,
+        "faviconPath" => path
+      })
+
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "this checkout has no {string} but has {string}", %{args: [missing, file]} = context do
+    refute File.exists?(Path.join(World.project(context, "shop").root, missing))
+    put_icon(context, "shop", file)
+  end
+
+  step "the icon of {string} was served from {string}", %{args: [project, file]} = context do
+    context = put_icon(context, project, file)
+    served(ask(context, project).icon, context.favicon)
+    context
+  end
+
+  step "the user deletes {string} and a client asks for the icon again",
+       %{args: [file]} = context do
+    File.rm!(Path.join(World.project(context, "shop").root, file))
+    ask(context, "shop")
+  end
+
+  step "the next icon candidate is served or the MC answers that there is no icon", context do
+    assert {status, _} = context.icon
+    assert status in [200, 404]
+    refute status == 200 and String.contains?(elem(context.icon, 1), "public/favicon.svg")
+    context
+  end
+
+  step "that file is not served", context do
+    assert {404, _} = context.icon
+    context
+  end
+
+  step "the usual icon locations are tried instead", context do
+    assert {404, _} = context.icon
+    context
   end
 
   step "the checkout of {string} has no favicon", %{args: [project]} = context do
@@ -29,15 +105,7 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
   end
 
   step "a client asks for the icon of {string}", %{args: [project]} = context do
-    root = World.project(context, project).root
-
-    {reply, context} =
-      World.call(context, "assets.createUrl", %{
-        "resource" => %{"_tag" => "project-favicon", "cwd" => root}
-      })
-
-    assert {:ok, %{"relativeUrl" => url}} = reply
-    Map.put(context, :icon, get(context, url))
+    ask(context, project)
   end
 
   step "the favicon is served", context do
@@ -87,8 +155,13 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
     await_themes(context, &(id in &1))
   end
 
+  # With `context.no_longer_offered` (a fun of the context and the name), that checks
+  # it: a registry agent's command in providers/acp-registry.feature.
   step "{string} is no longer offered", %{args: [id]} = context do
-    await_themes(context, &(id not in &1))
+    case context do
+      %{no_longer_offered: check} when is_function(check, 2) -> check.(context, id)
+      _ -> await_themes(context, &(id not in &1))
+    end
   end
 
   step "the themes folder has a file named {string}", %{args: [name]} = context do
@@ -225,6 +298,39 @@ defmodule HalC2.Steps.Files.ProjectIdentity do
   end
 
   defp ids(frame), do: Enum.map(frame["themes"], & &1["id"])
+
+  defp put_icon(context, project, file) do
+    write(
+      context,
+      project,
+      file,
+      ~s(<svg xmlns="http://www.w3.org/2000/svg"><!-- #{file} --></svg>\n)
+    )
+  end
+
+  defp write(context, project, file, text) do
+    path = Path.join(World.project(context, project).root, file)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, text)
+    Map.put(context, :favicon, path)
+  end
+
+  defp ask(context, project) do
+    root = World.project(context, project).root
+
+    {reply, context} =
+      World.call(context, "assets.createUrl", %{
+        "resource" => %{"_tag" => "project-favicon", "cwd" => root}
+      })
+
+    assert {:ok, %{"relativeUrl" => url}} = reply
+    Map.put(context, :icon, get(context, url))
+  end
+
+  defp served({status, body}, path) do
+    assert status == 200
+    assert body == File.read!(path)
+  end
 
   defp get(context, url) do
     :inets.start()

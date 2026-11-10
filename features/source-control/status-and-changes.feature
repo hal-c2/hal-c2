@@ -1,4 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27103
+#   https://github.com/pingdotgg/t3code/pull/29817
+#   https://github.com/pingdotgg/t3code/pull/31928
+#   https://github.com/pingdotgg/t3code/pull/29586
+#   https://github.com/pingdotgg/t3code/pull/32162
+#   https://github.com/pingdotgg/t3code/pull/25207
+#   https://github.com/pingdotgg/t3code/pull/24258
+#   https://github.com/pingdotgg/t3code/pull/21046
 #   https://github.com/pingdotgg/t3code/pull/14942
 #   https://github.com/pingdotgg/t3code/pull/20175
 #   https://github.com/pingdotgg/t3code/pull/16453
@@ -26,6 +34,14 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/GitActions.qml (Initialize Git, git pill)
 #   apps/tui/src/gitActions.logic.ts (mergeVcsStatus, resolveGitQuickAction)
 #   apps/tui/src/connection.ts (subscribeVcsStatus)
+#   https://github.com/pingdotgg/t3code/pull/28600
+#   https://github.com/pingdotgg/t3code/pull/28439
+#   https://github.com/pingdotgg/t3code/pull/22119
+#   https://github.com/pingdotgg/t3code/pull/31342
+#   https://github.com/pingdotgg/t3code/pull/26125
+#   https://github.com/pingdotgg/t3code/pull/29180
+#   https://github.com/pingdotgg/t3code/pull/29670
+#   https://github.com/pingdotgg/t3code/pull/30085
 
 Feature: Repository status and working tree changes
   The checkout behind a thread reports its branch, its uncommitted changes and how it stands
@@ -42,7 +58,7 @@ Feature: Repository status and working tree changes
     And it lists both files with their inserted and deleted line counts
     And it says the working tree has changes
 
-  @backlog @mc
+  @mc
   Scenario: A file whose name starts or ends with a space keeps its exact path
     Given the user has added " leading.txt" to "shop"
     When status is read for "shop"
@@ -50,7 +66,8 @@ Feature: Repository status and working tree changes
     And a git action given " leading.txt" acts on that file, not on "leading.txt"
 
   # Upstream #20175: status parsed git's display output, which quotes and escapes some paths.
-  @backlog @mc @priority-high
+  # Upstream #19371: a quoted file name lost a leading U+FEFF, the invisible byte-order mark (the last row).
+  @mc @priority-high
   Scenario Outline: Status lists changed files by their real paths
     Given the user has <change> in "shop"
     When status is read for "shop"
@@ -62,10 +79,6 @@ Feature: Repository status and working tree changes
       | added "docs/résumé.md"                   | "docs/résumé.md"                              |
       | added 'notes/a "quoted" name.txt'        | 'notes/a "quoted" name.txt'                   |
       | renamed "src/cart.ts" to "src/basket.ts" | "src/basket.ts" as renamed from "src/cart.ts" |
-
-    # Upstream #19371: a quoted file name lost a leading U+FEFF, the invisible byte-order mark.
-    Examples:
-      | change                                                       | listed                                                |
       | renamed "old.txt" to a name of U+FEFF followed by "note.txt" | that name, U+FEFF included, as renamed from "old.txt" |
 
   # Upstream #16771: counting the lines of thousands of untracked files pegged the CPU.
@@ -84,9 +97,30 @@ Feature: Repository status and working tree changes
     Then the status says the branch has an upstream
     And it reports 2 commits ahead and 1 behind
 
+  # Upstream #29180: a local branch literally named "origin/feature/tax" made the upstream's
+  # remote read as "remotes", so background fetches failed and a push saved a base that does
+  # not exist.
+  @mc
+  Scenario: A local branch named like the upstream does not hide the upstream's remote
+    Given "feature/tax" tracks "origin/feature/tax" and is 1 commit ahead
+    And the repository also has a local branch named "origin/feature/tax"
+    When status is read for "shop"
+    Then the upstream is "origin/feature/tax" on the remote "origin"
+    And it reports 1 commit ahead
+    And pushing "feature/tax" keeps "origin/feature/tax" as its base
+
+  # Upstream #29670: a branch tracking the local "feature/part-1" read "feature" as its remote,
+  # so every status refresh fetched a remote that does not exist and logged a failure.
+  @mc @priority-low
+  Scenario: A branch that tracks a local branch fetches nothing
+    Given "part-2" tracks the local branch "feature/part-1" and is 1 commit ahead of it
+    When status is read for "shop"
+    Then nothing is fetched for "part-2"
+    And it reports 1 commit ahead
+
   # Upstream #16453: a branch without an upstream that is configured to merge into "upstream/main"
   # was still compared with the fork's "origin/main".
-  @backlog @mc
+  @mc
   Scenario: A branch's changes are compared with the base it is configured to merge into
     Given the branch "fix-tax" has no upstream and is set to merge into "upstream/main"
     And the fork's "origin/main" is behind "upstream/main"
@@ -113,6 +147,76 @@ Feature: Repository status and working tree changes
     And a client in front is showing a thread in "shop"
     When 30 seconds pass
     Then the MC fetches from the remote and the ahead and behind counts are updated
+
+  # Upstream #31342: after a turn merged a branch, the counts stayed stale while the background
+  # activity profile held periodic work back.
+  @backlog @mc
+  Scenario: A finished turn updates the ahead and behind counts without fetching
+    Given "feature/tax" is 3 commits ahead and 5 behind its upstream
+    And the background activity profile holds periodic Git work back
+    When a turn merges the upstream into "feature/tax" and finishes
+    Then the thread shows 7 commits ahead and 0 behind
+    And nothing is fetched from the remote
+
+  # Upstream #28439: an empty branch total of +0 -0 hid the working tree's edits, so Changes read
+  # +0 -0 while the diff showed real changes.
+  @backlog @desktop @mobile
+  Scenario Outline: The Changes totals show the edits the diff shows
+    Given the thread's branch in "shop" has <branch> and its working tree has 12 inserted and 3 deleted lines
+    When the user looks at the thread's Changes totals
+    Then they read <totals>
+
+    Examples:
+      | branch                                    | totals   |
+      | no changes of its own                     | +12 -3   |
+      | 40 inserted and 5 deleted lines committed | +40 -5   |
+
+  # Upstream #30085: with origin/HEAD missing the totals were silently counted against origin/master,
+  # and nothing said which base they came from.
+  @backlog @desktop @mobile
+  Scenario: The Changes totals name the base they are counted against
+    Given the thread's worktree in "shop" is compared against "origin/master"
+    When the user looks at the thread's Changes totals
+    Then they read "vs origin/master" beside the totals
+    And the full name of the base can be seen on hover
+
+  # Upstream #22119: only a remote named "origin" counted, so a repository cloned with another
+  # remote name had no Push or Create PR and was offered "Publish repository".
+  @mc
+  Scenario Outline: A repository's only remote is its primary remote whatever its name
+    Given "shop" has <remotes>
+    When the MC reads the git status of "shop"
+    Then "shop" <has> a primary remote
+
+    Examples:
+      | remotes                         | has         |
+      | only the remote "github"        | has         |
+      | the remotes "origin" and "fork" | has         |
+      | no remote                       | does not have |
+
+  # Upstream #28600: the lines-changed totals stayed counted against the old base when only the
+  # base moved and the ahead and behind counts did not.
+  @backlog @mc
+  Scenario Outline: The Changes totals follow a base that moved
+    Given the thread's worktree in "shop" shows its Changes totals
+    When <what>
+    Then the Changes totals are counted against the new base
+
+    Examples:
+      | what                                                                  |
+      | an automatic fetch finds the base branch moved, with the same ahead and behind counts |
+      | the user refreshes and the merge base has changed                     |
+      | another client read the totals while the fetch was running            |
+
+  # Upstream #26125: a status read that straddled the automatic rename after a thread's first
+  # message guessed the remote's default branch as the base, and showed hundreds of thousands
+  # of changed lines.
+  @backlog @mc
+  Scenario: Changes totals read during the branch's automatic rename are not counted against a guess
+    Given a new thread's worktree in "shop" has three changed lines
+    When its temporary branch is renamed while its status is being read
+    Then the Changes totals show the three working tree lines
+    And they are never counted against the remote's default branch
 
   @mc
   Scenario: A fetch interval of zero never fetches on its own
@@ -171,7 +275,7 @@ Feature: Repository status and working tree changes
   # repository hidden in a project's files cannot bring its config or hooks into HAL-C2's git calls.
   # A project whose own folder is a bare repository is still opened, by naming it explicitly
   # (mc/orchestration/projects.feature, "A project in a bare repository carries its repository").
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A bare repository among a project's files is not opened as a repository
     Given the folder "fixtures/evil" in "shop" is shaped like a bare repository with a hook
     When HAL-C2 runs git inside "fixtures/evil"
@@ -179,23 +283,25 @@ Feature: Repository status and working tree changes
     And the hook does not run
 
   # Legacy: apps/server/src/git/GitManager.test.ts (status returns an explicit non-repo result for deleted directories)
-  @mc @backlog
+  @mc
   Scenario: A folder that has been deleted says it is not a repository
-    Given the folder of the project "notes" was deleted
+    Given the project "notes" is not in a git repository
+    And the folder of "notes" was deleted
     When status is read for "notes"
     Then the status says it is not a repository
     And no failure is reported
 
   # Upstream #14942: without git installed, a folder read as a failure to start git.
-  @backlog @mc
+  @mc
   Scenario: A folder on a machine without git says it is not a repository
-    Given git is not installed on the MC's machine
+    Given the project "notes" is not in a git repository
+    And git is not installed on the MC's machine
     When status is read for "notes"
     Then the status says it is not a repository
     And no failure is reported
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (statusDetails: unborn HEAD)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A repository with no commits yet still reports its branch and changes
     Given the project "notes" is a git repository with no commits
     And "notes" holds a staged "a.txt" and an untracked "b.txt"
@@ -204,7 +310,7 @@ Feature: Repository status and working tree changes
     And "a.txt" and "b.txt" are listed with their changed line counts
 
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (readStatusDetailsLocal: index lock)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A checkout whose git index is locked reports that instead of a status
     Given another git process is holding the index lock of "shop"
     When status is read for "shop"
@@ -240,6 +346,47 @@ Feature: Repository status and working tree changes
     And the host now cannot be reached
     When the branch's remote is changed to a different repository and status is read again
     Then the status carries no pull request
+  # Upstream #21046: the local scan is published before a slow pull request lookup finishes.
+  @mc
+  Scenario: Local status is not held back by a slow pull request lookup
+    Given the host is slow to answer the pull request lookup for "feature/tax"
+    When the user changes "src/cart.ts" while the lookup is still waiting
+    Then the status shows the change to "src/cart.ts" before the lookup answers
+
+  # Upstream #32162: after a restart the background pull request lookups took every git slot, so
+  # status waited one to two minutes behind them.
+  @backlog @mc @priority-low
+  Scenario: Pull request lookups in the background after a restart do not hold up status
+    Given the MC has just restarted and is looking up the pull requests of many threads' branches
+    When status is read for "shop"
+    Then the status is read without waiting for those lookups
+    And the background lookups run no more than two git processes at a time
+
+  # Upstream #21046: a lookup started on one branch never fills in the pull request of the branch checked out next.
+  @mc @priority-high
+  Scenario: A late pull request answer for the previous branch is not shown on the new one
+    Given a pull request lookup for "feature/tax" is still waiting
+    When the user checks out "feature/cart" and the lookup for "feature/tax" then answers
+    Then the status for "feature/cart" does not carry the pull request of "feature/tax"
+    And a later lookup still finds the pull request of "feature/cart"
+
+  # Upstream #24258: a branch with the same name as a tag read as "heads/<name>" in remote status and review.
+  @mc
+  Scenario: A branch named like a tag is still reported by its name
+    Given the checked out branch "release" has a tag also named "release"
+    When status is read for "shop"
+    Then the status names the branch "release", not "heads/release"
+    And the review compares "release" with the default branch
+    And the pull request of "release" is still found
+
+  # Upstream #25207: status of a repository with thousands of long changed paths failed on an output cap.
+  @mc
+  Scenario: Status of a repository with thousands of changed files is complete
+    Given the user has changed 6000 files with long paths in "shop"
+    When status is read for "shop"
+    Then the status lists all 6000 files with their line counts
+    And a commit can be prepared from them
+
 
   # Legacy: apps/server/src/git/GitManager.ts (prLookupFailureTtl)
   @mc
@@ -349,8 +496,52 @@ Feature: Repository status and working tree changes
     Then the status carries that pull request
     And committing, pushing and opening a pull request from "fix-tax" uses it instead of opening another
 
+  # Upstream #29817: on Azure DevOps a fork's newer pull request from a same-named branch took
+  # the only result asked for, so the branch showed no pull request and offered to open one.
+  @backlog @mc
+  Scenario: On Azure DevOps a fork's same-named branch does not hide the branch's own pull request
+    Given "shop" has its primary remote on Azure DevOps
+    And "feature" has an open pull request in "shop"
+    And a fork has a newer open pull request from its own "feature" branch
+    When status is read for "shop" on "feature"
+    Then the status carries the pull request from "shop"
+    And creating a pull request for "feature" is not offered
+
+  # Upstream #31928: the Azure CLI sent the branch unescaped, so a "#" cut the query off and an
+  # existing pull request read as none; a changed file's path holding "#" or "&" was cut the same way.
+  @backlog @mc
+  Scenario: On Azure DevOps a branch whose name holds "#" finds its pull request
+    Given "shop" has its primary remote on Azure DevOps
+    And "user/feat/12-(#34)-slug" has an open pull request
+    When status is read for "shop" on "user/feat/12-(#34)-slug"
+    Then the status carries that pull request
+    And reviewing it shows the whole of a changed file named "notes #1 & 2.md"
+
+  # Upstream #29586: Azure DevOps's default-branch lookup never named the repository, so it always
+  # failed and the default branch was guessed instead.
+  @backlog @mc @priority-low
+  Scenario Outline: On Azure DevOps the default branch is read from the repository the remote names
+    Given the primary remote of "shop" is <remote>
+    And the repository's default branch on Azure DevOps is "trunk"
+    When status is read for "shop"
+    Then the default branch is "trunk"
+
+    Examples:
+      | remote                                                   |
+      | "https://dev.azure.com/acme/web/_git/shop"                |
+      | "https://acme.visualstudio.com/web/_git/shop"             |
+      | "git@ssh.dev.azure.com:v3/acme/web/shop"                  |
+
+  # Upstream #29586: a name starting with "@" would make the Azure CLI read a local file instead.
+  @backlog @mc @priority-low
+  Scenario: On Azure DevOps a repository named with a leading "@" falls back to guessing the default branch
+    Given the primary remote of "shop" is "https://dev.azure.com/acme/web/_git/@shop"
+    When status is read for "shop"
+    Then the Azure CLI is not asked for the default branch
+    And the default branch is found the way it is for a remote without a host
+
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus), GitManager.ts (refreshMissingPullRequest)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A pull request opened outside HAL-C2 shows up when the next turn ends
     Given a client in front is showing a thread in "shop"
     And the status has no pull request for "feature/tax"
@@ -359,7 +550,7 @@ Feature: Repository status and working tree changes
     Then the status carries that pull request without waiting for the slower recheck
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus: background policy)
-  @mc @backlog
+  @mc
   Scenario: The turn-end pull request check respects the background settings
     Given background work is paused for "shop" by the user's background activity settings
     When a thread's turn ends in "shop"
@@ -382,7 +573,7 @@ Feature: Repository status and working tree changes
       | a newer turn of the thread is already running             |
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (refreshPullRequestStatus: resolves the checked-out branch again)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A pull request found for one branch is not shown after the agent checks out another
     Given the status of "shop" carries the pull request of "feature/tax"
     And the agent checks out "feature/other", which has no pull request, during its turn
@@ -390,7 +581,7 @@ Feature: Repository status and working tree changes
     Then the status carries no pull request
 
   # Legacy: apps/server/src/git/GitManager.ts (invalidateStatus bumps the lookup epoch)
-  @mc @backlog
+  @mc
   Scenario Outline: What the user does asks the host again at once
     Given status showed no pull request for "feature/tax" a moment ago
     When <action>
@@ -409,15 +600,22 @@ Feature: Repository status and working tree changes
     Then git is asked once for the checkout's status
     And all five get the same answer
 
-  # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (fingerprints)
+  # Upstream #27103: every refresh a subscriber asked for ran the checkout's git commands again.
   @mc @backlog @priority-low
+  Scenario: A burst of refreshes reads the checkout at most twice
+    Given clients ask to refresh the status of "shop" five times while one read is running
+    Then the checkout's status is read at most twice
+    And every client gets a status read after its own request
+
+  # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (fingerprints)
+  @mc @priority-low
   Scenario: A refresh that finds nothing new sends nothing to watchers
     Given a client is watching the status of "shop"
     When the status is refreshed and nothing about the checkout changed
     Then the client receives no update
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (poller per cwd)
-  @mc @backlog @priority-low
+  @mc @priority-low
   Scenario: Clients watching one checkout share a single background fetch
     Given two clients are watching the status of "shop"
     When the fetch interval elapses
@@ -442,7 +640,7 @@ Feature: Repository status and working tree changes
     Then the status still carries the new pull request
 
   # Legacy: apps/server/src/vcs/VcsStatusBroadcaster.ts (maybeAutoPull)
-  @mc @backlog
+  @mc
   Scenario Outline: A watched checkout that falls behind is pulled when it is safe to
     Given "shop" has automatic pull on
     And "shop" <state>
@@ -505,16 +703,17 @@ Feature: Repository status and working tree changes
       | the system to initialize is left unknown              | the user initializes "notes"             | A concrete VCS driver kind is required for repository provisioning. |
 
   # Legacy: apps/server/src/vcs/VcsProvisioningService.ts (resolveRequestedKind)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: Initializing without naming a system creates a git repository
     Given the project "notes" is not in a git repository
     When the user initializes "notes" without naming a version control system
     Then "notes" becomes a git repository
 
   # Legacy: apps/server/src/vcs/VcsDriverRegistry.ts (null detections are not cached)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A folder that has just become a repository is noticed at once
-    Given status was just read for "notes" and said it is not a repository
+    Given the project "notes" is not in a git repository
+    And status was just read for "notes" and said it is not a repository
     When "notes" is initialized as a git repository
     Then the next status for "notes" reports the repository
 
@@ -526,7 +725,7 @@ Feature: Repository status and working tree changes
     And no more than 4 GitHub CLI commands run at once
 
   # Legacy: apps/server/src/vcs/VcsProcess.ts (isTransientGitExit, CHECKPOINT_CAPTURE_OPERATION)
-  @mc @backlog @priority-high
+  @mc @priority-high
   Scenario: A checkpoint is not lost to a brief git lock
     Given git reports a lock file or a vanished file while a checkpoint is being captured
     When the capture command is retried
@@ -538,7 +737,7 @@ Feature: Repository status and working tree changes
     When status is read for "shop"
     Then the status reports the Jujutsu driver with its bookmark and working copy changes
 
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: Reading status never takes the git index lock
     Given the MC keeps the status of "shop" fresh in the background
     When the user runs "git checkout" or "git commit" in "shop" while a status read is under way

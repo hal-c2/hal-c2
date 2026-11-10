@@ -428,6 +428,36 @@ export const ServerProcessDiagnosticsResult = Schema.Struct({
 });
 export type ServerProcessDiagnosticsResult = typeof ServerProcessDiagnosticsResult.Type;
 
+/**
+ * `server.getOpenShellStatus`: whether this environment can run review sandboxes
+ * (OpenShell), as `hal-c2-service openshell status` reports it. `supported` is false
+ * where OpenShell cannot run at all; `problems` say what stands in the way and what to
+ * do, in order, and are empty once the gateway is ready.
+ */
+export const ServerOpenShellProblem = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+});
+export type ServerOpenShellProblem = typeof ServerOpenShellProblem.Type;
+
+export const ServerOpenShellStatus = Schema.Struct({
+  supported: Schema.Boolean,
+  ready: Schema.Boolean,
+  /** How the gateway runs: as the user's service, in the foreground, or one the user runs. */
+  mode: Schema.NullOr(Schema.Literals(["managed", "foreground", "external"])),
+  version: Schema.NullOr(TrimmedNonEmptyString),
+  /** The version this MC pins. */
+  pinnedVersion: TrimmedNonEmptyString,
+  problems: Schema.Array(ServerOpenShellProblem),
+});
+export type ServerOpenShellStatus = typeof ServerOpenShellStatus.Type;
+
+/** The status could not be read in time. */
+export class ServerOpenShellStatusError extends Schema.TaggedError<ServerOpenShellStatusError>()(
+  "ServerOpenShellStatusError",
+  { message: TrimmedNonEmptyString },
+) {}
+
 export const ServerProcessResourceHistoryInput = Schema.Struct({
   windowMs: NonNegativeInt,
   bucketMs: NonNegativeInt,

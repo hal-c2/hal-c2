@@ -7,6 +7,7 @@
 #include <QtQml/qqml.h>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -34,6 +35,7 @@ void registerBrowser() {
     return browser;
   });
   qmlRegisterType<BrowserPage>("HalC2.Shell", 1, 0, "BrowserPage");
+  qmlRegisterUncreatableType<PagePermissions>("HalC2.Shell", 1, 0, "PagePermissions", QStringLiteral("Browser.permissions"));
 }
 
 }  // namespace
@@ -158,13 +160,25 @@ void BrowserPage::setPreviews(ThreadPreviews* previews) {
 
 void BrowserPage::setTabId(const QString& tabId) {
   if (tabId == m_tabId) return;
+  const bool resizing = this->resizing();
   m_tabId = tabId;
   m_lastReport = {};
+  m_unsent = false;
+  // A size picked for the old tab is not the new tab's, but its request is
+  // still the MC's to answer: back on that tab, the wait is on.
+  m_pendingViewport = {};
+  m_superseded = false;
+  if (resizing != this->resizing()) emit resizingChanged();
   follow();
   emit tabIdChanged();
 }
 
 void BrowserPage::follow() {
+  // The reports on their way were another tab's: a new generation, so a reply
+  // that comes after the page is back on that tab is not the one in flight.
+  ++m_reports;
+  m_reporting = false;
+  m_reportQueued = false;
   if (!m_enrolled.isEmpty()) Browser::instance()->leave(this, m_enrolled);
   m_enrolled = m_tabId;
   if (!m_enrolled.isEmpty()) Browser::instance()->enrol(this, m_enrolled);
@@ -172,6 +186,18 @@ void BrowserPage::follow() {
     disconnect(m_previews, &ThreadPreviews::tabChanged, this, nullptr);
     connect(m_previews, &ThreadPreviews::tabChanged, this, [this](const QString& tabId) {
       if (tabId == m_tabId) refresh();
+    });
+    disconnect(m_previews, &ThreadPreviews::listed, this, nullptr);
+    connect(m_previews, &ThreadPreviews::listed, this, [this] {
+      // Back from a drop, the MC's tab still where it was: where the page went is news.
+      if (!std::exchange(m_unsent, false) || m_lastReport.isEmpty() || m_tab.isEmpty()) return;
+      // The report as the MC lists it, or not: its address, status, title and
+      // history flags all come back (a load finished while away is news).
+      const QString where = m_lastReport.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString();
+      const bool listed = m_tab.value(QLatin1String("navStatus")).toObject() == m_lastReport.value(QLatin1String("navStatus")).toObject() &&
+                          m_tab.value(QLatin1String("canGoBack")).toBool() == m_lastReport.value(QLatin1String("canGoBack")).toBool() &&
+                          m_tab.value(QLatin1String("canGoForward")).toBool() == m_lastReport.value(QLatin1String("canGoForward")).toBool();
+      if (where == m_at && !listed) send();
     });
   }
   // What the MC has now is where the page starts: the brick loads `url`.
@@ -186,38 +212,82 @@ void BrowserPage::refresh() {
   const QJsonObject tab = m_previews ? m_previews->tab(m_tabId) : QJsonObject();
   if (tab == m_tab) return;
   const QJsonValue before = m_tab.value(QLatin1String("viewport"));
+  const QString was = url();
   m_tab = tab;
   emit tabChanged();
-  // The MC confirming the size picked ends the pick.
-  if (!m_pendingViewport.isEmpty() && m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport) {
+  // The tab showing the size picked ends the display of the pick, not the wait
+  // on the MC's answer: a request is outstanding until it is answered (or the
+  // wait times out), whatever else the tab shows meanwhile, or a second request
+  // could be told from the first's events no better. Another size while the
+  // pick is waiting (another window's) leaves the pick shown. Once answered, any
+  // size the tab shows ends the display of the pick.
+  const bool resized = m_tab.value(QLatin1String("viewport")) != before;
+  const QJsonObject shown = m_tab.value(QLatin1String("viewport")).toObject();
+  if (!m_pendingViewport.isEmpty() && (shown == m_pendingViewport || (resized && !resizing()))) {
     m_pendingViewport = {};
-  } else if (m_tab.value(QLatin1String("viewport")) != before && m_pendingViewport.isEmpty()) {
+    emit viewportChanged();
+  } else if (resized && !m_pendingViewport.isEmpty()) {
+    // The newest listing shows another size: when the answer comes, that one
+    // stands, not the pick it overtook.
+    m_superseded = true;
+  } else if (resized && m_pendingViewport.isEmpty()) {
     emit viewportChanged();
   }
   const QString at = url();
-  // A tab gone, or not at a page yet: its page starts afresh when one comes.
+  // A tab gone: its page starts afresh when one comes. Not at a page yet (a
+  // size, say, before the page's first report): where the page went stands.
   if (at.isEmpty()) {
-    m_at.clear();
-    m_echoes.clear();
+    if (tab.isEmpty()) {
+      m_at.clear();
+      m_echoes.clear();
+    }
     return;
   }
-  // The MC saying back where the page went, in order.
-  if (const qsizetype echo = m_echoes.indexOf(at); echo >= 0) {
+  // The MC saying back where the page went, in order (the page is where it
+  // went last).
+  // News that is not about the address (a size, whatever the viewport was) is
+  // not the echo of a report still on its way: at the address the tab already
+  // had, a resize event leaves the echoes for that one, even one that changed
+  // nothing (the MC restamps it all the same).
+  const bool sizeOnly = at == was && m_previews && m_previews->lastEvent(m_tabId) == QLatin1String("resized");
+  const auto echoed = sizeOnly ? m_echoes.cend() : std::find_if(m_echoes.cbegin(), m_echoes.cend(), [&](const Echo& echo) { return echo.url == at; });
+  if (const qsizetype echo = echoed - m_echoes.cbegin(); echoed != m_echoes.cend()) {
     m_echoes.remove(0, echo + 1);
-    m_at = at;
     return;
   }
+  // The tab changed but not its address (its size, say): not where the page
+  // is, which may be somewhere the MC has not heard of yet.
+  if (at == was) return;
   if (at == m_at) return;
   // Somewhere the page did not go by itself: an agent, or another window.
   m_at = at;
+  m_unsent = false;
   emit loadRequested(at);
 }
 
-void BrowserPage::went(const QString& url) {
+void BrowserPage::settle(const QString& tabId, int pick) {
+  if (m_outstanding.value(tabId) != pick) return;
+  m_outstanding.remove(tabId);
+  if (tabId == m_tabId) emit resizingChanged();
+}
+
+void BrowserPage::went(const QString& url, quint64 owner) {
   m_at = url;
-  if (!m_echoes.isEmpty() && m_echoes.constLast() == url) return;
-  m_echoes.append(url);
+  if (!m_echoes.isEmpty() && m_echoes.constLast().url == url) {
+    m_echoes.last().owners.append(owner);
+    return;
+  }
+  m_echoes.append({url, {owner}});
   if (m_echoes.size() > kEchoes) m_echoes.removeFirst();
+}
+
+void BrowserPage::forget(const QString& url, quint64 owner) {
+  for (qsizetype i = m_echoes.size() - 1; i >= 0; --i) {
+    Echo& echo = m_echoes[i];
+    if (echo.url != url) continue;
+    echo.owners.removeAll(owner);
+    if (echo.owners.isEmpty()) m_echoes.removeAt(i);
+  }
 }
 
 QString BrowserPage::url() const {
@@ -298,33 +368,90 @@ void BrowserPage::report(const QString& phase, const QString& url, const QString
                            {QStringLiteral("canGoForward"), canGoForward}};
   if (report == m_lastReport) return;
   m_lastReport = report;
-  went(url);
-  m_previews->report(m_tabId, navStatus, canGoBack, canGoForward);
+  // One report at a time: the MC takes each call in a task of its own, so two
+  // in flight can be applied in either order, leaving its tab at the older.
+  // The newest waits for the answer to the last, and goes then.
+  if (m_reporting) {
+    m_reportQueued = true;
+    m_at = url;
+    return;
+  }
+  send();
+}
+
+// The last report to the MC.
+void BrowserPage::send() {
+  m_unsent = false;
+  const QJsonObject navStatus = m_lastReport.value(QLatin1String("navStatus")).toObject();
+  const QString url = navStatus.value(QLatin1String("url")).toString();
+  const bool canGoBack = m_lastReport.value(QLatin1String("canGoBack")).toBool();
+  const bool canGoForward = m_lastReport.value(QLatin1String("canGoForward")).toBool();
+  const quint64 owner = ++m_reports;
+  m_reporting = true;
+  m_reportQueued = false;
+  went(url, owner);
+  const bool called = m_previews->report(m_tabId, navStatus, canGoBack, canGoForward, [this, url, owner, tabId = m_tabId, guard = QPointer<BrowserPage>(this)](ThreadPreviews::Unheard why) {
+    if (!guard || tabId != m_tabId || owner != m_reports) return;
+    m_reporting = false;
+    if (why == ThreadPreviews::Unheard::Heard) {
+      if (m_reportQueued) send();
+      return;
+    }
+    // Dropped on the way, the MC may have taken it and say it back once
+    // listed again: the echo stays. Otherwise the MC will not say it back
+    // (and an earlier report's echo for the address is that report's).
+    if (why != ThreadPreviews::Unheard::Dropped) forget(url, owner);
+    if (why != ThreadPreviews::Unheard::Refused) {
+      // It may not have heard: the page stays where it went, and says so on the way back.
+      m_unsent = true;
+      if (m_reportQueued) send();
+      return;
+    }
+    // Refused: its tab is where the page is.
+    m_reportQueued = false;
+    m_lastReport = {};
+    const QString at = this->url();
+    if (at.isEmpty() || at == m_at) return;
+    m_at = at;
+    emit loadRequested(at);
+  });
+  if (!called) m_reporting = false;
 }
 
 void BrowserPage::navigate(const QString& url) {
   if (!m_previews || m_tabId.isEmpty() || url.isEmpty()) return;
-  went(url);
+  went(url, 0);
   m_previews->navigate(m_tabId, url);
 }
 
 void BrowserPage::setViewport(const QVariantMap& viewport) {
-  if (!m_previews || m_tabId.isEmpty()) return;
+  // One size at a time: until the MC answers the last, the size it has (or the
+  // one picked) is the size, and a second request could not be told from the
+  // first's events.
+  if (!m_previews || m_tabId.isEmpty() || resizing()) return;
   const QJsonObject next = QJsonObject::fromVariantMap(viewport);
-  m_pendingViewport = next;
   const int pick = ++m_viewportPick;
+  const QString tabId = m_tabId;
+  m_outstanding.insert(tabId, pick);
+  m_pendingViewport = next;
+  m_superseded = false;
+  emit resizingChanged();
   emit viewportChanged();
-  m_previews->resizeTab(m_tabId, next, [this, pick, guard = QPointer<BrowserPage>(this)](const QString&) {
-    // Refused or timed out: the MC's size comes back, unless the user has
-    // picked another since.
-    if (!guard || pick != m_viewportPick) return;
-    m_pendingViewport = {};
-    emit viewportChanged();
+  m_previews->resizeTab(tabId, next, [this, pick, tabId, guard = QPointer<BrowserPage>(this)](const std::optional<QString>& error) {
+    // Answered, unless the wait timed out: refused, the MC's size is the size;
+    // taken, the size picked stays shown until the MC's tab has it (its event
+    // may come after the answer, or not at all).
+    if (!guard || m_outstanding.value(tabId) != pick) return;
+    if (tabId == m_tabId && (error || m_superseded)) m_pendingViewport = {};
+    else if (tabId == m_tabId && m_tab.value(QLatin1String("viewport")).toObject() == m_pendingViewport) m_pendingViewport = {};
+    settle(tabId, pick);
+    if (tabId == m_tabId && (error || m_superseded)) emit viewportChanged();
   });
-  QTimer::singleShot(kResizeTimeoutMs, this, [this, pick] {
-    if (pick != m_viewportPick || m_pendingViewport.isEmpty()) return;
-    m_pendingViewport = {};
-    emit viewportChanged();
+  QTimer::singleShot(kResizeTimeoutMs, this, [this, pick, tabId] {
+    if (m_outstanding.value(tabId) != pick) return;
+    if (tabId == m_tabId) m_pendingViewport = {};
+    settle(tabId, pick);
+    if (tabId == m_tabId) emit viewportChanged();
   });
 }
 

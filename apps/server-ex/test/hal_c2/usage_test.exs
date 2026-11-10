@@ -98,6 +98,40 @@ defmodule HalC2.UsageTest do
   defp output_tokens(summary),
     do: summary["buckets"] |> Enum.map(& &1["totals"]["outputTokens"]) |> Enum.sum()
 
+  test "a history folder that exists but cannot be listed fails the scan", ctx do
+    {uid, 0} = System.cmd("id", ["-u"])
+
+    if String.trim(uid) == "0" do
+      # root lists anything, so there is nothing to refuse.
+      :ok
+    else
+      File.write!(Path.join(ctx.claude, "a.jsonl"), claude_line(1, 5))
+      start(ctx.home, ctx.settings)
+      projects = Path.dirname(ctx.claude)
+      File.chmod!(projects, 0o000)
+      on_exit(fn -> File.chmod(projects, 0o755) end)
+
+      assert {:error,
+              %{"reason" => "scanFailed", "detail" => "Transcripts could not be scanned."}} =
+               HalC2.Usage.summary(@window)
+    end
+  end
+
+  test "a history folder that is gone when listed counts as empty", ctx do
+    # A link whose target does not exist resolves no further, so the scan lists the link
+    # itself and gets :enoent, as it would for a folder removed after it was resolved.
+    File.rm_rf!(Path.dirname(ctx.claude))
+    File.ln_s!(Path.join(ctx.home, "gone"), Path.dirname(ctx.claude))
+    File.write!(Path.join(ctx.codex, "r.jsonl"), codex_lines("s", [9]))
+    start(ctx.home, ctx.settings)
+
+    summary = summary()
+    assert output_tokens(summary) == 9
+
+    assert %{"status" => "missing"} =
+             Enum.find(summary["sources"], &(&1["fingerprint"]["provider"] == "claude"))
+  end
+
   test "repeated records count once, within and across transcripts", ctx do
     # Every content block of a message repeats its usage, and a resumed session
     # copies earlier messages into its own transcript.

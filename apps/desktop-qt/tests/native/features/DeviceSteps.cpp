@@ -34,6 +34,7 @@
 #include "FFmpeg.h"
 #include "Harness.h"
 #include "RightPanelController.h"
+#include "RunNotices.h"
 #include "Stream.h"
 #include "ThreadDevices.h"
 #include "World.h"
@@ -1012,6 +1013,7 @@ const Steps steps([] {
     }, [&] { return tabWords(world).join(QStringLiteral(" | ")) + QLatin1Char('\n') + describe(world); });
   });
   step(QStringLiteral("the user dismisses the error"), [](World& world, const Captures&, const Table&) {
+    if (dismissThreadError(world)) return;
     devicePanel(world).click(QStringLiteral("deviceDismissError"));
   });
   step(QStringLiteral("the tab shows no error"), [](World& world, const Captures&, const Table&) {
@@ -1757,7 +1759,7 @@ const Steps backlogSteps([] {
   });
 
   // --- Driving -------------------------------------------------------------
-  step(QStringLiteral("the tab offers (.+)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the tab offers (?!to )(.+)"), [](World& world, const Captures& c, const Table&) {
     // The Given opened the device; showing its tab is what offers buttons.
     FakeHub& hub = fakeHub(world);
     const QJsonObject session = hub.sessions.isEmpty() ? QJsonObject() : hub.sessions.last().toObject();

@@ -1,7 +1,12 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/23753
+#   https://github.com/pingdotgg/t3code/pull/29285
 #   https://github.com/pingdotgg/t3code/pull/18603
 #   https://github.com/pingdotgg/t3code/pull/22075
 #   https://github.com/pingdotgg/t3code/pull/20747
+#   https://github.com/pingdotgg/t3code/pull/29000
+#   https://github.com/pingdotgg/t3code/pull/28378
+#   https://github.com/pingdotgg/t3code/pull/28326
 #   docs/orchestration-v2/thread-lineage-and-context-transfer.md
 #   docs/orchestration-v2/feature-lifecycles.md (fork, merge back, provider switch)
 #   docs/internals/context-handoffs.md
@@ -51,6 +56,16 @@ Feature: Forking threads and merging work back
     Then no agent session is started for the fork
     And the fork's context is carried over when its first message is sent
 
+  # Upstream #28378: a fork copied its source's pin, its place in Active, its auto-settle opt-out,
+  # its last snooze wake and the thread that delegated it.
+  @backlog @mc @shared
+  Scenario: A fork starts like a new thread, whatever its source's place and settings
+    Given "Plan billing" is pinned, never auto-settles and was started as another thread's subagent
+    When a client forks "Plan billing"
+    Then the fork is not pinned and is at the top of Active
+    And the fork settles on its own like any new thread
+    And the fork is not listed as a subagent of any thread
+
   @mc
   Scenario: A fork on the same agent continues the agent's own conversation
     Given "Plan billing" ran on Codex
@@ -64,17 +79,33 @@ Feature: Forking threads and merging work back
     Then Claude receives a transcript of the history ahead of the message
 
   @mc
-  Scenario: A long history leaves out the message that does not fit
+  Scenario: A long history cuts the request that does not fit in its middle
     Given "Plan billing" has more history than fits in a handoff
     When the user sends the first message in a fork on another agent
-    Then the first request and the newest messages are kept whole
-    And the message that does not fit is left out
+    Then the first request and the newest work are kept whole
+    And the request that does not fit is cut in its middle where it says so
 
   @mc
   Scenario: A fork outlives the thread it came from
     Given "Try Stripe" is a fork of "Plan billing"
     When "Plan billing" is deleted
     Then "Try Stripe" still holds its history
+
+  @mc
+  Scenario: A fork keeps the files its messages carry when the thread it came from is deleted
+    Given the first message of "Plan billing" has the file "notes.txt" attached
+    And "Try Stripe" is a fork of "Plan billing"
+    When "Plan billing" is deleted
+    Then "notes.txt" in "Try Stripe" still holds what was attached
+    And "notes.txt" still opens from the timeline of "Try Stripe"
+
+  @mc
+  Scenario: A fork whose files cannot be copied is refused
+    Given the first message of "Plan billing" has the file "notes.txt" attached
+    And the disk takes no more files
+    When a client forks "Plan billing"
+    Then the fork is rejected because the files its messages carry could not be copied
+    And no copy of "notes.txt" is left behind
 
   @mc
   Scenario: Merging a fork back
@@ -208,12 +239,21 @@ Feature: Forking threads and merging work back
     When a relative receives a message or changes status
     Then the relatives stay in the order they were in
 
-  @backlog @desktop @priority-low
-  Scenario: A relative that is no longer available is listed last
-    Given "Try Stripe" has the fork "Webhooks" and a fork that was deleted
+  # Upstream #29000: a deleted fork stayed in its parent's lineage as a bare id marked Queued. The
+  # row now goes once the MC confirms the thread is gone; this replaces listing it last as unavailable.
+  @backlog @mc @desktop @mobile
+  Scenario: A deleted fork leaves its parent's relatives
+    Given "Try Stripe" has the forks "Webhooks" and "Refunds"
+    When the user deletes "Refunds" while "Try Stripe" is open
+    Then "Refunds" is no longer among the relatives of "Try Stripe", then or after a restart
+    And "Webhooks", archived forks and finished subagents are still listed
+
+  # Upstream #29000: a relative the client has not loaded is not taken for deleted.
+  @backlog @mc @desktop @mobile
+  Scenario: A relative the client has not loaded yet keeps its row
+    Given a fork of "Try Stripe" has not reached this client yet
     When the user looks at the relatives of "Try Stripe"
-    Then the deleted fork is listed after "Webhooks"
-    And it says "This related thread is unavailable"
+    Then the fork is listed by its title once the MC confirms it exists
 
   # Upstream #20747: opening a deleted thread from the timeline stays on the current thread.
   @backlog @shared
@@ -239,6 +279,17 @@ Feature: Forking threads and merging work back
     When the user opens the "Previous agents" heading
     Then "Docs" and "Lint" are listed
 
+  # Upstream #29285: subagents running on another machine sat in a list of their own below
+  # Previous agents, whether they were running or finished.
+  @backlog @desktop
+  Scenario: Subagents on another machine of the cluster are grouped with the local ones
+    Given "Plan billing" has the subagent "Tax tests" working on the cluster machine "beast"
+    And its subagent "Docs" finished on "beast"
+    When the user looks at the relatives of "Plan billing"
+    Then "Tax tests" is listed with the working relatives, marked as on "beast"
+    And "Docs" is under "Previous agents"
+    And the relatives are shown even when "Tax tests" is the only one working
+
   # Upstream #18603: a supervisor whose own turn ended while its worker ran moved under Previous agents.
   @backlog @desktop
   Scenario: A subagent waiting on its own worker is still listed as working
@@ -247,6 +298,14 @@ Feature: Forking threads and merging work back
     When the user looks at the relatives of "Plan billing"
     Then "Tax tests" is listed as working, with its task's progress and time
     And it moves under "Previous agents" only once its task has finished
+
+  # Upstream #28326: a relative or side chat whose title was cut short only hinted what the row
+  # does on hover, so its full title could not be read without opening it.
+  @backlog @desktop
+  Scenario: A relative's full title shows on hover
+    Given "Plan billing" has a fork whose title is too long for its row
+    When the user holds the pointer over the fork in the relatives of "Plan billing"
+    Then the tip shows the fork's full title and what opening it does
 
   @backlog @desktop
   Scenario: A long list of relatives is shown a part at a time
@@ -298,6 +357,19 @@ Feature: Forking threads and merging work back
     Given the agent session of "Plan billing" is stopped
     When the user looks at the lineage actions of "Plan billing"
     Then "Disconnect agent session" is not offered
+
+  # Upstream #23753: a merge back or disconnect that failed showed nothing; it now shows the error, and a retry clears it.
+  @backlog @shared
+  Scenario Outline: A lineage action that fails says why
+    Given the MC rejects the next attempt to <action> "Try Stripe"
+    When the user chooses to <action> "Try Stripe"
+    Then the user sees the MC's error
+    And the error goes away when the user tries again
+
+    Examples:
+      | action                                  |
+      | merge back into "Plan billing"          |
+      | disconnect the agent session of         |
 
   # Upstream #22075: a forked Claude thread lost the context count and Compact until it reported usage.
   @backlog @mc @desktop

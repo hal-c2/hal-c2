@@ -35,7 +35,7 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "desktopUpdateControl", "mc"?: n}`: this client as the desktop app
       that started that MC (`HalC2.DesktopUpdate`); the update control messages
       (`DesktopUpdateControlMessage`) the MC sends it
-    * `{"type": "localServers", "mc": n}`: web servers listening on that MC's
+    * `{"type": "localServers", "mc": n, "configuredUrls"?: [url]}`: web servers listening on that MC's
       host (`DiscoveredLocalServerList`), then the list whenever it changes
     * `{"type": "devices", "mc": n}`: that MC's simulators, emulators and
       open device sessions (`DeviceServiceState`), then the whole state on every change
@@ -67,7 +67,12 @@ defmodule HalC2.Web.Protocol do
         (a stream also takes "handle": the one its offset came with, and "window":
         {"items": n} to start with the newest runs holding n turn items or
         {"floor": f} to keep the window it has; the shell takes "have":
-        {mc: [epoch, rev]}, each MC's rows as the client holds them; a terminal takes
+        {mc: [epoch, rev]}, each MC's rows as the client holds them, its shape's
+        "omitIdleSubagents": true to leave idle subagent threads out of an MC
+        sent whole (`HalC2.Shell.idle_subagent?/2`; a resume delta is never
+        filtered), and "settledLimit": n, to be
+        sent of an MC's rows sent whole only the n newest settled threads of each
+        project, and the pinned and snoozed ones; a terminal takes
         "acks": true, to answer with "ack" and have its output held back when it falls
         behind)
       {"t": "more", "id": 1, "items": n}
@@ -92,10 +97,13 @@ defmodule HalC2.Web.Protocol do
        "reset"}],
        "rows": [[mc, id, kind, row]]}
         (the rows the client lacks: all of an MC marked "reset", whose rows the
-        client held are dropped, else those after the "have" it sent)
+        client held are dropped, else those after the "have" it sent; an MC sent
+        whole to a client with "settledLimit" also has "settledLeftOut":
+        {projectId: n}, the settled threads of each project it was not sent)
       {"t": "shell.environment", "id", "mc", "environment"}
       {"t": "shell.rows", "id", "mc", "rows": [[id, kind, row]], "epoch", "rev", "reset"}
-        (they bring that MC's rows to [epoch, rev], what a client sends as "have")
+        (they bring that MC's rows to [epoch, rev], what a client sends as "have";
+        a "reset" to a client with "settledLimit" carries "settledLeftOut" as above)
       {"t": "shell.mc", "id", "mc", "online", "trying"}
         (with "removed": true once the machine was removed or switched off: its
         environment and rows are no longer part of the shell; "trying" is false for
@@ -182,7 +190,8 @@ defmodule HalC2.Web.Protocol do
 
   @typedoc """
   Where a subscription continues from: a stream's `offset`, `handle`, `window`
-  and `kinds` (`HalC2.Streams.Server.client/0`), the shell's `have`. A shape that
+  and `kinds` (`HalC2.Streams.Server.client/0`), the shell's `have` and
+  `settled_limit`. A shape that
   does not resume ignores it.
   """
   @type resume :: %{
@@ -190,7 +199,9 @@ defmodule HalC2.Web.Protocol do
           handle: String.t() | nil,
           window: {:items, pos_integer} | {:floor, integer | nil} | nil,
           kinds: %{String.t() => map} | nil,
-          have: %{String.t() => {String.t(), non_neg_integer}}
+          have: %{String.t() => {String.t(), non_neg_integer}},
+          omit_idle_subagents: boolean,
+          settled_limit: pos_integer | nil
         }
 
   # The shapes a client may name by environment. The rest are about the MC a client
@@ -328,8 +339,9 @@ defmodule HalC2.Web.Protocol do
   defp decode_shape(%{"type" => "desktopUpdateControl"}, _mcs),
     do: {:ok, {:desktop_update_control, node()}}
 
-  defp decode_shape(%{"type" => "localServers", "mc" => mc}, mcs) do
-    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:local_servers, mc}}
+  defp decode_shape(%{"type" => "localServers", "mc" => mc} = shape, mcs) do
+    urls = Enum.filter(List.wrap(shape["configuredUrls"]), &is_binary/1)
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:local_servers, mc, urls}}
   end
 
   defp decode_shape(%{"type" => "devices", "mc" => mc}, mcs) do
@@ -405,6 +417,8 @@ defmodule HalC2.Web.Protocol do
       window: window(msg["window"]),
       kinds: kinds(shape["kinds"]),
       have: have(msg["have"]),
+      omit_idle_subagents: shape["omitIdleSubagents"] == true,
+      settled_limit: settled_limit(msg["settledLimit"]),
       acks: msg["acks"] == true
     }
   end
@@ -426,6 +440,9 @@ defmodule HalC2.Web.Protocol do
   end
 
   defp have(_), do: %{}
+
+  defp settled_limit(n) when is_integer(n) and n > 0, do: n
+  defp settled_limit(_), do: nil
 
   @spec encode(map) :: {:text, iodata}
   def encode(message), do: {:text, JSON.encode_to_iodata!(message)}

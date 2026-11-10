@@ -199,8 +199,13 @@ defmodule HalC2.ClaudeProviderTest do
     :ok = Provider.load()
     assert model("opus")
 
-    # The same `claude`, now crashing at start.
-    File.write!(Path.join(dir, "claude"), "#!/bin/sh\nexit 1\n")
+    # The same `claude`, now crashing at start. The earlier load may still be
+    # executing the old script, which Linux won't let us open for writing
+    # (ETXTBSY), so swap a new file in by rename; the running one keeps its inode.
+    claude = Path.join(dir, "claude")
+    File.write!(claude <> ".new", "#!/bin/sh\nexit 1\n")
+    File.chmod!(claude <> ".new", 0o755)
+    File.rename!(claude <> ".new", claude)
     :ok = Provider.load()
     assert model("opus")
   end
@@ -223,5 +228,111 @@ defmodule HalC2.ClaudeProviderTest do
     # A call to the settings server returns once it has handled every notice sent before.
     HalC2.Settings.watch(self())
     refute_received {:hal_c2_providers_changed, _}
+  end
+
+  # A system variable set for one test, put back when it ends.
+  defp with_env(key, value) do
+    old = System.get_env(key)
+    if value, do: System.put_env(key, value), else: System.delete_env(key)
+
+    on_exit(fn ->
+      if old, do: System.put_env(key, old), else: System.delete_env(key)
+    end)
+  end
+
+  test "a nested value in Claude's settings env breaks no read of it", %{tmp_dir: dir} do
+    config = Path.join(dir, "claude-config")
+    File.mkdir_p!(config)
+
+    File.write!(
+      Path.join(config, "settings.json"),
+      ~s({"env": {"ANTHROPIC_API_KEY": {"nested": 1}, "ANTHROPIC_AUTH_TOKEN": "tok", ) <>
+        ~s("CLAUDE_CODE_ENTRYPOINT": {"also": "nested"}, "OTHER": [1, 2]}})
+    )
+
+    with_env("CLAUDE_CONFIG_DIR", config)
+    with_env("ANTHROPIC_API_KEY", nil)
+
+    assert Provider.effective_env()["ANTHROPIC_AUTH_TOKEN"] == "tok"
+    refute Map.has_key?(Provider.effective_env(), "ANTHROPIC_API_KEY")
+    assert Provider.entrypoint() == "hal-c2"
+  end
+
+  test "a missing Claude stays unwrapped, so the spawn reports it missing", %{tmp_dir: dir} do
+    with_env("CLAUDECODE", "1")
+    with_env("CLAUDE_CODE_SESSION_ID", nil)
+    with_env("CLAUDE_CODE_TOOL_USE_ID", nil)
+    with_env("CLAUDE_CODE_CHILD_SESSION", nil)
+    missing = Path.join(dir, "no-such-claude")
+
+    assert Provider.scrubbed_command([missing, "--version"]) == [missing, "--version"]
+
+    assert Provider.scrubbed_command(["python3", "-u", "x"]) == [
+             "env",
+             "-u",
+             "CLAUDECODE",
+             "python3",
+             "-u",
+             "x"
+           ]
+  end
+
+  test "a sign-in read forgotten while in flight cannot land its stale answer" do
+    key = {"claudeAgent", "/fake/claude", 42}
+    on_exit(fn -> Provider.forget_auth(["claudeAgent"]) end)
+
+    # A read starts, is forgotten (a refresh by hand), then lands signed out:
+    # its answer is refused and no in-flight token is left behind.
+    assert Provider.auth_claim(key, 1)
+    refute Provider.auth_claim(key, 2)
+    Provider.forget_auth(["claudeAgent"])
+    refute Provider.auth_land(key, 1, :signed_out, 100)
+    assert Provider.auth_lookup(key) == nil
+
+    # The next read claims and lands normally.
+    assert Provider.auth_claim(key, 2)
+    assert Provider.auth_land(key, 2, :signed_in, 200)
+    assert Provider.auth_lookup(key) == {:signed_in, 200}
+    assert Provider.auth_claim(key, 3)
+  end
+
+  test "a claude that vanishes before its sign-in read does not strand it", %{tmp_dir: dir} do
+    # The binary is gone by the time the read spawns it, so System.cmd raises
+    # :enoent inside the read's task. Driven synchronously (land_auth_read is
+    # what the background task runs): the read lands :unreadable instead of
+    # the raise killing the landing task and stranding the claim.
+    path = Path.join(dir, "no-such-claude")
+    key = {"claudeAgent", path, 7}
+    on_exit(fn -> Provider.forget_auth(["claudeAgent"]) end)
+
+    assert Provider.auth_claim(key, 1)
+    Provider.land_auth_read(key, "claudeAgent", path, 1)
+    assert {:unreadable, _at} = Provider.auth_lookup(key)
+    assert Provider.auth_claim(key, 2)
+  end
+
+  test "a relative --add-dir without a session folder offers no skills", %{tmp_dir: dir} do
+    skill = Path.join([dir, "tools", ".claude", "skills", "leaked"])
+    File.mkdir_p!(skill)
+    File.write!(Path.join(skill, "SKILL.md"), "---\ndescription: Leaked\n---\nDo it.\n")
+    config = Path.join(dir, "config")
+    File.mkdir_p!(config)
+
+    HalC2.Settings.update(fn settings ->
+      put_in(settings, [Access.key("providers", %{}), "claudeAgent"], %{
+        "launchArgs" => "--add-dir tools"
+      })
+    end)
+
+    names = fn cwd ->
+      "claudeAgent"
+      |> HalC2.Claude.Skills.discover(cwd, config)
+      |> Enum.map(& &1["name"])
+    end
+
+    File.cd!(dir, fn ->
+      refute "leaked" in names.(nil)
+      assert "leaked" in names.(dir)
+    end)
   end
 end

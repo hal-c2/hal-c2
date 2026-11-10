@@ -19,19 +19,91 @@ defmodule HalC2.Prop do
   @doc """
   Points the MC at a fresh directory under `tmp/prop` for one case and returns it.
   Every file a service writes lands there, never in a real HAL-C2 home.
+
+  The directory sits inside the checkout, so git would find the checkout from it and a
+  git action would commit and push the developer's work. `GIT_CEILING_DIRECTORIES` stops
+  that: git discovery gives up at `tmp`, so the folder is no repository unless the case
+  makes one (`scratch_repo/1`).
   """
   def scratch_home(name) do
+    tmp = Path.expand("../../tmp", __DIR__)
+    put_system_env("GIT_CEILING_DIRECTORIES", tmp)
+
     # The OS pid keeps two runs in one checkout out of each other's homes.
-    dir =
-      Path.expand(
-        "../../tmp/prop/#{name}-#{System.pid()}-#{System.unique_integer([:positive])}",
-        __DIR__
-      )
+    dir = Path.join(tmp, "prop/#{name}-#{System.pid()}-#{System.unique_integer([:positive])}")
 
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
-    Application.put_env(:hal_c2, :home, dir)
+    put_env(:home, dir)
     dir
+  end
+
+  @doc """
+  A scratch home holding a throwaway git repository on `main` with one commit, cloned
+  from a bare `origin.git` beside it, so commit and push stay in the scratch home.
+  Returns `{home, repo}`.
+  """
+  def scratch_repo(name) do
+    home = scratch_home(name)
+    origin = Path.join(home, "origin.git")
+    repo = Path.join(home, "repo")
+    git!(home, ["init", "-q", "--bare", "-b", "main", origin])
+    git!(home, ["clone", "-q", origin, repo])
+    git!(repo, ~w(config user.name t))
+    git!(repo, ~w(config user.email t@t))
+    File.write!(Path.join(repo, "a.txt"), "one\n")
+    git!(repo, ~w(add a.txt))
+    git!(repo, ~w(commit -q -m init))
+    git!(repo, ~w(push -q -u origin main))
+    {home, repo}
+  end
+
+  defp git!(cwd, args) do
+    {out, 0} = System.cmd("git", args, cd: cwd, stderr_to_stdout: true)
+    out
+  end
+
+  @doc """
+  `Application.put_env(:hal_c2, key, value)` for one case; `restore_env/0` puts every
+  key it set back as it was (unset stays unset), so a case leaves no setting behind
+  for the tests that run after it.
+  """
+  def put_env(key, value) do
+    remember({:app, key}, Application.fetch_env(:hal_c2, key))
+    Application.put_env(:hal_c2, key, value)
+  end
+
+  @doc "`System.put_env/2` (or `System.delete_env/1` for nil) for one case; see `put_env/2`."
+  def put_system_env(name, value) do
+    remember({:system, name}, System.fetch_env(name))
+    if value, do: System.put_env(name, value), else: System.delete_env(name)
+  end
+
+  # Only the first setting of a key in a case is what to go back to.
+  defp remember(key, prior) do
+    saved = Process.get({__MODULE__, :env}, [])
+
+    if not List.keymember?(saved, key, 0),
+      do: Process.put({__MODULE__, :env}, [{key, prior} | saved])
+  end
+
+  @doc """
+  Undoes what `put_env/2`, `put_system_env/2` and `scratch_home/1` set in this case, and
+  takes back a store refusing changes (`:store_hook`), however the case set it
+  (`HalC2.Test.Machines.refuse_changes/1` included): a store left refusing fails every
+  case after it before its first command.
+  """
+  def restore_env do
+    for {key, prior} <- Process.delete({__MODULE__, :env}) || [] do
+      case {key, prior} do
+        {{:app, key}, {:ok, value}} -> Application.put_env(:hal_c2, key, value)
+        {{:app, key}, :error} -> Application.delete_env(:hal_c2, key)
+        {{:system, name}, {:ok, value}} -> System.put_env(name, value)
+        {{:system, name}, :error} -> System.delete_env(name)
+      end
+    end
+
+    Application.delete_env(:hal_c2, :store_hook)
   end
 
   @doc """
@@ -41,25 +113,50 @@ defmodule HalC2.Prop do
   is not available, so a case starts its services with this and stops them with
   `stop_services/0` before it returns. The supervisor is kept in the process
   dictionary, where the commands of the case find it (`restart_service/1`).
+
+  Cases run one at a time, so services still running are an earlier case's that never
+  reached `stop_services/0` (its setup raised): they are stopped first, or every case
+  after it would fail to start its own.
   """
   def start_services(specs) do
-    {:ok, sup} = Supervisor.start_link(specs, strategy: :one_for_one, max_restarts: 0)
+    if sup = Process.whereis(__MODULE__.Services), do: stop_supervisor(sup)
+
+    {:ok, sup} =
+      Supervisor.start_link(specs,
+        strategy: :one_for_one,
+        max_restarts: 0,
+        name: __MODULE__.Services
+      )
+
     Process.unlink(sup)
     Process.put({__MODULE__, :services}, sup)
     sup
   end
 
-  @doc "Stops what `start_services/1` started, waiting for every child to exit."
+  @doc """
+  Stops what `start_services/1` started, waiting for every child to exit, then
+  `restore_env/0`: the case is over, and a `scratch_home/1` it set must not outlive it.
+  Services that already went (a crash past `max_restarts: 0`) are stopped already.
+  """
   def stop_services do
     case Process.delete({__MODULE__, :services}) do
-      nil ->
-        :ok
-
-      sup ->
-        plugins = plugins_supervisor()
-        Supervisor.stop(sup)
-        if plugins, do: await_down(plugins)
+      nil -> :ok
+      sup -> stop_supervisor(sup)
     end
+  after
+    restore_env()
+  end
+
+  defp stop_supervisor(sup) do
+    plugins = plugins_supervisor()
+
+    try do
+      Supervisor.stop(sup)
+    catch
+      :exit, :noproc -> :ok
+    end
+
+    if plugins, do: await_down(plugins)
   end
 
   # What runs the plugins hangs off `HalC2.Plugins` and ends after it, so stopping the

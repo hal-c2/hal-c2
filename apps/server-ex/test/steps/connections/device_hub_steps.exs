@@ -1097,8 +1097,9 @@ defmodule HalC2.Steps.Connections.DeviceHub do
 
   step "the request succeeds", context do
     assert {:ok, nil} = context.reply
-    # The list really could not be read afterwards.
-    assert {:ok, 500, _} = hub_get("/api/devices")
+
+    # The list really could not be read afterwards (the device scenarios only).
+    if Map.has_key?(context, :emulator), do: assert({:ok, 500, _} = hub_get("/api/devices"))
     context
   end
 

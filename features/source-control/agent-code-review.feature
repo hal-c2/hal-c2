@@ -1,12 +1,17 @@
 # Sources:
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
+#   apps/server-ex/lib/hal_c2/open_shell/review.ex, broker.ex (review sandboxes, their lease and the report broker)
+#   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex, codex/thread_runtime.ex (a sandboxed turn skips this machine's checks, skills, tasks and quota)
+#   apps/server-ex/lib/hal_c2/claude/budget.ex (what a sandboxed Claude CLI spent, its subagents and side requests included)
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
-#   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
-#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers)
+#   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, trust, submitReview through gh)
+#   apps/server-ex/lib/hal_c2/pull_requests/github.ex (who opened a pull request, commented on it, labeled it and asked for its review, and their standing in the repository)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers, pull request trust)
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 #   https://github.com/pingdotgg/t3code/pull/15427
+#   https://github.com/hal-c2/hal-c2/issues/1464 (naming a model for an agent only a sandbox runs)
 
 @plugin-code-review
 Feature: Agent code review
@@ -204,6 +209,190 @@ Feature: Agent code review
       When the watch looks for new remarks
       Then replies on later pages count too, and a failed page holds the watermark
 
+  Rule: Only people the user trusts get reviews or start them
+
+    @mc
+    Scenario: A pull request from someone who is not a member or collaborator is not reviewed on its own
+      Given "code-review" watches "acme/api" automatically
+      When #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      Then no review starts
+      And #12 is listed as not reviewed, saying "Opened by stranger, who is not a member or collaborator"
+
+    @mc
+    Scenario: A login the user trusts is reviewed like a collaborator
+      Given "code-review" watches "acme/api" automatically and trusts "stranger"
+      When #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      Then a review of #12 starts
+
+    @mc
+    Scenario: A pull request whose commits come from someone else's fork is not reviewed on its own
+      Given "code-review" watches "acme/api" automatically
+      When #12, whose commits come from the fork of "stranger", is opened on "acme/api"
+      Then no review starts
+      And #12 is listed as not reviewed, saying "Its commits come from stranger"
+
+    @mc
+    Scenario Outline: Only someone trusted starts a review with a trigger
+      Given "code-review" watches "acme/api" selectively with the trigger "<trigger>"
+      When <event>
+      Then no review starts
+
+      Examples:
+        | trigger         | event                                                                             |
+        | comment command | someone who is not a member or collaborator comments "/review" on #12             |
+        | label           | someone who is not a member or collaborator adds the label "agent-review" to #12 |
+
+    @mc
+    Scenario: A trigger label added by someone trusted and someone untrusted in the same second starts no review
+      Given "code-review" watches "acme/api" selectively with the trigger "label"
+      When its author and someone who is not a member or collaborator add the label "agent-review" to #12 in the same second
+      Then no review starts
+
+    @mc
+    Scenario: A trigger label in a second GitHub's last hundred events may not all show starts no review
+      Given "code-review" watches "acme/api" selectively with the trigger "label"
+      When its author adds the label "agent-review" to #12 in the earliest second of the last hundred events GitHub gives of it, with older ones left out
+      Then no review starts
+
+    @mc
+    Scenario: Who added one label does not count for another
+      Given "code-review" watches "acme/api" selectively with the trigger "label"
+      And #12 has the label "ship-it" from someone who is not a member or collaborator, and once had "agent-review" from its author
+      When the user makes "ship-it" the label that starts a review
+      Then no review starts
+
+    @mc
+    Scenario: A pull request updated since it was last read is not reviewed on what was read before
+      Given "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit
+      And who stands behind #12 cannot be read
+      When "code-review" looks at "acme/api" again
+      Then no new review of #12 starts
+      And the review of #12 says "has not been read yet"
+
+    @mc
+    Scenario: Asking for a review of a pull request nobody trusted needs the user's approval
+      Given "code-review" watches "acme/api" selectively
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      When the user asks for a review of #12 they have not approved
+      Then the user is told "Approve it on the Reviews page to review this commit."
+      And no review starts
+
+    @mc
+    Scenario: The user approves one untrusted pull request at the commit they looked at
+      Given "code-review" watches "acme/api" automatically
+      And review sandboxes can run on this MC
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      When the user approves #12 at its head commit
+      Then a review of #12 starts
+
+    @mc
+    Scenario: An approval of a commit the user did not look at is refused
+      Given "code-review" watches "acme/api" automatically
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      When the user approves #12 at an older commit
+      Then the user is told "has new commits since you looked at it"
+      And no review starts
+
+    @mc
+    Scenario: An approval does not carry over to a new push
+      Given "code-review" reviews new pushes
+      And review sandboxes can run on this MC
+      And the user approved #12 by "stranger", who is not a member or collaborator, and it was reviewed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      Then no new review of #12 starts
+      And the review of #12 says "Opened by stranger"
+
+    @mc
+    Scenario: A pull request pushed back to the commit the user approved needs their approval again
+      Given "code-review" reviews new pushes
+      And review sandboxes can run on this MC
+      And the user approved #12 by "stranger", who is not a member or collaborator, and it was reviewed
+      And #12 has a new head commit
+      And "code-review" looks at "acme/api" again
+      When #12 is pushed back to the commit the user approved
+      And "code-review" looks at "acme/api" again
+      And the user asks to review #12 again
+      Then the user is told "Approve it on the Reviews page"
+      And no new review of #12 starts
+
+    @mc
+    Scenario: The user withdraws an approval before its review starts
+      Given "code-review" runs at most 1 reviews at once
+      And a review of #13 is running
+      And #12 by "stranger", who is not a member or collaborator, is opened on "acme/api"
+      And the user approves #12 at its head commit
+      When the user withdraws the approval of #12
+      Then #12 is listed as not reviewed, saying "Opened by stranger"
+      And #12 is no longer waiting its turn
+
+    @mc
+    Scenario: An author's pull requests get at most the reviews a day the user allows
+      Given "code-review" watches "acme/api" automatically with at most 1 review of each author a day
+      And #12 is reviewed
+      When the pull request #13 is opened on "acme/api"
+      Then #13 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day"
+      When the user asks for a review of #13
+      Then a review of #13 starts
+
+    @mc
+    Scenario: A new push to a pull request the user asked for counts toward the limits
+      Given "code-review" watches "acme/api" selectively with at most 1 review of each author a day
+      And "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit after the user asked for it
+      When "code-review" looks at "acme/api" again
+      Then #12 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day"
+
+    @mc
+    Scenario: Reviews on the user's other machines count toward the limits
+      Given "code-review" watches "acme/api" automatically with at most 1 review of each author a day
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" reviewed #12
+      When the pull request #13 is opened on "acme/api"
+      Then #13 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day"
+
+    @mc
+    Scenario: Machines out of each other's reach each have only their share of the limits
+      Given "code-review" watches "acme/api" automatically with at most 2 reviews of each author a day
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" reviewed #11
+      And this machine shows #11 reviewed on "laptop"
+      And "laptop" is apart from this machine
+      When the pull request #12 is opened on "acme/api"
+      Then #12 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day, this machine's share of what the settings allow while laptop is out of reach"
+      When the user asks for a review of #12
+      Then a review of #12 starts
+
+    @mc
+    Scenario: A machine of the cluster never yet in reach counts as out of reach for the limits
+      Given "code-review" watches "acme/api" automatically with at most 2 reviews of each author a day
+      And the user's machine "laptop" is in the cluster but has never been in reach
+      And #11 is reviewed
+      When the pull request #12 is opened on "acme/api"
+      Then #12 is held back by the review limit, saying "octocat's pull requests had 1 reviews in the last day, this machine's share of what the settings allow while laptop is out of reach"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page says why a pull request is not reviewed and lets the user approve it
+      Given #13 by "stranger", who is not a member or collaborator, is listed
+      When the user opens the review of #13 on the "Reviews" page
+      Then it says "stranger" is not a member or collaborator
+      And the user can approve #13 at the commit shown, and withdraw the approval
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page lets the user withdraw an approval of any commit
+      Given #13 by "stranger", who is not a member or collaborator, is listed with an approval of an earlier commit
+      When the user opens the review of #13 on the "Reviews" page
+      Then the user can withdraw the approval of #13
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A push while the reviews page is open is shown before it can be approved
+      Given #13 by "stranger", who is not a member or collaborator, is listed
+      And the user opens the review of #13 on the "Reviews" page
+      When #13 is pushed to while the page is open
+      Then the page says #13 was pushed since the user opened it
+      And the user approves #13 only at the new commit, once they have taken it in
+
   Rule: The agent and its prompt are the user's to set
 
     @mc
@@ -293,6 +482,180 @@ Feature: Agent code review
       Then its thread works in a checkout of the head of #12
       And the user's own checkout of "api" is not touched
 
+  Rule: An untrusted pull request is reviewed in a sandbox
+
+    The agent reviewing a pull request HAL-C2 does not trust runs in an OpenShell
+    sandbox: a checkout of the pull request made from a bundle, a home of its own, no
+    credential in its environment, and a network that reaches only its model's own
+    requests on the model's API and the one tool it reports with. Its turns take no
+    checkpoint: git here would run this machine's filters on whatever files the pull
+    request's attributes send through them. A pull request is untrusted as the rule on who gets
+    reviews says, and its review still waits for the user's approval of its head.
+
+    @mc
+    Scenario: An untrusted pull request is reviewed in a sandbox, deleted once the agent reports
+      Given pull requests are not trusted and OpenShell is installed
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the review of #12 is finished with the agent's verdict
+      And its sandbox and the sandbox's provider are deleted
+      And git on this machine took no checkpoint of the review's checkout
+
+    # The API key is the user's, and the rest of the API opens the rest of their
+    # account with it, their uploaded files among them.
+    @mc
+    Scenario: A review sandbox reaches its model's requests and nothing else on the model's API
+      Given pull requests are not trusted and OpenShell is installed
+      When #12 is reviewed
+      Then its sandbox lets the agent send its model's requests and nothing else on the model's API
+
+    @mc
+    Scenario: With "Sandbox every review" on, a trusted pull request is reviewed in a sandbox too
+      Given pull requests are trusted and OpenShell is installed
+      And "code-review" sandboxes every review
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+
+    @mc
+    Scenario: A sandboxed Claude review takes none of this machine's Claude settings
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude on this machine has launch arguments, a home and a project environment of its own
+      And "code-review" reviews with Claude
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox with none of this machine's launch arguments, home or project environment
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: A sandboxed review runs whatever version of its agent this machine has
+      Given pull requests are not trusted and OpenShell is installed
+      And this release marks the Codex on this machine broken
+      When #12 is reviewed
+      Then its agent runs in a sandbox, in a checkout of the head of #12, with no credential in its environment
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed Claude review runs on a model the Claude on this machine is too old for
+      Given pull requests are not trusted and OpenShell is installed
+      And the Claude on this machine is too old for "claude-opus-5-5"
+      And "code-review" reviews with Claude on "claude-opus-5-5"
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox on "claude-opus-5-5"
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed review runs on an agent this machine has not installed, on the model it names
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      And "code-review" reviews with Claude on "claude-haiku-4-5" at high effort
+      When #12 is reviewed
+      Then its agent runs Claude in a sandbox on "claude-haiku-4-5"
+      And the review of #12 is finished with the agent's verdict
+
+    @mc
+    Scenario: A sandboxed review on an agent this machine has not installed asks for its model to be named
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      And "code-review" reviews with Claude on no model named
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Install it here, or name the model to review with in the settings."
+
+    @desktop @mobile @tui @backlog
+    Scenario: The settings name a model for an agent that only runs in a sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude is not installed on this machine
+      When the user picks Claude in the review settings
+      Then the settings let them type the model to review with
+
+    @mc
+    Scenario: A sandboxed Claude review keeps to itself, away from this machine's skills, tasks and usage
+      Given pull requests are not trusted and OpenShell is installed
+      And Claude on this machine has skills and task lists of its own
+      And "code-review" asks Claude to review "with $host-skill and then $other-skill"
+      And the sandboxed agent updates a task and reports its usage
+      When #12 is reviewed
+      Then the sandboxed Claude is sent "with $host-skill and then $other-skill" as written
+      And the review of #12 is finished with the agent's verdict
+      And the review's thread shows none of this machine's Claude tasks
+      And this machine's Claude usage is not the sandbox's
+
+    @mc
+    Scenario: An untrusted pull request on an MC without OpenShell is not reviewed, saying how to set it up
+      Given pull requests are not trusted
+      When the user starts a review of #12
+      Then the review of #12 is failed saying "Run `hal-c2-service openshell install`."
+
+    @mc
+    Scenario: A sandboxed review takes one report, however many its agent sends
+      Given pull requests are not trusted and OpenShell is installed
+      And the sandboxed agent sends its report twice at once
+      When #12 is reviewed
+      Then one report is taken and the other refused
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: A sandboxed review past its token budget fails and loses its sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And sandboxed reviews may use 500 tokens
+      And the sandboxed agent uses 1000 tokens without reporting
+      When #12 is reviewed
+      Then the review of #12 is failed saying it used up its token budget
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario Outline: A sandboxed Claude review's budget counts what only its subagents and the CLI report
+      Given pull requests are not trusted and OpenShell is installed
+      And sandboxed reviews may use 500 tokens
+      And "code-review" reviews with Claude on "claude-haiku-4-5"
+      And <spender> 1000 tokens without reporting
+      When #12 is reviewed
+      Then the review of #12 is failed saying it used up its token budget
+      And its sandbox and the sandbox's provider are deleted
+
+      Examples:
+        | spender                                       |
+        | the sandboxed agent's subagent writes         |
+        | the sandboxed agent's CLI alone counts        |
+
+    @mc
+    Scenario: Stopping a sandboxed review deletes its sandbox
+      Given pull requests are not trusted and OpenShell is installed
+      And the sandboxed agent works until it is stopped
+      And #12 is being reviewed in a sandbox
+      When the user stops the review of #12
+      Then the review of #12 is failed saying "Stopped."
+      And its sandbox and the sandbox's provider are deleted
+
+    @mc
+    Scenario: Review sandboxes past their time are deleted while the MC is down
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox past its time and one within it are left on the gateway
+      And a review sandbox's provider past its time is left without its sandbox
+      When the reaper's timer runs without the MC
+      Then only the review sandbox within its time remains, with its provider
+
+    @mc
+    Scenario: A reaper whose gateway will not list its sandboxes still deletes their providers past their time
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox past its time and one within it are left on the gateway
+      And the gateway will not list its sandboxes
+      When the reaper's timer runs without the MC
+      Then the reap says the sandboxes were not listed
+      And only the provider within its time remains
+
+    @mc
+    Scenario: An MC starting deletes the review sandboxes left from before
+      Given pull requests are not trusted and OpenShell is installed
+      And a review sandbox within its time is left on the gateway from before
+      When the MC starts again
+      Then that sandbox and its provider are deleted
+
+    @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: A sandboxed review says so, and offers to stop it
+      Given a review of #12 is running in a sandbox
+      When the user opens the review's thread
+      Then its header and its row in the thread list say it runs in a sandbox
+      And the header offers to stop it and delete the sandbox
+
   Rule: What the agent finds is structured
 
     @mc
@@ -307,6 +670,35 @@ Feature: Agent code review
       When the agent reports the verdict "changes requested" with no summary and no comments
       Then the agent is told its report needs a summary or a comment on the change
       And the review of #12 is still running in the same thread
+
+    @mc
+    Scenario: A run's first report is final
+      Given a review of #12 is running
+      When the agent reports the verdict "changes requested" with two comments on "src/limits.ts"
+      And the agent reports again
+      Then the report is refused saying "the first report is final"
+      And the review of #12 is finished with that verdict, summary and comments
+
+    @mc
+    Scenario Outline: A report over a limit is sent back to the agent
+      Given a review of #12 is running
+      When the agent reports <too much>
+      Then the report is refused saying "<limit>"
+      And the review of #12 is still running in the same thread
+
+      Examples:
+        | too much                          | limit                       |
+        | 31 comments                       | at most 30 comments         |
+        | a summary of 5000 bytes           | summary is over 4096 bytes  |
+        | a comment of 3000 bytes           | at most 2048 bytes          |
+        | a comment on a path with a newline | on one line                |
+
+    @mc
+    Scenario: What the agent writes mentions nobody and loads nothing
+      Given a review of #12 is running
+      When the agent reports a summary that mentions "@acme/security" and "@octocat", shows an image and hides an HTML comment
+      And the user publishes the review of #12
+      Then the review posted to #12 mentions nobody and has no image or HTML
 
     @mc
     Scenario: A review whose agent never reports is finished as failed
@@ -444,6 +836,58 @@ Feature: Agent code review
         | automatic | the review is posted to #12 as a review with both line comments and the agent is told so |
 
     @mc
+    Scenario: A review of a pull request nobody trusted is not posted on its own
+      Given the publishing mode for "acme/api" is "automatic"
+      And review sandboxes can run on this MC
+      And the user approved #12 by "stranger", who is not a member or collaborator, and its review is running
+      When the agent of #12 reports two comments
+      Then the review waits for the user to publish it
+
+    @mc
+    Scenario: A review that changed since the user looked at it is not published
+      Given the review of #12 is waiting with three comments
+      And the user looked at the review of #12
+      When one comment is dismissed from another of the user's clients
+      And the user publishes the review of #12 as they saw it
+      Then the user is told "changed since you looked at it"
+      And nothing is posted to #12
+
+    @mc
+    Scenario: A publish that does not say how the user was shown it is posted is not published
+      Given the review of #12 is waiting to be published
+      And the user looked at the review of #12
+      When the user publishes the review of #12 without the verdict it was shown to be posted with
+      Then the user is told "Publishing needs what you were shown it would post"
+      And nothing is posted to #12
+
+    @mc
+    Scenario: Publishing posts the review its preview showed
+      Given the review of #12 is waiting with three comments
+      When the user dismisses one comment and reads what publishing the review of #12 would post
+      And the user publishes the review of #12 as previewed
+      Then #12 gets the review the preview showed
+
+    @mc
+    Scenario: A review whose post would no longer be what its preview showed is not published
+      Given the review of #12 is waiting to be published
+      And the user read what publishing the review of #12 would post
+      When the user posts verdicts as comments
+      And the user publishes the review of #12 as previewed
+      Then the user is told "changed since you looked at it"
+      And nothing is posted to #12
+
+    @mc
+    Scenario: A draft saved before its findings were made safe is shown safe and is reviewed again before it is posted
+      Given the review of #12 is waiting to be published
+      And the review of #12 was saved before code review made findings safe, as its agent wrote them
+      When code review starts again
+      Then the review of #12 shows no mention, image or markup as its agent wrote them
+      And what publishing the review of #12 would post is refused with "review it again"
+      When the user publishes the review of #12
+      Then the user is told "review it again"
+      And nothing is posted to #12
+
+    @mc
     Scenario: The user publishes a draft review with the comments they kept
       Given the review of #12 is waiting with three comments
       When the user dismisses one comment and publishes the review
@@ -493,6 +937,16 @@ Feature: Agent code review
       And the user publishes the review of #12 while it is being posted
       Then the user is told the review is already being posted
       And once GitHub has it, #12 has one review and it is marked as published
+
+    @mc
+    Scenario: A comment of a review being posted stays as it is posted
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub is slow to take reviews
+      When the review of #12 finishes with two comments
+      And the user dismisses a comment of the review of #12 while it is being posted
+      Then the user is told the comments stay as posted
+      And once GitHub has it, #12 has one review and it is marked as published
+      And the review of #12 keeps both comments
 
     @mc
     Scenario: Saving the settings leaves a post under way to finish
@@ -575,7 +1029,7 @@ Feature: Agent code review
       Given the review of #13 is waiting with two comments
       When the user opens the review of #13 on the "Reviews" page
       Then its verdict, summary and comments are shown
-      And the user can publish it or dismiss comments
+      And the user can dismiss comments, and publish it once shown how it is posted
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows a check the machine blocked as a problem of the machine
@@ -588,6 +1042,25 @@ Feature: Agent code review
       Given the review of #13 finished with the verdict "approved"
       When the user opens the review's thread
       Then the pull request, the verdict and the publish action are shown above the conversation
+
+    # The sandbox, the credential and the checkout of untrusted code are this machine's,
+    # so a review thread is never moved or exported (features/threads/moving-between-machines.feature).
+    @mc
+    Scenario: A review thread stays on the machine that reviewed
+      When #12 is reviewed
+      Then its thread stays on this machine
+      And the thread cannot be moved to another machine
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: Publishing from a review thread first shows what will be posted
+      Given the review of #13 finished with the verdict "approved"
+      When the user opens the review's thread
+      And the user publishes the review from above the conversation
+      Then the summary and comments that will be posted are shown, and nothing is posted yet
+      When the review changes while they are shown
+      Then what is shown is read again
+      When the user confirms what will be posted
+      Then the review is published as it was shown
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A review thread is marked as a review in the thread list

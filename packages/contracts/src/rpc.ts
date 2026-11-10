@@ -4,11 +4,22 @@ import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
+  McpAppCallToolInput,
+  McpAppCallToolResult,
+  McpAppReadResourceInput,
+  McpAppReadResourceResult,
+  McpAppRequestError,
+  McpAppToolInfo,
+  McpAppToolInfoInput,
+  McpAppUpdateModelContextInput,
+} from "./mcpApps.ts";
+import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
   ProviderAuthState,
   ProviderAuthStartInput,
   ProviderAuthRespondInput,
+  ProviderChatGptMoveInput,
   ProviderInstallCancelInput,
   ProviderInstallState,
   ProviderSetupError,
@@ -286,6 +297,8 @@ import {
   ServerSelfUpdateResult,
   ServerTraceDiagnosticsResult,
   ServerProcessDiagnosticsResult,
+  ServerOpenShellStatus,
+  ServerOpenShellStatusError,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
   ServerSignalProcessInput,
@@ -444,6 +457,12 @@ export const WS_METHODS = {
   attachmentsDelete: "attachments.delete",
 
   // Provider methods
+  // MCP Apps methods
+  mcpAppsCallTool: "mcpApps.callTool",
+  mcpAppsToolInfo: "mcpApps.toolInfo",
+  mcpAppsReadResource: "mcpApps.readResource",
+  mcpAppsUpdateModelContext: "mcpApps.updateModelContext",
+
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
@@ -452,6 +471,7 @@ export const WS_METHODS = {
   providerAuthCancel: "provider.auth.cancel",
   providerAuthLogout: "provider.auth.logout",
   providerAuthSubscribe: "provider.auth.subscribe",
+  providerChatGptMove: "provider.chatgpt.move",
   providerInstallStart: "provider.install.start",
   providerInstallCancel: "provider.install.cancel",
   providerInstallSubscribe: "provider.install.subscribe",
@@ -535,6 +555,7 @@ export const WS_METHODS = {
   serverLogoutAcpRegistry: "server.logoutAcpRegistry",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
+  serverGetOpenShellStatus: "server.getOpenShellStatus",
   serverGetHostResources: "server.getHostResources",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
@@ -762,6 +783,12 @@ const WsProviderAuthCompleteRpc = Rpc.make(WS_METHODS.providerAuthComplete, {
   error: ProviderSetupRpcError,
 });
 
+const WsProviderChatGptMoveRpc = Rpc.make(WS_METHODS.providerChatGptMove, {
+  payload: ProviderChatGptMoveInput,
+  success: ProviderChatGptMoveInput,
+  error: ProviderSetupRpcError,
+});
+
 const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
   payload: ProviderAuthCancelInput,
   success: ProviderAuthState,
@@ -928,6 +955,12 @@ const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDia
   payload: Schema.Struct({}),
   success: ServerProcessDiagnosticsResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerGetOpenShellStatusRpc = Rpc.make(WS_METHODS.serverGetOpenShellStatus, {
+  payload: Schema.Struct({}),
+  success: ServerOpenShellStatus,
+  error: Schema.Union([ServerOpenShellStatusError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
@@ -1409,6 +1442,29 @@ const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsMcpAppsCallToolRpc = Rpc.make(WS_METHODS.mcpAppsCallTool, {
+  payload: McpAppCallToolInput,
+  success: McpAppCallToolResult,
+  error: Schema.Union([McpAppRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpAppsToolInfoRpc = Rpc.make(WS_METHODS.mcpAppsToolInfo, {
+  payload: McpAppToolInfoInput,
+  success: McpAppToolInfo,
+  error: Schema.Union([McpAppRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpAppsUpdateModelContextRpc = Rpc.make(WS_METHODS.mcpAppsUpdateModelContext, {
+  payload: McpAppUpdateModelContextInput,
+  error: Schema.Union([McpAppRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsMcpAppsReadResourceRpc = Rpc.make(WS_METHODS.mcpAppsReadResource, {
+  payload: McpAppReadResourceInput,
+  success: McpAppReadResourceResult,
+  error: Schema.Union([McpAppRequestError, EnvironmentAuthorizationError]),
+});
+
 const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
   payload: ProviderUploadFeedbackInput,
   success: ProviderUploadFeedbackResult,
@@ -1724,6 +1780,15 @@ const WsOrchestrationV2GetFullThreadDiffRpc = Rpc.make(
     payload: OrchestrationV2RpcSchemas.getFullThreadDiff.input,
     success: OrchestrationV2RpcSchemas.getFullThreadDiff.output,
     error: Schema.Union([OrchestrationGetFullThreadDiffError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsOrchestrationV2GetCommandOutputRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getCommandOutput,
+  {
+    payload: OrchestrationV2RpcSchemas.getCommandOutput.input,
+    success: OrchestrationV2RpcSchemas.getCommandOutput.output,
+    error: Schema.Union([OrchestrationGetTurnDiffError, EnvironmentAuthorizationError]),
   },
 );
 
@@ -2255,6 +2320,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthCompleteRpc,
+  WsProviderChatGptMoveRpc,
   WsProviderAuthRespondRpc,
   WsProviderAuthCancelRpc,
   WsProviderAuthLogoutRpc,
@@ -2284,6 +2350,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerLogoutAcpRegistryRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
+  WsServerGetOpenShellStatusRpc,
   WsServerGetHostResourcesRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,
@@ -2418,6 +2485,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
+  WsMcpAppsCallToolRpc,
+  WsMcpAppsToolInfoRpc,
+  WsMcpAppsReadResourceRpc,
+  WsMcpAppsUpdateModelContextRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
@@ -2479,6 +2550,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
+  WsOrchestrationV2GetCommandOutputRpc,
   WsOrchestrationV2SearchThreadsRpc,
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,

@@ -18,6 +18,7 @@ defmodule HalC2.Traces do
   @slow_ms 1_000
   @top 10
   @recent 20
+  @severe ~w(warning warn error fatal)
 
   @doc "Whether this MC records spans."
   def enabled?, do: Application.get_env(:hal_c2, :trace, false) == true
@@ -57,6 +58,25 @@ defmodule HalC2.Traces do
     end
   end
 
+  @doc """
+  The receipt for a span: the caller is sent `{:hal_c2_span, name, attributes}` once a span named
+  `name` is in the trace file, and not for one that could not be written. A no-op where the registry is not running.
+  """
+  def subscribe(name) do
+    if Process.whereis(HalC2.Traces.Registry),
+      do: {:ok, _} = Registry.register(HalC2.Traces.Registry, name, nil)
+
+    :ok
+  end
+
+  defp notify(name, attributes) do
+    if Process.whereis(HalC2.Traces.Registry),
+      do:
+        Registry.dispatch(HalC2.Traces.Registry, name, fn entries ->
+          for {pid, _} <- entries, do: send(pid, {:hal_c2_span, name, attributes})
+        end)
+  end
+
   @doc "Records a span that already happened, from `started_ms` until now."
   def finished(name, attributes, started_ms, exit \\ %{"_tag" => "Success"}) do
     if enabled?(),
@@ -73,6 +93,11 @@ defmodule HalC2.Traces do
   end
 
   defp record_span(name, attributes, started, ended, exit) do
+    if append_span(name, attributes, started, ended, exit) == :ok, do: notify(name, attributes)
+    :ok
+  end
+
+  defp append_span(name, attributes, started, ended, exit) do
     append(%{
       "type" => "effect-span",
       "name" => name,
@@ -220,8 +245,12 @@ defmodule HalC2.Traces do
     HalC2.Diagnostics.Attribution.write("server-trace", "append", IO.iodata_length(line), fn ->
       File.write!(path, line, [:append])
     end)
+
+    :ok
   rescue
-    error -> Logger.warning("Failed to write a trace record: #{Exception.message(error)}")
+    error ->
+      Logger.warning("Failed to write a trace record: #{Exception.message(error)}")
+      :error
   end
 
   defp rotate(path) do
@@ -334,9 +363,27 @@ defmodule HalC2.Traces do
       |> Enum.sort(&({&1["count"], &1["lastSeenAt"]} >= {&2["count"], &2["lastSeenAt"]}))
       |> Enum.take(@top)
 
+    logs = for span <- spans, log <- span.logs, do: {span, log}
+
     %{
       base
       | "recordCount" => length(spans),
+        "logLevelCounts" => logs |> Enum.frequencies_by(fn {_, log} -> log.level end),
+        "latestWarningAndErrorLogs" =>
+          logs
+          |> Enum.filter(fn {_, log} -> String.downcase(log.level) in @severe end)
+          |> Enum.sort_by(fn {_, log} -> log.seen end, :desc)
+          |> Enum.take(@recent)
+          |> Enum.map(fn {span, log} ->
+            %{
+              "spanName" => span.name,
+              "level" => log.level,
+              "message" => log.message,
+              "seenAt" => iso(log.seen),
+              "traceId" => span.trace_id,
+              "spanId" => span.span_id
+            }
+          end),
         "parseErrorCount" => errors,
         "firstSpanAt" =>
           spans |> Enum.map(& &1.started) |> Enum.min(fn -> nil end) |> maybe_iso(),
@@ -387,12 +434,30 @@ defmodule HalC2.Traces do
          started: div(nanos(record["startTimeUnixNano"]), 1_000_000),
          ended: div(ended, 1_000_000),
          exit: exit,
-         cause: cause
+         cause: cause,
+         logs: logs(record["events"], div(ended, 1_000_000))
        }}
     else
       _ -> :error
     end
   end
+
+  # The log lines a span holds: events with an `effect.logLevel` attribute, the event's
+  # name being the message. `seen` is the span's end when an event has no time of its own.
+  defp logs(events, span_ended) when is_list(events) do
+    for %{"name" => message, "attributes" => %{"effect.logLevel" => level}} = event <- events,
+        is_binary(message) and message != "" and is_binary(level) and level != "" do
+      time = nanos(event["timeUnixNano"] || event["startTimeUnixNano"])
+
+      %{
+        level: level,
+        message: message,
+        seen: if(time > 0, do: div(time, 1_000_000), else: span_ended)
+      }
+    end
+  end
+
+  defp logs(_events, _ended), do: []
 
   # `effect-span` records carry an exit; OTLP spans from clients carry a status,
   # 2 being an error.

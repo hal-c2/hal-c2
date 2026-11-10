@@ -17,7 +17,7 @@ defmodule HalC2.Mcp.Tools do
                   hal_c2_thread_search hal_c2_environment_read hal_c2_environment_preferences_update
                   hal_c2_project_list hal_c2_project_read list_scheduled_tasks schedule_task
                   update_scheduled_task delete_scheduled_task run_scheduled_task_now
-                  hal_c2_preview_list hal_c2_preview_close)
+                  hal_c2_preview_list hal_c2_preview_close hal_c2_background_wait)
 
   @areas [
     HalC2.Mcp.Tools.Threads,
@@ -102,7 +102,7 @@ defmodule HalC2.Mcp.Tools do
     do: HalC2.Orchestration.Delegation.task_status(caller.thread_id, id)
 
   def call("task_cancel", %{"taskId" => id}, caller),
-    do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id)
+    do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id, requested_by: "agent")
 
   # The browser tools are the credential's preview capability to give: a
   # credential minted while the user withheld agent browser access (or while
@@ -160,7 +160,7 @@ defmodule HalC2.Mcp.Tools do
     title = args["titleContains"] && String.downcase(args["titleContains"])
 
     threads =
-      project_threads(me["projectId"])
+      if(args["allProjects"] == true, do: all_threads(), else: project_threads(me["projectId"]))
       |> Enum.filter(
         &(statuses in [nil, []] or (&1["activityRunStatus"] || &1["status"]) in statuses)
       )
@@ -172,13 +172,14 @@ defmodule HalC2.Mcp.Tools do
             get_in(&1, ["lineage", "relationshipToParent"]) != "subagent")
       )
       |> Enum.filter(&(not is_boolean(args["settled"]) or settled?(&1) == args["settled"]))
+      |> Enum.filter(&(not is_boolean(args["snoozed"]) or snoozed?(&1) == args["snoozed"]))
 
     cursor = args["cursor"] || 0
     page = Enum.slice(threads, cursor, args["limit"] || 50)
 
     {:ok,
      %{
-       "projectId" => me["projectId"],
+       "projectId" => if(args["allProjects"] != true, do: me["projectId"]),
        "currentThreadId" => me["id"],
        "threads" => Enum.map(page, &list_item/1),
        "nextCursor" => if(cursor + length(page) < length(threads), do: cursor + length(page)),
@@ -187,12 +188,14 @@ defmodule HalC2.Mcp.Tools do
   end
 
   def run("hal_c2_thread_read", args, %{row: me} = caller) do
-    with {:ok, row} <- readable_thread(me, args["threadId"]),
+    with {:ok, args} <- clamp_read(args),
+         {:ok, row} <- mc_thread(me, args["threadId"]),
          :here <- on_owner(row, "hal_c2_thread_read", args, caller) do
       view = args["view"] || "messages"
       after_position = args["afterPosition"] || -1
       limit = args["limit"] || 50
       max_chars = args["maxCharsPerItem"] || 20_000
+      run_limit = args["runLimit"] || 10
 
       shown? =
         &((view == "activity" or &1["type"] in ["user_message", "assistant_message"]) and
@@ -281,9 +284,12 @@ defmodule HalC2.Mcp.Tools do
            state
            |> StreamState.list("run")
            |> Enum.sort_by(&(&1["ordinal"] || 0), :desc)
-           |> Enum.take(args["runLimit"] || 10)
+           |> Enum.take(run_limit)
            |> Enum.map(&run_summary/1),
          "items" => read,
+         "limit" => limit,
+         "runLimit" => run_limit,
+         "maxCharsPerItem" => max_chars,
          "nextPosition" =>
            case List.last(page) do
              {_, position} -> position
@@ -307,13 +313,17 @@ defmodule HalC2.Mcp.Tools do
       timeout = wait_limit(args["timeoutMs"], caller)
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
 
-      {:ok,
-       %{
-         "threadId" => row["id"],
-         "runId" => run && run["id"],
-         "status" => (run && run["status"]) || "idle",
-         "timedOut" => timed_out
-       }}
+      result = %{
+        "threadId" => row["id"],
+        "runId" => run && run["id"],
+        "status" => (run && run["status"]) || "idle",
+        "timedOut" => timed_out
+      }
+
+      # Waiting on a task of the caller's that works on: its completion wakes the caller.
+      if timed_out and HalC2.Orchestration.Delegation.working_task?(me["id"], row["id"]),
+        do: {:ok, Map.put(result, "next", HalC2.Orchestration.Delegation.running_next())},
+        else: {:ok, result}
     end
   end
 
@@ -321,6 +331,27 @@ defmodule HalC2.Mcp.Tools do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          :ok <- live(caller) do
       interrupt(row["id"], args, me["id"])
+    end
+  end
+
+  # Marks the caller's own background work as awaited (or not), so it holds the thread
+  # Working; only adapters that track a background roster can.
+  def run("hal_c2_background_wait", args, %{row: me} = caller) do
+    ids =
+      for id <- List.wrap(args["taskIds"]), is_binary(id), id = String.trim(id), id != "", do: id
+
+    runtime = Orchestration.runtime(caller.instance)
+
+    cond do
+      ids == [] or length(ids) > 20 ->
+        {:error, "invalid_request", "taskIds must list 1 to 20 background task ids."}
+
+      not (Code.ensure_loaded?(runtime) and function_exported?(runtime, :await_background, 3)) ->
+        {:error, "invalid_request", "This provider cannot mark background work as awaited."}
+
+      true ->
+        {:ok, matched} = runtime.await_background(me["id"], ids, args["waiting"] != false)
+        {:ok, %{"matched" => matched, "unmatched" => Enum.uniq(ids) -- matched}}
     end
   end
 
@@ -350,7 +381,8 @@ defmodule HalC2.Mcp.Tools do
          "currentThreadId" => me["id"],
          "currentProjectId" => me["projectId"],
          "providers" =>
-           for provider <- HalC2.Environment.providers(), provider["enabled"] != false do
+           for provider <- HalC2.Settings.providers_for(me["projectId"]),
+               provider["enabled"] != false do
              %{
                "providerInstanceId" => provider["instanceId"],
                "driver" => provider["driver"],
@@ -373,7 +405,7 @@ defmodule HalC2.Mcp.Tools do
           ~w(defaultThreadEnvMode newWorktreesStartFromOrigin enableProviderUpdateChecks backgroundActivity sourceControlWritingStyle)
         )
 
-      {:ok, preferences(update_settings(patch))}
+      with {:ok, settings} <- update_settings(patch), do: {:ok, preferences(settings)}
     end
   end
 
@@ -508,9 +540,25 @@ defmodule HalC2.Mcp.Tools do
      })}
   end
 
-  def run("hal_c2_preview_close", %{"tabId" => tab}, %{row: me}) do
-    {:ok, _} = HalC2.Preview.close(%{"threadId" => me["id"], "tabId" => tab})
-    {:ok, %{}}
+  # Only the agent session that opened a tab can close it; a tab no agent
+  # opened is the user's, and another session's is that session's.
+  def run("hal_c2_preview_close", %{"tabId" => tab}, %{row: me} = caller) do
+    scope = %{thread_id: me["id"], instance: caller.instance}
+
+    case HalC2.PreviewAutomation.tab_ownership(scope, tab) do
+      :own ->
+        {:ok, _} = HalC2.Preview.close(%{"threadId" => me["id"], "tabId" => tab})
+        HalC2.PreviewAutomation.forget_tab(scope, tab)
+        {:ok, %{}}
+
+      :other_agent ->
+        {:error, "preview_tab_other_agent",
+         "That preview tab belongs to another agent session; only the session that opened it can close it."}
+
+      :not_agent ->
+        {:error, "preview_tab_not_opened_by_agent",
+         "You did not open that preview tab; only the agent session that opened a tab can close it."}
+    end
   end
 
   # --- access ---------------------------------------------------------------------------
@@ -553,44 +601,20 @@ defmodule HalC2.Mcp.Tools do
   defp foreign_credential,
     do: {:error, "capability_denied", "This credential belongs to another environment."}
 
-  # A thread `hal_c2_thread_read` may show the caller: one of its project, or one
-  # the user attached to the caller's conversation as context, of any project.
-  # A deleted one the caller could otherwise read says it is gone, not missing.
-  defp readable_thread(me, nil), do: {:ok, me}
+  @doc """
+  A thread of this MC that is not deleted (the caller itself for nil), of any
+  project, as its sidebar row: what `hal_c2_thread_list` with `allProjects`
+  finds, `hal_c2_thread_read` and `hal_c2_thread_organize` reach. The caller's
+  project is only the default the list starts from, as upstream (#26442).
+  """
+  def mc_thread(me, nil), do: {:ok, me}
 
-  defp readable_thread(%{"projectId" => project} = me, id) do
+  def mc_thread(_me, id) do
     case HalC2.Shell.row(node(), id) do
-      {"thread", row} ->
-        cond do
-          row["projectId"] != project and not user_attached?(me, id) ->
-            {:error, "thread_not_found", "The thread was not found in the calling project."}
-
-          row["deletedAt"] != nil ->
-            {:error, "thread_not_found", "Thread #{id} is no longer available."}
-
-          true ->
-            {:ok, row}
-        end
-
-      _ ->
-        {:error, "thread_not_found", "The thread was not found in the calling project."}
+      {"thread", %{"deletedAt" => nil} = row} -> {:ok, row}
+      {"thread", _} -> {:error, "thread_not_found", "Thread #{id} is no longer available."}
+      _ -> {:error, "thread_not_found", "The thread was not found."}
     end
-  end
-
-  # Only records on messages the user wrote count: an agent cannot widen its own
-  # reach by writing a `thread` context record naming a thread elsewhere.
-  defp user_attached?(me, thread_id) do
-    HalC2.Streams.read(me["id"], fn state ->
-      state
-      |> StreamState.all("message")
-      |> Enum.any?(fn message ->
-        message["role"] == "user" and message["createdBy"] == "user" and
-          Enum.any?(
-            get_in(message, ["context", "records"]) || [],
-            &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
-          )
-      end)
-    end)
   end
 
   @doc """
@@ -703,6 +727,32 @@ defmodule HalC2.Mcp.Tools do
     |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
   end
 
+  @read_maximums %{"limit" => 100, "runLimit" => 50, "maxCharsPerItem" => 50_000}
+
+  # A read's size arguments are capped at their maximum rather than failing the read
+  # (upstream #22901); one under 1 is refused.
+  defp clamp_read(args) do
+    Enum.reduce_while(@read_maximums, {:ok, args}, fn {key, maximum}, {:ok, args} ->
+      case args[key] do
+        nil -> {:cont, {:ok, args}}
+        n when is_integer(n) and n >= 1 -> {:cont, {:ok, Map.put(args, key, min(n, maximum))}}
+        _ -> {:halt, {:error, "invalid_request", "#{key} must be a whole number of at least 1."}}
+      end
+    end)
+  end
+
+  @doc "Every thread on this MC that is not deleted, most recently updated first."
+  def all_threads do
+    for(
+      {{mc, _}, {"thread", row}} <- HalC2.Shell.rows(),
+      mc == node() and row["deletedAt"] == nil,
+      do: row
+    )
+    |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
+  end
+
+  defp snoozed?(row), do: row["snoozedUntil"] != nil
+
   # Whether the thread is settled: moved out of the active list by the user or
   # by automatic settlement (`thread.settle` records the override either way).
   defp settled?(row), do: row["settledOverride"] == "settled"
@@ -727,6 +777,7 @@ defmodule HalC2.Mcp.Tools do
     Map.merge(
       %{
         "threadId" => row["id"],
+        "projectId" => row["projectId"],
         "title" => row["title"],
         "status" => row["activityRunStatus"] || row["status"],
         "providerInstanceId" => row["providerInstanceId"],
@@ -738,6 +789,19 @@ defmodule HalC2.Mcp.Tools do
         "activeRunId" => row["activeRunId"],
         "latestRunId" => row["latestRunId"],
         "archived" => row["archivedAt"] != nil,
+        "snoozed" => snoozed?(row),
+        "snoozedUntil" => row["snoozedUntil"],
+        "pullRequests" =>
+          for(
+            link <- HalC2.Projection.PullRequests.visible(row["pullRequests"] || []),
+            do:
+              link
+              |> HalC2.Projection.PullRequests.normalize()
+              |> Map.merge(%{
+                "url" => link["url"],
+                "state" => get_in(link, ["snapshot", "state"])
+              })
+          ),
         "parentThreadId" => get_in(row, ["lineage", "parentThreadId"]),
         "updatedAt" => row["updatedAt"]
       },
@@ -755,12 +819,15 @@ defmodule HalC2.Mcp.Tools do
       "completedAt" => run["completedAt"]
     }
 
+  # An approval reads as what it asks, with the provider's reason for asking when it
+  # gave one (Upstream #22546).
   defp timeline_item(item, position, messages, max_chars, offset) do
     text =
       (item["messageId"] && get_in(messages, [item["messageId"], "text"])) || item["text"] ||
-        item["title"] || item["markdown"] || ""
+        item["title"] || item["markdown"] || item["prompt"] || ""
 
     rest = String.slice(text, offset, String.length(text))
+    message = item["messageId"] && messages[item["messageId"]]
 
     %{
       "position" => position,
@@ -768,10 +835,32 @@ defmodule HalC2.Mcp.Tools do
       "type" => item["type"],
       "runId" => item["runId"],
       "status" => item["status"],
+      "sentByThreadId" =>
+        item["messageId"] && get_in(messages, [item["messageId"], "senderThreadId"]),
       "text" => String.slice(rest, 0, max_chars),
       "truncated" => String.length(rest) > max_chars
     }
+    |> then(fn read ->
+      if is_binary(item["reason"]),
+        do: Map.put(read, "reason", String.slice(item["reason"], 0, max_chars)),
+        else: read
+    end)
+    |> put_folds(message, text)
   end
+
+  # A message too long to send whole was saved as a file
+  # (`HalC2.Attachments.fold_long_text/3`): its text names the file, and the read says
+  # where it is, so the whole of the user's words can be read.
+  defp put_folds(read, %{} = message, text) do
+    case for file <- HalC2.Attachments.folded_into(text, List.wrap(message["attachments"])),
+             path = HalC2.Attachments.path(file),
+             do: %{"name" => file["name"], "path" => path} do
+      [] -> read
+      files -> Map.put(read, "files", files)
+    end
+  end
+
+  defp put_folds(read, _message, _text), do: read
 
   defp project(row),
     do: Map.take(row, ~w(id title workspaceRoot defaultModelSelection createdAt updatedAt))
@@ -794,12 +883,23 @@ defmodule HalC2.Mcp.Tools do
 
       {"thread", row} ->
         # The stream's modes: the sidebar row trails a change.
+        # So is its running turn: a send just after a turn starts steers it.
         with :ok <- no_escalation(sender, thread(id) || row),
-             do: dispatch_message(row, sender["id"], args)
+             do: dispatch_message(Map.put(row, "activeRunId", active_run(id)), sender["id"], args)
 
       nil ->
         {:error, "thread_not_found", "The thread was not found."}
     end
+  end
+
+  # The thread's newest turn that can still be steered or interrupted, as the sidebar
+  # row's `activeRunId` names it once the projection catches up.
+  defp active_run(id) do
+    stream(id)
+    |> StreamState.list("run")
+    |> Enum.filter(&(&1["status"] in ~w(preparing starting running)))
+    |> Enum.max_by(&(&1["ordinal"] || 0), fn -> %{} end)
+    |> Map.get("id")
   end
 
   defp dispatch_message(row, sender, args) do
@@ -934,12 +1034,26 @@ defmodule HalC2.Mcp.Tools do
 
         with {:ok, _} <-
                orchestration(
-                 Orchestration.dispatch_once(%{
-                   "type" => "run.interrupt",
-                   "commandId" => command_id,
-                   "threadId" => id,
-                   "runId" => run
-                 })
+                 Orchestration.dispatch_once(
+                   Map.merge(
+                     %{
+                       "type" => "run.interrupt",
+                       "commandId" => command_id,
+                       "threadId" => id,
+                       "runId" => run,
+                       "requestedBy" => "agent"
+                     },
+                     # An agent's Stop holds the queue as the user's does, unless it asks not to.
+                     args
+                     |> Map.take(["holdQueue"])
+                     |> then(
+                       &if(is_binary(args["reason"]),
+                         do: Map.put(&1, "reason", args["reason"]),
+                         else: &1
+                       )
+                     )
+                   )
+                 )
                ) do
           answer = %{
             "threadId" => id,
@@ -1100,8 +1214,10 @@ defmodule HalC2.Mcp.Tools do
       end
 
     case HalC2.Settings.put(next, version) do
-      {:ok, _} -> next
+      {:ok, _} -> {:ok, next}
       {:error, :stale} -> update_settings(patch)
+      # A settings.json the MC cannot read refuses the save.
+      {:error, error} -> orchestration({:error, error})
     end
   end
 

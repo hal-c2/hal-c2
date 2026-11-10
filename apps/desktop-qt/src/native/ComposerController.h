@@ -58,8 +58,13 @@ class TimelineModel;
 //      [{label, description}], multiSelect, allowCustomAnswer}], canRespond,
 //      responding, problem}],
 //    plan: {id, title, markdown} | null,  // offered while the thread is idle
-//    queue: [{runId, text}], waiting: [{runId, summary, outcome}],
-//    queueHeld, queueResuming}  // the MC keeps the queue until it is resumed
+//    queue: [{runId, messageId, text, pending}], waiting: [{runId, summary,
+//      outcome}],
+//    queueHeld, queueResuming,  // the MC keeps the queue until it is resumed
+//    queueBusy,  // a remove or send-now the MC has not answered: one at a time
+//    queueEditBlocked}  // why queued messages cannot be edited now, or ""
+// A `pending` queue entry is a send the MC has not confirmed yet: listed, but
+// with nothing to act on.
 // `problem` says why a request cannot be answered, when it cannot. On a new
 // thread's draft route the turn is {threadKey: draftId, kind: "draft",
 // sending} with nothing pending; `sending` while its first send
@@ -99,7 +104,7 @@ class TimelineModel;
 // goes to each model so chosen),
 // composer.option.set {id, value}, composer.runtimeMode.set {mode},
 // composer.interactionMode.set {mode}, composer.submit {text, intent, edit},
-// composer.interrupt, composer.attach {files, folders} (a file is {name,
+// composer.interrupt {runId} (only that run, when named), composer.attach {files, folders} (a file is {name,
 // mimeType, base64} for an image, {name, mimeType, path} for any other file,
 // {name, text} for a pasted text), composer.attachment.remove {id},
 // composer.attachment.retry {id}, composer.question.attach {requestId,
@@ -114,7 +119,8 @@ class TimelineModel;
 // composer.approval.respond {requestId, decision},
 // composer.question.answer {requestId, answers}, composer.question.dismiss
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
-// composer.queue.steer {runId?} (the first queued without one),
+// composer.queue.steer {runId?} (the first queued without one; on a stopped
+// thread it sends the message now, `queued-run.start`),
 // composer.queue.edit {runId?} (the last queued without one),
 // composer.queue.edit.cancel, composer.queue.resume (a held queue),
 // composer.stash, composer.stash.restore {id},
@@ -147,9 +153,14 @@ class TimelineModel;
 // composer (`composer.editingQueuedRunId`; the message's attachments are
 // listed with `sent`) and sets the thread's own draft, attachments included,
 // aside; a send saves the edit (`queued-run.edit`, its text and, when they
-// changed, its attachments) and cancelling gives the draft back. A run that leaves the queue mid-edit ends it: a changed edit
-// stays in the composer when the set-aside draft was empty, and is dropped
-// with a toast otherwise.
+// changed, its attachments) and cancelling gives the draft back. Saves go
+// one at a time: one made while another is unanswered waits for it, and only
+// the newest waits; a save's answer leaves the edit open when more was typed
+// since. Each thread keeps its own edit: leaving the thread keeps it, deleting
+// the thread drops it, and a run that leaves the queue mid-edit ends it, its
+// thread open or not: a changed edit stays in the composer when the set-aside
+// draft was empty, and is dropped otherwise, with a toast (naming the thread
+// when another is open).
 class ComposerController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -159,11 +170,28 @@ public:
   // The model the window's thread or draft will send with: {instanceId, model}, empty with none ready.
   QJsonObject currentSelection() const { return selection(target()); }
   void activate() override;
+  void preview() override;
   bool isActive() const { return m_active; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
+  // A message sent with no connection waits on this machine to be sent, in
+  // order, once its environment is connected again, instead of staying in the
+  // draft behind a "Not connected" toast; and one a dropped connection left
+  // unanswered is sent again (the MC carries a message id out once) rather
+  // than given back. The phone's outbox (MobileApp); off on the desktop.
+  // A waiting message shows in its thread's `turn.outbox`
+  // ({messageId, text, attachments, sending}), and `composer.outbox.edit
+  // {messageId}` pulls one back into the composer.
+  void setWaitsOffline(bool on);
+  // How long the outbox waits after a send the connection dropped before it
+  // tries that thread again: each delay in turn, then the last one over and
+  // over (1, 2, 4, 8, then 16 s).
+  void setOutboxRetryDelays(const QList<int>& delays) { m_outboxDelays = delays; }
+  QList<int> outboxRetryDelays() const { return m_outboxDelays; }
 
   bool handle(const QString& action, const QVariant& payload) override;
   void adopt(const QString& draftId, const QString& threadKey, const QString& text);
+  // The draft's first send is on its way: it becomes its thread once the MC answers.
+  bool launching(const QString& draftId) const { return m_launching.contains(draftId); }
 
   // Where the threads' drafts are kept; loads them from there.
   void setStorePath(const QString& path);
@@ -175,6 +203,12 @@ public:
   // What the sidebar shows for a draft with something in it: the text's first
   // line, else how many attachments it carries; nothing for an empty draft.
   std::optional<QString> draftPreview(const QString& target) const;
+  // The threads (keys) whose composer holds something unsent, the rows the
+  // sidebar marks "Unsent draft".
+  QSet<QString> unsentThreads() const;
+  // Empties the thread's composer of its text, attachments and excerpts, in
+  // every window (the sidebar's `thread.draft.discard`); its model and modes stay.
+  void discardDraft(const QString& target);
   // An image (a snapshot) joins `target`'s draft: a thread key or a draft id.
   // `source` rides with it to the MC when set (ChatImageAttachment.source).
   void attachImage(const QString& target, const QString& name, const QString& mimeType, const QByteArray& bytes,
@@ -184,6 +218,8 @@ public:
   // Whether `target`'s draft has files still on their way to the MC, or a
   // send in flight that carries the draft's attachments.
   bool attachmentsPending(const QString& target) const;
+  // Whether `target`'s draft has a file attached: it went to the draft's machine.
+  bool holdsFiles(const QString& target) const;
   // The draft key of a Space page; never a thread key (env:id) or a draft id (a uuid).
   static QString pageKey(const QString& pageId) { return QStringLiteral("page#") + pageId; }
   // The draft key of a Space's images prompt.
@@ -197,6 +233,10 @@ public:
   // mimeType, url (an image's bytes as a data URL), text (a file's as captured,
   // when it is text this machine can read), truncated}; empty when it is gone.
   QVariantMap attachmentPreview(const QString& id);
+
+signals:
+  // The outbox will try `target` again in `delayMs`.
+  void outboxRetryScheduled(const QString& target, int delayMs);
 
 private:
   struct Attachment {
@@ -224,9 +264,15 @@ private:
     QString error;
     QString remoteId;
     QString environmentId;
+    // How much of an uploading file has gone, 0 to 1; negative while unknown.
+    double progress = -1;
   };
-  // The attachment `id` of any draft or answer; null when it is gone.
+  // The attachment `id` of any draft, answer, waiting send or send in flight;
+  // null when it is gone.
   Attachment* findAttachment(const QString& id);
+  // Runs `change` on every held copy of the attachment `id` (a draft's, an
+  // answer's, a waiting send's, a send in flight's); how many there were.
+  int updateAttachmentCopies(const QString& id, const std::function<void(Attachment&)>& change);
   // Sends a file's bytes to the environment `target` runs on.
   void uploadFile(const QString& id, const QString& environmentId);
   // The environment a thread's or a new thread's files go to.
@@ -259,6 +305,9 @@ private:
     // {filePath, sectionId, sectionTitle, startIndex, endIndex, rangeLabel,
     // diff}; `text` is then the note and the lines are the file's.
     QJsonObject review;
+    // Set for another thread carried as context instead (a `thread`
+    // record): {environmentId, threadId, title}; its link is in the text.
+    QJsonObject thread;
   };
   struct Draft {
     QString text;  // a new thread's is DraftController's
@@ -271,6 +320,9 @@ private:
     std::optional<QJsonObject> modelSelection;
     QString runtimeMode;
     QString interactionMode;
+    // The model and mode came with a new thread from the thread it was
+    // started on, not from a pick here; the next new thread replaces them.
+    bool carried = false;
     // A new thread's prompt goes to each of these instead: one thread per
     // model, each in its own worktree.
     std::optional<QList<QJsonObject>> multipleModels;
@@ -331,9 +383,19 @@ private:
     // its command id, which the MC carries out once, if the shell after the
     // drop has no thread for it. Not kept across a restart.
     QJsonObject launch;
+    // The outbox's (setWaitsOffline): the commands as they were written, the
+    // mode changes ahead of the message, sent once the thread's environment
+    // is connected, less those the MC has answered; and the draft's model and
+    // modes, which a refusal gives back with the prompt.
+    QList<QJsonObject> commands;
+    QJsonObject choices;
+    // Waiting its turn to be sent rather than on its way, and whether it ever
+    // waited, which is what shows it in the thread's outbox.
+    bool waiting = false;
+    bool waited = false;
   };
 
-  bool interrupt();
+  bool interrupt(const QString& only = {});
   bool submit(const QVariantMap& payload);
   // A new thread's first send: its images, then the thread with its message.
   bool submitDraft(const QString& draftId, const QVariantMap& payload);
@@ -360,7 +422,12 @@ private:
   QJsonObject baseSelection(const QString& key) const;
   // What a new thread in the project starts with.
   QJsonObject newThreadSelection(const QString& environmentId, const QString& projectId) const;
+  // The project's own default model: this device's override, else the project's. Empty when it has none.
+  QJsonObject projectSelection(const QString& environmentId, const QString& projectId) const;
+  // A new thread started from `from` (a thread's key or a draft's id) keeps its model and mode.
+  void carryInto(const QString& draftId, const QString& from);
   QString newThreadRuntimeMode(const QString& projectId) const;
+  QString defaultRuntimeModeOf(const QString& target) const;
   // The Space page on show, when no thread or draft is.
   QString openPage() const;
   bool onPage() const { return !m_pageId.isEmpty(); }
@@ -405,10 +472,31 @@ private:
   // whether its thread exists. Sends still on their way take the open
   // thread's newest message as their `after` once it is known.
   void reconcileUnsent();
+  void forgetTakenPicks();
+  // Sends the outbox's waiting messages of each thread whose environment is
+  // connected, in the order they were written; drops those of a thread the
+  // environment no longer has. One window drains it.
+  void drainOutbox();
+  // A send the connection dropped, or the MC is still sending: it and the ones
+  // behind it wait again, with what the MC has not answered of them, and the
+  // thread is tried again after the next delay.
+  void waitAgain(const QString& target, const QList<Send>& sends);
+  void forgetAnswered(const QString& messageId, const QJsonObject& command);
+  // The outbox's messages of the route thread, for `turn.outbox`.
+  QVariantList outboxState(const QString& target) const;
+  // Pulls a waiting message back into the composer.
+  bool editWaiting(const QString& target, const QString& messageId);
+  // Drops a waiting send and what it had already uploaded for it.
+  bool deleteWaiting(const QString& target, const QString& messageId);
+  // A refused outbox send: its prompt ahead of what was typed since, with the
+  // model and modes it was written with.
+  void restoreRefused(const QString& target, const QList<Send>& sends, const QString& error);
   std::optional<QString> newestBefore(const QString& thread) const;
   static QJsonObject excerptJson(const Excerpt& excerpt);
   static Excerpt excerptOf(const QJsonObject& kept);
-  void dispatchAll(const Send& send, qsizetype index, std::function<void(const std::optional<QString>&)> done);
+  // The send's commands in order; `done` has the first error and its detail.
+  using Dispatched = std::function<void(const std::optional<QString>& error, const QJsonValue& detail)>;
+  void dispatchAll(const Send& send, qsizetype index, Dispatched done);
   bool attach(const QVariantList& files);
   static QString thumbnail(const QString& dataUrl);
   // A terminal selection joins the route's draft; blank ones are dropped.
@@ -429,8 +517,9 @@ private:
   // text only: back from an empty draft,
   // forward past the newest to an empty one. An edited recall is a draft.
   void stepHistory(const QString& target, bool backward);
-  // Why the prompt cannot be sent as it is, or nothing: its length.
-  static QString promptProblem(const QString& text);
+  // Why a draft carrying this much cannot be sent (the contracts' attachment
+  // and context limits), or empty when it can.
+  static QString carryProblem(const QList<Attachment>& attachments, const QList<Excerpt>& contexts);
   bool stash(const QString& target);
   void restoreStash(const QString& target, const QString& id);
   void setStashOpen(bool open);
@@ -441,9 +530,9 @@ private:
   bool editQueued(const QString& target, QString runId);
   bool saveQueuedEdit(const QString& target, const QString& text);
   // Gives the set-aside draft back; `keepEdit` leaves the edit's text instead.
-  void endQueuedEdit(bool keepEdit = false);
-  // Ends an edit whose run is no longer queued.
-  void recoverQueuedEdit(const QVariantMap& turn);
+  void endQueuedEdit(const QString& thread, bool keepEdit = false);
+  // Ends the edits whose run is no longer queued, and drops those of deleted threads.
+  void recoverQueuedEdits();
 
   // The thread the window shows (the shell's route), or empty.
   QString openThread() const;
@@ -470,6 +559,8 @@ private:
   // A send used this model: new threads start from it.
   void rememberModel(const QJsonObject& selection);
   bool setOption(const QString& target, const QString& id, const QVariant& value);
+  bool stepEffort(const QString& target, int direction);
+  static bool effortLocked(const QJsonObject& descriptor, const QString& text);
   bool selectSuggestion(const QString& target, const QString& id);
   // The suggestions for the caret, with the trigger they answer.
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;
@@ -493,13 +584,19 @@ private:
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
-  void save() const;
+  // False when the drafts and stash could not be written.
+  bool save() const;
   // The other windows' composers show what this one changed in the drafts.
   void spread() const;
   bool running(const QString& target) const;
+  // Whether the shown thread's provider can take a message into its running
+  // turn (its session's `turns.supportsActiveSteering`); a provider that
+  // cannot is only offered the queue. No session known reads as able.
+  bool canSteerActive() const;
   void toast(const QString& title, const QString& description);
   void follow();
   void publish();
+  void previewTurn();
   // publish() in every window's composer: what one window changed in the
   // shared state (Kept) the others show too.
   static void publishEverywhere(NativeShell* shell);
@@ -517,6 +614,9 @@ private:
   ShellStore* m_store;
   std::function<QDateTime()> m_now = [] { return QDateTime::currentDateTimeUtc(); };
   bool m_active = false;
+  bool m_previewing = false;
+  // holdsFiles() of the target, as last published.
+  bool m_heldFiles = false;
   // What every window's composer keeps.
   struct Kept {
     QHash<QString, Draft> drafts;
@@ -526,6 +626,9 @@ private:
     // last sent with: a new thread starts from them.
     QHash<QString, QJsonObject> lastModels;
     QString lastInstance;
+    // The options last given to each model (instanceId + '\n' + slug):
+    // picking a model again offers them back.
+    QHash<QString, QJsonArray> modelOptions;
     // In the order they were sent.
     QList<Unsent> unsent;
     // Each target's send the MC answered last, which its stream may not have
@@ -548,6 +651,15 @@ private:
   // Each thread's sends, the one in flight first: a thread sends one at a
   // time, in the order the user sent them.
   QHash<QString, QList<Send>> m_queues;
+  // The outbox (setWaitsOffline): on, its retry delays, how many sends in a
+  // row the connection dropped for each thread, and the threads waiting out
+  // their delay; and the shell frame it waits for after a drop, which says
+  // which threads are still there.
+  bool m_waitsOffline = false;
+  quint64 m_outboxSince = 0;
+  QList<int> m_outboxDelays{1000, 2000, 4000, 8000, 16000};
+  QHash<QString, int> m_outboxFailures;
+  QSet<QString> m_outboxHeld;
   // The route thread (or draft) and its stream.
   QString m_thread;
   QString m_draftId;
@@ -606,10 +718,13 @@ private:
     int request = 0;
   };
   PathSearch m_paths;
-  // The queued message the route thread's composer is editing, and the
-  // thread's draft set aside for it.
+  // The queued message a thread's composer is editing, and the thread's
+  // draft set aside for it.
   struct QueuedEdit {
     QString thread;
+    // The thread's stream, watched for the run leaving the queue while
+    // another thread is open.
+    QMetaObject::Connection watch;
     QString runId;
     QString messageId;
     QString original;
@@ -624,8 +739,16 @@ private:
     // the MC refused reuses them rather than storing them again.
     QHash<QString, QJsonObject> stored;
     bool saving = false;
+    // A save made while one is on its way, sent once it is answered.
+    std::optional<QString> next;
   };
-  std::optional<QueuedEdit> m_queuedEdit;
+  QHash<QString, QueuedEdit> m_queuedEdits;
+  QueuedEdit* queuedEdit(const QString& thread) {
+    const auto it = m_queuedEdits.find(thread);
+    return it == m_queuedEdits.end() ? nullptr : &*it;
+  }
+  // Threads with a queue action (remove, send now) the MC has not answered.
+  QSet<QString> m_queueBusy;
   // The sent prompt the composer is showing again: its message and text.
   struct Recall {
     QString target;

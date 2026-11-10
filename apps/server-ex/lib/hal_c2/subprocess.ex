@@ -27,21 +27,33 @@ defmodule HalC2.Subprocess do
   the helper program in between is the same lines, plus the byte offset they reach
   as `{:subprocess_offset, reader, offset}` after each batch.
 
+  With `:sandbox`, the program runs in an OpenShell sandbox over an exec stream
+  (`HalC2.Subprocess.Sandboxed`), with the same messages.
+
   Reader loops recurse through fully qualified calls, so a hot code load moves them
   onto the new module version at the next chunk.
   """
 
   alias Exile.Process, as: Proc
   alias HalC2.Subprocess.Durable
+  alias HalC2.Subprocess.Sandboxed
 
   require Logger
 
   @enforce_keys [:proc, :reader]
   defstruct [:proc, :reader, :durable, :errors]
 
-  @type t :: %__MODULE__{proc: Proc.t(), reader: pid, durable: map | nil, errors: pid | nil}
+  @type t :: %__MODULE__{
+          proc: Proc.t() | Sandboxed.t(),
+          reader: pid,
+          durable: map | nil,
+          errors: pid | nil
+        }
 
   @read_size 65_535
+  # A stdout line longer than this is dropped, however it arrives: one
+  # message Pi sends larger than 8 MiB never reaches its handler.
+  @max_line 8_388_608
   # A stderr line longer than this is dropped unread; prefixed lines are short.
   @max_stderr_line 65_536
   # How much of the end of stderr `:stderr_tail` keeps, and how many lines it hands over.
@@ -58,9 +70,19 @@ defmodule HalC2.Subprocess do
   def start(cmd, opts \\ []) do
     {durable, opts} = Keyword.pop(opts, :durable)
 
-    if durable && Durable.enabled?(),
-      do: start_durable(durable, cmd, opts),
-      else: start_owned(cmd, opts)
+    cond do
+      # In a sandbox the program gets only the sandbox's environment and directory,
+      # never `:env` or `:cd` (`HalC2.Subprocess.Sandboxed`).
+      sandbox = opts[:sandbox] ->
+        argv = if is_function(cmd, 1), do: cmd.(nil), else: cmd
+        HalC2.Subprocess.Sandboxed.start(argv, sandbox, self())
+
+      durable && Durable.enabled?() ->
+        start_durable(durable, cmd, opts)
+
+      true ->
+        start_owned(cmd, opts)
+    end
   end
 
   defp start_durable(thread_id, cmd, opts) do
@@ -298,6 +320,9 @@ defmodule HalC2.Subprocess do
   end
 
   @spec write_line(t, iodata) :: :ok | {:error, term}
+  def write_line(%__MODULE__{proc: %Sandboxed{} = proc}, line),
+    do: Sandboxed.write_line(proc, line)
+
   def write_line(%__MODULE__{proc: proc}, line), do: Proc.write(proc, [line, ?\n])
 
   @spec ack(t) :: :ok
@@ -306,11 +331,14 @@ defmodule HalC2.Subprocess do
     :ok
   end
 
-  @spec os_pid(t) :: pos_integer
+  @spec os_pid(t) :: pos_integer | nil
   def os_pid(%__MODULE__{durable: %{dir: dir}}) do
     %{"pid" => pid} = JSON.decode!(File.read!(Path.join(dir, "meta")))
     pid
   end
+
+  # A sandboxed program's process is the sandbox's, not this machine's.
+  def os_pid(%__MODULE__{proc: %Sandboxed{}}), do: nil
 
   def os_pid(%__MODULE__{proc: proc}) do
     {:ok, pid} = Proc.os_pid(proc)
@@ -327,7 +355,27 @@ defmodule HalC2.Subprocess do
   def exit_status(%__MODULE__{durable: nil, proc: %Proc{exit_ref: ref}}, {ref, {:ok, status}}),
     do: {:ok, status}
 
+  def exit_status(%__MODULE__{proc: %Sandboxed{exit_ref: ref}}, {ref, {:ok, status}}),
+    do: {:ok, status}
+
   def exit_status(_sub, _message), do: :error
+
+  @doc """
+  An owned program's exit status if it exits within `timeout`, else `:running`. For a
+  program the MC keeps across its own stop, `:unknown`: its output is a file, whose end
+  says the program has ended.
+  """
+  @spec exited(t, timeout) :: {:ok, non_neg_integer} | :running | :unknown
+  def exited(%__MODULE__{durable: nil, proc: %Proc{exit_ref: ref}}, timeout) do
+    receive do
+      {^ref, {:ok, status}} -> {:ok, status}
+    after
+      timeout -> :running
+    end
+  end
+
+  def exited(%__MODULE__{proc: %Sandboxed{} = proc}, timeout), do: Sandboxed.exited(proc, timeout)
+  def exited(_sub, _timeout), do: :unknown
 
   @doc "Closes stdin and waits for the program to exit, escalating to signals after `timeout`."
   @spec stop(t, timeout) :: {:ok, non_neg_integer} | term
@@ -347,6 +395,9 @@ defmodule HalC2.Subprocess do
       result
     end
   end
+
+  def stop(%__MODULE__{proc: %Sandboxed{} = proc, reader: reader}, timeout),
+    do: Sandboxed.stop(proc, reader, timeout)
 
   def stop(%__MODULE__{proc: proc}, timeout) do
     Proc.close_stdin(proc)
@@ -411,8 +462,8 @@ defmodule HalC2.Subprocess do
     case Proc.read(proc, @read_size) do
       {:ok, data} ->
         data = IO.iodata_to_binary(data)
-        {lines, rest} = split_lines(partial <> data)
-        offset = offset + byte_size(partial) + byte_size(data) - byte_size(rest)
+        {lines, rest} = split_lines(partial, data)
+        offset = offset + line_bytes(partial) + byte_size(data) - line_bytes(rest)
         {lines, ended} = Enum.split_while(lines, &(not Durable.exit_line?(&1)))
 
         if lines != [] do
@@ -442,7 +493,7 @@ defmodule HalC2.Subprocess do
   def reader_loop(proc, owner, partial) do
     case Proc.read(proc, @read_size) do
       {:ok, data} ->
-        {lines, rest} = split_lines(partial <> IO.iodata_to_binary(data))
+        {lines, rest} = split_lines(partial, IO.iodata_to_binary(data))
 
         if lines != [] do
           send(owner, {:subprocess_lines, self(), lines})
@@ -452,10 +503,19 @@ defmodule HalC2.Subprocess do
         __MODULE__.reader_loop(proc, owner, rest)
 
       _eof_or_error ->
-        if partial != "", do: send(owner, {:subprocess_lines, self(), [partial]})
+        if is_binary(partial) and partial != "",
+          do: send(owner, {:subprocess_lines, self(), [partial]})
+
         send(owner, {:subprocess_eof, self()})
     end
   end
+
+  # The bytes an unsplit rest holds, counting a dropped line's so far: with
+  # them in the offset formula, the offset stays at that line's start while
+  # it is skipped, so a reader resumed from a saved offset re-reads (and
+  # re-drops) the whole line instead of handing up its tail.
+  defp line_bytes({:skip, bytes}), do: bytes
+  defp line_bytes(partial), do: byte_size(partial)
 
   @doc false
   def stderr_init(proc, owner, prefix, tail \\ nil) do
@@ -509,25 +569,26 @@ defmodule HalC2.Subprocess do
   end
 
   @doc """
-  The last lines a program started with `:stderr_tail` wrote to stderr, without colour
-  codes or blank lines: "" when there are none or it was not kept. Asked once the
+  The last `lines` (or all of the last 4,096 bytes) a program started with
+  `:stderr_tail` wrote to stderr, without colour codes or blank lines: "" when there
+  are none or it was not kept. Asked once the
   program has ended (its output has); a program still running is waited on for at most
   `timeout`.
   """
-  @spec stderr_tail(t, timeout) :: String.t()
-  def stderr_tail(sub, timeout \\ 1_000)
+  @spec stderr_tail(t, timeout, pos_integer | :all) :: String.t()
+  def stderr_tail(sub, timeout \\ 1_000, lines \\ @tail_lines)
 
-  def stderr_tail(%__MODULE__{durable: %{dir: dir}}, _timeout),
-    do: dir |> Durable.stderr_tail(@tail_bytes) |> last_lines()
+  def stderr_tail(%__MODULE__{durable: %{dir: dir}}, _timeout, lines),
+    do: dir |> Durable.stderr_tail(@tail_bytes) |> last_lines(lines)
 
-  def stderr_tail(%__MODULE__{errors: errors}, timeout) when is_pid(errors) do
+  def stderr_tail(%__MODULE__{errors: errors}, timeout, lines) when is_pid(errors) do
     ref = Process.monitor(errors)
     send(errors, {:stderr_tail, self(), ref})
 
     receive do
       {^ref, tail} ->
         Process.demonitor(ref, [:flush])
-        last_lines(tail)
+        last_lines(tail, lines)
 
       {:DOWN, ^ref, :process, _, _} ->
         ""
@@ -538,17 +599,17 @@ defmodule HalC2.Subprocess do
     end
   end
 
-  def stderr_tail(_sub, _timeout), do: ""
+  def stderr_tail(_sub, _timeout, _lines), do: ""
 
   @doc false
-  def last_lines(text) do
+  def last_lines(text, lines \\ @tail_lines) do
     text
     |> String.replace(~r/\e\[[0-9;?]*[A-Za-z]/, "")
     |> String.replace_invalid()
     |> String.split(~r/\r?\n/)
     |> Enum.map(&String.trim_trailing/1)
     |> Enum.reject(&(&1 == ""))
-    |> Enum.take(-@tail_lines)
+    |> then(&if lines == :all, do: &1, else: Enum.take(&1, -lines))
     |> Enum.join("\n")
   end
 
@@ -585,16 +646,37 @@ defmodule HalC2.Subprocess do
       else: :binary.copy(partial <> data)
   end
 
-  # Lines are copied so a retained line never pins the whole read chunk.
-  @doc false
-  def split_lines(buffer) do
-    case :binary.split(buffer, "\n", [:global]) do
-      [rest] ->
-        {[], rest}
+  @doc """
+  Splits `partial <> data` into whole lines: `{lines, rest}`. A line longer
+  than `max` bytes is dropped, and so is the rest of it as it arrives (`rest`
+  is then `{:skip, bytes}` — how much of it has been seen — until the next
+  newline), so one oversized message neither reaches the owner nor piles up
+  in the reader. Lines are copied so a retained line never pins the whole
+  read chunk.
+  """
+  def split_lines(partial, data, max \\ @max_line) do
+    case :binary.split(data, "\n", [:global]) do
+      [tail] ->
+        {[], grow_line(partial, tail, max)}
 
-      parts ->
-        {lines, [rest]} = Enum.split(parts, -1)
-        {for(l <- lines, l != "", do: :binary.copy(l)), :binary.copy(rest)}
+      [head | parts] ->
+        {middle, [tail]} = Enum.split(parts, -1)
+        first = if match?({:skip, _}, partial), do: [], else: [partial <> head]
+
+        lines =
+          for line <- first ++ middle,
+              line != "",
+              byte_size(line) <= max,
+              do: :binary.copy(line)
+
+        {lines, grow_line("", tail, max)}
     end
+  end
+
+  defp grow_line({:skip, bytes}, data, _max), do: {:skip, bytes + byte_size(data)}
+
+  defp grow_line(partial, data, max) do
+    seen = byte_size(partial) + byte_size(data)
+    if seen > max, do: {:skip, seen}, else: :binary.copy(partial <> data)
   end
 end

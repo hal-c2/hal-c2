@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/27848
+#   https://github.com/pingdotgg/t3code/pull/25222
 #   https://github.com/pingdotgg/t3code/pull/24554
 #   https://github.com/pingdotgg/t3code/pull/19616
 #   https://github.com/pingdotgg/t3code/pull/17370
@@ -35,6 +37,8 @@
 #   docs/internals/environment-auth.md
 #   docs/operations/development.md (Reusable dev credential)
 #   AGENTS.md (npx hal-c2 pair, HAL_C2_DEV_AUTH_TOKEN)
+#   https://github.com/pingdotgg/t3code/pull/23782
+#   https://github.com/pingdotgg/t3code/pull/30337
 
 Feature: MC authentication and scopes
   An MC issues its own sessions. Pairing hands out a session with a set of scopes, a
@@ -62,7 +66,7 @@ Feature: MC authentication and scopes
     When a client exchanges it
     Then the exchange fails as an invalid grant
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: Pairing tokens can be typed by hand
     When the MC mints a pairing token
     Then it is 12 characters long
@@ -148,7 +152,7 @@ Feature: MC authentication and scopes
 
   # Upstream #24554: a socket ticket opened any ticket route, and a DPoP session's ticket
   # worked for anyone holding the string.
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario Outline: A socket ticket opens only the route it was bought for
     Given a client bought a socket ticket for <route>
     When it opens <other> with that ticket
@@ -159,7 +163,8 @@ Feature: MC authentication and scopes
       | the RPC socket     | a media stream     |
       | media streams      | the RPC socket     |
 
-  @backlog @mc @priority-high
+  # Upstream #24554: a DPoP session's socket ticket needs a fresh proof from the session's key.
+  @mc @priority-high
   Scenario Outline: A DPoP session's RPC ticket needs a fresh proof from the session's key
     Given a DPoP client bought an RPC socket ticket
     When the socket is opened with <proof>
@@ -172,7 +177,8 @@ Feature: MC authentication and scopes
       | a proof from another key                | refuses it       |
       | a proof that was already used           | refuses it       |
 
-  @backlog @mc
+  # Upstream #24554: a ticket bought without naming a route keeps opening either socket.
+  @mc
   Scenario: A ticket bought without naming a route still opens either
     Given an older client bought a socket ticket without naming a route
     Then it can open the RPC socket or a media stream with it
@@ -284,6 +290,46 @@ Feature: MC authentication and scopes
       | hal-c2.revokeClient       |
       | hal-c2.revokeOtherClients |
 
+  # Upstream #23782: a token sent as "bearer" or "bEaReR" was refused before it was checked.
+  @mc
+  Scenario Outline: The bearer scheme is read in any letter case
+    When a local tool sends the MC's access token with the scheme "<scheme>"
+    Then the MC says it is authenticated
+
+    Examples:
+      | scheme |
+      | Bearer |
+      | bearer |
+      | bEaReR |
+
+  # Upstream #30337: a DPoP token sent as "dpop" matched neither scheme and was refused as no credential.
+  @mc @priority-low
+  Scenario Outline: The DPoP scheme is read in any letter case
+    Given a client holds a DPoP-bound access token and a fresh proof from its key
+    When it sends the token with the scheme "<scheme>"
+    Then the MC says it is authenticated
+    And a refused request is challenged for DPoP whatever the scheme's case
+
+    Examples:
+      | scheme |
+      | DPoP   |
+      | dpop   |
+      | DPOP   |
+
+  # Upstream #23782: refusals say which part was wrong, without repeating the credential.
+  @mc @priority-low
+  Scenario Outline: A refused MCP request says what was wrong with its credential
+    When an agent calls the MCP server with <authorization>
+    Then it is refused as <reason>
+    And the refusal does not contain the credential
+
+    Examples:
+      | authorization                 | reason                      |
+      | no Authorization header       | a missing credential        |
+      | a Basic credential            | an unsupported scheme       |
+      | the scheme "Bearer", no token | an empty credential         |
+      | an expired token              | an unknown or expired token |
+
   @mc
   Scenario: Access requests without a bearer are refused as missing credentials
     When a client calls an access route without a bearer token
@@ -344,7 +390,7 @@ Feature: MC authentication and scopes
     When an administrator lists pairing links
     Then only the "Tablet" link is listed
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: A client's surface and app version are recorded when it connects
     Given a paired client
     When it opens a socket reporting its surface and app version
@@ -409,7 +455,7 @@ Feature: MC authentication and scopes
     Then the MC records what the client presented
     And only what it left out is read from the user agent
 
-  @backlog @mc @priority-low
+  @mc @priority-low
   Scenario: The address a client paired from is recorded without IPv6 wrapping
     When a client pairs from an IPv4 address that the system reports as an IPv4-mapped IPv6 address
     Then the authorized clients list shows the plain IPv4 address
@@ -434,6 +480,14 @@ Feature: MC authentication and scopes
     Given a browser holds a session cookie for the MC
     When a page from another origin sends a request with that cookie
     Then the MC refuses the request as an invalid credential
+
+  # Upstream #27848: a valid bearer token wins over a blank session cookie (hosted web app).
+  # The MC keeps no browser session cookie, so there is no cookie to be blank.
+  @dropped @mc
+  Scenario: A blank session cookie does not hide a valid bearer token
+    Given a request carries an empty session cookie and a valid bearer token
+    When it reaches the MC
+    Then the MC authenticates it with the bearer token
 
   @mc
   Scenario: Listed pairing links never reveal their secret
@@ -499,6 +553,7 @@ Feature: MC authentication and scopes
     When a client exchanges it asking only for orchestration:read
     Then its session carries only orchestration:read
 
+  # Upstream #25222: a read-only pairing code refused for full MCP access stays usable for read-only access.
   @mc
   Scenario: A token exchange asking for more than its link grants leaves the link unused
     Given a pairing link with standard scopes
@@ -515,8 +570,7 @@ Feature: MC authentication and scopes
 
   # Upstream #19616: the host computed DPoP key thumbprints with its locale's sort order, so hosts
   # in a Latvian, Lithuanian, Basque or Azerbaijani locale refused valid clients.
-  # Likely already implemented: apps/server-ex/lib/hal_c2/auth/dpop.ex (thumbprint/1 writes the members in a fixed order)
-  @backlog @mc @priority-high
+  @mc @priority-high
   Scenario: A client's key is recognised whatever the host's locale
     Given the MC runs under a Latvian, Lithuanian, Basque or Azerbaijani locale
     And a client that paired with a DPoP key
@@ -661,7 +715,7 @@ Feature: MC authentication and scopes
       | a paired client's session                 | the session was revoked                      |
       | a session that is already revoked         | no active session has that id                |
 
-  @backlog @mc
+  @mc
   Scenario: Access can be managed from the command line while the MC is stopped
     Given the MC is not running
     When an operator mints a pairing link and lists sessions from the command line
