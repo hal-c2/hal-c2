@@ -472,10 +472,22 @@ impl World {
         let _ = controller::with::<Usage, _>(&engine, |c, _| c.set_clock(move || time));
         let _ = controller::with::<ArchivedThreads, _>(&engine, |c, _| c.set_clock(move || time));
         let _ = controller::with::<Toasts, _>(&engine, |c, engine| c.expire(engine));
+        let _ = controller::with::<hal_c2_shell::controllers::slow_requests::SlowRequests, _>(
+            &engine,
+            |c, engine| c.expire(engine),
+        );
+        let _ = controller::with::<hal_c2_shell::controllers::computer_notice::ComputerNotice, _>(
+            &engine,
+            |c, engine| c.expire(engine),
+        );
         let _ = controller::with::<ProviderUpdateNotice, _>(&engine, |c, engine| {
             c.set_clock(move || time);
             c.expire(engine);
         });
+        let _ = controller::with::<hal_c2_shell::controllers::thread_notice::ThreadNotice, _>(
+            &engine,
+            |c, engine| c.expire(engine),
+        );
         // The favicon renewal timer runs on the engine's clock; time jumps here.
         let _ = controller::with::<hal_c2_shell::controllers::identity::Identity, _>(
             &engine,

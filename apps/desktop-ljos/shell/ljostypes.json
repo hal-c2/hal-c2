@@ -3365,6 +3365,62 @@
           ]
         },
         {
+          "name": "Diagrams",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "revision",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "revisionChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "diagram",
+              "parameters": [
+                {
+                  "name": "source",
+                  "type": "string"
+                },
+                {
+                  "name": "theme",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "retry",
+              "parameters": [
+                {
+                  "name": "source",
+                  "type": "string"
+                },
+                {
+                  "name": "theme",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
           "name": "Threads",
           "since": "1.0",
           "base": null,
@@ -5859,6 +5915,18 @@
               "constant": false,
               "group": false,
               "notify": "problemChanged"
+            },
+            {
+              "name": "threads",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "threadsChanged"
             }
           ],
           "signals": [],
@@ -5978,6 +6046,236 @@
             {
               "name": "openOnHost",
               "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "PullRequestLinkPreviews",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "address",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "addressChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "card",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "cardChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "claims",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "hover",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "follow",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                },
+                {
+                  "name": "external",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "PullRequestThreadLinks",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "available",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "availableChanged"
+            },
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "label",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "labelChanged"
+            },
+            {
+              "name": "pending",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pendingChanged"
+            },
+            {
+              "name": "linkedHere",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "linkedHereChanged"
+            },
+            {
+              "name": "menuLabel",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "menuLabelChanged"
+            },
+            {
+              "name": "pickerOpen",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pickerOpenChanged"
+            },
+            {
+              "name": "query",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "queryChanged"
+            },
+            {
+              "name": "candidates",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "candidatesChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "search",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "toggleHere",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "choose",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
               "returnType": "void"
             }
           ]
@@ -6485,6 +6783,54 @@
               "constant": false,
               "group": false,
               "notify": "maxColumnsChanged"
+            },
+            {
+              "name": "background",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "backgroundChanged"
+            },
+            {
+              "name": "columnLimit",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "columnLimitChanged"
+            },
+            {
+              "name": "coloured",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "colouredChanged"
+            },
+            {
+              "name": "reading",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
             }
           ],
           "signals": [],
@@ -6679,6 +7025,18 @@
               "constant": false,
               "group": false,
               "notify": "mediaUrlChanged"
+            },
+            {
+              "name": "mediaDocument",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "mediaDocumentChanged"
             },
             {
               "name": "revealLine",
@@ -6891,6 +7249,24 @@
                   "type": "string"
                 }
               ]
+            },
+            {
+              "name": "previewReady",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "previewRefused",
+              "parameters": [
+                {
+                  "name": "reason",
+                  "type": "string"
+                }
+              ]
             }
           ],
           "methods": [
@@ -6906,6 +7282,11 @@
             },
             {
               "name": "openMedia",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "openInPreview",
               "parameters": [],
               "returnType": "void"
             },
@@ -19275,6 +19656,18 @@
               "constant": false,
               "group": false,
               "notify": "hasSelectionChanged"
+            },
+            {
+              "name": "error",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "errorChanged"
             },
             {
               "name": "scrollTotal",

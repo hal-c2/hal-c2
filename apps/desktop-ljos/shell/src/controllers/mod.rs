@@ -7,6 +7,7 @@ pub mod background_activity;
 pub mod client_activity;
 pub mod cluster;
 pub mod composer;
+pub mod computer_notice;
 pub mod connection_health;
 pub mod connections;
 pub mod desktop_update;
@@ -24,7 +25,9 @@ pub mod limit_recovery;
 pub mod load_balancing;
 pub mod mc_plugin;
 pub mod menus;
+pub mod mermaid;
 pub mod navigation;
+pub mod notice_stack;
 pub mod onboarding;
 pub mod palette;
 pub mod panel;
@@ -34,6 +37,7 @@ pub mod project_actions;
 pub mod project_clone;
 pub mod project_settings;
 pub mod projects;
+pub mod provider_notice;
 pub mod provider_settings;
 pub mod provider_update_notice;
 pub mod pull_request_list;
@@ -56,8 +60,10 @@ pub mod storage_settings;
 pub mod terminals;
 pub mod text_generation;
 pub mod theme;
+pub mod thread_error;
 pub mod thread_lineage;
 pub mod thread_menu;
+pub mod thread_notice;
 pub mod threads;
 pub mod toasts;
 pub mod usage;
@@ -142,7 +148,13 @@ pub fn registrations() -> Vec<Registration> {
         ),
         Registration::new::<mc_plugin::McPlugin>("mcPlugins", &["mcPlugins"], Scope::Shared),
         Registration::new::<menus::Menus>("menus", &["menu", "confirmation"], Scope::Window),
+        Registration::new::<mermaid::Mermaid>("mermaid", &[], Scope::Shared),
         Registration::new::<navigation::Navigation>("navigation", &["route"], Scope::Window),
+        Registration::new::<notice_stack::NoticeStack>(
+            "noticeStack",
+            &["noticeStack"],
+            Scope::Window,
+        ),
         Registration::new::<onboarding::Onboarding>("onboarding", &["onboarding"], Scope::Window),
         Registration::new::<palette::Palette>("palette", &[], Scope::Window),
         Registration::new::<panel::RightPanel>("panel", &["panel"], Scope::Window),
@@ -160,6 +172,11 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<projects::Projects>("projects", &["projectRemoval"], Scope::Window),
+        Registration::new::<provider_notice::ProviderNotice>(
+            "providerNotice",
+            &["providerNotice"],
+            Scope::Window,
+        ),
         Registration::new::<provider_settings::ProviderSettings>(
             "providerSettings",
             &["providerSettings"],
@@ -234,12 +251,27 @@ pub fn registrations() -> Vec<Registration> {
             Scope::Window,
         ),
         Registration::new::<theme::Themes>("theme", &["theme"], Scope::Window),
+        Registration::new::<computer_notice::ComputerNotice>(
+            "threadComputer",
+            &["threadComputer"],
+            Scope::Window,
+        ),
+        Registration::new::<thread_error::ThreadError>(
+            "threadError",
+            &["threadError"],
+            Scope::Window,
+        ),
         Registration::new::<thread_lineage::ThreadLineage>(
             "threadLineage",
             &["lineage"],
             Scope::Window,
         ),
         Registration::new::<thread_menu::ThreadMenu>("threadMenu", &[], Scope::Window),
+        Registration::new::<thread_notice::ThreadNotice>(
+            "threadNotice",
+            &["threadNotice"],
+            Scope::Window,
+        ),
         Registration::new::<threads::ThreadStore>("threads", &[], Scope::Window),
         Registration::new::<toasts::Toasts>("toasts", &["toasts"], Scope::Window),
         Registration::new::<usage::Usage>("usage", &["usage"], Scope::Window),
