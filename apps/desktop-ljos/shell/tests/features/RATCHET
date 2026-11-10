@@ -1558,6 +1558,7 @@ settings/snap-shot.feature: Choosing the capture cues [sound, a sound]
 settings/snap-shot.feature: Choosing the capture sound
 settings/snap-shot.feature: Finishing setup later leaves Snap Shot off
 settings/snap-shot.feature: Recording a new shortcut
+settings/snap-shot.feature: Setup continues after macOS restarts the app for a permission
 settings/snap-shot.feature: Snap Shot is off until the user turns it on
 settings/snap-shot.feature: The desktop does not allow the shortcut
 settings/snap-shot.feature: Turning Snap Shot off

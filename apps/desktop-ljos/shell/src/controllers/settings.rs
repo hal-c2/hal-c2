@@ -148,6 +148,8 @@ static ROWS: &[Row] = rows![
     "snapShotSound", true, "soft-pop";
     "snapShotFlash", true, true;
     "snapShotAnimations", true, true;
+    // Where macOS quit the app from setup (enabled/disabled), until setup closes.
+    "snapShotSetupResume", true, "";
 ];
 
 fn row_of(key: &str) -> Option<&'static Row> {
