@@ -88,7 +88,8 @@ defmodule HalC2.OpenShellReviewPropTest do
           roots: roots,
           left: [],
           others: [],
-          deleted: []
+          deleted: [],
+          swept: []
         })
 
         HalC2.Prop.start_services([
@@ -423,9 +424,11 @@ defmodule HalC2.OpenShellReviewPropTest do
     observe(fn -> :ok end, [])
   end
 
-  # A reconcile asks for every provider no open review holds to go.
+  # A reconcile asks for every provider no open review holds to go, and deletes every
+  # sandbox of this home no open review holds, one whose provider already went too.
   def reconcile do
     bound = for t <- @threads, b = Review.binding(t), do: b.sandbox
+    deleting = Enum.reject(mine(), &(name(&1) in bound))
     forget_left()
 
     observe(
@@ -433,11 +436,12 @@ defmodule HalC2.OpenShellReviewPropTest do
         Review.reconcile()
         settle()
       end,
-      providers() -- bound
+      deleting
     )
   end
 
   def restart do
+    deleting = mine()
     forget_left()
 
     observe(
@@ -445,7 +449,7 @@ defmodule HalC2.OpenShellReviewPropTest do
         HalC2.Prop.restart_service(Review)
         settle()
       end,
-      providers()
+      deleting
     )
   end
 
@@ -500,6 +504,22 @@ defmodule HalC2.OpenShellReviewPropTest do
   # Every provider on the gateway is this home's: other homes leave only sandboxes.
   defp providers, do: Map.keys(FakeOpenShell.providers(Process.get(:review_prop).gateway))
 
+  # What deleting all of this home's sandboxes and providers on the gateway waits on:
+  # each provider, and each sandbox whose provider already went (`{:sandbox, name}`),
+  # as no provider deletion follows it. Notices of sandboxes deleted before are
+  # dropped, as a left one's name is used again.
+  defp mine do
+    settle()
+    ctx = Process.get(:review_prop)
+    Process.put(:review_prop, %{ctx | swept: []})
+    providers = providers()
+    bare = Map.keys(FakeOpenShell.sandboxes(ctx.gateway)) -- (ctx.others ++ providers)
+    providers ++ for(name <- bare, do: {:sandbox, name})
+  end
+
+  defp name({:sandbox, name}), do: name
+  defp name(name), do: name
+
   # A thread open before `fun` and not after has its sandbox deleted.
   defp ending(t, fun) do
     before = Review.binding(t)
@@ -538,6 +558,22 @@ defmodule HalC2.OpenShellReviewPropTest do
     ctx.left
   end
 
+  # A sandbox without a provider is gone once its deletion is told.
+  defp deleted?({:sandbox, name}) do
+    ctx = Process.get(:review_prop)
+
+    if name in ctx.swept do
+      Process.put(:review_prop, %{ctx | swept: List.delete(ctx.swept, name)})
+      true
+    else
+      receive do
+        {:openshell_request, "DeleteSandbox", %{name: ^name}} -> gone(name)
+      after
+        @wait -> false
+      end
+    end
+  end
+
   # A deletion's provider goes after its sandbox, so once it is asked for the sandbox
   # is gone.
   defp deleted?(name) do
@@ -568,6 +604,11 @@ defmodule HalC2.OpenShellReviewPropTest do
         gone(name)
         ctx = Process.get(:review_prop)
         Process.put(:review_prop, %{ctx | deleted: [name | ctx.deleted]})
+        flush()
+
+      {:openshell_request, "DeleteSandbox", %{name: name}} ->
+        ctx = Process.get(:review_prop)
+        Process.put(:review_prop, %{ctx | swept: [name | ctx.swept]})
         flush()
 
       {:openshell_request, _, _} ->
