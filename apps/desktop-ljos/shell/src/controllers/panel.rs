@@ -933,7 +933,7 @@ impl RightPanel {
             self.recent.retain(|k| *k != thread_key);
             self.recent.push(thread_key.clone());
             let (environment, rest) = thread_key.split_once(':').unwrap_or(("", &thread_key));
-            let (thread_id, root, configured, mc) = store::with(engine, |s| {
+            let (thread_id, root, folder, configured, mc) = store::with(engine, |s| {
                 let row = s.thread_row(&thread_key).cloned().unwrap_or_default();
                 let thread_id = text(&row, "id");
                 let thread_id = if thread_id.is_empty() {
@@ -950,6 +950,13 @@ impl RightPanel {
                 if root.is_empty() {
                     root = text(&project, "workspaceRoot").to_owned();
                 }
+                // The project may be a folder inside its repository.
+                let repository = project
+                    .get("repositoryIdentity")
+                    .and_then(|identity| identity.pointer("/rootPath"))
+                    .and_then(Json::as_str)
+                    .unwrap_or("");
+                let folder = repository_folder(repository, text(&project, "workspaceRoot"));
                 // The project's own preview addresses (its scripts'
                 // previewUrl).
                 let configured: Vec<String> = project
@@ -961,10 +968,17 @@ impl RightPanel {
                     .filter(|url| !url.is_empty())
                     .map(str::to_owned)
                     .collect();
-                (thread_id, root, configured, s.mc_serving(environment))
+                (
+                    thread_id,
+                    root,
+                    folder,
+                    configured,
+                    s.mc_serving(environment),
+                )
             });
             let timeline = threads::timeline_of(engine, &thread_key);
             if let Some(diff) = self.diff {
+                ThreadDiff::update(engine, diff, |t| t.set_folder(&folder));
                 ThreadDiff::set_thread(engine, diff, environment, &thread_id, timeline, &root);
             }
             if let Some(agents) = self.agents {
@@ -2208,6 +2222,20 @@ impl Default for PanelObject {
             link_previews: Value::Null,
         }
     }
+}
+
+/// `workspace_root`'s folder inside `repository` ("packages/web"), or empty
+/// when either is unknown, they are the same, or the root is outside it.
+fn repository_folder(repository: &str, workspace_root: &str) -> String {
+    let repository = repository.trim_end_matches('/');
+    if repository.is_empty() || workspace_root.is_empty() {
+        return String::new();
+    }
+    workspace_root
+        .strip_prefix(repository)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .map(|rest| rest.trim_end_matches('/').to_owned())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

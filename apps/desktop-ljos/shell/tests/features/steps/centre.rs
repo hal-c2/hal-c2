@@ -10,13 +10,14 @@ use hal_c2_shell::controllers::panel::RightPanel;
 use hal_c2_shell::controllers::threads::ThreadStore;
 use hal_c2_shell::thread_view::thread_diff::{DiffTab, ThreadDiff};
 use hal_c2_shell::thread_view::timeline::Timeline;
-use ljos::prelude::{ObjectId, Value as Qml};
+use ljos::prelude::{Engine, ObjectId, Value as Qml};
 use serde_json::{Value, json};
 
 use super::stream::{
-    FakeStreams, add_item, describe, followers, look_at_thread, read, role, settle_run, start_run,
-    timeline_object,
+    FakeStreams, add_item, describe, followers, look_at_thread, read, role, set, settle_run,
+    start_run, timeline_object,
 };
+use crate::brick::{self, Brick};
 use crate::harness::{Failure, Outcome, Q, Steps, show, text};
 use crate::world::World;
 use crate::{expect, fail};
@@ -25,6 +26,92 @@ use crate::{expect, fail};
 #[derive(Default)]
 struct FakeTurns {
     replies: Vec<String>,
+    // Since the user last clicked a copy button, in real time: the shell's
+    // clock follows it while a step waits.
+    copied: Option<std::time::Instant>,
+}
+
+/// The open thread's timeline as the Timeline brick draws it.
+fn timeline_brick(world: &mut World) -> Outcome<Brick> {
+    if world.part::<brick::Shown>().0.is_none() {
+        let brick = Brick::new(
+            world,
+            "import QtQuick\nimport HalC2.Bricks\nTimeline {}\n",
+            820.0,
+            1400.0,
+        )?;
+        world.part::<brick::Shown>().0 = Some(brick);
+        let timeline = timeline_object(world)?;
+        let Some(root) = brick.root(world) else {
+            fail!("the timeline brick has no root");
+        };
+        brick.write(world, root, "model", Qml::Object(timeline))?;
+    }
+    brick::shown(world)
+}
+
+fn collect(engine: &Engine, item: ObjectId, name: &str, out: &mut Vec<ObjectId>) {
+    if matches!(engine.read_by_name(item, "objectName"), Qml::String(ref s) if s.as_str() == name) {
+        out.push(item);
+    }
+    for child in engine.children(item) {
+        collect(engine, child, name, out);
+    }
+}
+
+fn str_of(world: &World, item: ObjectId, name: &str) -> String {
+    match world.engine().read_by_name(item, name) {
+        Qml::String(s) => s.as_str().to_owned(),
+        _ => String::new(),
+    }
+}
+
+/// The copy button the timeline draws for `row_id`, or none.
+fn copy_button(world: &World, brick: Brick, row_id: &str) -> Option<ObjectId> {
+    let root = brick.root(world)?;
+    let mut buttons = Vec::new();
+    collect(world.engine(), root, "copyMessage", &mut buttons);
+    buttons.into_iter().find(|&button| {
+        world.engine().read_by_name(button, "visible") == Qml::Bool(true)
+            && str_of(world, button, "rowId") == row_id
+    })
+}
+
+/// What the first reply's copy button says beside itself: empty while it
+/// says nothing.
+fn copy_notice(world: &World, brick: Brick, row_id: &str) -> Vec<String> {
+    let Some(button) = copy_button(world, brick, row_id) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    collect(world.engine(), button, "copyNotice", &mut found);
+    let Some(&notice) = found.first() else {
+        return Vec::new();
+    };
+    if world.engine().read_by_name(notice, "visible") != Qml::Bool(true) {
+        return Vec::new();
+    }
+    let mut said = Vec::new();
+    for name in ["copyNoticeTitle", "copyNoticeReason"] {
+        let mut texts = Vec::new();
+        collect(world.engine(), notice, name, &mut texts);
+        if let Some(&item) = texts.first()
+            && world.engine().read_by_name(item, "visible") == Qml::Bool(true)
+        {
+            said.push(str_of(world, item, "text"));
+        }
+    }
+    said
+}
+
+fn first_reply(world: &mut World) -> String {
+    world
+        .mc
+        .part::<FakeTurns>()
+        .replies
+        .first()
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn thread_key(world: &mut World) -> String {
@@ -90,6 +177,27 @@ pub fn register(steps: &mut Steps) {
             settle_run(world, "completed", 30)
         },
     );
+    steps.step(
+        &format!("a thread in {Q} whose first turn failed but left a ready checkpoint"),
+        |world, c, _| {
+            look_at_thread(world, &c[0])?;
+            let run = start_run(world, 60, "running")?;
+            let reply = add_item(
+                world,
+                "assistant_message",
+                json!({"text": "Turn 1 is done."}),
+            )?;
+            world.mc.part::<FakeTurns>().replies.push(reply);
+            settle_run(world, "failed", 30)?;
+            set(
+                world,
+                "checkpoint",
+                "cp-1",
+                json!({"id": "cp-1", "scopeId": "scope-1", "runId": run,
+                       "appRunOrdinal": 1, "status": "ready"}),
+            )
+        },
+    );
 
     // Copying.
     steps.step("the agent has answered", |world, _, _| {
@@ -104,25 +212,79 @@ pub fn register(steps: &mut Steps) {
     });
     steps.step("the user copies the reply", |world, _, _| {
         world.set_clipboard("");
-        let reply = world
-            .mc
-            .part::<FakeTurns>()
-            .replies
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        let timeline = timeline_object(world)?;
-        let copied = world
-            .engine()
-            .invoke_by_name(timeline, "copy", &[Qml::from(reply.as_str())])
-            .map_err(|e| Failure(format!("copy: {e:?}")))?;
-        expect!(
-            matches!(copied, Qml::Bool(true)),
-            "the reply cannot be copied; {}",
-            describe(world)
-        );
+        let reply = first_reply(world);
+        let brick = timeline_brick(world)?;
+        let wanted = reply.clone();
+        world.wait_for_with(
+            move |w| copy_button(w, brick, &wanted).is_some(),
+            |w| format!("the reply's copy button; {}", describe(w)),
+        )?;
+        let Some(button) = copy_button(world, brick, &reply) else {
+            fail!("the reply has no copy button; {}", describe(world));
+        };
+        let (x, y) = brick.at(world, button, 0.5, 0.5)?;
+        world.click_at(x, y)?;
+        world.mc.part::<FakeTurns>().copied = Some(std::time::Instant::now());
         Ok(())
     });
+    steps.step(
+        "the copy button shows that the reply was copied",
+        |world, _, _| {
+            let reply = first_reply(world);
+            let brick = timeline_brick(world)?;
+            let button = copy_button(world, brick, &reply);
+            expect!(
+                button.is_some_and(|b| str_of(world, b, "icon") == "check"),
+                "the copy button shows no check"
+            );
+            let said = copy_notice(world, brick, &reply);
+            expect!(
+                said == ["Copied!"],
+                "beside the copy button: [{}]",
+                said.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "that confirmation goes away after about a second",
+        |world, _, _| {
+            let reply = first_reply(world);
+            let brick = timeline_brick(world)?;
+            let wanted = reply.clone();
+            world.wait_for("the confirmation to go away", move |w| {
+                copy_notice(w, brick, &wanted).is_empty()
+            })?;
+            let copied = world.mc.part::<FakeTurns>().copied;
+            let shown = copied.map_or(0, |at| at.elapsed().as_millis());
+            expect!(
+                (800..3000).contains(&shown),
+                "the confirmation went away after {shown}ms"
+            );
+            let button = copy_button(world, brick, &reply);
+            expect!(
+                button.is_some_and(|b| str_of(world, b, "icon") == "copy"),
+                "the copy button still shows a check"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user sees a {Q} message beside the copy button with the reason"),
+        |world, c, _| {
+            let reply = first_reply(world);
+            let brick = timeline_brick(world)?;
+            let said = copy_notice(world, brick, &reply);
+            expect!(
+                said.len() == 2
+                    && said[0] == c[0]
+                    && said[1] == "The clipboard could not be written.",
+                "beside the copy button: [{}]",
+                said.join(", ")
+            );
+            Ok(())
+        },
+    );
     steps.step("the reply's markdown is on the clipboard", |world, _, _| {
         let copied = world.clipboard();
         expect!(

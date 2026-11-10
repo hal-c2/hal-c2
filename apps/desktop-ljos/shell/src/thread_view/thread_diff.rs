@@ -47,7 +47,9 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use ljos::prelude::QmlValue;
-use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
+use ljos::prelude::{
+    Application, ApplicationState, Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl,
+};
 use ljos::prelude::{EngineError, RowKey};
 use regex::Regex;
 use serde_json::json;
@@ -233,6 +235,9 @@ pub struct DiffTab {
     /// base, latest picked.
     remembered: HashMap<String, (i32, String, bool)>,
     cwd: String,
+    /// The project's folder inside its repository ("packages/web"), or
+    /// empty when the project is the repository.
+    folder: String,
     /// The checkout's refs for the base picker, and how often they were
     /// read.
     refs: Vec<Json>,
@@ -289,6 +294,7 @@ impl Default for DiffTab {
             latest_picked: false,
             remembered: HashMap::new(),
             cwd: String::new(),
+            folder: String::new(),
             refs: Vec::new(),
             refs_read: 0,
             base_query: String::new(),
@@ -1386,11 +1392,22 @@ impl DiffTab {
         });
     }
 
+    /// The project's folder inside its repository, empty when the project
+    /// is the repository itself.
+    pub fn set_folder(&mut self, folder: &str) {
+        folder.clone_into(&mut self.folder);
+    }
+
     /// A diff path as the thread's workspace has it: the diff's paths are
-    /// the repository's, and the shell knows no folder of the project
-    /// inside its repository yet, so every path is the workspace's.
+    /// the repository's, so a project in a folder of its repository drops
+    /// that folder, and a file outside it is empty.
     pub fn workspace_path<'a>(&self, path: &'a str) -> &'a str {
-        path
+        if self.folder.is_empty() {
+            return path;
+        }
+        path.strip_prefix(self.folder.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or("")
     }
 
     pub fn take_effects(&mut self) -> Vec<Effect> {
@@ -1668,6 +1685,17 @@ impl ThreadDiff {
                 ThreadDiff::update(engine, obj, |t| t.set_wrap(wrap));
             }
         })?;
+        // Back from working elsewhere, the checkout may have moved on with
+        // nothing in the thread to say so.
+        if let Ok(app) = engine.singleton::<Application>() {
+            engine.connect_by_name(app, "stateChanged", move |engine, _| {
+                let active = matches!(engine.read_by_name(app, "state"),
+                    Value::Int(state) if state == ApplicationState::Active.qt_value());
+                if active {
+                    ThreadDiff::update(engine, obj, DiffTab::follow);
+                }
+            })?;
+        }
         Ok(obj)
     }
 

@@ -78,6 +78,7 @@ fn publish(mc: &mut FakeMc) -> Outcome {
                 "verdict",
                 "error",
                 "publishError",
+                "version",
             ] {
                 if let Some(value) = review.get(field) {
                     fields.insert(field.into(), value.clone());
@@ -125,6 +126,7 @@ fn finish(review: &mut Json, status: &str, verdict: &str) {
     review["status"] = json!(status);
     review["verdict"] = json!(verdict);
     review["summary"] = json!("The limits are not checked per user.");
+    review["version"] = json!("v1");
     review["comments"] = json!([
         comment("c1", 12, "This counts every user together."),
         comment("c2", 30, "The window never resets.")
@@ -175,6 +177,21 @@ fn answer(mc: &mut FakeMc, rpc: &Rpc) -> Outcome {
         mc.refuse(rpc, &format!("no review {at}"));
         return Ok(());
     };
+    if method == "preview" {
+        // What publishing would post: here the summary as the body, and the
+        // comments kept.
+        let comments: Vec<Json> = review["comments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|each| each["dismissed"] != json!(true))
+            .map(|each| json!({"path": each["path"], "line": each["line"], "body": each["body"]}))
+            .collect();
+        let answer = json!({"version": review["version"], "verdict": review["verdict"],
+                            "body": review["summary"], "comments": comments});
+        mc.reply(rpc, answer);
+        return Ok(());
+    }
     if method == "dismiss" {
         let mut comments = review["comments"].as_array().cloned().unwrap_or_default();
         for each in &mut comments {
@@ -186,7 +203,23 @@ fn answer(mc: &mut FakeMc, rpc: &Rpc) -> Outcome {
     } else if method == "retry" {
         review["status"] = json!("queued");
         review["elsewhere"] = Json::Null;
+    } else if method == "approve" {
+        review["approved"] = input["headSha"].clone();
+        review["status"] = json!("queued");
+    } else if method == "unapprove" {
+        review["approved"] = Json::Null;
+        if review["status"] == json!("queued") {
+            review["status"] = json!("ready");
+        }
     } else if method == "publish" {
+        // What is posted is the review the user saw.
+        if input["version"] != review["version"] || input["verdict"] != review["verdict"] {
+            mc.refuse(
+                rpc,
+                &format!("The review of {at} changed since you looked at it."),
+            );
+            return Ok(());
+        }
         review["status"] = json!("published");
         review["publishedAt"] = json!("2026-10-07T09:30:00Z");
     } else {
@@ -393,7 +426,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
-        "the user can publish it or dismiss comments",
+        "the user can dismiss comments, and publish it once shown how it is posted",
         |world, _, _| {
             let brick = shell(world)?;
             // A changed review draws its comments again.
@@ -417,26 +450,30 @@ pub fn register(steps: &mut Steps) {
                 "the MC was asked {}",
                 show(&dismissed)
             );
+            // Publishing first shows how the post goes, and posts only what
+            // the user confirms.
             let publish_button = shown_named(world, "codeReviewPublish")?;
             click(world, publish_button)?;
+            let at = last_review(&mut world.mc)?;
+            let verdict = text(&state(&mut world.mc).reviews[&at]["verdict"]);
             world.wait_for_with(
-                // "Published 10/7 11:30 AM": with when.
-                |w| {
-                    text_now(w, "codeReviewStatus", brick)
-                        .strip_prefix("Published ")
-                        .is_some_and(|when| !when.trim().is_empty())
-                },
-                |w| {
-                    format!(
-                        "the status says \"{}\" with the review published {} time(s)",
-                        text_now(w, "codeReviewStatus", brick),
-                        asked(&w.mc, "publish").len()
-                    )
-                },
+                |w| text_now(w, "codeReviewPublishVerdict", brick).starts_with("Posted as: "),
+                |w| text_now(w, "codeReviewPublishVerdict", brick),
             )?;
             expect!(
-                asked(&world.mc, "publish") == [json!({"key": key(13)})],
-                "the review was not published once"
+                asked(&world.mc, "publish").is_empty(),
+                "the review was published before the user confirmed"
+            );
+            let confirm = shown_named(world, "codeReviewPublishConfirm")?;
+            click(world, confirm)?;
+            world.wait_for_with(
+                |w| text_now(w, "codeReviewStatus", brick).starts_with("Published"),
+                |w| text_now(w, "codeReviewStatus", brick),
+            )?;
+            expect!(
+                asked(&world.mc, "publish")
+                    == [json!({"key": key(13), "version": "v1", "verdict": verdict})],
+                "the review was not published once, as shown"
             );
             Ok(())
         },
@@ -472,6 +509,165 @@ pub fn register(steps: &mut Steps) {
             expect!(
                 ran.contains("mix test: 412 passed"),
                 "what ran reads {ran}"
+            );
+            Ok(())
+        },
+    );
+
+    steps.step(
+        &format!("#(\\d+) by {Q}, who is not a member or collaborator, is listed"),
+        |world, c, _| {
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            let review = add(&mut world.mc, number, "ready", "Add rate limits");
+            review["author"] = json!(c[1]);
+            review["untrusted"] = json!(format!(
+                "Opened by {}, who is not a member or collaborator of the repository.",
+                c[1]
+            ));
+            publish(&mut world.mc)
+        },
+    );
+    steps.step(
+        &format!("it says {Q} is not a member or collaborator"),
+        |world, c, _| {
+            let note = text_of(world, "codeReviewProblem")?;
+            expect!(
+                note.contains(&c[0]) && note.contains("not a member or collaborator"),
+                "the review says {note}"
+            );
+            world.sync()?;
+            let brick = shell(world)?;
+            let retry = brick.find(world, "codeReviewRetry")?;
+            expect!(
+                retry.is_some_and(|retry| !brick.flag(world, retry, "visible")),
+                "it can be reviewed without an approval"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user can approve #(\\d+) at the commit shown, and withdraw the approval",
+        |world, c, _| {
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            let approve = shown_named(world, "codeReviewApprove")?;
+            click(world, approve)?;
+            wait_text(world, "codeReviewStatus", "Queued")?;
+            let approved = asked(&world.mc, "approve")
+                .first()
+                .cloned()
+                .unwrap_or(Json::Null);
+            expect!(
+                approved == json!({"key": key(number), "headSha": format!("abc{number}")}),
+                "the MC was asked {}",
+                show(&approved)
+            );
+            let unapprove = shown_named(world, "codeReviewUnapprove")?;
+            click(world, unapprove)?;
+            wait_text(world, "codeReviewStatus", "Not reviewed")?;
+            expect!(
+                asked(&world.mc, "unapprove") == [json!({"key": key(number)})],
+                "the approval was not withdrawn once"
+            );
+            shown_named(world, "codeReviewApprove")?;
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("#(\\d+) by {Q}, who is not a member or collaborator, is listed with an approval of an earlier commit"),
+        |world, c, _| {
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            let review = add(&mut world.mc, number, "ready", "Add rate limits");
+            review["author"] = json!(c[1]);
+            review["untrusted"] = json!(format!(
+                "Opened by {}, who is not a member or collaborator of the repository.",
+                c[1]
+            ));
+            review["approved"] = json!(format!("old{number}"));
+            publish(&mut world.mc)
+        },
+    );
+    steps.step(
+        "the user can withdraw the approval of #(\\d+)",
+        |world, c, _| {
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            let unapprove = shown_named(world, "codeReviewUnapprove")?;
+            click(world, unapprove)?;
+            world.wait_for_with(
+                |w| !asked(&w.mc, "unapprove").is_empty(),
+                |_| "the withdrawal to be asked".to_owned(),
+            )?;
+            expect!(
+                asked(&world.mc, "unapprove") == [json!({"key": key(number)})],
+                "the approval was not withdrawn once"
+            );
+            world.sync()?;
+            let brick = shell(world)?;
+            let withdraw = brick.find(world, "codeReviewUnapprove")?;
+            expect!(
+                withdraw.is_some_and(|item| !brick.flag(world, item, "visible")),
+                "the approval is still offered for withdrawal"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "#(\\d+) is pushed to while the page is open",
+        |world, c, _| {
+            wait_text(
+                world,
+                "codeReviewApproveCommit",
+                &format!("At commit abc{}", c[0]),
+            )?;
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            state(&mut world.mc)
+                .reviews
+                .get_mut(&key(number))
+                .map(|review| {
+                    review["headSha"] = json!(format!("def{number}"));
+                });
+            publish(&mut world.mc)
+        },
+    );
+    steps.step(
+        "the page says #(\\d+) was pushed since the user opened it",
+        |world, c, _| {
+            wait_text(
+                world,
+                "codeReviewApproveCommit",
+                &format!(
+                    "Pushed since you opened it: now at def{n}, not abc{n}",
+                    n = c[0]
+                ),
+            )
+        },
+    );
+    steps.step(
+        "the user approves #(\\d+) only at the new commit, once they have taken it in",
+        |world, c, _| {
+            let number = c[0].parse::<i64>().unwrap_or(0);
+            // The first click takes in the new commit and approves nothing.
+            let approve = shown_named(world, "codeReviewApprove")?;
+            click(world, approve)?;
+            wait_text(
+                world,
+                "codeReviewApproveCommit",
+                &format!("At commit def{number}"),
+            )?;
+            expect!(
+                asked(&world.mc, "approve").is_empty(),
+                "a commit the user had not seen was approved"
+            );
+            let approve = shown_named(world, "codeReviewApprove")?;
+            click(world, approve)?;
+            wait_text(world, "codeReviewStatus", "Queued")?;
+            let approved = asked(&world.mc, "approve")
+                .first()
+                .cloned()
+                .unwrap_or(Json::Null);
+            expect!(
+                approved == json!({"key": key(number), "headSha": format!("def{number}")}),
+                "the MC was asked {}",
+                show(&approved)
             );
             Ok(())
         },
@@ -577,6 +773,95 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+
+    steps.step(
+        "the user publishes the review from above the conversation",
+        |world, _, _| {
+            let header = shown_named(world, "codeReviewHeader")?;
+            let publish_button = part_of(world, header, "codeReviewPublish")?;
+            click(world, publish_button)
+        },
+    );
+    steps.step(
+        "the summary and comments that will be posted are shown, and nothing is posted yet",
+        |world, _, _| {
+            wait_text(
+                world,
+                "codeReviewConfirmBody",
+                "The limits are not checked per user.",
+            )?;
+            for (index, body) in [
+                (0, "This counts every user together."),
+                (1, "The window never resets."),
+            ] {
+                let shown = shown_named(world, &format!("codeReviewConfirmComment:{index}"))?;
+                expect!(
+                    draws_text(world, shown, body)?,
+                    "comment {index} is not shown"
+                );
+            }
+            expect!(
+                asked(&world.mc, "preview") == [json!({"key": key(13)})],
+                "what will be posted was not read once"
+            );
+            expect!(
+                asked(&world.mc, "publish").is_empty(),
+                "the review was published before the user confirmed"
+            );
+            Ok(())
+        },
+    );
+    steps.step("the review changes while they are shown", |world, _, _| {
+        // Another of the user's devices dismisses a comment.
+        let at = last_review(&mut world.mc)?;
+        if let Some(review) = state(&mut world.mc).reviews.get_mut(&at) {
+            if let Some(second) = review["comments"].as_array_mut().and_then(|c| c.get_mut(1)) {
+                second["dismissed"] = json!(true);
+            }
+            review["version"] = json!("v2");
+        }
+        publish(&mut world.mc)
+    });
+    steps.step("what is shown is read again", |world, _, _| {
+        world.wait_for_with(
+            |w| asked(&w.mc, "preview").len() == 2,
+            |_| "what will be posted to be read again".to_owned(),
+        )?;
+        let brick = shell(world)?;
+        world.wait_for_with(
+            |w| {
+                let gone = brick.find(w, "codeReviewConfirmComment:1");
+                let kept = brick.find(w, "codeReviewConfirmComment:0");
+                (match gone {
+                    Ok(None) => true,
+                    Ok(Some(item)) => !brick.flag(w, item, "visible"),
+                    Err(_) => false,
+                }) && matches!(kept, Ok(Some(_)))
+            },
+            |_| "the dismissed comment to leave what is shown".to_owned(),
+        )
+    });
+    steps.step("the user confirms what will be posted", |world, _, _| {
+        let confirm = shown_named(world, "codeReviewConfirmPublishButton")?;
+        click(world, confirm)
+    });
+    steps.step("the review is published as it was shown", |world, _, _| {
+        let expected = vec![json!({"key": key(13), "version": "v2", "verdict": "approve"})];
+        world.wait_for_with(
+            |w| asked(&w.mc, "publish") == expected,
+            |w| {
+                format!(
+                    "the MC to be asked to publish what was shown, not {}",
+                    show(
+                        &asked(&w.mc, "publish")
+                            .first()
+                            .cloned()
+                            .unwrap_or(Json::Null)
+                    )
+                )
+            },
+        )
+    });
 
     steps.step(&format!("{Q} shows reviews as {Q}"), |world, c, _| {
         state(&mut world.mc).settings["display"] = json!(c[1]);
