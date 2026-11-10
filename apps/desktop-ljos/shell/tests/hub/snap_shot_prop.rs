@@ -70,7 +70,7 @@ impl World {
         let hub = on_threads_with(launch_in("snap-shot-prop"), &THREADS);
         hub.engine.set_wall_clock_origin(Some(1_790_000_000_000.0));
         let desktop = Rc::new(RefCell::new(Desktop {
-            session: portal("hyprland"),
+            session: portal("gnome"),
             ..Desktop::default()
         }));
         install(&hub, &desktop);
@@ -100,6 +100,8 @@ impl World {
                 }
             }
             Op::RecordStart => {
+                // Recording lives on the Snap Shot panel: it holds until the
+                // window goes elsewhere (SnapShotController::follow).
                 hub.dispatch("snapShot.record.start", json!({}));
                 model.recording = true;
             }
@@ -129,6 +131,10 @@ impl World {
             }
             Op::Open(thread) => {
                 open(hub, THREADS[thread]);
+                // Going to another thread leaves wherever recording began.
+                if thread != model.open {
+                    model.recording = false;
+                }
                 model.open = thread;
             }
         }

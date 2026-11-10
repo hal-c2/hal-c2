@@ -60,11 +60,11 @@ fn a_toast_shows_newest_first_with_its_actions_lesser_first() {
         hub.published("toasts"),
         json!({"expanded": false, "items": [
             {"id": "native:2", "type": "warning", "title": "Newer", "description": "Why", "updateKey": 0,
-             "actions": [
+             "rows": [], "actions": [
                 {"id": "secondary", "label": "Remove project", "primary": false},
                 {"id": "primary", "label": "Retry", "primary": true},
              ]},
-            {"id": "native:1", "type": "info", "title": "Older", "description": null, "updateKey": 0, "actions": []},
+            {"id": "native:1", "type": "info", "title": "Older", "description": null, "updateKey": 0, "rows": [], "actions": []},
         ]})
     );
 }
@@ -459,7 +459,7 @@ impl Model {
                     .collect();
                 json!({"id": t.id, "type": t.kind, "title": t.title,
                        "description": if t.description.is_empty() { serde_json::Value::Null } else { json!(t.description) },
-                       "updateKey": t.revision, "actions": actions})
+                       "updateKey": t.revision, "rows": [], "actions": actions})
             })
             .collect();
         json!({"items": items, "expanded": self.expanded})

@@ -600,7 +600,8 @@ const PATHS: [&str; 2] = ["a.png", "b.svg"];
 
 /// IdentityController's rule for one project: the favicon asked for is the
 /// one its row names, asked once while its environment is online, and an
-/// answer counts only while it is still what was asked.
+/// answer counts only while it is still what was asked: found, it shows;
+/// missing, the monogram does.
 #[derive(Default)]
 struct Model {
     asked: Option<String>,
@@ -634,8 +635,10 @@ proptest! {
                         "/assets/project-favicon-missing".to_owned()
                     };
                     hub.mc.reply(&hub.engine, index, Ok(json!({"relativeUrl": relative})));
-                    if found && model.asked.as_deref() == Some(asked.as_str()) {
-                        model.url = relative;
+                    // A missing favicon for what is still asked shows the
+                    // monogram, even over an earlier answer for the same.
+                    if model.asked.as_deref() == Some(asked.as_str()) {
+                        model.url = if found { relative } else { String::new() };
                     }
                 }
             }

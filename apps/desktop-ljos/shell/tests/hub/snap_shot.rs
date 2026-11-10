@@ -262,7 +262,9 @@ fn a_picker_desktop_asks_for_a_window_each_time() {
 
 #[test]
 fn a_recorded_shortcut_is_checked_saved_and_bound() {
-    let (hub, desktop) = rig("record", portal("hyprland"));
+    // Hyprland and Niri keep the binding in their own config; elsewhere a
+    // portal binds what HAL-C2 records.
+    let (hub, desktop) = rig("record", portal("gnome"));
     hub.dispatch("snapShot.enable", json!({"on": true}));
     // The saved pair cannot be bound on a portal.
     assert!(desktop.borrow().bound.is_none());
@@ -312,7 +314,7 @@ fn a_recorded_shortcut_is_checked_saved_and_bound() {
 
 #[test]
 fn a_shortcut_the_system_or_the_app_uses_cannot_be_saved() {
-    let (hub, _) = rig("conflicts", portal("hyprland"));
+    let (hub, _) = rig("conflicts", portal("gnome"));
     hub.dispatch("snapShot.enable", json!({"on": true}));
     hub.dispatch("snapShot.record.start", json!({}));
     // Ctrl+C alone: the terminals' interrupt.

@@ -601,6 +601,12 @@ fn ticking_a_markdown_task_writes_the_file() {
     f.answer(0, listing(&[]));
     f.open_with("todo.md", "- [ ] a\n- [x] b\n");
     f.invoke("toggleTask", &[Value::from(0)]);
+    // The tick waits on a fresh read: the file may have changed underneath.
+    assert!(f.asked("projects.writeFile").is_empty());
+    f.reply(
+        "projects.readFile",
+        Ok(json!({ "contents": "- [ ] a\n- [x] b\n" })),
+    );
     assert_eq!(
         f.asked("projects.writeFile")[0]["contents"],
         "- [x] a\n- [x] b\n"

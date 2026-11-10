@@ -237,23 +237,24 @@ fn the_panel_is_resized_and_reset() {
 }
 
 #[test]
-fn the_panel_fills_the_window_while_open() {
+fn the_active_tab_opens_in_centre_and_comes_back() {
     let hub = hub(&["t1"]);
     open(&hub, "t1");
-    // Closed, it stays beside the thread.
+    // Closed with nothing staged, there is nothing to open in centre.
     run(&hub, "rightPanel.toggleMaximized");
-    assert_eq!(panel(&hub)["maximized"], false);
+    assert_eq!(panel(&hub)["stage"]["focus"], false);
     hub.dispatch("rightPanel.toggle", json!({}));
+    let active = panel(&hub)["activeId"].as_str().unwrap().to_owned();
+    assert!(!active.is_empty());
     run(&hub, "rightPanel.toggleMaximized");
-    assert_eq!(panel(&hub)["maximized"], true);
+    assert_eq!(panel(&hub)["stage"]["focus"], true);
+    assert_eq!(panel(&hub)["stage"]["tabs"][0]["id"], json!(active));
+    assert_eq!(panel(&hub)["stage"]["tabs"].as_array().unwrap().len(), 1);
+    // Again, the tab comes back to the open panel and the timeline shows.
     hub.dispatch("rightPanel.toggleMaximized", json!({}));
-    assert_eq!(panel(&hub)["maximized"], false);
-    // Closing it brings it back beside the thread.
-    hub.dispatch("rightPanel.toggleMaximized", json!({}));
-    hub.dispatch("rightPanel.toggle", json!({}));
-    hub.dispatch("rightPanel.toggle", json!({}));
+    assert_eq!(panel(&hub)["stage"]["focus"], false);
     assert_eq!(panel(&hub)["isOpen"], true);
-    assert_eq!(panel(&hub)["maximized"], false);
+    assert_eq!(panel(&hub)["activeId"], json!(active));
 }
 
 #[test]
@@ -883,13 +884,16 @@ fn the_panels_come_back_with_the_app() {
         serde_json::from_slice(&std::fs::read(dir.path().join("shell-panel.json")).unwrap())
             .unwrap();
     assert_eq!(stored["width"], 700);
+    let stage = json!({"chatWidth": 0, "focus": false, "focused": 0, "layout": "single",
+        "panes": [""], "tabs": []});
     assert_eq!(
         stored["threads"],
         json!([
             {"threadKey": "env-1:t1", "open": true, "tabs": ["files", "diff"],
-                "active": "files", "details": false, "dismissed": []},
+                "active": "files", "details": false, "dismissed": [], "stage": stage,
+                "titles": {}},
             {"threadKey": "env-1:t2", "open": false, "tabs": [], "active": "",
-                "details": true, "dismissed": []},
+                "details": true, "dismissed": [], "stage": stage, "titles": {}},
         ])
     );
     let hub = hub_with(launch(dir.path()), &rows(&["t1", "t2"]));
@@ -1154,10 +1158,9 @@ mod prop {
                 p
             );
         } else {
-            prop_assert_eq!(
-                &p["maximized"],
-                &json!(false),
-                "a closed panel fills nothing: {}",
+            prop_assert!(
+                p["stage"]["focus"] == false || !p["stage"]["tabs"].as_array().unwrap().is_empty(),
+                "an empty stage is not focused: {}",
                 p
             );
         }

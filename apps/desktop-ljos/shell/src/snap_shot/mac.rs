@@ -921,8 +921,11 @@ mod tests {
 
     #[test]
     fn the_helper_sits_below_the_list_right_of_the_sidebar() {
+        let bounds = Helper::bounds_beside(Rect::new(100, 100, 1000, 600));
+        assert_eq!(bounds, Rect::new(428, 544, 560, 140));
+        // A narrow window keeps the insets beside the panel.
         let bounds = Helper::bounds_beside(Rect::new(100, 100, 800, 600));
-        assert_eq!(bounds, Rect::new(408, 544, 560, 140));
+        assert_eq!(bounds, Rect::new(332, 544, 552, 140));
     }
 
     #[test]

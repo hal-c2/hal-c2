@@ -55,7 +55,7 @@ fn the_thread_follows_its_setup_on_the_member_serving_it() {
         state(&hub),
         json!({"threadKey": "env-1:t1", "phase": "running", "label": "Setting up worktree…",
         "error": "", "branch": "hal/feature", "baseRef": "main", "worktreePath": "/w/p-feature",
-        "script": "Install", "canCancel": true, "detailsOpen": false,
+        "script": "Install", "canCancel": true, "canRetry": false, "detailsOpen": false,
         "stages": [
             {"id": "fetch", "label": "Fetch base branch", "status": "done", "detail": "origin/main", "tail": []},
             {"id": "checkout", "label": "Check out files", "status": "running", "detail": "",

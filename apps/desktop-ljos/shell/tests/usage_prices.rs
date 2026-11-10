@@ -76,8 +76,11 @@ impl World {
             move |env, method, payload| {
                 let mut hosts = hosts.borrow_mut();
                 match method {
-                    // The shell reports activity on its own; not under test.
-                    "server.reportClientActivity" => Ok(json!({})),
+                    // The shell reports activity and its update status on its own; not
+                    // under test.
+                    "server.reportClientActivity" | "server.reportDesktopUpdateStatus" => {
+                        Ok(json!({}))
+                    }
                     "hal-c2.readSettings" => Ok(json!({
                         "settings": hosts.settings[env],
                         "version": hosts.version,
@@ -128,6 +131,8 @@ impl World {
             .subscribed()
             .into_iter()
             .filter(|shape| shape.get("usageLimitsCommand").is_none())
+            // The desktop update controller follows its own shape.
+            .filter(|shape| shape["type"] != "desktopUpdateControl")
             .collect()
     }
 
@@ -161,7 +166,7 @@ impl World {
             .calls
             .borrow()
             .iter()
-            .filter(|(_, method, _)| method != "server.reportClientActivity")
+            .filter(|(_, method, _)| !method.starts_with("server.report"))
             .cloned()
             .collect()
     }
@@ -216,7 +221,7 @@ fn it_is_closed_until_opened_and_follows_the_chosen_environments() {
     // Edits to a closed dialog are taken and ignored.
     w.edit("m", INPUT, "1");
     assert_eq!(prices(&w.engine)["rows"], json!([]));
-    assert!(w.followed().is_empty());
+    assert_eq!(w.followed(), Vec::<Json>::new());
 
     w.act("usagePrices.open", json!({}));
     assert_eq!(w.followed(), [shape("env-1")]);

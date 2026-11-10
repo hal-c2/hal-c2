@@ -4715,6 +4715,19 @@
               ]
             },
             {
+              "name": "attachmentSigned",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                },
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ]
+            },
+            {
               "name": "earlierWanted",
               "parameters": [
                 {
@@ -7133,6 +7146,18 @@
               "constant": false,
               "group": false,
               "notify": "readOnlyReasonChanged"
+            },
+            {
+              "name": "outsideProject",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "outsideProjectChanged"
             },
             {
               "name": "editing",

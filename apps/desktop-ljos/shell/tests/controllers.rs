@@ -421,16 +421,26 @@ fn the_window_reports_itself_when_the_mc_is_ready_and_every_report_interval() {
         mc.methods().is_empty(),
         "nothing to tell an MC that is not there"
     );
+    // What the window says of itself; the desktop's update status is
+    // reported on ready too, by its own controller.
+    let reports = |mc: &FakeMc| {
+        mc.calls
+            .borrow()
+            .iter()
+            .filter(|(_, method, _)| method == "server.reportClientActivity")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     mc.set_ready(&engine, true);
-    assert_eq!(mc.methods(), ["server.reportClientActivity"]);
-    let (environment, _, payload) = mc.calls.borrow()[0].clone();
+    assert_eq!(reports(&mc).len(), 1);
+    let (environment, _, payload) = reports(&mc)[0].clone();
     assert_eq!(environment, "env-1");
     assert_eq!(payload["clientKind"], json!("desktop-renderer"));
     assert_eq!(payload["environmentId"], json!("env-1"));
     window.advance(REPORT_MS as u64).unwrap();
-    assert_eq!(mc.methods().len(), 2);
+    assert_eq!(reports(&mc).len(), 2);
     // Gone: the timer keeps running and says nothing.
     mc.set_ready(&engine, false);
     window.advance(REPORT_MS as u64).unwrap();
-    assert_eq!(mc.methods().len(), 2);
+    assert_eq!(reports(&mc).len(), 2);
 }

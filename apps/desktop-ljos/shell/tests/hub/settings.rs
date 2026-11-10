@@ -509,8 +509,10 @@ fn the_page_states_the_project_and_environment_being_edited() {
     // This machine first, the others by name.
     assert_eq!(
         scope["environments"],
-        json!([{"id": "env-1", "label": "Laptop", "online": true},
-               {"id": "env-2", "label": "Build box", "online": true}])
+        json!([{"id": "env-1", "label": "Laptop", "online": true, "capabilities": null,
+                "readable": false},
+               {"id": "env-2", "label": "Build box", "online": true, "capabilities": null,
+                "readable": false}])
     );
     assert_eq!(
         scope["projects"],

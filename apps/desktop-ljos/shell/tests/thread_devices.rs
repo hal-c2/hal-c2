@@ -645,11 +645,21 @@ fn a_proxy_that_turns_the_video_away_is_retried() {
 fn a_stream_the_mc_refuses_is_an_error() {
     let t = tab();
     t.watching(&[PIXEL_9], &[PIXEL], PIXEL);
-    let refused = StreamEnd {
+    let refused = || StreamEnd {
         status: Some(401),
         ..StreamEnd::default()
     };
-    assert!(t.mc.end(&t.engine, t.stream_at("/serve-emu/ws"), refused));
+    // Its access may simply have run out: a fresh ticket is minted, and the
+    // stream starts over with it.
+    assert!(t.mc.end(&t.engine, t.stream_at("/serve-emu/ws"), refused()));
+    assert_eq!(t.text("status"), "connecting");
+    t.mc.answer(
+        &t.engine,
+        "POST /api/auth/websocket-ticket",
+        Ok(json!({"ticket": "fresh"})),
+    );
+    // Refused again, it is an error.
+    assert!(t.mc.end(&t.engine, t.stream_at("/serve-emu/ws"), refused()));
     assert_eq!(t.text("status"), "error");
     assert_eq!(t.text("detail"), stream::REFUSED);
     assert!(t.mc.open_now().is_empty());
@@ -660,6 +670,9 @@ fn an_ios_video_request_the_mc_refuses_is_an_error() {
     let t = tab();
     t.watching(&[IPHONE_17], &[IPHONE], IPHONE);
     t.emit("stream.avcc", StreamEvent::Opened { status: 403 });
+    assert_eq!(t.text("status"), "connecting");
+    // The fresh ticket cannot be minted either.
+    t.mc.answer(&t.engine, "POST /api/auth/websocket-ticket", Err("refused"));
     assert_eq!(t.text("status"), "error");
     assert_eq!(t.text("detail"), stream::REFUSED);
 }

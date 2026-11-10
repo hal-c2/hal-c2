@@ -13,6 +13,9 @@ use crate::Hub;
 
 const UPDATE: &str = "server.updateProvider";
 
+/// An MC the shell follows the cluster of.
+const ORIGIN: &str = "http://127.0.0.1:1";
+
 fn config_dir(test: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join("hub-provider-update")
@@ -22,10 +25,26 @@ fn config_dir(test: &str) -> PathBuf {
 }
 
 fn hub(test: &str) -> Hub {
-    Hub::with(Launch {
+    synced(Hub::with(Launch {
         config_dir: Some(config_dir(test)),
+        mc_origin: Some(ORIGIN.into()),
         ..Launch::default()
-    })
+    }))
+}
+
+/// A hub whose store has synchronized with its one MC: offers wait for the
+/// cluster's members, so one machine is not offered alone and then again.
+fn synced(hub: Hub) -> Hub {
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": [
+            {"mc": "a", "online": true, "epoch": "e", "rev": 1,
+             "environment": {"environmentId": "env-1"}},
+        ], "rows": []}),
+    );
+    hub
 }
 
 fn behind(driver: &str, latest: &str) -> Json {
@@ -132,9 +151,10 @@ fn closing_the_prompt_dismisses_those_versions_for_good() {
     let dir = config_dir("dismissed");
     let launch = || Launch {
         config_dir: Some(dir.clone()),
+        mc_origin: Some(ORIGIN.into()),
         ..Launch::default()
     };
-    let first = Hub::with(launch());
+    let first = synced(Hub::with(launch()));
     providers(&first, json!([behind("codex", "1.2.0")]));
     let id = items(&first)[0]["id"].as_str().unwrap().to_owned();
     first.dispatch("notification.dismiss", json!({"id": id}));
@@ -144,7 +164,7 @@ fn closing_the_prompt_dismisses_those_versions_for_good() {
     );
 
     // A later run of the shell does not offer them again, but newer ones.
-    let second = Hub::with(launch());
+    let second = synced(Hub::with(launch()));
     providers(&second, json!([behind("codex", "1.2.0")]));
     assert!(items(&second).is_empty());
     providers(&second, json!([behind("codex", "1.3.0")]));
@@ -168,7 +188,9 @@ fn update_runs_the_command_and_reports_success() {
     providers(&hub, json!([behind("codex", "1.2.0")]));
     let id = items(&hub)[0]["id"].as_str().unwrap().to_owned();
     press(&hub, &id, "primary");
-    assert!(items(&hub).is_empty(), "the prompt is gone");
+    // The prompt gives way to a loading toast until the MC answers.
+    assert_eq!(titles(&hub), ["Updating provider"]);
+    assert_eq!(items(&hub)[0]["type"], "loading");
     assert_eq!(
         hub.mc.calls.borrow().last().unwrap().2,
         json!({"provider": "codex", "instanceId": "codex"})
@@ -202,11 +224,20 @@ fn update_waits_for_the_provider_to_finish_updating() {
     running["updateState"] = json!({"status": "running"});
     hub.mc
         .answer(&hub.engine, UPDATE, Ok(json!({"providers": [running]})));
-    assert!(items(&hub).is_empty(), "nothing is reported while it runs");
+    assert_eq!(
+        titles(&hub),
+        ["Updating provider"],
+        "nothing is reported while it runs"
+    );
 
     let mut failed = behind("codex", "1.2.0");
     failed["updateState"] = json!({"status": "failed", "message": "EACCES"});
     providers(&hub, json!([failed]));
+    assert_eq!(
+        items(&hub).len(),
+        1,
+        "the loading toast turns into the result"
+    );
     let toast = &items(&hub)[0];
     assert_eq!(toast["type"], "error");
     assert_eq!(toast["title"], "Provider update failed");

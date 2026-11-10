@@ -15,6 +15,7 @@ use crate::composer::on_threads;
 
 const SEARCH: &str = "projects.searchEntries";
 const NOTHING: &str = "No matching files or folders.";
+const SEARCHING: &str = "Searching workspace files...";
 
 /// No menu, a bare @, and words after it, at the start of the text or after
 /// another word, that the workspace's one file, src/main.cpp, does and does
@@ -140,7 +141,7 @@ impl World {
                 if query.is_empty() {
                     assert_eq!((count, empty), (0, &json!(NOTHING)), "{shown}");
                 } else if m.searched != query || !m.answered {
-                    assert_eq!((count, empty), (0, &json!(null)), "{shown}");
+                    assert_eq!((count, empty), (0, &json!(SEARCHING)), "{shown}");
                 } else {
                     let found = found(&query).len();
                     let expected = if found > 0 {
@@ -167,7 +168,8 @@ impl World {
 }
 
 /// A bare `@` opened no menu: it is never searched, so the menu says at
-/// once that nothing matches; a word after it waits for its search.
+/// once that nothing matches; a word after it says it is searching until
+/// its search answers.
 #[test]
 fn a_bare_at_opens_the_menu_saying_nothing_matches() {
     let hub = on_threads(&["t1"]);
@@ -184,7 +186,7 @@ fn a_bare_at_opens_the_menu_saying_nothing_matches() {
     );
     let shown = hub.published("composer");
     assert_eq!(shown["triggerKind"], "path");
-    assert_eq!(shown["suggestionsEmptyText"], json!(null));
+    assert_eq!(shown["suggestionsEmptyText"], SEARCHING);
     let index = hub.mc.pending(SEARCH).expect("the word is searched");
     hub.mc.reply(&hub.engine, index, Ok(json!({"entries": []})));
     assert_eq!(hub.published("composer")["suggestionsEmptyText"], NOTHING);

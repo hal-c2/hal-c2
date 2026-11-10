@@ -518,5 +518,8 @@ fn files_of_an_mc_on_another_machine_do_not_open_here() {
             .iter()
             .any(|m| m == "shell.openInEditor" || m == "files.localPath")
     );
-    assert!(toasts(&hub).contains(&(workspace::FILES_ELSEWHERE.into(), String::new())));
+    assert!(toasts(&hub).contains(&(
+        workspace::FILES_ELSEWHERE.into(),
+        "An error occurred.".into()
+    )));
 }

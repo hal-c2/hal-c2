@@ -15,12 +15,17 @@
 //! FUSE says why); the shell's MC starts it there. Every other open asks no
 //! MC to start anything and tells the user why. Whichever thread is open,
 //! the editors offered are this machine's: the thread's environment's when
-//! it runs here, else the shell's own.
+//! it runs here, else the shell's own. Neither on this machine: the thread's
+//! MC advertising an SSH name offers this computer's SSH-capable editors,
+//! and an editor opens by a link; otherwise none.
+
+use std::rc::Rc;
 
 use hal_c2_shell::Launch;
 use hal_c2_shell::controllers::workspace::{self, FILES_ELSEWHERE};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::this_machine;
+use ljos::prelude::{OpenUrlService, Platform};
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -125,6 +130,8 @@ fn root_of(which: usize) -> &'static str {
 
 #[derive(Clone, Debug)]
 struct Model {
+    /// Whether the MCs advertise an SSH name, for the whole run.
+    ssh: bool,
     own: Machine,
     member: Machine,
     joined: bool,
@@ -143,6 +150,10 @@ impl Model {
         } else {
             self.member == Machine::Here
         }
+    }
+
+    fn far(&self, which: usize) -> bool {
+        !self.here(which) && !self.here(0)
     }
 }
 
@@ -163,11 +174,30 @@ struct World {
     opened: Vec<(String, Json)>,
     /// files.localPath asked of anything but the shell's MC for the member.
     misasked: Vec<String>,
+    /// The links handed to the operating system.
+    links: Links,
     _pinned: Pinned,
 }
 
+/// The operating system's handler of links, which takes every one.
+#[derive(Clone, Default)]
+struct Links(Rc<std::cell::RefCell<Vec<String>>>);
+
+impl Links {
+    fn urls(&self) -> Vec<String> {
+        self.0.borrow().clone()
+    }
+}
+
+impl OpenUrlService for Links {
+    fn open(&self, url: &str) -> bool {
+        self.0.borrow_mut().push(url.to_owned());
+        true
+    }
+}
+
 impl World {
-    fn new() -> World {
+    fn new(ssh: bool) -> World {
         this_machine::set_id_for_testing(Some(HERE.into()));
         // This device keeps the editor last used.
         let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("hub-open-here");
@@ -178,9 +208,12 @@ impl World {
             ..Launch::default()
         });
         hub.mc.set_ready(&hub.engine, true);
+        let links = Links::default();
+        Platform::of(&hub.engine).set_open_url(Rc::new(links.clone()));
         let world = World {
             hub,
             model: Model {
+                ssh,
                 own: Machine::Unsaid,
                 member: Machine::Unsaid,
                 joined: false,
@@ -190,6 +223,7 @@ impl World {
             },
             opened: Vec::new(),
             misasked: Vec::new(),
+            links,
             _pinned: Pinned,
         };
         world.snapshot();
@@ -239,8 +273,13 @@ impl World {
     /// member's to the member's followers.
     fn configs(&self) {
         for (which, environment) in [(0, ""), (1, MEMBER)] {
+            let targets = if self.model.ssh {
+                json!([{"kind": "mdns", "host": "devbox"}])
+            } else {
+                json!([])
+            };
             let config = json!({"settings": {}, "availableEditors": editors_of(which == 1),
-                "shellRevealInFileManager": true});
+                "remoteOpenTargets": targets, "shellRevealInFileManager": true});
             self.hub.mc.frame(
                 &self.hub.engine,
                 "config",
@@ -386,19 +425,36 @@ impl World {
     fn open_it(&mut self, which: usize, open: Open) -> Result<(), TestCaseError> {
         let model = self.model.clone();
         // This machine's editors: the thread's MC's when it runs here, else
-        // the shell's.
-        let expected = editors_of(which == 1 && model.here(1));
-        prop_assert_eq!(self.offered(), expected.to_vec());
+        // the shell's. Neither here, the SSH-capable ones on this computer's
+        // PATH (VS Code when none is) over the advertised name, else none.
+        let far = model.far(which);
+        let offered = self.offered();
+        if far && model.ssh {
+            prop_assert!(!offered.is_empty());
+            for id in &offered {
+                prop_assert!(
+                    workspace::ssh_open_url(id, "devbox", "/x").is_some(),
+                    "{}",
+                    id
+                );
+            }
+        } else if far {
+            prop_assert!(offered.is_empty(), "{:?}", offered);
+        } else {
+            prop_assert_eq!(&offered, &editors_of(which == 1 && model.here(1)).to_vec());
+        }
 
         let editor = match open {
-            Open::Reveal => "file-manager",
-            _ => expected[0],
+            Open::Reveal => "file-manager".to_owned(),
+            _ => offered.first().cloned().unwrap_or_else(|| "vscode".into()),
         };
+        let editor = editor.as_str();
         let path = match open {
             Open::Workspace => root_of(which).to_owned(),
             _ => format!("{}/src/app.ts", root_of(which)),
         };
         let before = self.opened.len();
+        let links_before = self.links.urls().len();
         let toast_before = self.newest_toast().0;
         match open {
             Open::Workspace => {
@@ -423,7 +479,17 @@ impl World {
         // when that MC runs here.
         let asked = !model.here(which) && which == 1 && model.here(0);
         let mounted = asked && model.folder == Folder::Mounted;
-        if model.here(which) || mounted {
+        if far && model.ssh && !matches!(open, Open::Reveal) {
+            prop_assert_eq!(self.opened.len(), before);
+            let links = self.links.urls();
+            prop_assert_eq!(links.len(), links_before + 1);
+            prop_assert_eq!(
+                links.last().cloned(),
+                workspace::ssh_open_url(editor, "devbox", &path)
+            );
+            prop_assert_eq!(toast, toast_before, "told {}", title);
+        } else if model.here(which) || mounted {
+            prop_assert_eq!(self.links.urls().len(), links_before);
             let cwd = if mounted {
                 format!("{FOLDERS}/{MEMBER}{path}")
             } else {
@@ -439,6 +505,7 @@ impl World {
             prop_assert_eq!(toast, toast_before, "told {}", title);
         } else {
             prop_assert_eq!(self.opened.len(), before);
+            prop_assert_eq!(self.links.urls().len(), links_before);
             prop_assert_ne!(toast, toast_before);
             let told = if asked && model.folder == Folder::NoFuse {
                 NO_FUSE
@@ -456,9 +523,10 @@ proptest! {
 
     #[test]
     fn an_editor_or_the_file_manager_starts_only_on_this_machine(
+        ssh in any::<bool>(),
         ops in proptest::collection::vec(op(), 1..30),
     ) {
-        let mut world = World::new();
+        let mut world = World::new(ssh);
         for op in &ops {
             world.step(op)?;
         }

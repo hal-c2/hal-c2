@@ -2237,14 +2237,11 @@ mod tests {
     fn summaries() {
         let p = json!({"enabled": true, "installed": true, "auth": {"status": "authenticated", "type": "apiKey"}});
         assert_eq!(summary(&p).0, "Authenticated · apiKey");
+        // The headline says it; the detail is only what the message adds.
         let p = json!({"enabled": false, "installed": true});
-        assert_eq!(
-            summary(&p),
-            (
-                "Disabled".into(),
-                "This provider is installed but disabled for new sessions in HAL-C2.".into()
-            )
-        );
+        assert_eq!(summary(&p), ("Disabled".into(), String::new()));
+        let p = json!({"enabled": false, "message": "OpenCode is disabled in HAL-C2 settings. Server: http://x"});
+        assert_eq!(summary(&p), ("Disabled".into(), "Server: http://x".into()));
         let p =
             json!({"enabled": true, "installed": true, "status": "warning", "message": " Odd "});
         assert_eq!(summary(&p), ("Needs attention".into(), "Odd".into()));

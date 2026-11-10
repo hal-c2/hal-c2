@@ -204,7 +204,7 @@ fn a_default_binding_runs_its_native_command() {
     assert_eq!(
         shortcut(&keymap, "Ctrl+B"),
         json!({"sequence": "Ctrl+B", "autoRepeat": true, "chrome": true,
-               "composer": true, "editable": true, "terminal": true})
+               "composer": true, "editable": true, "terminal": true, "preview": true})
     );
     assert!(keymap.press(&hub.engine, "Ctrl+B", CHROME));
     assert_eq!(*log.borrow(), ["sidebar.toggle"]);
