@@ -2096,7 +2096,15 @@ space/images.feature: The user is offered only the providers that can generate a
 space/images.feature: The user places an image on a page
 space/images.feature: The user restores an image from the trash
 space/images.feature: Without a provider that can generate, the prompt area says so
+space/markdown.feature: A Mermaid diagram is drawn [flowchart]
+space/markdown.feature: A Mermaid diagram is drawn [gantt]
+space/markdown.feature: A Mermaid diagram is drawn [graph]
+space/markdown.feature: A Mermaid diagram is drawn [sequenceDiagram]
+space/markdown.feature: A Mermaid diagram is drawn [stateDiagram-v2]
 space/markdown.feature: A code block is shown as code
+space/markdown.feature: A diagram is drawn once, not over and over
+space/markdown.feature: A diagram type the renderer cannot draw shows its source and says why
+space/markdown.feature: A diagram with a mistake shows its source and the mistake
 space/markdown.feature: A link in a page never loads anything by itself
 space/markdown.feature: A list is shown with its markers and nesting
 space/markdown.feature: A table and code are edited as their source
@@ -2110,6 +2118,7 @@ space/markdown.feature: Text is shown with its inline formatting [bold and itali
 space/markdown.feature: Text is shown with its inline formatting [inline code]
 space/markdown.feature: Text is shown with its inline formatting [struck-through text]
 space/markdown.feature: The user copies a code block
+space/markdown.feature: The user edits a diagram's source
 space/page-history.feature: A client watching the Space sees a restore land
 space/page-history.feature: A restore can be undone by restoring the version before it
 space/page-history.feature: A restore keeps the page's update
