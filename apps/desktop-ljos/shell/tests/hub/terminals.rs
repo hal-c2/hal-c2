@@ -22,6 +22,7 @@ const CHROME: Focus = Focus {
     terminal: false,
     composer: false,
     editable: false,
+    preview: false,
 };
 
 fn ids(hub: &Hub) -> Vec<String> {

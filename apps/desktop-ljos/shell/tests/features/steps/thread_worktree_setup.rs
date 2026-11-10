@@ -25,6 +25,10 @@ struct FakeSetup {
 }
 
 fn extension(mc: &mut FakeMc) {
+    mc.on_rpc("worktreeSetup.retry", |mc, rpc| {
+        mc.reply(rpc, json!({"retried": true}));
+        Ok(())
+    });
     mc.on_shape("worktreeSetup", |mc, id, _| {
         let snapshot = mc.part::<FakeSetup>().snapshot.clone();
         mc.send(&json!({"t": "worktreeSetup", "id": id, "event": snapshot}));
@@ -160,8 +164,8 @@ pub fn register(steps: &mut Steps) {
                     vec![
                         fetched,
                         stage("checkout", "failed", Some("exit 128"), &[]),
-                        stage("setup-script", "skipped", None, &[]),
-                        stage("agent", "skipped", None, &[]),
+                        stage("setup-script", "pending", None, &[]),
+                        stage("agent", "pending", None, &[]),
                     ],
                     Some("Could not create the worktree: the branch already exists."),
                 )
@@ -298,6 +302,54 @@ pub fn register(steps: &mut Steps) {
         world.dispatch("worktreeSetup.details", json!({"open": true}))
     });
     steps.step(
+        &format!("the setup of {Q} failed as its agent started"),
+        |world, _, _| {
+            publish(
+                world,
+                "failed",
+                vec![
+                    stage("fetch", "done", None, &[]),
+                    stage("checkout", "done", None, &[]),
+                    stage("setup-script", "done", None, &[]),
+                    stage("agent", "failed", None, &[]),
+                ],
+                Some("The agent could not start: no such provider."),
+            )
+        },
+    );
+    steps.step("the user chooses to retry the setup", |world, _, _| {
+        world.wait_for_with(
+            |w| setup(w)["canRetry"] == json!(true),
+            |w| format!("a retry; the setup shown is {}", show(&setup(w))),
+        )?;
+        world.dispatch("worktreeSetup.retry", json!({}))?;
+        world.sync()
+    });
+    steps.step("the MC is asked to run the setup again", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                w.mc.calls
+                    .iter()
+                    .filter(|call| call.method == "worktreeSetup.retry")
+                    .count()
+                    == 1
+            },
+            |_| "the MC to be asked to retry".to_owned(),
+        )
+    });
+    steps.step("the conversation offers no retry", |world, _, _| {
+        world.wait_for_with(
+            |w| text(&setup(w)["phase"]) == "failed",
+            |w| format!("the failure; the setup shown is {}", show(&setup(w))),
+        )?;
+        expect!(
+            setup(world)["canRetry"] != json!(true),
+            "the setup shown is {}",
+            show(&setup(world))
+        );
+        Ok(())
+    });
+    steps.step(
         "the user sees why the setup failed and the steps that ran",
         |world, _, _| {
             let shown_setup = setup(world);
@@ -318,8 +370,8 @@ pub fn register(steps: &mut Steps) {
                         == [
                             "Fetch base branch=done",
                             "Check out files=failed",
-                            "Run setup script=skipped",
-                            "Start agent=skipped"
+                            "Run setup script=pending",
+                            "Start agent=pending"
                         ],
                 "the setup shown is {}",
                 show(&shown_setup)

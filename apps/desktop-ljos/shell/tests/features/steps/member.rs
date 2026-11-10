@@ -6,6 +6,7 @@
 
 use serde_json::{Value, json};
 
+use super::workspace::{FakeGit, Repo};
 use crate::expect;
 use crate::harness::{Q, Steps, at, show, text};
 use crate::world::World;
@@ -101,6 +102,17 @@ pub fn register(steps: &mut Steps) {
                 id: c[1].clone(),
             };
             put_project(world, &c[0], &c[3]);
+            // A thread on a branch is in a checkout of a repository, which
+            // that machine reports as on the branch.
+            world.mc.part::<FakeGit>().repos.insert(
+                format!("/work/{}", c[3]),
+                Repo {
+                    branches: vec![c[4].clone()],
+                    current: c[4].clone(),
+                    default_branch: c[4].clone(),
+                    ..Repo::default()
+                },
+            );
             let mut row = thread_row(&c[1], &c[2], &c[3]);
             row["branch"] = json!(c[4]);
             world.mc.send_peer_row(&c[0], &c[1], &row);

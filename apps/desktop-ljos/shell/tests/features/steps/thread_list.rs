@@ -16,6 +16,7 @@ use serde_json::{Map, Value, json};
 use super::settings_rows::turn_row;
 use super::stream::{FakeStreams, add_item, iso, start_run};
 use super::thread_menu::{id_in, key_of, project_thread_commands, section_of, update_row};
+use crate::brick::{Brick, Shown};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
 use crate::{expect, fail};
@@ -33,6 +34,96 @@ struct ListScene {
 
 fn scene(world: &mut World) -> &mut ListScene {
     world.part::<ListScene>()
+}
+
+/// The project the list was scoped to, and the member that had not reported.
+#[derive(Default)]
+struct ScopeMemory {
+    name: String,
+    key: String,
+    waiting: String,
+}
+
+/// How many commands the MC had before a drop.
+#[derive(Default)]
+struct Reorder {
+    commands_before: usize,
+}
+
+/// A row the row-lines steps draw on its own.
+#[derive(Default)]
+struct RowItem(Value);
+
+/// The titles of the active section, top first.
+fn active_titles(world: &World) -> Vec<String> {
+    titles_of(world, "active")
+}
+
+/// Takes the project from the MC (while the app is closed: no row is sent).
+fn remove_project_titled(world: &mut World, title: &str) {
+    world
+        .mc
+        .projects
+        .retain(|_, row| text(&row["title"]) != title);
+}
+
+/// The thread list as the window draws it, its rows as Sidebar.qml builds
+/// them.
+fn thread_list(world: &mut World) -> Outcome<Brick> {
+    if let Some(brick) = world.part::<Shown>().0 {
+        return Ok(brick);
+    }
+    let brick = Brick::new(
+        world,
+        "import QtQuick\nimport HalC2.Bricks\nSidebar { height: 600 }\n",
+        256.0,
+        600.0,
+    )?;
+    world.part::<Shown>().0 = Some(brick);
+    Ok(brick)
+}
+
+fn list_rows(brick: &Brick, world: &World) -> Vec<Value> {
+    let Some(root) = brick.root(world) else {
+        return Vec::new();
+    };
+    let rows = brick.read(world, root, "rows");
+    hal_c2_shell::json::from_value(world.engine(), &rows)
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn number(brick: &Brick, world: &World, item: ljos::prelude::ObjectId, name: &str) -> f64 {
+    let value = brick.read(world, item, name);
+    hal_c2_shell::json::from_value(world.engine(), &value)
+        .as_f64()
+        .unwrap_or(0.0)
+}
+
+/// Where the row's top is in the list's view, or -1 when it is not wholly
+/// in it (or not drawn).
+fn row_top(brick: &Brick, world: &World, key: &str) -> Outcome<f64> {
+    let list = brick.item(world, "list")?;
+    if !brick.flag(world, list, "visible") {
+        return Ok(-1.0);
+    }
+    let Some(row) = brick.find(world, &format!("threadRow:{key}"))? else {
+        return Ok(-1.0);
+    };
+    if !brick.flag(world, row, "visible") {
+        return Ok(-1.0);
+    }
+    let (_, row_y) = brick.at(world, row, 0.0, 0.0)?;
+    let (_, list_y) = brick.at(world, list, 0.0, 0.0)?;
+    let top = row_y - list_y;
+    let height = number(&brick, world, row, "height");
+    let list_height = number(&brick, world, list, "height");
+    Ok(if top >= 0.0 && top + height <= list_height {
+        top
+    } else {
+        -1.0
+    })
 }
 
 fn sidebar(world: &World) -> Value {
@@ -98,7 +189,7 @@ pub fn ensure_thread(world: &mut World, title: &str, project: &str) -> Outcome<S
 
 fn row_of(world: &World, key: &str) -> Option<Value> {
     let state = sidebar(world);
-    ["pinned", "active", "snoozed", "settled"]
+    ["pinned", "active", "working", "snoozed", "settled"]
         .iter()
         .find_map(|section| {
             state[*section]
@@ -348,6 +439,18 @@ pub fn register(steps: &mut Steps) {
         }
         Ok(())
     });
+    steps.step("there are (\\d+) active threads", |world, c, _| {
+        for index in 0..c[0].parse::<i64>().unwrap_or(0) {
+            let at = iso(world.now() - Duration::seconds(60 * (index + 1)));
+            let project = first_project(world);
+            put_thread(
+                world,
+                &format!("t-active-{index}"),
+                json!({"projectId": project, "title": format!("Active {index}"), "createdAt": at}),
+            )?;
+        }
+        Ok(())
+    });
     // Threads a plugin settles as it finishes them, as the code-review plugin
     // does.
     steps.step("(\\d+) settled threads a plugin started", |world, c, _| {
@@ -427,6 +530,10 @@ pub fn register(steps: &mut Steps) {
 
     // Opening and scoping.
     steps.step("the user opens \"([^\"./:]*)\"", |world, c, _| {
+        // A Space page of that name, when the scenario made one.
+        if super::space::space_opens(world, &c[0])? {
+            return Ok(());
+        }
         // A view of the planner plugin, when the MC runs it.
         if super::planner::open_planner_view(world, &c[0])? {
             return Ok(());
@@ -946,15 +1053,414 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("the row for {Q} reads {Q}"), |world, c, _| {
-        world.sync()?;
+    steps.step(
+        &format!("the row for {Q} reads \"([^\"·]*)\""),
+        |world, c, _| {
+            world.sync()?;
+            let key = key_of(world, &c[0])?;
+            let row = row_of(world, &key);
+            let word = row.as_ref().map_or("", word_of);
+            expect!(
+                word == c[1],
+                "the row reads \"{word}\": {}",
+                shown_row(world, &key)
+            );
+            Ok(())
+        },
+    );
+
+    // A window that crosses a width where the rows change height keeps the
+    // open thread's row in the list's view.
+    steps.step(
+        &format!("the thread list is scrolled to {Q}"),
+        |world, c, _| {
+            let key = key_of(world, &c[0])?;
+            world.sync()?;
+            let brick = thread_list(world)?;
+            world.pump()?;
+            let rows = list_rows(&brick, world);
+            let index = rows.iter().position(|row| text(&row["rowKey"]) == key);
+            let Some(index) = index else {
+                fail!("the list has no row for {}", c[0]);
+            };
+            let list = brick.item(world, "list")?;
+            expect!(
+                index >= 4,
+                "{} has too few rows above it to scroll past",
+                c[0]
+            );
+            // As the user scrolls down to it: show the rows above first
+            // (ListView.Beginning, 0), then scroll on.
+            let first = text(&rows[index - 4]["rowKey"]);
+            world
+                .engine()
+                .invoke_by_name(
+                    list,
+                    "positionViewAtIndex",
+                    &[
+                        ljos::prelude::Value::from(i32::try_from(index - 4).unwrap_or(0)),
+                        ljos::prelude::Value::from(0),
+                    ],
+                )
+                .map_err(|e| crate::harness::Failure(format!("positionViewAtIndex: {e:?}")))?;
+            let first_key = first.clone();
+            world.wait_for_with(
+                |w| row_top(&brick, w, &first_key).is_ok_and(|top| top == 0.0),
+                |_| format!("the rows above {} at the top of the list", c[0]),
+            )?;
+            let row = brick.find(world, &format!("threadRow:{key}"))?;
+            expect!(
+                row.is_some(),
+                "the list draws {} below the rows above it",
+                c[0]
+            );
+            let row = row.unwrap();
+            let (_, row_y) = brick.at(world, row, 0.0, 0.0)?;
+            let (_, list_y) = brick.at(world, list, 0.0, 0.0)?;
+            let content_y = number(&brick, world, list, "contentY");
+            brick.write(
+                world,
+                list,
+                "contentY",
+                ljos::prelude::Value::from(content_y + (row_y - list_y)),
+            )?;
+            let key2 = key.clone();
+            let total = rows.len();
+            world.wait_for_with(
+                |w| row_top(&brick, w, &key2).is_ok_and(|top| top == 0.0),
+                |_| format!("{} (row {index} of {total}) at the top of the list", c[0]),
+            )?;
+            expect!(
+                brick.find(world, &format!("threadRow:{first}"))?.is_some(),
+                "the list keeps the rows above {} drawn",
+                c[0]
+            );
+            Ok(())
+        },
+    );
+    steps.step(&format!("the thread list shows {Q}"), |world, c, _| {
         let key = key_of(world, &c[0])?;
-        let row = row_of(world, &key);
-        let word = row.as_ref().map_or("", word_of);
+        world.sync()?;
+        let brick = thread_list(world)?;
+        world.wait_for_with(
+            |w| row_top(&brick, w, &key).is_ok_and(|top| top >= 0.0),
+            |w| {
+                format!(
+                    "{} in the list's view; the list is in {} mode",
+                    c[0],
+                    at(&w.state("layout"), "sidebarMode")
+                )
+            },
+        )
+    });
+
+    // A thread's composer holding unsent text marks its row (but the open
+    // one's).
+    steps.step(
+        &format!("the user typed a message in the composer of {Q} and did not send it"),
+        |world, c, _| {
+            let key = ensure_thread(world, &c[0], "")?;
+            world.dispatch("thread.open", json!({"key": key}))?;
+            let typed = "Half a thought";
+            let revision = world.next_edit;
+            world.next_edit += 1;
+            world.dispatch(
+                "composer.text.set",
+                json!({
+                    "target": key,
+                    "edit": {"clientId": "qml", "revision": revision},
+                    "text": typed,
+                    "cursor": typed.len(),
+                }),
+            )?;
+            world.sync()
+        },
+    );
+    steps.step(&format!("{Q} is the open thread"), |world, c, _| {
+        let key = ensure_thread(world, &c[0], "")?;
+        world.dispatch("thread.open", json!({"key": key}))?;
+        world.sync()
+    });
+    steps.step(
+        &format!("the row for {Q} (says|no longer says) \"Unsent draft\""),
+        |world, c, _| {
+            let key = key_of(world, &c[0])?;
+            let marked = c[1] == "says";
+            world.wait_for_with(
+                |w| row_of(w, &key).is_some_and(|row| row["unsentDraft"].as_bool() == Some(marked)),
+                |w| {
+                    format!(
+                        "the row for {} is {}",
+                        c[0],
+                        show(&row_of(w, &key).unwrap_or(Value::Null))
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the user discards the draft from the row", |world, _, _| {
+        let mut marked = String::new();
+        let state = sidebar(world);
+        for section in ["pinned", "active", "snoozed", "settled"] {
+            for row in at(&state, section).as_array().into_iter().flatten() {
+                if row["unsentDraft"] == json!(true) {
+                    marked = text(&row["key"]);
+                }
+            }
+        }
+        expect!(!marked.is_empty(), "no row is marked \"Unsent draft\"");
+        world.dispatch("thread.draft.discard", json!({"key": marked}))?;
+        world.sync()
+    });
+    steps.step(&format!("the composer of {Q} is empty"), |world, c, _| {
+        let key = key_of(world, &c[0])?;
+        let preview = hal_c2_shell::controllers::drafts::preview(world.engine(), &key);
         expect!(
-            word == c[1],
-            "the row reads \"{word}\": {}",
-            shown_row(world, &key)
+            preview.is_none(),
+            "the composer of {} holds {}",
+            c[0],
+            preview.unwrap_or_default()
+        );
+        Ok(())
+    });
+
+    // The project filter this device remembers.
+    steps.step(
+        &format!("the user scoped the list to {Q}(?: before closing the app)?"),
+        |world, c, _| {
+            let key = world.project_key(&c[0]);
+            {
+                let memory = world.part::<ScopeMemory>();
+                memory.name = c[0].clone();
+                memory.key = key.clone();
+            }
+            world.dispatch("sidebar.scope", json!({"projectKey": key}))?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the list (?:is|is still|stays) scoped to {Q}"),
+        |world, c, _| {
+            let key = world.part::<ScopeMemory>().key.clone();
+            expect!(!key.is_empty(), "the list was scoped to {}", c[0]);
+            world.sync()?;
+            world.wait_for_with(
+                |w| text(&sidebar(w)["scopeProjectKey"]) == key,
+                |w| {
+                    format!(
+                        "the list scoped to {key}; it is scoped to \"{}\"",
+                        text(&sidebar(w)["scopeProjectKey"])
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the user opens settings and then returns to the threads",
+        |world, _, _| {
+            world.dispatch("settings.open", json!({}))?;
+            world.sync()?;
+            world.dispatch("settings.back", json!({}))?;
+            world.sync()
+        },
+    );
+    // The scoped project goes from this MC while it is closed, and the
+    // member is listed but unreachable when the app starts.
+    steps.step(
+        &format!("the app starts and the environment {Q} has not reported its projects yet"),
+        |world, c, _| {
+            world.part::<ScopeMemory>().waiting = c[0].clone();
+            world.restart()?;
+            let name = world.part::<ScopeMemory>().name.clone();
+            remove_project_titled(world, &name);
+            world.mc.offline.insert(c[0].clone());
+            world.mc.join_named(&c[0]);
+            world.connect()?;
+            world.wait_for("the shell to start", |w| w.active())
+        },
+    );
+    steps.step(
+        &format!("every environment has reported and {Q} is gone"),
+        |world, c, _| {
+            let waiting = world.part::<ScopeMemory>().waiting.clone();
+            world.mc.set_online(&waiting, true);
+            world.sync()?;
+            expect!(
+                c[0] == world.part::<ScopeMemory>().name,
+                "{} was the remembered project",
+                c[0]
+            );
+            Ok(())
+        },
+    );
+    steps.step("the list shows every project", |world, _, _| {
+        world.wait_for_with(
+            |w| sidebar(w)["scopeProjectKey"].is_null(),
+            |w| {
+                format!(
+                    "the list unscoped; it is scoped to \"{}\"",
+                    text(&sidebar(w)["scopeProjectKey"])
+                )
+            },
+        )
+    });
+
+    // A drop beside rows the offline member serves.
+    steps.step(
+        "the sidebar shows rows from a machine that is offline or asleep",
+        |world, _, _| {
+            project_thread_commands(world);
+            let project = first_project(world);
+            put_thread(
+                world,
+                &title_id("Here one"),
+                json!({"projectId": project, "title": "Here one", "createdAt": AT}),
+            )?;
+            put_thread(
+                world,
+                &title_id("Here two"),
+                json!({
+                    "projectId": project, "title": "Here two",
+                    "createdAt": "2026-09-23T09:05:00Z",
+                }),
+            )?;
+            let deploy = "t-deploy";
+            world.mc.send_peer_row(
+                "work",
+                deploy,
+                &json!({
+                    "id": deploy, "title": "Deploy", "projectId": project,
+                    "createdAt": "2026-09-23T09:10:00Z",
+                    "updatedAt": "2026-09-23T09:10:00Z",
+                }),
+            );
+            world.mc.offline.insert("work".to_owned());
+            world.mc.join_named("work");
+            world.wait_for_with(
+                |w| {
+                    active_titles(w)
+                        == vec![
+                            "Deploy".to_owned(),
+                            "Here two".to_owned(),
+                            "Here one".to_owned(),
+                        ]
+                },
+                |w| {
+                    format!(
+                        "Deploy, Here two, Here one; the active threads are {}",
+                        active_titles(w).join(", ")
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the user drops a thread among rows that have no order yet",
+        |world, _, _| {
+            world.part::<Reorder>().commands_before = world.mc.commands.len();
+            let key = key_of(world, "Here one")?;
+            let before = key_of(world, "Here two")?;
+            world.dispatch(
+                "thread.drop",
+                json!({
+                    "key": key,
+                    "section": "active",
+                    "beforeKey": before,
+                }),
+            )?;
+            world.sync()
+        },
+    );
+    steps.step("the thread lands where it was dropped", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                active_titles(w)
+                    == vec![
+                        "Deploy".to_owned(),
+                        "Here one".to_owned(),
+                        "Here two".to_owned(),
+                    ]
+            },
+            |w| {
+                format!(
+                    "Deploy, Here one, Here two; the active threads are {}",
+                    active_titles(w).join(", ")
+                )
+            },
+        )
+    });
+    steps.step(
+        "rows that cannot store an order are not written",
+        |world, _, _| {
+            world.sync()?;
+            let before = world.part::<Reorder>().commands_before;
+            for index in before..world.mc.commands.len() {
+                expect!(
+                    world.mc.command_environments.get(index).map(String::as_str) != Some("work"),
+                    "no command to the offline \"work\"; the MC has {}",
+                    world.describe_commands()
+                );
+            }
+            Ok(())
+        },
+    );
+
+    // The row's two lines, title first (SidebarThreadRow.qml as the list
+    // draws it with every project in scope).
+    steps.step(
+        &format!("the thread {Q} in {Q} works on the branch {Q}"),
+        |world, c, _| {
+            let mut item = json!({
+                "title": c[0], "branch": c[2], "status": "ready",
+                "updatedAt": "2026-09-23T09:00:00Z",
+            });
+            item["_project"] = json!(c[1]);
+            world.part::<RowItem>().0 = item;
+            Ok(())
+        },
+    );
+    steps.step("the user looks at its row in the thread list", |world, _, _| {
+        let item = world.part::<RowItem>().0.clone();
+        let project = text(&item["_project"]);
+        let js = |value: &Value| serde_json::to_string(value).unwrap_or_else(|_| "null".into());
+        let mut bare = item.clone();
+        if let Some(map) = bare.as_object_mut() {
+            map.remove("_project");
+        }
+        let qml = format!(
+            "import QtQuick\nimport HalC2.Bricks\nSidebarThreadRow {{ width: 256; active: false; projectInDetail: true; projectName: {}; item: ({}) }}\n",
+            js(&json!(project)),
+            js(&bare)
+        );
+        Brick::show(world, &qml, 256.0, 80.0)
+    });
+    steps.step(&format!("the row's first line reads {Q}"), |world, c, _| {
+        let brick = world.part::<Shown>().0;
+        let Some(brick) = brick else {
+            fail!("no row is shown");
+        };
+        let title = brick.item(world, "cardTitle")?;
+        let read = brick.text_of(world, title, "text");
+        expect!(read == c[0], "the first line reads {read}");
+        Ok(())
+    });
+    steps.step(&format!("its second line reads {Q}"), |world, c, _| {
+        let brick = world.part::<Shown>().0;
+        let Some(brick) = brick else {
+            fail!("no row is shown");
+        };
+        let line = format!(
+            "{} \u{b7} {}",
+            brick.text_of(world, brick.item(world, "rowDetailProject")?, "text"),
+            brick.text_of(world, brick.item(world, "rowDetailBranch")?, "text")
+        );
+        let (_, title_bottom) = brick.at(world, brick.item(world, "cardTitle")?, 0.5, 1.0)?;
+        let detail_item = brick.item(world, "rowDetail")?;
+        let (_, detail_top) = brick.at(world, detail_item, 0.5, 0.0)?;
+        expect!(
+            brick.flag(world, detail_item, "visible") && line == c[0] && detail_top >= title_bottom,
+            "the second line reads {line}, {} px under the title",
+            detail_top - title_bottom
         );
         Ok(())
     });

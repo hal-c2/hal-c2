@@ -541,6 +541,40 @@ impl ThreadMenu {
             .active_run_id
             .clone()
             .or_else(|| thread.latest_run_id.clone());
+        if run_id.is_none() || !busy(&thread) {
+            move_thread(engine, key, machine, String::new(), false, asking);
+            return;
+        }
+        // The palette lists the cluster's machines without asking the MC,
+        // which may keep the thread here (a plugin's review, say): its turn
+        // is not stopped for a move that would be refused.
+        let Some(mc) = controller::mc(engine) else {
+            return;
+        };
+        let me = self.me.clone();
+        let key = key.to_owned();
+        mc.call(
+            &thread.environment_id,
+            "hal-c2.moveDestinations",
+            json!({"threadId": thread.id}),
+            Box::new(move |engine, result| match result {
+                Err(error) => toast_error(engine, "Failed to move thread", &error.message),
+                Ok(_) => me.run(engine, |m, engine| {
+                    m.stop_and_move(engine, &key, machine, asking)
+                }),
+            }),
+        );
+    }
+
+    /// Asks to stop the thread's turn, then moves it once it has stopped.
+    fn stop_and_move(&mut self, engine: &Engine, key: &str, machine: Machine, asking: Asking) {
+        let Some(thread) = thread(engine, key) else {
+            return;
+        };
+        let run_id = thread
+            .active_run_id
+            .clone()
+            .or_else(|| thread.latest_run_id.clone());
         let Some(run_id) = run_id.filter(|_| busy(&thread)) else {
             move_thread(engine, key, machine, String::new(), false, asking);
             return;

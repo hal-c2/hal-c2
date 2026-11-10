@@ -294,9 +294,15 @@ pub fn register(steps: &mut Steps) {
                     row.remove(key);
                 }
             })?;
-            wait_section(world, &c[2], "active")?;
+            // Working again, it is listed in the Working section while that is on.
+            let live = if world.state("sidebar")["workingShelf"] == json!(true) {
+                "working"
+            } else {
+                "active"
+            };
+            wait_section(world, &c[2], live)?;
             let sidebar = world.state("sidebar");
-            for row in sidebar["active"].as_array().into_iter().flatten() {
+            for row in sidebar[live].as_array().into_iter().flatten() {
                 if row["key"] == json!(key) {
                     expect!(
                         row["status"] == json!("working"),

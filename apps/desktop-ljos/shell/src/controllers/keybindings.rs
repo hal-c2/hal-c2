@@ -110,16 +110,18 @@ pub struct Focus {
     pub terminal: bool,
     pub composer: bool,
     pub editable: bool,
+    pub preview: bool,
 }
 
 impl Focus {
-    /// `{terminal, composer, editable}`, as the window passes it.
+    /// `{terminal, composer, editable, preview}`, as the window passes it.
     pub fn from_json(value: &Json) -> Focus {
         let flag = |key: &str| value.get(key).and_then(Json::as_bool).unwrap_or(false);
         Focus {
             terminal: flag("terminal"),
             composer: flag("composer"),
             editable: flag("editable"),
+            preview: flag("preview"),
         }
     }
 }
@@ -573,6 +575,7 @@ impl Keymap {
         let s = self.0.state.borrow();
         [
             ("previewOpen", s.preview_open),
+            ("previewFocus", focus.preview),
             ("modelPickerOpen", s.model_picker_open),
             ("composerDraft", draft),
             ("terminalFocus", focus.terminal),
@@ -587,6 +590,18 @@ impl Keymap {
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v))
         .collect()
+    }
+
+    /// A typed condition in the words the rows show; as typed when it does
+    /// not parse.
+    pub fn when_label(expression: &str) -> String {
+        let trimmed = expression.trim();
+        if trimmed.is_empty() {
+            keymap::when_words(None)
+        } else {
+            keymap::parse_when(trimmed)
+                .map_or_else(|| trimmed.to_owned(), |w| keymap::when_words(Some(&w)))
+        }
     }
 
     /// The command `sequence` runs with that focus, or empty.
@@ -657,6 +672,10 @@ impl Keymap {
                 terminal: true,
                 ..Focus::default()
             },
+            Focus {
+                preview: true,
+                ..Focus::default()
+            },
         ];
         let contexts = focuses.map(|focus| self.context(engine, focus));
         let sequences: Vec<String> = {
@@ -676,7 +695,7 @@ impl Keymap {
             if sequence.is_empty() || !seen.insert(sequence.clone()) {
                 continue;
             }
-            let [chrome, composer, editable, terminal] =
+            let [chrome, composer, editable, terminal, preview] =
                 contexts.each_ref().map(|c| self.resolve_in(&sequence, c));
             shortcuts.push(json!({
                 "sequence": sequence,
@@ -687,6 +706,7 @@ impl Keymap {
                 "composer": native(&composer),
                 "editable": native(&editable),
                 "terminal": native(&terminal),
+                "preview": native(&preview),
             }));
         }
         {
@@ -1495,13 +1515,7 @@ impl KeybindingsObject {
     /// not parse.
     #[qml(invokable)]
     fn when_label(_cx: &Cx, expression: Atom) -> Atom {
-        let trimmed = expression.trim();
-        let words = if trimmed.is_empty() {
-            keymap::when_words(None)
-        } else {
-            keymap::parse_when(trimmed).map_or(trimmed.to_owned(), |w| keymap::when_words(Some(&w)))
-        };
-        Atom::from(words.as_str())
+        Atom::from(Keymap::when_label(&expression).as_str())
     }
 
     #[qml(invokable)]

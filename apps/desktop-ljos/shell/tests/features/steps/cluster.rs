@@ -26,6 +26,8 @@ struct FakeCluster {
     version: String,
     update_refusals: HashMap<String, String>,
     calls: Vec<(String, Value)>,
+    /// The MC of each member switched off, by environment.
+    switched_off: HashMap<String, String>,
 }
 
 fn cluster_status(mc: &mut FakeMc) -> Value {
@@ -126,6 +128,36 @@ fn answer_cluster(mc: &mut FakeMc, rpc: &Rpc) -> Outcome {
                 }
             }
             result = json!({"version": version, "members": updates});
+        }
+        "cluster.switch" => {
+            // Off keeps the member listed, and the shell drops it and its
+            // rows as for a removal; on brings it back.
+            let id = text(&rpc.payload["id"]);
+            let on = rpc.payload["on"].as_bool().unwrap_or(false);
+            let known_peer = mc.peers.get(&id).cloned();
+            let peer = {
+                let fake = mc.part::<FakeCluster>();
+                for member in fake.members.iter_mut() {
+                    if text(&member["id"]) != id {
+                        continue;
+                    }
+                    member["off"] = json!(!on);
+                    member["connected"] = json!(on);
+                }
+                if !on {
+                    known_peer.inspect(|peer| {
+                        fake.switched_off.insert(id.clone(), peer.clone());
+                    })
+                } else {
+                    fake.switched_off.remove(&id)
+                }
+            };
+            match (on, peer) {
+                (false, Some(_)) => mc.remove(&id),
+                (true, Some(peer)) => mc.join(&peer, &id),
+                _ => {}
+            }
+            result = cluster_status(mc);
         }
         "cluster.remove" => {
             let removed = text(&rpc.payload["id"]);
@@ -460,6 +492,86 @@ pub fn register(steps: &mut Steps) {
                 page_is(world)
             );
             Ok(())
+        },
+    );
+    // The Cluster settings page's switch (settings/connections.feature;
+    // desktop-qt's ComputerSwitchSteps.cpp).
+    steps.step(&format!("{Q} is connected"), |world, c, _| {
+        let name = c[0].clone();
+        if !fake(world)
+            .members
+            .iter()
+            .any(|member| member["id"] == name.as_str())
+        {
+            fake(world).members.push(json!({
+                "id": name, "label": name, "addresses": [], "connected": true,
+            }));
+        }
+        world.mc.join_named(&name);
+        world.wait_for_with(
+            |w| hal_c2_shell::store::with(w.engine(), |s| s.environment_online(&name)),
+            |_| format!("{name} to connect"),
+        )
+    });
+    steps.step(&format!("the user switches {Q} (off|on)"), |world, c, _| {
+        world.dispatch("cluster.open", json!({}))?;
+        world.wait_for_with(
+            |w| at(&cluster(w), "status.clustered") == &json!(true),
+            |_| "the Cluster page to read the cluster".to_owned(),
+        )?;
+        world.dispatch("cluster.switch", json!({"id": c[0], "on": c[1] == "on"}))
+    });
+    steps.step("the user switches it back on", |world, _, _| {
+        let name = fake(world)
+            .switched_off
+            .keys()
+            .next()
+            .cloned()
+            .unwrap_or_default();
+        expect!(!name.is_empty(), "nothing is switched off");
+        world.dispatch("cluster.switch", json!({"id": name, "on": true}))
+    });
+    steps.step(
+        &format!("this device disconnects from {Q}"),
+        |world, c, _| {
+            let name = c[0].clone();
+            world.wait_for_with(
+                |w| !hal_c2_shell::store::with(w.engine(), |s| s.serves_environment(&name)),
+                move |_| format!("the shell to drop {}", c[0]),
+            )
+        },
+    );
+    steps.step(&format!("{Q} stays listed as off"), |world, c, _| {
+        let name = c[0].clone();
+        world.wait_for_with(
+            |w| {
+                at(&cluster(w), "status.members")
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|member| member["id"] == name.as_str())
+                    .is_some_and(|member| member["off"] == json!(true))
+            },
+            move |w| format!("the Cluster page lists {}", show(&cluster(w))),
+        )
+    });
+    steps.step(
+        &format!("this device connects to {Q} again"),
+        |world, c, _| {
+            let name = c[0].clone();
+            world.wait_for_with(
+                |w| hal_c2_shell::store::with(w.engine(), |s| s.environment_online(&name)),
+                |_| format!("{name} to connect again"),
+            )?;
+            world.wait_for_with(
+                |w| {
+                    at(&cluster(w), "status.members")
+                        .as_array()
+                        .and_then(|members| members.first())
+                        .is_some_and(|member| member["off"] != json!(true))
+                },
+                |w| format!("the Cluster page lists {}", show(&cluster(w))),
+            )
         },
     );
     steps.step("the cluster page closes", |world, _, _| {

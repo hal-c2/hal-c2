@@ -12,7 +12,7 @@
 //!
 //! Actions: `cluster.refresh`, `cluster.invite {tailscale?}`,
 //! `cluster.invite.copy`, `cluster.join {link}`, `cluster.update`,
-//! `cluster.remove {id}`.
+//! `cluster.switch {id, on}`, `cluster.remove {id}`.
 
 use std::rc::Rc;
 
@@ -138,6 +138,42 @@ impl Controller for Cluster {
                 }
             }
             "cluster.update" => self.update(engine),
+            "cluster.switch" => {
+                let id = settings_page::text(payload, "id").to_owned();
+                if id.is_empty() {
+                    return true;
+                }
+                let on = settings_page::flag(payload.get("on"));
+                let label = self
+                    .state
+                    .get("status")
+                    .and_then(|s| s.get("members"))
+                    .and_then(Json::as_array)
+                    .and_then(|members| {
+                        members
+                            .iter()
+                            .find(|m| m.get("id").and_then(Json::as_str) == Some(id.as_str()))
+                    })
+                    .map_or_else(
+                        || id.clone(),
+                        |m| settings_page::text(m, "label").to_owned(),
+                    );
+                self.change(
+                    engine,
+                    "cluster.switch",
+                    json!({"id": id, "on": on}),
+                    if on {
+                        format!("Switched {label} on.")
+                    } else {
+                        format!("Switched {label} off.")
+                    },
+                    if on {
+                        "Switch on failed"
+                    } else {
+                        "Switch off failed"
+                    },
+                );
+            }
             "cluster.remove" => {
                 let id = settings_page::text(payload, "id").to_owned();
                 if id.is_empty() {

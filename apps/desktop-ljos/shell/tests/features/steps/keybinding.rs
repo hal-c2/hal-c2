@@ -327,6 +327,8 @@ fn press_sequence(world: &mut World, sequence: &str) -> Outcome {
     // As the window enables its shortcuts.
     let field = if focus.terminal {
         "terminal"
+    } else if focus.preview {
+        "preview"
     } else if focus.composer {
         "composer"
     } else if focus.editable {
@@ -640,12 +642,21 @@ const COMPOSER: Focus = Focus {
     terminal: false,
     composer: true,
     editable: true,
+    preview: false,
 };
 
 const TERMINAL: Focus = Focus {
     terminal: true,
     composer: false,
     editable: false,
+    preview: false,
+};
+
+const PREVIEW: Focus = Focus {
+    terminal: false,
+    composer: false,
+    editable: false,
+    preview: true,
 };
 
 /// The rule as keybindings.json holds it when the command has a default:
@@ -710,10 +721,14 @@ pub fn register(steps: &mut Steps) {
 
     // Where the keyboard is.
     steps.step(
-        "the user is (anywhere|outside a terminal|in a terminal|with the model picker open)",
+        "the user is (anywhere|outside a terminal|in a terminal|in the preview|with the model picker open)",
         |world, c, _| {
+            // In the preview: a browser tab's page has the keyboard
+            // (ShellWindow's previewFocused).
             let focus = if c[0] == "in a terminal" {
                 TERMINAL
+            } else if c[0] == "in the preview" {
+                PREVIEW
             } else {
                 Focus::default()
             };
@@ -1263,6 +1278,18 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    steps.step(&format!("the condition {Q} reads {Q}"), |world, c, _| {
+        ensure_shell(world)?;
+        let read = Keymap::when_label(&c[0]);
+        expect!(read == c[1], "{read}");
+        Ok(())
+    });
+    steps.step(&format!("an empty condition reads {Q}"), |world, c, _| {
+        ensure_shell(world)?;
+        let read = Keymap::when_label("");
+        expect!(read == c[0], "{read}");
+        Ok(())
+    });
     steps.step(&format!("{Q} is flagged as unknown"), |world, c, _| {
         let condition = keys(world).borrow().condition.clone();
         let unknown = Keymap::unknown_variables(&condition);
@@ -1626,6 +1653,44 @@ pub fn set_key_focus(world: &mut World, focus: Focus) -> Outcome {
 /// presses" does.
 pub fn press_key(world: &mut World, key: &str) -> Outcome {
     press(world, key)
+}
+
+/// Binds `key` to `command` in the MC's keybindings.json, as "the user
+/// binds" does.
+pub fn bind_key(world: &mut World, key: &str, command: &str) -> Outcome {
+    ensure_shell(world)?;
+    add_rule(world, key, command, "")?;
+    let Some(shortcut) = keymap::parse_shortcut(&key.to_lowercase()) else {
+        fail!("{key} is not a key");
+    };
+    let sequence = keymap::sequence(&shortcut, keys(world).borrow().mac);
+    let command = command.to_owned();
+    world.wait_for_with(
+        |w| {
+            keymap_of(w)
+                .shortcuts()
+                .iter()
+                .any(|s| text(&s["sequence"]) == sequence && s["chrome"] == json!(true))
+                && keymap_of(w).resolve(w.engine(), &sequence, Focus::default()) == command
+        },
+        |w| {
+            let configs: Vec<Value> = w
+                .mc
+                .subscribers("config")
+                .into_iter()
+                .map(|id| w.mc.shape_of(id))
+                .collect();
+            let held = Settings::of(w.engine()).config().get("keybindingRules").cloned();
+            format!(
+                "the keymap to bind {key} to the command; connected: {}, the MC's environment {} and its config subscriptions {}; the shell holds the rules {}; its shortcuts are {}",
+                connected(w),
+                w.mc.environment_id,
+                show(&json!(configs)),
+                show(&json!(held)),
+                show(&json!(keymap_of(w).shortcuts()))
+            )
+        },
+    )
 }
 
 /// Whether the last press ran `command`.

@@ -32,7 +32,7 @@ fn iso(time: DateTime<Utc>) -> String {
 
 fn row_of(world: &World, key: &str) -> Option<Value> {
     let sidebar = world.state("sidebar");
-    ["pinned", "active", "snoozed", "settled"]
+    ["pinned", "active", "working", "snoozed", "settled"]
         .iter()
         .find_map(|section| {
             sidebar[*section]

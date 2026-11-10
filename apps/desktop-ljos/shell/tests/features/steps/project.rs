@@ -554,6 +554,18 @@ pub fn register(steps: &mut Steps) {
             world.dispatch("project.add", json!({"path": root}))
         },
     );
+    steps.step(
+        &format!("the user adds the local folder of {Q} again written with a detour"),
+        |world, c, _| {
+            let root =
+                text(&world.mc.projects.get(&c[0]).cloned().unwrap_or_default()["workspaceRoot"]);
+            let folder = root.rsplit('/').next().unwrap_or_default();
+            world.dispatch(
+                "project.add",
+                json!({"path": format!("{root}/../{folder}")}),
+            )
+        },
+    );
     steps.step(&format!("the user asks to remove {Q}"), |world, c, _| {
         ask_to_remove(world, &c[0])
     });

@@ -52,6 +52,8 @@ struct FakeMove {
     /// The machines the palette offered, and the thread it named.
     choices: Vec<Choice>,
     palette_thread: String,
+    /// The threads a plugin keeps on their machine, by id, with the plugin.
+    kept: std::collections::HashMap<String, String>,
 }
 
 impl Default for FakeMove {
@@ -67,6 +69,7 @@ impl Default for FakeMove {
             message: String::new(),
             choices: Vec::new(),
             palette_thread: String::new(),
+            kept: std::collections::HashMap::new(),
         }
     }
 }
@@ -374,6 +377,16 @@ fn answer_machine_move(mc: &mut FakeMc, rpc: &Rpc) -> bool {
     } else {
         rpc.environment.clone()
     };
+    // What ThreadArchive.stays/1 says, before anything else is asked.
+    let thread_id = text(&rpc.payload["threadId"]);
+    if let Some(plugin) = mc.part::<FakeMove>().kept.get(&thread_id).cloned() {
+        let title = text(&row_on(mc, &from, &thread_id)["title"]);
+        mc.refuse(
+            rpc,
+            &format!("{title} was started by {plugin}, which keeps it on this machine."),
+        );
+        return true;
+    }
     if rpc.method == "hal-c2.moveDestinations" {
         let destinations: Vec<Value> = machines(mc)
             .into_iter()
@@ -681,13 +694,20 @@ pub fn register(steps: &mut Steps) {
     });
 
     // Where the thread is listed and shown.
-    steps.step(&format!("{Q} is listed under {Q}"), |world, c, _| {
-        let key = key_on(&c[1], &id_of(world, &c[0])?);
-        world.wait_for_with(
-            |w| sidebar_row(w, &key).is_some_and(|row| text(&row["environmentId"]) == c[1]),
-            |w| format!("{} to be listed under {}; {}", c[0], c[1], sidebar(w)),
-        )
-    });
+    // A name without a dot: a file ("cart.ts") is timeline_details.rs's.
+    steps.step(
+        &format!("\"([^\".]*)\" is listed under {Q}"),
+        |world, c, _| {
+            if let Some(step) = world.on_settings_page.get("listedUnder").cloned() {
+                return step(world, c);
+            }
+            let key = key_on(&c[1], &id_of(world, &c[0])?);
+            world.wait_for_with(
+                |w| sidebar_row(w, &key).is_some_and(|row| text(&row["environmentId"]) == c[1]),
+                |w| format!("{} to be listed under {}; {}", c[0], c[1], sidebar(w)),
+            )
+        },
+    );
     steps.step(
         &format!("{Q} is no longer listed under {Q}"),
         |world, c, _| {
@@ -832,6 +852,55 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user asks the command palette to move the thread to another machine",
         |world, _, _| ask_palette(world),
+    );
+    steps.step(
+        &format!("the user moves the thread to {Q} from the command palette"),
+        |world, c, _| {
+            ask_palette(world)?;
+            for row in 0..palette::count(world) {
+                if palette::role_text(world, row, "title") != c[0] {
+                    continue;
+                }
+                palette::invoke_ok(world, "run", &[ljos::prelude::Value::Int(row as i32)])?;
+                world.sync()?;
+                return Ok(());
+            }
+            fail!("{}", offered(world))
+        },
+    );
+    steps.step(
+        &format!("{Q} was started by the plugin {Q}, which keeps its threads on the machine"),
+        |world, c, _| {
+            let id = id_of(world, &c[0])?;
+            fake(world).kept.insert(id, c[1].clone());
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the running turn of {Q} is not interrupted"),
+        |world, c, _| {
+            let id = id_of(world, &c[0])?;
+            world.sync()?;
+            let question = world.state("confirmation");
+            expect!(
+                question.is_null() || text(&question["title"]).is_empty(),
+                "the user is asked {}",
+                show(&question)
+            );
+            for command in &world.mc.commands {
+                expect!(
+                    text(&command["type"]) != "run.interrupt" || text(&command["threadId"]) != id,
+                    "the run was interrupted: {}",
+                    world.describe_commands()
+                );
+            }
+            expect!(
+                fake(world).moved.is_empty(),
+                "a move was asked: {}",
+                world.describe_commands()
+            );
+            Ok(())
+        },
     );
     steps.step(
         &format!("the user is asked which machine to move {Q} to"),

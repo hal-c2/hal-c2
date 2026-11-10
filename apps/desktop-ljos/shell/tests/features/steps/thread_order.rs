@@ -9,6 +9,7 @@ use hal_c2_shell::controllers::keybindings::{Focus, Keymap};
 use hal_c2_shell::keybindings;
 use serde_json::{Value, json};
 
+use super::legacy_tree::drag_project;
 use super::thread_menu::{id_in, key_of, section_of, update_row};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
@@ -152,6 +153,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("the user drags {Q} above {Q}"), |world, c, _| {
+        if drag_project(world, &c[0], &c[1])? {
+            return Ok(());
+        }
         let key = key_of(world, &c[1])?;
         let section = section_of(world, &key);
         drop_on(world, &c[0], &section, &c[1])
@@ -283,6 +287,7 @@ pub fn register(steps: &mut Steps) {
             terminal: false,
             composer: true,
             editable: true,
+            preview: false,
         };
         let engine = world.engine().clone();
         let taken =

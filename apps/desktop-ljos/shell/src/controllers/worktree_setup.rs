@@ -11,7 +11,8 @@
 //!
 //! Actions: `worktreeSetup.details {open}` shows or hides the steps and why
 //! the setup failed; `worktreeSetup.cancel` stops a running setup
-//! (`worktreeSetup.cancel`), told when it cannot.
+//! (`worktreeSetup.cancel`), told when it cannot; `worktreeSetup.retry` runs
+//! a failed one again.
 
 use std::rc::Rc;
 
@@ -112,6 +113,24 @@ impl Controller for WorktreeSetup {
                     }),
                 );
             }
+            "worktreeSetup.retry" if !self.thread.is_empty() => {
+                let (environment_id, thread_id) = split_key(&self.thread);
+                self.mc.call(
+                    environment_id,
+                    "worktreeSetup.retry",
+                    json!({ "threadId": thread_id }),
+                    Box::new(|engine, result| {
+                        let why = match result {
+                            Ok(result) if result["retried"].as_bool() == Some(true) => return,
+                            Ok(_) => "The thread has already moved on.".to_owned(),
+                            Err(error) => error.message,
+                        };
+                        controller::with::<Toasts, _>(engine, |t, engine| {
+                            t.error(engine, "Could not retry the worktree setup", &why)
+                        });
+                    }),
+                );
+            }
             _ => {}
         }
         true
@@ -153,6 +172,7 @@ pub fn state(thread_key: &str, snapshot: &Map<String, Json>, details_open: bool)
     let field = |key: &str| snapshot.get(key).unwrap_or(&Json::Null);
     let phase = text(field("phase"));
     let mut script_failed = false;
+    let mut agent_pending = false;
     let stages: Vec<Json> = snapshot
         .get("stages")
         .and_then(Json::as_array)
@@ -162,6 +182,7 @@ pub fn state(thread_key: &str, snapshot: &Map<String, Json>, details_open: bool)
             let id = text(&stage["id"]);
             let status = text(&stage["status"]);
             script_failed = script_failed || status == "failed";
+            agent_pending = agent_pending || (id == "agent" && status == "pending");
             let tail: Vec<String> = stage["tail"]
                 .as_array()
                 .map(|lines| lines.iter().map(line).collect())
@@ -193,6 +214,8 @@ pub fn state(thread_key: &str, snapshot: &Map<String, Json>, details_open: bool)
         "worktreePath": text(field("worktreePath")),
         "script": text(&field("setupScript")["name"]),
         "canCancel": phase == "running",
+        // Failed before the agent: the MC's `worktreeSetup.retry` takes it.
+        "canRetry": phase == "failed" && agent_pending,
         "detailsOpen": details_open,
         "stages": stages,
     })

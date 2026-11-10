@@ -28,7 +28,7 @@
 //! them in NativeShell::common for every window), so the sidebar and the
 //! composer read them without waiting on it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -113,6 +113,9 @@ struct Kept {
     /// The thread or draft a window last showed: what a new thread carries
     /// from when none is shown (the phone starts threads from home).
     last_shown: RefCell<String>,
+    /// Shift is down, as the last key event had it: what Qt's
+    /// keyboardModifiers() says, which Ljós does not offer (hal-c2/ljos-ui#297).
+    shift_held: Cell<bool>,
 }
 
 fn kept(engine: &Engine) -> Rc<Kept> {
@@ -428,8 +431,12 @@ pub fn set_text(engine: &Engine, id: &str, text: &str) {
     }
     save(engine);
     let id = id.to_owned();
+    // Every window's sidebar: another window lists the draft as it is
+    // written.
     Bridge::of(engine).defer(engine, move |engine| {
-        controller::with::<Sidebar, _>(engine, |s, e| s.draft_edited(e, &id));
+        controller::each_window(engine, |engine| {
+            controller::with::<Sidebar, _>(engine, |s, e| s.draft_edited(e, &id));
+        });
     });
 }
 
@@ -546,6 +553,15 @@ impl Controller for DraftController {
         }
         reconcile(engine);
         add_commands(engine);
+        ljos::keys::add_key_filter(engine, |engine, _, ev| {
+            let held = if ev.key == ljos::keys::key::SHIFT {
+                ev.kind == ljos::keys::KeyKind::Press
+            } else {
+                ev.modifiers.contains(ljos::keys::Modifiers::SHIFT)
+            };
+            kept(engine).shift_held.set(held);
+            false
+        });
         let me = self.me.clone();
         let present_and_land = move |engine: &Engine| {
             let me = me.clone();
@@ -588,7 +604,12 @@ impl Controller for DraftController {
         match action {
             "thread.new" => {
                 let requested = text("projectKey");
-                Bridge::of(engine).defer(engine, move |engine| start_new(engine, &requested));
+                // The thread list's button asks, unless Shift is held.
+                let ask = payload.get("ask").and_then(Json::as_bool).unwrap_or(false)
+                    && !kept(engine).shift_held.get();
+                Bridge::of(engine).defer(engine, move |engine| {
+                    start_new_asking(engine, &requested, ask)
+                });
             }
             "landing.retry" => {
                 self.set_landing_failed(engine, false);
@@ -667,6 +688,12 @@ impl DraftController {
 /// the one the window shows, else the first. With several projects and
 /// none of them showing or in scope, it asks which one.
 pub fn start_new(engine: &Engine, requested: &str) {
+    start_new_asking(engine, requested, false);
+}
+
+/// As [`start_new`]; with `ask` (the thread list's button) it asks which
+/// project whenever there are several.
+fn start_new_asking(engine: &Engine, requested: &str, ask: bool) {
     let group = if !requested.is_empty() {
         // A stale key (project removed, environment gone) must not land the
         // thread in whichever project sorts first.
@@ -675,8 +702,7 @@ pub fn start_new(engine: &Engine, requested: &str) {
             None => return,
         }
     } else {
-        if shown_project(engine).is_none()
-            && sidebar::scope(engine).is_none()
+        if (ask || (shown_project(engine).is_none() && sidebar::scope(engine).is_none()))
             && sidebar::groups(engine).len() > 1
         {
             Commands::of(engine).run(engine, "thread.newIn");

@@ -50,6 +50,10 @@ pub struct Thread {
     pub created_at: String,
     pub updated_at: String,
     pub latest_user_message_at: Nullable,
+    /// When the user last typed in the thread, as opposed to a wake the
+    /// agent's side wrote as the user; the outer None is an MC row that
+    /// does not say which messages the user typed.
+    pub latest_user_authored_message_at: Option<Nullable>,
     pub archived_at: Nullable,
     pub subagent: bool,
     pub interaction_mode: String,
@@ -170,6 +174,9 @@ pub fn thread_from_row(environment_id: &str, row: &Map<String, Value>) -> Thread
         created_at: text(row, "createdAt"),
         updated_at: text(row, "updatedAt"),
         latest_user_message_at: string_field(row, "latestUserMessageAt"),
+        latest_user_authored_message_at: row
+            .contains_key("latestUserAuthoredMessageAt")
+            .then(|| string_field(row, "latestUserAuthoredMessageAt")),
         archived_at: string_field(row, "archivedAt"),
         subagent: object(row, "lineage")
             .and_then(|l| l.get("relationshipToParent"))
@@ -230,16 +237,19 @@ pub fn thread_from_row(environment_id: &str, row: &Map<String, Value>) -> Thread
         });
     }
     if thread.latest_run_id.is_some() || present(row, "activeProviderThreadId") {
+        let last_error_class = string_field(row, "lastErrorClass");
+        // Background tasks still open after the run park the runtime at idle
+        // ("Waiting"), unless the run stopped on a usage limit: the limit is
+        // what needs the user (its recovery actions), the tasks are not.
+        let limited = status == "failed" && last_error_class.as_deref() == Some("usage_limit");
         thread.runtime = Some(RuntimeSummary {
-            // Background tasks still open after the run park the runtime at
-            // idle ("Waiting").
-            status: if thread.pending_background_tasks > 0 {
+            status: if thread.pending_background_tasks > 0 && !limited {
                 "idle".into()
             } else {
                 thread.activity_run_status.clone().unwrap_or(status)
             },
             active_run_id: thread.active_run_id.clone(),
-            last_error_class: string_field(row, "lastErrorClass"),
+            last_error_class,
             updated_at: thread.updated_at.clone(),
         });
     }
@@ -357,6 +367,191 @@ fn latest_run_completed_after_snooze(thread: &Thread) -> bool {
         return false;
     };
     run.status == "completed" && parse(&run.completed_at).is_some_and(|at| at > snoozed_at)
+}
+
+/// Whether the thread is busy for the Working section: its run is going or
+/// connecting, or it waits on background work it resumes from. Not while it
+/// asks for an approval or an answer, nor with a plan to review, nor when
+/// its run stopped on a usage limit.
+pub fn working(thread: &Thread) -> bool {
+    if thread.has_pending_approvals || thread.has_pending_user_input {
+        return false;
+    }
+    // A thread returns to the inbox when its run fails on a usage limit,
+    // even with background work it still waits on.
+    if status(thread) == "limited" {
+        return false;
+    }
+    let busy = thread
+        .runtime
+        .as_ref()
+        .is_some_and(|r| active_run_status(&r.status))
+        || thread.pending_background_tasks > 0;
+    if !busy {
+        return false;
+    }
+    !(thread.interaction_mode == "plan"
+        && thread.has_actionable_proposed_plan
+        && latest_run_settled(thread))
+}
+
+/// How long a thread that stopped working stays in the Working section: a
+/// run can end moments before its continuation starts, or before the MC
+/// settles it.
+pub const WORKING_EXIT_GRACE_MS: i64 = 2000;
+
+/// The Working section's placement on this device (upstream's
+/// createInboxReturnTracker): observe() every list of threads the sidebar
+/// is built from. A thread that stops working stays in the section for
+/// [`WORKING_EXIT_GRACE_MS`], unless it asks for something, fails, or the
+/// user or the MC moves it (pins, snoozes, settles, archives); when it
+/// leaves, the time is its return to the inbox. Threads not observed
+/// since are forgotten.
+#[derive(Clone, Debug, Default)]
+pub struct WorkingTracker {
+    states: HashMap<String, WorkingState>,
+    returns: HashMap<String, i64>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct WorkingState {
+    working: bool,
+    deadline: Option<i64>,
+    /// Where the thread was placed while it worked; a change is a move.
+    placement: Option<String>,
+}
+
+impl WorkingTracker {
+    pub fn observe(&mut self, threads: &[Thread], now_ms: i64) {
+        let mut present = HashSet::new();
+        for thread in threads {
+            let key = thread.key();
+            present.insert(key.clone());
+            let previous = self.states.get(&key).cloned();
+            let was_working = previous.as_ref().is_some_and(|p| p.working);
+            let actual = working(thread);
+            let placement = (actual || was_working).then(|| {
+                [
+                    &thread.archived_at,
+                    &thread.pinned_at,
+                    &thread.settled_override,
+                    &thread.settled_at,
+                    &thread.snoozed_at,
+                    &thread.snoozed_until,
+                    &thread.active_order_key,
+                ]
+                .iter()
+                .map(|field| field.as_ref().map_or("-".to_owned(), |v| format!("={v}")))
+                .collect::<Vec<_>>()
+                .join("\u{1f}")
+            });
+            // Asking for something or failing is news: it is never held back.
+            let actionable = thread.has_pending_approvals
+                || thread.has_pending_user_input
+                || (thread.interaction_mode == "plan" && thread.has_actionable_proposed_plan)
+                || thread
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|r| r.last_error_class.is_some())
+                || thread
+                    .latest_run
+                    .as_ref()
+                    .is_some_and(|r| r.status == "failed");
+            let moved = previous.as_ref().is_some_and(|p| p.placement != placement);
+            let excluded = thread.archived_at.is_some()
+                || thread.pinned_at.is_some()
+                || thread.settled_override.as_deref() == Some("settled")
+                || effective_snoozed(thread, now_ms);
+            let deadline = if !actual && was_working && !actionable && !moved && !excluded {
+                Some(
+                    previous
+                        .as_ref()
+                        .and_then(|p| p.deadline)
+                        .unwrap_or(now_ms + WORKING_EXIT_GRACE_MS),
+                )
+            } else {
+                None
+            };
+            let still_working = actual || deadline.is_some_and(|d| d > now_ms);
+            if was_working && !still_working {
+                self.returns.insert(key.clone(), now_ms);
+            }
+            self.states.insert(
+                key,
+                WorkingState {
+                    working: still_working,
+                    deadline: still_working.then_some(deadline).flatten(),
+                    placement,
+                },
+            );
+        }
+        self.states.retain(|key, _| present.contains(key));
+        self.returns.retain(|key, _| present.contains(key));
+    }
+
+    /// Forgets everything, as when the section is turned off.
+    pub fn clear(&mut self) {
+        self.states.clear();
+        self.returns.clear();
+    }
+
+    pub fn is_working(&self, thread: &Thread) -> bool {
+        self.states
+            .get(&thread.key())
+            .map_or_else(|| working(thread), |s| s.working)
+    }
+
+    /// When the thread `key` last left the section, as this device saw it.
+    pub fn returned_at(&self, key: &str) -> Option<i64> {
+        self.returns.get(key).copied()
+    }
+
+    /// The soonest grace that runs out, to observe again then.
+    pub fn next_deadline(&self) -> Option<i64> {
+        self.states.values().filter_map(|s| s.deadline).min()
+    }
+}
+
+/// The inbox while the Working section is on: newest return first, a return
+/// being a new thread, an un-settle, a run asked for or ended, or this
+/// device seeing the thread leave the section.
+fn sort_by_return(threads: &mut [Thread], tracker: &WorkingTracker) {
+    let returned = |thread: &Thread| {
+        let mut at = sortable(&thread.created_at).max(sortable_ms(&thread.unsettled_at));
+        if let Some(run) = &thread.latest_run {
+            at = at
+                .max(sortable_ms(&run.requested_at))
+                .max(sortable_ms(&run.completed_at));
+        }
+        at.max(tracker.returned_at(&thread.key()).unwrap_or(0))
+    };
+    threads.sort_by(|left, right| {
+        returned(right)
+            .cmp(&returned(left))
+            .then_with(|| compare_identity(left, right))
+    });
+}
+
+/// The Working section: the thread the user last sent work to first. A wake
+/// or an agent's message is not the user's, so it moves no row; an MC that
+/// does not say which messages the user typed leaves the latest run's
+/// request.
+fn sort_by_send(threads: &mut [Thread]) {
+    let sent = |thread: &Thread| {
+        let at = match &thread.latest_user_authored_message_at {
+            Some(at) => at.clone(),
+            None => thread
+                .latest_run
+                .as_ref()
+                .and_then(|r| r.requested_at.clone()),
+        };
+        sortable(&thread.created_at).max(sortable_ms(&at))
+    };
+    threads.sort_by(|left, right| {
+        sent(right)
+            .cmp(&sent(left))
+            .then_with(|| compare_identity(left, right))
+    });
 }
 
 pub fn has_queued_turn_start(thread: &Thread, now_ms: i64) -> bool {
@@ -538,7 +733,8 @@ pub fn status_label(thread: &Thread) -> Nullable {
     let label = match runtime {
         "running" | "waiting" => "Working",
         "preparing" | "starting" | "queued" => "Connecting",
-        _ if thread.pending_background_tasks > 0 => "Waiting",
+        // A run stopped on a usage limit needs the user, not its background work.
+        _ if thread.pending_background_tasks > 0 && status(thread) != "limited" => "Waiting",
         _ if thread.interaction_mode == "plan"
             && latest_run_settled(thread)
             && thread.has_actionable_proposed_plan =>
@@ -869,6 +1065,10 @@ pub struct GroupingSettings {
     pub mode: String,
     pub overrides: HashMap<String, String>,
     pub sort_order: String,
+    /// The order the user arranged the folders in by hand
+    /// (`sidebarProjectOrder`, physical keys), which "manual" lists first;
+    /// folders it does not name follow in the order given.
+    pub manual_order: Vec<String>,
 }
 
 impl Default for GroupingSettings {
@@ -877,6 +1077,7 @@ impl Default for GroupingSettings {
             mode: "repository".into(),
             overrides: HashMap::new(),
             sort_order: "updated_at".into(),
+            manual_order: Vec::new(),
         }
     }
 }
@@ -900,6 +1101,27 @@ pub fn group_projects(
     preferred_environment_id: &str,
     threads: &[Thread],
 ) -> Vec<ProjectGroup> {
+    // By hand, the folders the user arranged lead in that order; the rest
+    // keep theirs.
+    let by_hand = settings.sort_order == "manual" && !settings.manual_order.is_empty();
+    let mut arranged: Vec<Project> = Vec::new();
+    if by_hand {
+        arranged = projects.to_vec();
+        let place: HashMap<&str, usize> = settings
+            .manual_order
+            .iter()
+            .enumerate()
+            .map(|(i, k)| (k.as_str(), i))
+            .collect();
+        let rank = |project: &Project| {
+            place
+                .get(physical_key(project).as_str())
+                .copied()
+                .unwrap_or(place.len())
+        };
+        arranged.sort_by_key(rank);
+    }
+    let projects: &[Project] = if by_hand { &arranged } else { projects };
     // Folders in first-seen order, each with every project row claiming it.
     let mut folder_order: Vec<String> = Vec::new();
     let mut by_folder: HashMap<String, Vec<&Project>> = HashMap::new();
@@ -1104,6 +1326,85 @@ pub fn fallback_after_delete(threads: &[Thread], key: &str, sort_order: &str) ->
     best.map(|(t, _)| t.key())
 }
 
+/// The legacy sidebar (legacySidebarEnabled): one tree of threads per
+/// project instead of the sections. A project lists its threads in
+/// `thread_sort_order` ("updated_at" is the last message the user sent, or
+/// "created_at"), the first `preview_count` of them unless the user asked
+/// for all; a folded one lists only the open thread, when it is one of
+/// its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tree {
+    pub preview_count: i64,
+    pub thread_sort_order: String,
+    /// Logical project keys.
+    pub folded: HashSet<String>,
+    pub showing_all: HashSet<String>,
+    /// Projects are sorted by hand, so their headers can be dragged.
+    pub manual: bool,
+}
+
+impl Default for Tree {
+    fn default() -> Self {
+        Tree {
+            preview_count: DEFAULT_THREAD_PREVIEW_COUNT,
+            thread_sort_order: "updated_at".into(),
+            folded: HashSet::new(),
+            showing_all: HashSet::new(),
+            manual: false,
+        }
+    }
+}
+
+/// sidebarThreadPreviewCount as the tree reads it: 1 to 15, 6 when unset
+/// (packages/contracts settings.ts).
+pub const MIN_THREAD_PREVIEW_COUNT: i64 = 1;
+pub const MAX_THREAD_PREVIEW_COUNT: i64 = 15;
+pub const DEFAULT_THREAD_PREVIEW_COUNT: i64 = 6;
+
+pub fn clamp_thread_preview_count(count: i64) -> i64 {
+    count.clamp(MIN_THREAD_PREVIEW_COUNT, MAX_THREAD_PREVIEW_COUNT)
+}
+
+/// The folder order after the user dropped the folders `dragged` on the
+/// project of the folders `target` (physical keys): dragged up it lands
+/// above the target, dragged down below it. `order` unchanged when the
+/// drop moves nothing.
+pub fn reorder_projects(order: &[String], dragged: &[String], target: &[String]) -> Vec<String> {
+    // As the web's uiStateStore reorderProjects, which dnd-kit's drop over
+    // a project feeds.
+    let dragged_set: HashSet<&str> = dragged.iter().map(String::as_str).collect();
+    let target_set: HashSet<&str> = target.iter().map(String::as_str).collect();
+    if dragged.is_empty() || target_set.is_superset(&dragged_set) {
+        return order.to_vec();
+    }
+    let Some(target_index) = order.iter().position(|k| target_set.contains(k.as_str())) else {
+        return order.to_vec();
+    };
+    let mut next: Vec<String> = Vec::new();
+    let mut removed: Vec<String> = Vec::new();
+    let mut dragged_before_target = 0usize;
+    for (i, key) in order.iter().enumerate() {
+        if !dragged_set.contains(key.as_str()) {
+            next.push(key.clone());
+            continue;
+        }
+        removed.push(key.clone());
+        if i < target_index {
+            dragged_before_target += 1;
+        }
+    }
+    if removed.is_empty() {
+        return order.to_vec();
+    }
+    // Past the end appends, as the web's splice: a dragged folder can be
+    // the target's first.
+    let insert_at = (target_index - dragged_before_target.saturating_sub(1)).min(next.len());
+    for (i, key) in removed.into_iter().enumerate() {
+        next.insert(insert_at + i, key);
+    }
+    next
+}
+
 pub type DescribeWake<'a> = Box<dyn Fn(&str) -> String + 'a>;
 
 /// What `build` reads besides the threads.
@@ -1122,6 +1423,9 @@ pub struct Input<'a> {
     pub drafts: Vec<Value>,
     pub active_thread_key: Nullable,
     pub active_draft_id: Value,
+    /// The threads whose composer holds something unsent; their rows, but
+    /// the open one's, are marked `unsentDraft`.
+    pub unsent_draft_keys: HashSet<String>,
     /// The shortcut labels of the first rows' jump commands (thread.jump.1..9),
     /// in order; each row carries its own while `show_jump_hints`.
     pub jump_labels: Vec<String>,
@@ -1140,6 +1444,14 @@ pub struct Input<'a> {
     /// code reviews (`sidebarShowSettledPluginThreads`); the open one is
     /// listed either way.
     pub show_settled_plugin_threads: bool,
+    /// Set, the view is the legacy tree: `mode` "tree" and `tree` in place
+    /// of the sections, which are empty.
+    pub tree: Option<Tree>,
+    /// The Working section (sidebarWorkingShelfEnabled), off without one:
+    /// busy inbox threads list in `working`, ordered by when the user last
+    /// sent work, and the inbox orders by when each came back, so it
+    /// cannot be arranged.
+    pub working: Option<&'a WorkingTracker>,
 }
 
 impl Default for Input<'_> {
@@ -1152,6 +1464,7 @@ impl Default for Input<'_> {
             drafts: Vec::new(),
             active_thread_key: None,
             active_draft_id: Value::Null,
+            unsent_draft_keys: HashSet::new(),
             jump_labels: Vec::new(),
             show_jump_hints: false,
             selected_keys: HashSet::new(),
@@ -1159,6 +1472,8 @@ impl Default for Input<'_> {
             settled_limit: SETTLED_PAGE,
             settled_page: SETTLED_PAGE,
             show_settled_plugin_threads: false,
+            tree: None,
+            working: None,
         }
     }
 }
@@ -1231,6 +1546,27 @@ pub fn build(
         sections
             .settled
             .retain(|thread| thread.plugin_id.is_empty() || thread.key() == open);
+    }
+    // The tree lists every thread under its project, so it has no Working
+    // section.
+    let working_shelf = if input.tree.is_some() {
+        None
+    } else {
+        input.working
+    };
+    let mut working_threads: Vec<Thread> = Vec::new();
+    if let Some(shelf) = working_shelf {
+        let mut inbox = Vec::new();
+        for thread in std::mem::take(&mut sections.active) {
+            if shelf.is_working(&thread) {
+                working_threads.push(thread);
+            } else {
+                inbox.push(thread);
+            }
+        }
+        sections.active = inbox;
+        sort_by_return(&mut sections.active, shelf);
+        sort_by_send(&mut working_threads);
     }
 
     let project_names: HashMap<&str, &str> = input
@@ -1324,6 +1660,7 @@ pub fn build(
                 },
                 "wokeAt": nullable(&visible_woke_at(thread, now_ms)),
                 "offline": offline,
+                "unsentDraft": input.unsent_draft_keys.contains(&key) && key != active_key,
                 "movingTo": nullable(&thread.moving_to),
                 "canSettle": !offline && capabilities.settlement,
                 "canSnooze": !offline && capabilities.snooze && can_snooze(thread, now_ms),
@@ -1336,10 +1673,151 @@ pub fn build(
         }
         Value::Array(rows)
     };
-    let pinned = convert(&sections.pinned, false, false, usize::MAX);
-    let active = convert(&sections.active, false, false, usize::MAX);
-    let snoozed = convert(&sections.snoozed, true, true, usize::MAX);
-    let settled = convert(&sections.settled, false, true, input.settled_limit);
+    let (pinned, active, working_rows, snoozed, settled, tree_rows);
+    if let Some(tree) = &input.tree {
+        // The legacy tree's projects (Tree), each {key, displayName,
+        // environmentId, projectId, workspaceRoot, memberKeys,
+        // threadCount, status, expanded, threads, more ("more", "less",
+        // or null when every thread shows)}.
+        let mut by_project: HashMap<String, Vec<Thread>> = HashMap::new();
+        let mut snoozed_keys: HashSet<String> = HashSet::new();
+        let mut parked_keys: HashSet<String> = HashSet::new();
+        for (section, is_snoozed, is_parked) in [
+            (&sections.pinned, false, false),
+            (&sections.active, false, false),
+            (&sections.snoozed, true, true),
+            (&sections.settled, false, true),
+        ] {
+            for thread in section {
+                let Some(&logical) = logical_by_physical.get(thread.project_key().as_str()) else {
+                    continue;
+                };
+                if is_snoozed {
+                    snoozed_keys.insert(thread.key());
+                }
+                if is_parked {
+                    parked_keys.insert(thread.key());
+                }
+                by_project
+                    .entry(logical.to_owned())
+                    .or_default()
+                    .push(thread.clone());
+            }
+        }
+        let open = active_key.clone();
+        let limit = clamp_thread_preview_count(tree.preview_count) as usize;
+        let mut projects_out: Vec<Value> = Vec::new();
+        for group in &input.projects {
+            if scoped.is_some_and(|g| g.key != group.key) {
+                continue;
+            }
+            let mut listed = by_project.get(&group.key).cloned().unwrap_or_default();
+            // Newest first; ties go to the greater id, as the web's
+            // sortThreads.
+            listed.sort_by(|left, right| {
+                thread_sort_timestamp(right, &tree.thread_sort_order)
+                    .partial_cmp(&thread_sort_timestamp(left, &tree.thread_sort_order))
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| right.id.cmp(&left.id))
+            });
+            let expanded = !tree.folded.contains(&group.key);
+            let all = tree.showing_all.contains(&group.key);
+            let overflowing = listed.len() > limit;
+            let mut rows: Vec<Value> = Vec::new();
+            for (i, thread) in listed.iter().enumerate() {
+                // Folded, the open thread still shows under its project.
+                let shown = if expanded {
+                    all || i < limit
+                } else {
+                    thread.key() == open
+                };
+                if !shown {
+                    continue;
+                }
+                let is_snoozed = snoozed_keys.contains(&thread.key());
+                let is_parked = parked_keys.contains(&thread.key());
+                let mut made = convert(
+                    std::slice::from_ref(thread),
+                    is_snoozed,
+                    is_parked,
+                    usize::MAX,
+                );
+                let mut row = made
+                    .as_array_mut()
+                    .and_then(|rows| rows.pop())
+                    .unwrap_or(Value::Null);
+                // The section it would sit in, for the row's actions.
+                if let Some(map) = row.as_object_mut() {
+                    map.insert(
+                        "section".into(),
+                        if is_snoozed {
+                            "snoozed"
+                        } else if is_parked {
+                            "settled"
+                        } else if thread.pinned_at.is_some() {
+                            "pinned"
+                        } else {
+                            "active"
+                        }
+                        .into(),
+                    );
+                }
+                rows.push(row);
+            }
+            let mut project = group.summary.clone();
+            project.insert(
+                "memberKeys".into(),
+                Value::Array(
+                    group
+                        .member_keys
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+            project.insert(
+                "threadCount".into(),
+                thread_counts
+                    .get(group.key.as_str())
+                    .copied()
+                    .unwrap_or(0)
+                    .into(),
+            );
+            let statuses = thread_statuses
+                .get(group.key.as_str())
+                .map_or(&[][..], Vec::as_slice);
+            project.insert("status".into(), most_urgent_status(statuses).into());
+            project.insert("expanded".into(), expanded.into());
+            project.insert("draggable".into(), tree.manual.into());
+            project.insert("threads".into(), Value::Array(rows));
+            project.insert(
+                "more".into(),
+                if !expanded || !overflowing {
+                    Value::Null
+                } else if all {
+                    "less".into()
+                } else {
+                    "more".into()
+                },
+            );
+            projects_out.push(Value::Object(project));
+        }
+        tree_rows = Value::Array(projects_out);
+        sections = Partition::default();
+        pinned = Value::Array(Vec::new());
+        active = Value::Array(Vec::new());
+        working_rows = Value::Array(Vec::new());
+        snoozed = Value::Array(Vec::new());
+        settled = Value::Array(Vec::new());
+    } else {
+        tree_rows = Value::Array(Vec::new());
+        pinned = convert(&sections.pinned, false, false, usize::MAX);
+        active = convert(&sections.active, false, false, usize::MAX);
+        working_rows = convert(&working_threads, false, false, usize::MAX);
+        snoozed = convert(&sections.snoozed, true, true, usize::MAX);
+        settled = convert(&sections.settled, false, true, input.settled_limit);
+    }
 
     let projects: Vec<Value> = input
         .projects
@@ -1398,6 +1876,10 @@ pub fn build(
         "scopeProjectKey": nullable(scope_project_key),
         "pinned": pinned,
         "active": active,
+        "working": working_rows,
+        // While the Working section is on the inbox keeps its own order:
+        // no arranging.
+        "workingShelf": working_shelf.is_some(),
         "snoozed": snoozed,
         "settled": settled,
         "settledTotal": sections.settled.len(),
@@ -1405,6 +1887,8 @@ pub fn build(
         "drafts": drafts,
         "activeThreadKey": nullable(&input.active_thread_key),
         "activeDraftId": input.active_draft_id,
+        "mode": if input.tree.is_some() { "tree" } else { "attention" },
+        "tree": tree_rows,
         "selectedKeys": selected,
     });
     view
@@ -1496,6 +1980,57 @@ pub struct OrderAssignment {
     /// The thread's key.
     pub key: String,
     pub order_key: String,
+}
+
+/// [`plan_reorder`] for a list that shows threads of environments this
+/// device cannot write to (offline, asleep, or read-only): the frozen ones
+/// take no order key, so the writable ones are ordered among themselves and
+/// keyless ones keep floating, unless putting the moved thread where it
+/// should read would have to move a frozen keyless thread across a keyed
+/// one (`keyless_first`, as in Active) or a keyed one across a frozen
+/// keyless one (Pinned), where the write could not hold. None then.
+pub fn plan_writable_reorder(
+    ordered_keys: &[String],
+    order_keys: &HashMap<String, Nullable>,
+    moved_key: &str,
+    writable: &HashSet<String>,
+    keyless_first: bool,
+) -> Option<Vec<OrderAssignment>> {
+    if !writable.contains(moved_key) {
+        return None;
+    }
+    let frozen_keyless =
+        |key: &String| !writable.contains(key) && !matches!(order_keys.get(key), Some(Some(_)));
+    let planned: Vec<String> = ordered_keys
+        .iter()
+        .filter(|key| !frozen_keyless(key))
+        .cloned()
+        .collect();
+    let assignments = plan_reorder(&planned, order_keys, moved_key);
+    let mut assigned = HashSet::new();
+    for assignment in &assignments {
+        if !writable.contains(&assignment.key) {
+            return None;
+        }
+        assigned.insert(assignment.key.clone());
+    }
+    // Keyless rows sort before keyed ones in Active and after them in
+    // Pinned, so a key written on the wrong side of a frozen keyless row
+    // cannot hold.
+    let mut frozen_before = false;
+    let mut assigned_before = false;
+    for key in ordered_keys {
+        let frozen = frozen_keyless(key);
+        let written = assigned.contains(key);
+        if (keyless_first && frozen && assigned_before)
+            || (!keyless_first && written && frozen_before)
+        {
+            return None;
+        }
+        frozen_before = frozen_before || frozen;
+        assigned_before = assigned_before || written;
+    }
+    Some(assignments)
 }
 
 /// The writes that put `moved_key` where `ordered_keys` (the section as it

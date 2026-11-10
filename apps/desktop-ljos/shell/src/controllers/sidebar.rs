@@ -51,6 +51,7 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init, Me};
+use crate::controllers::composer::Composer;
 use crate::controllers::drafts;
 use crate::controllers::keybindings::Keymap;
 use crate::controllers::mc_plugin;
@@ -62,7 +63,7 @@ use crate::json::Json;
 use crate::mc::Mc;
 use crate::sidebar_model::{
     self as model, CustomSnooze, GroupingSettings, Input, Nullable, ProjectGroup, SnoozePreset,
-    Thread, View,
+    Thread, Tree, View, WorkingTracker,
 };
 use crate::store;
 use crate::this_machine;
@@ -73,6 +74,11 @@ pub const CUSTOM_SNOOZE: &str = "snooze:custom";
 /// Reading a thread is told at most this often, unless a run completed.
 const VISIT_EVERY: Duration = Duration::from_secs(5);
 const MIGRATED_ANNOUNCED: &str = "migratedThreadsAnnounced";
+/// The device preference that remembers the project the list is scoped to.
+const SCOPE_KEY: &str = "sidebarProjectScopeKey";
+/// The legacy tree's folded projects and hand order, on this device.
+const FOLDED_PROJECTS: &str = "sidebarFoldedProjects";
+const PROJECT_ORDER: &str = "sidebarProjectOrder";
 
 /// What runs once a command lands.
 pub type Then = Box<dyn FnOnce(&Engine)>;
@@ -91,6 +97,9 @@ struct Shared {
     /// Tests pin the zone; the app uses the system's.
     zone: RefCell<Option<Zone>>,
     timestamp_format: RefCell<String>,
+    /// Whether the Working section is off, as [`can_move`] reads it (it is
+    /// on until the device's settings say otherwise).
+    working_shelf_off: Cell<bool>,
 }
 
 fn shared(engine: &Engine) -> std::rc::Rc<Shared> {
@@ -247,7 +256,7 @@ fn section_keys(engine: &Engine, section: &str) -> Vec<String> {
 }
 
 fn section_of(engine: &Engine, key: &str) -> &'static str {
-    ["pinned", "active", "snoozed", "settled"]
+    ["pinned", "active", "working", "snoozed", "settled"]
         .into_iter()
         .find(|section| section_keys(engine, section).iter().any(|k| k == key))
         .unwrap_or("")
@@ -257,6 +266,9 @@ fn section_of(engine: &Engine, key: &str) -> &'static str {
 pub fn can_move(engine: &Engine, key: &str, up: bool) -> bool {
     let section = section_of(engine, key);
     if section != "pinned" && section != "active" {
+        return false;
+    }
+    if section == "active" && !shared(engine).working_shelf_off.get() {
         return false;
     }
     let ordered = section_keys(engine, section);
@@ -387,6 +399,21 @@ pub struct Sidebar {
     open_draft_label: Option<String>,
     /// The migrated threads were announced, or tried to be, this run.
     migration_announced: bool,
+    /// The legacy tree, when legacySidebarEnabled; the projects listing
+    /// all their threads last the session, as the web's did.
+    tree: Option<Tree>,
+    showing_all: HashSet<String>,
+    working_shelf: bool,
+    working: WorkingTracker,
+    /// Refreshes when a thread's grace in the Working section runs out.
+    working_grace: Option<TimerId>,
+    /// The threads whose composer holds something unsent.
+    unsent_threads: HashSet<String>,
+    scope_restored: bool,
+    /// Whether a synchronized MC has listed the scope's project this run
+    /// (or the user picked it): only a restored one not seen yet waits
+    /// for every environment. A cached listing does not count.
+    scope_seen: bool,
 }
 
 impl Controller for Sidebar {
@@ -424,6 +451,14 @@ impl Controller for Sidebar {
             open_draft_id: String::new(),
             open_draft_label: None,
             migration_announced: false,
+            tree: None,
+            showing_all: HashSet::new(),
+            working_shelf: true,
+            working: WorkingTracker::default(),
+            working_grace: None,
+            unsent_threads: HashSet::new(),
+            scope_restored: false,
+            scope_seen: false,
         }
     }
 
@@ -505,17 +540,44 @@ impl Sidebar {
         });
         let regrouped = shape(&groups) != before;
         *shared.groups.borrow_mut() = groups.clone();
-        // A scope whose project went away (removed, regrouped) shows everything again.
+        // The scope this device chose last time, once per run, as soon as
+        // its preferences are read (a preview can refresh before they are).
+        let settings = Settings::of(engine);
+        if !self.scope_restored && settings.device_path().is_some() {
+            self.scope_restored = true;
+            if let Some(kept) = settings
+                .device_value(SCOPE_KEY)
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .filter(|s| !s.is_empty())
+            {
+                *shared.scope.borrow_mut() = Some(kept);
+            }
+        }
+        // A scope whose project went away (removed, regrouped) shows
+        // everything again. One restored from the preferences and not
+        // seen yet this run waits until every environment has said what
+        // projects it has: a cached or unreachable one cannot tell that
+        // the project is gone.
+        let has_group = |key: &str| groups.iter().any(|g| g.key == key);
+        if shared.scope.borrow().as_deref().is_some_and(has_group)
+            && store::with(engine, |s| !s.previewing() && s.synchronized())
+        {
+            self.scope_seen = true;
+        }
+        let mut cleared = false;
         let scope = {
             let mut scope = shared.scope.borrow_mut();
-            if scope
-                .as_ref()
-                .is_some_and(|key| !groups.iter().any(|g| &g.key == key))
+            if scope.as_ref().is_some_and(|key| !has_group(key))
+                && (self.scope_seen || self.projects_reported(engine))
             {
                 *scope = None;
+                cleared = true;
             }
             scope.clone()
         };
+        if cleared {
+            self.remember_scope(engine);
+        }
         let now = now_ms(engine);
         // The window's route marks the open thread or draft.
         let route = navigation::shown(engine);
@@ -575,6 +637,16 @@ impl Sidebar {
                 None => model::wake_description(until, &at.with_timezone(&Local), &format, &locale),
             }
         };
+        self.unsent_threads = threads
+            .iter()
+            .map(Thread::key)
+            .filter(|key| drafts::preview(engine, key).is_some())
+            .collect();
+        if self.working_shelf {
+            self.working.observe(&threads, now);
+        } else {
+            self.working.clear();
+        }
         let local_folders = !own.is_empty() && this_machine::hosts(engine, &own);
         let view = store::with(engine, |s| {
             let input = Input {
@@ -593,6 +665,7 @@ impl Sidebar {
                 } else {
                     json!(open_draft)
                 },
+                unsent_draft_keys: self.unsent_threads.clone(),
                 jump_labels: self.jump_labels.clone(),
                 show_jump_hints: self.show_jump_hints,
                 selected_keys: selected,
@@ -600,6 +673,8 @@ impl Sidebar {
                 settled_limit: self.settled_shown,
                 settled_page: self.settled_page,
                 show_settled_plugin_threads: self.show_settled_plugin_threads,
+                tree: self.tree.clone(),
+                working: self.working_shelf.then_some(&self.working),
             };
             model::build(
                 &threads,
@@ -618,6 +693,22 @@ impl Sidebar {
         let state = view.state.clone();
         *shared.view.borrow_mut() = view;
         self.bridge.publish(engine, "sidebar", state);
+        if let Some(timer) = self.working_grace.take() {
+            engine.cancel_call(timer);
+        }
+        if let Some(deadline) = self.working.next_deadline() {
+            let wait = (deadline - now).clamp(1, model::WORKING_EXIT_GRACE_MS) as u64;
+            let me = self.me.clone();
+            self.working_grace = Some(engine.call_at(
+                engine.now() + Duration::from_millis(wait),
+                move |engine| {
+                    me.run(engine, |c, e| {
+                        c.working_grace = None;
+                        c.refresh(e);
+                    });
+                },
+            ));
+        }
         // Snoozes wake and "2h" labels tick over on the minute.
         if let Some(timer) = self.minute.take() {
             engine.cancel_call(timer);
@@ -655,6 +746,18 @@ impl Sidebar {
                 .unwrap_or(default)
                 .to_owned()
         };
+        let strings = |key: &str| -> Vec<String> {
+            device
+                .get(key)
+                .and_then(Json::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
         let defaults = GroupingSettings::default();
         self.grouping = GroupingSettings {
             mode: text("sidebarProjectGroupingMode", &defaults.mode),
@@ -668,8 +771,33 @@ impl Sidebar {
                         .collect()
                 })
                 .unwrap_or_default(),
+            manual_order: strings(PROJECT_ORDER),
         };
         self.thread_sort_order = text("sidebarThreadSortOrder", "updated_at");
+        self.working_shelf = device
+            .get("sidebarWorkingShelfEnabled")
+            .and_then(Json::as_bool)
+            .unwrap_or(true);
+        shared(engine).working_shelf_off.set(!self.working_shelf);
+        self.tree = None;
+        if device
+            .get("legacySidebarEnabled")
+            .and_then(Json::as_bool)
+            .unwrap_or(false)
+        {
+            let count = device.get("sidebarThreadPreviewCount");
+            self.tree = Some(Tree {
+                preview_count: model::clamp_thread_preview_count(
+                    count
+                        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                        .unwrap_or(model::DEFAULT_THREAD_PREVIEW_COUNT),
+                ),
+                thread_sort_order: self.thread_sort_order.clone(),
+                folded: strings(FOLDED_PROJECTS).into_iter().collect(),
+                showing_all: self.showing_all.clone(),
+                manual: self.grouping.sort_order == "manual",
+            });
+        }
         // The shell's own MC decides for the whole sidebar, as its Settings
         // row shows.
         self.show_settled_plugin_threads = Settings::of(engine)
@@ -678,6 +806,29 @@ impl Sidebar {
             .and_then(Json::as_bool)
             .unwrap_or(false);
         *shared(engine).timestamp_format.borrow_mut() = text("timestampFormat", "locale");
+    }
+
+    /// Whether every environment has said what projects it has: none is
+    /// held from the cache or unreachable.
+    fn projects_reported(&self, engine: &Engine) -> bool {
+        store::with(engine, |s| {
+            !s.previewing()
+                && s.synchronized()
+                && s.environments().iter().all(|e| s.environment_online(e))
+        })
+    }
+
+    /// Keeps the scope in this device's preferences for the next start.
+    fn remember_scope(&self, engine: &Engine) {
+        let settings = Settings::of(engine);
+        let current = scope(engine);
+        let kept = settings
+            .device_value(SCOPE_KEY)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        if kept != current.clone().unwrap_or_default() {
+            settings.write_device(engine, SCOPE_KEY, current.map_or(Json::Null, Json::String));
+        }
     }
 
     /// Threads the MC brought over from the first version (`historyOrigin`
@@ -806,6 +957,14 @@ impl Sidebar {
             return;
         }
         let label = drafts::preview(engine, id);
+        // A thread's row is marked while its composer holds something
+        // unsent.
+        if thread(engine, id).is_some() {
+            if label.is_some() != self.unsent_threads.contains(id) {
+                self.refresh(engine);
+            }
+            return;
+        }
         if self.draft_labels.get(id) != label.as_ref() {
             self.refresh(engine);
         }
@@ -842,7 +1001,71 @@ impl Sidebar {
                     .get("projectKey")
                     .and_then(Json::as_str)
                     .map(str::to_owned);
+                // Picked from the projects listed now.
+                self.scope_seen = true;
+                self.remember_scope(engine);
                 self.refresh(engine);
+                true
+            }
+            "sidebar.project.fold"
+            | "sidebar.project.more"
+            | "sidebar.project.less"
+            | "sidebar.project.drop"
+            | "sidebar.project.menu" => {
+                let key = text(payload, "projectKey");
+                if group(engine, &key).is_none() {
+                    return true;
+                }
+                match action {
+                    "sidebar.project.fold" => {
+                        let mut folded: HashSet<String> = self
+                            .tree
+                            .as_ref()
+                            .map(|t| t.folded.clone())
+                            .unwrap_or_default();
+                        if !folded.remove(&key) {
+                            folded.insert(key);
+                        }
+                        let mut keys: Vec<String> = folded.into_iter().collect();
+                        keys.sort();
+                        Settings::of(engine).write_device(
+                            engine,
+                            FOLDED_PROJECTS,
+                            if keys.is_empty() {
+                                Json::Null
+                            } else {
+                                json!(keys)
+                            },
+                        );
+                    }
+                    "sidebar.project.drop" => {
+                        self.drop_project(engine, &key, &text(payload, "targetKey"));
+                    }
+                    "sidebar.project.menu" => {
+                        self.open_project_menu(
+                            engine,
+                            &key,
+                            payload.get("x").and_then(Json::as_f64).unwrap_or(0.0),
+                            payload.get("y").and_then(Json::as_f64).unwrap_or(0.0),
+                        );
+                    }
+                    "sidebar.project.more" => {
+                        self.showing_all.insert(key);
+                        self.refresh(engine);
+                    }
+                    _ => {
+                        self.showing_all.remove(&key);
+                        self.refresh(engine);
+                    }
+                }
+                true
+            }
+            "sidebar.options" => {
+                self.open_sort_menu(
+                    engine,
+                    payload.get("x").and_then(Json::as_f64).unwrap_or(0.0),
+                    payload.get("y").and_then(Json::as_f64).unwrap_or(0.0),
+                );
                 true
             }
             // Opening a thread that woke acknowledges the wake, as dismissing
@@ -868,6 +1091,13 @@ impl Sidebar {
                     }
                 }
                 false
+            }
+            "thread.draft.discard" => {
+                let key = key.clone();
+                Bridge::of(engine).defer(engine, move |engine| {
+                    controller::with::<Composer, _>(engine, |c, e| c.discard_draft(e, &key));
+                });
+                true
             }
             "thread.attachFiles" => {
                 if thread(engine, &key).is_none() {
@@ -1380,7 +1610,20 @@ impl Sidebar {
         if pinning {
             order_keys.insert(key.to_owned(), None);
         }
-        for assignment in model::plan_reorder(ordered, &order_keys, key) {
+        let writable: HashSet<String> = store::with(engine, |s| {
+            s.threads()
+                .iter()
+                .filter(|t| s.environment_online(&t.environment_id))
+                .map(Thread::key)
+                .collect()
+        });
+        // Keyless rows lead Active and trail Pinned.
+        let Some(plan) =
+            model::plan_writable_reorder(ordered, &order_keys, key, &writable, !pinned)
+        else {
+            return;
+        };
+        for assignment in plan {
             let Some(thread) = thread(engine, &assignment.key) else {
                 continue;
             };
@@ -1413,6 +1656,9 @@ impl Sidebar {
         if from.is_empty() || section == "snoozed" {
             return;
         }
+        if from == "working" || section == "working" {
+            return;
+        }
         let keyed = json!({"key": key});
         let placed = || {
             let mut ordered = section_keys(engine, section);
@@ -1424,7 +1670,7 @@ impl Sidebar {
             ordered
         };
         if section == from {
-            if section == "pinned" || section == "active" {
+            if section == "pinned" || (section == "active" && !self.working_shelf) {
                 let ordered = placed();
                 if ordered != section_keys(engine, section) {
                     self.arrange(engine, section, &ordered, key, false);
@@ -1450,6 +1696,312 @@ impl Sidebar {
         } else if from == "snoozed" {
             self.handle_action(engine, "thread.unsnooze", &keyed);
         }
+    }
+
+    fn drop_project(&mut self, engine: &Engine, key: &str, target_key: &str) {
+        // Only an order the user keeps by hand takes a drag.
+        if self.grouping.sort_order != "manual" || key == target_key {
+            return;
+        }
+        let (Some(dragged), Some(target)) = (group(engine, key), group(engine, target_key)) else {
+            return;
+        };
+        let folders = |group: &ProjectGroup| -> Vec<String> {
+            let mut keys: Vec<String> = Vec::new();
+            for member in &group.members {
+                let physical = model::physical_key(member);
+                if !keys.contains(&physical) {
+                    keys.push(physical);
+                }
+            }
+            keys
+        };
+        let mut order: Vec<String> = Vec::new();
+        for group in &groups(engine) {
+            for physical in folders(group) {
+                if !order.contains(&physical) {
+                    order.push(physical);
+                }
+            }
+        }
+        let next = model::reorder_projects(&order, &folders(&dragged), &folders(&target));
+        if next == order {
+            return;
+        }
+        Settings::of(engine).write_device(engine, PROJECT_ORDER, json!(next));
+    }
+
+    fn open_project_menu(&mut self, engine: &Engine, key: &str, x: f64, y: f64) {
+        let Some(project) = group(engine, key) else {
+            return;
+        };
+        if project.members.is_empty() {
+            return;
+        }
+        let members = project.members.clone();
+        let grouped = members.len() > 1;
+        // A grouped project's entries name the folder each acts on.
+        let member_label = |member: &model::Project| -> String {
+            let environment = store::with(engine, |s| {
+                s.environment(&member.environment_id)
+                    .get("label")
+                    .and_then(Json::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_default()
+            });
+            if environment.is_empty() {
+                member.workspace_root.clone()
+            } else {
+                format!("{} ({environment})", member.workspace_root)
+            }
+        };
+        type Run = Rc<dyn Fn(&Engine)>;
+        let run: Rc<RefCell<HashMap<String, Run>>> = Rc::new(RefCell::new(HashMap::new()));
+        let leaf = |run: &Rc<RefCell<HashMap<String, Run>>>,
+                    id: String,
+                    label: String,
+                    action: Run|
+         -> Item {
+            run.borrow_mut().insert(id.clone(), action);
+            Item::new(id, label)
+        };
+        let bridge = self.bridge;
+        let mut items: Vec<Item> = Vec::new();
+        // `targeted(action, label, make)`: one entry, or a folder entry
+        // per member of a grouped project.
+        macro_rules! targeted {
+            ($action:expr, $label:expr, $make:expr) => {{
+                let make: &dyn Fn(&model::Project, String, String) -> Item = &$make;
+                if !grouped {
+                    make(&members[0], format!("{}:0", $action), $label.to_owned())
+                } else {
+                    let mut item = Item::new($action, $label);
+                    for (i, member) in members.iter().enumerate() {
+                        let label = member_label(member);
+                        item.children
+                            .push(make(member, format!("{}:{i}", $action), label));
+                    }
+                    item
+                }
+            }};
+        }
+        items.push(targeted!(
+            "rename",
+            "Rename",
+            |member: &model::Project, id: String, label: String| {
+                let member_key = member.key();
+                leaf(
+                    &run,
+                    id,
+                    label,
+                    Rc::new(move |engine: &Engine| {
+                        bridge.dispatch(
+                            engine,
+                            "project.rename",
+                            json!({"projectKey": member_key}),
+                        );
+                    }),
+                )
+            }
+        ));
+        // The device's default, else the folder's own choice
+        // (sidebarProjectGroupingOverrides).
+        const GROUPINGS: [(&str, &str); 4] = [
+            ("inherit", "Use global default"),
+            ("repository", "Group by repository"),
+            ("repository_path", "Group by repository path"),
+            ("separate", "Keep separate"),
+        ];
+        let overrides = self.grouping.overrides.clone();
+        items.push(targeted!(
+            "grouping",
+            "Group into...",
+            |member: &model::Project, id: String, label: String| {
+                let folder = model::physical_key(member);
+                let current = overrides
+                    .get(&folder)
+                    .map_or("inherit", String::as_str)
+                    .to_owned();
+                let mut choices = Item::new(id.clone(), label);
+                for (choice, choice_label) in GROUPINGS {
+                    let folder = folder.clone();
+                    let mut item = leaf(
+                        &run,
+                        format!("{id}:{choice}"),
+                        choice_label.to_owned(),
+                        Rc::new(move |engine: &Engine| {
+                            let settings = Settings::of(engine);
+                            let mut overrides = settings
+                                .device_value("sidebarProjectGroupingOverrides")
+                                .and_then(|v| v.as_object().cloned())
+                                .unwrap_or_default();
+                            if choice == "inherit" {
+                                overrides.remove(&folder);
+                            } else {
+                                overrides.insert(folder.clone(), json!(choice));
+                            }
+                            settings.write_device(
+                                engine,
+                                "sidebarProjectGroupingOverrides",
+                                if overrides.is_empty() {
+                                    Json::Null
+                                } else {
+                                    Json::Object(overrides)
+                                },
+                            );
+                        }),
+                    );
+                    item.checked = choice == current;
+                    choices.children.push(item);
+                }
+                choices
+            }
+        ));
+        items.push(targeted!(
+            "copy-path",
+            "Copy Path",
+            |member: &model::Project, id: String, label: String| {
+                let path = member.workspace_root.clone();
+                leaf(
+                    &run,
+                    id,
+                    label,
+                    Rc::new(move |engine: &Engine| {
+                        if Bridge::of(engine).copy_to_clipboard(engine, &path) {
+                            controller::with::<Toasts, _>(engine, |t, e| {
+                                t.show(e, "success", "Path copied", &path, None, 0);
+                            });
+                        } else {
+                            toast_error(
+                                engine,
+                                "Failed to copy path",
+                                "The clipboard could not be written.",
+                            );
+                        }
+                    }),
+                )
+            }
+        ));
+        let key_owned = key.to_owned();
+        let mut settings_item = leaf(
+            &run,
+            "project-settings".into(),
+            "Project settings".into(),
+            Rc::new(move |engine: &Engine| {
+                let key = key_owned.clone();
+                controller::with::<Navigation, _>(engine, |n, e| {
+                    n.open_for_project(e, Route::Settings("/settings/projects".into()), key);
+                });
+            }),
+        );
+        settings_item.icon = "settings".into();
+        items.push(settings_item);
+        let bridge = self.bridge;
+        let mut remove = targeted!(
+            "delete",
+            "Remove",
+            |member: &model::Project, id: String, label: String| {
+                let member_key = member.key();
+                let mut item = leaf(
+                    &run,
+                    id,
+                    label,
+                    Rc::new(move |engine: &Engine| {
+                        // A project with threads says so first; deleting
+                        // it anyway still asks (the projects controller).
+                        let member_key2 = member_key.clone();
+                        let ask = move |engine: &Engine| {
+                            bridge.dispatch(
+                                engine,
+                                "project.remove",
+                                json!({"projectKey": member_key2.clone()}),
+                            );
+                        };
+                        let Some(project) = store::with(engine, |s| s.project(&member_key)) else {
+                            return;
+                        };
+                        let threads = store::with(engine, |s| {
+                            s.threads()
+                                .iter()
+                                .filter(|t| {
+                                    t.environment_id == project.environment_id
+                                        && t.project_id == project.id
+                                        && t.archived_at.is_none()
+                                })
+                                .count()
+                        });
+                        if threads == 0 {
+                            ask(engine);
+                            return;
+                        }
+                        controller::with::<Toasts, _>(engine, |t, e| {
+                            t.show(
+                                e,
+                                "warning",
+                                "Project is not empty",
+                                "Delete all threads in this project before removing it.",
+                                Some(crate::controllers::toasts::Action::new(
+                                    "Delete anyway",
+                                    ask,
+                                )),
+                                0,
+                            );
+                        });
+                    }),
+                );
+                item.destructive = true;
+                item
+            }
+        );
+        remove.icon = "trash".into();
+        remove.destructive = true;
+        items.push(remove);
+        controller::with::<Menus, _>(engine, |m, e| {
+            m.open(e, x, y, items, move |engine, id| {
+                if let Some(action) = run.borrow().get(id).cloned() {
+                    action(engine);
+                }
+            });
+        });
+    }
+
+    fn open_sort_menu(&mut self, engine: &Engine, x: f64, y: f64) {
+        const ORDERS: [(&str, &str); 3] = [
+            ("updated_at", "Last user message"),
+            ("created_at", "Created at"),
+            ("manual", "Manual"),
+        ];
+        let choices = |prefix: &str, label: &str, count: usize, current: &str| -> Item {
+            let mut item = Item::new(prefix, label);
+            for (value, text) in ORDERS.iter().take(count) {
+                let mut choice = Item::new(format!("{prefix}:{value}"), *text);
+                choice.checked = *value == current;
+                item.children.push(choice);
+            }
+            item
+        };
+        let items = vec![
+            choices(
+                "sidebarProjectSortOrder",
+                "Sort projects",
+                3,
+                &self.grouping.sort_order,
+            ),
+            // Threads have no order of the user's own.
+            choices(
+                "sidebarThreadSortOrder",
+                "Sort threads",
+                2,
+                &self.thread_sort_order,
+            ),
+        ];
+        controller::with::<Menus, _>(engine, |m, e| {
+            m.open(e, x, y, items, move |engine, id| {
+                if let Some((key, value)) = id.split_once(':') {
+                    Settings::of(engine).write_device(engine, key, json!(value));
+                }
+            });
+        });
     }
 }
 

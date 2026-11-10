@@ -111,6 +111,8 @@ pub struct Projects {
     /// A project the MC created whose row has not reached the shell yet; its
     /// draft opens when the row does.
     created: Option<(String, String)>,
+    /// The project key the rename question (`projectRename`) is about.
+    renaming: String,
 }
 
 impl Controller for Projects {
@@ -122,6 +124,7 @@ impl Controller for Projects {
             active: false,
             removal: None,
             created: None,
+            renaming: String::new(),
         }
     }
 
@@ -154,6 +157,7 @@ impl Controller for Projects {
             ],
         );
         self.publish(engine);
+        self.publish_rename(engine);
     }
 
     fn handle(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
@@ -208,6 +212,24 @@ impl Controller for Projects {
                     }
                 }
                 self.ask_by_key(engine, &key);
+                true
+            }
+            "project.rename" => {
+                let key = text("projectKey");
+                if store::with(engine, |s| s.project(&key)).is_none() {
+                    return true;
+                }
+                self.renaming = key;
+                self.publish_rename(engine);
+                true
+            }
+            "project.rename.submit" => {
+                self.submit_rename(engine, text("title").trim());
+                true
+            }
+            "project.rename.cancel" => {
+                self.renaming.clear();
+                self.publish_rename(engine);
                 true
             }
             "project.remove.confirm" => {
@@ -284,6 +306,70 @@ impl Projects {
             return;
         };
         self.ask_to_remove(engine, vec![key], "project", &project.title);
+    }
+
+    fn submit_rename(&mut self, engine: &Engine, title: &str) {
+        let Some(project) = store::with(engine, |s| s.project(&self.renaming)) else {
+            self.renaming.clear();
+            self.publish_rename(engine);
+            return;
+        };
+        if title.is_empty() {
+            controller::with::<Toasts, _>(engine, |t, e| {
+                t.show(e, "warning", "Project title cannot be empty", "", None, 0);
+            });
+            return;
+        }
+        if title == project.title {
+            self.renaming.clear();
+            self.publish_rename(engine);
+            return;
+        }
+        let Some(mc) = controller::mc(engine) else {
+            return;
+        };
+        let key = self.renaming.clone();
+        let me = self.me.clone();
+        mc.call(
+            &project.environment_id,
+            "projects.mutate",
+            json!({"type": "project.update", "projectId": project.id, "title": title}),
+            Box::new(move |engine, result| {
+                if let Err(error) = result {
+                    toast_error(engine, "Failed to rename project", &error.message);
+                    return;
+                }
+                me.run(engine, |c, e| {
+                    if c.renaming != key {
+                        return;
+                    }
+                    c.renaming.clear();
+                    c.publish_rename(e);
+                });
+            }),
+        );
+    }
+
+    fn publish_rename(&self, engine: &Engine) {
+        if !self.active {
+            return;
+        }
+        let project = (!self.renaming.is_empty())
+            .then(|| store::with(engine, |s| s.project(&self.renaming)))
+            .flatten();
+        let Some(project) = project else {
+            self.bridge.publish(engine, "projectRename", Json::Null);
+            return;
+        };
+        self.bridge.publish(
+            engine,
+            "projectRename",
+            json!({
+                "projectKey": project.key(),
+                "title": project.title,
+                "environment": label_of(engine, &project.environment_id),
+            }),
+        );
     }
 
     fn confirm_removal(&mut self, engine: &Engine) {

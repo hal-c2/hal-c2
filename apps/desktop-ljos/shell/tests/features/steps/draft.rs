@@ -4,6 +4,7 @@
 //! and the draft a window with no thread lands on (navigation/landing.feature).
 //! desktop-qt's DraftSteps.cpp.
 
+use hal_c2_shell::controller;
 use hal_c2_shell::controllers::drafts::{self, Draft};
 use serde_json::{Value, json};
 
@@ -97,10 +98,14 @@ fn open_projects(world: &mut World, x: f64, y: f64) -> Outcome {
     world.dispatch("draft.project", json!({"x": x, "y": y}))
 }
 
-/// The shell keeps to one window (`set_window_opener` is not given one
-/// here), so what a second window shows can not be read.
-fn second_window() -> Outcome {
-    fail!("the headless shell has one window; a second one is not opened")
+/// The second window's published `sidebar`, or a failure naming how many
+/// windows are open (desktop-qt reads windows.at(1)'s bridge state).
+fn second_state(world: &World, key: &str) -> Outcome<Value> {
+    let windows = controller::windows(world.engine());
+    expect!(windows.len() == 2, "{} windows are open", windows.len());
+    Ok(controller::window_bridge(world.engine(), &windows[1])
+        .and_then(|bridge| bridge.published(world.engine(), key))
+        .unwrap_or(Value::Null))
 }
 
 pub fn register(steps: &mut Steps) {
@@ -280,7 +285,14 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step(
         &format!("the new window's sidebar lists the draft reading {Q}"),
-        |_, _, _| second_window(),
+        |world, c, _| {
+            world.sync()?;
+            let sidebar = second_state(world, "sidebar")?;
+            let route = second_state(world, "route")?;
+            expect_listed_draft(world, &sidebar, &c[0]).map_err(|e| {
+                crate::harness::Failure(format!("{}; the new window shows {route}", e.0))
+            })
+        },
     );
     steps.step(
         "(?:the sidebar lists no drafts|the thread list does not list the empty draft)",
@@ -332,12 +344,39 @@ pub fn register(steps: &mut Steps) {
         world.dispatch("landing.retry", json!({}))
     });
     steps.step("the user opens a new window", |world, _, _| {
+        // The window shell has no opener of its own: the headless one
+        // shows nothing (as window.rs's steps give it).
+        controller::set_window_opener(world.engine(), |_, _| {});
         world.dispatch("window.new", json!({}))?;
+        // The steps go on acting in the first window, as desktop-qt's
+        // `world.bridge()` is the first window's.
+        let windows = controller::windows(world.engine());
+        if let Some(first) = windows
+            .first()
+            .and_then(|w| controller::window_bridge(world.engine(), w))
+        {
+            first.set_front(world.engine());
+        }
         world.sync()
     });
     steps.step(
         "the new window shows the first window's draft",
-        |_, _, _| second_window(),
+        |world, _, _| {
+            world.sync()?;
+            let first = world.state("route");
+            let second = second_state(world, "route")?;
+            expect!(
+                at(&first, "kind") == "draft"
+                    && at(&second, "kind") == at(&first, "kind")
+                    && text(&second["draftId"]) == text(&first["draftId"]),
+                "the windows show {} {} and {} {}",
+                at(&first, "kind"),
+                text(&first["draftId"]),
+                at(&second, "kind"),
+                text(&second["draftId"])
+            );
+            Ok(())
+        },
     );
 
     steps.step(

@@ -78,6 +78,7 @@ pub enum Route {
     Settings(String),
     PullRequests,
     Usage,
+    Space,
 }
 
 impl Route {
@@ -89,6 +90,7 @@ impl Route {
             Route::Settings(_) => "settings",
             Route::PullRequests => "pullRequests",
             Route::Usage => "usage",
+            Route::Space => "space",
         }
     }
 
@@ -107,6 +109,7 @@ impl Route {
             "settings" => Some(Route::Settings(text("section").into())),
             "pullRequests" => Some(Route::PullRequests),
             "usage" => Some(Route::Usage),
+            "space" => Some(Route::Space),
             _ => None,
         }
     }
@@ -661,6 +664,7 @@ impl Navigation {
             Route::Settings(_) => "Settings".into(),
             Route::PullRequests => "Pull requests".into(),
             Route::Usage => "Usage".into(),
+            Route::Space => "Spaces".into(),
             Route::Home => String::new(),
         };
         let plugin = thread.filter(|t| !t.plugin_id.is_empty()).map_or(
