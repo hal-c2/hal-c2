@@ -1193,6 +1193,9 @@ pub struct PullRequestReview {
     /// Why the last change was refused, or could not be sent.
     #[qml(readonly, notify)]
     problem: Atom,
+    /// The threads that link it: a PullRequestThreadLinks.
+    #[qml(readonly, notify)]
+    threads: Value,
     #[qml(skip)]
     inner: Rc<Inner>,
 }
@@ -1252,6 +1255,7 @@ impl PullRequestReview {
             viewed_count: 0,
             busy: false,
             problem: Atom::new(""),
+            threads: Value::Null,
             inner,
         };
         let obj = engine.create_native(object, owner)?;
@@ -1261,6 +1265,14 @@ impl PullRequestReview {
         })?;
         tell(engine, obj, &[Note::Detail, Note::Stack, Note::Viewed]);
         Ok(obj)
+    }
+
+    /// The review shows `links` as the threads that link it.
+    pub fn set_threads(engine: &Engine, obj: ObjectId, links: ObjectId) {
+        warn(
+            engine,
+            engine.set_internal(obj, PullRequestReview::THREADS, Value::Object(links)),
+        );
     }
 
     /// The review's DiffModel.

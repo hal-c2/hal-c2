@@ -100,7 +100,7 @@ fn row_key(link: &Json) -> RowKey {
 }
 
 /// A pull request named: where, and its page.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Target {
     pub host: String,
     pub repository: String,
@@ -155,7 +155,7 @@ pub fn repository_of(project: &Map<String, Json>) -> (String, String) {
 
 /// One name for an Azure DevOps repository however it is reached, over SSH,
 /// visualstudio.com or dev.azure.com.
-fn canonical_key(key: &str) -> String {
+pub fn canonical_key(key: &str) -> String {
     static SSH: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r"^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)/v3/([^/]+)/([^/]+)/([^/]+)$",
@@ -175,6 +175,12 @@ fn canonical_key(key: &str) -> String {
 /// The host, repository and number behind a pull request URL, as the MC
 /// parses it (projection/pull_requests.ex parse_change_request_url/1).
 pub fn parse_url(url: &str) -> Option<Target> {
+    parse(url).map(|(target, _)| target)
+}
+
+/// What [`parse_url`] finds, with the provider that names it: github,
+/// forgejo, gitlab, bitbucket or azure-devops.
+pub fn parse(url: &str) -> Option<(Target, &'static str)> {
     static GITHUB: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^/([^/]+/[^/]+)/pull/([0-9]+)(?:/|$)").expect("a valid pattern")
     });
@@ -202,31 +208,109 @@ pub fn parse_url(url: &str) -> Option<Target> {
         "" => "/",
         path => path,
     };
-    let found = if host_of(&host, "github.com", "github") && GITHUB.is_match(path) {
-        GITHUB.captures(path)
+    let (found, provider) = if host_of(&host, "github.com", "github") && GITHUB.is_match(path) {
+        (GITHUB.captures(path), "github")
     } else if let Some(found) = FORGEJO.captures(path) {
         // Forgejo and Gitea keep a port that is not the scheme's (which
         // the URL already leaves out).
         if let Some(port) = parsed.port() {
             host = format!("{host}:{port}");
         }
-        Some(found)
+        (Some(found), "forgejo")
     } else if let Some(found) = GITLAB.captures(path) {
-        Some(found)
+        (Some(found), "gitlab")
     } else if host_of(&host, "bitbucket.org", "bitbucket") {
-        BITBUCKET.captures(path)
+        (BITBUCKET.captures(path), "bitbucket")
     } else if azure_host(&host) {
-        AZURE.captures(path)
+        (AZURE.captures(path), "azure-devops")
     } else {
-        None
-    }?;
+        (None, "")
+    };
+    let found = found?;
     let number = found[2].parse::<i32>().ok().filter(|n| *n > 0)?;
-    Some(Target {
+    let target = Target {
         host,
         repository: found[1].to_lowercase(),
         number: number.into(),
         url: trimmed.to_owned(),
+    };
+    Some((target, provider))
+}
+
+/// What a link may name: a pull request [`parse_url`] reads, or a GitHub
+/// issue page, since GitHub writes every `#123` through /issues/, pull
+/// requests included; that candidate's page is the pull request one, and
+/// the host must confirm it (pullRequestCandidateUrlFromReferenceAutolink).
+pub fn claim(url: &str) -> Option<Target> {
+    static ISSUE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^/([^/]+/[^/]+)/issues/([0-9]+)(?:/|$)").expect("a valid pattern")
+    });
+    if let Some(target) = parse_url(url) {
+        return Some(target);
+    }
+    let mut parsed = url::Url::parse(url.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed.host_str().filter(|h| !h.is_empty())?.to_lowercase();
+    if !host_of(&host, "github.com", "github") {
+        return None;
+    }
+    let found = ISSUE.captures(parsed.path())?;
+    let number = found[2].parse::<i32>().ok().filter(|n| *n > 0)?;
+    let (repository, number) = (found[1].to_owned(), i64::from(number));
+    parsed.set_path(&format!("/{repository}/pull/{number}"));
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    Some(Target {
+        host,
+        repository: repository.to_lowercase(),
+        number,
+        url: parsed.to_string(),
     })
+}
+
+/// The project whose checkout is `target`'s repository; with `any_host`,
+/// else one on its host, which lends the MC its credentials there (not on
+/// Azure DevOps, read with the checkout's own organization). Empty for none.
+pub fn project_for(projects: &[&Map<String, Json>], target: &Target, any_host: bool) -> String {
+    let host = target.host.split(':').next().unwrap_or("");
+    let wanted = canonical_key(&format!("{host}/{}", target.repository));
+    let id = |project: &Map<String, Json>| text_in(project, "id");
+    for project in projects {
+        let (h, r) = repository_of(project);
+        if !h.is_empty() && canonical_key(&format!("{h}/{r}")) == wanted {
+            return id(project);
+        }
+    }
+    if !any_host || wanted.starts_with("dev.azure.com/") {
+        return String::new();
+    }
+    projects
+        .iter()
+        .find(|project| repository_of(project).0 == host)
+        .map(|project| id(project))
+        .unwrap_or_default()
+}
+
+fn text_in(object: &Map<String, Json>, key: &str) -> String {
+    object
+        .get(key)
+        .and_then(Json::as_str)
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// "Open on GitHub", and so on: where a pull request's page is.
+pub fn open_on_host_label(provider: &str) -> &'static str {
+    match provider {
+        "github" => "Open on GitHub",
+        "gitlab" => "Open on GitLab",
+        "forgejo" => "Open on Forgejo",
+        "bitbucket" => "Open on Bitbucket",
+        "azure-devops" => "Open on Azure DevOps",
+        _ => "Open on host",
+    }
 }
 
 /// The repositories a thread's environment reads: its projects' (host,
@@ -778,6 +862,29 @@ impl PullRequests {
 
     pub fn index_of(&self, key: &str) -> Option<usize> {
         self.links.iter().position(|link| key_of(link) == key)
+    }
+
+    /// The page of pull request `key` (`host/repository#number`): its link's,
+    /// a dismissed layer's or a project one's, else the host's page for it.
+    pub fn url_of(&self, key: &str) -> String {
+        let listed = self
+            .find(key)
+            .into_iter()
+            .chain(self.dismissed.iter().filter(|link| key_of(link) == key))
+            .chain(self.project.iter().filter(|entry| key_of(entry) == key))
+            .map(|link| text(link, "url"))
+            .find(|url| !url.is_empty());
+        if let Some(url) = listed {
+            return url.to_owned();
+        }
+        let (Some(slash), Some(hash)) = (key.find('/'), key.rfind('#')) else {
+            return String::new();
+        };
+        if slash == 0 || hash <= slash {
+            return String::new();
+        }
+        let number = key[hash + 1..].parse().unwrap_or(0);
+        page_of(&key[..slash], &key[slash + 1..hash], number)
     }
 
     fn find(&self, key: &str) -> Option<&Json> {

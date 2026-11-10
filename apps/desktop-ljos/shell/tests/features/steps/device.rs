@@ -2449,6 +2449,9 @@ fn register_setup(steps: &mut Steps) {
         )
     });
     steps.step(&format!("it says {Q}"), |world, c, _| {
+        if super::pull_request::pull_request_review_says(world, &c[0])? {
+            return Ok(());
+        }
         let wanted = c[0].clone();
         world.wait_for_with(|w| tab_says(w, &wanted), describe_words)
     });

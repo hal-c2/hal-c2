@@ -781,20 +781,28 @@ impl Bridge {
     /// link with the platform's opener (`Qt.openUrlExternally`'s); anything
     /// else is ignored.
     pub fn open_external(self, engine: &Engine, url: &str) {
+        self.try_open_external(engine, url);
+    }
+
+    /// `open_external`, false when the address is not one to open or
+    /// nothing opened it.
+    pub fn try_open_external(self, engine: &Engine, url: &str) -> bool {
         let scheme = url
             .split_once(':')
             .map_or("", |(s, _)| s)
             .to_ascii_lowercase();
         if scheme == "hal-c2" {
             self.dispatch(engine, "link.open", serde_json::json!({ "url": url }));
-            return;
+            return true;
         }
         if !matches!(scheme.as_str(), "http" | "https" | "mailto") {
-            return;
+            return false;
         }
-        if !Platform::of(engine).open_url().open(url) {
+        let opened = Platform::of(engine).open_url().open(url);
+        if !opened {
             eprintln!("hal-c2: cannot open {url}");
         }
+        opened
     }
 
     /// Hands a link to another app (`slack:`, `mailto:`) to the platform's

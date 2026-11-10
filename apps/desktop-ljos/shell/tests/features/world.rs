@@ -98,6 +98,8 @@ struct Recorded {
     clipboard_files: RefCell<Vec<PathBuf>>,
     clipboard_fails: Cell<bool>,
     opened_urls: RefCell<Vec<String>>,
+    /// Nothing can open an address: the platform's opener says no.
+    browser_fails: Cell<bool>,
 }
 
 impl Recorded {
@@ -113,6 +115,9 @@ struct Urls(Rc<Recorded>);
 
 impl OpenUrlService for Urls {
     fn open(&self, url: &str) -> bool {
+        if self.0.browser_fails.get() {
+            return false;
+        }
         self.0.opened_urls.borrow_mut().push(url.to_owned());
         true
     }
@@ -421,6 +426,11 @@ impl World {
     /// copies them, with `text` beside them.
     pub fn copy_files(&self, files: Vec<PathBuf>, text: &str) {
         self.recorded.copy(text, None, files);
+    }
+
+    /// Whether the platform fails to open every address.
+    pub fn set_browser_fails(&self, fails: bool) {
+        self.recorded.browser_fails.set(fails);
     }
 
     /// From here on the clipboard refuses what it is given.

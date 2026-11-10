@@ -700,6 +700,10 @@ pub fn register(steps: &mut Steps) {
         if super::device::device_chooses(world, &c[0])? {
             return Ok(());
         }
+        // A pull request review's thread picker.
+        if super::pull_request::pull_request_thread_chooses(world, &c[0])? {
+            return Ok(());
+        }
         // From an open command palette (its Change theme submenu among them):
         // its entry of that title.
         if add_project::is_open(world) {

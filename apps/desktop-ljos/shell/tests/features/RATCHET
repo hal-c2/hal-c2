@@ -1690,6 +1690,16 @@ source-control/pull-request-review.feature: The review page while the environmen
 source-control/pull-request-review.feature: Unmarking a viewed file on the review page
 source-control/pull-request-threads.feature: A bare number needs the thread's own project to be understood
 source-control/pull-request-threads.feature: A bare number on a host with no pull request address
+source-control/pull-request-threads.feature: A click with the modifier key opens a pull request link in the browser
+source-control/pull-request-threads.feature: A link on a host no project is checked out from goes to the browser [https://github.com.evil.test/acme/shop/pull/42]
+source-control/pull-request-threads.feature: A link on a host no project is checked out from goes to the browser [https://github.example.com/acme/shop/pull/42]
+source-control/pull-request-threads.feature: A link that could not be changed is reported [link, to]
+source-control/pull-request-threads.feature: A link that could not be changed is reported [unlink, from]
+source-control/pull-request-threads.feature: A link that is not a pull request is left to the browser [https://blog.example.test/2026/updates/pull/3]
+source-control/pull-request-threads.feature: A link that is not a pull request is left to the browser [https://github.com/acme/shop/commit/0a1b2c3]
+source-control/pull-request-threads.feature: A link that is not a pull request is left to the browser [https://github.com/acme/shop/pull/abc]
+source-control/pull-request-threads.feature: A link that is not a pull request is left to the browser [https://github.com/acme/shop]
+source-control/pull-request-threads.feature: A link that is not a pull request is left to the browser [https://gitlab.com/acme/shop/-/snippets/12]
 source-control/pull-request-threads.feature: A link the host has not been asked about yet shows what is known
 source-control/pull-request-threads.feature: A linked pull request says how and when it was linked
 source-control/pull-request-threads.feature: A linked pull request says how it came to be linked [created from the thread, Created from this thread]
@@ -1707,8 +1717,15 @@ source-control/pull-request-threads.feature: A pull request can be pasted as its
 source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [https://gitlab.com/acme/shop/-/merge_requests/7, 7]
 source-control/pull-request-threads.feature: A pull request can be pasted as its host's link or checkout command [tea pr checkout 7, 7]
 source-control/pull-request-threads.feature: A pull request from another repository on a host a project reads
+source-control/pull-request-threads.feature: A pull request link that cannot be read shows the address
+source-control/pull-request-threads.feature: A pull request number can be copied or opened where it lives [Azure DevOps, Open on Azure DevOps]
+source-control/pull-request-threads.feature: A pull request number can be copied or opened where it lives [Bitbucket, Open on Bitbucket]
+source-control/pull-request-threads.feature: A pull request number can be copied or opened where it lives [Forgejo, Open on Forgejo]
+source-control/pull-request-threads.feature: A pull request number can be copied or opened where it lives [GitHub, Open on GitHub]
+source-control/pull-request-threads.feature: A pull request number can be copied or opened where it lives [GitLab, Open on GitLab]
 source-control/pull-request-threads.feature: A pull request on a host no project can read
 source-control/pull-request-threads.feature: A pull request reference nobody can read is refused
+source-control/pull-request-threads.feature: A pull request says how many threads work on it
 source-control/pull-request-threads.feature: A pull request that cannot be resolved says why
 source-control/pull-request-threads.feature: A pull request the MC does not link says why
 source-control/pull-request-threads.feature: A pull request thread is not abandoned while it is prepared
@@ -1717,15 +1734,22 @@ source-control/pull-request-threads.feature: A pull request thread that could no
 source-control/pull-request-threads.feature: A stack layer is dismissed from the thread rather than unlinked
 source-control/pull-request-threads.feature: A stack the thread's pull request belongs to says what merging does
 source-control/pull-request-threads.feature: A thread links several pull requests across repositories
+source-control/pull-request-threads.feature: A thread that already has the pull request cannot be chosen again
 source-control/pull-request-threads.feature: A thread without pull requests says so
+source-control/pull-request-threads.feature: A written number that is a pull request opens as one
+source-control/pull-request-threads.feature: A written number that is an issue opens in the browser
 source-control/pull-request-threads.feature: An Azure DevOps pull request needs a project of its own repository
 source-control/pull-request-threads.feature: An environment without several links per thread says so
 source-control/pull-request-threads.feature: Choosing waits until the pull request is resolved
 source-control/pull-request-threads.feature: Clearing the reference asks for one
+source-control/pull-request-threads.feature: Clicking a pull request link opens it in HAL-C2
+source-control/pull-request-threads.feature: Clicking a pull request link the MC cannot resolve opens it in the browser
 source-control/pull-request-threads.feature: Each linked pull request names its repository, even when two share a number
+source-control/pull-request-threads.feature: Hovering a pull request link shows what it points to
 source-control/pull-request-threads.feature: Linked pull requests of an unreachable environment stay as last synced
 source-control/pull-request-threads.feature: Linked pull requests stay current
 source-control/pull-request-threads.feature: Linking a pull request to a thread
+source-control/pull-request-threads.feature: Linking a pull request to a thread chosen from a list
 source-control/pull-request-threads.feature: Linking from a pull request link in the conversation
 source-control/pull-request-threads.feature: Linking shows it is working and says why it failed
 source-control/pull-request-threads.feature: Opening a linked pull request in the browser
@@ -1734,6 +1758,8 @@ source-control/pull-request-threads.feature: Pull requests chained only by their
 source-control/pull-request-threads.feature: Refreshing the linked pull requests reads them from the host again
 source-control/pull-request-threads.feature: Starting a pull request thread from a pasted link
 source-control/pull-request-threads.feature: The link dialog asks for a reference before it links
+source-control/pull-request-threads.feature: The pull request number's menu says when it could not act [Copy link, Could not copy the link]
+source-control/pull-request-threads.feature: The pull request number's menu says when it could not act [Open on GitHub, Could not open the link]
 source-control/pull-request-threads.feature: Unlinking a pull request from a thread
 source-control/push-pull-and-default-branch.feature: A finished action's result goes away by itself
 source-control/push-pull-and-default-branch.feature: A refused pull is reported

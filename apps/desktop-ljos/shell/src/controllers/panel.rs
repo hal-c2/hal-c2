@@ -32,6 +32,7 @@ use crate::controllers::keybindings::Keymap;
 use crate::controllers::layout;
 use crate::controllers::menus::{Answer, Item, Menus};
 use crate::controllers::navigation::{self, Navigation, Route};
+use crate::controllers::palette::Palette;
 use crate::controllers::settings::Settings;
 use crate::controllers::terminals::{self, Terminals};
 use crate::controllers::threads;
@@ -45,6 +46,7 @@ use crate::this_machine;
 use crate::thread_view::agents::AgentsModel;
 use crate::thread_view::diff::DiffModel;
 use crate::thread_view::previews::ThreadPreviews;
+use crate::thread_view::pull_request_links::{LinkPreviews, ThreadLinks};
 use crate::thread_view::pull_request_review::{PullRequestReview, Review};
 use crate::thread_view::pull_requests::{self, ThreadPullRequests};
 use crate::thread_view::thread_diff::ThreadDiff;
@@ -258,6 +260,8 @@ pub struct RightPanel {
     agents: Option<ObjectId>,
     pull_requests: Option<ObjectId>,
     review: Option<ObjectId>,
+    link_previews: Option<ObjectId>,
+    thread_links: Option<ObjectId>,
     files: Option<ObjectId>,
     devices: Option<ObjectId>,
     /// The thread's checkout, for the Files tab.
@@ -321,6 +325,43 @@ impl Controller for RightPanel {
             |e, text| Bridge::of(e).copy_to_clipboard(e, text),
         );
         let (pull_requests, review) = (pull_requests.ok(), review.ok());
+        // A pull request link opens its review beside the thread.
+        let hook = me.clone();
+        let link_previews = LinkPreviews::create(
+            engine,
+            owner,
+            init.mc.clone(),
+            move |e, key| {
+                let tab = format!("{REVIEW_TAB}{key}");
+                later(e, &hook, move |p, e| {
+                    if p.on_thread {
+                        p.show_tab(e, &tab);
+                    }
+                });
+            },
+            |e, url| Bridge::of(e).open_external(e, url),
+            {
+                let hook = me.clone();
+                move |e, url| {
+                    let url = url.to_owned();
+                    later(e, &hook, move |p, e| p.open_address(e, &url));
+                }
+            },
+        )
+        .ok();
+        let thread_links = ThreadLinks::create(engine, owner, init.mc.clone(), toast, |e, url| {
+            let url = url.to_owned();
+            Bridge::of(e).defer(e, move |e| {
+                controller::with::<Palette, _>(e, |p, e| {
+                    p.show(e);
+                    p.set_query(e, &url);
+                });
+            });
+        })
+        .ok();
+        if let (Some(review), Some(links)) = (review, thread_links) {
+            PullRequestReview::set_threads(engine, review, links);
+        }
         let files = WorkspaceFiles::create(engine, owner, init.mc.clone());
         let devices = ThreadDevices::create(engine, owner, init.mc.clone());
         let (diff, previews, agents) = (diff.ok(), previews.ok(), agents.ok());
@@ -354,6 +395,10 @@ impl Controller for RightPanel {
             warn(
                 engine,
                 engine.set_internal(obj, PanelObject::DEVICE, value(devices)),
+            );
+            warn(
+                engine,
+                engine.set_internal(obj, PanelObject::LINK_PREVIEWS, value(link_previews)),
             );
         }
         if let Some(previews) = previews {
@@ -452,6 +497,8 @@ impl Controller for RightPanel {
             agents,
             pull_requests,
             review,
+            link_previews,
+            thread_links,
             files,
             devices,
             files_root: String::new(),
@@ -559,6 +606,19 @@ impl Controller for RightPanel {
             "panel.open" => self.open(engine, &field("tab"), payload),
             // A web address in the conversation (ThreadView's openLink).
             "thread.openAddress" => self.open_address(engine, &field("url")),
+            // A link clicked in the conversation: a pull request's opens its
+            // review, `external` in the browser.
+            "thread.openLink" => {
+                let external = payload
+                    .get("external")
+                    .and_then(Json::as_bool)
+                    .unwrap_or(false);
+                match self.link_previews {
+                    Some(obj) => LinkPreviews::follow(engine, obj, &field("url"), external),
+                    None => self.open_address(engine, &field("url")),
+                }
+            }
+            "pullRequest.linkMenu" => self.pull_request_link_menu(engine, payload),
             _ => return false,
         }
         true
@@ -598,7 +658,10 @@ impl RightPanel {
     /// do (ThreadStore::set_clock).
     pub fn set_clock(&mut self, engine: &Engine, clock: Clock) {
         if let Some(agents) = self.agents {
-            AgentsModel::update(engine, agents, |a| a.set_clock(clock));
+            AgentsModel::update(engine, agents, |a| a.set_clock(clock.clone()));
+        }
+        if let Some(obj) = self.link_previews {
+            LinkPreviews::set_clock(engine, obj, clock);
         }
     }
 
@@ -610,6 +673,16 @@ impl RightPanel {
     /// The pull request review's PullRequestReview.
     pub fn review(&self) -> Option<ObjectId> {
         self.review
+    }
+
+    /// The conversation's pull request links (`Panel.linkPreviews`).
+    pub fn link_previews(&self) -> Option<ObjectId> {
+        self.link_previews
+    }
+
+    /// The review's linked threads (`Panel.review.threads`).
+    pub fn thread_links(&self) -> Option<ObjectId> {
+        self.thread_links
     }
 
     /// The Device tab's ThreadDevices.
@@ -792,6 +865,17 @@ impl RightPanel {
             }
             if let Some(devices) = self.devices {
                 ThreadDevices::set_thread(engine, devices, environment, &thread_id, &mc);
+            }
+            if let Some(obj) = self.link_previews {
+                // Links claim pull requests where the environment reads them.
+                let (environment, projects) = store::with(engine, |s| {
+                    if !s.supports(environment, "pullRequests") {
+                        return (String::new(), Vec::new());
+                    }
+                    let projects = s.project_rows(environment).into_iter().cloned().collect();
+                    (environment.to_owned(), projects)
+                });
+                LinkPreviews::set_context(engine, obj, &environment, projects);
             }
             self.open_proactively(engine);
         }
@@ -1300,6 +1384,49 @@ impl RightPanel {
         });
     }
 
+    /// A pull request's number: copying its page and opening it on its host.
+    fn pull_request_link_menu(&mut self, engine: &Engine, payload: &Json) {
+        let url = payload
+            .get("url")
+            .and_then(Json::as_str)
+            .unwrap_or("")
+            .to_owned();
+        if url.is_empty() {
+            return;
+        }
+        let provider = payload
+            .get("provider")
+            .and_then(Json::as_str)
+            .filter(|p| !p.is_empty())
+            .or_else(|| pull_requests::parse(&url).map(|(_, p)| p))
+            .unwrap_or("github");
+        let item = |id: &str, label: &str, icon: &str| Item {
+            icon: icon.into(),
+            ..Item::new(id, label)
+        };
+        let items = vec![
+            item("copy-link", "Copy link", "copy"),
+            item(
+                "open-external",
+                pull_requests::open_on_host_label(provider),
+                "external-link",
+            ),
+        ];
+        let x = payload.get("x").and_then(Json::as_f64).unwrap_or(0.0);
+        let y = payload.get("y").and_then(Json::as_f64).unwrap_or(0.0);
+        controller::with::<Menus, _>(engine, move |m, e| {
+            m.open(e, x, y, items, move |e, id| match id {
+                "copy-link" if !Bridge::of(e).copy_to_clipboard(e, &url) => {
+                    toast(e, "error", "Could not copy the link", "");
+                }
+                "open-external" if !Bridge::of(e).try_open_external(e, &url) => {
+                    toast(e, "error", "Could not open the link", "");
+                }
+                _ => {}
+            })
+        });
+    }
+
     // --- Out -----------------------------------------------------------------------
 
     fn update(&mut self, engine: &Engine) {
@@ -1383,6 +1510,30 @@ impl RightPanel {
                     r.set_online(online);
                     r.set_pull_request(environment, &project, &host, &repository, number.into());
                 });
+                if let Some(links) = self.thread_links {
+                    let key = &active[REVIEW_TAB.len()..];
+                    let url = self
+                        .pull_requests
+                        .and_then(|obj| ThreadPullRequests::read(engine, obj, |p| p.url_of(key)))
+                        .unwrap_or_default();
+                    let thread_id = store::with(engine, |s| {
+                        s.thread_row(&self.thread)
+                            .map(|row| text(row, "id").to_owned())
+                            .unwrap_or_default()
+                    });
+                    ThreadLinks::set_target(
+                        engine,
+                        links,
+                        environment,
+                        &thread_id,
+                        pull_requests::Target {
+                            host: host.clone(),
+                            repository: repository.clone(),
+                            number: number.into(),
+                            url,
+                        },
+                    );
+                }
             }
             PullRequestReview::update(engine, review, |r| r.set_active(open && reviewing));
         }
@@ -1673,8 +1824,7 @@ pub struct PanelObject {
     #[qml(readonly)]
     device: Value,
     /// The hover cards and clicks of pull request links (desktop-qt's
-    /// PullRequestLinkPreviews). Null until the port has them (#1194): Markdown then
-    /// shows a link's address on hover.
+    /// PullRequestLinkPreviews).
     #[qml(notify, readonly)]
     link_previews: Value,
 }

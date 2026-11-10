@@ -14,8 +14,10 @@ use std::rc::Rc;
 
 use hal_c2_shell::commands::Commands;
 use hal_c2_shell::controllers::navigation::Navigation;
+use hal_c2_shell::controllers::palette::Palette;
 use hal_c2_shell::controllers::panel::RightPanel;
 use hal_c2_shell::thread_view::diff::DiffModel;
+use hal_c2_shell::thread_view::pull_request_links::{LinksView, ThreadLinks};
 use hal_c2_shell::thread_view::pull_request_review::{PullRequestReview, Review};
 use hal_c2_shell::thread_view::pull_requests::{PullRequests, ThreadPullRequests};
 use hal_c2_shell::thread_view::rows::RowSource;
@@ -41,6 +43,10 @@ pub struct FakePullRequests {
     pub stack: Vec<i64>,
     /// The pull request whose row's menu is open.
     pub actions_of: i64,
+    /// The numbers the MC cannot read a preview of (an issue among them).
+    pub unreadable: BTreeSet<i64>,
+    /// The link the scenario's message mentions.
+    pub mentioned: String,
 }
 
 impl Default for FakePullRequests {
@@ -68,6 +74,8 @@ impl Default for FakePullRequests {
             stack_base: String::new(),
             stack: Vec::new(),
             actions_of: 0,
+            unreadable: BTreeSet::new(),
+            mentioned: String::new(),
         }
     }
 }
@@ -150,6 +158,63 @@ fn extension(mc: &mut FakeMc) {
                             "event": {"_tag": "snapshot", "local": status["local"],
                                       "remote": status["remote"]}}));
         }
+        Ok(())
+    });
+    // The threads that link a pull request (pull_requests.ex linked_threads).
+    mc.on_rpc("pullRequests.linkedThreads", |mc, rpc| {
+        if mc.part::<FakePullRequests>().thread.is_empty() {
+            return mc.pass_on(rpc);
+        }
+        let wanted = host_key(&rpc.payload);
+        let mut threads: Vec<Value> = mc
+            .threads
+            .values()
+            .filter(|row| {
+                row["pullRequests"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|link| {
+                        host_key(link) == wanted
+                            && link["host"] == rpc.payload["host"]
+                            && text(&link["source"]) != "stack-dismissed"
+                    })
+            })
+            .cloned()
+            .collect();
+        threads.sort_by_key(|row| std::cmp::Reverse(text(&row["updatedAt"])));
+        let threads: Vec<Value> = threads
+            .iter()
+            .map(|row| {
+                json!({"id": row["id"], "projectId": row["projectId"], "title": row["title"],
+                       "archivedAt": row.get("archivedAt").cloned().unwrap_or(Value::Null)})
+            })
+            .collect();
+        mc.reply(rpc, json!({"threads": threads}));
+        Ok(())
+    });
+    // A pull request link's card (pull_requests.ex preview): GitHub's only.
+    mc.on_rpc("pullRequests.preview", |mc, rpc| {
+        let number = rpc.payload["number"].as_i64().unwrap_or(0);
+        let fake = mc.part::<FakePullRequests>();
+        let known = rpc.payload["host"] == "github.com"
+            && fake.host.contains_key(&host_key(&rpc.payload))
+            && !fake.unreadable.contains(&number);
+        if !known {
+            mc.refuse(rpc, "Pull request not found.");
+            return Ok(());
+        }
+        let repository = text(&rpc.payload["repository"]);
+        let snapshot = fake.host[&host_key(&rpc.payload)].clone();
+        mc.reply(
+            rpc,
+            json!({"number": number, "title": snapshot["title"],
+                   "url": format!("https://github.com/{repository}/pull/{number}"),
+                   "isDraft": snapshot["isDraft"], "state": snapshot["state"],
+                   "createdAt": "2026-09-23T06:00:00Z",
+                   "author": {"login": "ada", "name": "Ada Lovelace"},
+                   "projectId": rpc.payload["projectId"], "repository": repository}),
+        );
         Ok(())
     });
     mc.on_rpc("pullRequests.invalidate", |mc, rpc| {
@@ -910,6 +975,7 @@ fn start_in_worktree(world: &mut World, number: &str) -> Outcome {
 
 pub fn register(steps: &mut Steps) {
     steps.extension(extension);
+    register_links(steps);
 
     steps.step(
         &format!("a connected environment with the GitHub project {Q}"),
@@ -2075,6 +2141,7 @@ pub fn register(steps: &mut Steps) {
     // A pull request a message mentions, linked from that message.
     steps.step(&format!("a message in {Q} mentions {Q}"), |world, c, _| {
         look_at(world, &c[0])?;
+        world.mc.part::<FakePullRequests>().mentioned = c[1].clone();
         start_run(world, 30, "running")?;
         add_item(
             world,
@@ -2719,6 +2786,543 @@ pub fn register(steps: &mut Steps) {
                 },
                 describe_review,
             )
+        },
+    );
+}
+
+// Pull request links in the conversation, and the threads of a review
+// (desktop-qt's PullRequestLinkPreviews and PullRequestThreadLinks).
+
+const ISSUE_TEXT: &str = "The tax line is fixed in";
+
+fn thread_links(world: &World) -> Outcome<ObjectId> {
+    world
+        .with::<RightPanel, _>(|p, _| p.thread_links())?
+        .ok_or_else(|| Failure("the review has no linked threads".into()))
+}
+
+fn links_view(world: &World) -> Outcome<LinksView> {
+    let obj = thread_links(world)?;
+    ThreadLinks::view(world.engine(), obj)
+        .ok_or_else(|| Failure("the linked threads are gone".into()))
+}
+
+fn describe_threads(world: &World) -> String {
+    match links_view(world) {
+        Ok(v) => format!("the review's threads are {v:?}"),
+        Err(f) => f.0,
+    }
+}
+
+/// A thread of "acme/shop" besides the scenario's, linking `links`.
+fn add_thread(
+    world: &mut World,
+    id: &str,
+    title: &str,
+    links: Vec<Value>,
+    archived: bool,
+) -> Outcome {
+    let mut row = json!({"id": id, "title": title, "projectId": PROJECT,
+                         "pullRequests": links,
+                         "createdAt": "2026-09-23T09:30:00Z", "updatedAt": "2026-09-23T09:30:00Z"});
+    if archived {
+        row["archivedAt"] = json!("2026-09-23T09:40:00Z");
+    }
+    world.mc.threads.insert(id.into(), row.clone());
+    world.mc.send_row(id, &row);
+    world.sync()
+}
+
+/// Opens the review of pull request `number` of "acme/shop", which no
+/// thread links, beside the thread.
+fn review_unlinked(world: &mut World, number: i64) -> Outcome {
+    serve_review(&mut world.mc);
+    world.dispatch(
+        "rightPanel.reviewProject",
+        json!({"key": format!("github.com/acme/shop#{number}")}),
+    )?;
+    world.sync()?;
+    world.wait_for_with(
+        |w| links_view(w).is_ok_and(|v| v.available && v.count >= 0),
+        describe_threads,
+    )
+}
+
+/// The conversation drawn as ThreadView, once.
+fn thread_brick(world: &mut World) -> Outcome<Brick> {
+    if let Ok(brick) = shown(world) {
+        return Ok(brick);
+    }
+    Brick::show(
+        world,
+        "import QtQuick\nimport HalC2.Bricks\nThreadView { anchors.fill: parent }\n",
+        820.0,
+        700.0,
+    )?;
+    world.sync()?;
+    shown(world)
+}
+
+/// Where the mentioned link is drawn in the conversation.
+fn mention_point(world: &mut World) -> Outcome<(Brick, (f64, f64))> {
+    let brick = thread_brick(world)?;
+    let mentioned = world.mc.part::<FakePullRequests>().mentioned.clone();
+    let root = brick
+        .root(world)
+        .ok_or_else(|| Failure("the conversation is not shown".into()))?;
+    let pattern = fancy_regex::escape(&mentioned).into_owned();
+    world.wait_for("the message to show its link", |w| {
+        brick.text_point(w, root, "markdownProse", &pattern).is_ok()
+    })?;
+    let point = brick.text_point(world, root, "markdownProse", &pattern)?;
+    Ok((brick, point))
+}
+
+fn read_text(world: &World, obj: ObjectId, name: &str) -> String {
+    match world.engine().read_by_name(obj, name) {
+        ljos::prelude::Value::String(s) => s.as_str().to_owned(),
+        _ => String::new(),
+    }
+}
+
+/// The link the user's pointer rests on, as the previews say.
+fn previews_say(world: &World) -> String {
+    let previews = world
+        .with::<RightPanel, _>(|p, _| p.link_previews())
+        .ok()
+        .flatten();
+    match previews {
+        Some(obj) => format!(
+            "the previews are at \"{}\" ({})",
+            read_text(world, obj, "address"),
+            read_text(world, obj, "status")
+        ),
+        None => "the panel has no link previews".into(),
+    }
+}
+
+const NUMBER_URLS: [(&str, &str); 5] = [
+    ("GitHub", "https://github.com/acme/shop/pull/42"),
+    ("GitLab", "https://gitlab.com/acme/shop/-/merge_requests/42"),
+    ("Forgejo", "https://codeberg.org/acme/shop/pulls/42"),
+    (
+        "Bitbucket",
+        "https://bitbucket.org/acme/shop/pull-requests/42",
+    ),
+    (
+        "Azure DevOps",
+        "https://dev.azure.com/acme/shop/_git/shop/pullrequest/42",
+    ),
+];
+
+fn open_number_menu(world: &mut World, host: &str) -> Outcome {
+    let Some((_, url)) = NUMBER_URLS.iter().find(|(h, _)| *h == host) else {
+        fail!("{host} is not a host the scenario knows");
+    };
+    world.dispatch(
+        "pullRequest.linkMenu",
+        json!({"url": url, "x": 300, "y": 200}),
+    )?;
+    world.sync()
+}
+
+/// "the user chooses {Q}" in the open thread picker.
+pub fn pull_request_thread_chooses(world: &mut World, title: &str) -> Outcome<bool> {
+    let Ok(view) = links_view(world) else {
+        return Ok(false);
+    };
+    if !view.picker_open {
+        return Ok(false);
+    }
+    let Some(candidate) = view.candidates.iter().find(|c| text(&c["title"]) == title) else {
+        fail!("{}", describe_threads(world));
+    };
+    let obj = thread_links(world)?;
+    ThreadLinks::choose(world.engine(), obj, &text(&candidate["id"]));
+    world.sync()?;
+    Ok(true)
+}
+
+/// "it says {Q}" of a review's linked threads.
+pub fn pull_request_review_says(world: &mut World, wanted: &str) -> Outcome<bool> {
+    if !wanted.starts_with("Linked from") || !links_view(world).is_ok_and(|v| v.available) {
+        return Ok(false);
+    }
+    let wanted = wanted.to_owned();
+    world.wait_for_with(
+        move |w| links_view(w).is_ok_and(|v| v.label == wanted),
+        describe_threads,
+    )?;
+    Ok(true)
+}
+
+fn register_links(steps: &mut Steps) {
+    steps.step(
+        &format!("a message in {Q} mentions {Q} of {Q}, which the message links to GitHub's page for issue (\\d+)"),
+        |world, c, _| {
+            look_at(world, &c[0])?;
+            let url = format!("https://github.com/{}/issues/{}", c[2], c[3]);
+            world.mc.part::<FakePullRequests>().mentioned = c[1].clone();
+            start_run(world, 30, "running")?;
+            add_item(
+                world,
+                "assistant_message",
+                json!({"text": format!("{ISSUE_TEXT} [{}]({url}).", c[1])}),
+            )?;
+            settle_run(world, "completed", 30)
+        },
+    );
+    steps.step(
+        "the host knows (\\d+) as (a pull request|an issue)",
+        |world, c, _| {
+            if c[1] == "an issue" {
+                let number: i64 = c[0].parse().unwrap_or(0);
+                world
+                    .mc
+                    .part::<FakePullRequests>()
+                    .unreadable
+                    .insert(number);
+            }
+            Ok(())
+        },
+    );
+    steps.step("the MC cannot read pull request (\\d+)", |world, c, _| {
+        let number: i64 = c[0].parse().unwrap_or(0);
+        world
+            .mc
+            .part::<FakePullRequests>()
+            .unreadable
+            .insert(number);
+        Ok(())
+    });
+    steps.step("no project is checked out from that host", |world, _, _| {
+        let mentioned = world.mc.part::<FakePullRequests>().mentioned.clone();
+        let host = mentioned
+            .split("://")
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or("")
+            .to_owned();
+        for project in world.mc.projects.values() {
+            let key = text(&project["repositoryIdentity"]["canonicalKey"]);
+            expect!(
+                key.split('/').next() != Some(host.as_str()),
+                "{} is checked out from {host}",
+                text(&project["id"])
+            );
+        }
+        Ok(())
+    });
+    steps.step("the user rests the pointer on that link", |world, _, _| {
+        world.set_time_iso("2026-09-23T09:00:00Z")?;
+        let (_, (x, y)) = mention_point(world)?;
+        world.hover_at(1.0, 1.0)?;
+        world.hover_at(x, y)?;
+        world.sync()
+    });
+    steps.step(
+        &format!(
+            "a card shows {Q} #(\\d+), its state, its title, its author and when it was opened"
+        ),
+        |world, c, _| {
+            let brick = shown(world)?;
+            let wanted = [
+                c[0].clone(),
+                format!("#{}", c[1]),
+                "Open".to_owned(),
+                "Tax line fix".to_owned(),
+                "Ada Lovelace (@ada)".to_owned(),
+                "opened 3h ago".to_owned(),
+            ];
+            world.wait_for_with(
+                move |w| wanted.iter().all(|t| brick.shows(w, t).unwrap_or(false)),
+                previews_say,
+            )
+        },
+    );
+    steps.step(&format!("the card shows {Q}"), |world, c, _| {
+        let brick = shown(world)?;
+        let wanted = c[0].clone();
+        world.wait_for_with(
+            move |w| {
+                w.with::<RightPanel, _>(|p, _| p.link_previews())
+                    .ok()
+                    .flatten()
+                    .is_some_and(|obj| read_text(w, obj, "status") == "failed")
+                    && brick.shows(w, &wanted).unwrap_or(false)
+            },
+            previews_say,
+        )?;
+        expect!(
+            !brick.shows(world, "Tax line fix")?,
+            "the card shows the pull request's title"
+        );
+        Ok(())
+    });
+    steps.step(
+        "the user clicks that link( holding the modifier key)?",
+        |world, c, _| {
+            use ljos::item::{Modifiers, MouseButtons};
+            let (_, (x, y)) = mention_point(world)?;
+            let mut modifiers = Modifiers::CONTROL;
+            if !c[0].is_empty() {
+                modifiers |= Modifiers::SHIFT;
+            }
+            world.click_at_with(x, y, MouseButtons::LEFT, modifiers)?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "pull request (\\d+) (opens|does not open) in HAL-C2",
+        |world, c, _| {
+            let tab = format!("pull-request:github.com/acme/shop#{}", c[0]);
+            if c[1] == "opens" {
+                world.wait_for_with(
+                    move |w| at(&w.state("panel"), "activeId") == &json!(tab),
+                    |w| format!("{}; {}", show(&w.state("panel")), previews_say(w)),
+                )?;
+                expect!(
+                    world.opened_urls().is_empty(),
+                    "the browser opened {:?}",
+                    world.opened_urls()
+                );
+            } else {
+                let panel = world.state("panel");
+                expect!(at(&panel, "activeId") != &json!(tab), "{}", show(&panel));
+            }
+            Ok(())
+        },
+    );
+    steps.step(
+        "it is not opened as a pull request of the public host",
+        |world, _, _| {
+            expect!(
+                asked(world, "pullRequests.preview").is_empty(),
+                "the MC was asked for {:?}",
+                asked(world, "pullRequests.preview")
+            );
+            let panel = world.state("panel");
+            expect!(
+                !text(at(&panel, "activeId")).starts_with("pull-request:"),
+                "{}",
+                show(&panel)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user opens the menu of the number of a pull request of (GitHub|GitLab|Forgejo|Bitbucket|Azure DevOps)",
+        |world, c, _| open_number_menu(world, &c[0]),
+    );
+    steps.step(
+        "the clipboard cannot be written and the browser cannot be opened",
+        |world, _, _| {
+            world.set_clipboard_fails(true);
+            world.set_browser_fails(true);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user chooses {Q} from the menu of a pull request number"),
+        |world, c, _| {
+            open_number_menu(world, "GitHub")?;
+            let menu = world.state("menu");
+            let items = at(&menu, "items").as_array().cloned().unwrap_or_default();
+            let Some(item) = items.iter().find(|i| text(&i["label"]) == c[0]) else {
+                fail!("the menu offers {}", show(&menu));
+            };
+            world.dispatch(
+                "menu.select",
+                json!({"requestId": at(&menu, "requestId"), "id": item["id"]}),
+            )?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("pull request (\\d+) is linked to {Q} and to {Q}"),
+        |world, c, _| {
+            look_at(world, &c[1])?;
+            let number: i64 = c[0].parse().unwrap_or(0);
+            let link = link_of("acme/shop", number, "manual", LINKED_AT);
+            set_links(world, vec![link.clone()])?;
+            add_thread(world, "thread-2", &c[2], vec![link], false)?;
+            wait_for_row(world, number, true)
+        },
+    );
+    steps.step("the user reads pull request (\\d+)", |world, c, _| {
+        serve_review(&mut world.mc);
+        open_review(world, c[0].parse().unwrap_or(0))
+    });
+    steps.step(
+        "choosing it searches the threads for pull request (\\d+)",
+        |world, c, _| {
+            let obj = thread_links(world)?;
+            ThreadLinks::search(world.engine(), obj);
+            world.sync()?;
+            let wanted = format!("https://github.com/acme/shop/pull/{}", c[0]);
+            world.wait_for_with(
+                move |w| {
+                    w.with::<Palette, _>(|p, _| p.is_open() && p.query() == wanted)
+                        .unwrap_or(false)
+                },
+                |w| {
+                    w.with::<Palette, _>(|p, _| {
+                        format!("the palette ({}) searches \"{}\"", p.is_open(), p.query())
+                    })
+                    .unwrap_or_default()
+                },
+            )
+        },
+    );
+    steps.step(
+        "pull request (\\d+) is linked to no thread",
+        |world, c, _| {
+            look_at(world, "Tax work")?;
+            add_thread(world, "thread-2", "Tax review", Vec::new(), false)?;
+            add_thread(world, "thread-3", "Old tax work", Vec::new(), true)?;
+            review_unlinked(world, c[0].parse().unwrap_or(0))
+        },
+    );
+    steps.step(
+        "the user chooses to link pull request (\\d+) to a thread",
+        |world, c, _| {
+            let number: i64 = c[0].parse().unwrap_or(0);
+            let key = format!("github.com/acme/shop#{number}");
+            let reviewing =
+                at(&world.state("panel"), "activeId") == &json!(format!("pull-request:{key}"));
+            if !reviewing || links_view(world)?.count < 0 {
+                if row_of(world, number).is_some() {
+                    serve_review(&mut world.mc);
+                    open_review(world, number)?;
+                    world.wait_for_with(
+                        |w| links_view(w).is_ok_and(|v| v.count >= 0),
+                        describe_threads,
+                    )?;
+                } else {
+                    review_unlinked(world, number)?;
+                }
+            }
+            let obj = thread_links(world)?;
+            ThreadLinks::set_picker_open(world.engine(), obj, true);
+            world.sync()?;
+            expect!(
+                links_view(world)?.picker_open,
+                "{}",
+                describe_threads(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user sees the active threads, newest first, with a way to search threads and projects",
+        |world, _, _| {
+            let titles = |w: &World| -> Vec<String> {
+                links_view(w)
+                    .map(|v| v.candidates.iter().map(|c| text(&c["title"])).collect())
+                    .unwrap_or_default()
+            };
+            expect!(
+                titles(world) == ["Tax review", "Tax work"],
+                "{}",
+                describe_threads(world)
+            );
+            let obj = thread_links(world)?;
+            ThreadLinks::set_query(world.engine(), obj, "review");
+            expect!(
+                titles(world) == ["Tax review"],
+                "{}",
+                describe_threads(world)
+            );
+            // Each thread's project is searched too.
+            ThreadLinks::set_query(world.engine(), obj, PROJECT);
+            expect!(titles(world).len() == 2, "{}", describe_threads(world));
+            ThreadLinks::set_query(world.engine(), obj, "");
+            world.sync()
+        },
+    );
+    steps.step("archived threads are not offered", |world, _, _| {
+        let view = links_view(world)?;
+        expect!(
+            !view.candidates.iter().any(|c| c["id"] == "thread-3"),
+            "{}",
+            describe_threads(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("{Q} is shown as {Q} and cannot be chosen"),
+        |world, c, _| {
+            let view = links_view(world)?;
+            let Some(candidate) = view.candidates.iter().find(|t| text(&t["title"]) == c[0]) else {
+                fail!("{}", describe_threads(world));
+            };
+            expect!(
+                c[1] == "Linked" && candidate["linked"] == true,
+                "{}",
+                describe_threads(world)
+            );
+            let before = link_commands(world);
+            let obj = thread_links(world)?;
+            ThreadLinks::choose(world.engine(), obj, &text(&candidate["id"]));
+            world.sync()?;
+            expect!(
+                link_commands(world) == before,
+                "choosing it changed the links"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the menu offers to unlink pull request (\\d+) from this thread",
+        |world, _, _| {
+            let view = links_view(world)?;
+            expect!(
+                view.menu_label == "Unlink from this thread",
+                "{}",
+                describe_threads(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the MC refuses to (link|unlink) pull request (\\d+) (?:to|from) {Q}"),
+        |world, c, _| {
+            look_at(world, &c[2])?;
+            let number: i64 = c[1].parse().unwrap_or(0);
+            if c[0] == "link" {
+                review_unlinked(world, number)?;
+            } else {
+                set_links(
+                    world,
+                    vec![link_of("acme/shop", number, "manual", LINKED_AT)],
+                )?;
+                wait_for_row(world, number, true)?;
+                serve_review(&mut world.mc);
+                open_review(world, number)?;
+                world.wait_for_with(
+                    |w| links_view(w).is_ok_and(|v| v.count >= 0),
+                    describe_threads,
+                )?;
+            }
+            world.mc.refusals.insert(
+                format!("thread.pull-request.{}", c[0]),
+                "Thread is archived".into(),
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user tries to (link|unlink) pull request (\\d+) (?:to|from) {Q}"),
+        |world, c, _| {
+            let unlink = c[0] == "unlink";
+            expect!(
+                links_view(world)?.linked_here == unlink,
+                "{}",
+                describe_threads(world)
+            );
+            let obj = thread_links(world)?;
+            ThreadLinks::toggle_here(world.engine(), obj);
+            world.sync()
         },
     );
 }

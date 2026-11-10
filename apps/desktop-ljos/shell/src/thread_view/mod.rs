@@ -16,6 +16,7 @@ pub mod diff;
 pub mod file_render;
 pub mod file_tree;
 pub mod previews;
+pub mod pull_request_links;
 pub mod pull_request_review;
 pub mod pull_requests;
 pub mod rows;
@@ -39,6 +40,8 @@ pub fn register(engine: &Engine) {
         previews::ThreadPreviews,
         pull_requests::ThreadPullRequests,
         pull_request_review::PullRequestReview,
+        pull_request_links::LinkPreviews,
+        pull_request_links::ThreadLinks,
         thread_diff::ThreadDiff,
         workspace_files::TextLinesModel,
         workspace_files::WorkspaceFiles,
