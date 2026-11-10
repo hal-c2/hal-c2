@@ -176,6 +176,20 @@ under the plugin's **Settings**, set **Micro-skills** to **Learn environment
 facts**. Two settings there bound what a new conversation is told: **Most
 facts stated** and the facts' **token budget**.
 
+Set **Micro-skills** to **Learn and ask a model** to also have your text
+generation model propose facts the turns alone would not show, such as a build
+step the tests need first. Every few turns (**Turns between proposals**) it
+reads a digest of the project's recent turns -- commands, error lines and file
+names, never file contents -- and each fact it proposes comes with a check
+TokenEconomizer runs itself. A fact is kept only if that check holds on two of
+the turns the model cites, and is stated only once later turns keep bearing it
+out. Each proposal costs a model call; the plugin's status counts them and
+their tokens. Its facts are listed, dropped and restored like the others.
+
+A project whose saved micro-skills cannot be read is held rather than started
+afresh: nothing is learned or stated there, and its listing says why, until
+the file is fixed or removed.
+
 ## Connect Slack for plugins
 
 Plugins on an MC reach Slack through that MC's one Slack connection, and only

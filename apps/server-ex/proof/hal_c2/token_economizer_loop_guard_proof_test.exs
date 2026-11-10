@@ -153,6 +153,8 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer state :ended" =>
         "the runs the last sweep found ended, which decide only when a lost end's turn is dropped",
       "HalC2Plugins.TokenEconomizer state :sweep" => "the next sweep's timer",
+      "HalC2Plugins.TokenEconomizer handle_info {:proposed, _, _}" =>
+        "a model's proposal of a project's facts, from a task of its own keyed by the project, not a thread; it decides nothing for the guard, and its admission is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
       "HalC2Plugins.TokenEconomizer handle_info {:DOWN, _, :process, _, _}" =>
         "forgets a task that ended; what it did came in a message of its own",
       "HalC2Plugins.TokenEconomizer state :sup" =>
