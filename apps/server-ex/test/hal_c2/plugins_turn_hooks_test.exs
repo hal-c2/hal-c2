@@ -980,6 +980,46 @@ defmodule HalC2.PluginsTurnHooksTest do
     await_statuses(thread_id, ["completed", "completed", "interrupted"])
   end
 
+  test "a plugin reads a thread's turns forwards, a page after the last",
+       %{thread_id: thread_id} do
+    grant(%{"reader" => ["turns:observe"]})
+
+    {:ok, _} = send_message(thread_id, "m1", "one")
+    await_statuses(thread_id, ["completed"])
+    {:ok, _} = send_message(thread_id, "m2", "two")
+    await_statuses(thread_id, ["completed", "completed"])
+    {:ok, _} = send_message(thread_id, "m3", "wait m3")
+    [first, second, working] = await_statuses(thread_id, ["completed", "completed", "running"])
+
+    assert {:ok, [one]} = Host.history("reader", thread_id, after: nil, limit: 1)
+    assert one["runId"] == first["id"]
+    # A turn under way is not among them, nor is it a cut.
+    assert {:ok, [two]} = Host.history("reader", thread_id, after: first["id"], limit: 1)
+    assert two["runId"] == second["id"]
+    assert {:ok, []} = Host.history("reader", thread_id, after: second["id"])
+    assert {:ok, [^one, ^two]} = Host.history("reader", thread_id, after: "run:none")
+
+    :ok = HalC2.Claude.ThreadRuntime.interrupt(thread_id, working["id"])
+    await_statuses(thread_id, ["completed", "completed", "interrupted"])
+  end
+
+  test "a plugin lists a project's threads on this MC, oldest first, those deleted left out",
+       %{thread_id: first, work: work} do
+    grant(%{"reader" => ["turns:observe"]})
+    second = create_thread(work)
+    deleted = create_thread(work)
+    {:ok, _} = send_message(second, "m1", "hello")
+    await_statuses(second, ["completed"])
+    {:ok, _} = Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => deleted})
+    for id <- [first, second, deleted], do: :ok = HalC2.Streams.flush_shell(id)
+
+    assert {:ok, [one, two]} = Host.project_threads("reader", "project-1")
+    assert one["id"] == first and two["id"] == second
+    assert one["latestUserMessageAt"] == nil and is_binary(two["latestUserMessageAt"])
+    assert {:ok, []} = Host.project_threads("reader", "project-none")
+    assert {:error, _} = Host.project_threads("stranger", "project-1")
+  end
+
   test "text generation for a plugin reports what the provider said it used, or an estimate" do
     selection = %{"instanceId" => "claudeAgent", "model" => "claude-haiku-5-5"}
 

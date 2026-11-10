@@ -51,6 +51,19 @@ defmodule HalC2Plugins.TokenEconomizer do
   learned, staged or proposed for it, and its listing says why, until the file
   reads again. It is never silently started afresh.
 
+  With the history import on (`historyImport`, off until turned on), the first
+  turn to start in a project with nothing folded yet folds the project's
+  earlier threads first (`MicroSkills.History`): the newest `historyMaxThreads`
+  of those active in the last `historyDays` days, oldest first, each turn as a
+  live one folds, and its green turns seed the loop guard's envelope where it
+  has learned nothing yet. It reads in a task, a page at a time, never in this
+  process; a project's turns that end meanwhile are held back and folded after
+  it, in order. Where it got to is kept with the micro-skills, so a crash or a
+  restart resumes it at the next turn without folding a turn twice. A project
+  that had already learned is never imported into. `microSkills.forget`
+  forgets what a project learned, the import's envelope samples with it, and
+  runs the import again when it is on.
+
   A turn whose start the plugin missed is not watched. Missed events (`"dropped"`) mark
   the turns under way as partial, and the turns heard until the events that were still
   waiting (`"waiting"`) have been, and a partial turn does not teach the envelope. A
@@ -84,8 +97,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   alias HalC2.Plugins.Host
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Turn}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.{Distiller, EnvFacts, History}
   alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
-  alias HalC2Plugins.TokenEconomizer.MicroSkills.{Distiller, EnvFacts}
 
   @id "token-economizer"
   # The providers tool pruning has a unit for (`ToolPrune.Evidence.unit_for_provider/1`).
@@ -153,6 +166,12 @@ defmodule HalC2Plugins.TokenEconomizer do
           not (is_number(max_tokens) and max_tokens >= 1 and max_tokens == trunc(max_tokens)) ->
         {:error, "microSkillsMaxTokens: give a whole number, 1 or more."}
 
+      settings["historyImport"] not in [nil, true, false] ->
+        {:error, "historyImport: give true or false."}
+
+      (bad = Enum.find(~w(historyDays historyMaxThreads), &(not whole?(settings[&1])))) != nil ->
+        {:error, "#{bad}: give a whole number, 1 or more."}
+
       every != nil and not (is_number(every) and every >= 1 and every == trunc(every)) ->
         {:error, "microSkillsProposeEvery: give a whole number, 1 or more."}
 
@@ -185,6 +204,9 @@ defmodule HalC2Plugins.TokenEconomizer do
     end
   end
 
+  defp whole?(nil), do: true
+  defp whole?(v), do: is_number(v) and v >= 1 and v == trunc(v)
+
   defp pinnable?({kind, least, most}, v) do
     is_number(v) and v >= least and (most == nil or v <= most) and
       (kind != :count or v == trunc(v))
@@ -216,6 +238,9 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   def call("microSkills.restore", input, _context),
     do: GenServer.call(__MODULE__, {:micro_skill_restore, input})
+
+  def call("microSkills.forget", input, _context),
+    do: GenServer.call(__MODULE__, {:micro_skill_forget, input})
 
   def call(method, _input, _context), do: {:error, "Unknown method #{method}."}
 
@@ -302,6 +327,11 @@ defmodule HalC2Plugins.TokenEconomizer do
        # restarted is resumed, not staged again, and still counts its facts.
        staged: staged,
        staged_order: staged_order,
+       # project id => its first fold from history (`MicroSkills.History`), loaded
+       # with its micro-skills and saved with them; the one read under way, at most:
+       # %{pid, project, fold, step, what}.
+       folds: %{},
+       reading: nil,
        stats: %{
          "turns" => 0,
          "nudges" => 0,
@@ -421,7 +451,15 @@ defmodule HalC2Plugins.TokenEconomizer do
           %{cancel(state, &match?({_, :judge}, &1)) | turns: %{}}
       end
 
-    {:reply, :ok, state |> publish() |> publish_loaded_skills() |> publish_prune()}
+    # The import turned off stops each fold's reading; the live turns it held
+    # back are still folded. Turned on again, a stopped fold resumes where it
+    # stopped. Learning off pauses a fold where it is; back on, it goes on.
+    state =
+      if history_on?(state),
+        do: each_fold(state, &History.resume/1),
+        else: each_fold(state, &History.stop(&1, "the history import was turned off"))
+
+    {:reply, :ok, state |> publish() |> publish_loaded_skills() |> publish_prune() |> pump()}
   end
 
   def handle_call(:status, _from, state), do: {:reply, status(state), state}
@@ -436,6 +474,8 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   def handle_call({:micro_skill_restore, input}, _from, state),
     do: drop_or_restore(state, input, :restore)
+
+  def handle_call({:micro_skill_forget, input}, _from, state), do: forget(state, input)
 
   def handle_call({:shape_run, run, deadline}, _from, state) do
     {facts, ids, state} = shape(state, run, deadline)
@@ -653,6 +693,28 @@ defmodule HalC2Plugins.TokenEconomizer do
     {:noreply, %{state | ended: MapSet.difference(ended, gone), sweep: arm(state.sweep)}}
   end
 
+  # A page of a fold, read in its task (`read/3`). One the fold has moved past
+  # (forgotten, or read with learning off) is not folded.
+  def handle_info({:history, project_id, fold_id, step, result}, state) do
+    state =
+      case state.reading do
+        %{project: ^project_id, fold: ^fold_id, step: ^step} -> %{state | reading: nil}
+        _ -> state
+      end
+
+    {:noreply, state |> fold_read(project_id, fold_id, step, result) |> pump()}
+  end
+
+  # A read that went down without an answer could not read what it was given.
+  def handle_info({:DOWN, _ref, :process, pid, reason}, %{reading: %{pid: pid} = r} = state) do
+    Logger.warning("token-economizer: a history read ended: #{inspect(reason)}")
+
+    {:noreply,
+     %{state | reading: nil}
+     |> fold_read(r.project, r.fold, r.step, {:error, r.what, inspect(reason)})
+     |> pump()}
+  end
+
   # A proposal's answer, read against the project's window as it is now. Paid
   # for whatever it says; admitted only while the proposer is still on and the
   # project's file reads.
@@ -690,11 +752,11 @@ defmodule HalC2Plugins.TokenEconomizer do
               skills
           end
 
-        save_skills(project_id, skills)
+        state = put_in(state.skills[project_id], skills)
+        save_skills(state, project_id)
 
         {:noreply,
          state
-         |> put_in([:skills, project_id], skills)
          |> publish_skills(project_id)
          |> publish()}
 
@@ -1712,7 +1774,10 @@ defmodule HalC2Plugins.TokenEconomizer do
     }
 
     # A turn under way whose end was missed did not end normally.
-    state |> close(thread_id, false) |> put_in([:turns, thread_id], turn)
+    state
+    |> close(thread_id, false)
+    |> put_in([:turns, thread_id], turn)
+    |> start_fold(event["projectId"])
   end
 
   # A subagent's call is not the turn's own: the loop guard watches the agent's loop.
@@ -1776,7 +1841,12 @@ defmodule HalC2Plugins.TokenEconomizer do
 
             if learns?(turn, stopped_normally) do
               {tracker, state} = tracker(state, turn.project)
-              tracker = Envelope.record_turn(tracker, turn.guard, stopped_normally)
+
+              tracker =
+                tracker
+                |> History.claim(state.folds[elem(turn.project, 0)])
+                |> History.record_turn(turn.guard, stopped_normally)
+
               save_tracker(turn.project, tracker)
               publish(put_in(state.trackers[turn.project], tracker))
             else
@@ -1798,8 +1868,42 @@ defmodule HalC2Plugins.TokenEconomizer do
     {project_id, _provider} = turn.project
 
     if micro_on?(state) and is_binary(project_id) do
-      with {%EnvFacts{held: nil} = skills, state} <- skills_for(state, project_id),
-           calls when calls != nil <- fold_calls(thread_id, turn) do
+      # The fold is kept with the skills, so looking at it loads them; that is
+      # kept only for a turn held back, as a turn that teaches nothing changes
+      # nothing.
+      {skills, loaded} = skills_for(state, project_id)
+      fold = loaded.folds[project_id]
+
+      # A fold from history under way folds this turn after it, read back
+      # whole then, unless it read it already. A held project (its file does
+      # not read) learns nothing until it does.
+      cond do
+        skills.held != nil ->
+          loaded
+
+        History.running?(fold) ->
+          if turn.run in skills.folded,
+            do: loaded,
+            else:
+              loaded
+              |> put_fold(project_id, History.hold(fold, [thread_id, turn.run, turn.injected]))
+              |> pump()
+
+        true ->
+          fold_live(state, project_id, thread_id, turn)
+      end
+    else
+      state
+    end
+  end
+
+  defp fold_live(state, project_id, thread_id, turn) do
+    case fold_calls(thread_id, turn) do
+      nil ->
+        state
+
+      calls ->
+        {skills, state} = skills_for(state, project_id)
         proposing = micro_mode(state) == "on"
 
         skills =
@@ -1808,20 +1912,13 @@ defmodule HalC2Plugins.TokenEconomizer do
           |> then(&if(proposing, do: Distiller.fold(&1, calls, turn.run), else: &1))
           |> EnvFacts.update_turn(calls, turn.run)
 
-        save_skills(project_id, skills)
+        state = put_in(state.skills[project_id], skills)
+        save_skills(state, project_id)
 
         state
         |> know_skill(project_id)
-        |> put_in([:skills, project_id], skills)
         |> publish_skills(project_id)
         |> maybe_propose(project_id)
-      else
-        # Held: its file does not read, so nothing is learned until it does.
-        {%EnvFacts{}, state} -> state
-        nil -> state
-      end
-    else
-      state
     end
   end
 
@@ -1846,12 +1943,11 @@ defmodule HalC2Plugins.TokenEconomizer do
     if micro_mode(state) == "on" and skills.held == nil and not out? and
          Distiller.due?(skills, propose_every(state)) do
       prompt = Distiller.prompt(skills, project_id)
-      skills = Distiller.proposed(skills)
-      save_skills(project_id, skills)
+      state = put_in(state.skills[project_id], Distiller.proposed(skills))
+      save_skills(state, project_id)
       server = self()
 
       state
-      |> put_in([:skills, project_id], skills)
       |> update_in([:stats, "proposerCalls"], &(&1 + 1))
       |> spawn_task(project_id, :proposer, fn ->
         result =
@@ -2150,6 +2246,26 @@ defmodule HalC2Plugins.TokenEconomizer do
         {skills, put_in(state.skills[project_id], skills)}
 
       {saved, skills} ->
+        state = put_in(state.skills[project_id], skills)
+
+        # A fold saved running while the import is now off (turned off
+        # while the MC was down) stops as it would have, folding what it held.
+        state =
+          case History.load(saved["history"]) do
+            nil ->
+              state
+
+            fold ->
+              stopped =
+                if history_on?(state),
+                  do: fold,
+                  else: History.stop(fold, "the history import was turned off")
+
+              state = put_in(state.folds[project_id], stopped)
+              if stopped != fold, do: save_skills(state, project_id)
+              state
+          end
+
         # A fact the load left out for holding a credential leaves the file
         # too, and the log says so by family: an id can hold the credential.
         with %{"facts" => %{} = facts} <- saved,
@@ -2162,10 +2278,10 @@ defmodule HalC2Plugins.TokenEconomizer do
               "project #{project_id} that hold a credential: #{inspect(families)}"
           )
 
-          save_skills(project_id, skills)
+          save_skills(state, project_id)
         end
 
-        {skills, put_in(state.skills[project_id], skills)}
+        {skills, state}
     end
   end
 
@@ -2202,12 +2318,19 @@ defmodule HalC2Plugins.TokenEconomizer do
   end
 
   # As `save_tracker/2`: a failed write costs persistence, never the plugin.
-  # Callers that answer a person (drop and restore) report the failure; a
-  # turn's fold keeps what it learned in memory.
-  defp save_skills(project_id, skills) do
+  # Callers that answer a person (drop, restore, forget) report the failure; a
+  # turn's fold keeps what it learned in memory. The project's fold from
+  # history is kept in the same file, so a page folded and the place reached
+  # after it are saved in one write.
+  defp save_skills(state, project_id) do
     path = micro_skills_path(project_id)
     tmp = path <> ".tmp"
-    saved = Map.merge(EnvFacts.dump(skills), %{"projectId" => project_id})
+
+    saved =
+      state.skills[project_id]
+      |> EnvFacts.dump()
+      |> Map.merge(%{"projectId" => project_id, "history" => state.folds[project_id]})
+      |> Map.reject(fn {_k, v} -> v == nil end)
 
     with :ok <- File.mkdir_p(Path.dirname(path)),
          :ok <- File.write(tmp, JSON.encode!(saved)),
@@ -2274,28 +2397,30 @@ defmodule HalC2Plugins.TokenEconomizer do
 
     {projects, state} =
       Enum.map_reduce(ids, state, fn project_id, state ->
-        {skills, state} = skills_for(state, project_id)
-        {entry(project_id, skills), state}
+        {_skills, state} = skills_for(state, project_id)
+        {entry(state, project_id), state}
       end)
 
     {%{"mode" => micro_mode(state), "projects" => projects}, state}
   end
 
   defp micro_skills_view(state, project_id) do
-    {skills, state} = skills_for(state, project_id)
+    {_skills, state} = skills_for(state, project_id)
 
-    {%{"mode" => micro_mode(state), "projects" => [entry(project_id, skills)]}, state}
+    {%{"mode" => micro_mode(state), "projects" => [entry(state, project_id)]}, state}
   end
 
-  defp entry(project_id, skills),
-    do: Map.merge(%{"projectId" => project_id}, EnvFacts.view(skills))
+  defp entry(state, project_id) do
+    %{"projectId" => project_id, "history" => History.view(state.folds[project_id])}
+    |> Map.merge(EnvFacts.view(state.skills[project_id]))
+  end
 
   # Publishes a project's entry on its own topic, `microSkills:<project id>`,
   # when what a person would see in it changed: a turn that taught nothing new
   # only moves a turn count. One project's turn never rebuilds or resends the
   # others'; the whole listing is the `microSkills` call's.
   defp publish_skills(state, project_id) do
-    entry = entry(project_id, state.skills[project_id])
+    entry = entry(state, project_id)
     shape = Map.delete(entry, "turns")
 
     if state.published_skills[project_id] == shape do
@@ -2330,12 +2455,13 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       case result do
         {:ok, skills} ->
-          case save_skills(project_id, skills) do
+          kept = put_in(state.skills[project_id], skills)
+
+          case save_skills(kept, project_id) do
             :ok ->
               state =
-                state
+                kept
                 |> know_skill(project_id)
-                |> put_in([:skills, project_id], skills)
                 |> publish_skills(project_id)
 
               {view, state} = micro_skills_view(state, project_id)
@@ -2367,7 +2493,16 @@ defmodule HalC2Plugins.TokenEconomizer do
   defp tracker(state, project) do
     case state.trackers[project] do
       nil ->
-        tracker = Envelope.new(level(state), thresholds(state), read_tracker(project))
+        saved = read_tracker(project)
+        tracker = Envelope.new(level(state), thresholds(state), saved)
+
+        # What a fold from history seeded it with (`History.seed/4`).
+        tracker =
+          case History.load_seed(saved["seed"]) do
+            nil -> tracker
+            seed -> Map.put(tracker, :seed, seed)
+          end
+
         {tracker, put_in(state.trackers[project], tracker)}
 
       tracker ->
@@ -2396,7 +2531,10 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   defp save_tracker({project_id, provider} = project, tracker) do
     saved =
-      Map.merge(Envelope.dump(tracker), %{"projectId" => project_id, "provider" => provider})
+      tracker
+      |> Envelope.dump()
+      |> Map.merge(%{"projectId" => project_id, "provider" => provider, "seed" => tracker[:seed]})
+      |> Map.reject(fn {_k, v} -> v == nil end)
 
     save_json(envelope_path(project), saved)
   end
@@ -2416,6 +2554,352 @@ defmodule HalC2Plugins.TokenEconomizer do
         Logger.warning("token-economizer: #{path} not saved: #{inspect(reason)}")
         :error
     end
+  end
+
+  # --- the first fold from history ----------------------------------------------------
+
+  defp history_on?(state), do: state.settings["historyImport"] == true
+
+  defp setting(state, key, default) do
+    case state.settings[key] do
+      value when is_number(value) and value >= 1 -> trunc(value)
+      _ -> default
+    end
+  end
+
+  # The turns of a thread read at once, and the held-back live turns.
+  @history_page 20
+  @pending_page 50
+
+  defp now, do: DateTime.utc_now() |> DateTime.to_iso8601()
+
+  # A turn starting in a project with learning and the import on starts its
+  # fold, once: a project that already learned from its turns is skipped, and
+  # one stopped resumes. Then the next read, if none is under way.
+  defp start_fold(state, project_id) do
+    if micro_on?(state) and history_on?(state) and is_binary(project_id) do
+      {skills, state} = skills_for(state, project_id)
+
+      case state.folds[project_id] do
+        # A held project's file does not read: nothing is folded until it does.
+        _fold when skills.held != nil ->
+          state
+
+        nil ->
+          fold =
+            if skills.now > 0 or skills.folded != [] or skills.facts != %{},
+              do: History.skipped("the project had already learned from its turns", now()),
+              else: History.new(fold_id(), now())
+
+          put_fold(state, project_id, fold)
+
+        %{"state" => "stopped"} = fold ->
+          put_fold(state, project_id, History.resume(fold))
+
+        _fold ->
+          state
+      end
+      |> pump()
+    else
+      state
+    end
+  end
+
+  defp fold_id, do: Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
+
+  # Keeps a project's fold, with its micro-skills, and publishes its entry.
+  defp put_fold(state, project_id, fold) do
+    state = put_in(state.folds[project_id], fold)
+    save_skills(state, project_id)
+    state |> know_skill(project_id) |> publish_skills(project_id)
+  end
+
+  defp each_fold(state, fun) do
+    Enum.reduce(state.folds, state, fn {project_id, fold}, state ->
+      case fun.(fold) do
+        ^fold -> state
+        changed -> put_fold(state, project_id, changed)
+      end
+    end)
+  end
+
+  # Starts the next read of a running fold, one at a time across projects,
+  # while learning is on: off, a fold waits where it is.
+  defp pump(%{reading: nil} = state) do
+    if micro_on?(state) do
+      Enum.find_value(state.folds, state, fn {project_id, fold} ->
+        case History.next(fold) do
+          nil -> nil
+          :finish -> state |> put_fold(project_id, History.finish(fold, now())) |> pump()
+          what -> read(state, project_id, fold, what)
+        end
+      end)
+    else
+      state
+    end
+  end
+
+  defp pump(state), do: state
+
+  # Reads what a fold reads next in a task, so a long read never holds up
+  # the turns this process hears; its answer comes as `{:history, ...}`.
+  defp read(state, project_id, fold, what) do
+    server = self()
+    step = fold["step"]
+    days = setting(state, "historyDays", 365)
+    most = setting(state, "historyMaxThreads", 200)
+    {level, thr} = {level(state), thresholds(state)}
+
+    work = fn ->
+      result =
+        try do
+          case what do
+            {:pending, entries} -> read_pending(entries, fold)
+            what -> read_history(project_id, what, days, most, level, thr)
+          end
+        rescue
+          e -> {:error, what, Exception.message(e)}
+        end
+
+      send(server, {:history, project_id, fold["id"], step, result})
+    end
+
+    {:ok, pid} = Task.Supervisor.start_child(state.sup, work)
+    Process.monitor(pid)
+    %{state | reading: %{pid: pid, project: project_id, fold: fold["id"], step: step, what: what}}
+  end
+
+  defp read_history(project_id, :plan, days, most, _level, _thr) do
+    case Host.project_threads(@id, project_id) do
+      {:ok, threads} ->
+        {ids, skipped} = History.plan(threads, DateTime.utc_now(), days, most)
+        {:plan, ids, skipped}
+
+      {:error, reason} ->
+        {:error, :plan, reason}
+    end
+  end
+
+  defp read_history(_project_id, {:page, thread_id, after_run} = what, _days, _most, level, thr) do
+    case Host.history(@id, thread_id, after: after_run, limit: @history_page) do
+      {:ok, turns} ->
+        entries =
+          for turn <- turns do
+            calls = turn["items"] |> Enum.map(&call_of/1) |> Enum.reject(&is_nil/1)
+
+            %{
+              "run" => turn["runId"],
+              "endedAt" => turn["completedAt"] || turn["startedAt"],
+              "provider" => turn["provider"] || turn["instanceId"],
+              "calls" => calls,
+              "sample" => History.replay(calls, turn["status"], level, thr)
+            }
+          end
+
+        {:page, entries, length(turns) == @history_page}
+
+      {:error, reason} ->
+        {:error, what, reason}
+    end
+  end
+
+  # The held-back live turns, read back from their threads (`History.held_turns/6`).
+  defp read_pending(entries, fold) do
+    read =
+      entries
+      |> Enum.group_by(&hd/1, &Enum.at(&1, 1))
+      |> Map.new(fn {thread_id, runs} ->
+        page = &Host.history(@id, thread_id, before: &1, limit: @pending_page)
+        {thread_id, History.held_turns(MapSet.new(runs), fold, @pending_page, page)}
+      end)
+
+    {:pending,
+     Enum.map(entries, fn [thread_id, run_id, _ids] ->
+       case read[thread_id][run_id] do
+         nil -> nil
+         turn -> turn["items"] |> Enum.map(&call_of/1) |> Enum.reject(&is_nil/1)
+       end
+     end)}
+  end
+
+  # Applies a read to the fold that asked it, if it still awaits it: one
+  # forgotten, moved past, or answered with learning off is not applied, and
+  # read again when it is next.
+  defp fold_read(state, project_id, fold_id, step, result) do
+    fold = state.folds[project_id]
+
+    if micro_on?(state) and History.running?(fold) and fold["id"] == fold_id and
+         fold["step"] == step do
+      applied(state, project_id, fold, result)
+    else
+      state
+    end
+  end
+
+  defp applied(state, project_id, fold, {:plan, ids, skipped}),
+    do: put_fold(state, project_id, History.planned(fold, ids, skipped))
+
+  # A page of a thread's turns: those that ended before the fold started and
+  # that no live turn holds (`History.held/1`) or still runs fold oldest first,
+  # each once by its run id, and seed the envelope.
+  defp applied(state, project_id, fold, {:page, entries, more}) do
+    {skills, state} = skills_for(state, project_id)
+    held = History.held(fold)
+    live = MapSet.new(Map.values(state.turns), & &1.run)
+
+    kept =
+      Enum.filter(entries, fn entry ->
+        entry["run"] not in held and entry["run"] not in live and
+          History.imported?(fold, entry["endedAt"])
+      end)
+
+    folded = Enum.count(kept, &(&1["run"] not in skills.folded))
+    skills = Enum.reduce(kept, skills, &EnvFacts.update_turn(&2, &1["calls"], &1["run"]))
+    state = put_in(state.skills[project_id], skills)
+    {fold, state} = seed_envelopes(state, project_id, fold, kept)
+    last = List.last(entries)
+
+    put_fold(state, project_id, History.paged(fold, folded, last && last["run"], more))
+  end
+
+  # The live turns held back, in the order they ended, each read back whole
+  # from its thread; one that cannot be is counted.
+  defp applied(state, project_id, %{"pending" => pending} = fold, {:pending, calls}) do
+    {skills, state} = skills_for(state, project_id)
+    entries = Enum.take(pending, length(calls))
+
+    {skills, folded} =
+      entries
+      |> Enum.zip(calls)
+      |> Enum.reduce({skills, 0}, fn
+        {_entry, nil}, acc ->
+          acc
+
+        {[_thread, run, ids], calls}, {skills, n} ->
+          {skills |> EnvFacts.seed_injected(ids) |> EnvFacts.update_turn(calls, run), n + 1}
+      end)
+
+    state = put_in(state.skills[project_id], skills)
+    put_fold(state, project_id, History.drained(fold, entries, folded))
+  end
+
+  # The threads could not be listed: the fold stops, to resume when the
+  # import is turned on again.
+  defp applied(state, project_id, fold, {:error, :plan, reason}) do
+    Logger.warning(
+      "token-economizer: project #{project_id}'s threads not listed: #{inspect(reason)}"
+    )
+
+    put_fold(state, project_id, History.stop(fold, "the project's threads could not be listed"))
+  end
+
+  defp applied(state, project_id, fold, {:error, {:page, thread_id, _after}, reason}) do
+    Logger.warning("token-economizer: thread #{thread_id} not read: #{inspect(reason)}")
+    put_fold(state, project_id, History.unreadable(fold))
+  end
+
+  defp applied(state, project_id, fold, {:error, {:pending, entries}, _reason}),
+    do: put_fold(state, project_id, History.drained(fold, entries, 0))
+
+  # Seeds each provider's envelope with the page's green turns, where the
+  # fold may (`History.seedable/2`); the tracker is saved before the fold
+  # moves past the page, and `History.seed/4` seeds a step once.
+  defp seed_envelopes(state, project_id, fold, kept) do
+    kept
+    |> Enum.filter(&(is_binary(&1["provider"]) and &1["sample"] != nil))
+    |> Enum.group_by(& &1["provider"], & &1["sample"])
+    |> Enum.reduce({fold, state}, fn {provider, samples}, {fold, state} ->
+      key = {project_id, provider}
+      {tracker, state} = tracker(state, key)
+
+      entry = fold["envelopes"][provider]
+
+      {outcome, state} =
+        case History.envelope(entry, on?(state), tracker, fold["id"]) do
+          :seed ->
+            tracker = History.seed(tracker, fold["id"], fold["step"], samples)
+            save_tracker(key, tracker)
+            {{:seeded, tracker.seed["n"]}, put_in(state.trackers[key], tracker)}
+
+          outcome ->
+            {outcome, state}
+        end
+
+      {put_in(fold, ["envelopes", provider], History.noted(entry, on?(state), outcome)), state}
+    end)
+  end
+
+  # Forgets what a project learned: its facts (a dropped fact stays dropped),
+  # its fold from history, and the envelope samples that fold seeded. With
+  # learning and the import on, the fold runs again.
+  defp forget(state, input) do
+    case project_id(input) do
+      nil ->
+        {:reply, {:error, "Give a projectId."}, state}
+
+      project_id ->
+        case skills_for(state, project_id) do
+          {%EnvFacts{held: held}, state} when held != nil ->
+            {:reply, {:error, "The micro-skills of this project are held: #{held}"}, state}
+
+          {skills, state} ->
+            forget(state, project_id, skills)
+        end
+    end
+  end
+
+  defp forget(state, project_id, skills) do
+    fold = state.folds[project_id]
+    fresh = %{EnvFacts.new(skills_caps(state)) | dropped: skills.dropped}
+
+    again =
+      if micro_on?(state) and history_on?(state), do: History.new(fold_id(), now())
+
+    kept = %{
+      put_in(state.skills[project_id], fresh)
+      | folds:
+          if(again,
+            do: Map.put(state.folds, project_id, again),
+            else: Map.delete(state.folds, project_id)
+          )
+    }
+
+    case save_skills(kept, project_id) do
+      :ok ->
+        state =
+          kept
+          |> stop_reading(project_id)
+          |> unseed(project_id, fold)
+          |> know_skill(project_id)
+          |> publish_skills(project_id)
+          |> pump()
+
+        {view, state} = micro_skills_view(state, project_id)
+        {:reply, {:ok, view}, state}
+
+      :error ->
+        {:reply, {:error, "That could not be saved, so nothing was forgotten."}, state}
+    end
+  end
+
+  defp stop_reading(%{reading: %{project: project_id, pid: pid}} = state, project_id) do
+    Task.Supervisor.terminate_child(state.sup, pid)
+    %{state | reading: nil}
+  end
+
+  defp stop_reading(state, _project_id), do: state
+
+  defp unseed(state, _project_id, nil), do: state
+
+  defp unseed(state, project_id, fold) do
+    for({provider, %{"seeded" => _}} <- fold["envelopes"] || %{}, do: provider)
+    |> Enum.reduce(state, fn provider, state ->
+      key = {project_id, provider}
+      {tracker, state} = tracker(state, key)
+      tracker = History.unseed(tracker, fold["id"])
+      save_tracker(key, tracker)
+      put_in(state.trackers[key], tracker)
+    end)
   end
 
   # --- what a call was ------------------------------------------------------------------

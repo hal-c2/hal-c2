@@ -121,6 +121,10 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         "a person's word drops a learned fact; the guard never reads the facts",
       "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_restore, _}" =>
         "a person's word restores a dropped fact; the guard never reads the facts",
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_forget, _}" =>
+        "a person's word forgets a project's learned facts and its fold from history, and takes the envelope turns that fold seeded back out; seeding and unseeding are prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
+      "HalC2Plugins.TokenEconomizer handle_info {:history, _, _, _, _}" =>
+        "a read of a fold from history, which folds a project's earlier turns into its micro-skills and seeds only an envelope that learned nothing live; the fold is prop/hal_c2/token_economizer_micro_skills_prop_test.exs",
       "HalC2Plugins.TokenEconomizer handle_call {:shape_run, _, _}" =>
         "stages learned facts ahead of a new conversation's first message and denies it the tools pruning turned off (modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs), or, answered past its deadline, stages and records nothing; it neither steers nor notices a turn under way, and decides nothing for the guard",
       "HalC2Plugins.TokenEconomizer handle_info _" => "any other message is ignored",
@@ -172,6 +176,10 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
         "the fact ids staged for a thread's conversation, for counting the waste they prevented; the guard never reads them",
       "HalC2Plugins.TokenEconomizer state :staged_order" =>
         "the staged conversations' order, for keeping only the latest; the guard never reads it",
+      "HalC2Plugins.TokenEconomizer state :folds" =>
+        "each project's fold from history, which holds back the micro-skills' live turns, never the guard's",
+      "HalC2Plugins.TokenEconomizer state :reading" =>
+        "the fold's read under way, in a task of its own; the guard never waits on it",
       "HalC2Plugins.TokenEconomizer state :recent" =>
         "the latest actions for the topic, which decide nothing",
       "HalC2Plugins.TokenEconomizer.status/1" => "what the topic carries, which decides nothing",
