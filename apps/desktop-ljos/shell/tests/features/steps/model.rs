@@ -28,7 +28,7 @@ struct Catalogue {
 fn effort() -> Value {
     let choices: Vec<Value> = ["low", "medium", "high"]
         .iter()
-        .map(|level| json!({"id": level, "label": level}))
+        .map(|level| json!({"id": level, "label": level, "isDefault": *level == "medium"}))
         .collect();
     json!({"id": "reasoningEffort", "label": "Reasoning", "type": "select",
            "options": choices, "currentValue": "medium"})

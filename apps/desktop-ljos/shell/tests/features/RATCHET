@@ -235,6 +235,7 @@ composer/model-and-mode.feature: Checkouts of one repository are one project in 
 composer/model-and-mode.feature: Choosing another effort takes Ultrathink off the prompt
 composer/model-and-mode.feature: Confirming input-method text in the model search keeps the picker open
 composer/model-and-mode.feature: Each model keeps the options the user last gave it
+composer/model-and-mode.feature: Each option's default is marked
 composer/model-and-mode.feature: Every saved custom model is offered
 composer/model-and-mode.feature: Favourite models are listed first and can be unfavourited
 composer/model-and-mode.feature: Models are grouped by provider
