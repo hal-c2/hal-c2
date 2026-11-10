@@ -1,5 +1,5 @@
 # Sources:
-#   plugins/token-economizer/mc/token_economizer.ex (micro-skills: hears turns, stages facts, microSkills call and topic)
+#   plugins/token-economizer/mc/token_economizer.ex (micro-skills: hears turns, stages facts, microSkills call and topics)
 #   plugins/token-economizer/mc/micro_skills_envfacts.ex, micro_skills_observe.ex (what a turn teaches)
 #   plugins/token-economizer/mc/micro_skills_lifecycle.ex (a fact's formation, retirement and firing gate)
 #   plugins/token-economizer/mc/micro_skills_distiller.ex (the facts a model proposes, held to the turns they cite)
@@ -187,6 +187,13 @@ Feature: TokenEconomizer's micro-skills
     When the person drops the fact there
     Then a new conversation in that project is not told the fact
     And the page lists it as dropped, with a way to restore it
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  Scenario: A project that learns its first fact while the plugin's page is open shows up there
+    Given the person opens TokenEconomizer's page
+    And the page says nothing is learned yet
+    When TokenEconomizer has learned a fact on a project
+    Then the fact is listed with how many turns confirmed it and how often it fires
 
   @desktop @mobile @tui @backlog-mobile @backlog-tui
   Scenario: The plugin's page shows a held project with why and where, and reads it again once repaired

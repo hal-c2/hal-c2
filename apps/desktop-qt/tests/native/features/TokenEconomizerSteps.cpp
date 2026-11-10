@@ -1,7 +1,7 @@
 // TokenEconomizer's page (features/plugins/token-economizer-*.feature): its real
 // package from plugins/token-economizer, drawn by the desktop against a fake of
-// its MC part that publishes `loopGuard`, `toolPrune` and `microSkills:<project>`
-// as the MC part does and answers the calls the page makes.
+// its MC part that publishes `loopGuard`, `toolPrune`, `microSkills:<project>` and
+// `microSkillsProjects` as the MC part does and answers the calls the page makes.
 
 #include <QDir>
 #include <algorithm>
@@ -102,6 +102,13 @@ void publish(World& world) {
   part.topics.insert(QStringLiteral("microSkills:") + kProject, state(world).skills);
   publishTopic(world, kId, QStringLiteral("toolPrune"));
   publishTopic(world, kId, QStringLiteral("microSkills:") + kProject);
+  // The project is named for a listing as it first shows, and as its hold begins or ends.
+  const QJsonObject& skills = state(world).skills;
+  const QJsonObject named{{QStringLiteral("projectId"), kProject}, {QStringLiteral("held"), !skills.value(QLatin1String("held")).isNull()}};
+  if (!skills.isEmpty() && part.topics.value(QStringLiteral("microSkillsProjects")).toObject() != named) {
+    part.topics.insert(QStringLiteral("microSkillsProjects"), named);
+    publishTopic(world, kId, QStringLiteral("microSkillsProjects"));
+  }
 }
 
 QJsonObject history(const QString& at, int read) {
@@ -302,6 +309,9 @@ const Steps steps([] {
            QStringLiteral("the fact's claim is not shown"));
     waitSays(world, QStringLiteral("tokenEconomizerEvidence:") + kFact, {QStringLiteral("confirmed by 4 turn(s)"), QStringLiteral("fires 75%"), QStringLiteral("active, staged")});
     shoot(world, QStringLiteral("facts"));
+  });
+  step(QStringLiteral("the page says nothing is learned yet"), [](World& world, const Captures&, const Table&) {
+    waitSays(world, QStringLiteral("tokenEconomizerSkillsMode"), {QStringLiteral("Nothing learned yet.")});
   });
   step(QStringLiteral("the person drops the fact there"), [](World& world, const Captures&, const Table&) { click(world, QStringLiteral("tokenEconomizerDrop:") + kFact); });
   step(QStringLiteral("a new conversation in that project is not told the fact"), [](World& world, const Captures&, const Table&) {

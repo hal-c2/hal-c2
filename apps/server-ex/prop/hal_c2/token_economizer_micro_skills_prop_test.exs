@@ -1699,7 +1699,10 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
     * forgetting a held project is refused, saying it is held; forgetting one
       that reads is not;
     * a turn in a project that reads, with learning and the import on, leaves
-      it a fold, so the hold is what keeps a held one from folding.
+      it a fold, so the hold is what keeps a held one from folding;
+    * once the project's entry is published, the last `microSkillsProjects`
+      naming it says held as that entry does, so a page listing the projects
+      lists it, held or not; and no process names it twice saying the same.
   """
   # The plugin keeps the micro-skills under the MC's home, which a scratch
   # home sets for the whole VM.
@@ -1717,10 +1720,14 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
     forall cmds <- more_commands(4, commands(__MODULE__)) do
       home = HalC2.Prop.scratch_home("token-economizer-held")
       readable()
+      # The test stands in for the plugin host, which publishes what it is cast.
+      Process.register(self(), HalC2.Plugins)
       {:ok, plugin} = TokenEconomizer.init(settings(initial_state()))
       Process.put(:plugin, plugin)
       {history, state, result} = run_commands(__MODULE__, cmds)
       stop(Process.delete(:plugin))
+      Process.unregister(HalC2.Plugins)
+      Enum.each([:entry_held, :pulsed, :listed, :repeated], &Process.delete/1)
       HalC2.Prop.restore_env()
       File.rm_rf!(home)
 
@@ -1771,8 +1778,12 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
             seen.fold == nil and seen.entry["turns"] == 0 and seen.file == @garbled,
         else: seen.entry["held"] == nil and not Map.has_key?(seen.entry, "file")
 
-    common and called(state, call, seen)
+    common and called(state, call, seen) and listed?(seen)
   end
+
+  # The page's two topics agree: the listing names `p` as its entry shows it.
+  defp listed?(%{entry_held: entry_held, listed: listed, repeated: repeated}),
+    do: (entry_held == :none or listed == entry_held) and not repeated
 
   defp called(state, {:call, _, :forget, []}, %{reply: reply}) do
     case {state.held, reply} do
@@ -1865,6 +1876,9 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
   def restart do
     old = Process.get(:plugin)
     stop(old)
+    published()
+    # A new process names each project afresh.
+    Process.delete(:pulsed)
     {:ok, plugin} = TokenEconomizer.init(old.settings)
     seen(plugin)
   end
@@ -1901,13 +1915,43 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
 
   # What a person would see of project `p`, looked at without keeping what
   # looking loads, its fold, and its file's bytes.
+  # Also what its two topics last said, as a page would have them.
   defp seen(plugin) do
     Process.put(:plugin, plugin)
+    published()
 
     {:reply, {:ok, %{"projects" => [entry]}}, _} =
       TokenEconomizer.handle_call({:micro_skills, %{"projectId" => "p"}}, nil, plugin)
 
-    %{entry: entry, fold: plugin.folds["p"], file: File.read!(path())}
+    %{
+      entry: entry,
+      fold: plugin.folds["p"],
+      file: File.read!(path()),
+      entry_held: Process.get(:entry_held, :none),
+      listed: Process.get(:listed, :none),
+      repeated: Process.get(:repeated, false)
+    }
+  end
+
+  # Takes what the plugin published since, in order.
+  defp published do
+    receive do
+      {:"$gen_cast", {:publish, "token-economizer", "microSkills:p", entry}} ->
+        Process.put(:entry_held, entry["held"] != nil)
+        published()
+
+      {:"$gen_cast", {:publish, "token-economizer", "microSkillsProjects", named}} ->
+        %{"projectId" => "p", "held" => held} = named
+        if Process.get(:pulsed) == held, do: Process.put(:repeated, true)
+        Process.put(:pulsed, held)
+        Process.put(:listed, held)
+        published()
+
+      {:"$gen_cast", {:publish, "token-economizer", _topic, _value}} ->
+        published()
+    after
+      0 -> :ok
+    end
   end
 
   # Ends the process's tasks, as its end would, and forgets what they sent.

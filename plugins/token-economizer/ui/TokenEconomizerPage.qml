@@ -11,6 +11,8 @@ import HalC2.Bricks
 // and provider (apply, restore) with whatever holds pruning off and the way out.
 // Follows `loopGuard`, `toolPrune` and the one project's `microSkills:<id>`;
 // the plugin publishes them only on a change, so each is asked for once too.
+// The project listing is the `microSkills` call's, asked again whenever
+// `microSkillsProjects` names a project that first showed or was held or freed.
 // `toolPrune` carries only the evidence the plugin has loaded, so each of the
 // machine's projects is also asked for by name: after a restart its tools that
 // are off show, and can be given back, before its next conversation loads them.
@@ -86,8 +88,16 @@ Item {
         }, environment);
         page.plugin.call("toolPrune", {}, result => {
             if (result && page.environment === environment && page.toolPrune === null)
-                page.toolPrune = result;
+                page.takePrunes(result);
         }, environment);
+        page.listSkills();
+        page.watches = [page.plugin.watch("loopGuard", value => page.loopGuard = value, environment), page.plugin.watch("toolPrune", value => page.takePrunes(value), environment), page.plugin.watch("microSkillsProjects", () => page.listSkills(), environment)];
+        page.askPrunes();
+    }
+
+    // Lists the machine's projects with micro-skills, keeping the one shown if it is listed.
+    function listSkills() {
+        const environment = page.environment;
         page.plugin.call("microSkills", {}, result => {
             if (!result || page.environment !== environment)
                 return;
@@ -96,8 +106,16 @@ Item {
             if (!ids.includes(page.projectId))
                 page.showProject(ids[0] ?? "");
         }, environment);
-        page.watches = [page.plugin.watch("loopGuard", value => page.loopGuard = value, environment), page.plugin.watch("toolPrune", value => page.toolPrune = value, environment)];
-        page.askPrunes();
+    }
+
+    // What the topic carries replaces what a call by name found for the same project and agent.
+    function takePrunes(value) {
+        page.toolPrune = value;
+        page.namedPrunes = page.namedPrunes.filter(each => !page.prunedOnTopic(each));
+    }
+
+    function prunedOnTopic(entry) {
+        return (page.toolPrune?.projects ?? []).some(each => each.projectId === entry.projectId && each.provider === entry.provider);
     }
 
     // Asks for each of the machine's projects not asked for yet, by name.
@@ -114,7 +132,7 @@ Item {
             }, result => {
                 if (!result || page.environment !== environment)
                     return;
-                page.namedPrunes = page.namedPrunes.filter(each => each.projectId !== projectId).concat(result.projects ?? []);
+                page.namedPrunes = page.namedPrunes.filter(each => each.projectId !== projectId).concat((result.projects ?? []).filter(each => !page.prunedOnTopic(each)));
             }, environment);
         }
     }
@@ -399,6 +417,7 @@ Item {
             }
 
             Line {
+                objectName: "tokenEconomizerSkillsMode"
                 text: {
                     if (page.microSkills === null)
                         return "";

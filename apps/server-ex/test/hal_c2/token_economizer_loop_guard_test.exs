@@ -2242,6 +2242,11 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       assert entry["projectId"] == project
       assert entry["dropped"] == [@pytest]
       refute_received {:"$gen_cast", {:publish, "token-economizer", "microSkills", _}}
+
+      # First published since the plugin started, the project is named for a listing.
+      assert_receive {:"$gen_cast",
+                      {:publish, "token-economizer", "microSkillsProjects",
+                       %{"projectId" => ^project, "held" => false}}}
     end
 
     test "a finished turn reads and publishes its own project alone" do
@@ -2275,7 +2280,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
     defp micro_topics do
       receive do
-        {:"$gen_cast", {:publish, "token-economizer", "microSkills" <> _ = topic, _}} ->
+        {:"$gen_cast", {:publish, "token-economizer", "microSkills:" <> _ = topic, _}} ->
           [topic | micro_topics()]
 
         {:"$gen_cast", {:publish, "token-economizer", _topic, _}} ->
