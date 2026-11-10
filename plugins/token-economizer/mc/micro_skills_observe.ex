@@ -943,6 +943,16 @@ defmodule HalC2Plugins.TokenEconomizer.MicroSkills.Observe do
     Regex.match?(@userinfo_re, text) or text |> String.split() |> Enum.any?(&secret_word?/1)
   end
 
+  @doc """
+  Text with what `secret_value?/1` would find masked: a URL's userinfo written
+  `://<secret>@`, a credential-shaped word `<secret>`. The layout is kept.
+  """
+  def redact(text) when is_binary(text) do
+    text = Regex.replace(@userinfo_re, text, "://<secret>@")
+
+    Regex.replace(~r/\S+/u, text, fn word -> if secret_word?(word), do: "<secret>", else: word end)
+  end
+
   # A word is a credential when it starts as a known token does, or is opaque
   # and dense: one run of 20 letters and digits mixed (`a1b2c3...`), or 32
   # characters mixing cases and digits around a long run (a base64 key). An
