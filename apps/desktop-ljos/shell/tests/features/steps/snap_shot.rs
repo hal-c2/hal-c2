@@ -6,6 +6,7 @@
 //! saying so.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use hal_c2_shell::bridge::Bridge;
@@ -15,48 +16,54 @@ use hal_c2_shell::controllers::keybindings::Keymap;
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::snap_shot::{SnapShot, deliver};
-use hal_c2_shell::snap_shot::{Backend, Captured, Event, Mode, Session, Shortcut};
+use hal_c2_shell::snap_shot::{
+    self, Backend, Captured, Check, Event, Mode, Platform, PortalFactory, Session, Shortcut,
+};
 use image::{Rgba, RgbaImage};
 use serde_json::{Value, json};
 
+use super::snap_shot_bus::{self, PortalDesktop};
 use super::stream::{PROJECT, THREAD, look_at_thread};
 use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
 
-const SECTION: &str = "/settings/snap-shot";
+pub(crate) const SECTION: &str = "/settings/snap-shot";
 
 /// Qt's key codes and modifier masks, as the recorder receives them.
-const KEY_AT: i64 = 0x40;
-const KEY_O: i64 = 0x4f;
-const KEY_L: i64 = 0x4c;
-const CONTROL: i64 = 0x0400_0000;
-const SHIFT: i64 = 0x0200_0000;
-const META: i64 = 0x1000_0000;
+pub(crate) const KEY_AT: i64 = 0x40;
+pub(crate) const KEY_O: i64 = 0x4f;
+pub(crate) const KEY_L: i64 = 0x4c;
+pub(crate) const CONTROL: i64 = 0x0400_0000;
+pub(crate) const SHIFT: i64 = 0x0200_0000;
+pub(crate) const META: i64 = 0x1000_0000;
 
 /// What the desktop does, for the fake backend to read and record into.
 #[derive(Default)]
-struct Desktop {
-    picker: bool,
-    /// The desktop name the session reports (XDG_CURRENT_DESKTOP).
-    desktop: String,
-    /// The session type is X11, where capture is unsupported.
-    x11: bool,
+pub(crate) struct Desktop {
+    pub picker: bool,
+    /// Why capture access is not ready, if it is not.
+    pub message: String,
     /// The desktop turns down the shortcut with this.
-    refuse: String,
+    pub refuse: String,
     /// The next capture fails with this.
-    failure: String,
-    image: Option<RgbaImage>,
-    binds: Vec<String>,
-    releases: usize,
-    configured: usize,
+    pub failure: String,
+    pub image: Option<RgbaImage>,
+    pub binds: Vec<String>,
+    pub releases: usize,
+    pub configured: usize,
     /// Each capture: true when the user picked the window.
-    captures: Vec<bool>,
-    played: Vec<String>,
-    probed: bool,
-    shortcut: Shortcut,
+    pub captures: Vec<bool>,
+    pub played: Vec<String>,
+    /// Shortcut checks wait for [`answer_check`], counted here.
+    pub hold_checks: bool,
+    pub checks: usize,
+    /// The desktop will not pause the capture shortcut, with this reason.
+    pub refuse_pause: Option<String>,
+    /// The desktop does not answer a shortcut's bind.
+    pub hold_shortcuts: bool,
     /// What the backend's thread left for `arrive`.
-    arrivals: Vec<Event>,
+    pub arrivals: Vec<Event>,
 }
 
 /// The trigger as a desktop names it: CTRL+SHIFT+2 is Ctrl+Shift+2.
@@ -74,21 +81,31 @@ fn describe_trigger(trigger: &str) -> String {
         .join("+")
 }
 
-struct Fake(Rc<RefCell<Desktop>>);
+/// desktop-qt's FakePortal: the portal of a desktop whose shortcut answers
+/// at once, standing in for [`hal_c2_shell::snap_shot::portal`].
+pub(crate) struct Fake {
+    state: Rc<RefCell<Desktop>>,
+    desktop: String,
+    probed: bool,
+    shortcut: Shortcut,
+}
+
+impl Fake {
+    pub(crate) fn new(state: Rc<RefCell<Desktop>>, platform: &Platform) -> Fake {
+        Fake {
+            state,
+            desktop: platform.desktop.clone(),
+            probed: false,
+            shortcut: Shortcut::default(),
+        }
+    }
+}
 
 impl Backend for Fake {
     fn session(&self) -> Session {
-        let d = self.0.borrow();
-        if d.x11 {
-            return Session {
-                ready: true,
-                message: "SnapShots require a Wayland session. X11 capture is not supported."
-                    .into(),
-                ..Session::default()
-            };
-        }
+        let d = self.state.borrow();
         Session {
-            ready: d.probed,
+            ready: self.probed,
             mode: Mode::Portal,
             backend: if d.picker {
                 "picker"
@@ -96,45 +113,72 @@ impl Backend for Fake {
                 "screenshot-portal"
             }
             .into(),
-            desktop: d.desktop.clone(),
+            desktop: self.desktop.clone(),
+            message: d.message.clone(),
             ..Session::default()
         }
     }
     fn shortcut(&self) -> Shortcut {
-        self.0.borrow().shortcut.clone()
+        self.shortcut.clone()
     }
     fn probe(&mut self) -> Vec<Event> {
-        let mut d = self.0.borrow_mut();
-        if d.probed {
+        if self.probed {
             return Vec::new();
         }
-        d.probed = true;
+        self.probed = true;
         vec![Event::Changed]
     }
     fn bind(&mut self, trigger: &str) -> Vec<Event> {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.state.borrow_mut();
         d.binds.push(trigger.to_owned());
-        d.shortcut = Shortcut::default();
-        if d.refuse.is_empty() {
-            d.shortcut.registered = true;
-            d.shortcut.label = describe_trigger(trigger);
+        self.shortcut = Shortcut::default();
+        if d.hold_shortcuts {
+            self.shortcut.pending = true;
+        } else if d.refuse.is_empty() {
+            self.shortcut.registered = true;
+            self.shortcut.label = describe_trigger(trigger);
         } else {
-            d.shortcut.message = d.refuse.clone();
+            self.shortcut.message = d.refuse.clone();
         }
         vec![Event::Changed]
     }
     fn release(&mut self) -> Vec<Event> {
-        let mut d = self.0.borrow_mut();
-        d.releases += 1;
-        d.shortcut = Shortcut::default();
+        self.state.borrow_mut().releases += 1;
+        self.shortcut = Shortcut::default();
         vec![Event::Changed]
     }
     fn configure(&mut self) -> Vec<Event> {
-        self.0.borrow_mut().configured += 1;
+        self.state.borrow_mut().configured += 1;
         Vec::new()
     }
+    fn check_shortcut(&mut self, shortcut: &Value) -> Option<Check> {
+        {
+            let mut d = self.state.borrow_mut();
+            if d.hold_checks {
+                d.checks += 1;
+                return None;
+            }
+        }
+        // The portal's own check (the Backend default).
+        Some(match snap_shot::portal_trigger(shortcut) {
+            Err(problem) => Check {
+                available: false,
+                message: problem,
+            },
+            Ok(_) => Check {
+                available: true,
+                message: "Your desktop will confirm this shortcut when you save it.".into(),
+            },
+        })
+    }
+    fn pause(&mut self, paused: bool) -> Result<(), String> {
+        match &self.state.borrow().refuse_pause {
+            Some(reason) if paused => Err(reason.clone()),
+            _ => Ok(()),
+        }
+    }
     fn capture(&mut self) -> Vec<Event> {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.state.borrow_mut();
         let picked = d.picker;
         d.captures.push(picked);
         if !d.failure.is_empty() {
@@ -145,42 +189,74 @@ impl Backend for Fake {
             image: d.image.clone().unwrap_or_else(|| RgbaImage::new(1, 1)),
             app_name: "Window".into(),
             window_title: String::new(),
+            context: Value::Null,
         })]
     }
     fn play(&mut self, sound: &str) {
-        self.0.borrow_mut().played.push(sound.to_owned());
+        self.state.borrow_mut().played.push(sound.to_owned());
     }
     fn arrive(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.0.borrow_mut().arrivals)
+        std::mem::take(&mut self.state.borrow_mut().arrivals)
     }
 }
 
-/// The desktop of the running shell, and whether its fake is installed.
+/// The desktop of the running shell, and whether its backend is installed.
 #[derive(Default)]
-struct Snap {
-    desktop: Rc<RefCell<Desktop>>,
-    installed: bool,
+pub(crate) struct Snap {
+    pub desktop: Rc<RefCell<Desktop>>,
+    pub installed: bool,
     /// The window commands asked since the last capture.
-    raised: Rc<RefCell<Vec<String>>>,
+    pub raised: Rc<RefCell<Vec<String>>>,
 }
 
-fn snap(world: &mut World) -> &mut Snap {
+thread_local! {
+    /// What the platforms' steps reset with the desktop (their stand-ins).
+    static RESETS: RefCell<Vec<fn()>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `reset` runs whenever a scenario starts a fresh desktop, before the
+/// shell restarts: a platform's steps put their stand-ins away in it.
+pub(crate) fn on_reset(reset: fn()) {
+    RESETS.with(|resets| resets.borrow_mut().push(reset));
+}
+
+pub(crate) fn snap(world: &mut World) -> &mut Snap {
     world.part::<Snap>()
 }
 
-fn desktop(world: &mut World) -> Rc<RefCell<Desktop>> {
+pub(crate) fn desktop(world: &mut World) -> Rc<RefCell<Desktop>> {
     snap(world).desktop.clone()
 }
 
-/// The shell's backend is the fake, as every shell of tst_Features has it.
-fn install(world: &mut World) -> Outcome {
+/// A process environment of session `kind` (wayland, x11) on `current`
+/// (XDG_CURRENT_DESKTOP, none when empty).
+pub(crate) fn environment(kind: &str, current: &str) -> HashMap<String, String> {
+    let mut env = HashMap::from([("XDG_SESSION_TYPE".to_owned(), kind.to_owned())]);
+    if !current.is_empty() {
+        env.insert("XDG_CURRENT_DESKTOP".to_owned(), current.to_owned());
+    }
+    env
+}
+
+/// The shell's backend is the one [`snap_shot::create`] gives in the
+/// stand-in environment: the fake portal, unless a platform's steps stand
+/// in for something else.
+pub(crate) fn install(world: &mut World) -> Outcome {
     if snap(world).installed {
         return Ok(());
     }
     world.connect()?;
-    let fake = Fake(desktop(world));
-    world
-        .with::<SnapShot, _>(|controller, engine| controller.set_backend(engine, Box::new(fake)))?;
+    if !snap_shot::environment_overridden() {
+        snap_shot::set_environment(Some(environment("wayland", "")));
+    }
+    let state = desktop(world);
+    if !snap_shot::portal_overridden() {
+        snap_shot::set_portal_factory(Some(Rc::new(move |platform: &Platform| {
+            Box::new(Fake::new(state.clone(), platform)) as Box<dyn Backend>
+        })));
+    }
+    let backend = snap_shot::create(None);
+    world.with::<SnapShot, _>(|controller, engine| controller.set_backend(engine, backend))?;
     let raised = snap(world).raised.clone();
     let bridge = Bridge::of(world.engine()).object();
     let _ =
@@ -195,40 +271,74 @@ fn install(world: &mut World) -> Outcome {
     world.pump()
 }
 
-fn page(world: &World) -> Value {
+pub(crate) fn page(world: &World) -> Value {
     world.state("snapShot")
 }
 
-fn field(world: &World, path: &str) -> Value {
+pub(crate) fn field(world: &World, path: &str) -> Value {
     at(&page(world), path).clone()
 }
 
-fn send(world: &mut World, action: &str, payload: Value) -> Outcome {
-    world.dispatch(&format!("snapShot.{action}"), payload)
+pub(crate) fn send(world: &mut World, action: &str, payload: Value) -> Outcome {
+    world.dispatch(&format!("snapShot.{action}"), payload)?;
+    settle(world)
 }
 
-fn setting(world: &World, key: &str) -> Value {
+/// What the desktop portal said, handed to the shell.
+pub(crate) fn settle(world: &mut World) -> Outcome {
+    snap_shot_bus::settle(world.engine());
+    world.pump()
+}
+
+pub(crate) fn setting(world: &World, key: &str) -> Value {
     Settings::of(world.engine())
         .setting(world.engine(), key)
         .unwrap_or(Value::Null)
 }
 
-fn set_setting(world: &mut World, key: &str, value: Value) -> Outcome {
+pub(crate) fn set_setting(world: &mut World, key: &str, value: Value) -> Outcome {
     Settings::of(world.engine()).set(world.engine(), key, value);
-    world.pump()
+    world.pump()?;
+    settle(world)
 }
 
-/// A fresh desktop: Wayland on `desktop` (no named compositor by default),
-/// nothing bound yet.
-fn reset_desktop(world: &mut World, desktop: &str, x11: bool) -> Outcome {
+/// Waits for the page's `path` to be `value`.
+pub(crate) fn wait_for_field(world: &mut World, path: &str, value: Value) -> Outcome {
+    let path = path.to_owned();
+    world.wait_for_with(
+        |w| {
+            snap_shot_bus::settle(w.engine());
+            field(w, &path) == value
+        },
+        |w| {
+            format!(
+                "{path} to be {}; Snap Shot is {}",
+                show(&value),
+                show(&page(w))
+            )
+        },
+    )
+}
+
+/// A fresh desktop in `env`, nothing bound yet, its shell restarted: the
+/// platforms' stand-ins are put away first, and the portal is the fake
+/// unless `portal` stands in for it.
+pub(crate) fn reset_with(
+    world: &mut World,
+    env: HashMap<String, String>,
+    portal: Option<PortalFactory>,
+) -> Outcome {
     let mut image = RgbaImage::new(320, 200);
     for pixel in image.pixels_mut() {
         *pixel = Rgba([0, 139, 139, 255]);
     }
+    RESETS.with(|resets| {
+        for reset in resets.borrow().iter() {
+            reset();
+        }
+    });
     // A new state: the shell being dropped may still release the old one.
     let fresh = Desktop {
-        desktop: desktop.to_owned(),
-        x11,
         image: Some(image),
         ..Desktop::default()
     };
@@ -236,6 +346,9 @@ fn reset_desktop(world: &mut World, desktop: &str, x11: bool) -> Outcome {
     state.desktop = Rc::new(RefCell::new(fresh));
     state.installed = false;
     state.raised = Rc::new(RefCell::new(Vec::new()));
+    snap_shot_bus::bus().borrow_mut().active = portal.is_some();
+    snap_shot::set_environment(Some(env));
+    snap_shot::set_portal_factory(portal);
     world.restart()?;
     // The shell's controllers start once the MC has answered.
     world.connect()?;
@@ -247,13 +360,36 @@ fn reset_desktop(world: &mut World, desktop: &str, x11: bool) -> Outcome {
     world.pump()
 }
 
-fn project_row(id: &str) -> Value {
+/// A fresh Wayland desktop on `desktop` (no named compositor when empty),
+/// or an X11 one.
+fn reset_desktop(world: &mut World, desktop: &str, x11: bool) -> Outcome {
+    let kind = if x11 { "x11" } else { "wayland" };
+    reset_with(world, environment(kind, desktop), None)
+}
+
+/// The fake portal answers the oldest shortcut check it holds.
+pub(crate) fn answer_check(world: &mut World, available: bool, message: &str) -> Outcome {
+    let state = desktop(world);
+    {
+        let mut d = state.borrow_mut();
+        expect!(d.checks > 0, "a shortcut check to answer");
+        d.checks -= 1;
+        d.arrivals.push(Event::Checked(Check {
+            available,
+            message: message.to_owned(),
+        }));
+    }
+    deliver(world.engine());
+    world.pump()
+}
+
+pub(crate) fn project_row(id: &str) -> Value {
     json!({"id": id, "title": id, "workspaceRoot": format!("/work/{id}"),
         "scripts": []})
 }
 
 /// A thread of "shop", open in the window.
-fn open_thread(world: &mut World) -> Outcome {
+pub(crate) fn open_thread(world: &mut World) -> Outcome {
     if !world
         .mc
         .part::<super::stream::FakeStreams>()
@@ -273,7 +409,7 @@ fn open_thread(world: &mut World) -> Outcome {
     look_at_thread(world, PROJECT)
 }
 
-fn open_panel(world: &mut World) -> Outcome {
+pub(crate) fn open_panel(world: &mut World) -> Outcome {
     install(world)?;
     world.with::<Navigation, _>(|navigation, engine| {
         navigation.open(engine, Route::Settings(SECTION.to_owned()))
@@ -284,23 +420,26 @@ fn open_panel(world: &mut World) -> Outcome {
     )
 }
 
-fn ctrl_shift_2() -> Value {
+pub(crate) fn ctrl_shift_2() -> Value {
     json!({"key": "2", "metaKey": false, "ctrlKey": false, "shiftKey": true,
         "altKey": false, "modKey": true})
 }
 
 /// Snap Shot on and holding Ctrl+Shift+2.
-fn turn_on(world: &mut World) -> Outcome {
+pub(crate) fn turn_on(world: &mut World) -> Outcome {
     install(world)?;
     set_setting(world, "snapShotShortcut", ctrl_shift_2())?;
     set_setting(world, "snapShotEnabled", json!(true))?;
+    if desktop(world).borrow().hold_shortcuts {
+        return Ok(());
+    }
     world.wait_for_with(
         |w| field(w, "shortcut.registered").as_bool() == Some(true),
         |w| format!("the shortcut to be held; Snap Shot is {}", show(&page(w))),
     )
 }
 
-fn press(world: &mut World, key: i64, modifiers: i64) -> Outcome {
+pub(crate) fn press(world: &mut World, key: i64, modifiers: i64) -> Outcome {
     send(
         world,
         "record.key",
@@ -308,7 +447,7 @@ fn press(world: &mut World, key: i64, modifiers: i64) -> Outcome {
     )
 }
 
-fn record_ctrl_shift_2(world: &mut World) -> Outcome {
+pub(crate) fn record_ctrl_shift_2(world: &mut World) -> Outcome {
     if setting(world, "snapShotEnabled").as_bool() != Some(true) {
         set_setting(world, "snapShotEnabled", json!(true))?;
     }
@@ -316,7 +455,7 @@ fn record_ctrl_shift_2(world: &mut World) -> Outcome {
     press(world, KEY_AT, CONTROL | SHIFT)
 }
 
-fn expect_off(world: &World) -> Outcome {
+pub(crate) fn expect_off(world: &World) -> Outcome {
     expect!(
         setting(world, "snapShotEnabled").as_bool() != Some(true)
             && field(world, "switchOn").as_bool() != Some(true)
@@ -328,25 +467,29 @@ fn expect_off(world: &World) -> Outcome {
 }
 
 /// The user presses the Snap Shot shortcut.
-fn capture(world: &mut World) -> Outcome {
+pub(crate) fn capture(world: &mut World) -> Outcome {
     install(world)?;
     snap(world).raised.borrow_mut().clear();
+    if snap_shot_bus::bus().borrow().active {
+        snap_shot_bus::bus().borrow_mut().press();
+        return settle(world);
+    }
     // The backend's thread says the shortcut was pressed.
     desktop(world).borrow_mut().arrivals.push(Event::Activated);
     deliver(world.engine());
     world.pump()
 }
 
-fn thread_key(world: &World) -> String {
+pub(crate) fn thread_key(world: &World) -> String {
     format!("{}:{THREAD}", world.mc.environment_id)
 }
 
-fn attachments(world: &World, target: &str) -> Vec<Value> {
+pub(crate) fn attachments(world: &World, target: &str) -> Vec<Value> {
     kept::attachments(world.engine(), target)
 }
 
 /// The one capture `target`'s draft holds.
-fn attached(world: &World, target: &str) -> Outcome<Value> {
+pub(crate) fn attached(world: &World, target: &str) -> Outcome<Value> {
     let images = attachments(world, target);
     expect!(
         images.len() == 1,
@@ -362,7 +505,7 @@ fn attached(world: &World, target: &str) -> Outcome<Value> {
     Ok(image)
 }
 
-fn toast_titled(world: &World, title: &str) -> Option<Value> {
+pub(crate) fn toast_titled(world: &World, title: &str) -> Option<Value> {
     world.state("toasts")["items"]
         .as_array()
         .into_iter()
@@ -371,7 +514,7 @@ fn toast_titled(world: &World, title: &str) -> Option<Value> {
         .cloned()
 }
 
-fn expect_toast(world: &World, title: &str, description: &str) -> Outcome {
+pub(crate) fn expect_toast(world: &World, title: &str, description: &str) -> Outcome {
     let toast = toast_titled(world, title);
     expect!(
         toast.is_some_and(|toast| text(&toast["description"]) == description),
@@ -382,7 +525,7 @@ fn expect_toast(world: &World, title: &str, description: &str) -> Outcome {
 }
 
 /// A capture of noise: no image format makes it small.
-fn noise(width: u32, height: u32) -> RgbaImage {
+pub(crate) fn noise(width: u32, height: u32) -> RgbaImage {
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut image = RgbaImage::new(width, height);
     for pixel in image.pixels_mut() {
@@ -395,16 +538,99 @@ fn noise(width: u32, height: u32) -> RgbaImage {
     image
 }
 
-fn shortcut_setting(world: &World) -> Value {
+pub(crate) fn shortcut_setting(world: &World) -> Value {
     setting(world, "snapShotShortcut")
 }
 
-fn binds_end_with(world: &mut World, trigger: &str) -> bool {
+pub(crate) fn binds_end_with(world: &mut World, trigger: &str) -> bool {
     desktop(world)
         .borrow()
         .binds
         .last()
         .is_some_and(|last| last == trigger)
+}
+
+/// The user saves the shortcut they recorded.
+pub(crate) fn save(world: &mut World) -> Outcome {
+    expect!(
+        field(world, "shortcut.canSave").as_bool() == Some(true),
+        "the shortcut to be ready to save; Snap Shot is {}",
+        show(&page(world))
+    );
+    world.answer_question = None;
+    send(world, "shortcut.save", Value::Null)
+}
+
+pub(crate) fn ctrl_shift_1() -> Value {
+    json!({"key": "1", "metaKey": false, "ctrlKey": false, "shiftKey": true,
+        "altKey": false, "modKey": true})
+}
+
+/// Snap Shot on with `shortcut`, without waiting on the desktop's answer.
+pub(crate) fn turn_on_with(world: &mut World, shortcut: Value) -> Outcome {
+    install(world)?;
+    set_setting(world, "snapShotShortcut", shortcut)?;
+    set_setting(world, "snapShotEnabled", json!(true))
+}
+
+/// A desktop that captures and gives shortcuts through the desktop portal,
+/// answering as `portal` says, with Settings, SnapShots open.
+pub(crate) fn portal_desktop(world: &mut World, portal: PortalDesktop) -> Outcome {
+    {
+        let bus = snap_shot_bus::bus();
+        let mut bus = bus.borrow_mut();
+        bus.reset();
+        bus.desktop = portal;
+    }
+    reset_with(
+        world,
+        environment("wayland", ""),
+        Some(snap_shot_bus::factory()),
+    )?;
+    open_panel(world)
+}
+
+/// The desktop's answers to the fake backend changed.
+pub(crate) fn update(world: &mut World) -> Outcome {
+    desktop(world).borrow_mut().arrivals.push(Event::Changed);
+    deliver(world.engine());
+    world.pump()
+}
+
+pub(crate) fn has_wizard(world: &World) -> bool {
+    field(world, "wizard").get("step").is_some()
+}
+
+/// Qt's key codes the recorder hears, past [`KEY_AT`] and friends.
+pub(crate) const KEY_TAB: i64 = 0x0100_0001;
+pub(crate) const KEY_BACKTAB: i64 = 0x0100_0002;
+pub(crate) const KEY_CONTROL: i64 = 0x0100_0021;
+pub(crate) const KEY_HOME: i64 = 0x0100_0010;
+pub(crate) const KEY_UP: i64 = 0x0100_0013;
+pub(crate) const ALT: i64 = 0x0800_0000;
+
+/// The keys of a shortcut as the feature names it.
+pub(crate) fn press_named(world: &mut World, name: &str) -> Outcome {
+    let (key, modifiers) = match name {
+        "Shift+K" => (0x4b, SHIFT),
+        "Ctrl+C" => (0x43, CONTROL),
+        "Ctrl+S" => (0x53, CONTROL),
+        "Ctrl+Z" => (0x5a, CONTROL),
+        "Alt+Tab" => (KEY_TAB, ALT),
+        "Super+L" => (KEY_L, META),
+        "Ctrl+Alt+K" => (0x4b, CONTROL | ALT),
+        other => crate::fail!("no keys for {other}"),
+    };
+    press(world, key, modifiers)
+}
+
+pub(crate) fn toast_saying(world: &World, description: &str) -> Option<Value> {
+    world.state("toasts")["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|toast| text(&toast["description"]) == description)
+        .cloned()
 }
 
 pub fn register(steps: &mut Steps) {
@@ -458,8 +684,10 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the user chooses to finish later", |world, _, _| {
+        // Close, once Snap Shot was on before setup opened.
+        let close = field(world, "wizard.closeLabel");
         expect!(
-            field(world, "wizard.closeLabel") == "Finish later",
+            close == "Finish later" || close == "Close",
             "setup to offer finishing later; Snap Shot is {}",
             show(&page(world))
         );
@@ -491,12 +719,18 @@ pub fn register(steps: &mut Steps) {
         "the user changes the shortcut and presses Ctrl\\+Shift\\+2",
         |world, _, _| {
             record_ctrl_shift_2(world)?;
-            send(world, "shortcut.save", Value::Null)
+            // "the user cancels" (project.rs) discards the recorded keys.
+            world.answer_question = Some(Rc::new(|world: &mut World, _| {
+                send(world, "shortcut.discard", Value::Null)
+            }));
+            Ok(())
         },
     );
     steps.step(
         "the shortcut is saved as Ctrl\\+Shift\\+2",
         |world, _, _| {
+            // The recorded keys are the shortcut once the user saves them.
+            save(world)?;
             expect!(
                 shortcut_setting(world) == ctrl_shift_2(),
                 "the shortcut to be saved; it is {}",
@@ -639,6 +873,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user is told the desktop did not allow it and can ask again",
         |world, _, _| {
+            save(world)?;
             expect!(
                 field(world, "shortcut.status") == "Your desktop did not allow the shortcut."
                     && field(world, "shortcut.permissions").as_bool() == Some(true),

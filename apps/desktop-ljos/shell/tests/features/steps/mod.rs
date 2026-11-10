@@ -95,6 +95,14 @@ pub mod settings_text_generation;
 pub mod shortcut;
 pub mod sidebar;
 pub mod snap_shot;
+pub mod snap_shot_bus;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub mod snap_shot_config;
+pub mod snap_shot_gnome;
+pub mod snap_shot_helper;
+pub mod snap_shot_mac;
+pub mod snap_shot_setup;
+pub mod snap_shot_windows;
 pub mod source_control_settings;
 pub mod space;
 pub mod space_fake;
@@ -234,6 +242,13 @@ pub fn register(steps: &mut Steps) {
     space_markdown::register(steps);
     space_media::register(steps);
     snap_shot::register(steps);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    snap_shot_config::register(steps);
+    snap_shot_gnome::register(steps);
+    snap_shot_helper::register(steps);
+    snap_shot_setup::register(steps);
+    snap_shot_mac::register(steps);
+    snap_shot_windows::register(steps);
     source_control_settings::register(steps);
     stash::register(steps);
     storage_layout::register(steps);

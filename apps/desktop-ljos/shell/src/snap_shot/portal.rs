@@ -29,7 +29,7 @@ use image::imageops::{self, FilterType};
 use image::{ImageFormat, RgbaImage};
 use sha2::{Digest, Sha256};
 
-use super::{Backend, Captured, Event, Mode, Platform, Session, Shortcut};
+use super::{Backend, Captured, Event, Json, Mode, Platform, Session, Shortcut};
 
 pub use wire::System;
 
@@ -115,10 +115,12 @@ pub enum Input {
     /// it could not be asked.
     Properties(Option<(u32, u32)>),
     /// The GlobalShortcuts portal's `version` for the `generation` that
-    /// asked; none when it could not be asked.
+    /// asked; none when it could not be asked, `unreachable` when nothing
+    /// answered for the portal at all.
     Version {
         generation: u64,
         version: Option<u32>,
+        unreachable: bool,
     },
     /// The method reply of a Request call: its handle, or the error.
     Replied {
@@ -188,6 +190,8 @@ pub struct Machine {
     shortcuts_version: u32,
     trigger: String,
     shortcut_id: String,
+    /// Hyprland: the config binds the keys to the action HAL-C2 holds.
+    keys_in_config: bool,
     session_handle: String,
     /// Bumped whenever the session is dropped, so a late answer for the one
     /// before is ignored.
@@ -200,13 +204,18 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(platform: &Platform, app_id: &str) -> Machine {
+        let keys_in_config = platform.desktop == "hyprland";
         Machine {
             session: Session {
                 mode: Mode::Portal,
                 desktop: platform.desktop.clone(),
                 ..Session::default()
             },
-            shortcut: Shortcut::default(),
+            shortcut: if keys_in_config {
+                connecting()
+            } else {
+                Shortcut::default()
+            },
             sandboxed: platform.sandboxed,
             app_id: app_id.to_owned(),
             probing: false,
@@ -214,6 +223,7 @@ impl Machine {
             shortcuts_version: 0,
             trigger: String::new(),
             shortcut_id: String::new(),
+            keys_in_config,
             session_handle: String::new(),
             generation: 0,
             capturing: false,
@@ -286,6 +296,20 @@ impl Machine {
         out
     }
 
+    /// Reads the desktop again: the user may have changed what it allows
+    /// while away.
+    pub fn refresh(&mut self) -> Vec<Out> {
+        if !self.session.ready || self.probing {
+            return Vec::new();
+        }
+        self.session.checking = true;
+        self.probing = true;
+        let mut out = vec![Out::Event(Event::Changed)];
+        self.register(&mut out);
+        out.push(Out::Call(Call::Properties));
+        out
+    }
+
     /// Captures the window in front, else has the user pick one.
     pub fn capture(&mut self) -> Vec<Out> {
         if self.capturing {
@@ -324,13 +348,19 @@ impl Machine {
 
     fn shortcut_failed(&mut self, message: &str, out: &mut Vec<Out>) {
         self.close_session(out);
-        self.set_shortcut(
+        let shortcut = if self.keys_in_config {
+            Shortcut {
+                message: "Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart HAL-C2.".into(),
+                can_retry: false,
+                ..Shortcut::default()
+            }
+        } else {
             Shortcut {
                 message: message.to_owned(),
                 ..Shortcut::default()
-            },
-            out,
-        );
+            }
+        };
+        self.set_shortcut(shortcut, out);
     }
 
     /// Binds the capture shortcut to `trigger`, replacing the one before;
@@ -342,8 +372,13 @@ impl Machine {
         let mut out = Vec::new();
         self.close_session(&mut out);
         self.trigger = trigger.to_owned();
-        self.shortcut_id = shortcut_id(trigger);
-        self.set_shortcut(
+        // The Hyprland config names the action, so its id does not follow
+        // the keys.
+        let shortcut = if self.keys_in_config {
+            self.shortcut_id = "capture-window".into();
+            connecting()
+        } else {
+            self.shortcut_id = shortcut_id(trigger);
             Shortcut {
                 pending: true,
                 message:
@@ -351,9 +386,9 @@ impl Machine {
                         .into(),
                 can_retry: self.shortcuts_version == 0 || self.shortcuts_version >= 2,
                 ..Shortcut::default()
-            },
-            &mut out,
-        );
+            }
+        };
+        self.set_shortcut(shortcut, &mut out);
         self.register(&mut out);
         out.push(Out::Call(Call::Version {
             generation: self.generation,
@@ -372,6 +407,15 @@ impl Machine {
 
     /// Shows the desktop's shortcut permissions again.
     pub fn configure(&mut self) -> Vec<Out> {
+        if self.keys_in_config {
+            let mut out = Vec::new();
+            let shortcut = Shortcut {
+                message: "Change the capture binding in your Hyprland config, then save it.".into(),
+                ..self.shortcut.clone()
+            };
+            self.set_shortcut(shortcut, &mut out);
+            return out;
+        }
         if self.session_handle.is_empty() {
             // The session failed or was closed: a fresh one asks again.
             let trigger = std::mem::take(&mut self.trigger);
@@ -404,6 +448,23 @@ impl Machine {
         for shortcut in shortcuts.iter().filter(|s| s.id == self.shortcut_id) {
             found = true;
             label = shortcut.trigger.trim().to_owned();
+        }
+        if self.keys_in_config {
+            // The action is what HAL-C2 holds; which keys press it is the
+            // config's business.
+            let message = if found {
+                "Managed by Hyprland. Add the binding to your config and save it."
+            } else {
+                "Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart HAL-C2."
+            };
+            let shortcut = Shortcut {
+                registered: found,
+                message: message.into(),
+                can_retry: false,
+                ..Shortcut::default()
+            };
+            self.set_shortcut(shortcut, out);
+            return;
         }
         let can_retry = self.shortcuts_version >= 2;
         let message = if !label.is_empty() {
@@ -455,28 +516,52 @@ impl Machine {
         match input {
             Input::Properties(found) => {
                 self.probing = false;
-                let (version, targets) = found.unwrap_or_default();
-                self.session.backend = if version >= 3 && targets & WINDOW_TARGET != 0 {
-                    "screenshot-portal"
-                } else {
-                    "picker"
+                let mut backend = self.session.backend.clone();
+                let mut message = String::new();
+                match found {
+                    Some((version, targets)) => {
+                        backend = if version >= 3 && targets & WINDOW_TARGET != 0 {
+                            "screenshot-portal"
+                        } else {
+                            "picker"
+                        }
+                        .into();
+                    }
+                    // Not knowing is not the picker: the screenshot portal
+                    // may be missing too.
+                    None => {
+                        message =
+                            "Your desktop could not say whether it can capture windows.".into()
+                    }
                 }
-                .into();
+                let checked = std::mem::take(&mut self.session.checking);
+                if !checked
+                    && self.session.ready
+                    && backend == self.session.backend
+                    && message == self.session.message
+                {
+                    return out;
+                }
+                self.session.backend = backend;
+                self.session.message = message;
                 self.session.ready = true;
                 out.push(Out::Event(Event::Changed));
             }
             Input::Version {
                 generation,
                 version,
+                unreachable,
             } => {
                 if generation != self.generation {
                     return out;
                 }
                 let Some(version) = version else {
-                    self.shortcut_failed(
-                        "This desktop doesn't offer app shortcuts. Choose a shortcut in your desktop's settings instead.",
-                        &mut out,
-                    );
+                    let message = if unreachable {
+                        "Could not connect to your desktop's shortcut service."
+                    } else {
+                        "This desktop doesn't offer app shortcuts. Choose a shortcut in your desktop's settings instead."
+                    };
+                    self.shortcut_failed(message, &mut out);
                     return out;
                 };
                 self.shortcuts_version = version;
@@ -587,8 +672,13 @@ impl Machine {
                     return out;
                 }
                 self.session_handle = handle.clone();
-                self.shortcut.can_retry = self.shortcuts_version >= 2;
-                let (id, trigger) = (self.shortcut_id.clone(), self.trigger.clone());
+                self.shortcut.can_retry = !self.keys_in_config && self.shortcuts_version >= 2;
+                let id = self.shortcut_id.clone();
+                let trigger = if self.keys_in_config {
+                    String::new()
+                } else {
+                    self.trigger.clone()
+                };
                 // Every session binds, even when the desktop remembers the
                 // approval.
                 self.request(
@@ -607,7 +697,21 @@ impl Machine {
                 if generation != self.generation {
                     return out;
                 }
+                if results.timeout {
+                    self.shortcut_failed(
+                        "Shortcut permission request timed out. Try again.",
+                        &mut out,
+                    );
+                    return out;
+                }
+                if status != 0 && self.keys_in_config {
+                    self.shortcut_failed("", &mut out);
+                    return out;
+                }
                 if status != 0 {
+                    // Asking again starts a session of its own, and the
+                    // desktop asks again.
+                    self.close_session(&mut out);
                     let can_retry = self.shortcuts_version >= 2;
                     let message = if can_retry {
                         "Shortcut permission wasn't granted. Open shortcut permissions to allow it."
@@ -628,6 +732,16 @@ impl Machine {
             }
         }
         out
+    }
+}
+
+/// A Hyprland shortcut while its session is being made.
+fn connecting() -> Shortcut {
+    Shortcut {
+        pending: true,
+        message: "Connecting to Hyprland shortcuts…".into(),
+        can_retry: false,
+        ..Shortcut::default()
     }
 }
 
@@ -670,6 +784,7 @@ pub fn load(uri: &str) -> Result<Captured, String> {
         image,
         app_name: "Window".into(),
         window_title: String::new(),
+        context: Json::Null,
     })
 }
 
@@ -743,6 +858,11 @@ impl Backend for Portal {
 
     fn probe(&mut self) -> Vec<Event> {
         let outs = self.machine.probe();
+        self.run(outs)
+    }
+
+    fn refresh(&mut self) -> Vec<Event> {
+        let outs = self.machine.refresh();
         self.run(outs)
     }
 

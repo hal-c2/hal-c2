@@ -105,6 +105,7 @@ pub fn window(app: &str, title: &str) -> Event {
         image: RgbaImage::new(4, 3),
         app_name: app.into(),
         window_title: title.into(),
+        context: hal_c2_shell::json::Json::Null,
     })
 }
 

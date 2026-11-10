@@ -18,25 +18,36 @@
 //! of features/source-control/snap-shot.feature) stay `@backlog-desktop`:
 //! desktop-qt does not run them either, only the portal.
 
+pub mod config;
+pub mod gnome;
+pub mod helper;
+pub mod mac;
+pub mod niri;
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod portal;
 mod sound;
+pub mod windows;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
 
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::{self, FilterType};
 use image::{ExtendedColorType, ImageFormat, RgbaImage};
 
-use crate::json::Json;
+pub use crate::json::Json;
 
 pub use sound::play as play_sound;
 
-/// Where capture is: through the portal, or not at all.
+/// Where capture is: through the portal, directly (macOS, Windows), or not at all.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
     Portal,
+    Direct,
     #[default]
     Unavailable,
 }
@@ -46,9 +57,17 @@ impl Mode {
     pub fn as_str(self) -> &'static str {
         match self {
             Mode::Portal => "portal",
+            Mode::Direct => "direct",
             Mode::Unavailable => "unavailable",
         }
     }
+}
+
+/// What macOS allows this app.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Permissions {
+    pub screen_recording: bool,
+    pub accessibility: bool,
 }
 
 /// What this session can do, as far as the desktop has been asked.
@@ -66,6 +85,56 @@ pub struct Session {
     pub message: String,
     /// The desktop can flash the captured window and animate it (never yet).
     pub feedback_available: bool,
+    /// Capture needs no setup (Windows): turning it on is enough.
+    pub setup_free: bool,
+    /// Captures can carry the app's text and controls; otherwise only an image.
+    pub app_text: bool,
+    /// The desktop is being asked again (`refresh`) and has not answered.
+    pub checking: bool,
+    /// Where capture needs privacy permissions the user grants one at a
+    /// time (macOS), what is allowed; a failed check keeps the last
+    /// answer and says so in `permissions_error`.
+    pub permissions: Option<Permissions>,
+    pub permissions_error: String,
+}
+
+/// Whether a shortcut can be the capture shortcut, and what to tell the user.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Check {
+    pub available: bool,
+    pub message: String,
+}
+
+/// A desktop whose capture has to be set up first (GNOME's extension, a
+/// capture helper): what the access step says and offers. The
+/// controller shows it as given; only `perform` changes anything.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Setup {
+    /// Capture works and setup can go on to the shortcut.
+    pub access_ready: bool,
+    pub heading: String,
+    pub body: String,
+    /// The access step's button: a `perform` action, or empty to check
+    /// again (or continue, once ready) with `action_label`.
+    pub action: String,
+    pub action_label: String,
+    /// What the desktop said, when it explains a failure.
+    pub details: String,
+    /// What to say after the user checked again.
+    pub check_message: String,
+    /// The capture row while capture is on and access is not ready.
+    pub status: String,
+    /// Why capture effects are off; empty to leave it to `feedback_available`.
+    pub effects: String,
+    /// Advanced: undoing what setup did, and the like.
+    pub advanced: Vec<SetupOption>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SetupOption {
+    pub action: String,
+    pub label: String,
+    pub note: String,
 }
 
 /// The capture shortcut as the desktop holds it.
@@ -100,6 +169,9 @@ pub struct Captured {
     pub image: RgbaImage,
     pub app_name: String,
     pub window_title: String,
+    /// What the attachment's source says of the app's text
+    /// ({accessibleText, accessibility}), when the backend could read it.
+    pub context: Json,
 }
 
 /// What a backend call or arrival changed.
@@ -111,6 +183,12 @@ pub enum Event {
     Activated,
     Captured(Captured),
     Failed(String),
+    /// A setup step failed; shown in setup, not as a toast.
+    SetupFailed(String),
+    /// A test capture finished: why it failed, or empty.
+    Tested(String),
+    /// A shortcut check answered (direct backends answer at once).
+    Checked(Check),
     /// Call [`Backend::timeout`] with `token` in `ms`.
     After {
         token: u64,
@@ -147,9 +225,83 @@ pub trait Backend {
     fn capture(&mut self) -> Vec<Event> {
         Vec::new()
     }
+    /// Asks again after the user may have changed what the desktop allows.
+    fn refresh(&mut self) -> Vec<Event> {
+        self.probe()
+    }
+    /// What `bind` takes for `shortcut`: [`portal_trigger`]'s for a
+    /// portal, the shortcut's JSON in direct mode; the reason when this
+    /// desktop cannot hold it.
+    fn trigger(&self, shortcut: &Json) -> Result<String, String> {
+        if self.session().mode == Mode::Direct {
+            Ok(serde_json::to_string(shortcut).unwrap_or_default())
+        } else {
+            portal_trigger(shortcut)
+        }
+    }
+    /// The capture cues the user chose (snapShotFlash, snapShotAnimations).
+    fn set_cues(&mut self, _flash: bool, _animations: bool) {}
+    /// Whether `shortcut` can be held here: the answer, or none while
+    /// the desktop is asked ([`Event::Checked`] follows). Unavailable
+    /// with no message is a check that failed; a message on an
+    /// available shortcut in direct mode is shown (it may only be
+    /// observed). A portal names the shortcut's keys and confirms it
+    /// only when it is bound.
+    fn check_shortcut(&mut self, shortcut: &Json) -> Option<Check> {
+        if self.session().mode != Mode::Portal {
+            return Some(Check {
+                available: false,
+                message: "SnapShots are not supported on this platform.".into(),
+            });
+        }
+        match portal_trigger(shortcut) {
+            Err(problem) => Some(Check {
+                available: false,
+                message: problem,
+            }),
+            Ok(_) => Some(Check {
+                available: true,
+                message: "Your desktop will confirm this shortcut when you save it.".into(),
+            }),
+        }
+    }
+    /// Pauses the capture shortcut while a new one is recorded, or ends
+    /// the pause; the desktop's reason when it could not. The
+    /// controller ignores the shortcut while it records, so a backend
+    /// only acts when it must let the OS go.
+    fn pause(&mut self, _paused: bool) -> Result<(), String> {
+        Ok(())
+    }
+    /// The permissions below are for a backend whose session has them.
+    /// Captures include the app's text, which needs Accessibility too.
+    fn set_include_accessibility(&mut self, _include: bool) {}
+    /// Checks the permissions again and again while setup shows them.
+    fn watch_permissions(&mut self, _on: bool) {}
+    /// One permission's Allow (screen-recording | accessibility).
+    fn allow(&mut self, _permission: &str) {}
+    /// Asks for what capture needs; why it still cannot, or empty.
+    fn request_permissions(&mut self, _include_accessibility: bool) -> String {
+        String::new()
+    }
+    /// A capture that is thrown away, to prove capture works.
+    fn test(&mut self) -> Vec<Event> {
+        vec![Event::Tested(String::new())]
+    }
     /// Plays a capture sound: `soft-pop` (Whoosh) or `camera-shutter`
     /// (Click).
     fn play(&mut self, _sound: &str) {}
+    /// The capture effects the user wants, for a desktop that can show them.
+    fn set_effects(&mut self, _flash: bool, _animate: bool) {}
+    /// The setup this desktop needs before it captures; none by default.
+    fn setup(&self) -> Option<Setup> {
+        None
+    }
+    /// Runs a setup step the user chose (install-extension,
+    /// remove-kde-helper, ...). A step this desktop does not have is
+    /// refused and changes nothing.
+    fn perform(&mut self, action: &str) -> Vec<Event> {
+        vec![Event::SetupFailed(unsupported_setup(action))]
+    }
     /// What the backend's own threads left, handed over on the Engine
     /// thread ([`SnapShot::arrive`](crate::controllers::snap_shot::SnapShot::arrive)).
     fn arrive(&mut self) -> Vec<Event> {
@@ -233,6 +385,51 @@ pub fn detect(env: &dyn Fn(&str) -> Option<String>, on_linux: bool) -> Platform 
     platform
 }
 
+/// What a test gives instead of the portal on the session bus.
+pub type PortalFactory = Rc<dyn Fn(&Platform) -> Box<dyn Backend>>;
+
+thread_local! {
+    static ENVIRONMENT: RefCell<Option<HashMap<String, String>>> = const { RefCell::new(None) };
+    static WAKE: RefCell<Option<Arc<dyn Fn() + Send + Sync>>> = const { RefCell::new(None) };
+    static PORTAL_FACTORY: RefCell<Option<PortalFactory>> = const { RefCell::new(None) };
+}
+
+/// Tests stand in for the portal on the session bus; `None` restores it.
+/// A stand-in portal never reaches the real GNOME Shell either.
+pub fn set_portal_factory(factory: Option<PortalFactory>) {
+    PORTAL_FACTORY.with(|held| *held.borrow_mut() = factory);
+}
+
+/// Whether a test stands in for the portal.
+pub fn portal_overridden() -> bool {
+    PORTAL_FACTORY.with(|held| held.borrow().is_some())
+}
+
+/// Tests stand in for the process environment (a Linux desktop's, on any
+/// platform, or Windows' when it has OS=Windows_NT); `None` restores it.
+pub fn set_environment(env: Option<HashMap<String, String>>) {
+    ENVIRONMENT.with(|held| *held.borrow_mut() = env);
+}
+
+/// A variable of the process environment, or of the tests' stand-in.
+pub fn env_var(name: &str) -> Option<String> {
+    ENVIRONMENT.with(|held| match &*held.borrow() {
+        Some(env) => env.get(name).cloned(),
+        None => std::env::var(name).ok(),
+    })
+}
+
+/// Whether the environment is a test's stand-in.
+pub fn environment_overridden() -> bool {
+    ENVIRONMENT.with(|held| held.borrow().is_some())
+}
+
+/// What wakes the Engine thread for work a thread finished (main.rs's,
+/// given to [`system`]); none in tests, which wait on the work instead.
+pub fn wake() -> Option<Arc<dyn Fn() + Send + Sync>> {
+    WAKE.with(|held| held.borrow().clone())
+}
+
 /// The backend this process gets: the portal where the session has one,
 /// else the reason it cannot capture. `wake` runs on any thread when
 /// [`Backend::arrive`] has something to do (main.rs posts a message to the
@@ -242,25 +439,74 @@ pub fn system(
     cache_dir: Option<PathBuf>,
     wake: impl Fn() + Send + Sync + 'static,
 ) -> Box<dyn Backend> {
-    let on_linux = cfg!(target_os = "linux");
-    let platform = detect(&|name| std::env::var(name).ok(), on_linux);
-    // TODO(port): SnapShotBackend::create: X11, macOS and Windows capture
-    // through the native/ helpers; desktop-qt runs none of them either
-    // (features/source-control/snap-shot.feature, @backlog-desktop).
+    let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+    WAKE.with(|held| *held.borrow_mut() = Some(wake));
+    create(cache_dir)
+}
+
+/// SnapShotBackend::create: the backend of the environment [`env_var`]
+/// reads (a test's stand-in, or the process's). Windows and macOS capture
+/// directly; Niri through its own socket; KDE and Hyprland through the
+/// capture helper with the portal's shortcut; GNOME through its extension
+/// beside the portal; any other Wayland desktop through the portal.
+pub fn create(cache_dir: Option<PathBuf>) -> Box<dyn Backend> {
+    if let Some(backend) = windows::create() {
+        return backend;
+    }
+    if let Some(backend) = mac::create() {
+        return backend;
+    }
+    // A test's stand-in environment is a Linux desktop's.
+    let on_linux = cfg!(target_os = "linux") || environment_overridden();
+    let platform = detect(&|name| env_var(name), on_linux);
     if !platform.portal {
         return Box::new(Unavailable::new(platform.message));
     }
-    #[cfg(all(unix, not(target_os = "macos")))]
+    if platform.desktop == "niri"
+        && let Some(backend) = niri::create(&platform)
     {
-        Box::new(portal::Portal::system(&platform, cache_dir, wake))
+        return backend;
     }
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let portal = || -> Option<Box<dyn Backend>> {
+        if let Some(factory) = PORTAL_FACTORY.with(|held| held.borrow().clone()) {
+            return Some(factory(&platform));
+        }
+        system_portal(&platform, cache_dir.clone())
+    };
+    if matches!(platform.desktop.as_str(), "kde" | "hyprland")
+        && let Some(shortcuts) = portal()
     {
-        let _ = (cache_dir, wake);
-        Box::new(Unavailable::new(
+        return helper::create(&platform, shortcuts);
+    }
+    let Some(fallback) = portal() else {
+        return Box::new(Unavailable::new(
             "SnapShots are not supported on this platform.",
-        ))
+        ));
+    };
+    if platform.desktop != "gnome" {
+        return fallback;
     }
+    gnome::create(fallback)
+}
+
+/// The portal on the session bus, where there is one.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_portal(platform: &Platform, cache_dir: Option<PathBuf>) -> Option<Box<dyn Backend>> {
+    let wake = wake();
+    Some(Box::new(portal::Portal::system(
+        platform,
+        cache_dir,
+        move || {
+            if let Some(wake) = &wake {
+                wake();
+            }
+        },
+    )))
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn system_portal(_platform: &Platform, _cache_dir: Option<PathBuf>) -> Option<Box<dyn Backend>> {
+    None
 }
 
 /// X keysym names for the keys a chord may name.
@@ -334,6 +580,27 @@ fn keysym(key: &str) -> Option<String> {
 /// The portal's trigger for a key chord ({key, metaKey, ctrlKey, shiftKey,
 /// altKey, modKey}), "CTRL+SHIFT+2"; the reason when the portal cannot take
 /// it (a modifier pair, or a key it has no name for).
+/// Why a setup step this session does not have was refused
+/// (DesktopSnapShotSetupError's unsupported-session messages).
+pub fn unsupported_setup(action: &str) -> String {
+    match action {
+        "install-kde-helper" | "remove-kde-helper" => {
+            "Helper setup requires a KDE Plasma Wayland session outside a sandbox."
+        }
+        "install-hyprland-helper" | "remove-hyprland-helper" => {
+            "Helper setup requires a Hyprland Wayland session outside a sandbox."
+        }
+        "test-mac-capture" => "Test capture requires macOS.",
+        "allow-screen-recording" | "allow-accessibility" => "Permission setup requires macOS.",
+        "preview-config" | "apply-config" => "Config setup requires a Niri or Hyprland session.",
+        "install-extension" | "enable-extension" | "disable-extension" => {
+            "Extension setup requires a GNOME Wayland session outside a sandbox."
+        }
+        _ => "This setup step is not available in this session.",
+    }
+    .to_owned()
+}
+
 pub fn portal_trigger(shortcut: &Json) -> Result<String, String> {
     if shortcut.get("kind").is_some() {
         return Err(

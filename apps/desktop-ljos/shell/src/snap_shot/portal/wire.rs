@@ -122,10 +122,11 @@ pub fn invoke<P: Put>(bus: &P, unique: &str, call: &Call) -> Option<zbus::Result
             let Ok(session) = ObjectPath::try_from(session.as_str()) else {
                 return Some(Err(zbus::Error::Failure("Invalid session handle.".into())));
             };
-            let shortcut = options([
-                ("description", Value::from("Capture a window")),
-                ("preferred_trigger", token(trigger)),
-            ]);
+            // A Hyprland config names the keys itself, so asks for none.
+            let mut shortcut = options([("description", Value::from("Capture a window"))]);
+            if !trigger.is_empty() {
+                shortcut.insert("preferred_trigger", token(trigger));
+            }
             bus.put(
                 DESKTOP_PATH,
                 SHORTCUTS,
@@ -268,6 +269,13 @@ pub fn reply(call: &Call, reply: zbus::Result<Message>) -> Option<Input> {
             Some(Input::Properties(found))
         }
         Call::Version { generation } => {
+            // Nothing owns the portal's name, or nothing answered for it.
+            let unreachable = matches!(&reply, Err(zbus::Error::MethodError(name, _, _))
+                if matches!(name.as_str(),
+                    "org.freedesktop.DBus.Error.ServiceUnknown"
+                    | "org.freedesktop.DBus.Error.NoReply"
+                    | "org.freedesktop.DBus.Error.Disconnected"
+                    | "org.freedesktop.DBus.Error.NoServer"));
             let version = reply.ok().and_then(|reply| {
                 let value: OwnedValue = reply.body().deserialize().ok()?;
                 u32::try_from(value).ok()
@@ -275,6 +283,7 @@ pub fn reply(call: &Call, reply: zbus::Result<Message>) -> Option<Input> {
             Some(Input::Version {
                 generation: *generation,
                 version,
+                unreachable,
             })
         }
         Call::Screenshot { token, .. }
@@ -400,6 +409,7 @@ fn unanswered(call: &Call) -> Option<Input> {
         Call::Version { generation } => Some(Input::Version {
             generation: *generation,
             version: None,
+            unreachable: true,
         }),
         Call::Screenshot { token, .. }
         | Call::CreateSession { token, .. }

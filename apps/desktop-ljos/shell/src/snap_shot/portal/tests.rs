@@ -69,6 +69,9 @@ impl Run {
                 Event::Failed(message) => format!("failed {message}"),
                 Event::After { ms, .. } => format!("after {ms}"),
                 Event::Cancel(_) => "cancel".into(),
+                Event::SetupFailed(message) => format!("setup failed {message}"),
+                Event::Tested(error) => format!("tested {error}"),
+                Event::Checked(check) => format!("checked {}", check.available),
             })
             .collect()
     }
@@ -147,7 +150,7 @@ fn probing_names_the_app_once_and_reads_what_the_screenshot_portal_offers() {
 
 #[test]
 fn a_portal_without_the_window_target_has_the_user_pick() {
-    for found in [Some((2, 8)), Some((3, 1 | 2)), None] {
+    for found in [Some((2, 8)), Some((3, 1 | 2))] {
         let mut run = Run::new();
         let outs = run.machine.probe();
         run.take(outs);
@@ -155,6 +158,46 @@ fn a_portal_without_the_window_target_has_the_user_pick() {
         assert_eq!(run.machine.session().backend, "picker", "{found:?}");
         assert!(run.machine.session().ready);
     }
+}
+
+#[test]
+fn a_portal_that_cannot_be_read_is_not_the_picker() {
+    let mut run = Run::new();
+    let outs = run.machine.probe();
+    run.take(outs);
+    run.input(Input::Properties(None));
+    let session = run.machine.session();
+    assert!(session.ready);
+    assert_eq!(session.backend, "");
+    assert_eq!(
+        session.message,
+        "Your desktop could not say whether it can capture windows."
+    );
+}
+
+#[test]
+fn refreshing_reads_the_portal_again_and_says_what_changed() {
+    let mut run = probed(true);
+    let outs = run.machine.refresh();
+    run.take(outs);
+    assert!(run.machine.session().checking);
+    assert_eq!(run.events(), ["changed"]);
+    assert!(run.calls().contains(&Call::Properties));
+    // Once asked, not again until it answers.
+    assert!(run.machine.refresh().is_empty());
+
+    run.input(Input::Properties(Some((3, 1))));
+    let session = run.machine.session();
+    assert!(!session.checking);
+    assert_eq!(session.backend, "picker");
+    assert_eq!(run.events(), ["changed"]);
+
+    // An answer that changes nothing says nothing, unless it was asked.
+    let outs = run.machine.refresh();
+    run.take(outs);
+    run.events();
+    run.input(Input::Properties(Some((3, 1))));
+    assert_eq!(run.events(), ["changed"]);
 }
 
 #[test]
@@ -332,6 +375,7 @@ fn a_loaded_screenshot_is_captured_and_a_bad_one_fails() {
         image: RgbaImage::new(4, 3),
         app_name: "Window".into(),
         window_title: String::new(),
+        context: Json::Null,
     })));
     run.input(Input::Loaded(Err("Invalid screenshot file.".into())));
     assert_eq!(
@@ -355,6 +399,7 @@ fn bound_run(version: u32) -> (Run, String) {
     run.input(Input::Version {
         generation,
         version: Some(version),
+        unreachable: false,
     });
     let create = run.calls().pop().unwrap();
     let token = token_of(&create);
@@ -401,6 +446,7 @@ fn binding_walks_the_portal_to_a_registered_shortcut() {
     run.input(Input::Version {
         generation: run.machine.generation,
         version: Some(2),
+        unreachable: false,
     });
     let create = run.calls().pop().unwrap();
     assert!(matches!(&create, Call::CreateSession { .. }));
@@ -524,6 +570,7 @@ fn a_desktop_without_app_shortcuts_says_where_to_choose_one() {
     run.input(Input::Version {
         generation: run.machine.generation,
         version: None,
+        unreachable: false,
     });
     let shortcut = run.machine.shortcut();
     assert!(!shortcut.pending && !shortcut.registered && shortcut.can_retry);
@@ -541,6 +588,7 @@ fn a_session_that_fails_says_why() {
     run.input(Input::Version {
         generation: run.machine.generation,
         version: Some(1),
+        unreachable: false,
     });
     let create = run.calls().pop().unwrap();
     run.input(response(
@@ -563,6 +611,7 @@ fn a_session_that_fails_says_why() {
     run.input(Input::Version {
         generation,
         version: Some(1),
+        unreachable: false,
     });
     let create = run.calls().pop().unwrap();
     assert!(matches!(create, Call::CreateSession { .. }));
@@ -599,6 +648,7 @@ fn a_refused_binding_says_whether_permissions_can_be_reopened() {
         run.input(Input::Version {
             generation: run.machine.generation,
             version: Some(version),
+            unreachable: false,
         });
         let create = run.calls().pop().unwrap();
         run.input(response(
@@ -626,6 +676,7 @@ fn a_new_trigger_drops_the_session_and_a_late_answer_for_it_is_closed() {
     run.input(Input::Version {
         generation: run.machine.generation,
         version: Some(2),
+        unreachable: false,
     });
     let old = run.calls().pop().unwrap();
 
@@ -652,6 +703,7 @@ fn a_new_trigger_drops_the_session_and_a_late_answer_for_it_is_closed() {
     run.input(Input::Version {
         generation: 1,
         version: Some(2),
+        unreachable: false,
     });
     assert!(run.calls().is_empty());
 }
@@ -1187,7 +1239,8 @@ fn replies_become_inputs() {
         reply(&Call::Version { generation: 5 }, version),
         Some(Input::Version {
             generation: 5,
-            version: Some(2)
+            version: Some(2),
+            ..
         })
     ));
     // A request call answers with its handle.
@@ -1282,4 +1335,143 @@ fn the_backend_sends_calls_and_hands_over_events() {
         events.as_slice(),
         [Event::Cancel(_), Event::Failed(_)]
     ));
+}
+
+/// A bind the desktop is prompting for, and its call.
+fn prompting_run() -> (Run, Call) {
+    let mut run = probed(true);
+    let outs = run.machine.bind("CTRL+SHIFT+2");
+    run.take(outs);
+    run.input(Input::Version {
+        generation: run.machine.generation,
+        version: Some(2),
+        unreachable: false,
+    });
+    let create = run.calls().pop().unwrap();
+    run.input(response(
+        &request(&token_of(&create)),
+        0,
+        Results {
+            session_handle: Some("/session/one".into()),
+            ..Results::default()
+        },
+    ));
+    let bind = run.calls().pop().unwrap();
+    (run, bind)
+}
+
+#[test]
+fn a_refused_shortcut_closes_its_session_so_asking_again_prompts_again() {
+    let (mut run, bind) = prompting_run();
+    run.input(response(&request(&token_of(&bind)), 1, Results::default()));
+    assert!(run.calls().contains(&Call::CloseSession {
+        handle: "/session/one".into()
+    }));
+    let shortcut = run.machine.shortcut();
+    assert!(!shortcut.registered && shortcut.can_retry);
+    assert_eq!(
+        shortcut.message,
+        "Shortcut permission wasn't granted. Open shortcut permissions to allow it."
+    );
+    // Asking again binds in a session of its own, not ConfigureShortcuts.
+    let outs = run.machine.configure();
+    run.take(outs);
+    assert!(matches!(run.calls().as_slice(), [Call::Version { .. }]));
+}
+
+#[test]
+fn a_shortcut_prompt_nobody_answers_times_out() {
+    let (mut run, _) = prompting_run();
+    let outs = run.machine.timeout(run.timer());
+    run.take(outs);
+    assert!(
+        run.calls()
+            .iter()
+            .any(|call| matches!(call, Call::CloseRequest { .. }))
+    );
+    let shortcut = run.machine.shortcut();
+    assert!(!shortcut.registered && !shortcut.pending);
+    assert_eq!(
+        shortcut.message,
+        "Shortcut permission request timed out. Try again."
+    );
+}
+
+/// A Hyprland machine whose session is made, and the BindShortcuts it sent.
+fn hyprland_binding() -> (Run, Call) {
+    let mut run = Run::on(Platform {
+        desktop: "hyprland".into(),
+        ..platform(false)
+    });
+    assert_eq!(
+        run.machine.shortcut().message,
+        "Connecting to Hyprland shortcuts…"
+    );
+    let outs = run.machine.bind("CTRL+SHIFT+2");
+    run.take(outs);
+    assert!(run.machine.shortcut().pending);
+    run.input(Input::Version {
+        generation: run.machine.generation,
+        version: Some(2),
+        unreachable: false,
+    });
+    let create = run.calls().pop().unwrap();
+    run.input(response(
+        &request(&token_of(&create)),
+        0,
+        Results {
+            session_handle: Some("/session/one".into()),
+            ..Results::default()
+        },
+    ));
+    let bind = run.calls().pop().unwrap();
+    (run, bind)
+}
+
+#[test]
+fn a_hyprland_shortcut_holds_the_action_and_leaves_the_keys_to_the_config() {
+    let (mut run, bind) = hyprland_binding();
+    let Call::BindShortcuts { id, trigger, .. } = &bind else {
+        panic!("not a bind: {bind:?}");
+    };
+    assert_eq!((id.as_str(), trigger.as_str()), ("capture-window", ""));
+    run.input(response(
+        &request(&token_of(&bind)),
+        0,
+        Results {
+            shortcuts: vec![bound("capture-window", "Ctrl+Shift+2")],
+            ..Results::default()
+        },
+    ));
+    let shortcut = run.machine.shortcut();
+    assert!(shortcut.registered && !shortcut.can_retry, "{shortcut:?}");
+    assert_eq!(
+        shortcut.message,
+        "Managed by Hyprland. Add the binding to your config and save it."
+    );
+    // Asking again points at the config, not the portal.
+    let outs = run.machine.configure();
+    run.take(outs);
+    assert!(run.calls().is_empty());
+    assert_eq!(
+        run.machine.shortcut().message,
+        "Change the capture binding in your Hyprland config, then save it."
+    );
+}
+
+#[test]
+fn a_hyprland_action_that_is_not_registered_or_refused_says_so() {
+    let (mut run, bind) = hyprland_binding();
+    run.input(response(&request(&token_of(&bind)), 0, Results::default()));
+    assert!(!run.machine.shortcut().registered);
+    assert_eq!(
+        run.machine.shortcut().message,
+        "Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart HAL-C2."
+    );
+    let (mut run, bind) = hyprland_binding();
+    run.input(response(&request(&token_of(&bind)), 1, Results::default()));
+    assert_eq!(
+        run.machine.shortcut().message,
+        "Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart HAL-C2."
+    );
 }
