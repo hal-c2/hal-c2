@@ -260,11 +260,17 @@ fn describe_palette_key(world: &World) -> String {
         .and_then(|shown| shown.0)
         .and_then(|brick| brick.root(world));
     let flags = root.map(|root| {
-        ["popupHoldsKeys", "composerFocused", "editableFocused", "terminalFocused", "previewFocused"]
-            .iter()
-            .map(|name| format!("{name}={:?}", world.engine().read_by_name(root, name)))
-            .collect::<Vec<_>>()
-            .join(" ")
+        [
+            "popupHoldsKeys",
+            "composerFocused",
+            "editableFocused",
+            "terminalFocused",
+            "previewFocused",
+        ]
+        .iter()
+        .map(|name| format!("{name}={:?}", world.engine().read_by_name(root, name)))
+        .collect::<Vec<_>>()
+        .join(" ")
     });
     format!(
         "the window {} the key and ran {}; its Ctrl+K shortcut is {}; the window has {}",

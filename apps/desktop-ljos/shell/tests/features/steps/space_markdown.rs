@@ -198,7 +198,8 @@ fn mono_face(world: &World) -> String {
 
 /// Whether `family` (an item's resolved head) is one of the list's.
 fn in_face(mono: &str, family: &str) -> bool {
-    mono.split(',').any(|name| name.trim().trim_matches('"') == family)
+    mono.split(',')
+        .any(|name| name.trim().trim_matches('"') == family)
 }
 
 fn code_size(world: &World) -> f64 {
@@ -425,7 +426,11 @@ fn import_diagram(world: &mut World, source: &str, after: usize) -> Outcome {
                     .any(|&note| !string_of(w, note, "text").starts_with("Drawing the diagram"))
         },
         move |w| {
-            let asked = w.mc.calls.iter().filter(|c| c.method == "mermaid.render").count();
+            let asked =
+                w.mc.calls
+                    .iter()
+                    .filter(|c| c.method == "mermaid.render")
+                    .count();
             let notes: Vec<String> = mermaid::shown(w, page, "mermaidStatus")
                 .iter()
                 .map(|&note| string_of(w, note, "text"))
@@ -583,7 +588,10 @@ fn register_markdown(steps: &mut Steps) {
                 let wrap = number_of(world, editor, "wrapMode");
                 expect!(wrap == 0.0, "{said:?} wraps (wrapMode {wrap})");
                 let (family, _) = font_of(world, editor);
-                expect!(in_face(&mono, &family), "{said:?} is in {family}, not {mono}");
+                expect!(
+                    in_face(&mono, &family),
+                    "{said:?} is in {family}, not {mono}"
+                );
                 // Left unchanged, it is drawn again.
                 page.press(world, "escape")?;
                 let name = format!("spaceBlockEditor:{said}");
@@ -660,7 +668,10 @@ fn register_markdown(steps: &mut Steps) {
             };
             let (family, _) = font_of(world, code);
             let mono = mono_face(world);
-            expect!(in_face(&mono, &family), "the code is in {family}, not {mono}");
+            expect!(
+                in_face(&mono, &family),
+                "the code is in {family}, not {mono}"
+            );
             let Some(highlighter) = find_child(world, code, "codeHighlighter") else {
                 fail!("the code block has no highlighter")
             };

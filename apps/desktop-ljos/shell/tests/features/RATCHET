@@ -1956,6 +1956,221 @@ source-control/worktrees-and-setup-scripts.feature: Going back to the project fo
 source-control/worktrees-and-setup-scripts.feature: Picking the base ref for a new worktree
 source-control/worktrees-and-setup-scripts.feature: Returning to the previous worktree
 source-control/worktrees-and-setup-scripts.feature: The setup card shows the base, branch and path
+space/agent-in-page.feature: A deleted thread ends what the page says, and the page says why
+space/agent-in-page.feature: A failure shows on the page and leaves it as the agent last wrote it
+space/agent-in-page.feature: A page that updates itself says what its agent and its update are doing apart
+space/agent-in-page.feature: A refused ask keeps the user's words
+space/agent-in-page.feature: An agent slow to stop can be stopped again
+space/agent-in-page.feature: An agent that changed nothing says so
+space/agent-in-page.feature: Following an agent whose thread is gone says so
+space/agent-in-page.feature: The agent's edits land live and name its thread
+space/agent-in-page.feature: The page says its agent is working and links to its thread
+space/agent-in-page.feature: The page says when its agent has finished
+space/agent-in-page.feature: The user clears what the page says once its agent is done
+space/agent-in-page.feature: The user stops the agent, and the page stays as it last wrote it
+space/images.feature: A client watching the Space sees a new image
+space/images.feature: A failed generation makes no image
+space/images.feature: A file that is not really an image is refused
+space/images.feature: A page says when its image is in the trash, and shows it again on restore
+space/images.feature: A page says when its image was deleted for good
+space/images.feature: A placed image is fetched only when the page is open
+space/images.feature: A trashed image leaves the Space's images and waits in the trash
+space/images.feature: An image in the trash cannot be placed
+space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the default shell]
+space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the minimal example shell]
+space/prompt.feature: A Space page shows one prompt, whatever shell draws the window [the terminal example shell]
+space/prompt.feature: A page's draft can be stashed and brought back
+space/prompt.feature: A page's draft is not a thread's
+space/prompt.feature: A refused ask keeps the user's words and attachments
+space/prompt.feature: A slash on a page's prompt picks the kind of block
+space/prompt.feature: An ask can be started from anywhere the page is [the command palette]
+space/prompt.feature: An ask can be started from anywhere the page is [the page's menu]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [a mention of "README.md"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [another model]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [approval for each action]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [high effort]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [planning]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the file "notes.pdf"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the image "sketch.png"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the project "docs"]
+space/prompt.feature: An ask from a page's prompt takes what the user chose [the skill "review"]
+space/prompt.feature: An ask in another project takes the model the user last used there
+space/prompt.feature: Each page keeps its own draft
+space/prompt.feature: Plain words on a page's prompt write a block
+space/prompt.feature: Starting an ask keeps what the user had written
+space/prompt.feature: Taking @agent back out writes a block again
+space/prompt.feature: The page's prompt edits as the thread's prompt does [rich text]
+space/prompt.feature: The page's prompt edits as the thread's prompt does [vim keys]
+space/prompt.feature: The page's prompt stops its agent as a thread's prompt stops a turn
+space/prompt.feature: The prompt says where an ask would run before it is sent
+space/prompt.feature: Words to @agent on a page's prompt ask an agent
+space/self-updating-pages.feature: A failed run leaves the page as it was and says so
+space/self-updating-pages.feature: The generated part cannot be edited by hand
+space/self-updating-pages.feature: The user changes the instruction and the cadence
+space/self-updating-pages.feature: The user has a page update itself at a time of day
+space/self-updating-pages.feature: The user has a page update itself every few hours
+space/self-updating-pages.feature: The user pauses a page's updates
+space/self-updating-pages.feature: The user removes the update and keeps what it wrote
+space/self-updating-pages.feature: The user resumes a page's updates
+space/self-updating-pages.feature: The user runs a page's update now
+space/sites.feature: A link only this machine can open says so
+space/sites.feature: A page in the trash cannot be published
+space/sites.feature: Every client watching the Space sees the page published
+space/sites.feature: Publishing again updates the site and keeps the link
+space/sites.feature: Restoring a page from the trash does not publish it again
+space/sites.feature: The page shows when its site is behind
+space/sites.feature: The user copies the link of a published page
+space/sites.feature: The user publishes a page and sees that it is published
+space/sites.feature: The user publishes over Tailscale
+space/sites.feature: The user unpublishes a page and the link stops working
+space/sites.feature: Trashing a page takes its site down
+space/slides.feature: A Space with a deck cannot be deleted
+space/slides.feature: A Space with a deck in the trash cannot be deleted
+space/slides.feature: A client watching the Space sees a new deck
+space/slides.feature: A client watching the Space sees a slide edit as it lands
+space/slides.feature: A deck can lose its last slide and gain another
+space/slides.feature: A deck from a page has a slide for each section
+space/slides.feature: A deck from a page is a copy
+space/slides.feature: A deck needs a title
+space/slides.feature: A deck with no slides cannot be presented
+space/slides.feature: A page in the trash makes no deck
+space/slides.feature: A page with no headings makes one slide
+space/slides.feature: A slide goes in between two others
+space/slides.feature: A slide moved by another client keeps the presenter on it
+space/slides.feature: A title being written reaches its deck after the Space changes
+space/slides.feature: A trashed deck cannot be edited
+space/slides.feature: A trashed deck leaves the Space and waits in the trash
+space/slides.feature: An edit from another client shows while presenting
+space/slides.feature: Decks and their slides survive a restart
+space/slides.feature: Only a trashed deck can be deleted for good
+space/slides.feature: Presenting starts at the first slide
+space/slides.feature: Stepping stops at either end
+space/slides.feature: The presenter closes when the deck goes to the trash
+space/slides.feature: The slide on show is deleted by another client
+space/slides.feature: The user adds a slide at the end
+space/slides.feature: The user deletes a deck from the trash for good
+space/slides.feature: The user deletes a slide
+space/slides.feature: The user edits a slide's title and body
+space/slides.feature: The user leaves the presenter
+space/slides.feature: The user makes a deck from nothing
+space/slides.feature: The user moves a slide
+space/slides.feature: The user renames a deck
+space/slides.feature: The user restores a deck from the trash
+space/slides.feature: The user steps through the slides and back
+space/visualize.feature: A chart comes back with its page from the trash
+space/visualize.feature: A chart is a line when that is what was asked for
+space/visualize.feature: A chart whose numbers do not match its labels is not drawn
+space/visualize.feature: A client watching the Space sees the chart land
+space/visualize.feature: A failed second ask keeps the chart
+space/visualize.feature: A request the MC's data cannot answer draws nothing
+space/visualize.feature: Asking again replaces the chart where it is
+space/visualize.feature: Reading a chart needs no provider
+space/visualize.feature: The user deletes a chart
+space/visualize.feature: The user sees the numbers behind a chart
+space/visualize.feature: The user visualises data on a page
+space/visualize.feature: Without a provider nothing is drawn
+space/images.feature: No image is made without a provider that can generate one
+space/images.feature: Only a trashed image can be deleted for good
+space/images.feature: The Space's images can be browsed
+space/images.feature: The images have the prompt area of a page, offering image models
+space/images.feature: The prompt keeps its words until the image is made
+space/images.feature: The user adds an image from a file
+space/images.feature: The user deletes an image from the trash for good
+space/images.feature: The user generates an image from a prompt
+space/images.feature: The user generates with the image model they chose
+space/images.feature: The user is offered only the providers that can generate an image
+space/images.feature: The user places an image on a page
+space/images.feature: The user restores an image from the trash
+space/images.feature: Without a provider that can generate, the prompt area says so
+space/markdown.feature: A code block is shown as code
+space/markdown.feature: A link in a page never loads anything by itself
+space/markdown.feature: A list is shown with its markers and nesting
+space/markdown.feature: A table and code are edited as their source
+space/markdown.feature: A table is shown as a table
+space/markdown.feature: Blocks the clients do not draw yet are shown as the MC writes them
+space/markdown.feature: Each heading level is shown in its own size
+space/markdown.feature: Markdown a page keeps as written is shown as its source
+space/markdown.feature: Text is shown with its inline formatting [a link with a title]
+space/markdown.feature: Text is shown with its inline formatting [an autolinked address and a bare www link]
+space/markdown.feature: Text is shown with its inline formatting [bold and italic text]
+space/markdown.feature: Text is shown with its inline formatting [inline code]
+space/markdown.feature: Text is shown with its inline formatting [struck-through text]
+space/markdown.feature: The user copies a code block
+space/page-history.feature: A client watching the Space sees a restore land
+space/page-history.feature: A restore can be undone by restoring the version before it
+space/page-history.feature: A restore keeps the page's update
+space/page-history.feature: A restore while the update is on leaves the generated part alone
+space/page-history.feature: A version an agent wrote names its thread
+space/page-history.feature: A version draws the chart it had
+space/page-history.feature: A version shows its image as the image is now
+space/page-history.feature: Opening a deck closes the history
+space/page-history.feature: Reading a version changes nothing
+space/page-history.feature: Restoring a version from before the update was removed
+space/page-history.feature: Restoring a version makes the page look like it again
+space/page-history.feature: The history lists a page's versions, newest first
+space/page-history.feature: The history of a page in the trash can be read but not restored
+space/page-history.feature: The user closes a version they were reading
+space/page-history.feature: What a run writes is a version by the page's update
+space/pages.feature: A Space needs a name
+space/pages.feature: A Space with pages cannot be deleted
+space/pages.feature: A block can link to a subpage
+space/pages.feature: A block goes in between two others
+space/pages.feature: A client watching the Space sees an edit as it lands
+space/pages.feature: A client watching the Spaces sees a new one
+space/pages.feature: A comment needs a body
+space/pages.feature: A failed summary makes no page
+space/pages.feature: A page cannot move inside itself [Q3]
+space/pages.feature: A page cannot move inside itself [Roadmap]
+space/pages.feature: A subpage made from a link is linked straight away
+space/pages.feature: A trashed page cannot be edited
+space/pages.feature: A trashed page leaves the Space and waits in the trash
+space/pages.feature: Moving a block changes no other block
+space/pages.feature: No page is made without text generation
+space/pages.feature: Only a checklist item can be ticked
+space/pages.feature: Only a trashed page can be deleted for good
+space/pages.feature: Pages and their content survive a restart
+space/pages.feature: The Personal Space is made only once
+space/pages.feature: The first look at Spaces finds a Personal Space
+space/pages.feature: The user adds a block of each kind [callout]
+space/pages.feature: The user adds a block of each kind [checklist]
+space/pages.feature: The user adds a block of each kind [heading]
+space/pages.feature: The user adds a block of each kind [paragraph]
+space/pages.feature: The user comments on a block
+space/pages.feature: The user deletes a block
+space/pages.feature: The user deletes a page from the trash for good
+space/pages.feature: The user deletes an empty Space
+space/pages.feature: The user edits a block
+space/pages.feature: The user exports a page as Markdown
+space/pages.feature: The user imports Markdown as a new page
+space/pages.feature: The user makes a Space
+space/pages.feature: The user makes a page
+space/pages.feature: The user makes a page inside another page
+space/pages.feature: The user moves a block
+space/pages.feature: The user moves a page into another page
+space/pages.feature: The user moves a page to the top of the Space
+space/pages.feature: The user renames a Space
+space/pages.feature: The user renames a page
+space/pages.feature: The user reopens a resolved comment
+space/pages.feature: The user resolves a comment
+space/pages.feature: The user restores a page from the trash
+space/pages.feature: The user ticks and unticks a checklist item
+space/pages.feature: The user turns a thread into a page
+space/pages.feature: Trashing a page takes its subpages with it
+space/presence.feature: A device already on the page is shown
+space/presence.feature: A device arriving shows up without a refresh
+space/presence.feature: A device that leaves the page goes away without a refresh
+space/presence.feature: A device whose connection drops goes away without a refresh
+space/presence.feature: A user who leaves a page is gone from it for the others
+space/presence.feature: An agent is gone from the page when its turn ends
+space/presence.feature: An agent working on the page is shown by its thread
+space/presence.feature: Another page has its own viewers
+space/presence.feature: Back on the page from a deck, the user is on it again
+space/presence.feature: Closing the images, the user is on the page again
+space/presence.feature: Nobody else is on the page
+space/presence.feature: Opening a deck leaves the page
+space/presence.feature: Opening the images leaves the page
+space/presence.feature: The user on several devices counts once
+space/presence.feature: Who else is on the page comes back when the MC can say again
 space/project-files.feature: A file opened as a page opens the folders it is in
 space/project-files.feature: A file-backed page shows its file
 space/project-files.feature: A page the file won over says where the user's edit went

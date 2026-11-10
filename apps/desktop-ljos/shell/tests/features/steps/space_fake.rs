@@ -2246,7 +2246,8 @@ pub fn decide(mc: &mut FakeMc, method: &str, input: &Value) -> Answer {
     if method == "image.providers" {
         // As the MC's (lib/hal_c2/space/image_generation.ex): only who can
         // draw, each with its image models.
-        let model = |slug: &str, name: &str| json!({"slug": slug, "name": name, "description": null});
+        let model =
+            |slug: &str, name: &str| json!({"slug": slug, "name": name, "description": null});
         let provider = |id: &str, ready: bool, missing: &str, models: Vec<Value>| {
             json!({
                 "instanceId": id,
