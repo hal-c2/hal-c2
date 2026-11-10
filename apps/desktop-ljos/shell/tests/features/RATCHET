@@ -1045,6 +1045,9 @@ plugins/ui-plugins.feature: A disabled plugin stays disabled after a restart
 plugins/ui-plugins.feature: A plugin URL that cannot be reached is reported
 plugins/ui-plugins.feature: A slot a surface does not have is skipped quietly
 plugins/ui-plugins.feature: Plugin errors are visible to the user
+preview/automation.feature: A dev-server port wins over an address given with it
+preview/automation.feature: A queued browser action whose caller gave up is not started
+preview/automation.feature: An agent opens a dev server's port in one step
 preview/devices.feature: A Device tab in the background streams nothing
 preview/devices.feature: A choice in the tools is applied by the device [the Android Emulator "Pixel 9", Orientation, Landscape left]
 preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Appearance, Dark]
@@ -1165,11 +1168,16 @@ preview/surfaces.feature: A new browser tab offers local servers and recent page
 preview/surfaces.feature: The desktop lists the thread's browser tabs to open in the browser
 preview/surfaces.feature: The desktop's list of browser tabs follows the MC
 preview/surfaces.feature: The user adds a browser tab from the side panel
+providers/claude.feature: A Claude monitor shows as background work, not as a command
+providers/claude.feature: A Claude monitor stays listed while the next turn runs
 providers/codex.feature: A plan Codex marked finished can still be implemented
 providers/models.feature: A hidden model can be shown again
 providers/models.feature: Favourite, hidden and ordered models are remembered on the device
 providers/permission-modes.feature: The permission mode can be changed from the desktop and mobile composers
 providers/provider-instances.feature: A clashing instance id gets a number
+providers/provider-instances.feature: A disabled provider says so once [, ]
+providers/provider-instances.feature: A disabled provider says so once [Codex Work is disabled in HAL-C2 settings. A server URL is configured., A server URL is configured.]
+providers/provider-instances.feature: A disabled provider says so once [Codex Work is disabled in HAL-C2 settings., ]
 providers/provider-instances.feature: Adding an instance derives its id from its label
 providers/provider-instances.feature: An instance can be renamed and given an accent colour
 providers/provider-instances.feature: Clearing the accent colour goes back to the default
@@ -1185,6 +1193,7 @@ providers/provider-instances.feature: Provider status headlines [not installed, 
 providers/provider-instances.feature: Provider status headlines [signed in, Authenticated]
 providers/provider-instances.feature: Provider status headlines [signed out, Not authenticated]
 providers/provider-setup.feature: Signing out asks for confirmation and keeps history
+providers/usage-limits.feature: A Grok account with no metered usage yet stays in Limits
 providers/usage-limits.feature: An account named by its email is hidden in the /usage-limits answer until asked for
 providers/usage-limits.feature: Automatic checks wait at least five minutes per environment
 providers/usage-limits.feature: The /usage-limits answer is dismissed without sending anything

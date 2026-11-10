@@ -23,6 +23,8 @@ use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::{OTHER_MACHINE, World};
 use crate::{expect, fail};
 
+mod automation;
+
 /// The MC's browser tabs, oldest change first, and how it answers a close.
 struct FakePreviews {
     epoch: String,
@@ -458,6 +460,7 @@ fn toast_items(world: &World) -> Vec<Json> {
 
 pub fn register(steps: &mut Steps) {
     steps.extension(extension);
+    automation::register(steps);
 
     steps.step(
         &format!("the thread has browser tabs at {Q} and {Q}"),

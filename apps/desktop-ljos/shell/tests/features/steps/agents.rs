@@ -13,7 +13,9 @@ use hal_c2_shell::thread_view::agents::{Agents, AgentsModel};
 use ljos::prelude::ObjectId;
 use serde_json::{Value, json};
 
-use super::stream::{FakeStreams, add_item, iso, now, set, start_run};
+use super::stream::{
+    FakeStreams, PROJECT, add_item, iso, look_at_thread, now, set, settle_run, start_run,
+};
 use crate::brick::Brick;
 use crate::harness::{Failure, Outcome, Q, Steps, text};
 use crate::world::World;
@@ -289,6 +291,55 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    steps.step("Claude starts a monitor in the thread", |world, _, _| {
+        look_at_thread(world, PROJECT)?;
+        start_run(world, 0, "running")?;
+        let command = add_item(
+            world,
+            "dynamic_tool",
+            json!({
+                "toolName": "Monitor",
+                "input": {"command": "tail -f log/dev.log", "description": "Watch the dev log"},
+                "status": "running",
+                "startedAt": iso(now()),
+            }),
+        )?;
+        world.mc.part::<FakeAgents>().command = command;
+        settle_run(world, "completed", 5)
+    });
+    steps.step(
+        "the user sends another message and its turn is running",
+        |world, _, _| {
+            start_run(world, 0, "running")?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "the thread lists the monitor as background work",
+        |world, _, _| {
+            world.sync()?;
+            let count = core(world, Agents::count)?;
+            let listed = (0..count).any(|row| {
+                text(&value(world, row, "kind")) == "background"
+                    && text(&value(world, row, "title")) == "Monitor"
+                    && value(world, row, "running") == json!(true)
+            });
+            expect!(listed, "{}", describe_agents(world));
+            Ok(())
+        },
+    );
+    steps.step("the monitor is not shown as a command", |world, _, _| {
+        let count = core(world, Agents::count)?;
+        for row in 0..count {
+            expect!(
+                text(&value(world, row, "kind")) != "command",
+                "{}",
+                describe_agents(world)
+            );
+        }
+        Ok(())
+    });
+
     steps.step("the command finishes", |world, _, _| {
         let command = world.mc.part::<FakeAgents>().command.clone();
         set(

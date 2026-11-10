@@ -362,10 +362,19 @@ pub fn summary(provider: &Json) -> (String, String) {
         }
     };
     if !bool_at(provider, "enabled") || status == "disabled" {
-        return (
-            "Disabled".into(),
-            or("This provider is installed but disabled for new sessions in HAL-C2."),
-        );
+        // Said once: the headline, and only what the message adds to its own
+        // "X is disabled in HAL-C2 settings." (an OpenCode server URL kept).
+        let detail = match message.find('.') {
+            Some(end)
+                if message[..end]
+                    .split(|c: char| !c.is_alphanumeric())
+                    .any(|word| word == "disabled") =>
+            {
+                message[end + 1..].trim_start().to_owned()
+            }
+            _ => message.clone(),
+        };
+        return ("Disabled".into(), detail);
     }
     if !bool_at(provider, "installed") {
         return ("Not found".into(), or("CLI not detected on PATH."));

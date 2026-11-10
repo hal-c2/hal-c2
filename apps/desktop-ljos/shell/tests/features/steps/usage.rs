@@ -1566,6 +1566,55 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    steps.step(
+        "Grok is signed in with a subscription and has not used any metered credit yet",
+        |world, _, _| {
+            // xAI leaves out the usage percentage until the account has
+            // metered use: the MC reports no windows, and nothing unavailable.
+            let mut grok = codex(
+                "grok",
+                "Grok",
+                "dev@example.com",
+                json!({"checkedAt": iso_ms(world.now()), "windows": []}),
+            );
+            grok["driver"] = json!("grok");
+            let mut providers = fake_config(&mut world.mc).config["providers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            providers.push(grok);
+            set_providers(world, providers);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("Grok's account is listed with the notice {Q}"),
+        |world, c, _| {
+            let notice = format!("Grok: {}", c[0]);
+            world.wait_for_with(
+                |w| {
+                    at(&usage(w), "limits.notices")
+                        .as_array()
+                        .is_some_and(|notices| notices.contains(&json!(notice)))
+                },
+                |w| format!("{notice} in limits; the page is {}", show(&usage(w))),
+            )
+        },
+    );
+    steps.step("it is not reported as not supported", |world, _, _| {
+        for notice in at(&usage(world), "limits.notices")
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let said = text(notice);
+            expect!(
+                !said.starts_with("Grok") || said == "Grok: No limits reported.",
+                "limits say {said}"
+            );
+        }
+        Ok(())
+    });
     steps.step("the user opens Limits(?: again)?", |world, _, _| {
         show_usage(world, "limits", 0)
     });

@@ -28,6 +28,7 @@ pub mod provider;
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod notifications;
 pub mod platform_window;
+pub mod preview_automation;
 pub mod qml;
 pub mod qr;
 pub mod runtime;

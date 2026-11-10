@@ -386,6 +386,39 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    steps.step(
+        &format!("a provider that is disabled, with the message {Q}"),
+        |world, c, _| {
+            let instance_id = "codex_work";
+            world.mc.part::<ProviderList>().instance_id = instance_id.into();
+            let mut instances = at(
+                &Value::Object(fake_config(&mut world.mc).settings.clone()),
+                "providerInstances",
+            )
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+            instances.insert(
+                instance_id.into(),
+                json!({"driver": "codex", "displayName": "Codex Work", "enabled": false}),
+            );
+            save_elsewhere(
+                &mut world.mc,
+                "providerInstances",
+                Value::Object(instances),
+                false,
+            );
+            publish_providers(
+                &mut world.mc,
+                vec![provider(
+                    instance_id,
+                    "Codex Work",
+                    json!({"enabled": false, "status": "disabled", "message": c[0]}),
+                )],
+            );
+            Ok(())
+        },
+    );
     steps.step("the user opens the provider list", |world, _, _| {
         open_panel(world)?;
         world.wait_for_with(
@@ -425,4 +458,39 @@ pub fn register(steps: &mut Steps) {
             },
         )
     });
+    steps.step(
+        &format!("the provider reads {Q}, explained by {Q}"),
+        |world, c, _| {
+            let instance_id = world.mc.part::<ProviderList>().instance_id.clone();
+            if instance_id.is_empty() {
+                fail!("a provider to have been set up");
+            }
+            let shown = |w: &World| {
+                panel(w)["providers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|row| row["instanceId"] == json!(instance_id))
+                    .next_back()
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            world.wait_for_with(
+                |w| {
+                    let row = shown(w);
+                    text(&row["headline"]) == c[0] && text(&row["detail"]) == c[1]
+                },
+                |w| {
+                    let row = shown(w);
+                    format!(
+                        "{instance_id} to read \"{}\", explained by \"{}\"; it reads \"{}\", explained by \"{}\"",
+                        c[0],
+                        c[1],
+                        text(&row["headline"]),
+                        text(&row["detail"])
+                    )
+                },
+            )
+        },
+    );
 }
