@@ -176,6 +176,46 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
   end
 
+  # From hal-c2/hal-c2#1408's merge queue: #1 steps back from the commit the laptop
+  # published, and the next start, #2's at a head it had not reviewed, is over the
+  # limit. The plugin read the laptop's claims again for the step back while #2 still
+  # ran, so #2, held back, never showed the laptop had published its head.
+  test "a review the limit holds back shows the head the laptop has" do
+    replay([
+      {:report, [{"acme/api#1", 1}]},
+      {:push, ["acme/api#1"]},
+      {:crash, []},
+      {:limited, [{"acme/api#1", 2}]},
+      {:restarting, [true]},
+      {:push, ["acme/api#2"]},
+      {:start, ["acme/api#1"]},
+      {:refresh, []},
+      {:restarting, [false]},
+      {:peer_set, ["acme/api#2", {1, {"published", true}, nil}]},
+      {:refresh, []},
+      {:peer_set, ["acme/api#1", {2, {"published", true}, "failed"}]},
+      {:push, ["acme/api#2"]},
+      {:start, ["acme/api#1"]},
+      {:limited, [{"acme/api#2", 3}]},
+      {:refresh, []},
+      {:start, ["acme/api#2"]}
+    ])
+  end
+
+  defp replay(steps) do
+    Process.flag(:trap_exit, true)
+
+    cmds =
+      for {{name, args}, i} <- Enum.with_index(steps, 1),
+          do: {:set, {:var, i}, {:call, __MODULE__, name, args}}
+
+    begin_case(true)
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
   # --- model ----------------------------------------------------------------------------
 
   # `prs`: key → its head (1 or 2). `reviews`: key → %{status, run (the run its thread
@@ -647,8 +687,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     case {running, queued} do
       {false, [{key, r} | _]} ->
         # The start is counted with the laptop's of the last day, if it can say them;
-        # one the watch would start over the limit goes back to ready. It had a thread id
-        # of its own, which never launches, and the checkout of the run before stays.
+        # one the watch would start over the limit goes back to ready, and if it has not
+        # reviewed the head it saw, reads the laptop's claims again, as a run stepping
+        # back does. It had a thread id of its own, which never launches, and the
+        # checkout of the run before stays.
         m =
           if tells?(m),
             do: %{
@@ -667,7 +709,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
               | status: :ready,
                 limited: if(tells?(m), do: :day, else: :apart)
             })
-            |> pump(),
+            |> pump()
+            |> then(&if(r.reviewed != r.seen, do: peer_claims(&1), else: &1)),
           else:
             launch(
               %{m | starts: m.starts + 1, told: m.told + if(tells?(m), do: 1, else: 0)},
