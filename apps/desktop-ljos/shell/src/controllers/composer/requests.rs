@@ -43,6 +43,9 @@ fn matches(regex: &LazyLock<Option<Regex>>, text: &str) -> bool {
 impl Composer {
     pub(super) fn handle_action(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
         let target = self.target(engine);
+        if let Some(done) = self.handle_place(engine, action, payload) {
+            return done;
+        }
         let id = string(payload, "id");
         match action {
             "composer.text.set" => {

@@ -39,6 +39,12 @@ pub(super) fn options_of(selection: &Obj) -> Vec<Json> {
 impl Composer {
     /// The route thread's requests, plan and queue; a draft's sending.
     pub(super) fn turn_state(&self, engine: &Engine) -> Json {
+        if self.on_page() {
+            return self.page_turn_state();
+        }
+        if self.on_images() {
+            return self.images_turn_state(engine);
+        }
         let thread = thread_of(engine, &self.thread);
         let running = thread.as_ref().is_some_and(|t| t.active_run_id.is_some());
         if !self.draft_id.is_empty() {
@@ -251,6 +257,9 @@ impl Composer {
         if target.is_empty() {
             return Json::Null;
         }
+        if self.on_images() {
+            return self.images_composer_state(engine);
+        }
         let is_draft = !self.draft_id.is_empty();
         let thread = thread_of(engine, &target);
         let kept = kept::draft_of(engine, &target);
@@ -266,7 +275,7 @@ impl Composer {
         let trigger = if kept.dismissed {
             None
         } else {
-            model::trigger(&text, cursor)
+            model::trigger(&text, cursor).and_then(|t| self.page_trigger(&target, &text, t))
         };
         let suggestions: Vec<Json> = self
             .suggestions(engine, &target, trigger.as_ref())
@@ -411,7 +420,7 @@ impl Composer {
                 .map(|edit| edit.run_id.clone())
         });
         let sending = kept::read(engine, |d| d.queues.contains_key(&target));
-        json!({
+        let mut state = json!({
             "target": target,
             "routeKind": if is_draft { "draft" } else { "server" },
             // The branch and worktree controls under the composer: a new
@@ -456,7 +465,11 @@ impl Composer {
             "showInteractionModeToggle": plan_on,
             "usageLimits": self.usage_limits.get(&target).cloned().unwrap_or(Json::Null),
             "editingQueuedRunId": editing.map_or(Json::Null, Json::String),
-        })
+        });
+        if self.on_page() {
+            self.page_composer_state(engine, &target, &mut state);
+        }
+        state
     }
 
     /// ShellModelPickerState: the rail for the route's thread or draft.
@@ -487,8 +500,9 @@ impl Composer {
                 .get(&target)
                 .and_then(|k| k.multiple_models.clone())
         });
-        json!({
-            "instances": model::picker_instances(
+        let instances = match self.images_picker_instances(engine) {
+            Some(images) => Json::Array(images),
+            None => json!(model::picker_instances(
                 &self.catalogue,
                 &prefs,
                 field(&chosen, "instanceId"),
@@ -496,7 +510,10 @@ impl Composer {
                 thread.as_ref().is_some_and(|t| t.runtime.is_some()),
                 field(&current, "instanceId"),
                 field(&current, "model"),
-            ),
+            )),
+        };
+        json!({
+            "instances": instances,
             // A new thread may go to several models: [{instanceId, model}]
             // once more than one is chosen.
             "supportsMultiple": !self.draft_id.is_empty() && target == self.draft_id,
@@ -566,7 +583,9 @@ impl Composer {
     pub(super) fn search_paths(&mut self, engine: &Engine, target: &str) {
         let text = kept::draft(engine, target);
         let cursor = kept::read(engine, |d| d.drafts.get(target).map_or(0, |k| k.cursor));
-        let Some(trigger) = model::trigger(&text, cursor) else {
+        let Some(trigger) =
+            model::trigger(&text, cursor).and_then(|t| self.page_trigger(target, &text, t))
+        else {
             return;
         };
         if trigger.kind != "path" || trigger.query.is_empty() {
@@ -575,12 +594,16 @@ impl Composer {
         if self.paths.target == target && self.paths.query == trigger.query {
             return;
         }
-        let Some(place) = workspace::place(engine) else {
-            return;
+        // A page's @ words are searched in the root of the project its ask
+        // runs in, anything else's in the route's checkout.
+        let (environment, cwd) = match self.page_search_place(engine, target) {
+            Some(place) => place,
+            None => match workspace::place(engine) {
+                Some(place) => (place.environment_id.clone(), place.cwd().to_owned()),
+                None => return,
+            },
         };
-        if place.cwd().is_empty()
-            || !store::with(engine, |s| s.environment_online(&place.environment_id))
-        {
+        if cwd.is_empty() || !store::with(engine, |s| s.environment_online(&environment)) {
             return;
         }
         self.paths = PathSearch {
@@ -592,9 +615,9 @@ impl Composer {
         };
         let request = self.paths.request;
         self.mc.call(
-            &place.environment_id,
+            &environment,
             "projects.searchEntries",
-            json!({"cwd": place.cwd(), "query": trigger.query, "limit": 80}),
+            json!({"cwd": cwd, "query": trigger.query, "limit": 80}),
             back(&self.me, move |c, engine, result| {
                 if request != c.paths.request {
                     return;

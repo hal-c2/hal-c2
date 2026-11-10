@@ -188,6 +188,9 @@ impl Composer {
             end,
             payload.get("edit").unwrap_or(&Json::Null),
         );
+        if let Some(done) = self.submit_place(engine, &target, &text) {
+            return done;
+        }
         if let Some(problem) = prompt_problem(&text) {
             toast_error(engine, "Message not sent", &problem);
             return true;

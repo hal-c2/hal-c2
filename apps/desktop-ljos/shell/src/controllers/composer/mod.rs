@@ -51,6 +51,8 @@ pub mod kept;
 pub mod text;
 
 mod attachments;
+mod images;
+mod page;
 mod requests;
 mod send;
 mod state;
@@ -73,6 +75,7 @@ use crate::controllers::keybindings::Keymap;
 use crate::controllers::navigation::{self, Route};
 use crate::controllers::settings::Settings;
 use crate::controllers::sidebar::{self, Sidebar};
+use crate::controllers::space;
 use crate::controllers::threads;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::workspace;
@@ -151,6 +154,16 @@ pub struct Composer {
     /// This window's "Not connected: queue not resumed" toast, while it may
     /// still show.
     not_connected_toast: String,
+    /// The Space page whose prompt this is, while no thread or draft is
+    /// open; the project its ask runs in (the MC's), whether it was asked,
+    /// and whether the page's agent works. The projects picked, by page key.
+    page_id: String,
+    page_project: String,
+    page_project_asked: bool,
+    page_running: bool,
+    page_projects: HashMap<String, String>,
+    /// The Space whose images' prompt this is, with no page open either.
+    images_space: String,
 }
 
 /// Runs `f` on the composer once no controller is running: what an MC
@@ -250,6 +263,12 @@ impl Controller for Composer {
             usage_limits: HashMap::new(),
             setting_mode: HashMap::new(),
             not_connected_toast: String::new(),
+            page_id: String::new(),
+            page_project: String::new(),
+            page_project_asked: false,
+            page_running: false,
+            page_projects: HashMap::new(),
+            images_space: String::new(),
         }
     }
 
@@ -287,6 +306,18 @@ impl Controller for Composer {
         settings.on_settings_changed(hook(&self.me, Composer::publish));
         settings.on_device_changed(hook(&self.me, Composer::publish));
         Keymap::of(engine).on_bindings_changed(hook(&self.me, Composer::publish));
+        // The Space's page or images on show take the prompt.
+        space::on_changed(engine, hook(&self.me, Composer::follow_page));
+        space::on_prompt_page_changed(engine, hook(&self.me, Composer::follow_page));
+        space::on_agent_ask_requested(engine, hook(&self.me, Composer::start_ask));
+        space::on_image_offer_changed(
+            engine,
+            hook(&self.me, |c, e| {
+                if c.on_images() {
+                    c.publish(e);
+                }
+            }),
+        );
         self.refresh_catalogue(engine);
         self.follow(engine);
     }
@@ -303,6 +334,9 @@ impl Composer {
     /// The thread or draft the window's composer writes to; empty with
     /// neither open (or the thread not listed).
     fn target(&self, engine: &Engine) -> String {
+        if let Some(place) = self.place_target() {
+            return place;
+        }
         if !self.draft_id.is_empty() {
             return if drafts::draft(engine, &self.draft_id).is_some() {
                 self.draft_id.clone()
@@ -330,6 +364,7 @@ impl Composer {
             draft_id.clone()
         };
         self.draft_id = draft_id;
+        self.follow_place(engine, !self.thread.is_empty());
         // Leaving the thread leaves its edit, as cancelling would.
         let editing = kept::read(engine, |d| d.queued_edit.as_ref().map(|e| e.thread.clone()));
         if editing.is_some_and(|t| t != self.thread) {
@@ -443,6 +478,9 @@ impl Composer {
     /// threads, then the model last sent with while its provider can run
     /// it. Empty lets the MC choose.
     fn base_selection(&self, engine: &Engine, key: &str) -> Obj {
+        if let Some(selection) = self.page_base_selection(engine, key) {
+            return selection;
+        }
         if let Some(thread) = thread_of(engine, key) {
             return thread.model_selection;
         }
@@ -539,6 +577,9 @@ impl Composer {
         if !own.is_empty() {
             return own;
         }
+        if let Some(mode) = self.page_runtime_mode(engine, target) {
+            return mode;
+        }
         if let Some(thread) = thread_of(engine, target)
             && !thread.runtime_mode.is_empty()
         {
@@ -627,6 +668,9 @@ impl Composer {
 
     /// The environment a thread's or a new thread's files go to.
     fn environment_of(&self, engine: &Engine, target: &str) -> String {
+        if target.starts_with("page#") || target.starts_with("images#") {
+            return self.mc.environment();
+        }
         if let Some(thread) = thread_of(engine, target) {
             return thread.environment_id;
         }
