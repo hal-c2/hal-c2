@@ -1817,6 +1817,26 @@ source-control/worktrees-and-setup-scripts.feature: Going back to the project fo
 source-control/worktrees-and-setup-scripts.feature: Picking the base ref for a new worktree
 source-control/worktrees-and-setup-scripts.feature: Returning to the previous worktree
 source-control/worktrees-and-setup-scripts.feature: The setup card shows the base, branch and path
+space/project-files.feature: A file opened as a page opens the folders it is in
+space/project-files.feature: A file-backed page shows its file
+space/project-files.feature: A page the file won over says where the user's edit went
+space/project-files.feature: A page whose file is gone says so
+space/project-files.feature: A project's section starts collapsed
+space/project-files.feature: Collapsing a folder hides its files
+space/project-files.feature: Collapsing a project's section hides its files
+space/project-files.feature: Expanding a folder shows its files
+space/project-files.feature: Expanding a project's section shows its folders collapsed
+space/project-files.feature: Going to a page's file passes over a thread in a worktree
+space/project-files.feature: Showing a file-backed page reads its file again
+space/project-files.feature: The client remembers which folders are expanded
+space/project-files.feature: The client remembers which sections are expanded
+space/project-files.feature: The sidebar has a section for each project with Space files
+space/project-files.feature: The user edits a file from its project's section
+space/project-files.feature: The user edits a project file as a page from the command palette
+space/project-files.feature: The user folds a folder from the keyboard
+space/project-files.feature: The user goes back to the Space's pages in one step
+space/project-files.feature: The user goes from a page to its file
+space/project-files.feature: The user runs the scan from the command palette
 terminal/composer-context.feature: A one-line selection names a single line
 terminal/composer-context.feature: Adding to chat is not offered where there is no draft to add to
 terminal/composer-context.feature: An excerpt whose text is gone is dropped when the message is sent
