@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 
 use super::snap_shot_bus::{self, PortalDesktop};
 use super::stream::{PROJECT, THREAD, look_at_thread};
+use super::{snap_shot_mac, snap_shot_windows};
 use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
@@ -468,6 +469,13 @@ pub(crate) fn expect_off(world: &World) -> Outcome {
 
 /// The user presses the Snap Shot shortcut.
 pub(crate) fn capture(world: &mut World) -> Outcome {
+    // A Mac or Windows stand-in hears the shortcut itself.
+    if snap_shot_mac::mac_overridden(world) {
+        return snap_shot_mac::mac_press(world);
+    }
+    if snap_shot_windows::on_windows(world) {
+        return snap_shot_windows::windows_press(world);
+    }
     install(world)?;
     snap(world).raised.borrow_mut().clear();
     if snap_shot_bus::bus().borrow().active {

@@ -9,6 +9,9 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use hal_c2_shell::controllers::composer;
 use hal_c2_shell::controllers::keybindings::Keymap;
 use hal_c2_shell::controllers::snap_shot::{SnapShot, deliver};
 use hal_c2_shell::snap_shot;
@@ -24,6 +27,7 @@ use super::snap_shot::{
     SECTION, attachments, field, install, open_panel, open_thread, page, send, set_setting,
     setting, snap, thread_key, toast_titled,
 };
+use super::snap_shot_config;
 use super::snap_shot_windows as windows;
 use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show, text};
@@ -335,11 +339,31 @@ fn capture(world: &mut World) -> Outcome {
 /// The shortcut pressed on this Mac, turning Snap Shot on first if the
 /// scenario has not, for snap_shot.rs's own press.
 pub(crate) fn mac_press(world: &mut World) -> Outcome {
-    if !enabled(world) {
+    if !enabled(world) || field(world, "shortcut.registered").as_bool() != Some(true) {
         turn_on(world)?;
     }
     open_thread(world)?;
     post(world, Signal::Pressed)
+}
+
+/// The size of the one image the draft holds, once it is there.
+pub(crate) fn attached_size(world: &mut World) -> Outcome<(u32, u32)> {
+    world.wait_for("the capture on the draft", |w| !draft(w).is_empty())?;
+    let images = draft(world);
+    let id = text(&images[0]["id"]);
+    let shown = composer::attachment_preview(world.engine(), &id).unwrap_or_default();
+    let url = text(&shown["url"]);
+    let data = url.split_once(',').map_or("", |(_, data)| data);
+    Ok(STANDARD
+        .decode(data)
+        .ok()
+        .and_then(|bytes| image::load_from_memory(&bytes).ok())
+        .map_or((0, 0), |image| {
+            (
+                image::GenericImageView::width(&image),
+                image::GenericImageView::height(&image),
+            )
+        }))
 }
 
 fn expect_text_on_capture(world: &World) -> Outcome {
@@ -1007,6 +1031,152 @@ pub fn register(steps: &mut Steps) {
                 field(world, "shortcut.registered").as_bool() != Some(true),
                 "the shortcut not to be registered; Snap Shot is {}",
                 show(&page(world))
+            );
+            Ok(())
+        },
+    );
+    // source-control/snap-shot.feature: capturing, with the rows Windows
+    // and Niri share.
+    steps.step(
+        "macOS returns an empty image for the window",
+        |world, _, _| {
+            mac_of(world).borrow_mut().empty_image = true;
+            Ok(())
+        },
+    );
+    steps.step(
+        "macOS taking the picture of the window has not answered after 15 seconds",
+        |world, _, _| {
+            // The native side gives up after that long; here it has just said so.
+            mac_of(world).borrow_mut().capture_failure = "timed-out".into();
+            Ok(())
+        },
+    );
+    steps.step("no window is available to capture", |world, _, _| {
+        if windows::on_windows(world) {
+            return windows::no_window(world);
+        }
+        mac_of(world).borrow_mut().capture_failure = "missing".into();
+        Ok(())
+    });
+    steps.step(
+        "nothing is attached and the user is told the (window could not be captured|active window is not available for capture)",
+        |world, c, _| {
+            let could_not = c[0].starts_with("window");
+            if windows::on_windows(world) {
+                return windows::told(world, could_not);
+            }
+            let said: &[&str] = if could_not {
+                &[
+                    "macOS could not capture the window.",
+                    "macOS returned an invalid snapshot.",
+                    "Niri has no focused window to capture.",
+                ]
+            } else {
+                &["No window is available to capture."]
+            };
+            world.wait_for_with(
+                |w| {
+                    w.state("toasts")["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|toast| {
+                            toast["title"] == "Snapshot failed"
+                                && said.contains(&text(&toast["description"]).as_str())
+                        })
+                },
+                |w| {
+                    format!(
+                        "the toast saying one of {}; the shell shows {}",
+                        said.join(", "),
+                        show(&w.state("toasts"))
+                    )
+                },
+            )?;
+            let images = draft(world);
+            expect!(
+                images.is_empty(),
+                "nothing attached; {}",
+                show(&Value::Array(images))
+            );
+            Ok(())
+        },
+    );
+    steps.step("no half-finished capture is kept", |world, _, _| {
+        if windows::on_windows(world) {
+            return windows::none_kept(world);
+        }
+        let shots = snap_shot_config::shots(world);
+        let images = draft(world);
+        expect!(
+            shots == 0 && images.is_empty(),
+            "no capture kept; {shots} taken, the draft has {}",
+            show(&Value::Array(images))
+        );
+        Ok(())
+    });
+    steps.step(
+        "the next press of the shortcut captures normally",
+        |world, _, _| {
+            mac_of(world).borrow_mut().capture_failure.clear();
+            capture(world)?;
+            let images = draft(world);
+            expect!(
+                images.len() == 1,
+                "one capture on the draft; {}",
+                show(&Value::Array(images))
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the window in front is larger than 2,560 by 1,600 pixels",
+        |world, _, _| {
+            if windows::on_windows(world) {
+                return windows::large_window(world);
+            }
+            mac_of(world).borrow_mut().window = (4000, 3000);
+            Ok(())
+        },
+    );
+    steps.step(
+        "the attached image is shrunk to fit within 2,560 by 1,600 pixels",
+        |world, _, _| {
+            if windows::on_windows(world) {
+                return windows::expect_shrunk(world);
+            }
+            let size = attached_size(world)?;
+            expect!(
+                size == (2133, 1600),
+                "the image shrunk, keeping its shape; it is {}x{}",
+                size.0,
+                size.1
+            );
+            Ok(())
+        },
+    );
+    steps.step("including app text is on", |world, _, _| {
+        include(world, true)
+    });
+    steps.step("the user captures a browser window", |world, _, _| {
+        mac_press(world)?;
+        world.wait_for("the capture on the draft", |w| !draft(w).is_empty())
+    });
+    steps.step(
+        "the attachment carries the window's text and controls along with the image",
+        |world, _, _| expect_text_on_capture(world),
+    );
+    steps.step(
+        "the user can inspect that data from the attachment",
+        |world, _, _| {
+            let shown = world.state("composer")["attachments"].clone();
+            let items = shown.as_array().cloned().unwrap_or_default();
+            expect!(
+                items.len() == 1
+                    && at(&items[0], "source.accessibility") == "Docs: Getting started",
+                "the composer to offer the capture's text; it shows {}",
+                show(&shown)
             );
             Ok(())
         },

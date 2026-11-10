@@ -11,16 +11,20 @@ use std::rc::{Rc, Weak};
 
 use hal_c2_shell::controllers::snap_shot::deliver;
 use hal_c2_shell::snap_shot::mac::Rect;
-use hal_c2_shell::snap_shot::windows::{self, Grab, Inbox, Signal, Window, WindowsSystem};
+use hal_c2_shell::snap_shot::windows::{
+    self, CAPTURE_TIMEOUT_MS, COULD_NOT_CAPTURE, Grab, Inbox, NO_WINDOW, Signal, Window,
+    WindowsSystem,
+};
 use image::{Rgba, RgbaImage};
 use serde_json::{Value, json};
 
 use super::snap_shot::{
-    attachments, field, open_panel, open_thread, page, reset_with, send, setting, thread_key,
+    attachments, expect_toast, field, open_panel, open_thread, page, reset_with, send, setting,
+    thread_key,
 };
-use super::snap_shot_mac::press_both;
+use super::snap_shot_mac::{attached_size, press_both};
 use crate::expect;
-use crate::harness::{Outcome, Steps, show};
+use crate::harness::{Outcome, Q, Steps, at, show};
 use crate::world::World;
 
 /// What Windows does, for the fake to read and record into.
@@ -28,6 +32,8 @@ struct Machine {
     window: Option<Window>,
     image: RgbaImage,
     played: Vec<String>,
+    answer_grabs: bool,
+    grab_running: bool,
     refuse_pairs: bool,
     animations: bool,
     flashes: usize,
@@ -47,6 +53,8 @@ impl Default for Machine {
             }),
             image: RgbaImage::from_pixel(320, 200, Rgba([0, 139, 139, 255])),
             played: Vec::new(),
+            answer_grabs: true,
+            grab_running: false,
             refuse_pairs: false,
             animations: true,
             flashes: 0,
@@ -76,10 +84,15 @@ impl WindowsSystem for FakeWindows {
         self.machine.borrow().window.clone()
     }
     fn grab(&mut self, _bounds: Rect) -> Grab {
-        Grab::Now(self.machine.borrow().image.clone())
+        let mut machine = self.machine.borrow_mut();
+        if machine.answer_grabs {
+            return Grab::Now(machine.image.clone());
+        }
+        machine.grab_running = true;
+        Grab::Later
     }
     fn grabbing(&self) -> bool {
-        false
+        self.machine.borrow().grab_running
     }
     fn cancel_grab(&mut self) {}
     fn hold_hot_key(&mut self, _modifiers: u32, _key: u32) -> bool {
@@ -213,6 +226,80 @@ pub(crate) fn refuse_pair(world: &mut World) -> Outcome {
     )
 }
 
+/// Snap Shot on and a thread open, for a capture step to change Windows.
+fn ready(world: &mut World) -> Outcome {
+    open_thread(world)?;
+    turn_on(world)
+}
+
+/// The Windows rows of the steps snap_shot_mac.rs registers for both.
+pub(crate) fn no_window(world: &mut World) -> Outcome {
+    ready(world)?;
+    machine(world).borrow_mut().window = None;
+    Ok(())
+}
+
+/// The capture ended with nothing attached and the toast saying why. A
+/// grab that never answers is given up on at its deadline.
+pub(crate) fn told(world: &mut World, could_not_capture: bool) -> Outcome {
+    let stuck = {
+        let machine = machine(world);
+        let m = machine.borrow();
+        m.grab_running && !m.answer_grabs
+    };
+    if stuck {
+        world.advance(CAPTURE_TIMEOUT_MS)?;
+        world.pump()?;
+    }
+    let images = draft(world);
+    expect!(
+        images.is_empty(),
+        "nothing attached; the draft has {}",
+        show(&Value::Array(images))
+    );
+    let said = if could_not_capture {
+        COULD_NOT_CAPTURE
+    } else {
+        NO_WINDOW
+    };
+    expect_toast(world, "Snapshot failed", said)
+}
+
+/// The press after the stuck grab ends works.
+pub(crate) fn none_kept(world: &mut World) -> Outcome {
+    {
+        let machine = machine(world);
+        let mut m = machine.borrow_mut();
+        m.grab_running = false;
+        m.answer_grabs = true;
+    }
+    capture(world)?;
+    let images = draft(world);
+    expect!(
+        images.len() == 1,
+        "the next capture to attach; the draft has {}",
+        show(&Value::Array(images))
+    );
+    Ok(())
+}
+
+pub(crate) fn large_window(world: &mut World) -> Outcome {
+    ready(world)?;
+    machine(world).borrow_mut().image = RgbaImage::from_pixel(5120, 2000, Rgba([0, 139, 139, 255]));
+    Ok(())
+}
+
+pub(crate) fn expect_shrunk(world: &mut World) -> Outcome {
+    let size = attached_size(world)?;
+    expect!(
+        draft(world).len() == 1 && size == (2560, 1000),
+        "2560x1000 with its shape kept; it is {}x{}",
+        size.0,
+        size.1
+    );
+    Ok(())
+}
+
 pub fn register(steps: &mut Steps) {
     steps.step("the desktop app runs on Windows", |world, _, _| {
         run_on_windows(world)
@@ -287,6 +374,90 @@ pub fn register(steps: &mut Steps) {
                 "a still flash and no flight: {} flashes, {} flights",
                 m.flashes,
                 m.flights
+            );
+            Ok(())
+        },
+    );
+    steps.step("the sound, flash and animation are on", |world, _, _| {
+        run_on_windows(world)?;
+        ready(world)
+    });
+    steps.step(
+        "the sound plays, the captured window flashes and the image flies into the draft",
+        |world, _, _| {
+            let machine = machine(world);
+            let m = machine.borrow();
+            expect!(
+                m.played.len() == 1 && m.flights_with_flash == 1 && draft(world).len() == 1,
+                "the sound and a flight with its flash: played {}, {} flights flashed",
+                m.played.join(","),
+                m.flights_with_flash
+            );
+            Ok(())
+        },
+    );
+    steps.step("the system asks for reduced motion", |world, _, _| {
+        run_on_windows(world)?;
+        ready(world)?;
+        machine(world).borrow_mut().animations = false;
+        Ok(())
+    });
+    steps.step(
+        "the image lands in the draft without animating",
+        |world, _, _| {
+            let flights = machine(world).borrow().flights;
+            expect!(
+                draft(world).len() == 1 && flights == 0,
+                "no flight; {flights} flights"
+            );
+            Ok(())
+        },
+    );
+
+    // source-control/snap-shot.feature: capturing.
+    steps.step(
+        "the Windows window capture does not answer in time",
+        |world, _, _| {
+            ready(world)?;
+            machine(world).borrow_mut().answer_grabs = false;
+            Ok(())
+        },
+    );
+    steps.step(
+        "an earlier Windows window capture is still running",
+        |world, _, _| {
+            ready(world)?;
+            machine(world).borrow_mut().grab_running = true;
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the window belongs to the program {Q}"),
+        |world, c, _| {
+            ready(world)?;
+            if let Some(window) = &mut machine(world).borrow_mut().window {
+                window.program = format!("C:\\Program Files\\{}", c[0]);
+            }
+            Ok(())
+        },
+    );
+    steps.step("the window reports no program name", |world, _, _| {
+        ready(world)?;
+        if let Some(window) = &mut machine(world).borrow_mut().window {
+            window.program.clear();
+        }
+        Ok(())
+    });
+    steps.step("the user captures it", |world, _, _| capture(world));
+    steps.step(
+        &format!("the attachment names the app {Q}"),
+        |world, c, _| {
+            let images = draft(world);
+            expect!(
+                images.len() == 1 && at(&images[0], "source.appName") == c[0].as_str(),
+                "the app {}; the draft has {}",
+                c[0],
+                show(&Value::Array(images.clone()))
             );
             Ok(())
         },

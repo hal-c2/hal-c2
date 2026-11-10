@@ -1934,14 +1934,28 @@ source-control/review-diffs.feature: Removing a line comment before sending
 source-control/review-diffs.feature: Switching between stacked and split views on the desktop and phone
 source-control/review-diffs.feature: Wrapping long lines
 source-control/snap-shot.feature: A cancelled capture attaches nothing
+source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [Linux on Niri, Niri has no focused window]
+source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [Windows, an earlier Windows window capture is still running]
+source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [Windows, the Windows window capture does not answer in time]
+source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [macOS, macOS returns an empty image for the window]
+source-control/snap-shot.feature: A capture with no window in front is explained [Windows]
+source-control/snap-shot.feature: A capture with no window in front is explained [macOS]
+source-control/snap-shot.feature: A slow platform step ends the capture instead of hanging [macOS taking the picture of the window, 15 seconds]
+source-control/snap-shot.feature: A very large window is captured at a bounded size [Windows]
+source-control/snap-shot.feature: A very large window is captured at a bounded size [macOS]
 source-control/snap-shot.feature: An oversize capture is discarded
 source-control/snap-shot.feature: Captures waiting to be sent survive a restart
 source-control/snap-shot.feature: Capturing the window in front
 source-control/snap-shot.feature: Capturing while HAL-C2 is in front captures HAL-C2
 source-control/snap-shot.feature: Capturing with no project
 source-control/snap-shot.feature: Capturing with no thread open starts a draft
+source-control/snap-shot.feature: Including the app's text and controls
 source-control/snap-shot.feature: Other Wayland desktops choose a window each time
+source-control/snap-shot.feature: Reduced motion turns the animation off
 source-control/snap-shot.feature: The Linux desktop decides how capture works [another compositor, the desktop portal]
+source-control/snap-shot.feature: The attachment names the app the way the user knows it [Windows, the window belongs to the program "Code.exe", Code]
+source-control/snap-shot.feature: The attachment names the app the way the user knows it [Windows, the window reports no program name, Window]
+source-control/snap-shot.feature: The capture plays its cues
 source-control/snap-shot.feature: Turning Snap Shot off stops capturing
 source-control/snap-shot.feature: X11 sessions are not supported
 source-control/snap-shot.feature: XWayland apps can be captured on Wayland

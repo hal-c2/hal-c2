@@ -401,7 +401,7 @@ fn scene(world: &mut World) -> &mut Scene {
     world.part::<Scene>()
 }
 
-fn shots(world: &mut World) -> usize {
+pub(crate) fn shots(world: &mut World) -> usize {
     scene(world)
         .niri
         .as_ref()
