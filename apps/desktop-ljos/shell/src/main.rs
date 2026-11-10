@@ -288,6 +288,9 @@ fn check(roots: &Roots) -> ExitCode {
 /// Which MC the shell connects to and where it keeps what it was sent: the
 /// one named, else the one `--pair` pairs with, else the one paired last.
 fn connect_to(options: &mut Options) -> Result<(), String> {
+    // A shell on the development profile is Dev (StageController), so it
+    // is never mistaken for the installed app.
+    hal_c2_shell::controllers::stage::set_app_stage(if options.dev { "Dev" } else { "" });
     let profile = if options.dev {
         Profile::Development
     } else {

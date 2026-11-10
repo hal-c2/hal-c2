@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use hal_c2_shell::controllers::panel::RightPanel;
+use hal_c2_shell::device::decoder;
 use hal_c2_shell::device::devices::{DeviceTab, ThreadDevices, tab_id_of};
 use hal_c2_shell::device::stream::DeviceStream;
 use hal_c2_shell::device::tools::{DeviceTools, PRESETS};
@@ -139,6 +140,33 @@ struct FakeHub {
     wanted_location: (f64, f64),
     /// No hub base path: the client was given no device access.
     no_access: bool,
+    /// FFmpeg is made to look not installed, until this MC goes.
+    no_ffmpeg: bool,
+    /// A second machine offering devices, when the scenario has one.
+    second_host_id: String,
+    second_label: String,
+    /// Devices starting for a thread: {name, threadId}.
+    booting: Vec<Value>,
+    /// The devices shape is not answered yet.
+    hold_state: bool,
+    /// The stream's access expired: only a fresh ticket is let through.
+    expired: bool,
+    ticket_requests: usize,
+    /// The one ticket an expired stream may use: the latest given out.
+    accepted_ticket: String,
+    /// Ticket requests kept unanswered, while held.
+    hold_tickets: bool,
+    /// The unanswered ticket requests, with the ticket each was minted.
+    held_tickets: Vec<(TcpStream, String)>,
+    /// device.close is refused with this, when not empty.
+    refuse_close: String,
+    /// Each device's video requests when a step began that must keep its
+    /// stream, by name.
+    kept_counts: std::collections::HashMap<String, usize>,
+    /// New input connections are closed at once.
+    drop_inputs: bool,
+    /// The 3D body's yaw while a drag was still held.
+    dragged_yaw: f64,
 }
 
 impl Default for FakeHub {
@@ -192,6 +220,20 @@ impl Default for FakeHub {
             last_field: String::new(),
             wanted_location: (0.0, 0.0),
             no_access: false,
+            no_ffmpeg: false,
+            second_host_id: String::new(),
+            second_label: String::new(),
+            booting: Vec::new(),
+            hold_state: false,
+            expired: false,
+            ticket_requests: 0,
+            accepted_ticket: String::new(),
+            hold_tickets: false,
+            held_tickets: Vec::new(),
+            refuse_close: String::new(),
+            kept_counts: std::collections::HashMap::new(),
+            drop_inputs: false,
+            dragged_yaw: 0.0,
         }
     }
 }
@@ -199,12 +241,41 @@ impl Default for FakeHub {
 impl Drop for FakeHub {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
+        if self.no_ffmpeg {
+            decoder::pretend_missing(false);
+        }
     }
 }
 
 /// The Device tab's brick, once shown over the right panel's ThreadDevices.
 #[derive(Default)]
 struct Panel(Option<Brick>);
+
+/// The right panel's own brick, for its tab strip (renaming a tab).
+#[derive(Default)]
+struct RightPanelBrick(Option<Brick>);
+
+fn panel_brick(world: &mut World) -> Outcome<Brick> {
+    if let Some(brick) = world.part::<RightPanelBrick>().0 {
+        return Ok(brick);
+    }
+    let brick = Brick::new(
+        world,
+        "import QtQuick\nimport HalC2.Bricks\nRightPanel {}\n",
+        900.0,
+        600.0,
+    )?;
+    world.part::<RightPanelBrick>().0 = Some(brick);
+    Ok(brick)
+}
+
+/// Whether the Device tab's brick shows `words`, as the user reads them.
+fn device_panel_shows(world: &World, words: &str) -> bool {
+    world
+        .peek_part::<Panel>()
+        .and_then(|p| p.0)
+        .is_some_and(|brick| brick.shows(world, words).unwrap_or(false))
+}
 
 fn state_of(mc: &mut FakeMc) -> Value {
     let name = mc.name.clone();
@@ -228,19 +299,29 @@ fn state_of(mc: &mut FakeMc) -> Value {
     if !hub.banner_detail.is_empty() {
         local_status["detail"] = json!(hub.banner_detail);
     }
-    let mut state = json!({
-        "hosts": [{
-            "id": HOST,
-            "kind": "local",
-            "label": hub.host_label,
+    let host = |id: &str, kind: &str, label: &str| {
+        json!({
+            "id": id,
+            "kind": kind,
+            "label": label,
             "platforms": platforms,
             "hubInstalled": true,
             "agentDeviceInstalled": true,
-        }],
+        })
+    };
+    let mut hosts = vec![host(HOST, "local", &hub.host_label)];
+    let mut statuses = json!({HOST: local_status});
+    if !hub.second_host_id.is_empty() {
+        hosts.push(host(&hub.second_host_id, "ssh", &hub.second_label));
+        statuses[hub.second_host_id.clone()] = json!({"status": "ready"});
+    }
+    let mut state = json!({
+        "hosts": hosts,
         "hostStatus": hub.host_status,
-        "hostStatuses": {HOST: local_status},
+        "hostStatuses": statuses,
         "devices": hub.devices,
         "sessions": hub.sessions,
+        "bootingDevices": hub.booting,
         "onboardingCompleted": hub.onboarding,
         "agentAccessEnabled": hub.agent_access,
         "supportsHostRetry": hub.supports_retry,
@@ -336,9 +417,15 @@ fn act(mc: &mut FakeMc, rpc: &crate::fake_mc::Rpc) {
 }
 
 fn session_of(hub: &FakeHub, device_id: &str, thread: &str) -> Option<usize> {
-    hub.sessions
-        .iter()
-        .position(|s| text(&s["threadId"]) == thread && text(&s["deviceId"]) == device_id)
+    session_on(hub, device_id, thread, "")
+}
+
+fn session_on(hub: &FakeHub, device_id: &str, thread: &str, host: &str) -> Option<usize> {
+    hub.sessions.iter().position(|s| {
+        text(&s["threadId"]) == thread
+            && text(&s["deviceId"]) == device_id
+            && (host.is_empty() || text(&s["hostId"]) == host)
+    })
 }
 
 fn device_named(hub: &FakeHub, name: &str) -> Outcome<Value> {
@@ -355,10 +442,18 @@ fn open_session(mc: &mut FakeMc, device: &Value, thread: &str) {
             listed["booted"] = json!(true);
         }
     }
-    if session_of(hub, &text(&device["id"]), thread).is_none() {
+    let host = {
+        let host = text(&device["hostId"]);
+        if host.is_empty() {
+            HOST.to_owned()
+        } else {
+            host
+        }
+    };
+    if session_on(hub, &text(&device["id"]), thread, &host).is_none() {
         hub.sessions.push(json!({
             "threadId": thread,
-            "hostId": HOST,
+            "hostId": host,
             "deviceId": device["id"],
             "platform": device["platform"],
             "openedAt": "2026-09-23T10:00:00Z",
@@ -499,9 +594,28 @@ fn proxy(mc: &mut FakeMc, mut stream: TcpStream, head: &str) -> Outcome {
         .requests
         .push(format!("{target} {authorization}"));
     hub.shared.notify();
+    if hub.expired
+        && (hub.accepted_ticket.is_empty()
+            || !target.contains(&format!("wsTicket={}", hub.accepted_ticket)))
+    {
+        let _ = stream.read_exact(&mut vec![0u8; head.len()]);
+        respond(stream, 401);
+        return Ok(());
+    }
     if hub.refuse != 0 {
         let _ = stream.read_exact(&mut vec![0u8; head.len()]);
         respond(stream, hub.refuse);
+        return Ok(());
+    }
+    if upgrade && hub.drop_inputs {
+        std::thread::spawn(move || {
+            if let Ok(mut socket) = tungstenite::accept(stream) {
+                let _ = socket.close(Some(tungstenite::protocol::CloseFrame {
+                    code: tungstenite::protocol::frame::coding::CloseCode::Normal,
+                    reason: "socket closed".into(),
+                }));
+            }
+        });
         return Ok(());
     }
     if upgrade {
@@ -576,7 +690,91 @@ fn proxy(mc: &mut FakeMc, mut stream: TcpStream, head: &str) -> Outcome {
     Ok(())
 }
 
+fn open_device(mc: &mut FakeMc, rpc: &crate::fake_mc::Rpc) {
+    let refusal = mc.part::<FakeHub>().refuse_open.clone();
+    if !refusal.is_empty() {
+        mc.refuse(rpc, &refusal);
+        return;
+    }
+    let wanted = &rpc.payload["deviceId"];
+    let host = &rpc.payload["hostId"];
+    let device = mc
+        .part::<FakeHub>()
+        .devices
+        .iter()
+        .find(|d| d["id"] == *wanted && (host.is_null() || d["hostId"] == *host))
+        .cloned();
+    let Some(device) = device else {
+        mc.refuse(rpc, "Device not found");
+        return;
+    };
+    let thread = text(&rpc.payload["threadId"]);
+    open_session(mc, &device, &thread);
+    announce(mc);
+    let hub = mc.part::<FakeHub>();
+    let host = {
+        let host = text(&device["hostId"]);
+        if host.is_empty() {
+            HOST.to_owned()
+        } else {
+            host
+        }
+    };
+    let session = session_on(hub, &text(&device["id"]), &thread, &host)
+        .map_or(Value::Null, |at| hub.sessions[at].clone());
+    mc.reply(rpc, session);
+}
+
+fn answer_ticket(mc: &mut FakeMc, stream: TcpStream, ticket: &str) {
+    mc.part::<FakeHub>().accepted_ticket = ticket.to_owned();
+    send_ticket(stream, ticket);
+}
+
+fn send_ticket(mut stream: TcpStream, ticket: &str) {
+    let body = json!({"ticket": ticket}).to_string();
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.flush();
+    let _ = stream.shutdown(Shutdown::Both);
+}
+
+/// Reads a whole request (its head was only peeked), body included.
+fn read_whole_request(stream: &mut TcpStream) {
+    // Bounded: a client that never finishes its request fails its own step.
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let n = stream.read(&mut buffer).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..n]);
+        let text = String::from_utf8_lossy(&bytes);
+        if let Some(end) = text.find("\r\n\r\n") {
+            let length = text[..end]
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse().ok())?
+                })
+                .unwrap_or(0usize);
+            if bytes.len() >= end + 4 + length {
+                break;
+            }
+        }
+    }
+}
+
 fn close_device(mc: &mut FakeMc, rpc: &crate::fake_mc::Rpc) {
+    if !mc.part::<FakeHub>().refuse_close.is_empty() {
+        let why = mc.part::<FakeHub>().refuse_close.clone();
+        return mc.refuse(rpc, &why);
+    }
     mc.part::<FakeHub>().closes.push(rpc.payload.clone());
     let hub = mc.part::<FakeHub>();
     let at = session_of(
@@ -607,6 +805,9 @@ fn fake_hub(world: &mut World) -> &mut FakeHub {
         // As an MC is named (`name@host`), which its hubBasePath carries encoded.
         world.mc.name = "hal-c2@studio".into();
         world.mc.on_shape("devices", |mc, id, _| {
+            if mc.part::<FakeHub>().hold_state {
+                return Ok(());
+            }
             let state = state_of(mc);
             mc.send(&json!({"t": "devices", "id": id, "state": state}));
             Ok(())
@@ -634,30 +835,35 @@ fn fake_hub(world: &mut World) -> &mut FakeHub {
             configure(mc, rpc);
             Ok(())
         });
+        // The stream mints its ticket over HTTP (Mc::post), as in the app.
+        // A raw route, as connection_health's fake answers this path for
+        // the client's own socket (and a raw route wins over on_http);
+        // until the stream's access expires that is all it answers.
+        world
+            .mc
+            .on_raw("/api/auth/websocket-ticket", |mc, mut stream, _head| {
+                read_whole_request(&mut stream);
+                let hub = mc.part::<FakeHub>();
+                if !hub.expired {
+                    send_ticket(stream, "ticket-socket");
+                    return Ok(());
+                }
+                hub.ticket_requests += 1;
+                let ticket = format!("fresh{}", hub.ticket_requests);
+                if hub.hold_tickets {
+                    hub.held_tickets.push((stream, ticket));
+                    return Ok(());
+                }
+                answer_ticket(mc, stream, &ticket);
+                Ok(())
+            });
         world.mc.on_rpc("device.open", |mc, rpc| {
-            let refusal = mc.part::<FakeHub>().refuse_open.clone();
-            if !refusal.is_empty() {
-                mc.refuse(rpc, &refusal);
+            if mc.holding("device.open") {
+                let rpc = rpc.clone();
+                mc.defer(move |mc| open_device(mc, &rpc));
                 return Ok(());
             }
-            let wanted = &rpc.payload["deviceId"];
-            let device = mc
-                .part::<FakeHub>()
-                .devices
-                .iter()
-                .find(|d| d["id"] == *wanted)
-                .cloned();
-            let Some(device) = device else {
-                mc.refuse(rpc, "Device not found");
-                return Ok(());
-            };
-            let thread = text(&rpc.payload["threadId"]);
-            open_session(mc, &device, &thread);
-            announce(mc);
-            let hub = mc.part::<FakeHub>();
-            let session = session_of(hub, &text(&device["id"]), &thread)
-                .map_or(Value::Null, |at| hub.sessions[at].clone());
-            mc.reply(rpc, session);
+            open_device(mc, rpc);
             Ok(())
         });
         world.mc.on_rpc("device.detail", |mc, rpc| {
@@ -765,6 +971,135 @@ fn requests(world: &mut World) -> Vec<String> {
     fake_hub(world).shared.seen().requests.clone()
 }
 
+/// The video requests made for the device named `name`.
+fn video_requests_of(world: &mut World, name: &str) -> Outcome<usize> {
+    let device = device_named(fake_hub(world), name)?;
+    let id = text(&device["id"]);
+    Ok(requests(world)
+        .iter()
+        .filter(|r| (r.contains("/stream.avcc") || r.contains("/serve-emu/ws")) && r.contains(&id))
+        .count())
+}
+
+/// Remembers each device's video requests, for "keeps its stream".
+fn keep_streams(world: &mut World) -> Outcome {
+    let names: Vec<String> = fake_hub(world)
+        .devices
+        .iter()
+        .map(|d| text(&d["name"]))
+        .collect();
+    fake_hub(world).kept_counts.clear();
+    for name in names {
+        let count = video_requests_of(world, &name)?;
+        fake_hub(world).kept_counts.insert(name, count);
+    }
+    Ok(())
+}
+
+/// The stream of the device named `name`: (status, input connected).
+fn stream_named(world: &World, name: &str) -> (String, bool) {
+    let Some(hub) = world.mc.peek::<FakeHub>() else {
+        return (String::new(), false);
+    };
+    let Some(device) = hub.devices.iter().find(|d| text(&d["name"]) == name) else {
+        return (String::new(), false);
+    };
+    let host = text(&device["hostId"]);
+    let host = if host.is_empty() { HOST } else { &host };
+    let tab = tab_id_of(host, &text(&device["id"]));
+    let Ok(devices) = devices_object(world) else {
+        return (String::new(), false);
+    };
+    ThreadDevices::stream(world.engine(), devices, &tab)
+        .and_then(|stream| {
+            hal_c2_shell::device::stream::DeviceStream::read(world.engine(), stream, |c| {
+                (c.status().to_owned(), c.input_connected())
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// Both devices' tabs on the stage, in columns.
+fn side_by_side(world: &mut World, left: &str, right: &str) -> Outcome {
+    show_device_tab(world, left)?;
+    show_device_tab(world, right)?;
+    let left_tab = tab_of(world, left)?;
+    let right_tab = tab_of(world, right)?;
+    world.dispatch("rightPanel.dock", json!({"id": left_tab, "dock": "stage"}))?;
+    world.dispatch(
+        "rightPanel.dock",
+        json!({"id": right_tab, "dock": "stage", "pane": 0, "zone": "right"}),
+    )?;
+    world.sync()?;
+    world.wait_for_with(
+        |w| {
+            let panel = w.state("panel");
+            let stage = at(&panel, "stage");
+            text(&stage["layout"]) == "columns" && stage["panes"] == json!([left_tab, right_tab])
+        },
+        |w| show(&at(&w.state("panel"), "stage")),
+    )
+}
+
+/// The 3D body's item, once the panel's loader has made it.
+fn body_item(world: &World) -> Option<ObjectId> {
+    let panel = world.peek_part::<Panel>().and_then(|p| p.0)?;
+    let loader = panel.find(world, "deviceBodyLoader").ok().flatten()?;
+    match panel.read(world, loader, "item") {
+        QmlValue::Object(item) => Some(item),
+        _ => None,
+    }
+}
+
+fn show_in_3d(world: &mut World) -> Outcome {
+    // The device's own tab first, when the Given only opened it.
+    if screen_of(world).is_null() {
+        let session = fake_hub(world).sessions.last().cloned();
+        if let Some(session) = session {
+            let name = fake_hub(world)
+                .devices
+                .iter()
+                .find(|d| d["id"] == session["deviceId"])
+                .map_or_else(String::new, |d| text(&d["name"]));
+            if !name.is_empty() {
+                show_device_tab(world, &name)?;
+            }
+        }
+    }
+    let panel = device_panel(world)?;
+    let showing = panel
+        .root(world)
+        .is_some_and(|root| panel.flag(world, root, "show3d"));
+    if !showing {
+        panel.click(world, "device3dToggle")?;
+    }
+    world.wait_for_with(|w| body_item(w).is_some(), describe_ref)
+}
+
+/// The input connections drop with `reason`, and new ones are closed at
+/// once until the connection returns.
+fn drop_input(world: &mut World, reason: &str) {
+    let hub = fake_hub(world);
+    hub.drop_inputs = true;
+    for input in &hub.inputs {
+        let _ = input
+            .out
+            .send(Message::Close(Some(tungstenite::protocol::CloseFrame {
+                code: tungstenite::protocol::frame::coding::CloseCode::Normal,
+                reason: reason.to_owned().into(),
+            })));
+    }
+    hub.inputs.clear();
+}
+
+fn both_stream(world: &mut World, one: &str, other: &str) -> Outcome {
+    let (one, other) = (one.to_owned(), other.to_owned());
+    world.wait_for_with(
+        move |w| stream_named(w, &one).0 == "streaming" && stream_named(w, &other).0 == "streaming",
+        describe_ref,
+    )
+}
+
 fn describe(world: &mut World) -> String {
     let (status, detail, input, _) = stream_of(world);
     let panel = world.state("panel");
@@ -778,13 +1113,34 @@ fn describe(world: &mut World) -> String {
 }
 
 fn add_device(world: &mut World, platform: &str, name: &str, booted: bool) {
-    let id = if platform == "ios" {
-        format!("UDID-{}", name.replace(' ', "-").to_uppercase())
+    add_device_on(world, platform, name, booted, HOST, "");
+}
+
+fn add_device_on(
+    world: &mut World,
+    platform: &str,
+    name: &str,
+    booted: bool,
+    host: &str,
+    wanted_id: &str,
+) {
+    let id = if !wanted_id.is_empty() {
+        wanted_id.to_owned()
+    } else if platform == "ios" {
+        format!(
+            "UDID-{}{}",
+            name.replace(' ', "-").to_uppercase(),
+            if host == HOST {
+                String::new()
+            } else {
+                format!("-{}", host.to_uppercase())
+            }
+        )
     } else {
         "emulator-5554".to_owned()
     };
     fake_hub(world).devices.push(json!({
-        "hostId": HOST,
+        "hostId": host,
         "id": id,
         "name": name,
         "platform": platform,
@@ -803,7 +1159,7 @@ fn device_panel(world: &mut World) -> Outcome<Brick> {
     let brick = Brick::new(
         world,
         "import QtQuick\nimport HalC2.Bricks\nimport HalC2.Shell\n\
-         DevicePanel { anchors.fill: parent; tabId: Shell.state.panel?.activeId ?? \"\" }\n",
+         DevicePanel { anchors.fill: parent; tabId: Shell.state.panel?.floatingDevice ?? Shell.state.panel?.activeId ?? \"\" }\n",
         420.0,
         900.0,
     )?;
@@ -1147,11 +1503,10 @@ pub fn register(steps: &mut Steps) {
         fake_hub(world).shared.silent.store(true, Ordering::SeqCst);
         Ok(())
     });
-    steps.step("FFmpeg is not installed", |_, _, _| {
-        fail!(
-            "desktop-ljos decodes with Ljós's own H.264 decoder and has no FFmpeg to hide: \
-             there is no state to put the shell in"
-        )
+    steps.step("FFmpeg is not installed", |world, _, _| {
+        fake_hub(world).no_ffmpeg = true;
+        decoder::pretend_missing(true);
+        Ok(())
     });
     steps.step(
         "the tab says to install FFmpeg to watch device screens",
@@ -1261,16 +1616,33 @@ pub fn register(steps: &mut Steps) {
         let wanted = c[0].clone();
         world.wait_for_with(
             |w| {
+                // desktop-qt's tabSays: the view's own words, or any the
+                // panel renders, or the stream's error.
                 let shown = view(w);
                 let (status, detail, ..) = stream_of(w);
-                text(&shown["empty"]) == wanted
-                    || text(&shown["error"]) == wanted
+                let banners = shown["banners"].as_array().cloned().unwrap_or_default();
+                let wizard = &shown["wizard"];
+                ["loading", "empty", "error", "hostDetail", "starting"]
+                    .iter()
+                    .any(|field| text(&shown[field]) == wanted)
+                    || banners.iter().any(|banner| {
+                        text(&banner["message"]) == wanted || text(&banner["advice"]) == wanted
+                    })
+                    || (wizard.is_object()
+                        && ["hubStatus", "agentStatus", "error"]
+                            .iter()
+                            .any(|field| text(&wizard[field]) == wanted))
                     || (status == "error" && detail == wanted)
+                    || device_panel_shows(w, &wanted)
             },
             describe_ref,
         )
     });
     steps.step("the user dismisses the error", |world, _, _| {
+        // Or the thread's, when the scenario showed one (RunNotices.h).
+        if super::run_notice::dismiss_thread_error(world)? {
+            return Ok(());
+        }
         let panel = device_panel(world)?;
         panel.click(world, "deviceDismissError")
     });
@@ -1988,6 +2360,13 @@ fn set_availability(world: &mut World, platform: &str, availability: Value) {
 /// The setup wizard's and the banners' "the user chooses …" (ThemeSteps' own
 /// step hands them here): false when no wizard is open to take it.
 pub fn device_chooses(world: &mut World, what: &str) -> Outcome<bool> {
+    if what == "Refresh devices" {
+        if world.peek_part::<Panel>().and_then(|p| p.0).is_none() {
+            return Ok(false);
+        }
+        click(world, "deviceRefresh")?;
+        return Ok(true);
+    }
     if tools_chooses(world, what)? {
         return Ok(true);
     }
@@ -2022,6 +2401,23 @@ fn wizard_can_continue(world: &mut World) -> Outcome {
         },
         describe_wizard,
     )
+}
+
+/// The Device tab's "{name} is offered" (MoveSteps' own step hands it
+/// here): false unless the Device tab's picker has loaded and lists devices
+/// (a thread-move world has none).
+pub fn device_offered(world: &mut World, name: &str) -> Outcome<bool> {
+    let shown = view(world);
+    if shown["loaded"].as_bool() != Some(true)
+        || shown["groups"]
+            .as_array()
+            .is_none_or(|groups| groups.is_empty())
+    {
+        return Ok(false);
+    }
+    let wanted = name.to_owned();
+    world.wait_for_with(|w| !row_of(w, &wanted, "").is_null(), describe_ref)?;
+    Ok(true)
 }
 
 /// The setup wizard's "the user can continue" (OnboardingSteps' own step
@@ -2676,7 +3072,7 @@ fn has_device(world: &mut World, name: &str) -> bool {
 }
 
 /// The thread has `name` open, on its tab.
-fn open_device(world: &mut World, platform: &str, name: &str) -> Outcome {
+fn open_named(world: &mut World, platform: &str, name: &str) -> Outcome {
     if !has_device(world, name) {
         add_device(world, platform, name, true);
     }
@@ -2716,7 +3112,7 @@ fn tool_device(world: &mut World, platform: &str, name: &str) -> Outcome {
         })
     };
     hub.foreground_app = json!({"id": "com.example.shop"});
-    open_device(world, platform, name)
+    open_named(world, platform, name)
 }
 
 fn tools_open_for(world: &mut World, platform: &str, name: &str) -> Outcome {
@@ -2859,7 +3255,7 @@ fn register_tools(steps: &mut Steps) {
         &format!("the user has the tools open for the iOS Simulator {Q} with no app in front"),
         |world, c, _| {
             fake_hub(world).foreground_app = Value::Null;
-            open_device(world, "ios", &c[0])?;
+            open_named(world, "ios", &c[0])?;
             wide_panel(world)?;
             open_tools(world)
         },
@@ -2873,7 +3269,7 @@ fn register_tools(steps: &mut Steps) {
     );
     steps.step("the user has the tools open", |world, _, _| {
         if !has_device(world, "iPhone 17") {
-            open_device(world, "ios", "iPhone 17")?;
+            open_named(world, "ios", "iPhone 17")?;
         }
         wide_panel(world)?;
         open_tools(world)
@@ -2882,7 +3278,7 @@ fn register_tools(steps: &mut Steps) {
         &format!("the thread has the iOS Simulator {Q} open in light appearance"),
         |world, c, _| {
             fake_hub(world).settings["appearance"] = json!("light");
-            open_device(world, "ios", &c[0])
+            open_named(world, "ios", &c[0])
         },
     );
 
@@ -3056,7 +3452,7 @@ fn register_tools(steps: &mut Steps) {
         &format!("the user changed the location of {Q} in the tools"),
         |world, c, _| {
             fake_hub(world).foreground_app = json!({"id": "com.example.shop"});
-            open_device(world, "ios", &c[0])?;
+            open_named(world, "ios", &c[0])?;
             wide_panel(world)?;
             open_tools(world)?;
             type_into(world, "toolsLatitude", "59.33")?;
@@ -3175,7 +3571,7 @@ fn register_tools(steps: &mut Steps) {
         &format!("the iOS Simulator {Q} has {Q} in front"),
         |world, c, _| {
             fake_hub(world).foreground_app = json!({"id": c[1]});
-            open_device(world, "ios", &c[0])
+            open_named(world, "ios", &c[0])
         },
     );
     steps.step(&format!("{Q} reads {Q}"), |world, c, _| {
@@ -3225,7 +3621,7 @@ fn register_tools(steps: &mut Steps) {
     });
     steps.step("the device has no app in front", |world, _, _| {
         fake_hub(world).foreground_app = Value::Null;
-        open_device(world, "ios", "iPhone 17")?;
+        open_named(world, "ios", "iPhone 17")?;
         wide_panel(world)?;
         open_tools(world)
     });
@@ -3443,7 +3839,7 @@ fn register_tools(steps: &mut Steps) {
         "the device has no app in front and the user typed no app",
         |world, _, _| {
             fake_hub(world).foreground_app = Value::Null;
-            open_device(world, "ios", "iPhone 17")?;
+            open_named(world, "ios", "iPhone 17")?;
             wide_panel(world)?;
             open_tools(world)
         },
@@ -3732,6 +4128,1505 @@ fn register_tools(steps: &mut Steps) {
             })
         },
     );
+
+    // The backlog steps: renaming and floating, the picker's ordering and
+    // messages, the stream's recovery, and the 3D body.
+
+    // --- Tab names -----------------------------------------------------------
+    steps.step(
+        &format!("the thread has {Q} open in a tab"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], true);
+            let device = device_named(fake_hub(world), &c[0])?;
+            open_session(&mut world.mc, &device, THREAD);
+            look(world)?;
+            let tab = tab_of(world, &c[0])?;
+            world.dispatch("rightPanel.activate", json!({"id": tab}))?;
+            world.sync()?;
+            let name = c[0].clone();
+            world.wait_for_with(move |w| tab_titles(w).contains(&name), describe_ref)
+        },
+    );
+    steps.step(
+        &format!("the user renames the tab to {Q}"),
+        |world, c, _| {
+            let brick = panel_brick(world)?;
+            let tab = tab_of(world, "iPhone 17")?;
+            let item = brick.item(world, &format!("panelTab-{tab}"))?;
+            let (x, y) = brick.at(world, item, 0.4, 0.5)?;
+            world.click_at(x, y)?;
+            world.click_at(x, y)?;
+            let rename = format!("panelRename-{tab}");
+            world.wait_for_with(
+                |w| {
+                    brick
+                        .find(w, &rename)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|field| brick.flag(w, field, "visible"))
+                },
+                describe_ref,
+            )?;
+            world.type_text(&c[0])?;
+            let down = key_event("return")?;
+            world.key(&down)?;
+            world.key(&KeyEvent::release(down.key))?;
+            world.sync()
+        },
+    );
+    steps.step(&format!("the tab is named {Q}"), |world, c, _| {
+        let name = c[0].clone();
+        world.wait_for_with(move |w| tab_titles(w).contains(&name), describe_ref)
+    });
+    steps.step(
+        "the tab keeps that name when the device list is read again",
+        |world, _, _| {
+            let before = tab_titles(world);
+            announce(&mut world.mc);
+            world.sync()?;
+            ThreadDevices::update(world.engine(), devices_object(world)?, |d| d.refresh());
+            world.sync()?;
+            expect!(tab_titles(world) == before, "{}", describe(world));
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user is renaming the tab {Q}"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], true);
+            let device = device_named(fake_hub(world), &c[0])?;
+            open_session(&mut world.mc, &device, THREAD);
+            look(world)?;
+            let tab = tab_of(world, &c[0])?;
+            world.dispatch("rightPanel.activate", json!({"id": tab}))?;
+            world.sync()?;
+            let brick = panel_brick(world)?;
+            let item = brick.item(world, &format!("panelTab-{tab}"))?;
+            let (x, y) = brick.at(world, item, 0.4, 0.5)?;
+            world.click_at(x, y)?;
+            world.click_at(x, y)?;
+            let rename = format!("panelRename-{tab}");
+            world.wait_for_with(
+                |w| {
+                    brick
+                        .find(w, &rename)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|field| brick.flag(w, field, "visible"))
+                },
+                describe_ref,
+            )
+        },
+    );
+    steps.step(
+        &format!("the user types {Q} and presses Escape"),
+        |world, c, _| {
+            panel_brick(world)?;
+            world.type_text(&c[0])?;
+            let down = key_event("escape")?;
+            world.key(&down)?;
+            world.key(&KeyEvent::release(down.key))?;
+            world.sync()
+        },
+    );
+    steps.step(&format!("the tab is still named {Q}"), |world, c, _| {
+        world.sync()?;
+        expect!(
+            tab_titles(world).contains(&c[0])
+                && !tab_titles(world).iter().any(|t| t == "Checkout flow"),
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+
+    // --- Two machines, one device id -----------------------------------------
+    steps.step(
+        "two connected machines each offer a simulator with the same device id",
+        |world, _, _| {
+            let hub = fake_hub(world);
+            hub.second_host_id = "remote".into();
+            hub.second_label = "laptop".into();
+            add_device_on(world, "ios", "iPhone 17", true, HOST, "UDID-SHARED");
+            add_device_on(world, "ios", "iPhone 17", true, "remote", "UDID-SHARED");
+            Ok(())
+        },
+    );
+    steps.step("the user opens both", |world, _, _| {
+        add_device_tab(world)?;
+        for host in [HOST, "remote"] {
+            if active_tab(world) != "device" {
+                add_device_tab(world)?;
+            }
+            let wanted = host.to_owned();
+            world.wait_for_with(
+                |w| {
+                    view(w)["groups"].as_array().into_iter().flatten().any(|g| {
+                        g["devices"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|row| text(&row["hostId"]) == wanted)
+                    })
+                },
+                describe_ref,
+            )?;
+            let row = view(world)["groups"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|g| g["devices"].as_array().cloned().unwrap_or_default())
+                .find(|row| text(&row["hostId"]) == host)
+                .unwrap_or(Value::Null);
+            let panel = device_panel(world)?;
+            panel.click(world, &format!("deviceRow-{}", text(&row["tab"])))?;
+            world.sync()?;
+            let tab = tab_id_of(host, "UDID-SHARED");
+            world.wait_for_with(move |w| active_tab(w) == tab, describe_ref)?;
+        }
+        Ok(())
+    });
+    steps.step("each has its own tab", |world, _, _| {
+        let ids: Vec<String> = world.state("panel")["tabs"]
+            .as_array()
+            .map(|tabs| tabs.iter().map(|t| text(&t["id"])).collect())
+            .unwrap_or_default();
+        expect!(
+            ids.contains(&tab_id_of(HOST, "UDID-SHARED"))
+                && ids.contains(&tab_id_of("remote", "UDID-SHARED")),
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+    steps.step("closing one leaves the other open", |world, _, _| {
+        world.dispatch(
+            "rightPanel.close",
+            json!({"id": tab_id_of(HOST, "UDID-SHARED")}),
+        )?;
+        world.sync()?;
+        let ids: Vec<String> = world.state("panel")["tabs"]
+            .as_array()
+            .map(|tabs| tabs.iter().map(|t| text(&t["id"])).collect())
+            .unwrap_or_default();
+        expect!(
+            !ids.contains(&tab_id_of(HOST, "UDID-SHARED"))
+                && ids.contains(&tab_id_of("remote", "UDID-SHARED")),
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+
+    // --- The picker's order and words ----------------------------------------
+    steps.step(
+        &format!("the thread's environment has the iOS Simulators {Q} stopped and {Q} running"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], false);
+            add_device(world, "ios", &c[1], true);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the thread's environment has the Android Emulators {Q} and {Q}, both running"),
+        |world, c, _| {
+            add_device(world, "android", &c[0], true);
+            add_device(world, "android", &c[1], true);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the thread's environment has the iOS Simulators {Q} and {Q} running"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], true);
+            add_device(world, "ios", &c[1], true);
+            // The open that follows stays in flight, so the picker can show
+            // that only one device opens at a time.
+            world.mc.hold("device.open");
+            add_device_tab(world)
+        },
+    );
+    steps.step(
+        &format!("{Q} is listed before {Q} under {Q}"),
+        |world, c, _| {
+            let mut names = Vec::new();
+            for listed in view(world)["groups"].as_array().into_iter().flatten() {
+                if text(&listed["title"]) != c[2] {
+                    continue;
+                }
+                for row in listed["devices"].as_array().into_iter().flatten() {
+                    names.push(text(&row["name"]));
+                }
+            }
+            let first = names.iter().position(|n| *n == c[0]);
+            let second = names.iter().position(|n| *n == c[1]);
+            expect!(
+                first.is_some() && first < second,
+                "the order is {}",
+                names.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the machine {Q} has the iOS Simulator {Q} on iOS 26.0, (running|stopped)"),
+        |world, c, _| {
+            fake_hub(world).host_label.clone_from(&c[0]);
+            add_device(world, "ios", &c[1], c[2] == "running");
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the row for {Q} reads \"([^\"]* · [^\"]*)\""),
+        |world, c, _| {
+            let (name, detail) = (c[0].clone(), c[1].clone());
+            world.wait_for_with(
+                move |w| text(&row_of(w, &name, "")["detail"]) == detail,
+                describe_ref,
+            )
+        },
+    );
+    steps.step(&format!("the row offers {Q}"), |world, c, _| {
+        let offered = view(world)["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|g| {
+                g["devices"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|row| text(&row["action"]) == c[0])
+            });
+        expect!(offered, "{}", describe(world));
+        Ok(())
+    });
+    steps.step(
+        &format!("{Q} cannot be chosen until {Q} is open"),
+        |world, c, _| {
+            // The first open is in flight (the Given held it); the other row
+            // must be disabled while it is.
+            expect!(
+                !text(&view(world)["pendingKey"]).is_empty(),
+                "{}",
+                describe(world)
+            );
+            let row = row_of(world, &c[0], "");
+            let panel = device_panel(world)?;
+            let item = panel.item(world, &format!("deviceRow-{}", text(&row["tab"])))?;
+            expect!(!panel.flag(world, item, "enabled"), "{}", describe(world));
+            world.mc.answer_held();
+            world.sync()
+        },
+    );
+    steps.step(&format!("the Device tab says {Q}"), |world, c, _| {
+        let words = c[0].clone();
+        world.wait_for_with(
+            move |w| tab_says(w, &words),
+            |w| format!("{}\n{}", tab_words(w).join(" | "), describe_ref(w)),
+        )
+    });
+    steps.step(
+        &format!("the user opened {Q}, which is already running"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], true);
+            world.mc.hold("device.open");
+            add_device_tab(world)?;
+            open_from_picker(world, &c[0])
+        },
+    );
+    steps.step(
+        &format!("the user opened {Q}, which is stopped"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], false);
+            world.mc.hold("device.open");
+            add_device_tab(world)?;
+            open_from_picker(world, &c[0])
+        },
+    );
+    steps.step(
+        "the device tools are still being installed",
+        |world, _, _| {
+            fake_hub(world).host_status = "installing".into();
+            add_device_tab(world)
+        },
+    );
+    steps.step(
+        "the device tools are being installed on the thread's environment",
+        |world, _, _| {
+            fake_hub(world).host_status = "installing".into();
+            Ok(())
+        },
+    );
+    steps.step("the list of devices has not arrived yet", |world, _, _| {
+        let hub = fake_hub(world);
+        hub.hold_state = true;
+        hub.looking = true;
+        world.mc.projects.insert(
+            PROJECT.into(),
+            json!({"id": PROJECT, "title": PROJECT, "workspaceRoot": format!("/work/{PROJECT}"), "scripts": []}),
+        );
+        world.connect()?;
+        world.sync()?;
+        look_at_thread(world, PROJECT)?;
+        world.dispatch("rightPanel.add", json!({"kind": "device"}))?;
+        world.sync()
+    });
+    steps.step(&format!("the thread has {Q} starting"), |world, c, _| {
+        add_device(world, "ios", &c[0], false);
+        fake_hub(world)
+            .booting
+            .push(json!({"name": c[0], "threadId": THREAD}));
+        look(world)
+    });
+    steps.step(&format!("{Q} is running"), |world, c, _| {
+        fake_hub(world).booting.retain(|b| text(&b["name"]) != c[0]);
+        announce(&mut world.mc);
+        world.sync()
+    });
+    steps.step("that message goes away", |world, _, _| {
+        world.wait_for_with(|w| text(&view(w)["starting"]).is_empty(), describe_ref)
+    });
+    steps.step(
+        &format!("the device hub is installing on the thread's environment and reports {Q}"),
+        |world, c, _| {
+            let hub = fake_hub(world);
+            hub.host_status = "installing".into();
+            hub.host_detail.clone_from(&c[0]);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the device hub failed to start on the thread's environment and says {Q}"),
+        |world, c, _| {
+            let hub = fake_hub(world);
+            hub.host_status = "failed".into();
+            hub.host_detail.clone_from(&c[0]);
+            Ok(())
+        },
+    );
+    steps.step(
+        "the device hub failed to start on the thread's environment without saying why",
+        |world, _, _| {
+            fake_hub(world).host_status = "failed".into();
+            Ok(())
+        },
+    );
+    steps.step("it has no simulators or emulators", |world, _, _| {
+        fake_hub(world);
+        Ok(())
+    });
+    steps.step(
+        &format!("the device hub is ready and reports {Q}"),
+        |world, c, _| {
+            fake_hub(world).host_detail.clone_from(&c[0]);
+            add_device(world, "ios", "iPhone 17", true);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the tab shows {Q} above the list of devices"),
+        |world, c, _| {
+            let words = c[0].clone();
+            world.wait_for_with(
+                move |w| text(&view(w)["hostDetail"]) == words && device_panel_shows(w, &words),
+                describe_ref,
+            )
+        },
+    );
+    steps.step(
+        "the thread's environment has the Android SDK",
+        |world, _, _| {
+            fake_hub(world).availability.push((
+                "android".into(),
+                json!({"platform": "android", "available": true}),
+            ));
+            Ok(())
+        },
+    );
+    steps.step("it has no Android virtual devices", |world, _, _| {
+        fake_hub(world);
+        Ok(())
+    });
+    steps.step(
+        "the user added a Device tab on an environment with no simulators",
+        |world, _, _| {
+            fake_hub(world);
+            add_device_tab(world)
+        },
+    );
+    steps.step(
+        &format!("the machine gains the iOS Simulator {Q}"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], true);
+            Ok(())
+        },
+    );
+    steps.step(
+        "the tab does not offer \"Refresh devices\"",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            let refresh = panel.find(world, "deviceRefresh")?;
+            expect!(
+                view(world)["canRefresh"] != true
+                    && refresh.is_none_or(|item| !panel.flag(world, item, "visible")),
+                "{}",
+                describe(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("device support is on and {Q} was added since the list was last read"),
+        |world, c, _| {
+            look(world)?;
+            add_device_tab(world)?;
+            add_device(world, "ios", &c[0], true);
+            world.dispatch("rightPanel.add", json!({"kind": "diff"}))?;
+            world.sync()
+        },
+    );
+    steps.step("device support is off", |world, _, _| {
+        fake_hub(world).host_status = "disabled".into();
+        announce(&mut world.mc);
+        world.sync()
+    });
+    steps.step(
+        "nothing is installed or started on the environment",
+        |world, _, _| {
+            let (lists, configures) = {
+                let hub = fake_hub(world);
+                (hub.lists.len(), hub.configures.len())
+            };
+            world.sync()?;
+            let hub = fake_hub(world);
+            expect!(
+                hub.configures.len() == configures && hub.lists.len() == lists,
+                "{}",
+                describe(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the thread has {Q} on iOS 26.0 open on the machine {Q}"),
+        |world, c, _| {
+            fake_hub(world).host_label.clone_from(&c[1]);
+            add_device(world, "ios", &c[0], true);
+            let device = device_named(fake_hub(world), &c[0])?;
+            open_session(&mut world.mc, &device, THREAD);
+            look(world)?;
+            let tab = tab_of(world, &c[0])?;
+            world.dispatch("rightPanel.activate", json!({"id": tab}))?;
+            world.sync()
+        },
+    );
+    steps.step(&format!("the tab's header reads {Q}"), |world, c, _| {
+        let words = c[0].clone();
+        world.wait_for_with(
+            move |w| text(&screen_of(w)["description"]) == words && device_panel_shows(w, &words),
+            describe_ref,
+        )
+    });
+
+    // --- Side by side in the centre -------------------------------------------
+    steps.step(
+        &format!("the user puts {Q} and {Q} side by side in the centre"),
+        |world, c, _| side_by_side(world, &c[0], &c[1]),
+    );
+    steps.step(
+        &format!("{Q} and {Q} both stream at once"),
+        |world, c, _| both_stream(world, &c[0], &c[1]),
+    );
+    steps.step(
+        &format!("{Q} and {Q} stream side by side in the centre"),
+        |world, c, _| {
+            side_by_side(world, &c[0], &c[1])?;
+            both_stream(world, &c[0], &c[1])
+        },
+    );
+    steps.step(
+        &format!("the user opens it side by side with {Q}"),
+        |world, c, _| {
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                |w| {
+                    panel
+                        .find(w, "deviceCompare")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|item| panel.flag(w, item, "visible"))
+                },
+                describe_ref,
+            )?;
+            panel.click(world, "deviceCompare")?;
+            let tab = tab_of(world, &c[0])?;
+            let entry = format!("deviceCompare-{tab}");
+            let name = c[0].clone();
+            let looked_for = entry.clone();
+            world.wait_for_with(
+                move |w| {
+                    panel.shows(w, &name).unwrap_or(false)
+                        && panel
+                            .find(w, &looked_for)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|item| panel.flag(w, item, "visible"))
+                },
+                describe_ref,
+            )?;
+            panel.click(world, &entry)?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("{Q} and {Q} show side by side in the centre"),
+        |world, c, _| {
+            let wanted = json!([tab_of(world, &c[0])?, tab_of(world, &c[1])?]);
+            world.wait_for_with(
+                move |w| {
+                    let state = w.state("panel");
+                    let stage = at(&state, "stage");
+                    text(&stage["layout"]) == "columns" && stage["panes"] == wanted
+                },
+                |w| show(&at(&w.state("panel"), "stage")),
+            )
+        },
+    );
+    steps.step(
+        &format!("the user shows only {Q} on the stage"),
+        |world, c, _| {
+            keep_streams(world)?;
+            let tab = tab_of(world, &c[0])?;
+            let pane = at(&world.state("panel"), "stage.panes")
+                .as_array()
+                .and_then(|panes| panes.iter().position(|p| text(p) == tab))
+                .unwrap_or(0);
+            world.dispatch("stage.focusPane", json!({"pane": pane}))?;
+            world.dispatch("stage.layout", json!({"layout": "single"}))?;
+            world.sync()
+        },
+    );
+    steps.step(&format!("the user closes the device {Q}"), |world, c, _| {
+        keep_streams(world)?;
+        let tab = tab_of(world, &c[0])?;
+        world.dispatch("rightPanel.close", json!({"id": tab}))?;
+        world.sync()
+    });
+    steps.step(
+        &format!("the user moves {Q} to the centre"),
+        |world, c, _| {
+            keep_streams(world)?;
+            let tab = tab_of(world, &c[0])?;
+            world.dispatch("rightPanel.dock", json!({"id": tab, "dock": "stage"}))?;
+            world.sync()?;
+            world.wait_for_with(
+                move |w| {
+                    at(&w.state("panel"), "stage.panes")
+                        .as_array()
+                        .is_some_and(|panes| panes.iter().any(|p| text(p) == tab))
+                },
+                |w| show(&at(&w.state("panel"), "stage")),
+            )
+        },
+    );
+    steps.step(&format!("{Q} streams nothing"), |world, c, _| {
+        let name = c[0].clone();
+        world.wait_for_with(
+            move |w| {
+                let status = stream_named(w, &name).0;
+                status.is_empty() || status == "idle"
+            },
+            describe_ref,
+        )?;
+        let asked = video_requests_of(world, &c[0])?;
+        world.sync()?;
+        expect!(
+            video_requests_of(world, &c[0])? == asked,
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+    steps.step(&format!("{Q} keeps its stream"), |world, c, _| {
+        world.sync()?;
+        let asked = video_requests_of(world, &c[0])?;
+        let kept = fake_hub(world)
+            .kept_counts
+            .get(&c[0])
+            .copied()
+            .unwrap_or_default();
+        expect!(
+            stream_named(world, &c[0]).0 == "streaming" && asked == kept,
+            "{} asked for video {asked} times, {kept} before; {}",
+            c[0],
+            describe(world)
+        );
+        Ok(())
+    });
+
+    // --- Watching: progress, an expired stream, the input connection ---------
+    steps.step(
+        &format!("the thread has the iOS Simulator {Q} opening"),
+        |world, c, _| {
+            add_device(world, "ios", &c[0], true);
+            fake_hub(world).shared.silent.store(true, Ordering::SeqCst);
+            world.mc.hold("device.open");
+            add_device_tab(world)?;
+            open_from_picker(world, &c[0])
+        },
+    );
+    steps.step(
+        &format!("the tab shows its progress as {Q}"),
+        |world, c, _| {
+            let words = c[0].clone();
+            world.wait_for_with(move |w| device_panel_shows(w, &words), describe_ref)
+        },
+    );
+    steps.step(
+        "the device is open and no picture has arrived yet",
+        |world, _, _| {
+            world.mc.answer_held();
+            world.sync()?;
+            world.wait_for_with(|w| stream_of(w).0 == "connecting", describe_ref)
+        },
+    );
+    steps.step(
+        "the MC refuses the stream because its access has expired",
+        |world, _, _| {
+            let hub = fake_hub(world);
+            hub.expired = true;
+            hub.accepted_ticket.clear();
+            // The stream in flight ends; its next request is the refused one.
+            for video in hub.videos.drain(..) {
+                let _ = video.shutdown(Shutdown::Both);
+            }
+            world.sync()
+        },
+    );
+    steps.step("the tab asks the MC for fresh access", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                w.mc.peek::<FakeHub>()
+                    .is_some_and(|hub| hub.ticket_requests > 0)
+            },
+            describe_ref,
+        )
+    });
+    steps.step(
+        "the tab asks the MC for fresh access again",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    w.mc.peek::<FakeHub>()
+                        .is_some_and(|hub| hub.ticket_requests > 1)
+                },
+                describe_ref,
+            )
+        },
+    );
+    steps.step("the MC is slow to give fresh access", |world, _, _| {
+        fake_hub(world).hold_tickets = true;
+        Ok(())
+    });
+    steps.step(
+        "the user reconnects before the MC answers",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    w.mc.peek::<FakeHub>()
+                        .is_some_and(|hub| hub.ticket_requests == 1)
+                },
+                describe_ref,
+            )?;
+            let stream = stream_object(world)?;
+            hal_c2_shell::device::stream::DeviceStream::update(
+                world.engine(),
+                stream,
+                hal_c2_shell::device::stream::Core::reconnect,
+            );
+            // Refused again, the new connection asks for its own ticket.
+            world.wait_for_with(
+                |w| {
+                    w.mc.peek::<FakeHub>()
+                        .is_some_and(|hub| hub.ticket_requests == 2)
+                },
+                describe_ref,
+            )
+        },
+    );
+    steps.step("the MC answers the earlier request", |world, _, _| {
+        if fake_hub(world).held_tickets.is_empty() {
+            fail!("a held ticket request");
+        }
+        let (respond, ticket) = fake_hub(world).held_tickets.remove(0);
+        answer_ticket(&mut world.mc, respond, &ticket);
+        // That the tab ignores it takes a moment to show.
+        world.sync()?;
+        world.sync()
+    });
+    steps.step("the tab does not use that answer", |world, _, _| {
+        for request in requests(world) {
+            expect!(!request.contains("wsTicket=fresh1"), "{request}");
+        }
+        expect!(stream_of(world).0 == "connecting", "{}", describe(world));
+        Ok(())
+    });
+    steps.step("the MC answers the later request", |world, _, _| {
+        fake_hub(world).hold_tickets = false;
+        if fake_hub(world).held_tickets.is_empty() {
+            fail!("a second held ticket request");
+        }
+        let (respond, ticket) = fake_hub(world).held_tickets.remove(0);
+        answer_ticket(&mut world.mc, respond, &ticket);
+        Ok(())
+    });
+    steps.step(
+        &format!("the tab {Q} shows the device's screen again"),
+        |world, c, _| wait_for_screen(world, &c[0]),
+    );
+    steps.step(
+        &format!("the device's input connection drops with the reason {Q}"),
+        |world, c, _| {
+            drop_input(world, &c[0]);
+            world.sync()?;
+            world.wait_for_with(|w| !stream_of(w).2, describe_ref)
+        },
+    );
+    steps.step(
+        &format!("the picture stays and the tab says {Q}"),
+        |world, c, _| {
+            let screen = screen_item(world)?;
+            let panel = device_panel(world)?;
+            let words = c[0].clone();
+            world.wait_for_with(
+                move |w| {
+                    device_panel_shows(w, &words)
+                        && panel.flag(w, screen, "hasFrame")
+                        && panel.flag(w, screen, "visible")
+                },
+                |w| {
+                    format!(
+                        "{}; the screen colour is {:?}",
+                        describe_ref(w),
+                        drawn_at_screen(w, screen)
+                    )
+                },
+            )?;
+            expect!(drawn_red(world, screen), "{}", describe_screen(world));
+            Ok(())
+        },
+    );
+    steps.step("the device's buttons cannot be used", |world, _, _| {
+        let panel = device_panel(world)?;
+        let home = panel.item(world, "deviceHome")?;
+        expect!(!panel.flag(world, home, "enabled"), "{}", describe(world));
+        Ok(())
+    });
+    steps.step("the input connection returns", |world, _, _| {
+        fake_hub(world).drop_inputs = false;
+        world.wait_for_with(|w| stream_of(w).2, describe_ref)
+    });
+    steps.step(
+        "the message goes away and the buttons work again",
+        |world, _, _| {
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                move |w| {
+                    let hidden = panel
+                        .find(w, "deviceInputStatus")
+                        .ok()
+                        .flatten()
+                        .is_none_or(|item| !panel.flag(w, item, "visible"));
+                    let enabled = panel
+                        .find(w, "deviceHome")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|item| panel.flag(w, item, "enabled"));
+                    hidden && enabled
+                },
+                describe_ref,
+            )
+        },
+    );
+    steps.step(
+        "the user makes the panel narrower than the device is wide",
+        |world, _, _| {
+            device_panel(world)?;
+            world.resize(220.0, 900.0)
+        },
+    );
+    steps.step(
+        "the device is shown smaller with its own proportions",
+        |world, _, _| {
+            let screen = screen_item(world)?;
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                move |w| {
+                    let aspect = stream_object(w)
+                        .ok()
+                        .and_then(|stream| {
+                            hal_c2_shell::device::stream::DeviceStream::read(
+                                w.engine(),
+                                stream,
+                                |c| c.aspect(),
+                            )
+                        })
+                        .unwrap_or(0.0);
+                    let (width, height) = item_size(&panel, w, screen);
+                    width > 0.0 && (width / height - aspect).abs() < 0.02 && width <= 224.0
+                },
+                |w| {
+                    format!(
+                        "{}; the screen colour is {:?}",
+                        describe_ref(w),
+                        drawn_at_screen(w, screen)
+                    )
+                },
+            )?;
+            expect!(drawn_red(world, screen), "{}", describe_screen(world));
+            Ok(())
+        },
+    );
+    steps.step(
+        "a touch at the middle of the shown screen is sent as the middle of the device",
+        |world, _, _| {
+            fake_hub(world).shared.seen().binary.clear();
+            tap(world, 0.5, 0.5)?;
+            world.wait_for_with(
+                |w| {
+                    let Some(hub) = w.mc.peek::<FakeHub>() else {
+                        return false;
+                    };
+                    let touches: Vec<Value> = hub
+                        .shared
+                        .seen()
+                        .binary
+                        .iter()
+                        .filter(|m| m.first() == Some(&0x03))
+                        .map(|m| serde_json::from_slice(&m[1..]).unwrap_or(Value::Null))
+                        .collect();
+                    touches.len() == 2 && near(&touches[0]["x"], 0.5) && near(&touches[0]["y"], 0.5)
+                },
+                |_| "the device to receive a touch at its middle".into(),
+            )
+        },
+    );
+
+    // --- Driving: the tab's buttons, where the keys go, a command chord ------
+    steps.step("the tab offers (?!to )(.+)", |world, c, _| {
+        // The Given opened the device; showing its tab is what offers buttons.
+        let session = fake_hub(world)
+            .sessions
+            .last()
+            .cloned()
+            .unwrap_or(Value::Null);
+        let name = fake_hub(world)
+            .devices
+            .iter()
+            .find(|d| d["id"] == session["deviceId"])
+            .map_or_else(String::new, |d| text(&d["name"]));
+        show_device_tab(world, &name)?;
+        let panel = device_panel(world)?;
+        let buttons = [
+            ("Home", "deviceHome"),
+            ("Back", "deviceBack"),
+            ("Recents", "deviceRecents"),
+            ("Rotate", "deviceRotate"),
+        ];
+        let wanted: Vec<String> = c[0]
+            .split(", ")
+            .flat_map(|part| part.split(" and "))
+            .map(str::to_owned)
+            .collect();
+        for (label, object) in buttons {
+            let item = panel.item(world, object)?;
+            expect!(
+                panel.flag(world, item, "visible") == wanted.iter().any(|w| w == label),
+                "{label} offered: {}, wanted among {}",
+                panel.flag(world, item, "visible"),
+                wanted.join(", ")
+            );
+        }
+        Ok(())
+    });
+    steps.step(
+        &format!("the user types {Q} in the tab's tools instead of on the screen"),
+        |world, c, _| {
+            fake_hub(world).settings = json!({"appearance": "light"});
+            // Wide enough that the tools sit beside the screen, not over it.
+            world.resize(900.0, 900.0)?;
+            open_tools(world)?;
+            fake_hub(world).shared.seen().binary.clear();
+            type_into(world, "toolsField-url", &c[0])
+        },
+    );
+    steps.step("the device receives no key", |world, _, _| {
+        world.sync()?;
+        expect!(
+            ios_input(world, 0x06).is_empty() && fake_hub(world).shared.seen().text.is_empty(),
+            "{}",
+            describe_input(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the user clicks the device's screen and types {Q}"),
+        |world, c, _| {
+            fake_hub(world).shared.seen().binary.clear();
+            tap(world, 0.5, 0.5)?;
+            fake_hub(world).shared.seen().binary.clear();
+            press(world, &c[0].chars().next().unwrap_or('a').to_string())
+        },
+    );
+    steps.step("the user clicked the device's screen", |world, _, _| {
+        watch(world, "iPhone 17")?;
+        tap(world, 0.5, 0.5)?;
+        fake_hub(world).shared.seen().binary.clear();
+        Ok(())
+    });
+    steps.step(
+        &format!("the user presses Command with {Q}"),
+        |world, c, _| {
+            let key = if c[0] == "K" { "meta+k" } else { "meta+r" };
+            press(world, key)?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the user holds Command with {Q}"),
+        |world, _c, _| {
+            let down = key_event("meta+r")?;
+            world.key(&down)?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the user presses Command with {Q} again"),
+        |world, _c, _| {
+            fake_hub(world).shared.seen().binary.clear();
+            press(world, "meta+r")?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the user holds Command with {Q} and lets go of Command first"),
+        |world, _c, _| {
+            let down = key_event("meta+r")?;
+            world.key(&down)?;
+            // Qt::Key_Meta letting go, as desktop-qt's step sends it.
+            world.key(&KeyEvent::release(0x0100_0022))?;
+            world.sync()
+        },
+    );
+    steps.step("the device has both keys up", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                let Some(hub) = w.mc.peek::<FakeHub>() else {
+                    return false;
+                };
+                let keys: Vec<Value> = hub
+                    .shared
+                    .seen()
+                    .binary
+                    .iter()
+                    .filter(|m| m.first() == Some(&0x06))
+                    .map(|m| serde_json::from_slice(&m[1..]).unwrap_or(Value::Null))
+                    .collect();
+                let downs: i64 = keys
+                    .iter()
+                    .map(|k| if k["type"] == "down" { 1 } else { -1 })
+                    .sum();
+                !keys.is_empty() && downs == 0
+            },
+            |_| "both keys up on the device".into(),
+        )
+    });
+    steps.step(
+        &format!("on a Mac the app keeps every Command chord but Command with {Q}"),
+        |world, _c, _| {
+            let panel = device_panel(world)?;
+            let stage = panel.item(world, "deviceStage")?;
+            let command =
+                brick_invoke(world, stage, "commandModifierOn", &[QmlValue::from("osx")])?;
+            // Qt::ControlModifier, what Qt calls Command on a Mac.
+            let control = match command {
+                QmlValue::Int(n) => i64::from(n),
+                QmlValue::Real(r) => r as i64,
+                _ => 0,
+            };
+            expect!(
+                control == 0x0400_0000,
+                "on a Mac Qt calls Command Control; it is {control}"
+            );
+            let owns = |world: &mut World, key: i32, modifiers: i64| -> Outcome<bool> {
+                let event = QmlValue::Map(Arc::new(vec![
+                    ("key".into(), QmlValue::Int(key)),
+                    ("modifiers".into(), QmlValue::Real(modifiers as f64)),
+                ]));
+                let got = brick_invoke(world, stage, "appOwns", &[event, command.clone()])?;
+                Ok(matches!(got, QmlValue::Bool(true)))
+            };
+            // Qt::Key_K, Qt::Key_R, Qt::Key_A; Control and Meta modifiers
+            // (Qt::ControlModifier 0x04000000, Qt::MetaModifier 0x10000000).
+            expect!(
+                owns(world, 0x4b, 0x0400_0000)?,
+                "Command+K went to the device"
+            );
+            expect!(
+                !owns(world, 0x52, 0x0400_0000)?,
+                "Command+R stayed with the app"
+            );
+            expect!(
+                owns(world, 0x52, 0x1000_0000)?,
+                "Control+R went to the device"
+            );
+            expect!(!owns(world, 0x41, 0)?, "a plain key stayed with the app");
+            Ok(())
+        },
+    );
+    steps.step("the app handles the shortcut", |world, _, _| {
+        // The stage turns the key away: it never reaches the device, so the
+        // window's own shortcut handling sees it.
+        world.sync()?;
+        expect!(
+            ios_input(world, 0x06).is_empty(),
+            "{}",
+            describe_input(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the device receives the key {Q} with Command"),
+        |world, c, _| {
+            let letter = c[0].chars().next().unwrap_or('a').to_ascii_lowercase();
+            let usage = 0x04 + (letter as i64 - 'a' as i64);
+            world.wait_for_with(
+                move |w| {
+                    let Some(hub) = w.mc.peek::<FakeHub>() else {
+                        return false;
+                    };
+                    let keys: Vec<Value> = hub
+                        .shared
+                        .seen()
+                        .binary
+                        .iter()
+                        .filter(|m| m.first() == Some(&0x06))
+                        .map(|m| serde_json::from_slice(&m[1..]).unwrap_or(Value::Null))
+                        .collect();
+                    let mut meta_down = false;
+                    let mut key_down = false;
+                    for key in &keys {
+                        if key["usage"].as_i64() == Some(0xe3) && key["type"] == "down" {
+                            meta_down = true;
+                        }
+                        if meta_down
+                            && key["usage"].as_i64() == Some(usage)
+                            && key["type"] == "down"
+                        {
+                            key_down = true;
+                        }
+                    }
+                    key_down
+                },
+                |_| "the device to receive the key with Command".into(),
+            )
+        },
+    );
+
+    // --- Closing and floating --------------------------------------------------
+    steps.step(
+        &format!("the MC cannot shut the device down because {Q}"),
+        |world, c, _| {
+            fake_hub(world).refuse_close.clone_from(&c[0]);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the right panel still has the {Q} tab"),
+        |world, c, _| {
+            let name = c[0].clone();
+            world.wait_for_with(move |w| tab_titles(w).contains(&name), describe_ref)
+        },
+    );
+    steps.step("the user floats the device over the chat", |world, _, _| {
+        let panel = device_panel(world)?;
+        panel.click(world, "deviceFloat")?;
+        world.sync()
+    });
+    steps.step("the device floats over the conversation", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                let Some(hub) = w.mc.peek::<FakeHub>() else {
+                    return false;
+                };
+                let Some(device) = hub.devices.iter().find(|d| text(&d["name"]) == "iPhone 17")
+                else {
+                    return false;
+                };
+                let tab = tab_id_of(HOST, &text(&device["id"]));
+                text(&w.state("panel")["floatingDevice"]) == tab
+                    && stream_named(w, "iPhone 17").0 == "streaming"
+            },
+            describe_ref,
+        )
+    });
+    steps.step("the user opens the right panel", |world, _, _| {
+        world.with::<RightPanel, _>(|p, engine| p.set_open(engine, true))?;
+        world.sync()
+    });
+    steps.step("the device no longer floats", |world, _, _| {
+        let state = world.state("panel");
+        expect!(
+            (state["floatingDevice"].is_null() || text(&state["floatingDevice"]).is_empty())
+                && world.with::<RightPanel, _>(|p, _| p.is_open())?,
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+    steps.step("the right panel closes", |world, _, _| {
+        expect!(
+            !world.with::<RightPanel, _>(|p, _| p.is_open())?,
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+
+    // --- The 3D body ------------------------------------------------------------
+    steps.step(
+        "the user shows the device in 3D and drags across it",
+        |world, _, _| {
+            show_in_3d(world)?;
+            let body = body_item(world).ok_or_else(|| Failure("no 3D body".into()))?;
+            let panel = device_panel(world)?;
+            let (fx, fy) = panel.at(world, body, 0.3, 0.5)?;
+            let (tx, ty) = panel.at(world, body, 0.75, 0.5)?;
+            world.pointer(|now| PointerEvent::press(fx, fy, now))?;
+            world.pointer(|now| PointerEvent::moved(tx, ty, Default::default(), now))?;
+            world.sync()?;
+            // The drag's turn is read before its release settles it.
+            let yaw = panel.read(world, body, "yaw");
+            fake_hub(world).dragged_yaw = match yaw {
+                QmlValue::Real(v) => v,
+                QmlValue::Int(v) => v as f64,
+                _ => 0.0,
+            };
+            world.pointer(|now| PointerEvent::release(tx, ty, now))?;
+            world.sync()
+        },
+    );
+    steps.step("the body turns with the drag", |world, _, _| {
+        let yaw = fake_hub(world).dragged_yaw;
+        expect!(yaw.abs() > 5.0, "the drag turned {yaw}");
+        Ok(())
+    });
+    steps.step(
+        "when the drag ends the body settles on the nearest view that faces its screen",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    let Some(panel) = w.peek_part::<Panel>().and_then(|p| p.0) else {
+                        return false;
+                    };
+                    body_item(w).is_some_and(|body| panel.flag(w, body, "settled"))
+                },
+                |w| describe_ref(w).to_string(),
+            )
+        },
+    );
+    steps.step("the 3D screen stands upright on its body", |world, _, _| {
+        let body = body_item(world).ok_or_else(|| Failure("no 3D body".into()))?;
+        let panel = device_panel(world)?;
+        let screen = panel
+            .find_in(world, body, "deviceBodyScreen")?
+            .ok_or_else(|| Failure("no screen on the body".into()))?;
+        world.wait_for_with(
+            move |w| panel.read(w, screen, "rotation") != QmlValue::Real(0.0),
+            describe_ref,
+        )?;
+        let rotation = panel.read(world, screen, "rotation");
+        let wanted = hal_c2_shell::device::stream::DeviceStream::read(
+            world.engine(),
+            stream_object(world)?,
+            |c| c.rotation(),
+        )
+        .unwrap_or(0);
+        let got = match rotation {
+            QmlValue::Real(v) => v as i32,
+            QmlValue::Int(v) => v as i32,
+            _ => 0,
+        };
+        expect!(got == wanted, "{}", describe(world));
+        let texture = match panel.read(world, screen, "parent") {
+            QmlValue::Object(parent) => parent,
+            _ => fail!("the screen has no parent"),
+        };
+        let (tw, th) = item_size(&panel, world, texture);
+        let (_sw, sh) = item_size(&panel, world, screen);
+        expect!(tw > th && (sh - tw).abs() < 0.5, "{}", describe(world));
+        Ok(())
+    });
+    steps.step(
+        "the picture is decoded for the flat view's size",
+        |world, _, _| {
+            let screen = screen_item(world)?;
+            let panel = device_panel(world)?;
+            world.wait_for_with(
+                move |w| {
+                    let limit = stream_object(w)
+                        .ok()
+                        .and_then(|stream| {
+                            hal_c2_shell::device::stream::DeviceStream::read(
+                                w.engine(),
+                                stream,
+                                |c| c.maximum_size(),
+                            )
+                        })
+                        .unwrap_or((0, 0));
+                    let (width, height) = item_size(&panel, w, screen);
+                    panel.flag(w, screen, "visible")
+                        && limit == (width.round() as u32, height.round() as u32)
+                },
+                |w| {
+                    let limit = stream_object(w)
+                        .ok()
+                        .and_then(|stream| {
+                            hal_c2_shell::device::stream::DeviceStream::read(
+                                w.engine(),
+                                stream,
+                                |c| c.maximum_size(),
+                            )
+                        })
+                        .unwrap_or((0, 0));
+                    let (width, height) = item_size(&panel, w, screen);
+                    format!(
+                        "a limit of {}x{} for a screen of {width}x{height}",
+                        limit.0, limit.1
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the user shows the device in 3D", |world, _, _| {
+        show_in_3d(world)
+    });
+    steps.step("the device has no 3D model", |world, _, _| look(world));
+    steps.step("the 3D model cannot be downloaded", |world, _, _| {
+        show_in_3d(world)?;
+        let body = body_item(world).ok_or_else(|| Failure("no 3D body".into()))?;
+        device_panel(world)?.write(
+            world,
+            body,
+            "modelOverride",
+            QmlValue::from("models/no-such-model.glb"),
+        )
+    });
+    steps.step("the 3D model file is not a valid model", |world, _, _| {
+        let path = world.home_dir().join("hal-c2-not-a-model.glb");
+        std::fs::write(&path, "this is not a glTF model").map_err(|e| Failure(e.to_string()))?;
+        show_in_3d(world)?;
+        let body = body_item(world).ok_or_else(|| Failure("no 3D body".into()))?;
+        device_panel(world)?.write(
+            world,
+            body,
+            "modelOverride",
+            QmlValue::from(format!("file://{}", path.display()).as_str()),
+        )
+    });
+    steps.step(
+        "a plain body of the device's family is shown instead of an error",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    let Some(panel) = w.peek_part::<Panel>().and_then(|p| p.0) else {
+                        return false;
+                    };
+                    body_item(w).is_some_and(|body| panel.flag(w, body, "plain"))
+                        && stream_of(w).0 != "error"
+                },
+                |w| describe_ref(w).to_string(),
+            )
+        },
+    );
+    steps.step("the device's screen is still live on it", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                stream_of(w).0 == "streaming"
+                    && w.peek_part::<Panel>()
+                        .and_then(|p| p.0)
+                        .is_some_and(|panel| {
+                            panel
+                                .find(w, "deviceScreen")
+                                .ok()
+                                .flatten()
+                                .is_some_and(|screen| panel.flag(w, screen, "hasFrame"))
+                        })
+            },
+            |w| describe_ref(w).to_string(),
+        )
+    });
+    for (words, in3d, attached) in [
+        ("in 3D with the Magic Keyboard attached", true, true),
+        (
+            "in the flat view with the Magic Keyboard attached",
+            false,
+            true,
+        ),
+        ("in 3D with no keyboard attached", true, false),
+        ("in portrait with no keyboard attached", false, false),
+    ] {
+        steps.step(
+            &format!("the user is viewing the iOS Simulator \"iPad Pro 13-inch\" {words}"),
+            move |world, _, _| viewing_ipad(world, in3d, attached),
+        );
+    }
+    steps.step("the user switches to the flat view", |world, _, _| {
+        device_panel(world)?.click(world, "device3dToggle")?;
+        world.sync()
+    });
+    steps.step("the user switches to the 3D view", |world, _, _| {
+        show_in_3d(world)
+    });
+    steps.step("the user attaches the Magic Keyboard", |world, _, _| {
+        device_panel(world)?.click(world, "deviceKeyboardToggle")?;
+        world.sync()
+    });
+    steps.step("the user detaches the Magic Keyboard", |world, _, _| {
+        device_panel(world)?.click(world, "deviceKeyboardToggle")?;
+        world.sync()
+    });
+    steps.step("the live screen fills the panel", |world, _, _| {
+        let screen = screen_item(world)?;
+        let panel = device_panel(world)?;
+        world.wait_for_with(
+            move |w| panel.flag(w, screen, "visible") && drawn_red(w, screen),
+            |w| {
+                format!(
+                    "{}; the screen colour is {:?}",
+                    describe_ref(w),
+                    drawn_at_screen(w, screen)
+                )
+            },
+        )
+    });
+    steps.step("the Magic Keyboard is not shown", |world, _, _| {
+        let panel = device_panel(world)?;
+        let showing = panel
+            .root(world)
+            .is_some_and(|root| panel.flag(world, root, "show3d"));
+        expect!(
+            !showing || body_item(world).is_none(),
+            "{}",
+            describe(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        "the Magic Keyboard is shown attached to the iPad",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    let Some(panel) = w.peek_part::<Panel>().and_then(|p| p.0) else {
+                        return false;
+                    };
+                    let Some(body) = body_item(w) else {
+                        return false;
+                    };
+                    panel
+                        .find_in(w, body, "deviceMagicKeyboard")
+                        .ok()
+                        .flatten()
+                        .is_some_and(|marker| panel.flag(w, marker, "visible"))
+                        && panel.flag(w, body, "keyboardAttached")
+                },
+                |w| describe_ref(w).to_string(),
+            )
+        },
+    );
+    steps.step("the Magic Keyboard is no longer shown", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                let Some(panel) = w.peek_part::<Panel>().and_then(|p| p.0) else {
+                    return false;
+                };
+                let Some(body) = body_item(w) else {
+                    return false;
+                };
+                panel
+                    .find_in(w, body, "deviceMagicKeyboard")
+                    .ok()
+                    .flatten()
+                    .is_some_and(|marker| !panel.flag(w, marker, "visible"))
+                    && !panel.flag(w, body, "keyboardAttached")
+            },
+            |w| describe_ref(w).to_string(),
+        )
+    });
+    steps.step("the device is asked to turn to landscape", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                let Some(hub) = w.mc.peek::<FakeHub>() else {
+                    return false;
+                };
+                hub.shared
+                    .seen()
+                    .binary
+                    .iter()
+                    .filter(|m| m.first() == Some(&0x07))
+                    .map(|m| serde_json::from_slice::<Value>(&m[1..]).unwrap_or(Value::Null))
+                    .any(|input| text(&input["orientation"]).starts_with("landscape"))
+            },
+            |_| "the device to be asked to turn to landscape".into(),
+        )
+    });
+}
+
+/// An iPad open and watched, in 3D or flat, with its keyboard or not.
+fn viewing_ipad(world: &mut World, in3d: bool, attached: bool) -> Outcome {
+    fake_hub(world).foreground_app = json!({"id": "com.example.shop"});
+    add_device(world, "ios", "iPad Pro 13-inch", true);
+    let device = device_named(fake_hub(world), "iPad Pro 13-inch")?;
+    open_session(&mut world.mc, &device, THREAD);
+    show_device_tab(world, "iPad Pro 13-inch")?;
+    wait_for_screen(world, "iPad Pro 13-inch")?;
+    // Input must be live before an attach can ask the device to turn.
+    world.wait_for_with(|w| stream_of(w).2, describe_ref)?;
+    if attached {
+        let tab = shown_tab(world)?;
+        world
+            .engine()
+            .invoke_by_name(tab, "toggleKeyboard", &[])
+            .map_err(|e| Failure(format!("toggleKeyboard: {e:?}")))?;
+    }
+    if in3d {
+        show_in_3d(world)?;
+    }
+    world.sync()
+}
+
+/// Runs a QML function on a brick's item, for the stage's own key policy.
+fn brick_invoke(
+    world: &mut World,
+    item: ObjectId,
+    method: &str,
+    args: &[QmlValue],
+) -> Outcome<QmlValue> {
+    world
+        .engine()
+        .invoke_by_name(item, method, args)
+        .map_err(|e| Failure(format!("{method}: {e:?}")))
+}
+
+/// An item's own width and height.
+fn item_size(panel: &Brick, world: &World, item: ObjectId) -> (f64, f64) {
+    let number = |name: &str| match panel.read(world, item, name) {
+        QmlValue::Int(n) => f64::from(n),
+        QmlValue::Real(r) => r,
+        _ => 0.0,
+    };
+    (number("width"), number("height"))
 }
 
 /// "the user chooses {Q}" in the open Tools drawer.

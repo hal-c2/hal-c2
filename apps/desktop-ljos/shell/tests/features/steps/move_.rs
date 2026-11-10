@@ -799,6 +799,10 @@ pub fn register(steps: &mut Steps) {
         if super::files_identity::check_icon_image_offered(world, &c[0], true)? {
             return Ok(());
         }
+        // So are the Device tab's simulators and emulators (device.rs).
+        if super::device::device_offered(world, &c[0])? {
+            return Ok(());
+        }
         let entry = item(world, &format!("machine:{}", c[0]));
         let listed = choice_offered(world, &c[0]);
         expect!(

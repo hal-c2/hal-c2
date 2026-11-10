@@ -135,6 +135,12 @@ pub enum Effect {
         ms: i32,
     },
     StopTimer(Timer),
+    /// Mints a fresh websocket ticket (POST /api/auth/websocket-ticket) and
+    /// calls [`Core::on_ticket`] with this epoch: a refused stream's access
+    /// may simply have expired.
+    MintTicket {
+        epoch: u64,
+    },
 }
 
 /// Which properties changed.
@@ -174,7 +180,19 @@ pub struct Core {
     decode_failures: u32,
     status: String,
     detail: String,
+    /// The fresh ticket a refusal was answered with, sent as `wsTicket`.
+    ticket: String,
+    /// This run already refreshed its access once (a second refusal is an
+    /// error); a picture clears it, tickets being short-lived.
+    refreshed: bool,
+    /// Grows with every target change and reconnect: a ticket minted for
+    /// an older epoch is not this stream's.
+    access_epoch: u64,
+    /// The key held in a Command chord on iOS, or -1.
+    chord_usage: i32,
     input_connected: bool,
+    /// Why input is not connected (the socket's close reason).
+    input_detail: String,
     /// The device's screen: iOS as its helper reports it, Android as its
     /// pictures come.
     width: i32,
@@ -336,7 +354,12 @@ impl Core {
             decode_failures: 0,
             status: "idle".into(),
             detail: String::new(),
+            ticket: String::new(),
+            refreshed: false,
+            access_epoch: 0,
+            chord_usage: -1,
             input_connected: false,
+            input_detail: String::new(),
             width: 0,
             height: 0,
             orientation: "portrait".into(),
@@ -353,6 +376,10 @@ impl Core {
     }
     pub fn input_connected(&self) -> bool {
         self.input_connected
+    }
+
+    pub fn input_detail(&self) -> &str {
+        &self.input_detail
     }
     pub fn platform(&self) -> &str {
         &self.platform
@@ -384,6 +411,11 @@ impl Core {
             .filter(|t| self.timers.contains_key(t))
             .collect()
     }
+    /// The largest picture the decoder converts to (the view's size).
+    pub fn maximum_size(&self) -> (u32, u32) {
+        self.decoder.maximum_size()
+    }
+
     pub fn decoder_mut(&mut self) -> &mut dyn Decode {
         &mut *self.decoder
     }
@@ -475,7 +507,14 @@ impl Core {
         }
     }
 
-    fn open_conn(&mut self, conn: Conn, path: String, query: String, socket: bool) {
+    fn open_conn(&mut self, conn: Conn, path: String, mut query: String, socket: bool) {
+        if !self.ticket.is_empty() {
+            if !query.is_empty() {
+                query.push('&');
+            }
+            query.push_str("wsTicket=");
+            query.push_str(&percent(&self.ticket));
+        }
         let id = self.id();
         match conn {
             Conn::Video => self.video = Some(id),
@@ -498,6 +537,9 @@ impl Core {
             return;
         }
         self.stop("idle", "");
+        self.access_epoch += 1;
+        self.ticket.clear();
+        self.refreshed = false;
         self.hub_base = hub_base.into();
         self.platform = platform.into();
         self.device = device.into();
@@ -541,7 +583,10 @@ impl Core {
 
     /// Starts over after an error.
     pub fn reconnect(&mut self) {
+        self.access_epoch += 1;
         self.stop("idle", "");
+        self.ticket.clear();
+        self.refreshed = false;
         self.start();
     }
 
@@ -551,6 +596,12 @@ impl Core {
         }
         if !self.active || self.hub_base.is_empty() || self.device.is_empty() {
             self.set_status("idle", "");
+            return;
+        }
+        // Without FFmpeg there is no picture to show: say what to install
+        // rather than connect. reconnect() looks again.
+        if let Some(why) = self.decoder.unavailable() {
+            self.set_status("error", &why);
             return;
         }
         self.running = true;
@@ -566,6 +617,7 @@ impl Core {
 
     /// Closes every connection, leaving `status`.
     fn stop(&mut self, status: &str, detail: &str) {
+        self.release_chord();
         self.running = false;
         for timer in TIMERS {
             self.stop_timer(timer);
@@ -590,8 +642,14 @@ impl Core {
     }
 
     fn set_input(&mut self, connected: bool) {
-        if connected != self.input_connected {
+        self.set_input_detail(connected, "");
+    }
+
+    fn set_input_detail(&mut self, connected: bool, detail: &str) {
+        let next = if connected { "" } else { detail };
+        if connected != self.input_connected || next != self.input_detail {
             self.input_connected = connected;
+            self.input_detail = next.into();
             self.note(Note::Input);
         }
     }
@@ -613,7 +671,34 @@ impl Core {
     }
 
     fn unauthorized(&mut self) {
+        if self.running && !self.refreshed {
+            return self.refresh_access();
+        }
         self.fail(REFUSED);
+    }
+
+    // The proxy refused the stream once: its access may simply have
+    // expired, so mint a fresh ticket and start over with it. A second
+    // refusal is an error.
+    fn refresh_access(&mut self) {
+        self.refreshed = true;
+        self.stop("idle", "");
+        self.set_status("connecting", "");
+        let epoch = self.access_epoch;
+        self.effects.push(Effect::MintTicket { epoch });
+    }
+
+    /// The ticket [`Effect::MintTicket`] asked for (None: minting failed).
+    pub fn on_ticket(&mut self, epoch: u64, ticket: Option<String>) {
+        // Asked for another device, or before a reconnect.
+        if epoch != self.access_epoch {
+            return;
+        }
+        let Some(ticket) = ticket.filter(|t| !t.is_empty()) else {
+            return self.stop("error", REFUSED);
+        };
+        self.ticket = ticket;
+        self.start();
     }
 
     fn retry(&mut self, timer: Timer) {
@@ -664,6 +749,9 @@ impl Core {
             return;
         }
         self.streaming = true;
+        // This access worked; tickets are short-lived, so a later refusal
+        // may again be only an expired one.
+        self.refreshed = false;
         self.stop_timer(Timer::FirstFrame);
         self.set_status("streaming", "");
     }
@@ -884,7 +972,15 @@ impl Core {
             StreamEvent::Data(_) | StreamEvent::Text(_) => {}
             StreamEvent::Ended(end) => {
                 self.socket = None;
-                self.set_input(false);
+                // A chord held when the socket went has no key to release
+                // on a new one.
+                self.chord_usage = -1;
+                let reason = if end.reason.is_empty() {
+                    "socket closed"
+                } else {
+                    end.reason.as_str()
+                };
+                self.set_input_detail(false, reason);
                 if refused(&end) {
                     return self.unauthorized();
                 }
@@ -928,8 +1024,14 @@ impl Core {
             StreamEvent::Data(_) => {}
             StreamEvent::Ended(end) => {
                 self.socket = None;
+                self.chord_usage = -1;
                 self.decoder.reset(None);
-                self.set_input(false);
+                let reason = if end.reason.is_empty() {
+                    "socket closed"
+                } else {
+                    end.reason.as_str()
+                };
+                self.set_input_detail(false, reason);
                 if refused(&end) {
                     return self.unauthorized();
                 }
@@ -1023,11 +1125,26 @@ impl Core {
     /// whether ctrl or meta is held.
     pub fn key(&mut self, qt_key: i32, text: &str, command: bool, down: bool) {
         if self.ios() {
-            if let Some(usage) = hid_usage(qt_key) {
-                let kind = if down { "down" } else { "up" };
-                let message = json!({"type": kind, "usage": usage});
-                self.send(tagged(IOS_KEY, message), true);
+            let Some(usage) = hid_usage(qt_key) else {
+                return;
+            };
+            // A command chord (the one shortcut the panel passes through,
+            // Cmd+R) holds the GUI modifier around the key, as a hardware
+            // keyboard would. The key's release may come after the
+            // modifier's, so it ends the chord whatever modifiers it carries.
+            if !down && usage == self.chord_usage {
+                return self.release_chord();
             }
+            if command && usage < 0xe0 && down && self.chord_usage < 0 {
+                self.chord_usage = usage;
+                self.send(
+                    tagged(IOS_KEY, json!({"type": "down", "usage": 0xe3})),
+                    true,
+                );
+            }
+            let kind = if down { "down" } else { "up" };
+            let message = json!({"type": kind, "usage": usage});
+            self.send(tagged(IOS_KEY, message), true);
             return;
         }
         if !down {
@@ -1048,6 +1165,16 @@ impl Core {
             json!({"text": text, "type": "text"})
         };
         self.send(message.to_string().into_bytes(), false);
+    }
+
+    /// Lets go of a Command chord still held on the device, if any.
+    pub fn release_chord(&mut self) {
+        if self.chord_usage < 0 {
+            return;
+        }
+        let usage = std::mem::replace(&mut self.chord_usage, -1);
+        self.send(tagged(IOS_KEY, json!({"type": "up", "usage": usage})), true);
+        self.send(tagged(IOS_KEY, json!({"type": "up", "usage": 0xe3})), true);
     }
 
     /// home, back, recents or power (iOS: home, recents as the app
@@ -1137,6 +1264,9 @@ pub struct DeviceStream {
     detail: Atom,
     #[qml(readonly, notify)]
     input_connected: bool,
+    /// Why input is not connected (the socket's close reason).
+    #[qml(readonly, notify)]
+    input_detail: Atom,
     #[qml(readonly, notify)]
     platform: Atom,
     /// portrait, landscape_left, portrait_upside_down or landscape_right.
@@ -1192,6 +1322,7 @@ impl DeviceStream {
             status: Atom::new("idle"),
             detail: Atom::new(""),
             input_connected: false,
+            input_detail: Atom::new(""),
             platform: Atom::new(""),
             orientation: Atom::new("portrait"),
             rotation: 0,
@@ -1319,12 +1450,13 @@ fn tell(engine: &Engine, obj: ObjectId, inner: &Inner, notes: &[Note]) {
     if notes.is_empty() {
         return;
     }
-    let (status, detail, input, platform, orientation, rotation, aspect) = {
+    let (status, detail, input, input_detail, platform, orientation, rotation, aspect) = {
         let c = inner.core.borrow();
         (
             Atom::new(c.status()),
             Atom::new(c.detail()),
             c.input_connected(),
+            Atom::new(c.input_detail()),
             Atom::new(c.platform()),
             Atom::new(c.orientation()),
             c.rotation(),
@@ -1343,7 +1475,11 @@ fn tell(engine: &Engine, obj: ObjectId, inner: &Inner, notes: &[Note]) {
                 Note::Status => engine
                     .set_internal(obj, DeviceStream::STATUS, status.clone())
                     .and_then(|()| engine.set_internal(obj, DeviceStream::DETAIL, detail.clone())),
-                Note::Input => engine.set_internal(obj, DeviceStream::INPUT_CONNECTED, input),
+                Note::Input => engine
+                    .set_internal(obj, DeviceStream::INPUT_CONNECTED, input)
+                    .and_then(|()| {
+                        engine.set_internal(obj, DeviceStream::INPUT_DETAIL, input_detail.clone())
+                    }),
                 Note::Screen => engine
                     .set_internal(obj, DeviceStream::PLATFORM, platform.clone())
                     .and_then(|()| {
@@ -1442,6 +1578,18 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
                 engine.destroy(old);
             }
         }
+        Effect::MintTicket { epoch } => {
+            inner.mc.post(
+                "/api/auth/websocket-ticket",
+                json!({}),
+                Box::new(move |engine, result| {
+                    let ticket = result
+                        .ok()
+                        .and_then(|v| v.get("ticket").and_then(Json::as_str).map(str::to_owned));
+                    DeviceStream::update(engine, obj, |c| c.on_ticket(epoch, ticket));
+                }),
+            );
+        }
     }
 }
 
@@ -1504,6 +1652,12 @@ impl DeviceStream {
     #[qml(invokable)]
     fn touch(cx: &Cx, phase: Atom, x: f64, y: f64) {
         DeviceStream::update(cx.engine, cx.this, |c| c.touch(&phase, x, y));
+    }
+
+    /// Lets go of a Command chord still held on the device, if any.
+    #[qml(invokable)]
+    fn release_chord(cx: &Cx) {
+        DeviceStream::update(cx.engine, cx.this, Core::release_chord);
     }
 
     /// A key (`Qt.Key`) going down or up, with the text it types and

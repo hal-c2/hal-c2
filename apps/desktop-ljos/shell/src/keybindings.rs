@@ -373,6 +373,19 @@ static COMMANDS: LazyLock<Vec<String>> = LazyLock::new(|| {
         ]
         .map(str::to_owned),
     );
+    list.extend(
+        [
+            "stage.moveTab",
+            "stage.toggleFocus",
+            "stage.nextPane",
+            "stage.dismiss",
+            "stage.layout.single",
+            "stage.layout.columns",
+            "stage.layout.rows",
+            "stage.layout.grid",
+        ]
+        .map(str::to_owned),
+    );
     list.extend((1..=9).map(|n| format!("thread.jump.{n}")));
     list
 });
@@ -419,6 +432,8 @@ static DEFAULTS: LazyLock<Vec<Rule>> = LazyLock::new(|| {
         ("mod+alt+[", "tabs.previous", not_terminal),
         ("mod+j", "terminal.toggle", ""),
         ("mod+alt+b", "rightPanel.toggle", ""),
+        ("mod+alt+s", "stage.moveTab", not_terminal),
+        ("mod+alt+f", "stage.toggleFocus", not_terminal),
         ("mod+d", "terminal.split", terminal),
         ("mod+shift+d", "terminal.splitVertical", terminal),
         ("mod+n", "terminal.new", terminal),
@@ -834,6 +849,15 @@ pub fn command_label(command: &str) -> String {
         "thread.copyReference" => "Pull Request: Copy Link or Thread ID",
         "space.open" => "Space: Open",
         "space.agent.focus" => "Space: Ask an Agent About the Page",
+        "stage.moveTab" => "Stage: Move Tab to Centre or Side Panel",
+        "stage.toggleFocus" => "Stage: Hide or Show the Timeline",
+        "stage.nextPane" => "Stage: Focus Next Pane",
+        "stage.dismiss" => "Stage: Move All Tabs to Side Panel",
+        "stage.layout.single" => "Stage: Single Pane",
+        "stage.layout.columns" => "Stage: Panes Side by Side",
+        "stage.layout.rows" => "Stage: Panes Stacked",
+        "stage.layout.grid" => "Stage: Four Panes",
+        "rightPanel.toggleMaximized" => "Right Panel: Open in Centre",
         _ => "",
     };
     if !special.is_empty() {

@@ -1,7 +1,7 @@
 //! `panel`, desktop-qt's RightPanelController: the right panel beside a
 //! thread, each thread's own tabs (Diff, Files, Agents, Terminal, Pull
 //! requests, Previews, a pull request under review, a device), which one
-//! shows, whether it is open or maximized, and the thread details column.
+//! shows, whether it is open, and the thread details column.
 //!
 //! Each thread keeps its panel: going to another thread shows that one's,
 //! and the last [`STORED_THREADS`] shown are kept in its window's
@@ -13,8 +13,12 @@
 //! so only that one asks the MC for anything.
 //!
 //! What it publishes (`panel`): null off a thread, else
-//! `{threadKey, isOpen, transitionMs, activeId, tabs: [{id, kind, title}],
-//! width, maximized, detailsOpen, details, canAdd, addReasons}`.
+//! `{threadKey, isOpen, transitionMs, activeId, floatingDevice,
+//! tabs: [{id, kind, title, dock}], width, stage, shownTabs, detailsOpen,
+//! details, canAdd, addReasons}`.
+
+#[path = "panel_stage.rs"]
+pub mod panel_stage;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -52,6 +56,8 @@ use crate::thread_view::pull_requests::{self, ThreadPullRequests};
 use crate::thread_view::thread_diff::ThreadDiff;
 use crate::thread_view::time::Clock;
 use crate::thread_view::workspace_files::WorkspaceFiles;
+
+use panel_stage::PanelStage;
 
 /// The kinds of tab the panel shows; a terminal, review or device tab's id
 /// carries what it shows after its kind.
@@ -178,32 +184,62 @@ fn known(tab: &str) -> bool {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Panel {
     open: bool,
+    // In the order they were added.
     tabs: Vec<String>,
+    // A panel tab (not on the stage), or "".
     active: String,
-    maximized: bool,
     details: bool,
     /// The device tabs the user closed: not opened again on their own.
     dismissed: Vec<String>,
+    /// Names the user gave tabs of their own, by tab id.
+    titles: HashMap<String, String>,
+    /// The device tab floating over the chat, while the panel is closed.
+    floating: String,
+    /// The tabs docked in the centre.
+    stage: PanelStage,
+}
+
+/// The tabs docked in the side panel (not on the stage), by id.
+fn panel_tabs(state: &Panel) -> Vec<String> {
+    state
+        .tabs
+        .iter()
+        .filter(|id| !state.stage.contains(id))
+        .cloned()
+        .collect()
+}
+
+/// After the panel's active tab left it (closed, or moved to the stage):
+/// the next docked tab shows in its place.
+fn next_active(state: &mut Panel, before: &[String]) {
+    let after = panel_tabs(state);
+    let at = before.iter().position(|t| *t == state.active).unwrap_or(0);
+    state.active = match after.len() {
+        0 => String::new(),
+        n => after[at.min(n - 1)].clone(),
+    };
+    if after.is_empty() {
+        state.open = false;
+    }
 }
 
 /// Takes `id` out of `state`; the next tab shows in its place.
 fn remove_tab(state: &mut Panel, id: &str) -> bool {
+    let before = panel_tabs(state);
     let Some(at) = state.tabs.iter().position(|t| t == id) else {
         return false;
     };
     state.tabs.remove(at);
+    state.titles.remove(id);
+    if state.floating == id {
+        state.floating.clear();
+    }
     if id.starts_with(DEVICE_TAB) && !state.dismissed.iter().any(|d| d == id) {
         state.dismissed.push(id.to_owned());
     }
+    state.stage.remove(id);
     if state.active == id {
-        state.active = match state.tabs.len() {
-            0 => String::new(),
-            n => state.tabs[at.min(n - 1)].clone(),
-        };
-        if state.tabs.is_empty() {
-            state.open = false;
-            state.maximized = false;
-        }
+        next_active(state, &before);
     }
     true
 }
@@ -447,6 +483,11 @@ impl Controller for RightPanel {
             ThreadDevices::on_names_changed(engine, devices, move |e| {
                 later(e, &hook, |p, e| p.publish(e));
             });
+            let hook = me.clone();
+            ThreadDevices::on_floated(engine, devices, move |e, tab| {
+                let tab = tab.to_owned();
+                later(e, &hook, move |p, e| p.float_device(e, &tab));
+            });
         }
         if let Some(obj) = pull_requests {
             // The add menu and the palette follow the linked pull requests,
@@ -575,6 +616,8 @@ impl Controller for RightPanel {
         match action {
             "rightPanel.toggle" => self.toggle(engine),
             "link.menu" => self.link_menu(engine, payload),
+            "rightPanel.rename" => self.rename_tab(engine, &field("id"), &field("title")),
+            "rightPanel.unfloat" => self.unfloat(engine),
             "rightPanel.activate" => self.show_tab(engine, &field("id")),
             "rightPanel.close" => self.close_tab(engine, &field("id")),
             "rightPanel.add" => self.add_tab(engine, &field("kind")),
@@ -583,6 +626,41 @@ impl Controller for RightPanel {
                 None => self.reset_width(engine),
             },
             "rightPanel.toggleMaximized" => self.toggle_maximized(engine),
+            "rightPanel.dock" => {
+                let id = field("id");
+                if field("dock") == "panel" {
+                    self.move_to_panel(engine, &id);
+                } else {
+                    // `focus`: with the timeline put away (Open in centre).
+                    if self.on_thread
+                        && payload
+                            .get("focus")
+                            .and_then(Json::as_bool)
+                            .unwrap_or(false)
+                        && self.panel().tabs.contains(&id)
+                    {
+                        self.panel().stage.focus = true;
+                    }
+                    let pane = int(payload.get("pane")).unwrap_or(-1) as i32;
+                    let zone = payload
+                        .get("zone")
+                        .and_then(Json::as_str)
+                        .unwrap_or("center")
+                        .to_owned();
+                    self.move_to_stage(engine, &id, pane, &zone);
+                }
+            }
+            "stage.sideBySide" => self.side_by_side(engine, &field("id"), &field("with")),
+            "stage.show" => self.show_tab(engine, &field("id")),
+            "stage.layout" => self.set_stage_layout(engine, &field("layout")),
+            "stage.focusPane" => {
+                self.focus_pane(engine, int(payload.get("pane")).unwrap_or(0) as i32)
+            }
+            "stage.toggleFocus" => self.toggle_focus(engine),
+            "stage.resize" => {
+                self.set_chat_width(engine, int(payload.get("width")).unwrap_or(0) as i32)
+            }
+            "stage.dismiss" => self.dismiss_stage(engine),
             "threadPanel.toggle" => self.toggle_details(engine),
             "rightPanel.review" => self.review_pull_request(engine, &field("key")),
             "rightPanel.linkPullRequest" => {
@@ -698,8 +776,23 @@ impl RightPanel {
         self.current().tabs
     }
 
-    pub fn is_maximized(&self) -> bool {
-        self.is_open() && self.current().maximized
+    /// The shown thread's stage.
+    pub fn stage(&self) -> PanelStage {
+        self.current().stage
+    }
+
+    /// Every tab showing, in the panel or on the stage (the stage's focused
+    /// pane first).
+    pub fn shown_tabs(&self) -> Vec<String> {
+        if !self.on_thread {
+            return Vec::new();
+        }
+        let state = self.current();
+        let mut ids = state.stage.shown();
+        if state.open && !state.active.is_empty() {
+            ids.push(state.active.clone());
+        }
+        ids
     }
 
     pub fn details_open(&self) -> bool {
@@ -723,20 +816,48 @@ impl RightPanel {
         // mod+w closes the innermost thing: the active tab, else the window.
         labelled("rightPanel.close", |p, e| {
             let state = p.current();
-            if p.on_thread && state.open && !state.active.is_empty() {
+            if p.on_thread
+                && ((state.open && !state.active.is_empty())
+                    || !state.stage.focused_tab().is_empty())
+            {
                 p.close_tab(e, "");
             } else {
                 p.bridge.window_command(e, "close");
             }
         });
         labelled("rightPanel.toggleMaximized", Self::toggle_maximized);
+        // The stage: palette entries, and keys for moving a tab and the timeline.
+        labelled("stage.moveTab", Self::move_tab);
+        labelled("stage.toggleFocus", Self::toggle_focus);
+        labelled("stage.nextPane", |p, e| {
+            if p.on_thread && !p.current().stage.is_empty() {
+                let stage = p.current().stage;
+                let next = (stage.focused + 1) % stage.panes.len() as i32;
+                p.focus_pane(e, next);
+            }
+        });
+        labelled("stage.dismiss", Self::dismiss_stage);
+        for layout in panel_stage::LAYOUTS {
+            let me = self.me.clone();
+            let layout = (*layout).to_owned();
+            commands.add(
+                engine,
+                &format!("stage.layout.{layout}"),
+                &command_label(&format!("stage.layout.{layout}")),
+                move |e| {
+                    let layout = layout.clone();
+                    later(e, &me, move |p, e| p.set_stage_layout(e, &layout));
+                },
+            );
+        }
         labelled("threadPanel.toggle", Self::toggle_details);
         labelled("diff.toggle", Self::toggle_diff);
         labelled("preview.toggle", Self::toggle_previews);
         labelled("pullRequest.copyNumber", |p, e| {
             if let Some(review) = p.review
-                && p.is_open()
-                && kind_of(&p.active_tab()) == "pull-request"
+                && p.shown_tabs()
+                    .iter()
+                    .any(|id| kind_of(id) == "pull-request")
             {
                 PullRequestReview::update(e, review, Review::copy_number);
             }
@@ -1007,18 +1128,25 @@ impl RightPanel {
         }
         let state = self.panel();
         if open {
-            if state.tabs.is_empty() {
-                state.tabs.push("diff".into());
-                state.active = "diff".into();
-            } else if !state.tabs.contains(&state.active) {
-                state.active = state.tabs[0].clone();
+            let ids = panel_tabs(state);
+            if ids.is_empty() {
+                // The Diff tab, or the first of these the stage does not have.
+                for kind in ["diff", "agents", "previews"] {
+                    if state.tabs.iter().any(|t| t == kind) {
+                        continue;
+                    }
+                    state.tabs.push(kind.into());
+                    state.active = kind.into();
+                    break;
+                }
+                if state.active.is_empty() {
+                    return;
+                }
+            } else if !ids.contains(&state.active) {
+                state.active = ids[0].clone();
             }
         }
         state.open = open;
-        // A closed panel comes back beside the thread.
-        if !open {
-            state.maximized = false;
-        }
         self.update(engine);
     }
 
@@ -1078,8 +1206,16 @@ impl RightPanel {
         if !state.tabs.iter().any(|t| t == id) {
             state.tabs.push(id.to_owned());
         }
-        state.active = id.to_owned();
-        state.open = true;
+        if state.floating == id {
+            state.floating.clear();
+        }
+        // A tab on the stage shows there.
+        if state.stage.contains(id) {
+            state.stage.show(id);
+        } else {
+            state.active = id.to_owned();
+            state.open = true;
+        }
         self.update(engine);
     }
 
@@ -1102,12 +1238,13 @@ impl RightPanel {
             return;
         }
         let state = self.panel();
+        // The panel's tab, else the stage's focused one.
         let closing = if !id.is_empty() {
             id.to_owned()
-        } else if state.open {
+        } else if state.open && !state.active.is_empty() {
             state.active.clone()
         } else {
-            String::new()
+            state.stage.focused_tab().to_owned()
         };
         if closing.is_empty() || !state.tabs.contains(&closing) {
             return;
@@ -1200,7 +1337,7 @@ impl RightPanel {
             return;
         }
         state.dismissed.retain(|d| d != id);
-        // The device takes the picker's place.
+        // The device takes the picker's place, on the panel or the stage.
         if !state.tabs.iter().any(|t| t == id) {
             if let Some(picker) = state.tabs.iter().position(|t| t == "device") {
                 state.tabs[picker] = id.to_owned();
@@ -1208,10 +1345,53 @@ impl RightPanel {
         } else if let Some(picker) = state.tabs.iter().position(|t| t == "device") {
             state.tabs.remove(picker);
         }
+        state.stage.rename("device", id);
         if state.active == "device" {
             state.active = id.to_owned();
         }
         self.show_tab(engine, id);
+    }
+
+    pub fn float_device(&mut self, engine: &Engine, id: &str) {
+        if !self.on_thread || !self.panel().tabs.iter().any(|t| t == id) {
+            return;
+        }
+        let state = self.panel();
+        // A device on the stage floats from the panel.
+        state.stage.remove(id);
+        state.floating = id.to_owned();
+        state.open = false;
+        if state.active.is_empty() || state.stage.contains(&state.active.clone()) {
+            state.active = id.to_owned();
+        }
+        self.update(engine);
+    }
+
+    pub fn unfloat(&mut self, engine: &Engine) {
+        if !self.on_thread {
+            return;
+        }
+        let state = self.panel();
+        if state.floating.is_empty() {
+            return;
+        }
+        let id = state.floating.clone();
+        state.floating.clear();
+        self.show_tab(engine, &id);
+    }
+
+    pub fn rename_tab(&mut self, engine: &Engine, id: &str, title: &str) {
+        if !self.on_thread || !self.panel().tabs.iter().any(|t| t == id) {
+            return;
+        }
+        let state = self.panel();
+        let trimmed = title.trim();
+        if trimmed.is_empty() {
+            state.titles.remove(id);
+        } else {
+            state.titles.insert(id.to_owned(), trimmed.to_owned());
+        }
+        self.update(engine);
     }
 
     pub fn review_pull_request(&mut self, engine: &Engine, key: &str) {
@@ -1240,12 +1420,153 @@ impl RightPanel {
         self.set_width(engine, DEFAULT_WIDTH);
     }
 
+    /// Open in centre: the panel's tab goes to the stage with the timeline
+    /// hidden; again (while the timeline is hidden), the stage's focused tab
+    /// comes back and the timeline shows.
     pub fn toggle_maximized(&mut self, engine: &Engine) {
-        if !self.is_open() {
+        if !self.on_thread {
+            return;
+        }
+        let state = self.current();
+        if state.stage.focus && !state.stage.focused_tab().is_empty() {
+            // Back: the tab returns to the panel, and the timeline shows.
+            self.panel().stage.focus = false;
+            let id = state.stage.focused_tab().to_owned();
+            self.move_to_panel(engine, &id);
+        } else if self.is_open() && !state.active.is_empty() {
+            let id = state.active.clone();
+            self.panel().stage.focus = true;
+            self.move_to_stage(engine, &id, -1, "center");
+        } else if !state.stage.is_empty() {
+            self.toggle_focus(engine);
+        }
+    }
+
+    pub fn move_to_stage(&mut self, engine: &Engine, id: &str, pane: i32, zone: &str) {
+        if !self.on_thread {
             return;
         }
         let state = self.panel();
-        state.maximized = !state.maximized;
+        if !state.tabs.iter().any(|t| t == id) {
+            return;
+        }
+        let before = panel_tabs(state);
+        if state.floating == id {
+            state.floating.clear();
+        }
+        state.stage.add(id, pane, zone);
+        if state.active == id {
+            next_active(state, &before);
+        }
+        self.update(engine);
+    }
+
+    pub fn move_to_panel(&mut self, engine: &Engine, id: &str) {
+        if !self.on_thread {
+            return;
+        }
+        let state = self.panel();
+        if !state.stage.remove(id) {
+            return;
+        }
+        state.active = id.to_owned();
+        state.open = true;
+        self.update(engine);
+    }
+
+    /// Both tabs on the stage, side by side (columns): `id` left, `other` right.
+    pub fn side_by_side(&mut self, engine: &Engine, id: &str, other: &str) {
+        if !self.on_thread || id == other {
+            return;
+        }
+        let state = self.panel();
+        if !state.tabs.iter().any(|t| t == id) || !state.tabs.iter().any(|t| t == other) {
+            return;
+        }
+        let before = panel_tabs(state);
+        for tab in [id, other] {
+            if state.floating == tab {
+                state.floating.clear();
+            }
+            if !state.stage.contains(tab) {
+                state.stage.tabs.push(tab.to_owned());
+            }
+        }
+        state.stage.layout = "columns".into();
+        state.stage.panes = vec![id.to_owned(), other.to_owned()];
+        state.stage.focused = 0;
+        state.stage.normalize();
+        if !state.active.is_empty() && !panel_tabs(state).contains(&state.active.clone()) {
+            next_active(state, &before);
+        }
+        self.update(engine);
+    }
+
+    /// The stage's focused tab back while the timeline is hidden, else the
+    /// panel's active tab to the stage, else the stage's focused tab back.
+    pub fn move_tab(&mut self, engine: &Engine) {
+        if !self.on_thread {
+            return;
+        }
+        let state = self.current();
+        // With the timeline away the stage is what the user looks at.
+        if state.stage.focus && !state.stage.focused_tab().is_empty() {
+            let id = state.stage.focused_tab().to_owned();
+            self.move_to_panel(engine, &id);
+        } else if self.is_open() && !state.active.is_empty() {
+            let id = state.active.clone();
+            self.move_to_stage(engine, &id, -1, "center");
+        } else if !state.stage.focused_tab().is_empty() {
+            let id = state.stage.focused_tab().to_owned();
+            self.move_to_panel(engine, &id);
+        }
+    }
+
+    pub fn set_stage_layout(&mut self, engine: &Engine, layout: &str) {
+        if !self.on_thread {
+            return;
+        }
+        self.panel().stage.set_layout(layout);
+        self.update(engine);
+    }
+
+    pub fn focus_pane(&mut self, engine: &Engine, pane: i32) {
+        if !self.on_thread {
+            return;
+        }
+        self.panel().stage.focus_pane(pane);
+        self.update(engine);
+    }
+
+    pub fn toggle_focus(&mut self, engine: &Engine) {
+        if !self.on_thread || self.panel().stage.is_empty() {
+            return;
+        }
+        let state = self.panel();
+        state.stage.focus = !state.stage.focus;
+        self.update(engine);
+    }
+
+    /// The conversation's width beside the stage (0: the default).
+    pub fn set_chat_width(&mut self, engine: &Engine, width: i32) {
+        if !self.on_thread {
+            return;
+        }
+        self.panel().stage.chat_width = width.max(0);
+        self.update(engine);
+    }
+
+    /// Every stage tab back to the panel.
+    pub fn dismiss_stage(&mut self, engine: &Engine) {
+        if !self.on_thread || self.panel().stage.is_empty() {
+            return;
+        }
+        let state = self.panel();
+        // The focused tab, else the first shown (the focused pane can be empty).
+        let shown = state.stage.shown().first().cloned().unwrap_or_default();
+        state.stage.clear();
+        state.active = shown;
+        state.open = true;
         self.update(engine);
     }
 
@@ -1433,68 +1754,81 @@ impl RightPanel {
         if self.on_thread {
             let groups = self.terminal_groups(engine);
             let state = self.panel();
+            // A device floats only while the panel is closed: open, the
+            // panel's active tab is what shows and takes input.
+            if state.open {
+                state.floating.clear();
+            }
             // A terminal tab whose terminals all ended (here, in another
             // client, or the MC's) goes: the next one shows.
-            let before = state.tabs.clone();
+            let before = panel_tabs(state);
             if let Some(groups) = groups {
-                state.tabs.retain(|id| {
-                    kind_of(id) != "terminal"
-                        || groups.iter().any(|g| *g == id[TERMINAL_TAB.len()..])
-                });
-            }
-            if kind_of(&state.active) == "terminal" && !state.tabs.contains(&state.active) {
-                let at = before.iter().position(|t| *t == state.active).unwrap_or(0);
-                state.active = match state.tabs.len() {
-                    0 => String::new(),
-                    n => state.tabs[at.min(n - 1)].clone(),
-                };
-                if state.tabs.is_empty() {
-                    state.open = false;
+                let ended: Vec<String> = state
+                    .tabs
+                    .iter()
+                    .filter(|id| kind_of(id) == "terminal")
+                    .cloned()
+                    .collect();
+                for id in ended {
+                    if groups.iter().any(|g| *g == id[TERMINAL_TAB.len()..]) {
+                        continue;
+                    }
+                    state.tabs.retain(|t| *t != id);
+                    state.stage.remove(&id);
                 }
             }
-            if !state.open {
-                state.maximized = false;
+            if !state.active.is_empty() && !panel_tabs(state).contains(&state.active.clone()) {
+                next_active(state, &before);
+            }
+            if panel_tabs(state).is_empty() {
+                state.open = false;
             }
         }
-        let open = self.is_open();
-        let active = self.active_tab();
+        // Each body works while a tab of its kind shows; a body of one kind
+        // shows the first of its tabs.
+        let shown = self.shown_tabs();
+        let first = |kind: &str| shown.iter().find(|id| kind_of(id) == kind).cloned();
         if let Some(diff) = self.diff {
-            ThreadDiff::update(engine, diff, |t| t.set_active(open && active == "diff"));
+            ThreadDiff::update(engine, diff, |t| {
+                t.set_active(shown.iter().any(|id| id == "diff"))
+            });
         }
         if let Some(previews) = self.previews {
             ThreadPreviews::update(engine, previews, |p| {
-                p.set_active(open && active == "previews")
+                p.set_active(shown.iter().any(|id| id == "previews"))
             });
         }
         if let Some(agents) = self.agents {
-            AgentsModel::set_active(engine, agents, open && active == "agents");
+            AgentsModel::set_active(engine, agents, shown.iter().any(|id| id == "agents"));
         }
         if let Some(files) = self.files {
-            WorkspaceFiles::set_active(engine, files, open && active == "files");
+            WorkspaceFiles::set_active(engine, files, shown.iter().any(|id| id == "files"));
         }
-        // Each device tab has its DeviceTab, and streams while it shows.
+        // Each device tab streams while it shows: a floating device keeps
+        // streaming while the panel is closed.
         if let Some(devices) = self.devices {
+            let mut shown_devices = shown.clone();
             let tabs: Vec<String> = if self.on_thread {
-                let tabs = self.current().tabs;
-                tabs.into_iter()
+                let state = self.current();
+                if !state.floating.is_empty() {
+                    shown_devices.push(state.floating.clone());
+                }
+                state
+                    .tabs
+                    .into_iter()
                     .filter(|t| t.starts_with(DEVICE_TAB))
                     .collect()
             } else {
                 Vec::new()
             };
-            let shown: Vec<String> = if open && kind_of(&active) == "device" {
-                vec![active.clone()]
-            } else {
-                Vec::new()
-            };
             ThreadDevices::set_tabs(engine, devices, &tabs);
-            ThreadDevices::set_shown(engine, devices, &shown);
+            ThreadDevices::set_shown(engine, devices, &shown_devices);
         }
-        // The review shows the active review tab's pull request, or the last
+        // The review shows the shown review tab's pull request, or the last
         // one shown.
         if let Some(review) = self.review {
-            let reviewing = kind_of(&active) == "pull-request";
-            if self.on_thread && reviewing {
+            let reviewing = first("pull-request");
+            if let Some(active) = &reviewing {
                 let (host, repository, number) = reviewed_of(&active[REVIEW_TAB.len()..]);
                 let online = self
                     .pull_requests
@@ -1535,9 +1869,10 @@ impl RightPanel {
                     );
                 }
             }
-            PullRequestReview::update(engine, review, |r| r.set_active(open && reviewing));
+            PullRequestReview::update(engine, review, |r| r.set_active(reviewing.is_some()));
         }
-        Keymap::of(engine).set_preview_open(engine, open && active == "previews");
+        Keymap::of(engine)
+            .set_preview_open(engine, self.is_open() && self.active_tab() == "previews");
         self.publish(engine);
         self.save();
     }
@@ -1559,13 +1894,16 @@ impl RightPanel {
             };
         self.published_thread = self.thread.clone();
         self.published_open = state.open;
-        let tabs: Vec<Json> = state
-            .tabs
-            .iter()
-            .map(|id| {
-                json!({"id": id, "kind": kind_of(id), "title": title_of(engine, self.devices, id)})
+        let tab_of = |id: &str| {
+            json!({
+                "id": id,
+                "kind": kind_of(id),
+                "title": state.titles.get(id).cloned().unwrap_or_else(|| title_of(engine, self.devices, id)),
+                "dock": if state.stage.contains(id) { "stage" } else { "panel" },
             })
-            .collect();
+        };
+        let tabs: Vec<Json> = state.tabs.iter().map(|id| tab_of(id)).collect();
+        let staged: Vec<Json> = state.stage.tabs.iter().map(|id| tab_of(id)).collect();
         // Terminals need the thread's place.
         let thread = &self.thread;
         let can_terminal = controller::with::<Terminals, _>(engine, |t, _| {
@@ -1588,9 +1926,11 @@ impl RightPanel {
                 "isOpen": state.open,
                 "transitionMs": transition_ms,
                 "activeId": state.active,
+                "floatingDevice": if state.floating.is_empty() { Json::Null } else { json!(state.floating) },
                 "tabs": tabs,
                 "width": self.width,
-                "maximized": state.open && state.maximized,
+                "stage": state.stage.to_variant(staged),
+                "shownTabs": self.shown_tabs(),
                 "detailsOpen": state.details,
                 "details": details,
                 "canAdd": {
@@ -1601,6 +1941,7 @@ impl RightPanel {
                     "pullRequests": pull_requests,
                     "pullRequest": pull_requests,
                     "previews": true,
+                    "browser": true,
                     "device": true,
                 },
                 // Why a kind cannot be added, for the Add menu to show under
@@ -1694,8 +2035,8 @@ impl RightPanel {
     // --- Kept ----------------------------------------------------------------------
 
     // The store: {width, threads: [{threadKey, open, tabs, active, details,
-    // dismissed (device tabs the user closed)}]}, the thread shown latest
-    // last.
+    // titles, stage (PanelStage::to_json), dismissed (device tabs the user
+    // closed)}]}, the thread shown latest last.
 
     fn load(&mut self, path: Option<PathBuf>) {
         self.store_path = path;
@@ -1731,18 +2072,35 @@ impl RightPanel {
                     state.tabs.push(tab);
                 }
             }
+            state.stage = PanelStage::from_json(thread.get("stage").unwrap_or(&Json::Null), |id| {
+                state.tabs.iter().any(|t| t == id)
+            });
+            for id in state.stage.tabs.clone() {
+                if !state.tabs.contains(&id) {
+                    state.tabs.push(id);
+                }
+            }
+            let docked = panel_tabs(&state);
             state.active = thread
                 .get("active")
                 .and_then(Json::as_str)
                 .unwrap_or("")
                 .to_owned();
-            if !state.tabs.contains(&state.active) {
-                state.active = state.tabs.first().cloned().unwrap_or_default();
+            if !docked.contains(&state.active) {
+                state.active = docked.first().cloned().unwrap_or_default();
             }
             let flag = |field: &str| thread.get(field).and_then(Json::as_bool).unwrap_or(false);
-            state.open = flag("open") && !state.tabs.is_empty();
+            state.open = flag("open") && !docked.is_empty();
             state.details = flag("details");
             state.dismissed = strings("dismissed");
+            if let Some(titles) = thread.get("titles").and_then(Json::as_object) {
+                for (id, title) in titles {
+                    let title = title.as_str().unwrap_or("");
+                    if state.tabs.contains(id) && !title.is_empty() {
+                        state.titles.insert(id.clone(), title.to_owned());
+                    }
+                }
+            }
             self.panels.insert(thread_key.to_owned(), state);
             self.recent.retain(|k| k != thread_key);
             self.recent.push(thread_key.to_owned());
@@ -1765,7 +2123,13 @@ impl RightPanel {
                 .iter()
                 .filter(|id| kind_of(id) != "terminal")
                 .collect();
-            if tabs.is_empty() && !state.details {
+            let mut stage = state.stage.clone();
+            for id in state.stage.tabs.clone() {
+                if kind_of(&id) == "terminal" {
+                    stage.remove(&id);
+                }
+            }
+            if tabs.is_empty() && stage == PanelStage::default() && !state.details {
                 continue;
             }
             let terminal_shown = kind_of(&state.active) == "terminal";
@@ -1775,6 +2139,8 @@ impl RightPanel {
                 "tabs": tabs,
                 "active": if terminal_shown { Json::Null } else { json!(state.active) },
                 "details": state.details,
+                "titles": state.titles,
+                "stage": stage.to_json(),
                 "dismissed": state.dismissed,
             }));
         }

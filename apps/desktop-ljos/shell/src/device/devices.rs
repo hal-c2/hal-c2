@@ -170,6 +170,10 @@ pub enum Effect {
     },
     /// A device's name became known or changed: tab titles follow.
     NamesChanged,
+    /// The panel floats `tab`'s device over the chat and closes.
+    Floated {
+        tab: String,
+    },
 }
 
 /// What a device tab was last told: its stream's target and its screen.
@@ -636,6 +640,15 @@ impl Devices {
         self.configure("check", json!({}));
     }
 
+    /// Float the tab's device over the chat; the panel closes (floated).
+    pub fn float_device(&mut self, tab: &str) {
+        if !tab.is_empty() {
+            self.effects.push(Effect::Floated {
+                tab: tab.to_owned(),
+            });
+        }
+    }
+
     pub fn wizard_done(&mut self) {
         self.configure("complete", json!({"onboardingCompleted": true}));
     }
@@ -1053,12 +1066,15 @@ pub type OnOpened = Rc<dyn Fn(&Engine, &str, bool)>;
 /// A tab the panel closes: the thread's key and the tab's id.
 pub type OnClosed = Rc<dyn Fn(&Engine, &str, &str)>;
 pub type OnNamesChanged = Rc<dyn Fn(&Engine)>;
+/// A tab the panel floats over the chat: its id.
+pub type OnFloated = Rc<dyn Fn(&Engine, &str)>;
 
 #[derive(Default)]
 struct Hooks {
     opened: Vec<OnOpened>,
     closed: Vec<OnClosed>,
     names_changed: Vec<OnNamesChanged>,
+    floated: Vec<OnFloated>,
 }
 
 struct Inner {
@@ -1223,6 +1239,13 @@ impl ThreadDevices {
         }
     }
 
+    /// The panel floats `tab`'s device over the chat and closes.
+    pub fn on_floated(engine: &Engine, obj: ObjectId, f: impl Fn(&Engine, &str) + 'static) {
+        if let Some(inner) = inner_of(engine, obj) {
+            inner.hooks.borrow_mut().floated.push(Rc::new(f));
+        }
+    }
+
     /// Runs `f` on the devices of `obj`, then publishes `view` and runs what
     /// they asked for. None when `obj` is not live.
     pub fn update<R>(
@@ -1382,6 +1405,12 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
                 hook(engine);
             }
         }
+        Effect::Floated { tab } => {
+            let hooks = inner.hooks.borrow().floated.clone();
+            for hook in hooks {
+                hook(engine, &tab);
+            }
+        }
     }
 }
 
@@ -1447,11 +1476,10 @@ impl ThreadDevices {
         ThreadDevices::update(cx.engine, cx.this, Devices::wizard_cancel);
     }
 
-    /// The device tab's Float. The Ljós panel has no floating devices yet,
-    /// so the tab stays where it is.
+    /// The device tab's Float: the panel floats the device over the chat.
     #[qml(invokable)]
     fn float_device(cx: &Cx, tab: Atom) {
-        let _ = (cx, tab);
+        ThreadDevices::update(cx.engine, cx.this, |d| d.float_device(&tab));
     }
 }
 

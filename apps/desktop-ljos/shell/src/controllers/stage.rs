@@ -1,13 +1,30 @@
-//! `stage`, desktop-qt's StageController: which build the window is talking
-//! to, said at a glance. A Nightly MC marks the sidebar's brand band with
-//! its artwork or a version pill, as Settings → Appearance's Environment
-//! identification chooses.
+//! `stage`, desktop-qt's StageController: which build the window is, said
+//! at a glance: a development shell, or one talking to a Nightly MC, marks
+//! the sidebar's brand band with its artwork or a version pill, as
+//! Settings → Appearance's Environment identification chooses.
 //!
-//! Publishes `stage`: {label ("Nightly", or empty for a release), artwork
-//! ("nightly" or null), pill ("Nightly" or null)}.
+//! Publishes `stage`: {label ("Dev", "Nightly", or empty for a release),
+//! artwork ("dev", "nightly" or null), pill (the label or null)}. The
+//! Sidebar brick draws it; the window title carries the label.
+
+use std::cell::RefCell;
 
 use ljos::prelude::Engine;
 use serde_json::json;
+
+thread_local! {
+    static APP_STAGE: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// The app's own stage, set before the first window ("Dev" for a
+/// development shell; empty for a release).
+pub fn set_app_stage(stage: &str) {
+    APP_STAGE.with(|s| *s.borrow_mut() = stage.to_owned());
+}
+
+fn app_stage() -> String {
+    APP_STAGE.with(|s| s.borrow().clone())
+}
 
 use crate::bridge::Bridge;
 use crate::controller::{Controller, Init, Me};
@@ -79,7 +96,13 @@ fn is_nightly(version: &str) -> bool {
 }
 
 impl Stage {
-    fn label(&self, engine: &Engine) -> &'static str {
+    /// The app's own stage, else "Nightly" for a nightly or preview build
+    /// of the MC.
+    fn label(&self, engine: &Engine) -> String {
+        let own = app_stage();
+        if !own.is_empty() {
+            return own;
+        }
         let environment = self.mc.environment();
         let version = store::with(engine, |s| {
             s.environment(&environment)
@@ -88,7 +111,11 @@ impl Stage {
                 .unwrap_or_default()
                 .to_owned()
         });
-        if is_nightly(&version) { "Nightly" } else { "" }
+        if is_nightly(&version) {
+            "Nightly".to_owned()
+        } else {
+            String::new()
+        }
     }
 
     fn publish(&self, engine: &Engine) {

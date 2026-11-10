@@ -613,6 +613,28 @@ fn tab_id_titled(world: &World, title: &str) -> Outcome<String> {
     fail!("{}", describe_panel(world))
 }
 
+/// The stage's tabs, and the tabs docked in the side panel, by id.
+fn stage_tabs(world: &World) -> Vec<String> {
+    let state = world.state("panel");
+    at(&state, "stage.tabs")
+        .as_array()
+        .map(|tabs| tabs.iter().map(|t| text(&t["id"])).collect())
+        .unwrap_or_default()
+}
+
+fn docked_tabs(world: &World) -> Vec<String> {
+    let state = world.state("panel");
+    at(&state, "tabs")
+        .as_array()
+        .map(|tabs| {
+            tabs.iter()
+                .filter(|t| text(&t["dock"]) != "stage")
+                .map(|t| text(&t["id"]))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Where the edge is dragged to.
 const DRAGGED_WIDTH: i64 = 720;
 
@@ -1614,8 +1636,10 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+    // Open in centre (rightPanel.toggleMaximized, the panel's header button and
+    // mod+alt+m when bound): the tab to the stage with the timeline away, and back.
     steps.step(
-        "the user toggles the right panel to fill the window",
+        "the user opens the right panel's tab in the centre",
         |world, _, _| {
             // The keybinding's command (mod+alt+m, bound by the user).
             let ran =
@@ -1624,24 +1648,34 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the user toggles it again", |world, _, _| {
+    steps.step("the user opens it in the centre again", |world, _, _| {
         world.dispatch("rightPanel.toggleMaximized", json!({}))
     });
-    steps.step("the right panel covers the thread", |world, _, _| {
-        expect!(
-            at(&world.state("panel"), "maximized").as_bool() == Some(true),
-            "{}",
-            describe_panel(world)
-        );
-        Ok(())
-    });
     steps.step(
-        "the thread is shown beside the right panel",
+        "the tab fills the thread's centre above the composer",
+        |world, _, _| {
+            let state = world.state("panel");
+            expect!(
+                at(&state, "stage.focus").as_bool() == Some(true)
+                    && at(&state, "stage.panes")
+                        .as_array()
+                        .is_some_and(|panes| panes.len() == 1 && panes[0] == "diff")
+                    && docked_tabs(world).is_empty(),
+                "{}",
+                describe_panel(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the tab is back in the right panel beside the thread",
         |world, _, _| {
             let state = world.state("panel");
             expect!(
                 at(&state, "isOpen").as_bool() == Some(true)
-                    && at(&state, "maximized").as_bool() != Some(true),
+                    && active_id(world) == "diff"
+                    && stage_tabs(world).is_empty()
+                    && at(&state, "stage.focus").as_bool() != Some(true),
                 "{}",
                 describe_panel(world)
             );
@@ -1822,6 +1856,227 @@ pub fn register(steps: &mut Steps) {
             expect_diff_of(world, &["src/turn4.ts"])?;
             let now = world.mc.part::<FakeDiffs>().asked.len();
             expect!(now == asked + 1, "opening asked {} times", now - asked);
+            Ok(())
+        },
+    );
+    // The stage (features/desktop/stage.feature): tabs docked in the thread's centre.
+    steps.step(
+        &format!("the user moves the {Q} tab to the centre"),
+        |world, c, _| {
+            let id = tab_id_titled(world, &c[0])?;
+            world.dispatch("rightPanel.dock", json!({"id": id, "dock": "stage"}))
+        },
+    );
+    steps.step(
+        &format!("the user opens the {Q} tab in the centre"),
+        |world, c, _| {
+            // The panel's Open in centre button.
+            let id = tab_id_titled(world, &c[0])?;
+            world.dispatch(
+                "rightPanel.dock",
+                json!({"id": id, "dock": "stage", "focus": true}),
+            )
+        },
+    );
+    steps.step(
+        &format!("the user moves the {Q} tab to the side panel"),
+        |world, c, _| {
+            let id = tab_id_titled(world, &c[0])?;
+            world.dispatch("rightPanel.dock", json!({"id": id, "dock": "panel"}))
+        },
+    );
+    steps.step(
+        "the user moves every stage tab to the side panel",
+        |world, _, _| world.dispatch("stage.dismiss", json!({})),
+    );
+    steps.step(
+        &format!("the right panel has an? {Q} tab"),
+        |world, c, _| {
+            world.with::<RightPanel, _>(|p, engine| p.add_tab(engine, &c[0].to_lowercase()))?;
+            expect!(
+                tab_titles(world).contains(&c[0]),
+                "{}",
+                describe_panel(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the (?:{Q} tab is|{Q} and {Q} tabs are) on the stage"),
+        |world, c, _| {
+            for title in c.iter().filter(|t| !t.is_empty()) {
+                if !world.checking {
+                    if !tab_titles(world).contains(title) {
+                        world.with::<RightPanel, _>(|p, engine| {
+                            p.add_tab(engine, &title.to_lowercase())
+                        })?;
+                    }
+                    let id = tab_id_titled(world, title)?;
+                    world.with::<RightPanel, _>(|p, engine| {
+                        p.move_to_stage(engine, &id, -1, "center")
+                    })?;
+                }
+                let id = tab_id_titled(world, title)?;
+                expect!(stage_tabs(world).contains(&id), "{}", describe_panel(world));
+            }
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the {Q} tab is in the right panel"),
+        |world, c, _| {
+            let id = tab_id_titled(world, &c[0])?;
+            expect!(
+                !stage_tabs(world).contains(&id) && docked_tabs(world).contains(&id),
+                "{}",
+                describe_panel(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the right panel shows only the {Q} tab"),
+        |world, c, _| {
+            let id = tab_id_titled(world, &c[0])?;
+            expect!(
+                docked_tabs(world) == [id.clone()] && active_id(world) == id,
+                "{}",
+                describe_panel(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step("the stage is empty", |world, _, _| {
+        expect!(
+            stage_tabs(world).is_empty()
+                && at(&world.state("panel"), "stage.focus").as_bool() != Some(true),
+            "{}",
+            describe_panel(world)
+        );
+        Ok(())
+    });
+    steps.step("the timeline is (shown|hidden)", |world, c, _| {
+        let hidden = c[0] == "hidden";
+        if !world.checking {
+            let focus = world.with::<RightPanel, _>(|p, _| p.stage().focus)?;
+            if focus != hidden {
+                world.with::<RightPanel, _>(|p, engine| p.toggle_focus(engine))?;
+            }
+        }
+        expect!(
+            at(&world.state("panel"), "stage.focus").as_bool() == Some(hidden),
+            "{}",
+            describe_panel(world)
+        );
+        Ok(())
+    });
+    steps.step("the user shows the timeline again", |world, _, _| {
+        world.dispatch("stage.toggleFocus", json!({}))
+    });
+    steps.step(
+        &format!(
+            "the user drops the {Q} tab at the (left|right|top|bottom) edge of the stage's first pane"
+        ),
+        |world, c, _| {
+            let id = tab_id_titled(world, &c[0])?;
+            world.dispatch(
+                "rightPanel.dock",
+                json!({"id": id, "dock": "stage", "pane": 0, "zone": c[1]}),
+            )
+        },
+    );
+    steps.step(
+        &format!("the stage shows {Q} and {Q} side by side"),
+        |world, c, _| {
+            let state = world.state("panel");
+            let stage = at(&state, "stage");
+            let panes: Vec<String> = at(&state, "stage.panes")
+                .as_array()
+                .map(|p| p.iter().map(|v| text(v)).collect())
+                .unwrap_or_default();
+            expect!(
+                text(&stage["layout"]) == "columns"
+                    && panes == [tab_id_titled(world, &c[0])?, tab_id_titled(world, &c[1])?],
+                "{}",
+                describe_panel(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user chooses the (single|columns|rows|grid) layout",
+        |world, c, _| world.dispatch("stage.layout", json!({"layout": c[0]})),
+    );
+    steps.step("the stage has (\\d+) panes", |world, c, _| {
+        let panes = at(&world.state("panel"), "stage.panes")
+            .as_array()
+            .map_or(0, |p| p.len());
+        expect!(
+            panes == c[0].parse::<usize>().unwrap_or(0),
+            "{}",
+            describe_panel(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        "the diff of the latest turn is on the stage",
+        |world, _, _| {
+            finish_turns(world, 3)?;
+            open_diff(world, -1)?;
+            world
+                .with::<RightPanel, _>(|p, engine| p.move_to_stage(engine, "diff", -1, "center"))?;
+            world.sync()?;
+            expect!(stage_tabs(world) == ["diff"], "{}", describe_panel(world));
+            Ok(())
+        },
+    );
+    steps.step("the agent finishes another turn", |world, _, _| {
+        // The turn's changes are there before its checkpoint lands, as the
+        // MC has them by then: the diff that follows the turn asks at once.
+        let patch = patch_adding("src/turn4.ts", &["export const turn = 4;".to_owned()]);
+        world
+            .mc
+            .part::<FakeDiffs>()
+            .patches
+            .insert(4, patch.clone());
+        finish_turn(world, 4, patch)?;
+        world.sync()
+    });
+    steps.step("the stage's diff shows that turn", |world, _, _| {
+        let (open, shown) = world.with::<RightPanel, _>(|p, _| (p.is_open(), p.shown_tabs()))?;
+        expect!(
+            !open && shown.iter().any(|id| id == "diff"),
+            "{}",
+            describe_panel(world)
+        );
+        expect_diff_of(world, &["src/turn4.ts"])
+    });
+    steps.step(
+        "the user drags the divider between the conversation and the stage",
+        |world, _, _| world.dispatch("stage.resize", json!({"width": DRAGGED_WIDTH})),
+    );
+    steps.step(
+        "the conversation keeps the width it was dragged to",
+        |world, _, _| {
+            expect!(
+                at(&world.state("panel"), "stage.chatWidth").as_i64() == Some(DRAGGED_WIDTH),
+                "{}",
+                describe_panel(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step("the user double-clicks the divider", |world, _, _| {
+        world.dispatch("stage.resize", json!({}))
+    });
+    steps.step(
+        "the conversation is back to its default width",
+        |world, _, _| {
+            expect!(
+                at(&world.state("panel"), "stage.chatWidth").as_i64() == Some(0),
+                "{}",
+                describe_panel(world)
+            );
             Ok(())
         },
     );

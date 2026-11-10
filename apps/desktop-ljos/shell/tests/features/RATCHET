@@ -415,6 +415,7 @@ connections/local-cache.feature: The thread list and the open thread show before
 connections/local-cache.feature: What a client kept of one MC is not shown for another
 connections/pairing.feature: A new pairing link can only be copied while its page is open
 connections/pairing.feature: Pairing again with a fresh link replaces a lost session
+desktop/native-centre.feature: A reply whose turn failed but left a ready checkpoint cannot be reverted to
 desktop/native-centre.feature: A reply whose turn left no checkpoint cannot be reverted to
 desktop/native-composer.feature: /plan and /default switch the mode without sending
 desktop/native-composer.feature: A background start offers to open the thread it started
@@ -471,6 +472,26 @@ desktop/native-sidebar.feature: An environment that does not track visits is sen
 desktop/native-toasts.feature: A refused settle shows the shell's own toast
 desktop/shell-host.feature: A screenshot of a desktop app that fails to start shows why and quits
 desktop/shell-host.feature: A screenshot taken without a display shows the app's window
+desktop/stage.feature: A tab goes back to the side panel
+desktop/stage.feature: A tab moves to the centre beside the conversation
+desktop/stage.feature: A tab on the stage works while the right panel is closed
+desktop/stage.feature: Dropping a tab at a pane's edge splits it
+desktop/stage.feature: Every tab goes back to the side panel at once
+desktop/stage.feature: Open in centre puts the timeline away
+desktop/stage.feature: Open in centre shows the tab in any shell [the dashboard example shell]
+desktop/stage.feature: Open in centre shows the tab in any shell [the default shell]
+desktop/stage.feature: Open in centre shows the tab in any shell [the folders example shell]
+desktop/stage.feature: Open in centre shows the tab in any shell [the glass example shell]
+desktop/stage.feature: Open in centre shows the tab in any shell [the minimal example shell]
+desktop/stage.feature: Open in centre shows the tab in any shell [the terminal example shell]
+desktop/stage.feature: Resizing the conversation beside the stage
+desktop/stage.feature: The stage has a layout for one, two or four panes [columns, 2]
+desktop/stage.feature: The stage has a layout for one, two or four panes [grid, 4]
+desktop/stage.feature: The stage has a layout for one, two or four panes [rows, 2]
+desktop/stage.feature: The stage has a layout for one, two or four panes [single, 1]
+desktop/stage.feature: The stage survives a restart
+desktop/stage.feature: The stage survives a visit to settings
+desktop/stage.feature: The stage's shortcuts move the tab and put the timeline away
 files/adding-projects.feature: A clone on another machine of the cluster shows its progress too
 files/adding-projects.feature: A failed or cancelled clone offers to remove the project it created
 files/adding-projects.feature: A finished clone offers to open its project
@@ -1241,11 +1262,22 @@ preview/devices.feature: A choice in the tools is applied by the device [the iOS
 preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Color filter, Red / green (protanopia)]
 preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Liquid Glass, Tinted]
 preview/devices.feature: A choice in the tools is applied by the device [the iOS Simulator "iPhone 17", Text size, Extra large]
+preview/devices.feature: A chord cut off by a dropped connection does not outlive it
 preview/devices.feature: A closed event log stops listening
 preview/devices.feature: A device an agent opens shows as a side panel tab
+preview/devices.feature: A device hidden from the centre stops streaming and the other goes on
+preview/devices.feature: A device hub that failed to start is named in the empty list [and says "Port 4400 is in use", Port 4400 is in use]
+preview/devices.feature: A device hub that failed to start is named in the empty list [without saying why, The device hub failed to start.]
 preview/devices.feature: A device hub that fails to start says why in the wizard
+preview/devices.feature: A device moved to the centre keeps its stream
+preview/devices.feature: A device opens side by side with another from its tab
 preview/devices.feature: A device powered off from a thread the user left closes that thread's tab
+preview/devices.feature: A device shown in 3D keeps a plain body when its own model is missing [Android Emulator "Pixel 9", the device has no 3D model]
+preview/devices.feature: A device shown in 3D keeps a plain body when its own model is missing [iOS Simulator "iPhone 18 Pro", the 3D model cannot be downloaded]
+preview/devices.feature: A device shown in 3D keeps a plain body when its own model is missing [iOS Simulator "iPhone 18 Pro", the 3D model file is not a valid model]
+preview/devices.feature: A device tab names the machine and the device's version
 preview/devices.feature: A device tab the user closed does not come back on its own
+preview/devices.feature: A device that cannot be powered off stays open and says why
 preview/devices.feature: A device that sends nothing is an error the user can retry
 preview/devices.feature: A device the MC cannot open says why
 preview/devices.feature: A failed machine can be retried
@@ -1257,10 +1289,12 @@ preview/devices.feature: A location preset places the device at once [New York]
 preview/devices.feature: A location preset places the device at once [San Francisco]
 preview/devices.feature: A location preset places the device at once [Stockholm]
 preview/devices.feature: A location preset places the device at once [Tokyo]
+preview/devices.feature: A lost input connection is shown over the picture
 preview/devices.feature: A machine installing or starting its tools shows a banner [installing and says "Downloading serve-sim", Downloading serve-sim]
 preview/devices.feature: A machine installing or starting its tools shows a banner [installing its device tools, Installing device tools…]
 preview/devices.feature: A machine installing or starting its tools shows a banner [starting its device tools, Starting device tools…]
 preview/devices.feature: A machine that could not start says what to do
+preview/devices.feature: A machine with the Android SDK but no virtual devices says how to make one
 preview/devices.feature: A permission can be set for an app that is not in front
 preview/devices.feature: A push notification needs an app in front
 preview/devices.feature: A setting the device does not report cannot be changed
@@ -1272,30 +1306,53 @@ preview/devices.feature: A stalled accessibility read is not asked again
 preview/devices.feature: A stopped device is offered to start
 preview/devices.feature: A stream that ends connects again
 preview/devices.feature: A stream the MC refuses is an error
+preview/devices.feature: A stream whose access expired reconnects without the user doing anything
 preview/devices.feature: A tab turned to another device never shows the last one's picture
 preview/devices.feature: A touch taken away mid-drag ends where it was
+preview/devices.feature: Access that expires again is refreshed again
 preview/devices.feature: Agent access can stay off
 preview/devices.feature: An Android emulator that rotates starts its video over
 preview/devices.feature: An empty address or app name cannot be sent
 preview/devices.feature: An emulator has no push notification section
 preview/devices.feature: An environment without devices says so
 preview/devices.feature: Another device's tools start fresh
+preview/devices.feature: Attaching the Magic Keyboard in portrait turns the device to landscape
+preview/devices.feature: Attaching the Magic Keyboard in the 3D view shows it on the iPad
 preview/devices.feature: Back goes to the step before
 preview/devices.feature: Banners are not shown while device support is off
 preview/devices.feature: Cancelling the wizard leaves device support as it is
 preview/devices.feature: Closing a device tab stops watching but leaves the device open
+preview/devices.feature: Closing one of two devices leaves the other streaming
+preview/devices.feature: Command is the Mac's own key on a Mac
+preview/devices.feature: Command shortcuts stay with the app while the device has the focus
+preview/devices.feature: Detaching the Magic Keyboard in the 3D view removes it from the iPad
 preview/devices.feature: Device support that is off points to its settings
+preview/devices.feature: Devices in the same state are listed by name
+preview/devices.feature: Each device in the list says where it runs and what state it is in [running, Running, Open]
+preview/devices.feature: Each device in the list says where it runs and what state it is in [stopped, Stopped, Start]
 preview/devices.feature: Enabling the device hub says what it is doing until it is ready
+preview/devices.feature: Escape leaves a device tab's name as it was
 preview/devices.feature: Finishing the wizard shows the device list
 preview/devices.feature: Following the pointer opens the Integrations settings
+preview/devices.feature: Fresh access answered after a reconnect is not used
+preview/devices.feature: Keys go to the device only while its screen has the focus
+preview/devices.feature: Letting go of Command first lifts both keys on the device
 preview/devices.feature: No app in front is shown as a dash
 preview/devices.feature: One platform missing does not block the other
+preview/devices.feature: Only one device is opened at a time from the list
+preview/devices.feature: Opening the right panel brings a floating device home
 preview/devices.feature: Overlaying accessibility elements needs device access
 preview/devices.feature: Permissions need an app
 preview/devices.feature: Picking a device shows its screen
 preview/devices.feature: Powering a device off closes it and its tab
+preview/devices.feature: Refreshing is not offered while a machine is busy preparing devices
+preview/devices.feature: Returning to the 3D view shows the Magic Keyboard attached again
 preview/devices.feature: Rotating a simulator turns its screen
+preview/devices.feature: Running devices are listed before stopped ones
+preview/devices.feature: Showing the Device tab refreshes its list but never turns device support on
 preview/devices.feature: Switches show and change the device's accessibility settings
+preview/devices.feature: Switching to the flat view hides the Magic Keyboard
+preview/devices.feature: The 3D body shows a device held sideways upright
 preview/devices.feature: The Agent access step says what it is doing [installing agent tools, Installing agent tools…]
 preview/devices.feature: The Agent access step says what it is doing [ready with agent tools, Agent tools are ready.]
 preview/devices.feature: The Agent access step says what it is doing [starting agent tools, Starting agent tools…]
@@ -1307,19 +1364,35 @@ preview/devices.feature: The Simulators step says what each platform needs [iOS 
 preview/devices.feature: The Simulators step says what each platform needs [iOS is unavailable because "Xcode is not installed", iOS, Xcode is not installed]
 preview/devices.feature: The Simulators step says what each platform needs [the Android SDK has an emulator, Android, The Android SDK and Emulator are available.]
 preview/devices.feature: The Simulators step says what each platform needs [the Android SDK is installed with no virtual device, Android, The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager.]
+preview/devices.feature: The device can be shown as a 3D body the user turns
+preview/devices.feature: The device keeps its shape in a panel of any size
+preview/devices.feature: The device list is refreshed by hand
 preview/devices.feature: The event log needs device access and an iOS Simulator
+preview/devices.feature: The flat view decodes at its own size after the 3D view
 preview/devices.feature: The foreground app changes as the user uses the device
 preview/devices.feature: The foreground follows the device again after its feed ends
 preview/devices.feature: The overlay outlines a crowded Android screen only so far
 preview/devices.feature: The permissions offered depend on the platform [the Android Emulator "Pixel 9", has none of those, calls Motion "Physical activity" and offers no "Reset"]
 preview/devices.feature: The permissions offered depend on the platform [the iOS Simulator "iPhone 17", includes Reminders, Media library and Face ID, and offers "Reset"]
+preview/devices.feature: The same device on two machines gets a tab for each
+preview/devices.feature: The tab offers the buttons its platform has [the Android Emulator "Pixel 9", Home, Back and Recents]
+preview/devices.feature: The tab offers the buttons its platform has [the iOS Simulator "iPhone 17", Home and Rotate]
 preview/devices.feature: The tab says it is connecting until the first picture
+preview/devices.feature: The tab says what it is waiting for while a device opens [the device tools are still being installed, Installing device support…]
+preview/devices.feature: The tab says what it is waiting for while a device opens [the list of devices has not arrived yet, Finding devices…]
+preview/devices.feature: The tab says what it is waiting for while a device opens [the user opened "iPhone 17", which is already running, Opening device…]
+preview/devices.feature: The tab says what it is waiting for while a device opens [the user opened "iPhone 17", which is stopped, Starting device…]
+preview/devices.feature: The tab shows the device hub's own words while it installs
+preview/devices.feature: The tab shows which of its two steps it is on
+preview/devices.feature: The tab tells the user which devices are starting
 preview/devices.feature: The tools offer the settings the platform has [the Android Emulator "Pixel 9", Emulator, Appearance, Text size, Orientation, Reduce Motion and Network]
 preview/devices.feature: The tools offer the settings the platform has [the iOS Simulator "iPhone 17", Simulator, Appearance, Text size, Liquid Glass, Color filter, Reduce Motion, Increase Contrast, Reduce Transparency, Show Borders and VoiceOver]
 preview/devices.feature: The tools show the app in front and can stop or restart it
 preview/devices.feature: The tools stay busy while a change is running
 preview/devices.feature: The tools wait for the device's own settings
 preview/devices.feature: The user checks the platforms again after installing something
+preview/devices.feature: The user floats a device over the chat
+preview/devices.feature: The user gives a device tab a name of their own
 preview/devices.feature: The user grants or revokes an app's permission [the Android Emulator "Pixel 9", Motion, grant]
 preview/devices.feature: The user grants or revokes an app's permission [the iOS Simulator "iPhone 17", Camera, grant]
 preview/devices.feature: The user grants or revokes an app's permission [the iOS Simulator "iPhone 17", Face ID, revoke]
@@ -1340,8 +1413,11 @@ preview/devices.feature: Touches and keys reach a simulator through the MC
 preview/devices.feature: Touches, keys and buttons reach an emulator through the MC
 preview/devices.feature: Turning device support off brings the wizard back
 preview/devices.feature: Turning the device hub off also turns agent access off
+preview/devices.feature: Two devices stream side by side in the centre
 preview/devices.feature: Video that arrives in pieces still shows the screen
 preview/devices.feature: Video the desktop cannot decode is an error, not endless reconnecting
+preview/devices.feature: What the device hub says while it runs is shown above the list
+preview/devices.feature: Without FFmpeg the device tab explains what to install
 preview/remote.feature: A client drops its old tabs after the MC restarts
 preview/remote.feature: A desktop whose MC is on another machine opens a dev server's address as it is
 preview/remote.feature: A dev server link in a reply opens through the forward

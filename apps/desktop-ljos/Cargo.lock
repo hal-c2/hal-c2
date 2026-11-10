@@ -2079,6 +2079,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "gltf"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3ce1918195723ce6ac74e80542c5a96a40c2b26162c1957a5cd70799b8cacf7"
+dependencies = [
+ "byteorder",
+ "gltf-json",
+ "lazy_static",
+ "serde_json",
+]
+
+[[package]]
+name = "gltf-derive"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14070e711538afba5d6c807edb74bcb84e5dbb9211a3bf5dea0dfab5b24f4c51"
+dependencies = [
+ "inflections",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "gltf-json"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6176f9d60a7eab0a877e8e96548605dedbde9190a7ae1e80bbcc1c9af03ab14"
+dependencies = [
+ "gltf-derive",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
 name = "glutin"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2186,6 +2222,7 @@ dependencies = [
  "interprocess",
  "libc",
  "ljos",
+ "ljos_quick3d",
  "notify",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -2900,6 +2937,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "inflections"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
+
+[[package]]
 name = "inotify"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3246,8 +3289,18 @@ name = "ljos_3d"
 version = "0.0.0"
 source = "git+https://github.com/hal-c2/ljos-ui?rev=6fa689e2af0df94584d8b467cce6f8e1c3a95035#6fa689e2af0df94584d8b467cce6f8e1c3a95035"
 dependencies = [
+ "bytemuck",
+ "gltf",
+ "naga",
+ "objc2-core-graphics",
+ "objc2-quartz-core 0.3.2",
+ "png",
+ "pollster 1.0.1",
  "slotmap",
  "thiserror 2.0.21",
+ "tracing",
+ "wgpu",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -3447,6 +3500,8 @@ version = "0.0.0"
 source = "git+https://github.com/hal-c2/ljos-ui?rev=6fa689e2af0df94584d8b467cce6f8e1c3a95035#6fa689e2af0df94584d8b467cce6f8e1c3a95035"
 dependencies = [
  "egui",
+ "egui-wgpu",
+ "ljos_3d",
  "ljos_a11y",
  "ljos_engine",
  "ljos_quick",
@@ -3674,6 +3729,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_quick3d"
+version = "0.0.0"
+source = "git+https://github.com/hal-c2/ljos-ui?rev=6fa689e2af0df94584d8b467cce6f8e1c3a95035#6fa689e2af0df94584d8b467cce6f8e1c3a95035"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "ljos_ir",
+ "lyon_tessellation",
+ "qt_types",
+ "quick-xml 0.42.0",
+ "skrifa 0.44.0",
+ "slotmap",
+]
+
+[[package]]
 name = "ljos_reactive"
 version = "0.0.0"
 source = "git+https://github.com/hal-c2/ljos-ui?rev=6fa689e2af0df94584d8b467cce6f8e1c3a95035#6fa689e2af0df94584d8b467cce6f8e1c3a95035"
@@ -3757,6 +3827,7 @@ dependencies = [
  "glow",
  "glutin",
  "libc",
+ "ljos_3d",
  "ljos_a11y",
  "ljos_accesskit_winit",
  "ljos_controls",
@@ -3778,6 +3849,7 @@ dependencies = [
  "softbuffer",
  "thiserror 2.0.21",
  "wayland-client",
+ "wgpu",
  "windows",
  "windows-core",
  "windows-sys 0.52.0",

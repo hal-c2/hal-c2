@@ -39,6 +39,8 @@ impl Hub {
 
 /// Adds the Device tab's types to the `HalC2.Shell` module.
 pub fn register(engine: &Engine) {
+    // QtQuick3D, for the device tab's 3D body.
+    ljos_quick3d::register(engine);
     engine.register_module(ljos::module!("HalC2.Shell" 1.0 => [
         stream::DeviceStream,
         devices::ThreadDevices,

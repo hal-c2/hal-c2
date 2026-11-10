@@ -113,14 +113,35 @@ fn untouched(world: &World, parts: &[&str]) -> Outcome {
     Ok(())
 }
 
+/// The sidebar of a shell that leaves off the brand band.
+#[derive(Default)]
+struct Brandless {
+    on: bool,
+}
+
+/// Set before the first window in the app; cleared when the part drops
+/// with the scenario (AppStage's destructor).
+#[derive(Default)]
+struct AppStage;
+
+impl Drop for AppStage {
+    fn drop(&mut self) {
+        hal_c2_shell::controllers::stage::set_app_stage("");
+    }
+}
+
 /// The sidebar's brand band, shown once.
 fn sidebar(world: &mut World) -> Outcome<Brick> {
     if let Some(brick) = world.part::<Shown>().0 {
         return Ok(brick);
     }
+    let brand = !world.mc.part::<Brandless>().on;
     let brick = Brick::new(
         world,
-        "import QtQuick\nimport HalC2.Bricks\nSidebar { showBrand: true; height: 600 }\n",
+        &format!(
+            "import QtQuick\nimport HalC2.Bricks\nSidebar {{ showBrand: {}; height: 600 }}\n",
+            if brand { "true" } else { "false" }
+        ),
         256.0,
         600.0,
     )?;
@@ -128,18 +149,74 @@ fn sidebar(world: &mut World) -> Outcome<Brick> {
     Ok(brick)
 }
 
-fn marks(world: &mut World, artwork: bool, pill: bool) -> Outcome {
+fn badge(world: &mut World, label: &str) -> Outcome {
     let brick = sidebar(world)?;
     world.pump()?;
-    let drawn_artwork = brick.flag(world, brick.item(world, "stageArtwork")?, "visible");
-    let drawn_pill = brick.flag(world, brick.item(world, "stagePill")?, "visible")
-        && brick.shows(world, "Nightly")?;
+    let shown = brick.flag(world, brick.item(world, "stageBadge")?, "visible");
     expect!(
-        drawn_artwork == artwork && drawn_pill == pill,
-        "the sidebar draws the artwork: {drawn_artwork}, the pill: {drawn_pill}; the stage is {}",
+        shown == !label.is_empty() && (label.is_empty() || brick.shows(world, label)?),
+        "the stage above the list: {shown}; the stage is {}",
         show(&world.state("stage"))
     );
     Ok(())
+}
+
+/// The marks the sidebar draws: the night sky, "DEV" in the wordmark, the
+/// pill (and its label).
+fn marks(world: &mut World, sky: bool, dev: bool, pill: &str) -> Outcome {
+    let brick = sidebar(world)?;
+    world.pump()?;
+    let drawn_sky = brick.flag(world, brick.item(world, "stageArtwork")?, "visible");
+    let drawn_dev = brick.flag(world, brick.item(world, "devMark")?, "visible");
+    let drawn_pill = brick.flag(world, brick.item(world, "stagePill")?, "visible");
+    expect!(
+        drawn_sky == sky
+            && drawn_dev == dev
+            && drawn_pill == !pill.is_empty()
+            && (pill.is_empty() || brick.shows(world, pill)?),
+        "the sidebar draws the night sky: {drawn_sky}, DEV: {drawn_dev}, the pill: {drawn_pill}; the stage is {}",
+        show(&world.state("stage"))
+    );
+    Ok(())
+}
+
+/// The primary environment runs `version`; the stage waits for the label
+/// it gives.
+fn runs(world: &mut World, version: &str, label: &str) -> Outcome {
+    let id = world.mc.subscribers("shell").first().copied().unwrap_or(-1);
+    let frame = json!({"t": "shell.environment", "id": id, "mc": world.mc.name,
+        "environment": {"environmentId": world.mc.environment_id,
+                        "serverVersion": version,
+                        "capabilities": world.mc.capabilities}});
+    world.mc.send(&frame);
+    world.sync()?;
+    world.wait_for_with(
+        |w| text(&w.state("stage")["label"]) == label,
+        |w| format!("the {label} stage; it is {}", show(&w.state("stage"))),
+    )
+}
+
+/// Set before the first window in the app; here the store's next change
+/// republishes it.
+fn own_stage(world: &mut World, label: &str) -> Outcome {
+    let _ = world.mc.part::<AppStage>();
+    hal_c2_shell::controllers::stage::set_app_stage(label);
+    runs(world, "0.9.0", label)
+}
+
+/// The shell's window, whose title is the app's name.
+fn shell_window(world: &mut World) -> Outcome<Brick> {
+    if let Some(brick) = world.part::<Shown>().0 {
+        return Ok(brick);
+    }
+    let brick = Brick::new(
+        world,
+        "import QtQuick\nimport HalC2.Bricks\nShellWindow { width: 800; height: 600 }\n",
+        800.0,
+        600.0,
+    )?;
+    world.part::<Shown>().0 = Some(brick);
+    Ok(brick)
 }
 
 /// The right panel as the desktop draws it, on a thread.
@@ -418,7 +495,23 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
-    // Environment identification: how a Nightly MC marks the sidebar's brand band.
+    // Environment identification: how a development shell or a Nightly MC
+    // marks the sidebar's brand band.
+    steps.step(
+        "the user's shell leaves off the sidebar's brand band",
+        |world, _, _| {
+            world.mc.part::<Brandless>().on = true;
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the sidebar shows a {Q} pill above the list"),
+        |world, c, _| badge(world, &c[0]),
+    );
+    steps.step(
+        "the sidebar shows no stage above the list",
+        |world, _, _| badge(world, ""),
+    );
     steps.step(
         &format!("the user sets environment identification to {Q}"),
         |world, c, _| {
@@ -435,26 +528,53 @@ pub fn register(steps: &mut Steps) {
         // A release marks nothing, whatever the mode.
         let stage = world.state("stage");
         expect!(text(&stage["label"]).is_empty(), "{}", show(&stage));
-        let id = world.mc.subscribers("shell").first().copied().unwrap_or(-1);
-        let frame = json!({"t": "shell.environment", "id": id, "mc": world.mc.name,
-            "environment": {"environmentId": world.mc.environment_id,
-                            "serverVersion": "0.9.0-nightly.20260923.412",
-                            "capabilities": world.mc.capabilities}});
-        world.mc.send(&frame);
-        world.sync()?;
+        runs(world, "0.9.0-nightly.20260923.412", "Nightly")
+    });
+    steps.step(&format!("the app's own stage is {Q}"), |world, c, _| {
+        own_stage(world, &c[0])
+    });
+    // Latest is a release app against a release MC; Nightly comes from the
+    // MC's version.
+    steps.step(
+        "the app's stage is \"(Latest|Nightly|Dev)\"",
+        |world, c, _| {
+            if c[0] == "Nightly" {
+                runs(world, "0.9.0-nightly.20260923.412", &c[0])
+            } else {
+                own_stage(world, if c[0] == "Dev" { &c[0] } else { "" })
+            }
+        },
+    );
+    steps.step("the user looks at the app's name", |world, _, _| {
+        shell_window(world).map(drop)
+    });
+    steps.step(&format!("the app's name reads {Q}"), |world, c, _| {
+        let brick = shell_window(world)?;
+        let Some(root) = brick.root(world) else {
+            crate::fail!("the window did not load");
+        };
         world.wait_for_with(
-            |w| w.state("stage")["label"] == "Nightly",
-            |w| format!("the Nightly stage; it is {}", show(&w.state("stage"))),
+            |w| brick.text_of(w, root, "title") == c[0],
+            |w| {
+                format!(
+                    "the window is titled \"{}\"",
+                    brick.text_of(w, root, "title")
+                )
+            },
         )
     });
     steps.step("the app shows the Nightly artwork", |world, _, _| {
-        marks(world, true, false)
+        marks(world, true, false, "")
     });
-    steps.step("the app shows a Nightly version pill", |world, _, _| {
-        marks(world, false, true)
+    steps.step(
+        "the app shows a (Nightly|Dev) version pill",
+        |world, c, _| marks(world, false, false, &c[0]),
+    );
+    steps.step("the app shows \"DEV\" by the wordmark", |world, _, _| {
+        marks(world, false, true, "")
     });
     steps.step("the app shows no environment marker", |world, _, _| {
-        marks(world, false, false)
+        marks(world, false, false, "")
     });
 
     // Motion: the right panel as the desktop draws it, on a thread.

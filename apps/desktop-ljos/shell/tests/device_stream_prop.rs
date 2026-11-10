@@ -68,6 +68,12 @@ enum Op {
         stale: bool,
     },
     Decoded(u8),
+    /// The minted ticket arrives: 0 ok, 1 minting failed; `stale`: an
+    /// answer for an older epoch.
+    Ticket {
+        outcome: u8,
+        stale: bool,
+    },
     Touch(f64, f64),
     Key(bool),
     Button(usize),
@@ -95,6 +101,7 @@ fn op() -> impl Strategy<Value = Op> {
             .prop_map(|(conn, refused, stale)| Op::Ended { conn, refused, stale }),
         3 => (0..5usize, prop::bool::weighted(0.2)).prop_map(|(timer, stale)| Op::Fire { timer, stale }),
         2 => (0..3u8).prop_map(Op::Decoded),
+        2 => (0..2u8, prop::bool::weighted(0.2)).prop_map(|(outcome, stale)| Op::Ticket { outcome, stale }),
         1 => (0.0..1.0f64, 0.0..1.0f64).prop_map(|(x, y)| Op::Touch(x, y)),
         1 => any::<bool>().prop_map(Op::Key),
         1 => (0..4usize).prop_map(Op::Button),
@@ -108,6 +115,8 @@ struct Host {
     /// conn -> (id, connected)
     open: HashMap<Conn, (u64, bool)>,
     timers: HashMap<Timer, u64>,
+    /// Ticket mints still unanswered, by epoch; the last is the newest.
+    mints: Vec<u64>,
     /// Every id the stream has used: a stale event carries an older one.
     used: Vec<u64>,
 }
@@ -139,6 +148,9 @@ impl Host {
                         self.timers.remove(&timer).is_some(),
                         "{timer:?} stopped twice"
                     );
+                }
+                Effect::MintTicket { epoch } => {
+                    self.mints.push(epoch);
                 }
             }
         }
@@ -288,6 +300,21 @@ proptest! {
                         host.run(core.take_effects())?;
                     }
                 }
+                Op::Ticket { outcome, stale } => {
+                    let ticket = (outcome == 0).then(|| "fresh-ticket".to_owned());
+                    if stale {
+                        // An epoch this stream never reaches in a run this
+                        // short: the answer is not its.
+                        is_stale = true;
+                        let epoch = host.mints.last().copied().unwrap_or(0) ^ (1 << 63);
+                        core.on_ticket(epoch, ticket);
+                    } else if let Some(epoch) = host.mints.pop() {
+                        core.on_ticket(epoch, ticket);
+                    } else {
+                        is_stale = true;
+                        core.on_ticket(1 << 63, ticket);
+                    }
+                }
                 Op::Touch(x, y) => core.touch("begin", x, y),
                 Op::Key(down) => core.key(0x41, "a", false, down),
                 Op::Button(i) => core.press_button(["home", "back", "recents", "power"][i]),
@@ -335,13 +362,98 @@ proptest! {
             }
             match core.status() {
                 "error" | "idle" => prop_assert!(!core.running(), "{} while running", core.status()),
-                "connecting" | "streaming" => prop_assert!(core.running()),
+                "streaming" => prop_assert!(core.running()),
+                // Connecting either waits for a first picture (running), or
+                // for a fresh ticket after a refusal: desktop-qt's
+                // refreshAccess stops, then says connecting while the mint
+                // is in flight.
+                "connecting" => prop_assert!(
+                    core.running() || !host.mints.is_empty(),
+                    "connecting, neither running nor minting"
+                ),
                 other => prop_assert!(false, "status {other}"),
             }
-            // Connecting always waits for a first picture.
-            if core.status() == "connecting" {
+            // Connecting while running always waits for a first picture.
+            if core.status() == "connecting" && core.running() {
                 prop_assert!(core.timers().contains(&Timer::FirstFrame));
             }
         }
     }
+}
+
+/// A stream refused once, up to the ticket mint it asks for.
+fn refused_once() -> (Core, u64) {
+    let script = Rc::new(RefCell::new(Script::default()));
+    let mut core = Core::new(Box::new(Scripted(script)));
+    core.set_active(true);
+    core.set_target("/api/device-hub/mcs/mc-1", "android", "emulator-5554");
+    let socket = core
+        .take_effects()
+        .into_iter()
+        .find_map(|e| match e {
+            Effect::Open {
+                conn: Conn::Socket,
+                id,
+                ..
+            } => Some(id),
+            _ => None,
+        })
+        .expect("an android stream opens its socket");
+    // A refused websocket handshake ends the socket with its status.
+    core.on_event(
+        Conn::Socket,
+        socket,
+        StreamEvent::Ended(StreamEnd {
+            status: Some(401),
+            ..StreamEnd::default()
+        }),
+    );
+    let epoch = core
+        .take_effects()
+        .into_iter()
+        .find_map(|e| match e {
+            Effect::MintTicket { epoch } => Some(epoch),
+            _ => None,
+        })
+        .expect("a first refusal mints a fresh ticket");
+    (core, epoch)
+}
+
+#[test]
+fn a_refusal_mints_then_retries_with_the_ticket() {
+    let (mut core, epoch) = refused_once();
+    // While the mint is in flight the stream says connecting but runs
+    // nothing (desktop-qt's refreshAccess stops first).
+    assert_eq!(core.status(), "connecting");
+    assert!(!core.running());
+    assert!(core.open().is_empty() && core.timers().is_empty());
+
+    core.on_ticket(epoch, Some("tick et".into()));
+    assert!(core.running());
+    let query = core
+        .take_effects()
+        .into_iter()
+        .find_map(|e| match e {
+            Effect::Open {
+                conn: Conn::Socket,
+                query,
+                ..
+            } => Some(query),
+            _ => None,
+        })
+        .expect("the retry opens its socket");
+    assert!(query.contains("wsTicket=tick%20et"), "{query}");
+}
+
+#[test]
+fn a_failed_mint_and_a_stale_ticket() {
+    let (mut core, epoch) = refused_once();
+    // A ticket for another epoch changes nothing.
+    core.on_ticket(epoch ^ (1 << 63), Some("nope".into()));
+    assert_eq!(core.status(), "connecting");
+    assert!(core.take_effects().is_empty());
+    // Minting itself failing is the refusal, said plainly.
+    core.on_ticket(epoch, None);
+    assert_eq!(core.status(), "error");
+    assert!(!core.running());
 }

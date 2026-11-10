@@ -15,10 +15,32 @@
 //! stream sees of it, so tests can give it another.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
 use ljos::media::{self, DecodeError, StreamFormat, VideoFrame};
+
+/// Tests: behave as if FFmpeg were not installed (desktop-qt's
+/// `ffmpeg::pretendMissing`): the desktop links the system FFmpeg at run
+/// time and bundles exclude it, so its absence is a state the Device tab
+/// must explain rather than a build without a decoder.
+static PRETEND_MISSING: AtomicBool = AtomicBool::new(false);
+
+/// Turns the pretence above on or off, for every decoder.
+pub fn pretend_missing(missing: bool) {
+    PRETEND_MISSING.store(missing, Ordering::SeqCst);
+}
+
+/// What the user should do when FFmpeg is not installed (desktop-qt's
+/// `ffmpeg::missing()`, its Linux library name).
+pub fn ffmpeg_missing() -> String {
+    "Install FFmpeg to watch device screens (libavcodec.so.61 was not found).".to_owned()
+}
+
+fn pretending_missing() -> bool {
+    PRETEND_MISSING.load(Ordering::SeqCst)
+}
 
 /// Units queued before the backlog is dropped.
 pub const MAX_QUEUED: usize = 8;
@@ -54,6 +76,11 @@ pub enum Decoded {
 
 /// A device stream's decoder, as the stream uses it.
 pub trait Decode {
+    /// Why no picture can be shown at all, when that is so before any
+    /// video is asked for (FFmpeg not installed); None: decoding can start.
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
     /// A new stream: `avcc` is its avcC record (AVCC units follow), or None
     /// for Annex-B. Drops what is queued and the newest picture, and decodes
     /// nothing before a keyframe.
@@ -67,6 +94,10 @@ pub trait Decode {
     /// The largest picture worth converting to (the view's size in pixels);
     /// pictures are scaled down to fit it, never up. (0, 0): full size.
     fn set_maximum_size(&mut self, size: (u32, u32));
+    /// The size set with [`Decode::set_maximum_size`].
+    fn maximum_size(&self) -> (u32, u32) {
+        (0, 0)
+    }
     /// What it said since last asked.
     fn take_events(&mut self) -> Vec<Decoded>;
     /// The newest picture, taken: the next [`Decoded::Frame`] is for the
@@ -179,6 +210,10 @@ impl Drop for Decoder {
 }
 
 impl Decode for Decoder {
+    fn unavailable(&self) -> Option<String> {
+        pretending_missing().then(ffmpeg_missing)
+    }
+
     fn reset(&mut self, avcc: Option<Vec<u8>>) {
         let mut state = self.shared.lock();
         state.epoch += 1;
@@ -236,6 +271,10 @@ impl Decode for Decoder {
 
     fn set_maximum_size(&mut self, size: (u32, u32)) {
         self.shared.lock().maximum = size;
+    }
+
+    fn maximum_size(&self) -> (u32, u32) {
+        self.shared.lock().maximum
     }
 
     fn take_events(&mut self) -> Vec<Decoded> {
@@ -366,6 +405,9 @@ fn work(shared: &Shared) {
 /// avcC record no decoder starts from (every unit fails, as broken video),
 /// Err(Some(why)) when this build cannot decode H.264 at all.
 fn open(avcc: Option<&[u8]>) -> Result<media::Decoder, Option<String>> {
+    if pretending_missing() {
+        return Err(Some(ffmpeg_missing()));
+    }
     let format = match avcc {
         None => StreamFormat::H264AnnexB,
         Some(config) => StreamFormat::H264Avcc {

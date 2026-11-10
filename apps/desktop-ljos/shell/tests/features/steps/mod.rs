@@ -119,6 +119,7 @@ pub mod space_fake;
 pub mod space_files;
 pub mod space_markdown;
 pub mod space_media;
+pub mod stage;
 pub mod stash;
 pub mod storage_layout;
 pub mod storage_settings;
@@ -277,6 +278,7 @@ pub fn register(steps: &mut Steps) {
     snap_shot_mac::register(steps);
     snap_shot_windows::register(steps);
     source_control_settings::register(steps);
+    stage::register(steps);
     stash::register(steps);
     storage_layout::register(steps);
     storage_settings::register(steps);
