@@ -739,6 +739,9 @@ pub fn register(steps: &mut Steps) {
                 world,
                 &format!("{{\"defaultThreadEnvMode\": \"{}\"}}", c[0]),
             );
+            // A checkout: a plain folder starts every thread in place
+            // (upstream #21404).
+            super::workspace::fake_git_repo(world, "/work/shop", &["main"], "main", "main");
             Ok(())
         },
     );
