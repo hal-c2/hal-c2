@@ -197,7 +197,8 @@ jobs:
     if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-24.04
     # About twice the slowest recent run (892 s): at 15 a passing suite was cancelled
-    # as it finished (#1494). The time is the sync suite, which the Test step's timings show.
+    # as it finished (#1494). The time is the sync suite; the Test step ends by listing
+    # the slowest tests and modules.
     timeout-minutes: 30
     env:
       MIX_ENV: test
@@ -232,8 +233,11 @@ jobs:
           cargo test --locked --manifest-path ../../native/mermaid/Cargo.toml
           cargo build --locked --release --manifest-path ../../native/mermaid/Cargo.toml
 
+      # Not `--slowest`: it turns on `--trace`, which runs one module at a time without timeouts.
       - name: Test
-        run: mix test --slowest 25 --slowest-modules 25
+        run: mix test
+        env:
+          HAL_C2_TEST_SLOWEST: 25
 
 
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
