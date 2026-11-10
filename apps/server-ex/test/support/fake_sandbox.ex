@@ -2,10 +2,15 @@ defmodule HalC2.Test.FakeSandbox do
   @moduledoc """
   A review sandbox for `HalC2.Test.FakeOpenShell`'s `:exec` (#1412): `exec/3` answers
   the commands `HalC2.OpenShell.Review` and the thread runtimes run in one, with the
-  sandbox's `/sandbox` standing for directory `root` here.
+  sandbox's `/review` standing for directory `root` here.
 
   - `tar -x ... -C dest -f -` unpacks its stdin into `dest`;
-  - `sh -c script` runs `script` here, `/sandbox` in it rewritten to `root`;
+  - `sh -c script` runs `script` here, `/review` in it rewritten to `root`;
+  - `printenv NAME` answers the placeholder OpenShell puts in a sandbox's
+    environment for a provider's credential, `openshell:resolve:env:fake_NAME`;
+  - `codex login --with-api-key` keeps its stdin as the sandbox's Codex login, and
+    tells `test` `{:sandbox_login, key}`: as 0.117's, the fake's Codex turn fails
+    without one;
   - `codex app-server` and `claude` are agents in Elixir that answer their handshakes
     and play one turn per message: they report through the MCP server they were given,
     the review broker, with `opts[:report]` (an approval unless it is `nil`), report
@@ -16,6 +21,10 @@ defmodule HalC2.Test.FakeSandbox do
     says the turn used `cli_tokens` over every model (none). Codex, with `subagent_tokens`, spawns a subagent whose thread reports `n`. With `hang: true` Codex's turn runs on, after `{:sandbox_turn, pid}`
     to `test`, until it is interrupted. With `late_tokens: n` Codex tells, once its turn
     ended, that the thread used `n`.
+
+  What the agents send the broker passes the sandbox's proxy first, which refuses an
+  MCP revision the sandbox's policy does not allow; Codex, as 0.117's, sends no
+  MCP-Protocol-Version header, and Claude sends `HalC2.OpenShell.Policy.mcp_version/0`.
 
   `stat -f` of the review's writable paths answers the tmpfs mounts it asked for,
   or an overlay with `disk: :unbounded`.
@@ -32,7 +41,7 @@ defmodule HalC2.Test.FakeSandbox do
   @report %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []}
 
   @doc """
-  A directory for a sandbox's `/sandbox`, removed when the test ends. Its path is
+  A directory for a sandbox's `/review`, removed when the test ends. Its path is
   plain, since the fake rewrites scripts with it: a test's own `tmp_dir` is named
   for the test, quotes included.
   """
@@ -61,7 +70,12 @@ defmodule HalC2.Test.FakeSandbox do
         end
       end
 
-      run(command, io, %{root: root, test: test, opts: Map.new(opts)})
+      run(command, io, %{
+        root: root,
+        test: test,
+        opts: Map.new(opts),
+        policy: Process.get(:fake_policy)
+      })
     end
   end
 
@@ -74,8 +88,10 @@ defmodule HalC2.Test.FakeSandbox do
   end
 
   defp run(["sh", "-c", script], io, s) do
-    {out, code} = System.cmd("sh", ["-c", String.replace(script, "/sandbox", s.root)])
-    if out != "", do: io.stdout.(String.replace(out, s.root, "/sandbox"))
+    # A path's `/review`, not a ref's (`refs/review/base`).
+    script = Regex.replace(~r{(?<![\w./-])/review(?![\w.-])}, script, s.root)
+    {out, code} = System.cmd("sh", ["-c", script])
+    if out != "", do: io.stdout.(String.replace(out, s.root, "/review"))
     io.exit.(code)
   end
 
@@ -95,9 +111,24 @@ defmodule HalC2.Test.FakeSandbox do
     io.exit.(0)
   end
 
+  defp run(["printenv", name], io, _s) do
+    io.stdout.("openshell:resolve:env:fake_#{name}\n")
+    io.exit.(0)
+  end
+
+  defp run(["codex", "login", "--with-api-key"], io, s) do
+    key = io |> stdin([]) |> String.trim()
+    File.mkdir_p!(Path.dirname(login(s)))
+    File.write!(login(s), key)
+    send(s.test, {:sandbox_login, key})
+    io.exit.(0)
+  end
+
   defp run(["codex", "app-server"], io, s), do: agent(io, s, "", &codex/3)
   defp run(["claude" | _], io, s), do: agent(io, s, "", &claude/3)
   defp run(_command, io, _s), do: io.exit.(127)
+
+  defp login(s), do: Path.join([s.root, "home", ".codex", "auth.json"])
 
   defp stdin(io, acc) do
     case io.read.() do
@@ -143,9 +174,11 @@ defmodule HalC2.Test.FakeSandbox do
     server = get_in(params, ["config", "mcp_servers", "hal-c2"]) || %{}
     out(io, %{"id" => id, "result" => %{"thread" => %{"id" => "sandboxed-thread"}}})
 
+    # As 0.117's, the fake's Codex sends no MCP-Protocol-Version header.
     Map.put(s, :mcp, %{
       url: server["url"],
-      authorization: get_in(server, ["http_headers", "Authorization"])
+      authorization: get_in(server, ["http_headers", "Authorization"]),
+      version: nil
     })
   end
 
@@ -154,9 +187,51 @@ defmodule HalC2.Test.FakeSandbox do
     ctx = %{"threadId" => "sandboxed-thread", "turnId" => turn}
     out(io, %{"id" => id, "result" => %{"turn" => %{"id" => turn, "status" => "inProgress"}}})
 
+    if File.exists?(login(s)), do: turn(io, ctx, s), else: unauthorized(io, ctx, s)
+  end
+
+  defp codex(%{"method" => "turn/interrupt", "id" => id}, io, s) do
+    out(io, %{"id" => id, "result" => %{}})
+
+    if s[:turn] do
+      completed(io, s.turn, "interrupted")
+      late_tokens(io, s.turn, s)
+    end
+
+    Map.delete(s, :turn)
+  end
+
+  defp codex(%{"id" => id, "method" => _}, io, s) do
+    out(io, %{"id" => id, "result" => %{}})
+    s
+  end
+
+  defp codex(_message, _io, s), do: s
+
+  # As Codex 0.117 does with no login: its environment's key is not its login.
+  defp unauthorized(io, ctx, s) do
+    error = %{
+      "message" => "unexpected status 401 Unauthorized: Missing bearer authentication in header"
+    }
+
+    out(io, %{
+      "method" => "error",
+      "params" => Map.merge(ctx, %{"error" => error, "willRetry" => false})
+    })
+
+    out(io, %{
+      "method" => "turn/completed",
+      "params" =>
+        Map.put(ctx, "turn", %{"id" => ctx["turnId"], "status" => "failed", "error" => error})
+    })
+
+    s
+  end
+
+  defp turn(io, ctx, s) do
     out(io, %{
       "method" => "turn/started",
-      "params" => Map.put(ctx, "turn", %{"id" => turn, "status" => "inProgress"})
+      "params" => Map.put(ctx, "turn", %{"id" => ctx["turnId"], "status" => "inProgress"})
     })
 
     tokens = Map.get(s.opts, :tokens, 0)
@@ -213,24 +288,6 @@ defmodule HalC2.Test.FakeSandbox do
     end
   end
 
-  defp codex(%{"method" => "turn/interrupt", "id" => id}, io, s) do
-    out(io, %{"id" => id, "result" => %{}})
-
-    if s[:turn] do
-      completed(io, s.turn, "interrupted")
-      late_tokens(io, s.turn, s)
-    end
-
-    Map.delete(s, :turn)
-  end
-
-  defp codex(%{"id" => id, "method" => _}, io, s) do
-    out(io, %{"id" => id, "result" => %{}})
-    s
-  end
-
-  defp codex(_message, _io, s), do: s
-
   # What the thread spent, told only after its turn ended.
   defp late_tokens(io, ctx, s) do
     if late = s.opts[:late_tokens] do
@@ -263,7 +320,8 @@ defmodule HalC2.Test.FakeSandbox do
           {%{"added" => Map.keys(servers), "removed" => [], "errors" => %{}},
            Map.put(s, :mcp, %{
              url: server["url"],
-             authorization: get_in(server, ["headers", "Authorization"])
+             authorization: get_in(server, ["headers", "Authorization"]),
+             version: HalC2.OpenShell.Policy.mcp_version()
            })}
 
         _ ->
@@ -401,17 +459,43 @@ defmodule HalC2.Test.FakeSandbox do
 
       # `reports: n` sends the report n times at once.
       1..Map.get(opts, :reports, 1)
-      |> Task.async_stream(fn _ -> post(s.mcp, request) end, timeout: 30_000)
+      |> Task.async_stream(fn _ -> proxied(s, request) end, timeout: 30_000)
       |> Enum.each(fn {:ok, {status, body}} ->
         send(s.test, {:sandbox_reported, status, body})
       end)
     end
   end
 
+  # OpenShell's proxy: it takes a request with no MCP-Protocol-Version header as of
+  # 2025-03-26, as the MCP spec says, and refuses a revision the report endpoint's
+  # policy does not list, before the broker sees it.
+  defp proxied(%{mcp: mcp, policy: policy}, request) do
+    version = mcp.version || "2025-03-26"
+
+    allowed =
+      case policy do
+        %{network_policies: %{"report" => %{endpoints: [%{mcp: %{versions: versions}} | _]}}} ->
+          versions
+
+        _ ->
+          [version]
+      end
+
+    if version in allowed,
+      do: post(mcp, request),
+      else: {403, ~s({"error":"mcp_protocol_version_not_allowed"})}
+  end
+
   @doc "POSTs JSON-RPC `body` to the broker `mcp` names: `{status, body}`."
-  def post(%{url: url, authorization: authorization}, body) do
+  def post(%{url: url, authorization: authorization} = mcp, body) do
     {:ok, _} = Application.ensure_all_started(:inets)
     headers = if authorization, do: [{~c"authorization", to_charlist(authorization)}], else: []
+
+    headers =
+      case mcp[:version] do
+        nil -> headers
+        version -> [{~c"mcp-protocol-version", to_charlist(version)} | headers]
+      end
 
     request =
       {to_charlist(url), headers, ~c"application/json", IO.iodata_to_binary(body_of(body))}
@@ -425,5 +509,5 @@ defmodule HalC2.Test.FakeSandbox do
   defp body_of(body) when is_binary(body), do: body
   defp body_of(body), do: JSON.encode!(body)
 
-  defp local(path, s), do: String.replace_prefix(path, "/sandbox", s.root)
+  defp local(path, s), do: String.replace_prefix(path, "/review", s.root)
 end

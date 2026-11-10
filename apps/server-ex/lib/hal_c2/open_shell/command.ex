@@ -49,7 +49,7 @@ defmodule HalC2.OpenShell.Command do
   # `--script` is the dev task's own temporary file.
   # sobelow_skip ["Traversal.FileModule"]
   def command(args) do
-    {:ok, _} = Application.ensure_all_started([:inets, :ssl, :grpc])
+    {:ok, _} = Application.ensure_all_started([:inets, :ssl, :grpc, :exile])
 
     case OptionParser.parse(args,
            strict: [

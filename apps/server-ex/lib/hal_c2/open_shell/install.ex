@@ -958,7 +958,8 @@ defmodule HalC2.OpenShell.Install do
   # reached. The sandbox is deleted whatever the outcome, and the check passes only
   # once it is gone. Sandboxes an earlier check left go first.
   defp check_isolation(conn, state) do
-    name = "halc2-smoke-" <> Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
+    # Within `Client.max_name/0`.
+    name = "halc2-check-" <> Base.encode16(:crypto.strong_rand_bytes(3), case: :lower)
 
     with :ok <- clear_probes(conn) do
       result =

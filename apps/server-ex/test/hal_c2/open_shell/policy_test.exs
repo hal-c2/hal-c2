@@ -48,6 +48,29 @@ defmodule HalC2.OpenShell.PolicyTest do
     assert Policy.check(wider, wanted) == {:error, "network rule report is not the one asked for"}
   end
 
+  # 0.1.7 adds one per provider attached, with nothing in it.
+  test "the empty rule the gateway adds for a provider is no widening, and one with an endpoint is" do
+    wanted = Policy.review(@review)
+    add = &put_in(wanted.network_policies["_provider_review-1"], &1)
+
+    assert Policy.check(add.(%Sb.NetworkPolicyRule{name: "_provider_review-1"}), wanted) == :ok
+
+    open = %Sb.NetworkPolicyRule{name: "_provider_review-1", endpoints: [model(wanted)]}
+    assert Policy.check(add.(open), wanted) == {:error, "the gateway adds network rules"}
+
+    binary = %Sb.NetworkPolicyRule{
+      name: "_provider_review-1",
+      binaries: [%Sb.NetworkBinary{path: "/bin/sh"}]
+    }
+
+    assert Policy.check(add.(binary), wanted) == {:error, "the gateway adds network rules"}
+
+    other = %Sb.NetworkPolicyRule{name: "extra"}
+
+    assert Policy.check(put_in(wanted.network_policies["extra"], other), wanted) ==
+             {:error, "the gateway adds network rules"}
+  end
+
   test "the model's TLS is left to OpenShell to terminate, never skipped" do
     assert model(Policy.review(@review)).tls == :NETWORK_TLS_MODE_UNSPECIFIED
   end
