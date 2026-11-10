@@ -509,6 +509,9 @@ files/file-viewer-and-editing.feature: A folder in the path trail explains why i
 files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing ["lib" was deleted after the file was opened, This folder is no longer available.]
 files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing [the project index is partial and has nothing in "lib", No entries from this folder are available in the partial workspace index.]
 files/file-viewer-and-editing.feature: A folder in the path trail lists what is in it
+files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [0, returns to its fitted size]
+files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [minus, zooms out one step]
+files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [plus, zooms in one step]
 files/file-viewer-and-editing.feature: A media preview that fails to load can be retried [assets/logo.png, image, is shown]
 files/file-viewer-and-editing.feature: A partial preview says how much of the file is shown
 files/file-viewer-and-editing.feature: A requested line is revealed even when it is past the end of the file
@@ -523,13 +526,17 @@ files/file-viewer-and-editing.feature: Closing a file returns to the tree
 files/file-viewer-and-editing.feature: Closing the file saves pending edits first
 files/file-viewer-and-editing.feature: Copying a file larger than one megabyte copies its first megabyte and says so [from the command palette]
 files/file-viewer-and-editing.feature: Copying a file larger than one megabyte copies its first megabyte and says so [from the viewer]
+files/file-viewer-and-editing.feature: Copying an attachment's text [over the preview limit, only the part shown, and the action says so]
 files/file-viewer-and-editing.feature: Edits save themselves shortly after the user stops typing
 files/file-viewer-and-editing.feature: Media files are previewed instead of shown as text [assets/logo.png, an image]
 files/file-viewer-and-editing.feature: Media files of a thread on another machine are previewed
+files/file-viewer-and-editing.feature: Mermaid diagrams are drawn in a rendered file [docs/flow.md, a "mermaid" code block]
+files/file-viewer-and-editing.feature: Mermaid diagrams are drawn in a rendered file [docs/flow.mmd, the whole file]
 files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [README.md]
 files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [data/orders.csv]
 files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [public/index.html]
 files/file-viewer-and-editing.feature: Some files open read-only [a file larger than one megabyte]
+files/file-viewer-and-editing.feature: The arrow keys look around a zoomed image and step through images otherwise
 files/file-viewer-and-editing.feature: The open file's text is copied whole [from the command palette]
 files/file-viewer-and-editing.feature: The open file's text is copied whole [from the viewer]
 files/file-viewer-and-editing.feature: The path trail lets the user jump to a sibling file
@@ -576,6 +583,7 @@ files/project-identity.feature: A picked icon still shows on environments that d
 files/project-identity.feature: A project without an icon shows a two-character monogram [M7 Forge, M7]
 files/project-identity.feature: A project without an icon shows a two-character monogram [Nebula, NA]
 files/project-identity.feature: A project without an icon shows a two-character monogram [Silver Orchard, SO]
+files/project-identity.feature: A project's image icon keeps showing past the life of its link
 files/project-identity.feature: An environment icon cannot always be changed ["laptop" is disconnected, Connect to this environment to change its icon.]
 files/project-identity.feature: An environment icon cannot always be changed ["laptop" runs a server too old to keep one, This environment's server is too old to keep an icon. Update it to choose one.]
 files/project-identity.feature: An environment icon cannot always be changed [the user's session cannot change settings, Your session on this environment cannot change its settings.]
@@ -2131,6 +2139,8 @@ source-control/snap-shot.feature: Capturing with no thread open starts a draft
 source-control/snap-shot.feature: Including the app's text and controls
 source-control/snap-shot.feature: Other Wayland desktops choose a window each time
 source-control/snap-shot.feature: Reduced motion turns the animation off
+source-control/snap-shot.feature: The Linux desktop decides how capture works [Hyprland, the capture helper and a Hyprland binding]
+source-control/snap-shot.feature: The Linux desktop decides how capture works [Niri, a Niri binding]
 source-control/snap-shot.feature: The Linux desktop decides how capture works [another compositor, the desktop portal]
 source-control/snap-shot.feature: The attachment names the app the way the user knows it [Windows, the window belongs to the program "Code.exe", Code]
 source-control/snap-shot.feature: The attachment names the app the way the user knows it [Windows, the window reports no program name, Window]
@@ -2144,10 +2154,13 @@ source-control/stacked-pull-requests.feature: Confirming a stack rebase warns it
 source-control/stacked-pull-requests.feature: The thread's pull request shows its stack
 source-control/status-and-changes.feature: Initializing a repository in a plain folder
 source-control/status-and-changes.feature: Status follows the checkout while the thread is open
+source-control/worktrees-and-setup-scripts.feature: A new worktree starts as the setting says, and the thread can differ
+source-control/worktrees-and-setup-scripts.feature: A project that starts in a new worktree starts it as the setting says
 source-control/worktrees-and-setup-scripts.feature: Choosing a new worktree for a new thread
 source-control/worktrees-and-setup-scripts.feature: Going back to the project folder
 source-control/worktrees-and-setup-scripts.feature: Picking the base ref for a new worktree
 source-control/worktrees-and-setup-scripts.feature: Returning to the previous worktree
+source-control/worktrees-and-setup-scripts.feature: Several chosen models always get a worktree each
 source-control/worktrees-and-setup-scripts.feature: The setup card shows the base, branch and path
 space/agent-in-page.feature: A deleted thread ends what the page says, and the page says why
 space/agent-in-page.feature: A failure shows on the page and leaves it as the agent last wrote it
