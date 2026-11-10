@@ -152,6 +152,16 @@
               "returnType": "void"
             },
             {
+              "name": "openApp",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "var"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
               "name": "clipboardText",
               "parameters": [],
               "returnType": "string"

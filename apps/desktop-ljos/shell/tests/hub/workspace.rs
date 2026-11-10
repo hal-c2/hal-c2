@@ -207,7 +207,7 @@ fn copy_reference_offers_the_branch_pull_request_of_the_route_thread() {
             .map(|r| (r.title, r.description))
             .unwrap()
     };
-    assert_eq!(title(&hub), ("Copy thread ID".into(), "t1".into()));
+    assert_eq!(title(&hub), ("Copy thread ID".into(), "Thread t1".into()));
     snapshot(
         &hub,
         "main",

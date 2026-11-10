@@ -234,9 +234,17 @@ fn the_plan_is_saved_into_the_threads_workspace() {
         )]
     );
 
-    // Without a path it is named after the plan, in the thread's worktree.
+    // Without a path nothing is written and the user is asked for one.
     offer(&hub, "t2");
-    hub.dispatch("plan.save", json!({}));
+    hub.dispatch("plan.save", json!({"path": "  "}));
+    assert_eq!(calls(&hub, "projects.writeFile").len(), 1);
+    assert_eq!(
+        toasts(&hub).last().unwrap(),
+        &("Enter a workspace path".to_owned(), String::new())
+    );
+
+    // A thread in a worktree saves into its worktree.
+    hub.dispatch("plan.save", json!({"path": "tax-line.md"}));
     let written = calls(&hub, "projects.writeFile");
     let second = payload(&hub, written[1]);
     assert_eq!(second["cwd"], "/work/p-tax");

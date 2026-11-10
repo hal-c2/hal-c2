@@ -123,6 +123,12 @@ impl ShellBridge {
     }
 
     #[qml(invokable)]
+    fn open_app(cx: &Cx, url: Value) -> bool {
+        let url = cx.engine.to_js_string(&url);
+        Bridge(cx.this).open_app(cx.engine, &url)
+    }
+
+    #[qml(invokable)]
     fn clipboard_text(cx: &Cx) -> String {
         Platform::of(cx.engine)
             .clipboard()
@@ -789,6 +795,42 @@ impl Bridge {
         if !Platform::of(engine).open_url().open(url) {
             eprintln!("hal-c2: cannot open {url}");
         }
+    }
+
+    /// Hands a link to another app (`slack:`, `mailto:`) to the platform's
+    /// opener, the user having agreed; never a web, local or inline address
+    /// (desktop-qt's `PagePermissions::engineScheme`). False when it is one,
+    /// or nothing could open it.
+    pub fn open_app(self, engine: &Engine, url: &str) -> bool {
+        const ENGINE: [&str; 14] = [
+            "http",
+            "https",
+            "about",
+            "data",
+            "blob",
+            "file",
+            "javascript",
+            "view-source",
+            "ws",
+            "wss",
+            "filesystem",
+            "chrome",
+            "qrc",
+            "devtools",
+        ];
+        let Some((scheme, _)) = url.split_once(':') else {
+            return false;
+        };
+        let scheme = scheme.to_ascii_lowercase();
+        let valid = !scheme.is_empty()
+            && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c));
+        if !valid || ENGINE.contains(&scheme.as_str()) {
+            return false;
+        }
+        Platform::of(engine).open_url().open(url)
     }
 
     /// Where `setClipboardText` writes instead of the clipboard (tests); it
