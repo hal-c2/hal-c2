@@ -78,9 +78,21 @@ impl McHandle {
     /// `origin` is the MC's http(s) origin; the token is its access token.
     /// Opening an open connection starts it over.
     pub fn open(&self, origin: Url, token: impl Into<String>) {
+        self.open_expecting(origin, token, "");
+    }
+
+    /// Opens as [`Self::open`], for an MC that must say it serves
+    /// `environment`: one that says another is blocked, not used.
+    pub fn open_expecting(
+        &self,
+        origin: Url,
+        token: impl Into<String>,
+        environment: impl Into<String>,
+    ) {
         self.send(Command::Open {
             origin,
             token: token.into(),
+            environment: environment.into(),
         });
     }
 
@@ -220,6 +232,21 @@ impl McHandle {
     /// How long a ping may go unanswered before the connection counts as dead.
     pub fn set_pong_timeout(&self, timeout: Duration) {
         self.send(Command::SetPongTimeout(timeout));
+    }
+
+    /// How long an open socket may go without the MC's hello.
+    pub fn set_setup_timeout(&self, timeout: Duration) {
+        self.send(Command::SetSetupTimeout(timeout));
+    }
+
+    /// How long the foreground check may go unanswered.
+    pub fn set_probe_timeout(&self, timeout: Duration) {
+        self.send(Command::SetProbeTimeout(timeout));
+    }
+
+    /// How long a connection holds before the retry delays start over.
+    pub fn set_steady_after(&self, after: Duration) {
+        self.send(Command::SetSteadyAfter(after));
     }
 }
 

@@ -22,6 +22,17 @@ use url::Url;
 
 use crate::{CallError, Frame, McEvent, PROTOCOL, Phase, Status, new_trace_id};
 
+/// How often a connection with nothing to say pings the MC.
+pub const DEFAULT_PING_INTERVAL: Duration = Duration::from_secs(25);
+/// How long the client waits for a pong before it drops the socket.
+pub const DEFAULT_PONG_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long a socket may take to be said hello to before it counts as failed.
+pub const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long wake's check of a connection that looks healthy waits for an answer.
+pub const DEFAULT_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a connection holds before the retry delays start over.
+pub const DEFAULT_STEADY_AFTER: Duration = Duration::from_secs(30);
+
 /// The delays between retries a client starts with: they grow to a cap.
 pub const DEFAULT_RETRY_DELAYS: [Duration; 5] = [
     Duration::from_millis(500),
@@ -37,6 +48,9 @@ pub(crate) enum Command {
     Open {
         origin: Url,
         token: String,
+        /// The environment the MC at `origin` must be; empty takes whichever
+        /// it first says it is.
+        environment: String,
     },
     Close,
     Reconnect,
@@ -57,6 +71,12 @@ pub(crate) enum Command {
         id: u64,
         items: u32,
     },
+    /// Says a terminal subscription has taken its output up to `sequence`.
+    Ack {
+        connection: u64,
+        id: u64,
+        sequence: i64,
+    },
     Call {
         id: u64,
         environment: String,
@@ -70,12 +90,9 @@ pub(crate) enum Command {
     SetRetryDelays(Vec<Duration>),
     SetPingInterval(Duration),
     SetPongTimeout(Duration),
-    /// Says a terminal subscription has taken its output up to `sequence`.
-    Ack {
-        connection: u64,
-        id: u64,
-        sequence: i64,
-    },
+    SetSetupTimeout(Duration),
+    SetProbeTimeout(Duration),
+    SetSteadyAfter(Duration),
 }
 
 /// A request on the MC's HTTP API whose answer goes straight to its owner.
@@ -192,6 +209,10 @@ pub(crate) struct Core {
     online: bool,
     phase: Phase,
     failure: String,
+    /// What the MC's answer means for the user, when it said ([`Status::failure_message`]).
+    failure_message: String,
+    /// The environment the MC must say it is; another one blocks.
+    expected_environment: String,
     trace_id: String,
     failure_trace_id: String,
     /// Why the socket is being dropped from this side ("timeout").
@@ -216,9 +237,18 @@ pub(crate) struct Core {
     retry_delays: Vec<Duration>,
     ping_interval: Duration,
     pong_timeout: Duration,
+    /// How long an open socket may go without its hello.
+    setup_timeout: Duration,
+    /// How long wake's check may go unanswered before the socket is replaced.
+    probe_timeout: Duration,
+    /// How long a connection holds before the retry delays start over.
+    steady_after: Duration,
     retry_at: Option<Instant>,
     ping_at: Option<Instant>,
     pong_by: Option<Instant>,
+    setup_by: Option<Instant>,
+    probe_by: Option<Instant>,
+    held_at: Option<Instant>,
     last_status: Status,
     effects: Vec<Effect>,
     now: Instant,
@@ -234,6 +264,8 @@ impl Core {
             online: true,
             phase: Phase::Closed,
             failure: String::new(),
+            failure_message: String::new(),
+            expected_environment: String::new(),
             trace_id: String::new(),
             failure_trace_id: String::new(),
             drop_reason: String::new(),
@@ -250,11 +282,17 @@ impl Core {
             hellos: 0,
             calls: BTreeSet::new(),
             retry_delays: DEFAULT_RETRY_DELAYS.to_vec(),
-            ping_interval: Duration::from_secs(25),
-            pong_timeout: Duration::from_secs(10),
+            ping_interval: DEFAULT_PING_INTERVAL,
+            pong_timeout: DEFAULT_PONG_TIMEOUT,
+            setup_timeout: DEFAULT_SETUP_TIMEOUT,
+            probe_timeout: DEFAULT_PROBE_TIMEOUT,
+            steady_after: DEFAULT_STEADY_AFTER,
             retry_at: None,
             ping_at: None,
             pong_by: None,
+            setup_by: None,
+            probe_by: None,
+            held_at: None,
             last_status: Status::default(),
             effects: Vec::new(),
             now,
@@ -263,10 +301,17 @@ impl Core {
 
     /// When the next timer is due, for the driver to wake and send [`Input::Tick`].
     pub fn next_deadline(&self) -> Option<Instant> {
-        [self.retry_at, self.ping_at, self.pong_by]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            self.retry_at,
+            self.ping_at,
+            self.pong_by,
+            self.setup_by,
+            self.probe_by,
+            self.held_at,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     pub fn handle(&mut self, input: Input, now: Instant) -> Vec<Effect> {
@@ -297,6 +342,7 @@ impl Core {
             phase: self.phase,
             connection: self.ready.then_some(self.hellos),
             failure: self.failure.clone(),
+            failure_message: self.failure_message.clone(),
             failure_trace_id: self.failure_trace_id.clone(),
             retry_delay: self.retry_delay,
             retries: self.retries,
@@ -319,13 +365,18 @@ impl Core {
 
     fn command(&mut self, command: Command) {
         match command {
-            Command::Open { origin, token } => self.open(origin, token),
+            Command::Open {
+                origin,
+                token,
+                environment,
+            } => self.open(origin, token, environment),
             Command::Close => self.close(),
             Command::Reconnect => {
                 if let Some(origin) = self.origin.clone() {
                     let token = self.token.clone();
+                    let environment = self.expected_environment.clone();
                     self.close();
-                    self.open(origin, token);
+                    self.open(origin, token, environment);
                 }
             }
             Command::SetOnline(online) => self.set_online(online),
@@ -394,6 +445,16 @@ impl Core {
                 }
             }
             Command::SetPongTimeout(timeout) => self.pong_timeout = timeout,
+            Command::SetSetupTimeout(timeout) => self.setup_timeout = timeout,
+            Command::SetProbeTimeout(timeout) => self.probe_timeout = timeout,
+            Command::SetSteadyAfter(after) => {
+                self.steady_after = after;
+                // A running timer starts again at the new length.
+                if self.held_at.is_some() {
+                    self.held_at = Some(self.now + after);
+                    self.tick();
+                }
+            }
         }
     }
 
@@ -406,7 +467,7 @@ impl Core {
 
     // `origin` is the MC's http(s) origin; the token is its access token.
     // Opening an open connection starts it over, as a reconnect.
-    fn open(&mut self, origin: Url, token: String) {
+    fn open(&mut self, origin: Url, token: String, environment: String) {
         if !self.closed {
             self.close();
         }
@@ -425,9 +486,11 @@ impl Core {
         self.closed = false;
         self.retries = 0;
         self.failure.clear();
+        self.failure_message.clear();
         self.failure_trace_id.clear();
         self.blocked_protocol = None;
         self.ticketed = false;
+        self.expected_environment = environment;
         self.connect();
     }
 
@@ -436,6 +499,7 @@ impl Core {
         self.attempt += 1;
         self.retry_at = None;
         self.pong_by = None;
+        self.stop_timers();
         if let Some(attempt) = self.socket.take() {
             self.effects.push(Effect::CloseSocket { attempt });
         }
@@ -480,11 +544,21 @@ impl Core {
         if self.closed {
             return;
         }
-        if self.phase == Phase::Retrying {
+        if matches!(
+            self.phase,
+            Phase::Retrying | Phase::Refused | Phase::Blocked
+        ) {
             self.retry_now();
         } else if self.ready {
             self.ping();
+            self.probe_by = Some(self.now + self.probe_timeout);
         }
+    }
+
+    fn stop_timers(&mut self) {
+        self.setup_by = None;
+        self.probe_by = None;
+        self.held_at = None;
     }
 
     fn retry_now(&mut self) {
@@ -544,6 +618,25 @@ impl Core {
             self.emit(McEvent::Checked(false));
             self.drop_socket("timeout");
         }
+        // A socket that opens but is never said hello to is as dead as one that drops.
+        if self.setup_by.is_some_and(|at| at <= now) {
+            self.setup_by = None;
+            self.drop_socket("timeout");
+        }
+        // A foreground check that goes unanswered replaces the connection at
+        // once: one that died while the app was away is the likely case.
+        if self.probe_by.is_some_and(|at| at <= now) {
+            self.probe_by = None;
+            self.pong_by = None;
+            self.emit(McEvent::Checked(false));
+            self.drop_socket("check");
+        }
+        // Only a connection that held starts the retry delays over: one that
+        // drops as soon as it is up is retried ever more slowly.
+        if self.held_at.is_some_and(|at| at <= now) {
+            self.held_at = None;
+            self.retries = 0;
+        }
         if let Some(at) = self.ping_at.filter(|at| *at <= now) {
             // A clock that jumped ahead pings once, not once per missed interval.
             self.ping_at = Some((at + self.ping_interval).max(now));
@@ -568,6 +661,9 @@ impl Core {
         self.trace_id = new_trace_id();
         self.drop_reason.clear();
         self.retry_delay = Duration::ZERO;
+        // Each attempt learns afresh what the MC says of it.
+        self.failure_message.clear();
+        self.blocked_protocol = None;
         self.phase = Phase::Connecting;
         self.effects.push(Effect::GetDescriptor {
             attempt: self.attempt,
@@ -591,6 +687,22 @@ impl Core {
                 self.failure_trace_id = self.trace_id.clone();
                 self.phase = Phase::Blocked;
                 return;
+            }
+            // An address that now answers as another environment is not that one.
+            let environment = self.descriptor.get("environmentId").and_then(Value::as_str);
+            if let Some(environment) = environment.filter(|e| !e.is_empty()) {
+                if self.expected_environment.is_empty() {
+                    self.expected_environment = environment.to_owned();
+                }
+                if environment != self.expected_environment {
+                    let message = format!(
+                        "Connected environment {environment} does not match {}.",
+                        self.expected_environment
+                    );
+                    self.failure = "mismatch".to_owned();
+                    self.stop(Phase::Blocked, message);
+                    return;
+                }
             }
         }
         // Nobody there: the socket would only fail the same way.
@@ -630,15 +742,63 @@ impl Core {
             .ok()
             .and_then(|body| body.get("ticket")?.as_str().map(str::to_owned))
             .unwrap_or_default();
-        match answer.status {
-            // The MC no longer knows this credential: no retry mends that.
-            Some(401) => self.phase = Phase::Refused,
-            Some(200) if !issued.is_empty() => {
-                self.ticketed = true;
-                self.open_socket(Some(&issued));
-            }
-            _ => self.schedule_retry(),
+        if answer.status == Some(200) && !issued.is_empty() {
+            self.ticketed = true;
+            self.open_socket(Some(&issued));
+            return;
         }
+        self.failure = match (answer.status, answer.error) {
+            (Some(status), _) => format!("HTTP {status}"),
+            (None, Some(NetError::Timeout)) => "timeout".to_owned(),
+            (None, Some(NetError::Unreachable(error) | NetError::Other(error))) => error,
+            (None, None) => "closed".to_owned(),
+        };
+        // What the MC answered says whether trying again can help
+        // (client-runtime connection/errors.ts mapRemoteEnvironmentError).
+        match answer.status {
+            // The MC no longer knows this credential: only pairing again mends that.
+            Some(401) => {
+                self.failure = "refused".to_owned();
+                self.stop(
+                    Phase::Refused,
+                    "The environment credential is invalid.".into(),
+                );
+            }
+            Some(403) => self.stop(
+                Phase::Blocked,
+                "The environment credential does not grant the required access.".into(),
+            ),
+            Some(400) => self.stop(
+                Phase::Blocked,
+                "The environment rejected the authentication request.".into(),
+            ),
+            Some(404) => self.stop(
+                Phase::Blocked,
+                "The environment endpoint could not be found.".into(),
+            ),
+            status => {
+                match status {
+                    Some(500..) => {
+                        self.failure_message =
+                            "The environment could not authorize the connection.".into();
+                    }
+                    Some(200) => {
+                        self.failure_message =
+                            "Remote environment endpoint returned an invalid response.".into();
+                    }
+                    _ => {}
+                }
+                self.failure_trace_id = self.trace_id.clone();
+                self.schedule_retry();
+            }
+        }
+    }
+
+    /// Stops trying: retrying cannot mend what the MC said.
+    fn stop(&mut self, phase: Phase, message: String) {
+        self.failure_message = message;
+        self.failure_trace_id = self.trace_id.clone();
+        self.phase = phase;
     }
 
     fn open_socket(&mut self, ticket: Option<&str>) {
@@ -651,6 +811,7 @@ impl Core {
                 .append_pair("wsTicket", ticket);
         }
         self.socket = Some(self.attempt);
+        self.setup_by = Some(self.now + self.setup_timeout);
         self.effects.push(Effect::OpenSocket {
             attempt: self.attempt,
             url,
@@ -664,15 +825,17 @@ impl Core {
         };
         let kind = frame.get("t").and_then(Value::as_str).unwrap_or_default();
         // Whatever it says, the MC is answering.
-        if self.pong_by.take().is_some() {
+        if self.pong_by.take().is_some() | self.probe_by.take().is_some() {
             self.emit(McEvent::Checked(true));
         }
         match kind {
             "hello" => {
                 self.ready = true;
                 self.hellos += 1;
-                self.retries = 0;
+                self.setup_by = None;
+                self.held_at = Some(self.now + self.steady_after);
                 self.failure.clear();
+                self.failure_message.clear();
                 self.failure_trace_id.clear();
                 self.mc = string(&frame, "mc");
                 self.environment = string(&frame, "environment");
@@ -736,22 +899,34 @@ impl Core {
         self.ready = false;
         self.ping_at = None;
         self.pong_by = None;
+        self.stop_timers();
         self.fail_calls();
         if self.closed {
             return;
         }
-        self.failure = reason;
+        self.failure_message.clear();
         self.failure_trace_id = self.trace_id.clone();
         if revoked {
+            self.failure = reason;
             self.phase = Phase::Refused;
+            return;
+        }
+        // A connection that failed wake's check is replaced at once; should the
+        // new one fail too, it is retried as usual.
+        if reason == "check" {
+            self.failure = reason;
+            self.connect();
             return;
         }
         // A socket that never got its hello may have been turned away for its
         // credential. With the bare token that is either a paired session's
         // token, which needs a ticket, or one the MC refuses: asking for a
         // ticket tells which. A ticketed socket that failed is retried like
-        // any other.
-        if was_ready || self.ticketed {
+        // any other, and so is one that timed out: the MC took it, so it took
+        // its credential.
+        let retry = was_ready || self.ticketed || reason == "timeout";
+        self.failure = reason;
+        if retry {
             self.schedule_retry();
         } else {
             self.open_with_ticket();
@@ -804,6 +979,7 @@ fn same_status(a: &Status, b: &Status) -> bool {
     a.phase == b.phase
         && a.connection == b.connection
         && a.failure == b.failure
+        && a.failure_message == b.failure_message
         && a.failure_trace_id == b.failure_trace_id
         && a.retry_delay == b.retry_delay
         && a.retries == b.retries

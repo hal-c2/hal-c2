@@ -2155,6 +2155,7 @@ dependencies = [
 name = "hal_c2_mc"
 version = "0.0.1"
 dependencies = [
+ "chrono",
  "futures-util",
  "getrandom 0.4.3",
  "proptest",

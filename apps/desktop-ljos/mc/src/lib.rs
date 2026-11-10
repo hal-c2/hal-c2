@@ -38,7 +38,10 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 
-pub use self::core::DEFAULT_RETRY_DELAYS;
+pub use self::core::{
+    DEFAULT_PING_INTERVAL, DEFAULT_PONG_TIMEOUT, DEFAULT_PROBE_TIMEOUT, DEFAULT_RETRY_DELAYS,
+    DEFAULT_SETUP_TIMEOUT, DEFAULT_STEADY_AFTER,
+};
 pub use client::{AuthorizedRequest, ListenerId, McClient, SubId, WeakMcClient};
 pub use driver::{McHandle, spawn};
 pub use http::fetch;
@@ -78,6 +81,9 @@ pub struct Status {
     /// Why the last connection ended or could not be made ("timeout", "closed",
     /// or the socket's own words); empty while none has failed since it was ready.
     pub failure: String,
+    /// What the failure means for the user, when the MC's answer says
+    /// ("The environment credential is invalid."); empty otherwise.
+    pub failure_message: String,
     /// The W3C trace id of the attempt that failed, sent as `traceparent` with
     /// its requests; empty when none failed.
     pub failure_trace_id: String,
@@ -103,6 +109,7 @@ impl Default for Status {
             phase: Phase::Closed,
             connection: None,
             failure: String::new(),
+            failure_message: String::new(),
             failure_trace_id: String::new(),
             retry_delay: Duration::ZERO,
             retries: 0,

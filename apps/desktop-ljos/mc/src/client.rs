@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -19,6 +20,10 @@ type FrameHandler = Box<dyn FnMut(&Frame)>;
 type Resume = Box<dyn FnMut() -> Frame>;
 type Reply = Box<dyn FnOnce(Result<Value, CallError>)>;
 type BytesReply = Box<dyn FnOnce(Result<Vec<u8>, CallError>)>;
+type Renewed = Box<dyn FnOnce(Result<(), CallError>)>;
+
+/// How long before its credential runs out an HTTP request renews it.
+pub const DEFAULT_RENEW_WITHIN: chrono::TimeDelta = chrono::TimeDelta::hours(24);
 
 /// The shell's connection to its MC, as its controllers use it: subscriptions
 /// multiplexed by id, sent once the MC says hello and again after every
@@ -75,6 +80,12 @@ struct State {
     next_listener: ListenerId,
     status_listeners: Vec<(ListenerId, Option<StatusListener>)>,
     checked_listeners: Vec<(ListenerId, Option<CheckedListener>)>,
+    /// When the credential runs out; None when it never does or is unknown.
+    expires_at: Option<DateTime<Utc>>,
+    /// None: [`DEFAULT_RENEW_WITHIN`].
+    renew_within: Option<chrono::TimeDelta>,
+    /// Who waits on the renewal in flight; empty while none is.
+    renewing: Vec<Renewed>,
 }
 
 struct Subscription {
@@ -227,13 +238,19 @@ impl McClient {
 
     /// `origin` is the MC's http(s) origin; the token is its access token.
     pub fn open(&self, origin: Url, token: impl Into<String>) {
+        self.open_expecting(origin, token, "");
+    }
+
+    /// Opens as [`Self::open`], for an MC that must say it serves
+    /// `environment` (empty takes whichever it first says).
+    pub fn open_expecting(&self, origin: Url, token: impl Into<String>, environment: &str) {
         let token = token.into();
         {
             let mut state = self.state();
             state.origin = Some(origin.clone());
             state.token = token.clone();
         }
-        self.inner.handle.open(origin, token);
+        self.inner.handle.open_expecting(origin, token, environment);
     }
 
     pub fn close(&self) {
@@ -496,14 +513,97 @@ impl McClient {
     /// too large for the socket, as `/api/pull-requests/diff`), with the
     /// access token. A refusal's error is the body's `message`, `detail` or
     /// `_tag`, else the HTTP status; its detail is then the body.
+    ///
+    /// Made within [`McClient::set_renew_within`] of the credential running
+    /// out, it renews it first (`/api/auth/session/renew`): the socket is not
+    /// touched, and a renewal that fails fails only the request that needed it.
     pub fn post(
         &self,
         path: &str,
         body: Value,
         reply: impl FnOnce(Result<Value, CallError>) + 'static,
     ) {
-        let id = self.expect(Pending::Value(Box::new(reply)));
-        self.inner.handle.post(id, path, body);
+        if !self.renewal_due() {
+            let id = self.expect(Pending::Value(Box::new(reply)));
+            self.inner.handle.post(id, path, body);
+            return;
+        }
+        let client = self.downgrade();
+        let path = path.to_owned();
+        self.renew(Box::new(move |renewed| match (renewed, client.upgrade()) {
+            (Err(error), _) => reply(Err(error)),
+            (Ok(()), Some(client)) => {
+                let id = client.expect(Pending::Value(Box::new(reply)));
+                client.inner.handle.post(id, &path, body);
+            }
+            (Ok(()), None) => {}
+        }));
+    }
+
+    /// The credential runs out at `expires_at` (None: never, or unknown).
+    pub fn set_credential_expiry(&self, expires_at: Option<DateTime<Utc>>) {
+        self.state().expires_at = expires_at;
+    }
+
+    pub fn credential_expiry(&self) -> Option<DateTime<Utc>> {
+        self.state().expires_at
+    }
+
+    /// How long before the credential runs out a request renews it.
+    pub fn set_renew_within(&self, within: chrono::TimeDelta) {
+        self.state().renew_within = Some(within);
+    }
+
+    fn renewal_due(&self) -> bool {
+        let state = self.state();
+        let within = state.renew_within.unwrap_or(DEFAULT_RENEW_WITHIN);
+        state.origin.is_some() && state.expires_at.is_some_and(|at| at - Utc::now() <= within)
+    }
+
+    // One renewal at a time; whoever asks meanwhile waits on it.
+    fn renew(&self, done: Renewed) {
+        {
+            let mut state = self.state();
+            state.renewing.push(done);
+            if state.renewing.len() > 1 {
+                return;
+            }
+        }
+        let client = self.downgrade();
+        let id = self.expect(Pending::Value(Box::new(
+            move |result: Result<Value, CallError>| {
+                let Some(client) = client.upgrade() else {
+                    return;
+                };
+                let expires_at = result.as_ref().ok().and_then(|body| {
+                    let at = body.get("expiresAt")?.as_str()?;
+                    DateTime::parse_from_rfc3339(at).ok()
+                });
+                let renewed = match (result, expires_at) {
+                    (Ok(_), Some(at)) => {
+                        client.state().expires_at = Some(at.with_timezone(&Utc));
+                        Ok(())
+                    }
+                    (Ok(_), None) => Err(CallError::new(
+                        "The environment credential could not be renewed (no expiry).",
+                    )),
+                    (Err(error), _) => Err(CallError {
+                        message: format!(
+                            "The environment credential could not be renewed ({}).",
+                            error.message
+                        ),
+                        detail: error.detail,
+                    }),
+                };
+                let waiting = std::mem::take(&mut client.state().renewing);
+                for done in waiting {
+                    done(renewed.clone());
+                }
+            },
+        )));
+        self.inner
+            .handle
+            .post(id, "/api/auth/session/renew", Value::Object(Map::new()));
     }
 
     /// GETs `path` of the MC's origin (its HTTP API, as `/api/auth/session`)
@@ -574,5 +674,17 @@ impl McClient {
     /// How long a ping may go unanswered before the connection counts as dead.
     pub fn set_pong_timeout(&self, timeout: Duration) {
         self.inner.handle.set_pong_timeout(timeout);
+    }
+
+    pub fn set_setup_timeout(&self, timeout: Duration) {
+        self.inner.handle.set_setup_timeout(timeout);
+    }
+
+    pub fn set_probe_timeout(&self, timeout: Duration) {
+        self.inner.handle.set_probe_timeout(timeout);
+    }
+
+    pub fn set_steady_after(&self, after: Duration) {
+        self.inner.handle.set_steady_after(after);
     }
 }
