@@ -14,6 +14,7 @@ defmodule HalC2.TokenEconomizerHistoryTest do
 
   alias HalC2.Orchestration.NativeSubagent
   alias HalC2Plugins.TokenEconomizer
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
   alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
 
   @moduletag :tmp_dir
@@ -1074,6 +1075,93 @@ defmodule HalC2.TokenEconomizerHistoryTest do
     assert {nil, _state} = shape(state, "other", "o1", p)
   end
 
+  test "a new conversation is given the project's facts and denied its tools turned off in one answer",
+       %{thread: thread, project: p} do
+    {state, text} = facts_and_pruning(thread, p)
+    run = %{"threadId" => "other", "runId" => "o1", "projectId" => p, "provider" => "claudeAgent"}
+    deadline = System.monotonic_time(:millisecond) + 60_000
+
+    {:reply, shape, state, {:continue, :save_staged}} =
+      TokenEconomizer.handle_call({:shape_run, run, deadline}, nil, state)
+
+    assert shape == %{"context" => text, "deniedTools" => ["CronCreate"]}
+    assert state.staged[{"other", "claudeAgent"}] == ["absent_tool:ruff"]
+
+    # With learning off the same conversation is still denied the tools.
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    assert {%{"deniedTools" => ["CronCreate"]} = shape, _state} = shape(state, "next", "n1", p)
+    refute Map.has_key?(shape, "context")
+  end
+
+  test "a conversation whose history read runs past its deadline is staged and shaped nothing, and the next one in time is",
+       %{thread: thread, project: p} do
+    {state, text} = facts_and_pruning(thread, p)
+    {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])
+    run = %{"threadId" => "other", "runId" => "o1", "projectId" => p, "provider" => "claudeAgent"}
+    project = {p, "claudeAgent"}
+
+    # The facts are rendered in time; tool pruning's read of the thread's history
+    # then holds the ask until its deadline has passed.
+    deadline = System.monotonic_time(:millisecond) + 250
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :hold_read, ["other", deadline]})
+
+    late =
+      try do
+        TokenEconomizer.handle_call({:shape_run, run, deadline}, nil, state)
+      after
+        Application.delete_env(:hal_c2, :streams_hook)
+      end
+
+    assert {:reply, nil, late} = late
+    assert late.staged == state.staged
+    assert late.shaped == state.shaped
+    # What the read learned is kept: the thread is not read back again.
+    assert late.seeded[{"other", project}] == :read
+
+    run = %{run | "runId" => "o2"}
+    deadline = System.monotonic_time(:millisecond) + 60_000
+
+    {:reply, shape, state, {:continue, :save_staged}} =
+      TokenEconomizer.handle_call({:shape_run, run, deadline}, nil, late)
+
+    assert shape == %{"context" => text, "deniedTools" => ["CronCreate"]}
+    assert state.staged[{"other", "claudeAgent"}] == ["absent_tool:ruff"]
+    unit = Prune.unit_for_provider("claudeAgent")
+    assert state.shaped[{"other", project}] == Prune.candidate_tools(unit) -- ["CronCreate"]
+  end
+
+  @doc "A `:streams_hook` that holds a read of `thread`'s stream until `deadline` has passed."
+  def hold_read(thread, deadline, :ensured, thread),
+    do: Process.sleep(max(deadline - System.monotonic_time(:millisecond) + 1, 0))
+
+  def hold_read(_thread, _deadline, _stage, _stream_id), do: :ok
+
+  # Project `p` with CronCreate turned off, and the fact that ruff is not installed
+  # learned from four turns; and the text that fact is given as.
+  defp facts_and_pruning(thread, p) do
+    ended(thread, "r1", 1, [])
+    settings = %{"toolPrune" => "propose", "microSkills" => "envfacts"}
+    {:ok, state} = TokenEconomizer.init(settings)
+    state = observe(state, started(thread, "r1", p, %{"newConversation" => true}))
+    state = observe(state, finished(thread, "r1", 1))
+    state = apply_tools(state, p, ["CronCreate"])
+
+    skills =
+      Enum.reduce(0..3, EnvFacts.new(), fn i, skills ->
+        {_text, skills} = EnvFacts.render(skills)
+
+        EnvFacts.update_turn(skills, [
+          {"Edit", %{"file_path" => "/r/m#{i}.py", "old_string" => "a", "new_string" => "b"},
+           "ok", nil},
+          {"Bash", %{"command" => "ruff check ."}, "bash: ruff: command not found", 127}
+        ])
+      end)
+
+    {text, _} = EnvFacts.render(skills)
+    assert text != ""
+    {put_in(state.skills[p], skills), text}
+  end
+
   defp stray_item(thread, tool),
     do: %{
       "type" => "turn.item",
@@ -1105,7 +1193,8 @@ defmodule HalC2.TokenEconomizerHistoryTest do
 
   defp shape(state, thread, run, p, provider \\ "claudeAgent") do
     run = %{"threadId" => thread, "runId" => run, "projectId" => p, "provider" => provider}
-    {:reply, shape, state} = TokenEconomizer.handle_call({:shape, run}, nil, state)
+    deadline = System.monotonic_time(:millisecond) + 60_000
+    {:reply, shape, state} = TokenEconomizer.handle_call({:shape_run, run, deadline}, nil, state)
     {shape, state}
   end
 

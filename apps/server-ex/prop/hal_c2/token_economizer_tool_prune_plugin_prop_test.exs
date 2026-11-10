@@ -15,7 +15,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
   starts again (missing whatever ran meanwhile), its history reads fail while it has
   no grant, a thread rolls turns back and is forked, a thread is deleted (perhaps
   while a turn runs, which then never ends here), the mode moves between off,
-  propose and auto, and the person applies and restores tools. After every step:
+  propose and auto, and the person applies and restores tools, and a new conversation's
+  shaping may outlive its deadline. After every step:
 
   - every use the plugin must know of is in its evidence's used list: one it heard,
     and, once it read a thread's history after starting, any of the thread's turns
@@ -43,6 +44,8 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     (what a deleted thread used reaches no conversation, so none of the above
     counts its uses);
   - it counts no turn twice, whatever a rollback or a fork did to the history;
+  - a conversation shaped past its deadline is answered nothing, and neither its
+    loaded set nor anything staged is recorded (what the shaping read back stays);
   - what it holds is what its file keeps, so a restart loses nothing.
 
   `prop/hal_c2/token_economizer_tool_prune_prop_test.exs` runs the evidence's own
@@ -374,6 +377,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     [
       idle != [] and s.runs < @max_runs and {6, start_call(s, idle)},
       idle != [] and s.runs < @max_runs and {2, late_call(s, idle)},
+      idle != [] and s.runs < @max_runs and {1, slow_start_call(s, idle)},
       open != [] and {8, use_call(s, open)},
       closed != [] and {2, late_use_call(closed)},
       open != [] and {5, finish_call(s, open)},
@@ -405,6 +409,12 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       first? = not Map.has_key?(s.threads, thread)
       run = "r#{s.runs + 1}"
       {:call, __MODULE__, :start, [thread, run, next_ordinal(s, thread), new? or first?, first?]}
+    end
+  end
+
+  defp slow_start_call(s, idle) do
+    let {:call, m, :start, [thread, run, ordinal, _new?, first?]} <- start_call(s, idle) do
+      {:call, m, :slow_start, [thread, run, ordinal, first?]}
     end
   end
 
@@ -492,6 +502,9 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
   def precondition(s, {:call, m, :late, [thread, run, ordinal, new?, first?, _]}),
     do: precondition(s, {:call, m, :start, [thread, run, ordinal, new?, first?]})
+
+  def precondition(s, {:call, m, :slow_start, [thread, run, ordinal, first?]}),
+    do: precondition(s, {:call, m, :start, [thread, run, ordinal, true, first?]})
 
   def precondition(s, {:call, _, :use, [thread, run | _]}), do: s.open[thread] == run
   def precondition(s, {:call, _, :finish, [thread, run, _]}), do: s.open[thread] == run
@@ -585,6 +598,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
         %{s | heard: Enum.uniq([thread | s.heard])}
     end
   end
+
+  # What the shaping learned stays, whatever became of its answer.
+  def next_state(s, res, {:call, m, :slow_start, [thread, run, ordinal, first?]}),
+    do: next_state(s, res, {:call, m, :start, [thread, run, ordinal, true, first?]})
 
   def next_state(s, res, {:call, m, :late, [thread, run, ordinal, new?, first?, tick?]}) do
     s
@@ -745,7 +762,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       disjoint?(res.proposal, next.owed) and disjoint?(denied, next.owed) and
       shaped_whole?(s, res, denied) and disjoint?(denied, lost(s)) and gone_holds_nothing?(s, res) and
       disjoint?(denied, strayed(s)) and (denied == [] or not s.unreadable) and
-      res.unreadable == next.unreadable and
+      res.unreadable == next.unreadable and overrun_untouched?(res) and
       res.prompts <= ended_runs(next) and
       Enum.all?(@tools -- res.used, &(streak(res, &1) <= unused_runs(next, &1)))
   end
@@ -770,6 +787,11 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       true -> denied == []
     end
   end
+
+  # A conversation shaped past its deadline is answered nothing and changes neither
+  # what is staged nor the loaded sets recorded.
+  defp overrun_untouched?(%{overrun: {shape, untouched?}}), do: shape == nil and untouched?
+  defp overrun_untouched?(_res), do: true
 
   # Saved uses that could not be read hold it off whatever else does.
   # A deleted thread's segments heard in part neither hold a conversation's shape off
@@ -856,6 +878,14 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     started(thread, run, new?)
   end
 
+  # A turn starts in a new conversation whose shaping outlived its deadline (its
+  # history read ran long): the MC has given up on the answer, so it must leave the
+  # conversation shaped with nothing.
+  def slow_start(thread, run, ordinal, first?) do
+    begin(thread, run, ordinal, first?)
+    started(thread, run, true, -1)
+  end
+
   def late(thread, run, ordinal, new?, first?, tick?) do
     begin(thread, run, ordinal, first?)
     commit(thread, [run_row(thread, run, ordinal, "completed")])
@@ -876,7 +906,7 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     commit(thread, [run_row(thread, run, ordinal, "running")])
   end
 
-  defp started(thread, run, new?) do
+  defp started(thread, run, new?, within \\ 60_000) do
     if Process.get(:plugin) do
       event = %{
         "threadId" => thread,
@@ -897,13 +927,22 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
 
       partial = for {t, marks} <- partial, do: {t, Enum.map(marks, & &1["run"])}
 
-      shape = if new?, do: call({:shape, event})
+      before = Process.get(:plugin)
+      shape = if new?, do: call({:shape_run, event, System.monotonic_time(:millisecond) + within})
       plugin = Process.get(:plugin)
+
+      # Past its deadline nothing is staged and no loaded set recorded for it.
+      overrun =
+        if within < 0,
+          do: %{
+            overrun: {shape, plugin.shaped == before.shaped and plugin.staged == before.staged}
+          },
+          else: %{}
 
       # What the evidence turns off as the conversation is shaped, and the threads
       # still to read back.
       shaped =
-        if new?,
+        if new? and within >= 0,
           do: %{
             shaped: true,
             deniable: Prune.denied(plugin.prunes[@project], Prune.config(plugin.settings)),
@@ -914,7 +953,10 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
       deliver(Map.merge(event, %{"type" => "turn.started", "newConversation" => new?}))
       denied = (shape || %{})["deniedTools"] || []
 
-      snapshot(Map.merge(shaped, %{denied: denied, partial: if(new?, do: partial, else: [])}))
+      shaped
+      |> Map.merge(overrun)
+      |> Map.merge(%{denied: denied, partial: if(new?, do: partial, else: [])})
+      |> snapshot()
     else
       snapshot()
     end

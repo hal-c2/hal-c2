@@ -398,12 +398,20 @@ defmodule HalC2Plugins.TokenEconomizer do
 
   def handle_call({:shape_run, run, deadline}, _from, state) do
     {facts, ids, state} = shape(state, run, deadline)
+    shaped = state.shaped
     {denied, state} = shape_prune(state, run)
 
-    reply =
-      case Map.merge(facts || %{}, denied || %{}) do
-        reply when reply == %{} -> nil
-        reply -> reply
+    # Tool pruning can read the thread's history back first, which may carry the
+    # ask past its deadline: the answer then never reaches the conversation, so it
+    # is staged no facts and keeps the loaded set it had; what the read learned stays.
+    {reply, ids, state} =
+      if System.monotonic_time(:millisecond) <= deadline do
+        case Map.merge(facts || %{}, denied || %{}) do
+          reply when reply == %{} -> {nil, ids, state}
+          reply -> {reply, ids, state}
+        end
+      else
+        {nil, nil, %{state | shaped: shaped}}
       end
 
     # Staged per conversation, not per thread: a thread carried on by another
