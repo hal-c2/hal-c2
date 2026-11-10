@@ -28,7 +28,8 @@ defmodule HalC2.OpenShell.ConfigTest do
     assert toml =~ ~s(client_ca_path = "#{Path.join(OpenShell.pki_dir(), "client-ca.crt")}")
     assert toml =~ ~s(guest_tls_ca = "#{Path.join(OpenShell.pki_dir(), "ca.crt")}")
     assert toml =~ "[openshell.drivers.podman]\n"
-    assert toml =~ "allow_driver_config = false\n"
+    # A review bounds its disk through driver config; 0.1.7 refuses it otherwise.
+    assert toml =~ "allow_driver_config = true\n"
     assert toml =~ "enable_bind_mounts = false\n"
     assert toml =~ "sandbox_pids_limit = 512\n"
     assert Config.pids_limit() < 2048

@@ -41,7 +41,11 @@ defmodule HalC2.OpenShell.Broker do
              startup_log: false
            ),
          {:ok, {_ip, port}} <- ThousandIsland.listener_info(pid) do
-      host = Keyword.get_lazy(config, :host, &default_host/0)
+      {host, dialed} =
+        case Keyword.fetch(config, :host) do
+          {:ok, host} -> {host, host}
+          :error -> default_host()
+        end
 
       {:ok,
        %{
@@ -49,20 +53,27 @@ defmodule HalC2.OpenShell.Broker do
          port: port,
          path: @path,
          ips: Keyword.get_lazy(config, :ips, &default_ips/0),
-         url: "http://#{host}:#{port}#{@path}"
+         url: "http://#{dialed}:#{port}#{@path}"
        }, pid}
     end
   end
 
-  # The name the container runtime gives the machine a sandbox runs on. On Docker it
-  # is the alias OpenShell's driver pins for the supervisor to the gateway's host
-  # (loopback on Linux's host network, Docker's host-gateway on a Mac's bridge), and
-  # the proxy connects an alias to that pinned address only, ahead of `ips`; so it
-  # holds on either network while the broker binds every interface.
+  # The name the container runtime gives the machine a sandbox runs on, and the name
+  # the sandbox's agent dials it by. On Docker it is the alias OpenShell's driver pins
+  # for the supervisor to the gateway's host (loopback on Linux's host network,
+  # Docker's host-gateway on a Mac's bridge), and the proxy connects an alias to that
+  # pinned address only, ahead of `ips`; so it holds on either network while the
+  # broker binds every interface.
+  #
+  # On rootless Podman (0.1.7) a sandbox connects only through its proxy, which it
+  # reaches at the addresses its own resolver answers, and the bare alias is answered
+  # before that resolver is asked, with an address the sandbox may not dial. The
+  # agent dials the fully-qualified name (the trailing dot), which only the resolver
+  # answers; the policy's endpoint names the host without it, as the proxy does.
   defp default_host do
     case HalC2.OpenShell.state() do
-      %{"driver" => "docker"} -> "host.docker.internal"
-      _ -> "host.containers.internal"
+      %{"driver" => "docker"} -> {"host.docker.internal", "host.docker.internal"}
+      _ -> {"host.containers.internal", "host.containers.internal."}
     end
   end
 

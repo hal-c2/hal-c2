@@ -504,7 +504,16 @@ defmodule HalC2.OpenShell.Service do
             {name,
              HalC2.Paths.absolute(System.get_env(name), :unix) || Path.join([home | default])}
 
-    [{"PATH", System.get_env("PATH", "")} | Service.chosen_home()] ++ xdg
+    [{"PATH", System.get_env("PATH", "")} | Service.chosen_home()] ++ xdg ++ mix_env()
+  end
+
+  # A checkout's reaper runs `mix`, which finds Hex and its other archives through
+  # these; a release's runs `hal-c2-service` and needs neither.
+  defp mix_env do
+    if System.get_env("RELEASE_ROOT"),
+      do: [],
+      else:
+        for(name <- ~w(MIX_HOME MIX_ARCHIVES), value = System.get_env(name), do: {name, value})
   end
 
   defp render_reaper(:systemd) do

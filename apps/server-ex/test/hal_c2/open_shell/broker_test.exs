@@ -23,9 +23,12 @@ defmodule HalC2.OpenShell.BrokerTest do
     end
   end
 
-  test "on Podman a sandbox dials host.containers.internal" do
+  # Its agent dials the fully-qualified name, which the sandbox's resolver answers
+  # with the way through its proxy; the policy's endpoint names the bare host.
+  test "on Podman a sandbox dials host.containers.internal by its fully-qualified name" do
     OpenShell.put_state(%{"driver" => "podman"})
-    assert %{host: "host.containers.internal"} = listen!()
+    assert %{host: "host.containers.internal", url: url} = listen!()
+    assert url =~ ~r"^http://host\.containers\.internal\.:\d+/report$"
   end
 
   defp listen! do
