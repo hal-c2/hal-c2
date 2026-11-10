@@ -527,6 +527,18 @@ pub fn register(steps: &mut Steps) {
         )
     });
     steps.step(
+        "a pull request the thread owns woke its agent because its checks failed",
+        |world, _, _| {
+            // pull_requests/wakes.ex wake.
+            start_notified_run(
+                world,
+                json!({"source": {"kind": "pull_request",
+                                  "pullRequests": ["github.com/acme/app#12"]},
+                       "outcome": "failed", "summary": "acme/app#12: checks failing"}),
+            )
+        },
+    );
+    steps.step(
         "a thread stored the agent's own wake-up as a user message",
         |world, _, _| {
             let run = start_run(world, 0, "running")?;

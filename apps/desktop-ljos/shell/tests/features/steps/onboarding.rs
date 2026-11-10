@@ -558,7 +558,7 @@ pub fn register(steps: &mut Steps) {
         )
     });
     steps.step(
-        "a saved computer and a computer discovered through HAL-C2 Connect",
+        "a saved computer and a computer that joined the cluster",
         |world, _, _| {
             world.mc.label = "studio".into();
             join_computer(world, "laptop", true);

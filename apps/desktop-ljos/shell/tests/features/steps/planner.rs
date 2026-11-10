@@ -1763,6 +1763,62 @@ fn register_panel(steps: &mut Steps) {
             wait_text(world, "plannerItemDue", &c[2])
         },
     );
+    steps.step(&format!("the user links it to {Q}"), |world, c, _| {
+        let brick = shell(world)?;
+        let field = shown_named(world, "plannerItemLink")?;
+        brick.write(world, field, "text", Value::from(c[0].as_str()))?;
+        world.sync()?;
+        let button = shown_named(world, "plannerItemLinkButton")?;
+        click(world, button)
+    });
+    steps.step(
+        &format!("the MC is asked to link {Q} to #(\\d+) of {Q} at {Q}"),
+        |world, c, _| {
+            let id = id_of(&mut world.mc, &c[0]);
+            let number: i64 = c[1].parse().unwrap_or(0);
+            wait_asked(
+                world,
+                "link",
+                json!({"itemId": id,
+                       "pullRequest": {"repository": c[2], "number": number, "url": c[3]}}),
+            )
+        },
+    );
+    steps.step(&format!("the user enters {Q} to link"), |world, c, _| {
+        let brick = shell(world)?;
+        let field = shown_named(world, "plannerItemLink")?;
+        brick.write(world, field, "text", Value::from(c[0].as_str()))?;
+        world.sync()
+    });
+    steps.step("the user presses Enter in the link field", |world, _, _| {
+        let field = shown_named(world, "plannerItemLink")?;
+        if let Err(error) = emit(world, field, "accepted", &[]) {
+            fail!("the link field cannot be accepted: {error:?}");
+        }
+        world.sync()
+    });
+}
+
+/// The planner half of "the pull request cannot be linked" (PlannerSteps.cpp):
+/// the Link PR button stays disabled, nothing was asked, and the field
+/// keeps what the user entered.
+pub fn cannot_be_linked(world: &mut World) -> Outcome {
+    let brick = shell(world)?;
+    let button = shown_named(world, "plannerItemLinkButton")?;
+    expect!(
+        !brick.flag(world, button, "enabled"),
+        "the Link PR button is enabled"
+    );
+    expect!(
+        asked(&world.mc, "link").is_empty(),
+        "the MC was asked {}",
+        show_asked(&world.mc, "link")
+    );
+    expect!(
+        !text_of(world, "plannerItemLink")?.is_empty(),
+        "the field lost what the user entered"
+    );
+    Ok(())
 }
 
 fn register_runs(steps: &mut Steps) {

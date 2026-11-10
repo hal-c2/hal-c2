@@ -686,6 +686,10 @@ pub fn register(steps: &mut Steps) {
 
     // Searching.
     steps.step(&format!("the user types {Q}"), |world, c, _| {
+        // Feedback on a plan the composer offers (TurnSteps).
+        if !is_open(world) && super::turn::plan_feedback_types(world, &c[0])? {
+            return Ok(());
+        }
         // Rich text in the composer (ComposerBrickSteps).
         if !is_open(world) && super::composer_brick::rich_text_types(world, &c[0])? {
             return Ok(());
@@ -732,6 +736,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("{Q} is not listed"), |world, c, _| {
+        if let Some(step) = world.on_settings_page.get("notListed").cloned() {
+            return step(world, c);
+        }
         if super::composer_picker::model_picker_lists(world, &c[0], false)? {
             return Ok(());
         }
@@ -739,6 +746,21 @@ pub fn register(steps: &mut Steps) {
         expect!(row.is_none(), "{}", describe(world));
         Ok(())
     });
+    steps.step(
+        &format!("{Q} is described by the title of the thread the user is looking at"),
+        |world, c, _| {
+            let listed = rows(world)?;
+            let row = index_of(world, &c[0], "")?;
+            expect!(
+                row.is_some_and(|row| {
+                    listed[row].description == format!("Chore {BACKGROUND_THREADS}")
+                }),
+                "{}",
+                describe(world)
+            );
+            Ok(())
+        },
+    );
     steps.step(
         &format!("{Q} is described with the project {Q} and {Q}"),
         |world, c, _| {

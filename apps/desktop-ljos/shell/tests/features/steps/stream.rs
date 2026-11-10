@@ -35,6 +35,14 @@ pub struct View {
     pub floor: Value,
 }
 
+/// A duration the scenarios ask to see written out (StreamingSteps.cpp),
+/// read back by the timeline activity steps' "it reads".
+#[derive(Default)]
+pub struct ShownDuration {
+    pub shown: bool,
+    pub text: String,
+}
+
 pub struct Change {
     pub seq: i64,
     pub kind: String,

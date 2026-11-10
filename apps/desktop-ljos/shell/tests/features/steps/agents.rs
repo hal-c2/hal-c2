@@ -269,6 +269,22 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+    steps.step(
+        "the agent delegated a task and chose to carry on",
+        |world, _, _| {
+            // The worker's thread is listed, so its result can lead to it.
+            let row = json!({"id": "thread-tax-tests", "title": "Tax tests", "projectId": PROJECT,
+                             "createdAt": iso(now()), "updatedAt": iso(now())});
+            world
+                .mc
+                .threads
+                .insert("thread-tax-tests".into(), row.clone());
+            world.mc.send_row("thread-tax-tests", &row);
+            start_subagent(world, "Tax tests", 30)?;
+            // The parent's turn ends without waiting for the worker.
+            settle_run(world, "completed", 30)
+        },
+    );
     steps.step(&format!("the subagent finishes with {Q}"), |world, c, _| {
         let id = world.mc.part::<FakeAgents>().last.clone();
         settle_subagent(

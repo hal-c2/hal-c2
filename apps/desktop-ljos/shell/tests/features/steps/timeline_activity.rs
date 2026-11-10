@@ -539,6 +539,11 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
     steps.step(&format!("it reads {Q}"), |world, c, _| {
+        if world.mc.part::<super::stream::ShownDuration>().shown {
+            let read = world.mc.part::<super::stream::ShownDuration>().text.clone();
+            expect!(read == c[0], "the duration reads \"{read}\"");
+            return Ok(());
+        }
         let read = group_line(world)?;
         expect!(read == c[0], "the group reads \"{read}\"");
         let brick = timeline_brick(world)?;

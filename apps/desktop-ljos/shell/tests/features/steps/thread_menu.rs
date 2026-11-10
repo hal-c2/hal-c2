@@ -352,7 +352,7 @@ pub fn view(world: &mut World, key: &str) -> Outcome {
 /// The sidebar section listing the thread `key`, empty when none does.
 pub fn section_of(world: &World, key: &str) -> String {
     let sidebar = world.state("sidebar");
-    for section in ["pinned", "active", "settled", "snoozed"] {
+    for section in ["pinned", "active", "working", "settled", "snoozed"] {
         let rows = sidebar[section].as_array().into_iter().flatten();
         if rows.into_iter().any(|row| text(&row["key"]) == key) {
             return section.to_owned();

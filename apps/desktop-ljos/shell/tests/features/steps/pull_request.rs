@@ -1375,6 +1375,10 @@ pub fn register(steps: &mut Steps) {
         link(world, &c[0])
     });
     steps.step("the pull request cannot be linked", |world, _, _| {
+        // Or the planner's link field (PlannerSteps.cpp).
+        if world.mc.part::<FakePullRequests>().thread.is_empty() {
+            return crate::steps::planner::cannot_be_linked(world);
+        }
         expect!(
             !read_tab(world, PullRequests::can_link)? && link_commands(world) == 0,
             "{}",

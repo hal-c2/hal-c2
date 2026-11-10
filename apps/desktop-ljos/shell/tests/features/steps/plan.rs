@@ -380,30 +380,9 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
-    // Why the plan could not be kept, as the toast gives it.
-    steps.step(
-        "the user is told \"(Could not (?:save|copy) plan)\" with the reason",
-        |world, c, _| {
-            let title = c[0].clone();
-            let reason = if title == "Could not save plan" {
-                "EACCES: permission denied"
-            } else {
-                "The clipboard could not be written."
-            };
-            world.wait_for_with(
-                move |w| {
-                    w.state("toasts")["items"].as_array().is_some_and(|items| {
-                        items.iter().any(|toast| {
-                            text(&toast["title"]) == title && text(&toast["description"]) == reason
-                        })
-                    })
-                },
-                |w| format!("the toasts are {}", show(&w.state("toasts"))),
-            )
-        },
-    );
     steps.step("the workspace refuses the write", |world, _, _| {
         world.mc.part::<FakeWrites>().refusal = Some("EACCES: permission denied".to_owned());
+        world.part::<super::desktop_update::Reason>().0 = "EACCES: permission denied".to_owned();
         Ok(())
     });
     steps.step("the user can try another path", |world, _, _| {

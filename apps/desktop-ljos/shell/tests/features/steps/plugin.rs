@@ -291,7 +291,7 @@ fn wait_shown(world: &mut World, slot: &str, id: &str, label: &str) -> Outcome {
         Value::Color(colour) => {
             expect!(
                 colour.is_valid() && colour != ljos::prelude::Color::BLACK,
-                "the plugin's text is {colour:?}"
+                "the plugin's text is {colour:?} (hal-c2/ljos-ui#305)"
             );
         }
         other => fail!("the plugin's text colour is {other:?}"),
@@ -492,6 +492,38 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| wait_shown(world, "sidebar.footer", &c[0], ""),
     );
 
+    // Format.time on a fixed local 6:05 PM, as a plugin page would show a time.
+    steps.step(
+        &format!("the plugin {Q} shows 6:05 PM with Format.time in {Q}"),
+        |world, c, _| {
+            let source = format!(
+                "import OpenTUI\nimport HalC2.Bricks\nPlugin {{\n  pluginId: \"{}\"\n  \
+                 Contribution {{ slot: \"{}\"\n    \
+                 Text {{ text: Format.time(new Date(2026, 8, 23, 18, 5)) }} }}\n}}\n",
+                c[0], c[1]
+            );
+            write_file(&plugin_path(world, &c[0]), &source)?;
+            world.part::<PluginWorld>().plugin = c[0].clone();
+            wait_loaded(world, &c[0])
+        },
+    );
+    steps.step(&format!("the plugin shows {Q}"), |world, c, _| {
+        let id = world.part::<PluginWorld>().plugin.clone();
+        let brick = shell(world)?;
+        let object = slot_object("statusbar")?;
+        world.wait_for_with(
+            |w| {
+                let Ok(Some(found)) = brick.find(w, object) else {
+                    return false;
+                };
+                brick.shows_under(w, found, &c[0]).unwrap_or(false)
+            },
+            |w| format!("the status bar to show \"{}\"; {}", c[0], describe(w)),
+        )?;
+        let shown = shown_in(world, "statusbar")?;
+        expect!(shown == [id], "{}", shown.join(", "));
+        Ok(())
+    });
     steps.step(
         &format!("the plugin {Q} contributes only to {Q}"),
         |world, c, _| {

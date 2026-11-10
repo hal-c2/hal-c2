@@ -685,6 +685,9 @@ pub fn register(steps: &mut Steps) {
         ensure_theme(world, &c[0], &["dark"])
     });
     steps.step(&format!("the user chooses {Q}"), |world, c, _| {
+        if super::timeline::plan_card_chooses(world, &c[0])? {
+            return Ok(());
+        }
         if super::composer_picker::model_picker_chooses(world, &c[0])? {
             return Ok(());
         }
@@ -698,6 +701,10 @@ pub fn register(steps: &mut Steps) {
         }
         // The Device tab's setup wizard and Tools drawer.
         if super::device::device_chooses(world, &c[0])? {
+            return Ok(());
+        }
+        // The open thread's notice (Un-settle).
+        if super::thread_settle::thread_notice_chooses(world, &c[0])? {
             return Ok(());
         }
         // A pull request review's thread picker.

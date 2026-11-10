@@ -45,18 +45,21 @@ const NOWHERE: Focus = Focus {
     terminal: false,
     composer: false,
     editable: false,
+    preview: false,
 };
 
 const COMPOSER: Focus = Focus {
     terminal: false,
     composer: true,
     editable: true,
+    preview: false,
 };
 
 const TERMINAL: Focus = Focus {
     terminal: true,
     composer: false,
     editable: false,
+    preview: false,
 };
 
 fn project_row(id: &str) -> Json {
