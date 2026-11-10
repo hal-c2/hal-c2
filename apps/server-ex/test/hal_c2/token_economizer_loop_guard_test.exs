@@ -3,7 +3,7 @@
 # tests/test_config_integer_thresholds.py (microsoft/TokenEconomizer@cb42207e3e09).
 
 for file <-
-      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge tool_prune_evidence token_economizer),
+      ~w(loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope loop_guard_judge micro_skills_lifecycle micro_skills_observe micro_skills_envfacts tool_prune_evidence token_economizer),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerLoopGuardTest do
@@ -19,6 +19,7 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
   alias HalC2Plugins.TokenEconomizer
   alias HalC2Plugins.TokenEconomizer.ToolPrune.Evidence, as: Prune
   alias HalC2Plugins.TokenEconomizer.LoopGuard.{Envelope, Judge, Rules, ShellEdits, State, Turn}
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
 
   # Printed by Playwright on Windows as it exits, after a passing run as after a failing one.
   @libuv ~S"Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76"
@@ -31,6 +32,8 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
 
     defaults = Map.new(manifest.settings, &{&1.key, &1.default})
     assert :ok = TokenEconomizer.validate_settings(defaults)
+    # The micro-skills are opt-in.
+    assert defaults["microSkills"] == "off"
   end
 
   describe "an exit status covers a command unless its work could fail unseen" do
@@ -115,6 +118,21 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
     }
 
     assert {"Read", %{"file_path" => "/r/a.ts"}, "x", nil} = TokenEconomizer.call_of(read)
+
+    # A shell run as a dynamic tool is read like a command — 0 only when its
+    # exit status covers the work, never for a status a pipe hid.
+    for {command, code} <- [{"pytest -q", 0}, {"pytest -q 2>&1 | head -n 0", nil}] do
+      shell = %{
+        "itemType" => "dynamic_tool",
+        "status" => "completed",
+        "tool" => "Bash",
+        "input" => JSON.encode!(%{"command" => command}),
+        "output" => "4 passed"
+      }
+
+      assert {"Bash", %{"command" => ^command}, "4 passed", ^code} =
+               TokenEconomizer.call_of(shell)
+    end
 
     assert TokenEconomizer.call_of(%{"itemType" => "assistant_message", "status" => "completed"}) ==
              nil
@@ -2088,6 +2106,526 @@ defmodule HalC2.TokenEconomizerLoopGuardTest do
       refute guard.redirecting
       assert guard.segment == 1 and guard.redirects == 1
       assert [%{"action" => "nudge", "delivered" => true}] = state.recent
+    end
+  end
+
+  describe "the micro-skills at the plugin's seam" do
+    # What was staged is kept on disk, read as the plugin starts: each test
+    # starts with none.
+    setup do
+      File.rm(TokenEconomizer.staged_path())
+      on_exit(fn -> File.rm(TokenEconomizer.staged_path()) end)
+      on_exit(fn -> File.rm(TokenEconomizer.micro_skills_path("seam")) end)
+    end
+
+    defp settings(state, settings) do
+      {:reply, :ok, state} = TokenEconomizer.handle_call({:settings, settings}, nil, state)
+      state
+    end
+
+    @pytest "form_repair:run_tests:pytest"
+
+    # A fact the project has learned: the bare `pytest` is missing here, and
+    # `python -m pytest` works.
+    defp learned(state) do
+      skills =
+        EnvFacts.add_candidate(EnvFacts.new(), %{
+          id: @pytest,
+          family: "form_repair",
+          high: false,
+          drift: false,
+          params: %{
+            "intent" => "run_tests",
+            "a" => "pytest",
+            "b_counts" => %{"python -m pytest" => 3},
+            "error_counts" => %{}
+          }
+        })
+
+      put_in(state.skills["seam"], skills)
+    end
+
+    defp stage(state, thread, instance, ids) do
+      %{
+        state
+        | staged: Map.put(state.staged, {thread, instance}, ids),
+          staged_order: state.staged_order ++ [{thread, instance}]
+      }
+    end
+
+    # One turn of `thread` on `instance` that runs the tests the working way,
+    # `calls` times.
+    defp ran_tests(state, thread, instance, calls \\ 1) do
+      run = "run-#{System.unique_integer([:positive])}"
+      at = %{"threadId" => thread, "runId" => run}
+
+      ran =
+        Map.merge(at, %{
+          "type" => "turn.item",
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "python -m pytest -q",
+          "output" => "3 passed in 0.10s"
+        })
+
+      state =
+        observe(
+          state,
+          started(thread, %{"runId" => run, "projectId" => "seam", "instanceId" => instance})
+        )
+
+      state = Enum.reduce(1..calls, state, fn _, state -> observe(state, ran) end)
+      observe(state, Map.merge(at, %{"type" => "turn.finished", "status" => "completed"}))
+    end
+
+    # How often the fact counted as given and doing its work.
+    defp fired(state), do: state.skills["seam"].facts[@pytest].life.fire_num
+
+    test "a fold credits the facts staged for the conversation's own instance" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+
+      # Another account of the same driver holds another conversation.
+      state = ran_tests(state, "t", "claude-home")
+      assert fired(state) == 0
+
+      state = ran_tests(state, "t", "claude-work")
+      assert fired(state) == 1
+    end
+
+    test "a project's change publishes that project's entry alone, on its own topic" do
+      project = "seam-#{System.unique_integer([:positive])}"
+      on_exit(fn -> File.rm(TokenEconomizer.micro_skills_path(project)) end)
+
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = put_in(state.skills[project], state.skills["seam"])
+
+      # The test stands in for the plugin host, which publishes what it is cast.
+      Process.register(self(), HalC2.Plugins)
+      topic = "microSkills:#{project}"
+
+      {:reply, {:ok, _view}, _state} =
+        TokenEconomizer.handle_call(
+          {:micro_skill_drop, %{"projectId" => project, "id" => @pytest}},
+          nil,
+          state
+        )
+
+      assert_receive {:"$gen_cast", {:publish, "token-economizer", ^topic, entry}}
+      assert entry["projectId"] == project
+      assert entry["dropped"] == [@pytest]
+      refute_received {:"$gen_cast", {:publish, "token-economizer", "microSkills", _}}
+    end
+
+    test "a finished turn reads and publishes its own project alone" do
+      other = "seam-other-#{System.unique_integer([:positive])}"
+      on_exit(fn -> File.rm(TokenEconomizer.micro_skills_path(other)) end)
+      path = TokenEconomizer.micro_skills_path(other)
+      File.mkdir_p!(Path.dirname(path))
+
+      File.write!(
+        path,
+        JSON.encode!(Map.put(EnvFacts.dump(EnvFacts.new()), "projectId", other))
+      )
+
+      # The test stands in for the plugin host, which publishes what it is cast.
+      Process.register(self(), HalC2.Plugins)
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> ran_tests("t", "claude-work")
+
+      # No other project's file was listed or read, and no other topic was sent.
+      assert state.known_skills == nil
+      assert Map.keys(state.skills) == ["seam"]
+      assert micro_topics() == ["microSkills:seam"]
+
+      # The whole listing, asked for, still finds the project saved on disk.
+      {:reply, {:ok, view}, _state} =
+        TokenEconomizer.handle_call({:micro_skills, nil}, nil, state)
+
+      ids = Enum.map(view["projects"], & &1["projectId"])
+      assert "seam" in ids and other in ids
+    end
+
+    defp micro_topics do
+      receive do
+        {:"$gen_cast", {:publish, "token-economizer", "microSkills" <> _ = topic, _}} ->
+          [topic | micro_topics()]
+
+        {:"$gen_cast", {:publish, "token-economizer", _topic, _}} ->
+          micro_topics()
+      after
+        0 -> []
+      end
+    end
+
+    test "what a conversation was staged outlives a restart, and an unreadable file is none" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      {:noreply, ^state} = TokenEconomizer.handle_continue(:save_staged, state)
+
+      # The MC restarts; the conversation is resumed, so it is not staged again.
+      {:ok, again} = TokenEconomizer.init(%{})
+      assert {again.staged, again.staged_order} == {state.staged, state.staged_order}
+
+      again = again |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      assert again |> ran_tests("t", "claude-work") |> fired() == 1
+
+      File.write!(TokenEconomizer.staged_path(), "{not json")
+      {:ok, again} = TokenEconomizer.init(%{})
+      assert {again.staged, again.staged_order} == {%{}, []}
+    end
+
+    test "a settings save keeps what the projects learned and gives it the new caps" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      # Learned in memory only: its save failed, or it was never due.
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+
+      state = settings(state, %{"microSkills" => "envfacts", "loopGuardLevel" => "strict"})
+      assert Map.has_key?(state.skills["seam"].facts, @pytest)
+
+      state = settings(state, %{"microSkills" => "envfacts", "microSkillsMaxFacts" => 2})
+      assert Map.has_key?(state.skills["seam"].facts, @pytest)
+      assert state.skills["seam"].max_facts == 2
+
+      state = settings(state, %{"microSkills" => "envfacts"})
+      assert state.skills["seam"].max_facts == EnvFacts.max_facts()
+    end
+
+    test "the guard switched off under a judge job awaits its verdict no more" do
+      {:ok, state} = TokenEconomizer.init(%{"microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+      {judge, state} = sleeper(state, "a", :judge)
+      pending = %{"id" => "a:0:1", "since" => System.monotonic_time(:second), "segment" => 0}
+      state = update_in(state.turns["a"].guard, &%{&1 | judge_pending: pending, judge_calls: 1})
+
+      state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})
+      assert_receive {:DOWN, _, :process, ^judge, _}
+      assert Map.has_key?(state.turns, "a")
+      assert state.turns["a"].guard.judge_pending == nil
+
+      # What the job sent before it stopped comes late: paid for, but read by no one.
+      verdict = %{"stuck" => true, "confidence" => 0.95, "reason" => "loop", "_tokens" => 5}
+
+      {:noreply, state} =
+        TokenEconomizer.handle_info({:verdict, "a", "run-a", "a:0:1", verdict}, state)
+
+      assert state.turns["a"].guard.judge_arrived == nil
+      assert state.stats["judgeTokens"] == 5
+
+      # Switched on again, the guard asks afresh, not after the old job goes stale. A
+      # settings save reads the envelopes afresh: the project has learned its turns.
+      state = settings(state, %{"microSkills" => "envfacts"})
+      saved = %{"level" => "default", "resolved_turns" => List.duplicate(30, 5)}
+      state = put_in(state.trackers[{"p", "claudeAgent"}], Envelope.new("default", %{}, saved))
+      state = stuck_until(state, &(&1.stats["judgeCalls"] > 0))
+      assert state.stats["judgeCalls"] == 1
+      assert [{_, {"a", :judge}}] = Map.to_list(state.tasks)
+    end
+
+    test "a conversation replaced while learning is off is credited none of its predecessor's facts" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      run = %{"threadId" => "t", "projectId" => "seam", "instanceId" => "claude-work"}
+      future = System.monotonic_time(:millisecond) + 60_000
+
+      # A Handoff replaces the conversation while learning is off: it is given nothing.
+      state = settings(state, %{"microSkills" => "off"})
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+      assert state.staged[{"t", "claude-work"}] == []
+
+      state = settings(state, %{"microSkills" => "envfacts"})
+      assert state |> ran_tests("t", "claude-work") |> fired() == 0
+    end
+
+    test "a turn is credited what its own conversation was staged, however late it folds" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      at = %{"threadId" => "t", "runId" => "run-old"}
+
+      state =
+        observe(
+          state,
+          started("t", %{
+            "runId" => "run-old",
+            "projectId" => "seam",
+            "instanceId" => "claude-work"
+          })
+        )
+
+      # A replacement past its deadline is given nothing before the old turn ends.
+      run = %{"threadId" => "t", "projectId" => "seam", "instanceId" => "claude-work"}
+      past = System.monotonic_time(:millisecond) - 1
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, run, past}, nil, state)
+
+      assert state.staged[{"t", "claude-work"}] == []
+
+      ran =
+        Map.merge(at, %{
+          "type" => "turn.item",
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "python -m pytest -q",
+          "output" => "3 passed in 0.10s"
+        })
+
+      state = observe(state, ran)
+      state = observe(state, Map.merge(at, %{"type" => "turn.finished", "status" => "completed"}))
+      assert fired(state) == 1
+    end
+
+    # The thread is read back whole (the feature's "A turn whose end the feed lost is learned
+    # from the thread's history"); here there is no thread to read, so nothing is learned.
+    test "a turn the sweep drops learns nothing from what was heard of it" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = state |> settings(%{"microSkills" => "envfacts"}) |> learned()
+      state = stage(state, "t", "claude-work", [@pytest])
+      at = %{"threadId" => "t", "runId" => "run-cut"}
+
+      state =
+        observe(
+          state,
+          started("t", %{
+            "runId" => "run-cut",
+            "projectId" => "seam",
+            "instanceId" => "claude-work"
+          })
+        )
+
+      looked =
+        Map.merge(at, %{
+          "type" => "turn.item",
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "ls",
+          "output" => "tests"
+        })
+
+      # Its last call, the test run the fact is for, and its end are lost.
+      state = observe(state, looked)
+      before = state.skills["seam"]
+      state = %{state | active?: fn _thread, run -> run != "run-cut" end}
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      {:noreply, state} = TokenEconomizer.handle_info(:sweep, state)
+      Process.cancel_timer(state.sweep)
+
+      refute Map.has_key?(state.turns, "t")
+      assert state.skills["seam"] == before
+    end
+
+    test "with the guard off a settings save keeps the turns learning hears" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"loopGuard" => "off", "microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+
+      state =
+        settings(state, %{
+          "loopGuard" => "off",
+          "microSkills" => "envfacts",
+          "microSkillsMaxFacts" => 4
+        })
+
+      assert Map.has_key?(state.turns, "a")
+      refute state.turns["a"].partial
+      # The guard watches nothing while it is off.
+      assert TokenEconomizer.status(state)["watching"] == 0
+
+      # Switched on under the turn, it folded none of its calls so far.
+      state = settings(state, %{"microSkills" => "envfacts"})
+      assert state.turns["a"].partial
+      assert TokenEconomizer.status(state)["watching"] == 1
+    end
+
+    test "a turn longer than its buffer is read back whole, and the guard hears all of it" do
+      {:ok, state} = TokenEconomizer.init(%{"loopGuard" => "watch"})
+      state = settings(state, %{"loopGuard" => "watch", "microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+      at = %{"type" => "turn.item", "threadId" => "a", "runId" => "run-a"}
+
+      item =
+        Map.merge(at, %{
+          "itemType" => "command_execution",
+          "status" => "completed",
+          "input" => "ls",
+          "output" => "a.py"
+        })
+
+      state = Enum.reduce(1..300, state, fn _, state -> observe(state, item) end)
+      assert state.turns["a"].calls == :history
+      assert state.turns["a"].guard.cum_turns == 300
+      refute state.turns["a"].partial
+    end
+
+    test "switching learning under a turn leaves it partial, and only then" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      state = observe(state, started("a"))
+      refute state.turns["a"].partial
+
+      state = settings(state, %{"microSkills" => "envfacts", "loopGuardLevel" => "strict"})
+      refute state.turns["a"].partial
+
+      state = settings(state, %{"microSkills" => "off"})
+      assert state.turns["a"].partial
+    end
+
+    test "staging is keyed by the conversation, and nothing stages past its deadline" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      future = System.monotonic_time(:millisecond) + 60_000
+      past = System.monotonic_time(:millisecond) - 1
+
+      run = %{"threadId" => "t", "projectId" => "p", "instanceId" => "claudeAgent"}
+
+      {:reply, nil, state} =
+        TokenEconomizer.handle_call({:shape_run, run, past}, nil, state)
+
+      assert state.staged == %{}
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+      other = %{run | "instanceId" => "codex"}
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, other, future}, nil, state)
+
+      # Another account of the same driver is another conversation.
+      account = Map.merge(run, %{"instanceId" => "claude-work", "provider" => "claudeAgent"})
+
+      {:reply, nil, state, {:continue, :save_staged}} =
+        TokenEconomizer.handle_call({:shape_run, account, future}, nil, state)
+
+      assert Map.keys(state.staged) |> Enum.sort() ==
+               [{"t", "claude-work"}, {"t", "claudeAgent"}, {"t", "codex"}]
+    end
+
+    test "a stored micro-skills mode that is not a choice is off" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      future = System.monotonic_time(:millisecond) + 60_000
+      run = %{"threadId" => "t", "projectId" => "p", "instanceId" => "claudeAgent"}
+
+      for mode <- ["envfact", "disabled", true] do
+        state = settings(state, %{"microSkills" => mode})
+
+        assert {:reply, nil, %{staged: staged}} =
+                 TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+        assert staged == %{}
+      end
+    end
+
+    test "staging keeps the latest 128 conversations" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      future = System.monotonic_time(:millisecond) + 60_000
+
+      state =
+        Enum.reduce(1..130, state, fn n, state ->
+          run = %{"threadId" => "t#{n}", "projectId" => "p", "instanceId" => "codex"}
+
+          {:reply, nil, state, {:continue, :save_staged}} =
+            TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+          state
+        end)
+
+      assert length(state.staged_order) == 128
+      assert hd(state.staged_order) == {"t3", "codex"}
+      assert Map.keys(state.staged) |> Enum.sort() == Enum.sort(state.staged_order)
+    end
+
+    test "a saved fact that holds a credential leaves the project's file" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      path = TokenEconomizer.micro_skills_path("seam")
+      File.mkdir_p!(Path.dirname(path))
+
+      leaky = %{
+        "id" => "env_value:DB_PASS",
+        "family" => "env_value",
+        "params" => %{"var" => "DB_PASS", "good" => %{"hunter2" => 2}},
+        "life" => %{}
+      }
+
+      File.write!(path, JSON.encode!(%{"facts" => %{"env_value:DB_PASS" => leaky}}))
+
+      run = %{"threadId" => "t", "projectId" => "seam", "instanceId" => "codex"}
+      future = System.monotonic_time(:millisecond) + 60_000
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+        end)
+
+      refute File.read!(path) =~ "hunter2"
+      # The drop leaves a trace, and the trace no credential.
+      assert log =~ "dropped 1 saved micro-skill fact(s) of project seam"
+      assert log =~ ~s("env_value" => 1)
+      refute log =~ "hunter2"
+    end
+
+    test "a run naming no conversation stages nothing" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+      future = System.monotonic_time(:millisecond) + 60_000
+
+      for run <- [
+            %{"projectId" => "p", "instanceId" => "claudeAgent"},
+            %{"projectId" => "p", "threadId" => "t"},
+            %{"projectId" => "p", "threadId" => 7, "provider" => "codex"}
+          ] do
+        {:reply, nil, after_run} =
+          TokenEconomizer.handle_call({:shape_run, run, future}, nil, state)
+
+        assert after_run.staged == %{}
+      end
+    end
+
+    test "a drop that cannot be saved is refused, and the plugin stands" do
+      {:ok, state} = TokenEconomizer.init(%{})
+      state = settings(state, %{"microSkills" => "envfacts"})
+
+      skills =
+        EnvFacts.add_candidate(EnvFacts.new(), %{
+          id: "form_repair:run_tests:pytest",
+          family: "form_repair",
+          high: false,
+          drift: false,
+          params: %{
+            "intent" => "run_tests",
+            "a" => "pytest",
+            "b_counts" => %{},
+            "error_counts" => %{}
+          }
+        })
+
+      state = put_in(state.skills["p"], skills)
+
+      # The write's temp path is a directory: the save cannot land.
+      tmp = TokenEconomizer.micro_skills_path("p") <> ".tmp"
+      File.mkdir_p!(tmp)
+      on_exit(fn -> File.rm_rf(tmp) end)
+
+      assert {:reply, {:error, message}, state} =
+               TokenEconomizer.handle_call(
+                 {:micro_skill_drop,
+                  %{"projectId" => "p", "id" => "form_repair:run_tests:pytest"}},
+                 nil,
+                 state
+               )
+
+      assert message =~ "could not be saved"
+      assert Map.has_key?(state.skills["p"].facts, "form_repair:run_tests:pytest")
     end
   end
 end

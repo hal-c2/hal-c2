@@ -163,6 +163,7 @@ defmodule HalC2.Rpc do
   def handle("projectClone.retry", input), do: HalC2.ProjectClones.retry(input)
   def handle("projectClone.cancel", input), do: HalC2.ProjectClones.cancel(input)
   def handle("server.getProcessDiagnostics", input), do: HalC2.Diagnostics.processes(input)
+  def handle("server.getOpenShellStatus", _input), do: HalC2.OpenShell.Command.settings_status()
   def handle("server.signalProcess", input), do: HalC2.Diagnostics.signal(input)
   def handle("server.getTraceDiagnostics", input), do: HalC2.Diagnostics.traces(input)
   def handle("server.getHostResources", input), do: HalC2.Diagnostics.host(input)
@@ -442,7 +443,7 @@ defmodule HalC2.Rpc do
     hal-c2.threadHistory hal-c2.threadFamily
     hal-c2.placeThread hal-c2.registerPush hal-c2.unregisterPush
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
-    server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
+    server.getProcessDiagnostics server.getOpenShellStatus server.getHostResources server.getProcessResourceHistory
     server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates
     server.reportClientActivity server.getBackgroundPolicy server.searchAcpRegistry
     server.listAcpRegistrySessions server.listAcpRegistryProviders scheduledTasks.list

@@ -153,6 +153,7 @@ SourceControlSettings 1.0 SourceControlSettings.qml
 IntegrationsSettings 1.0 IntegrationsSettings.qml
 SettingsScopeSentence 1.0 SettingsScopeSentence.qml
 StorageSettings 1.0 StorageSettings.qml
+SandboxSettings 1.0 SandboxSettings.qml
 ProjectSettings 1.0 ProjectSettings.qml
 DevicePanel 1.0 DevicePanel.qml
 DeviceToolsPanel 1.0 DeviceToolsPanel.qml

@@ -297,6 +297,8 @@ import {
   ServerSelfUpdateResult,
   ServerTraceDiagnosticsResult,
   ServerProcessDiagnosticsResult,
+  ServerOpenShellStatus,
+  ServerOpenShellStatusError,
   ServerProcessResourceHistoryInput,
   ServerProcessResourceHistoryResult,
   ServerSignalProcessInput,
@@ -553,6 +555,7 @@ export const WS_METHODS = {
   serverLogoutAcpRegistry: "server.logoutAcpRegistry",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
+  serverGetOpenShellStatus: "server.getOpenShellStatus",
   serverGetHostResources: "server.getHostResources",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
@@ -952,6 +955,12 @@ const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDia
   payload: Schema.Struct({}),
   success: ServerProcessDiagnosticsResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerGetOpenShellStatusRpc = Rpc.make(WS_METHODS.serverGetOpenShellStatus, {
+  payload: Schema.Struct({}),
+  success: ServerOpenShellStatus,
+  error: Schema.Union([ServerOpenShellStatusError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetHostResourcesRpc = Rpc.make(WS_METHODS.serverGetHostResources, {
@@ -2341,6 +2350,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerLogoutAcpRegistryRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
+  WsServerGetOpenShellStatusRpc,
   WsServerGetHostResourcesRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,

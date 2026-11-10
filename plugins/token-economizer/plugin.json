@@ -3,7 +3,7 @@
   "name": "TokenEconomizer",
   "version": "0.1.0",
   "apiVersion": 1,
-  "description": "Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls and, when an agent keeps repeating the same failing edit and test, redirects it once and offers you a button to stop the turn if it still does not recover. What counts as stuck is learned per project from turns that ended well. Its tool pruning turns tools a project's agents never use off from their next conversation, and gives them back when you ask. A port of Microsoft's TokenEconomizer.",
+  "description": "Spends fewer tokens on the same work. Its loop guard watches every turn's tool calls and, when an agent keeps repeating the same failing edit and test, redirects it once and offers you a button to stop the turn if it still does not recover. What counts as stuck is learned per project from turns that ended well. Its micro-skills learn short facts about a project's environment from the same turns -- which way of running the tests works here, which tool is not installed -- and state them at the start of a new conversation instead of letting the agent rediscover them by failing. Its tool pruning turns tools a project's agents never use off from their next conversation, and gives them back when you ask. A port of Microsoft's TokenEconomizer.",
   "author": {
     "name": "HAL-C2, porting microsoft/TokenEconomizer",
     "url": "https://github.com/microsoft/TokenEconomizer"
@@ -14,7 +14,11 @@
   "permissions": [
     {
       "id": "turns:observe",
-      "reason": "The loop guard reads each tool call as it ends: the command, the files it changed, and the tail of its output. Only counts and short signatures are kept, per turn, and they are dropped when the turn ends."
+      "reason": "The loop guard reads each tool call as it ends: the command, the files it changed, and the tail of its output. Only counts and short signatures are kept, per turn, and they are dropped when the turn ends. The micro-skills read the same calls to learn a project's environment facts from them, keeping only the learned facts with their evidence."
+    },
+    {
+      "id": "runs:shape",
+      "reason": "To state a project's learned environment facts ahead of the first message of a new conversation, so the agent does not rediscover them by failing. It never adds anything to a conversation already under way."
     },
     {
       "id": "runs:shape",
@@ -118,6 +122,32 @@
       "type": "list",
       "default": [],
       "description": "Tool names or patterns such as mcp__headroom__*, on top of the work-surface tools that are never proposed anyway."
+    },
+    {
+      "key": "microSkills",
+      "label": "Micro-skills",
+      "type": "choice",
+      "options": [
+        { "value": "envfacts", "label": "Learn environment facts" },
+        { "value": "on", "label": "On" },
+        { "value": "off", "label": "Off" }
+      ],
+      "default": "off",
+      "description": "Facts about a project's environment, learned from its turns and stated at the start of a new conversation. Off until you turn it on. On will add facts a model proposes in a later version; today it does the same as learning environment facts, which asks no model."
+    },
+    {
+      "key": "microSkillsMaxFacts",
+      "label": "Most facts stated",
+      "type": "number",
+      "default": 4,
+      "description": "How many facts a new conversation is told at most."
+    },
+    {
+      "key": "microSkillsMaxTokens",
+      "label": "Facts' token budget",
+      "type": "number",
+      "default": 150,
+      "description": "The most tokens, more or less, the facts stated at the start of a conversation may take."
     }
   ]
 }

@@ -18,6 +18,10 @@
 #   apps/server-ex/lib/hal_c2/open_shell/command.ex, apps/server-ex/lib/mix/tasks/hal_c2.openshell.ex
 #   apps/server-ex/rel/overlays/bin/hal-c2-service (hal-c2-service openshell ...)
 #   mise-tasks/openshell/_default (the dev run)
+#   https://github.com/hal-c2/hal-c2/issues/1420 (Settings shows whether review sandboxes can run)
+#   packages/contracts/src/rpc.ts (server.getOpenShellStatus), packages/contracts/src/server.ts (ServerOpenShellStatus)
+#   apps/desktop-qt/src/native/SandboxSettingsController.cpp, apps/desktop-qt/qml/HalC2/Bricks/SandboxSettings.qml
+#   apps/tui/src/host/sections/sandboxes.ts
 #   docs/user/openshell.md
 #   docs/operations/openshell.md
 
@@ -364,9 +368,30 @@ Feature: The OpenShell gateway review sandboxes run in
     Then no gateway is installed
     And the gateway's service is gone
 
-  # https://github.com/hal-c2/hal-c2/issues/1420: an RPC for the status, then each client's settings.
-  @mc @shared @backlog
+  # https://github.com/hal-c2/hal-c2/issues/1420: server.getOpenShellStatus, read when Settings
+  # shows the section; never pushed or polled.
+  @mc @shared
   Scenario: Settings shows whether review sandboxes can run, and what to fix
     Given a machine that is an Intel Mac
     When the user opens the sandbox settings
     Then they read that OpenShell does not run on an Intel Mac
+
+  @mc @shared
+  Scenario: Settings says how to install OpenShell where it can run
+    When the user opens the sandbox settings
+    Then they read that OpenShell is not installed, and how to install it
+
+  @mc @shared
+  Scenario: Settings says review sandboxes can run once the MC has a gateway
+    Given a gateway the user runs, with its CA and a client certificate
+    And the user points the MC at it
+    When the user opens the sandbox settings
+    Then they read that review sandboxes can run here
+
+  @shared
+  Scenario: Settings says when the MC could not answer, and can ask again
+    Given the MC cannot say whether review sandboxes can run
+    When the user opens the sandbox settings
+    Then they read that the sandbox status could not be read
+    When the MC can say again and the user refreshes the sandbox settings
+    Then they read that OpenShell is not installed, and how to install it
