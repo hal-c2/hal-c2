@@ -196,7 +196,9 @@ jobs:
     needs: [changes, mc_check]
     if: needs.changes.outputs.unit == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # About twice the slowest recent run (892 s): at 15 a passing suite was cancelled
+    # as it finished (#1494). The time is the sync suite, which the Test step's timings show.
+    timeout-minutes: 30
     env:
       MIX_ENV: test
     defaults:
@@ -231,7 +233,7 @@ jobs:
           cargo build --locked --release --manifest-path ../../native/mermaid/Cargo.toml
 
       - name: Test
-        run: mix test
+        run: mix test --slowest 25 --slowest-modules 25
 
 
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
