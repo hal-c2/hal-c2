@@ -67,6 +67,34 @@ defmodule HalC2.Upgrade.AppupTest do
     assert Appup.changed(%{AppupT.Lazy => %{md5: :unloaded}}, new) == []
   end
 
+  # Processes wait in a frozen module's code, so a change to it takes a restart.
+  test "a frozen module is told apart" do
+    new = beams("defmodule AppupT.Frozen do use HalC2.Frozen end")
+    assert new[AppupT.Frozen].frozen?
+    refute Appup.info(elem(:code.get_object_code(HalC2.Upgrade.Appup), 1)).frozen?
+  end
+
+  test "a change to, or removal of, a module that is or was frozen takes a restart" do
+    old = %{
+      AppupT.F1 => %{md5: "a", frozen?: false},
+      AppupT.F2 => %{md5: "a", frozen?: true},
+      AppupT.F3 => %{md5: "a", frozen?: false},
+      AppupT.F4 => %{md5: "a", frozen?: true},
+      AppupT.F6 => %{md5: "a", frozen?: true},
+      AppupT.F7 => %{md5: "a", frozen?: false}
+    }
+
+    new = %{
+      AppupT.F1 => %{md5: "b", frozen?: true},
+      AppupT.F2 => %{md5: "b", frozen?: false},
+      AppupT.F3 => %{md5: "b", frozen?: false},
+      AppupT.F4 => %{md5: "a", frozen?: true},
+      AppupT.F5 => %{md5: "b", frozen?: true}
+    }
+
+    assert Enum.sort(Appup.frozen(old, new)) == [AppupT.F1, AppupT.F2, AppupT.F6]
+  end
+
   test "a module loading a NIF is told apart" do
     {:ok, mod, bin} =
       :compile.forms(

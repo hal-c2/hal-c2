@@ -359,6 +359,11 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "server." <> acp when acp in ~w(setAcpRegistryProvider disableAcpRegistryProvider) ->
         {%{"instanceId" => "opencode", "projectId" => f.project, "providerId" => "fake"}, context}
 
+      # The machine's facts are an Intel Mac's, so the status asks no container runtime.
+      "server.getOpenShellStatus" ->
+        World.put_app_env(:openshell_facts, %{os: :darwin, arch: "x86_64", runtime: nil})
+        {%{}, context}
+
       "server.get" <> history
       when history in ~w(ProcessResourceHistory ResourceTelemetryHistory) ->
         {%{"windowMs" => 60_000, "bucketMs" => 5_000}, context}

@@ -1239,6 +1239,28 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the gateway lists its sandboxes again", context do
+    FakeOpenShell.failing(context.gateway, [])
+    context
+  end
+
+  step "the sandbox past its time remains without its provider", context do
+    assert Map.has_key?(FakeOpenShell.sandboxes(context.gateway), "review-old")
+    refute Map.has_key?(FakeOpenShell.providers(context.gateway), "review-old")
+    context
+  end
+
+  # The MC's reconcile deletes off its review process, each told once the gateway has
+  # it: the sandbox whose provider went, and the other with its provider.
+  step "no review sandbox or provider remains", context do
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-old"}}, 15_000
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-new"}}, 15_000
+    assert_receive {:openshell_request, "DeleteProvider", %{name: "review-new"}}, 15_000
+    assert FakeOpenShell.sandboxes(context.gateway) == %{}
+    assert FakeOpenShell.providers(context.gateway) == %{}
+    context
+  end
+
   step "the reap says the sandboxes were not listed", context do
     assert {:error, message} = context.reaped
     assert message =~ "sandboxes not listed"

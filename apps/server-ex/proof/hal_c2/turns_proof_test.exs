@@ -130,6 +130,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,
       "HalC2.Orchestration.driver_for/1" => "names an instance's driver",
+      "HalC2.Orchestration.run_under_way?/1" =>
+        "reads whether a run's status is one the model's runs are under way in; it changes no run",
       "HalC2.Orchestration.session_call/2" =>
         "answers a call into a session that stopped mid-call as a lookup that found none would; it changes no run",
       "HalC2.Orchestration.TurnWriter.commit/2" => @items,

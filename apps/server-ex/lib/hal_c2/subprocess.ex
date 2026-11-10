@@ -30,8 +30,8 @@ defmodule HalC2.Subprocess do
   With `:sandbox`, the program runs in an OpenShell sandbox over an exec stream
   (`HalC2.Subprocess.Sandboxed`), with the same messages.
 
-  Reader loops recurse through fully qualified calls, so a hot code load moves them
-  onto the new module version at the next chunk.
+  The readers wait on `HalC2.Pump`, not in this module, so a hot code update loads
+  this module however long they have waited: each chunk runs its newest `step/2`.
   """
 
   alias Exile.Process, as: Proc
@@ -122,12 +122,12 @@ defmodule HalC2.Subprocess do
          {:ok, proc} <- Proc.start_link(args, stderr: stderr, env: [entry]),
          :ok <- track(proc, mark) do
       owner = self()
-      reader = spawn_link(fn -> durable_reader_init(proc, owner, offset) end)
+      reader = HalC2.Pump.spawn_link(__MODULE__, durable_reader(proc, owner, offset))
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
       send(reader, :owned)
 
       if prefix do
-        errors = spawn(fn -> stderr_init(proc, owner, prefix) end)
+        errors = HalC2.Pump.spawn(__MODULE__, stderr_reader(proc, owner, prefix, nil))
         :ok = Proc.change_pipe_owner(proc, :stderr, errors)
         send(errors, :owned)
       end
@@ -149,7 +149,7 @@ defmodule HalC2.Subprocess do
          {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)),
          :ok <- track(proc, mark) do
       owner = self()
-      reader = spawn_link(fn -> reader_init(proc, owner) end)
+      reader = HalC2.Pump.spawn_link(__MODULE__, stdout_reader(proc, owner))
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
       send(reader, :owned)
 
@@ -158,7 +158,7 @@ defmodule HalC2.Subprocess do
           # Unlinked: stderr closing on its own must not stop the owner. The reader
           # dies with the program, when its read fails.
           tail = if tail?, do: ""
-          errors = spawn(fn -> stderr_init(proc, owner, prefix, tail) end)
+          errors = HalC2.Pump.spawn(__MODULE__, stderr_reader(proc, owner, prefix, tail))
           :ok = Proc.change_pipe_owner(proc, :stderr, errors)
           send(errors, :owned)
           errors
@@ -448,66 +448,125 @@ defmodule HalC2.Subprocess do
     end
   end
 
-  @doc false
-  def durable_reader_init(proc, owner, offset) do
-    receive do: (:owned -> :ok)
-    __MODULE__.durable_reader_loop(proc, owner, "", offset)
-  end
+  # --- readers ------------------------------------------------------------------------
+  #
+  # Each reader runs on `HalC2.Pump`, which waits for it, so a reader of a program
+  # that is quiet for hours holds no code a hot update changes. Its state is a map
+  # whose `:kind` is `:stdout`, `:durable` (counting the bytes of whole lines, so a
+  # later MC reads on from there) or `:stderr`.
+
+  @owned %{owned: true}
+  @acked %{ack: true}
 
   @doc false
-  # As `reader_loop/3`, counting the bytes of whole lines so a later MC reads on
-  # from there, and ending at the shim's report rather than at end of file: the
-  # output is a file, which has no end while the helper follows it.
+  def step(reader, :start), do: {:receive, @owned, :infinity, reader}
+  def step(reader, {:message, :owned}), do: read(reader)
+  def step(%{ended: true} = reader, {:message, :ack}), do: eof(reader)
+  def step(reader, {:message, :ack}), do: read(reader)
+
+  def step(%{kind: :stdout} = reader, {:called, {:ok, data}}) do
+    {lines, rest} = split_lines(reader.partial, IO.iodata_to_binary(data))
+    reader = %{reader | partial: rest}
+
+    if lines != [] do
+      send(reader.owner, {:subprocess_lines, self(), lines})
+      {:receive, @acked, :infinity, reader}
+    else
+      read(reader)
+    end
+  end
+
+  # Ends at the shim's report rather than at end of file: the output is a file, which
+  # has no end while the helper follows it.
+  def step(%{kind: :durable, partial: partial, offset: offset} = reader, {:called, {:ok, data}}) do
+    data = IO.iodata_to_binary(data)
+    {lines, rest} = split_lines(partial, data)
+    offset = offset + line_bytes(partial) + byte_size(data) - line_bytes(rest)
+    {lines, ended} = Enum.split_while(lines, &(not Durable.exit_line?(&1)))
+    reader = %{reader | partial: rest, offset: offset, ended: ended != []}
+
+    cond do
+      lines != [] ->
+        send(reader.owner, {:subprocess_lines, self(), lines})
+        send(reader.owner, {:subprocess_offset, self(), offset})
+        {:receive, @acked, :infinity, reader}
+
+      reader.ended ->
+        eof(reader)
+
+      true ->
+        read(reader)
+    end
+  end
+
+  def step(%{kind: :stderr, prefix: prefix} = reader, {:called, {:ok, data}}) do
+    data = IO.iodata_to_binary(data)
+    {lines, rest} = if prefix, do: prefixed_lines(reader.partial, data, prefix), else: {[], ""}
+    if lines != [], do: send(reader.owner, {:subprocess_stderr, self(), lines})
+    read(%{reader | partial: rest, tail: keep_tail(reader.tail, data)})
+  end
+
+  # The reader outlives the program's stderr until the owner asks for its end, or a
+  # while has gone by and nobody will.
+  def step(%{kind: :stderr, prefix: prefix} = reader, {:called, _eof_or_error}) do
+    {lines, _} = if prefix, do: prefixed_lines(reader.partial, "\n", prefix), else: {[], ""}
+    if lines != [], do: send(reader.owner, {:subprocess_stderr, self(), lines})
+
+    if reader.tail,
+      do: {:receive, %{stderr_tail: true}, 10_000, reader},
+      else: {:done, :ok}
+  end
+
+  def step(%{kind: :stderr} = reader, {:message, {:stderr_tail, from, ref}}) do
+    send(from, {ref, reader.tail})
+    {:done, :ok}
+  end
+
+  def step(%{kind: :stderr}, :timeout), do: {:done, :ok}
+
+  def step(%{kind: :stdout} = reader, {:called, _eof_or_error}) do
+    if is_binary(reader.partial) and reader.partial != "",
+      do: send(reader.owner, {:subprocess_lines, self(), [reader.partial]})
+
+    eof(reader)
+  end
+
+  def step(%{kind: :durable} = reader, {:called, _eof_or_error}), do: eof(reader)
+
+  defp read(%{kind: :stderr, proc: proc} = reader),
+    do: {:call, {Proc, :read_stderr, [proc, @read_size]}, reader}
+
+  defp read(%{proc: proc} = reader), do: {:call, {Proc, :read, [proc, @read_size]}, reader}
+
+  defp eof(reader) do
+    send(reader.owner, {:subprocess_eof, self()})
+    {:done, :ok}
+  end
+
+  defp stdout_reader(proc, owner), do: %{kind: :stdout, proc: proc, owner: owner, partial: ""}
+
+  defp durable_reader(proc, owner, offset),
+    do: %{kind: :durable, proc: proc, owner: owner, partial: "", offset: offset, ended: false}
+
+  defp stderr_reader(proc, owner, prefix, tail),
+    do: %{kind: :stderr, proc: proc, owner: owner, prefix: prefix, partial: "", tail: tail}
+
+  # Readers started before the Pump loop in these until their next chunk, then move to
+  # the Pump. Drop them once no running MC predates it.
+  @doc false
   def durable_reader_loop(proc, owner, partial, offset) do
-    case Proc.read(proc, @read_size) do
-      {:ok, data} ->
-        data = IO.iodata_to_binary(data)
-        {lines, rest} = split_lines(partial, data)
-        offset = offset + line_bytes(partial) + byte_size(data) - line_bytes(rest)
-        {lines, ended} = Enum.split_while(lines, &(not Durable.exit_line?(&1)))
-
-        if lines != [] do
-          send(owner, {:subprocess_lines, self(), lines})
-          send(owner, {:subprocess_offset, self(), offset})
-          receive do: (:ack -> :ok)
-        end
-
-        if ended == [] do
-          __MODULE__.durable_reader_loop(proc, owner, rest, offset)
-        else
-          send(owner, {:subprocess_eof, self()})
-        end
-
-      _eof_or_error ->
-        send(owner, {:subprocess_eof, self()})
-    end
+    reader = %{durable_reader(proc, owner, offset) | partial: partial}
+    HalC2.Pump.resume(__MODULE__, read(reader))
   end
 
   @doc false
-  def reader_init(proc, owner) do
-    receive do: (:owned -> :ok)
-    __MODULE__.reader_loop(proc, owner, "")
-  end
+  def reader_loop(proc, owner, partial),
+    do: HalC2.Pump.resume(__MODULE__, read(%{stdout_reader(proc, owner) | partial: partial}))
 
   @doc false
-  def reader_loop(proc, owner, partial) do
-    case Proc.read(proc, @read_size) do
-      {:ok, data} ->
-        {lines, rest} = split_lines(partial, IO.iodata_to_binary(data))
-
-        if lines != [] do
-          send(owner, {:subprocess_lines, self(), lines})
-          receive do: (:ack -> :ok)
-        end
-
-        __MODULE__.reader_loop(proc, owner, rest)
-
-      _eof_or_error ->
-        if is_binary(partial) and partial != "",
-          do: send(owner, {:subprocess_lines, self(), [partial]})
-
-        send(owner, {:subprocess_eof, self()})
-    end
+  def stderr_loop(proc, owner, prefix, partial, tail \\ nil) do
+    reader = %{stderr_reader(proc, owner, prefix, tail) | partial: partial}
+    HalC2.Pump.resume(__MODULE__, read(reader))
   end
 
   # The bytes an unsplit rest holds, counting a dropped line's so far: with
@@ -516,36 +575,6 @@ defmodule HalC2.Subprocess do
   # re-drops) the whole line instead of handing up its tail.
   defp line_bytes({:skip, bytes}), do: bytes
   defp line_bytes(partial), do: byte_size(partial)
-
-  @doc false
-  def stderr_init(proc, owner, prefix, tail \\ nil) do
-    receive do: (:owned -> :ok)
-    __MODULE__.stderr_loop(proc, owner, prefix, "", tail)
-  end
-
-  # The loop a reader started before `:stderr_tail` existed runs on here.
-  @doc false
-  def stderr_loop(proc, owner, prefix, partial),
-    do: __MODULE__.stderr_loop(proc, owner, prefix, partial, nil)
-
-  # `tail` is nil when it is not kept, else the end of stderr so far.
-  @doc false
-  def stderr_loop(proc, owner, prefix, partial, tail) do
-    case Proc.read_stderr(proc, @read_size) do
-      {:ok, data} ->
-        data = IO.iodata_to_binary(data)
-        {lines, rest} = if prefix, do: prefixed_lines(partial, data, prefix), else: {[], ""}
-        if lines != [], do: send(owner, {:subprocess_stderr, self(), lines})
-        __MODULE__.stderr_loop(proc, owner, prefix, rest, keep_tail(tail, data))
-
-      _eof_or_error ->
-        {lines, _} = if prefix, do: prefixed_lines(partial, "\n", prefix), else: {[], ""}
-        if lines != [], do: send(owner, {:subprocess_stderr, self(), lines})
-        if tail, do: hand_over_tail(tail)
-    end
-  catch
-    :exit, _ -> :ok
-  end
 
   defp keep_tail(nil, _data), do: nil
 
@@ -556,16 +585,6 @@ defmodule HalC2.Subprocess do
     if size > @tail_bytes,
       do: :binary.copy(binary_part(kept, size - @tail_bytes, @tail_bytes)),
       else: kept
-  end
-
-  # The reader outlives the program's stderr until the owner asks for its end, or a
-  # while has gone by and nobody will.
-  defp hand_over_tail(tail) do
-    receive do
-      {:stderr_tail, from, ref} -> send(from, {ref, tail})
-    after
-      10_000 -> :ok
-    end
   end
 
   @doc """

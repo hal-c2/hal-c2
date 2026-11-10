@@ -715,15 +715,19 @@ defmodule HalC2.Test.FakeOpenShell do
 
     defp unary(conn, "DeleteSandbox", body, config) do
       request = Pb.DeleteSandboxRequest.decode(body)
-      notify(config, "DeleteSandbox", request)
+      mode = Map.get(config, :delete, :completed)
+      if mode != :completed, do: notify(config, "DeleteSandbox", request)
 
-      case Map.get(config, :delete, :completed) do
+      case mode do
         :completed ->
           Agent.update(config.store, fn store ->
             store
             |> Map.update!(:sandboxes, &Map.delete(&1, request.name))
             |> Map.update!(:policies, &Map.delete(&1, request.name))
           end)
+
+          # Told once the store has it, so what is waited on is there to read.
+          notify(config, "DeleteSandbox", request)
 
           reply(conn, %Pb.DeleteSandboxResponse{outcome: :DELETION_OUTCOME_COMPLETED})
 

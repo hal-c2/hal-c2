@@ -372,8 +372,13 @@ defmodule HalC2.Plugins.Host do
   Steers run `run_id` of `thread_id` with `text`, as a user's steer does, and only it:
   a run that has ended, is being stopped, or whose provider cannot take a message while
   it works refuses it, and the message is neither queued nor kept (`steerOnly`). Needs
-  `threads:steer`. `{:ok, receipt}` once the provider took it, or `{:error, message}`,
-  also when `run_id` names no run of the thread.
+  `threads:steer`. `{:ok, receipt}` once the message was handed to the provider, or
+  `{:error, message}`, also when `run_id` names no run of the thread. The receipt's
+  `"confirmed"` is false when the provider's runtime did not answer in time: it still
+  holds the message and may hand it on, but nobody heard it taken. Its `"ordinal"` is the
+  thread's last place then: an item heard with a higher one (`observe/2`'s
+  `"ordinal"`) started after the provider took the message, and any other may have
+  been under way before the agent was sent it.
   """
   def steer(id, thread_id, run_id, text) when is_binary(text) and text != "" do
     with :ok <- permit(id, "threads:steer"),
@@ -390,6 +395,14 @@ defmodule HalC2.Plugins.Host do
         "dispatchMode" => %{"type" => "steer_active", "targetRunId" => run_id},
         "steerOnly" => true
       })
+      |> case do
+        {:ok, receipt} ->
+          last = HalC2.Streams.read(thread_id, &(HalC2.Orchestration.next_ordinal(&1) - 1))
+          {:ok, Map.put(receipt, "ordinal", last)}
+
+        refused ->
+          refused
+      end
     end
   end
 
@@ -509,6 +522,32 @@ defmodule HalC2.Plugins.Host do
           else: {:error, "There is no thread #{thread_id}."}
       end)
     end
+  end
+
+  @doc """
+  Whether run `run_id` of `thread_id` is under way on this MC. Not once it ended, nor a
+  run or thread this MC does not have: a plugin that never heard a turn end learns here
+  that it will not. Needs `turns:observe`; without it, false.
+  """
+  def run_active?(id, thread_id, run_id) do
+    granted?(id, "turns:observe") and
+      HalC2.Orchestration.run_under_way?(HalC2.Streams.get(thread_id, "run", run_id))
+  end
+
+  @doc """
+  How many turn events plugin `id`'s feed may still deliver: 0 when it has no feed. A
+  plugin process restarted while its feed ran has lost what it knew of the events
+  before: any of these may have been sent before events it missed, and a report of
+  missed events may have reached the process that went down. Besides those the feed
+  holds, each feed may be blocked delivering one more, its call already in the
+  restarted process's mailbox, so each counts one more.
+  """
+  def feed_backlog(id) do
+    Enum.sum(
+      for {pid, %{id: ^id}} <- Plugins.Feed.lookup(:observe),
+          {:message_queue_len, n} <- [Process.info(pid, :message_queue_len)],
+          do: n + 1
+    )
   end
 
   @ended ~w(completed interrupted failed cancelled)

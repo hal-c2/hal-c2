@@ -21,6 +21,8 @@
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex (the sweep that reads each link's host state)
 #   apps/server-ex/lib/hal_c2/pull_requests/github.ex (@summary_selection: the review and comment marker)
 #   https://github.com/hal-c2/hal-c2/issues/662
+#   https://github.com/hal-c2/hal-c2/pull/1477 (main requires the merge queue)
+#   https://github.com/hal-c2/hal-c2/pull/1479 (removed from the queue for failed checks, its thread never told)
 #   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (results are notifications that wake the agent; a finished task hands its links to its caller)
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (list_thread_pull_requests, unlink_pull_request)
 #   packages/contracts/src/orchestration.ts (ThreadPullRequestLink heard, ThreadPullRequestSnapshot activity)
@@ -50,6 +52,7 @@ Feature: A thread hears when a pull request it owns needs attention
       | a member publishes a review that asks for changes | New review from member-1 (changes requested). | acme/app#12: new review     |
       | the owner comments                                | New comment from owner-1.                     | acme/app#12: new comment    |
       | it comes to conflict with its base branch         | It conflicts with its base branch.            | acme/app#12: merge conflict |
+      | it leaves the merge queue because its checks failed there | It left the merge queue: its checks failed there. | acme/app#12: left merge queue |
 
   # Upstream #24781: agents woken by a watch re-linked or re-watched the pull request.
   @backlog @mc
@@ -139,6 +142,33 @@ Feature: A thread hears when a pull request it owns needs attention
       | its checks start running                             |
       | its checks pass without having failed                |
       | a member starts a review without publishing it       |
+      | it enters the merge queue                            |
+
+  # The queue's checks run on the queue's own commit, so the pull request's head stays
+  # green when it is dropped: the wake names the queue's run instead of the head's checks.
+  @mc
+  Scenario: Leaving the merge queue tells the thread how to see the queue's run
+    When it leaves the merge queue because its checks failed there and the MC reads "acme/app#12" again
+    Then the agent of "t1" is woken once about "acme/app#12"
+    And the message says "gh run list --repo acme/app --event merge_group"
+    And the message says "gh-readonly-queue/main/pr-12-"
+    When the MC reads "acme/app#12" again
+    Then the agent of "t1" is not woken again
+
+  @mc
+  Scenario: A pull request that merged after leaving the queue is told as a merge, not a queue failure
+    Given the user keeps "t1" active
+    When it is merged after leaving the merge queue and the MC reads "acme/app#12" again
+    Then the agent of "t1" is woken once about "acme/app#12"
+    And the message says "It was merged."
+    And the message does not say "left the merge queue"
+
+  # The snapshot carries whether the pull request is in the queue; the clients do not
+  # show it yet.
+  @backlog @shared
+  Scenario: A client shows that a linked pull request is in the merge queue
+    When it enters the merge queue and the MC reads "acme/app#12" again
+    Then the client shows "acme/app#12" as in the merge queue on thread "t1"
 
   @mc
   Scenario: Checks that pass after the thread heard they failed are worth one notice

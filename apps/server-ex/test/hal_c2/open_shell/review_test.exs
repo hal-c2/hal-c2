@@ -442,6 +442,33 @@ defmodule HalC2.OpenShell.ReviewTest do
     refute Map.has_key?(FakeOpenShell.sandboxes(g), "review-old")
   end
 
+  # The property's counter-example: a reap without sandboxes listed leaves a sandbox
+  # whose provider went, and the next reconcile still deletes it.
+  test "a reconcile deletes a sandbox left behind without its provider", %{gateway: g} do
+    labels = owned(Review.labels("left", System.os_time(:second) + 600))
+    FakeOpenShell.put_sandbox(g, "review-left", labels)
+    FakeOpenShell.put_provider(g, "review-left", labels)
+    {:ok, conn} = OpenShell.Client.connect()
+    FakeOpenShell.failing(g, ["ListSandboxes"])
+
+    try do
+      assert {:error, {:not_deleted, [], [sandboxes: _]}} =
+               Review.reap(conn, System.os_time(:second) + 86_400)
+    after
+      FakeOpenShell.failing(g, [])
+      OpenShell.Client.disconnect(conn)
+    end
+
+    assert_received {:openshell_request, "DeleteProvider", %{name: "review-left"}}
+    assert FakeOpenShell.providers(g) == %{}
+    assert Map.has_key?(FakeOpenShell.sandboxes(g), "review-left")
+
+    # Its deletion runs off the review process, told once the gateway has it.
+    Review.reconcile()
+    assert_receive {:openshell_request, "DeleteSandbox", %{name: "review-left"}}, 5_000
+    assert FakeOpenShell.sandboxes(g) == %{}
+  end
+
   test "a reaper that cannot list providers still deletes every sandbox past its lease",
        %{gateway: g} do
     now = System.os_time(:second)
@@ -533,7 +560,7 @@ defmodule HalC2.OpenShell.ReviewTest do
     sandbox =
       Review.binding(@thread)
       |> Review.subprocess()
-      |> Map.merge(%{output_limit: 10, on_limit: fn -> send(test, :limited) end})
+      |> Map.merge(%{output_limit: 10, on_limit: {Kernel, :send, [test, :limited]}})
 
     {:ok, sub} =
       HalC2.Subprocess.start(["sh", "-c", "printf '%s\\n' 0123456789abcdef"], sandbox: sandbox)

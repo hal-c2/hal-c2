@@ -7,7 +7,10 @@ defmodule HalC2.Plugins.Feed do
 
   Senders never wait for it. A turn's events come from the process driving the turn, so
   they arrive in its order; one that finds `@max_queue` events already waiting is
-  dropped and counted, and the next event delivered says how many were (`"dropped"`).
+  dropped and counted, and the next event delivered says how many were (`"dropped"`) and
+  how many events were still waiting behind it as it was (`"waiting"`): those, and that
+  event, are all that may have been sent before the missed ones. The limit is no bound
+  on them, since senders check it apart and may pass it together.
   Whether the plugin may hear turns is checked here, as each event is delivered, so a
   permission revoked while the plugin runs takes effect at once.
 
@@ -80,7 +83,8 @@ defmodule HalC2.Plugins.Feed do
 
           missed ->
             :counters.sub(state.dropped, 1, missed)
-            Map.put(event, "dropped", missed)
+            {:message_queue_len, waiting} = Process.info(self(), :message_queue_len)
+            Map.merge(event, %{"dropped" => missed, "waiting" => waiting})
         end
 
       context = %{id: state.id, settings: state.settings, thread_id: event["threadId"]}

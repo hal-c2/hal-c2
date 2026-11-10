@@ -150,9 +150,10 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @doc """
   Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once.
-  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  `:held` when the runtime did not answer in time and may still take it. Non-timeout
+  exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
   """
-  @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  @spec steer(String.t(), String.t(), map) :: :ok | :held | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
       [{pid, _}] -> steer_call(pid, run_id, message)
@@ -1264,12 +1265,25 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     case HalC2.Claude.Skills.dispatch(turn.text, skills) do
       nil ->
-        text =
-          turn.text
-          |> Provider.prompt(turn.launch.prompt_effort)
-          |> HalC2.Attachments.prompt_text(attachments)
+        text = Provider.prompt(turn.text, turn.launch.prompt_effort)
 
-        if images == [], do: text, else: [%{"type" => "text", "text" => text}] ++ image_blocks
+        cond do
+          # Claude runs a command only from the last block, as typed: what came with
+          # it (where its files are, its images) goes ahead of it.
+          attachments != [] and String.starts_with?(String.trim_leading(text), "/") ->
+            notes = HalC2.Attachments.prompt_text("", attachments)
+
+            ([if(notes != "", do: %{"type" => "text", "text" => notes})] ++
+               image_blocks ++ [%{"type" => "text", "text" => text}])
+            |> Enum.reject(&is_nil/1)
+
+          images == [] ->
+            HalC2.Attachments.prompt_text(text, attachments)
+
+          true ->
+            [%{"type" => "text", "text" => HalC2.Attachments.prompt_text(text, attachments)}] ++
+              image_blocks
+        end
 
       {leading, command} ->
         leading =

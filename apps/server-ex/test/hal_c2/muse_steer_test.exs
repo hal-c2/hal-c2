@@ -10,7 +10,7 @@ defmodule HalC2.MuseSteerTest do
   end
 
   # As Codex's stand-in test pins for Codex: only the steer call's own timeout may
-  # be answered `:ok` (the runtime still holds the request); a definite refusal
+  # be answered `:held` (the runtime still holds the request); a definite refusal
   # stays a refusal, and a runtime that stops is not a delivery either. Muse's
   # handler catches a nested provider-call timeout itself and answers such a
   # refusal (see `steer_call/3`), which this refusal case also covers.
@@ -18,7 +18,7 @@ defmodule HalC2.MuseSteerTest do
     Application.put_env(:hal_c2, :muse_steer_timeout_ms, 50)
     stand_in("thread-1", :hold)
 
-    assert :ok = ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []})
+    assert :held = ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []})
   end
 
   test "a refused steer still answers the refusal" do

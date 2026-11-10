@@ -7,8 +7,8 @@ defmodule HalC2.RuntimeSteer do
   Every runtime here answers a steer the same way, and the orchestration layer
   depends on the semantics staying identical: only this call's own timeout
   means the runtime (or the provider ahead of it) still holds the request
-  and hands it over when it gets to it, so that case alone is answered
-  `:ok`. The pin on `pid` and the steer request is what says so: a timeout
+  and may still hand it over when it gets to it, so that case alone is
+  answered `:held`: sent, but not heard taken. The pin on `pid` and the steer request is what says so: a timeout
   from a call nested inside the runtime (its provider `Connection.call`)
   that takes the runtime down surfaces as a different exit and propagates,
   so the caller counts it as a refusal and takes the reserved message back
@@ -20,7 +20,7 @@ defmodule HalC2.RuntimeSteer do
   default used to exit after 5s. And a steer the handler only reaches
   after this call timed out is handed over only if that turn is still its
   current one; if the turn guard fails by then, the handler's refusal
-  reply goes to a caller that already answered `:ok`, so the message
+  reply goes to a caller that already answered `:held`, so the message
   stays in the turn unread and nobody learns — the accepted loss the
   orchestration layer documents at `reserve_steer/3`.
 
@@ -30,13 +30,13 @@ defmodule HalC2.RuntimeSteer do
   as a refusal. The same holds for every runtime's `steer/3` built on it.
   Budgets must be ordered for that to work: where a handler blocks in a
   nested call, the outer budget must outlive the inner one, or the outer
-  timeout (answered `:ok`) always fires first.
+  timeout (answered `:held`) always fires first.
   """
 
-  @spec call(pid(), String.t(), map(), timeout()) :: :ok | {:error, term()}
+  @spec call(pid(), String.t(), map(), timeout()) :: :ok | :held | {:error, term()}
   def call(pid, run_id, message, timeout) do
     GenServer.call(pid, {:steer, run_id, message}, timeout)
   catch
-    :exit, {:timeout, {GenServer, :call, [^pid, {:steer, _, _}, _]}} -> :ok
+    :exit, {:timeout, {GenServer, :call, [^pid, {:steer, _, _}, _]}} -> :held
   end
 end

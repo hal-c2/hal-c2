@@ -136,7 +136,7 @@ defmodule HalC2.OpenShell.Review do
           Map.new(environment)
         ),
       timeout_seconds: max(binding.deadline - now(), 1),
-      on_limit: fn -> close(binding.thread_id, "output") end
+      on_limit: {__MODULE__, :close, [binding.thread_id, "output"]}
     }
   end
 
