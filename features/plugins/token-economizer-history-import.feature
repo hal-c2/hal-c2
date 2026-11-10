@@ -76,7 +76,7 @@ Feature: TokenEconomizer learns from a project's earlier threads
     Given the project's saved micro-skills are not valid JSON
     And the history import is on
     When Claude repairs the test command in 1 turns in the thread "Learning"
-    Then TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON
+    Then TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON and naming it
     And TokenEconomizer has not imported into the project
     And the person cannot forget what TokenEconomizer learned on the project, being told it is held
     And the project's saved micro-skills are as they were

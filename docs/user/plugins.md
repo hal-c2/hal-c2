@@ -197,8 +197,9 @@ out. Each proposal costs a model call; the plugin's status counts them and
 their tokens. Its facts are listed, dropped and restored like the others.
 
 A project whose saved micro-skills cannot be read is held rather than started
-afresh: nothing is learned or stated there, and its page says why, until
-the file is fixed or removed.
+afresh: nothing is learned or stated there until the file reads again. The
+plugin's page marks the project held, says why and names the file; repair or
+remove it, then click **Read again** there.
 
 ### TokenEconomizer's page
 
@@ -212,8 +213,8 @@ at a time:
   facts stay dropped) and, with **Learn from earlier threads** on, reads its
   earlier threads again; the page shows how far that read got and what it left
   out;
-- each project's tools per agent: those turned off, proposed and given back,
-  with how long each went unused. **Apply proposal** or **Turn off** applies
+- each project's tools per agent: those turned off (before the MC last
+  restarted too), proposed and given back, with how long each went unused. **Apply proposal** or **Turn off** applies
   them, **Give back** returns them.
 
 Tool pruning turns nothing off for a project while a thread's turns it heard

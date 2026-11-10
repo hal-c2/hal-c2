@@ -11,6 +11,9 @@ import HalC2.Bricks
 // and provider (apply, restore) with whatever holds pruning off and the way out.
 // Follows `loopGuard`, `toolPrune` and the one project's `microSkills:<id>`;
 // the plugin publishes them only on a change, so each is asked for once too.
+// `toolPrune` carries only the evidence the plugin has loaded, so each of the
+// machine's projects is also asked for by name: after a restart its tools that
+// are off show, and can be given back, before its next conversation loads them.
 Item {
     id: page
 
@@ -18,6 +21,9 @@ Item {
     property string environment: ""
     property var loopGuard: null
     property var toolPrune: null
+    // The machine's projects asked for by name, and the evidence they answered.
+    property var askedPrunes: ({})
+    property var namedPrunes: []
     // The micro-skills listing (`microSkills` call) and the shown project's entry.
     property var microSkills: null
     property string projectId: ""
@@ -27,7 +33,27 @@ Item {
     property string refusal: ""
 
     readonly property var skillProjects: (microSkills?.projects ?? []).map(entry => entry.projectId)
-    readonly property var prunes: toolPrune?.projects ?? []
+    // The topic's evidence, then what only a call by name found.
+    readonly property var prunes: {
+        const listed = toolPrune?.projects ?? [];
+        const keys = new Set(listed.map(each => each.projectId + ":" + each.provider));
+        return listed.concat(namedPrunes.filter(each => !keys.has(each.projectId + ":" + each.provider)));
+    }
+    // The ids of this machine's projects in the sidebar, a group's members on it included.
+    readonly property var machineProjects: {
+        const sidebar = Shell.state.sidebar ?? {};
+        const prefix = page.environment + ":";
+        const ids = new Set();
+        for (const group of sidebar.projects ?? []) {
+            for (const key of group.memberKeys ?? [])
+                if (key.startsWith(prefix))
+                    ids.add(key.slice(prefix.length));
+        }
+        for (const each of sidebar.localProjects ?? [])
+            if (each.environmentId === page.environment)
+                ids.add(each.projectId);
+        return [...ids].sort();
+    }
     // The call's answer has no top-level list; each project says whether it is held.
     readonly property var unreadable: toolPrune?.unreadable ?? [...new Set(prunes.filter(each => each.unreadable).map(each => each.provider))]
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
@@ -47,6 +73,8 @@ Item {
         page.watches = [];
         page.loopGuard = null;
         page.toolPrune = null;
+        page.askedPrunes = {};
+        page.namedPrunes = [];
         page.microSkills = null;
         page.showProject("");
         if (page.environment.length === 0)
@@ -69,6 +97,26 @@ Item {
                 page.showProject(ids[0] ?? "");
         }, environment);
         page.watches = [page.plugin.watch("loopGuard", value => page.loopGuard = value, environment), page.plugin.watch("toolPrune", value => page.toolPrune = value, environment)];
+        page.askPrunes();
+    }
+
+    // Asks for each of the machine's projects not asked for yet, by name.
+    function askPrunes() {
+        const environment = page.environment;
+        if (environment.length === 0)
+            return;
+        for (const projectId of page.machineProjects) {
+            if (page.askedPrunes[projectId])
+                continue;
+            page.askedPrunes[projectId] = true;
+            page.plugin.call("toolPrune", {
+                projectId
+            }, result => {
+                if (!result || page.environment !== environment)
+                    return;
+                page.namedPrunes = page.namedPrunes.filter(each => each.projectId !== projectId).concat(result.projects ?? []);
+            }, environment);
+        }
     }
 
     function showProject(projectId) {
@@ -91,6 +139,24 @@ Item {
         }, page.environment);
     }
 
+    // Asks for the shown project by name: a held one's file is read again.
+    function readAgain() {
+        const projectId = page.projectId;
+        page.start("microSkills", {
+            projectId
+        }, result => {
+            const entry = result?.projects?.[0];
+            if (!entry || entry.projectId !== projectId)
+                return;
+            if (page.projectId === projectId)
+                page.skills = entry;
+            if (page.microSkills !== null)
+                page.microSkills = Object.assign({}, page.microSkills, {
+                    projects: page.microSkills.projects.map(each => each.projectId === projectId ? entry : each)
+                });
+        });
+    }
+
     // Drop, restore and forget answer the project's entry.
     function skillsCall(method, input) {
         page.start(method, Object.assign({
@@ -104,8 +170,21 @@ Item {
 
     function projectName(projectId) {
         const sidebar = Shell.state.sidebar ?? {};
-        const known = (sidebar.projects ?? []).concat(sidebar.localProjects ?? []).find(each => each.projectId === projectId && each.environmentId === page.environment);
+        const key = page.environment + ":" + projectId;
+        const known = (sidebar.localProjects ?? []).find(each => each.projectId === projectId && each.environmentId === page.environment) ?? (sidebar.projects ?? []).find(each => (each.memberKeys ?? []).includes(key));
         return known?.displayName ?? projectId;
+    }
+
+    // Tool pruning acts on Claude and Codex alone; any other id shows as given.
+    function providerLabel(provider) {
+        return ({
+                "claudeAgent": qsTr("Claude"),
+                "codex": qsTr("Codex")
+            })[provider] ?? provider;
+    }
+
+    function skillsLabel(entry) {
+        return entry.held ? qsTr("%1 (held)").arg(page.projectName(entry.projectId)) : page.projectName(entry.projectId);
     }
 
     function environmentLabel(environment) {
@@ -172,6 +251,7 @@ Item {
     implicitWidth: 900
     implicitHeight: 600
     onEnvironmentChanged: load()
+    onMachineProjectsChanged: askPrunes()
     Component.onCompleted: {
         follow();
         if (page.watches.length === 0)
@@ -311,7 +391,7 @@ Item {
                     visible: page.skillProjects.length > 1
                     outline: true
                     implicitWidth: 220
-                    model: page.skillProjects.map(id => page.projectName(id))
+                    model: (page.microSkills?.projects ?? []).map(entry => page.skillsLabel(entry))
                     currentIndex: page.skillProjects.indexOf(page.projectId)
                     Accessible.name: qsTr("Project")
                     onActivated: index => page.showProject(page.skillProjects[index])
@@ -322,23 +402,61 @@ Item {
                 text: {
                     if (page.microSkills === null)
                         return "";
-                    if (page.microSkills.mode === "off")
+                    const mode = {
+                        "envfacts": qsTr("Learns environment facts from turns"),
+                        "on": qsTr("Learns from turns and asks the model")
+                    }[page.microSkills.mode];
+                    if (mode === undefined)
                         return qsTr("Off. Turn them on in the plugin's settings.");
                     if (page.skillProjects.length === 0)
-                        return qsTr("Nothing learned yet.");
-                    return page.skillProjects.length === 1 ? page.projectName(page.projectId) : "";
+                        return qsTr("%1. Nothing learned yet.").arg(mode);
+                    return page.skillProjects.length === 1 ? qsTr("%1 · %2").arg(mode).arg(page.skillsLabel(page.microSkills.projects[0])) : mode;
                 }
             }
 
-            Line {
-                objectName: "tokenEconomizerHeld"
-                text: page.skills?.held ? qsTr("Held: %1 Nothing is learned, staged, dropped or forgotten on this project until its saved file reads again; fix or remove the file and it is read again at its next use.").arg(page.skills.held) : ""
-                color: page.warningColor
+            // A held project's file does not read: nothing is learned, stated, dropped
+            // or forgotten there until it does, so it shows why and where, and reads again.
+            RowLayout {
+                Layout.fillWidth: true
+                visible: !!page.skills?.held
+                spacing: 8
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    Line {
+                        objectName: "tokenEconomizerHeld"
+                        text: page.skills?.held ? qsTr("Held: %1 Nothing is learned or stated on this project until it reads again. Repair or remove the file, then read it again.").arg(page.skills.held) : ""
+                        color: page.warningColor
+                    }
+
+                    TextEdit {
+                        objectName: "tokenEconomizerHeldFile"
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: page.skills?.file ?? ""
+                        readOnly: true
+                        selectByMouse: true
+                        wrapMode: TextEdit.WrapAnywhere
+                        color: page.muted
+                        selectionColor: page.border
+                        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+                }
+
+                ShellButton {
+                    objectName: "tokenEconomizerReadAgain"
+                    subtle: true
+                    text: qsTr("Read again")
+                    onClicked: page.readAgain()
+                }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                visible: page.skills !== null
+                visible: page.skills !== null && !page.skills.held
                 spacing: 8
 
                 Line {
@@ -353,7 +471,6 @@ Item {
                 ShellButton {
                     objectName: "tokenEconomizerForget"
                     subtle: true
-                    enabled: !page.skills?.held
                     text: qsTr("Forget")
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Forget every fact learned here and import again; dropped facts stay dropped.")
@@ -395,7 +512,6 @@ Item {
                     ShellButton {
                         objectName: "tokenEconomizerDrop:" + fact.modelData.id
                         subtle: true
-                        enabled: !page.skills?.held
                         text: qsTr("Drop")
                         onClicked: page.skillsCall("microSkills.drop", {
                             id: fact.modelData.id
@@ -423,7 +539,6 @@ Item {
                     ShellButton {
                         objectName: "tokenEconomizerRestore:" + dropped.modelData
                         subtle: true
-                        enabled: !page.skills?.held
                         text: qsTr("Restore")
                         onClicked: page.skillsCall("microSkills.restore", {
                             id: dropped.modelData
@@ -454,7 +569,7 @@ Item {
 
             Line {
                 objectName: "tokenEconomizerUnreadable"
-                text: page.unreadable.length > 0 ? qsTr("Held for %1: uses saved earlier could not be read, so nothing is turned off. Apply or restore that provider's tools below, or change the mode in the plugin's settings, to go on without them.").arg(page.unreadable.join(", ")) : ""
+                text: page.unreadable.length > 0 ? qsTr("Held for %1: uses saved earlier could not be read, so nothing is turned off. Apply or restore that provider's tools below, or change the mode in the plugin's settings, to go on without them.").arg(page.unreadable.map(each => page.providerLabel(each)).join(", ")) : ""
                 color: page.warningColor
             }
 
@@ -483,7 +598,7 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: qsTr("%1, %2").arg(page.projectName(prune.modelData.projectId)).arg(prune.modelData.provider)
+                                text: qsTr("%1, %2").arg(page.projectName(prune.modelData.projectId)).arg(page.providerLabel(prune.modelData.provider))
                                 color: page.foreground
                                 elide: Text.ElideRight
                                 font.pixelSize: Math.round(13 * Theme.fontScale)

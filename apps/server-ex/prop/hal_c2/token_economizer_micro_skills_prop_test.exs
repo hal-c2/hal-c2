@@ -1767,9 +1767,9 @@ defmodule HalC2.TokenEconomizerHeldPropTest do
     common =
       if state.held,
         do:
-          seen.entry["held"] =~ "not valid JSON" and seen.fold == nil and
-            seen.entry["turns"] == 0 and seen.file == @garbled,
-        else: seen.entry["held"] == nil
+          seen.entry["held"] =~ "not valid JSON" and seen.entry["file"] == path() and
+            seen.fold == nil and seen.entry["turns"] == 0 and seen.file == @garbled,
+        else: seen.entry["held"] == nil and not Map.has_key?(seen.entry, "file")
 
     common and called(state, call, seen)
   end

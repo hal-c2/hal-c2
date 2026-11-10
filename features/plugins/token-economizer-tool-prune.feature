@@ -7,6 +7,7 @@
 #   apps/server-ex/lib/hal_c2/orchestration/run_shape.ex (a conversation's tools, kept for the whole conversation)
 #   microsoft/TokenEconomizer@cb42207e3e09 tokeneconomizer/toolprune/, tokeneconomizer/plugin/fold.py, denylist.py, adapter.py (what this ports)
 #   plugins/token-economizer/ui/TokenEconomizerPage.qml, apps/desktop-qt/tests/native/features/TokenEconomizerSteps.cpp (the plugin's page)
+#   apps/desktop-qt/src/native/SidebarModel.cpp (memberKeys: the machine's projects the page asks for by name)
 #   hal-c2/hal-c2#1399 (the TokenEconomizer port)
 
 @plugin-token-economizer
@@ -101,6 +102,14 @@ Feature: TokenEconomizer's tool pruning
     Given a project where "CronCreate" is turned off for Claude
     When the person opens TokenEconomizer's page
     Then the page shows "CronCreate" as off, with the evidence for it
+    And the page offers to give it back
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  Scenario: The plugin's page shows tools turned off before the MC restarted, before the project's next conversation
+    Given a project where "CronCreate" was turned off for Claude before the MC restarted
+    When the person opens TokenEconomizer's page
+    Then the page asked for the project's tools by name
+    And the page shows "CronCreate" as off, with the evidence for it
     And the page offers to give it back
 
   @desktop @mobile @tui @backlog-mobile @backlog-tui

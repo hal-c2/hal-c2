@@ -2410,9 +2410,14 @@ defmodule HalC2Plugins.TokenEconomizer do
     {%{"mode" => micro_mode(state), "projects" => [entry(state, project_id)]}, state}
   end
 
+  # A held project's entry also names its file, so a person can repair or remove it.
   defp entry(state, project_id) do
+    view = EnvFacts.view(state.skills[project_id])
+    file = if view["held"], do: %{"file" => micro_skills_path(project_id)}, else: %{}
+
     %{"projectId" => project_id, "history" => History.view(state.folds[project_id])}
-    |> Map.merge(EnvFacts.view(state.skills[project_id]))
+    |> Map.merge(view)
+    |> Map.merge(file)
   end
 
   # Publishes a project's entry on its own topic, `microSkills:<project id>`,

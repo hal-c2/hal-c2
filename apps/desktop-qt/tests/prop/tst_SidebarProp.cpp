@@ -512,6 +512,8 @@ struct RowView {
 struct ProjectView {
   std::string key, displayName, environment, projectId, workspaceRoot, status;
   int threadCount = 0;
+  // Every machine's project in the group, as `environment:projectId`, in key order.
+  std::vector<std::string> memberKeys;
   bool operator==(const ProjectView&) const = default;
 };
 struct Projection {
@@ -553,7 +555,9 @@ std::ostream& operator<<(std::ostream& os, const Projection& view) {
   os << "\n  projects:";
   for (const ProjectView& project : view.projects) {
     os << " " << project.key << "['" << project.displayName << "' " << project.environment << ":" << project.projectId << " "
-       << project.workspaceRoot << " " << project.threadCount << " " << project.status << "]";
+       << project.workspaceRoot << " " << project.threadCount << " " << project.status;
+    for (const std::string& member : project.memberKeys) os << " " << member;
+    os << "]";
   }
   return os;
 }
@@ -628,6 +632,7 @@ Projection expected(const Model& model, const std::string& open = {}) {
     Group group{ProjectView{groupKey(project), kTitles[size_t(title)], representative, project,
                             "/work/" + representative + "/" + project, "ready", 0},
                 kTitles[size_t(model.environments.at(representative).projects.at(project))]};
+    for (const std::string& environment : members) group.view.memberKeys.push_back(keyOf(environment, project));
     for (const Living& thread : living(model.environments)) {
       if (thread.row->archived || thread.row->project != project) continue;
       group.view.threadCount += 1;
@@ -682,6 +687,8 @@ Projection read(const QVariantMap& state) {
                                         string(project.value(QStringLiteral("environmentId"))), string(project.value(QStringLiteral("projectId"))),
                                         string(project.value(QStringLiteral("workspaceRoot"))), string(project.value(QStringLiteral("status"))),
                                         project.value(QStringLiteral("threadCount")).toInt()});
+    for (const QVariant& member : project.value(QStringLiteral("memberKeys")).toList()) view.projects.back().memberKeys.push_back(member.toString().toStdString());
+    std::sort(view.projects.back().memberKeys.begin(), view.projects.back().memberKeys.end());
   }
   return view;
 }

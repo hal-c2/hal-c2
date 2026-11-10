@@ -93,6 +93,25 @@ defmodule HalC2.TokenEconomizerHeldProjectTest do
     assert File.read!(path) == @garbled
   end
 
+  test "a held project's entry names its file, and reads again once the file is repaired",
+       %{project: p, path: path} do
+    {:ok, state} = TokenEconomizer.init(%{"microSkills" => "envfacts"})
+
+    assert {:reply, {:ok, %{"projects" => [held]}}, state} =
+             TokenEconomizer.handle_call({:micro_skills, %{"projectId" => p}}, nil, state)
+
+    assert held["held"] =~ "not valid JSON"
+    assert held["file"] == path
+
+    File.rm!(path)
+
+    assert {:reply, {:ok, %{"projects" => [entry]}}, _state} =
+             TokenEconomizer.handle_call({:micro_skills, %{"projectId" => p}}, nil, state)
+
+    assert entry["held"] == nil
+    refute Map.has_key?(entry, "file")
+  end
+
   defp observe(state, event) do
     {:reply, :ok, state} = TokenEconomizer.handle_call({:observe, event}, nil, state)
     state

@@ -636,10 +636,14 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     Map.put(context, :skills_file, path)
   end
 
-  step "TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON",
+  step "TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON and naming it",
        context do
     {view, context} = micro_skills(context)
     assert view["held"] =~ "not valid JSON"
+
+    assert view["file"] ==
+             Module.concat(HalC2Plugins, TokenEconomizer).micro_skills_path(project_id(context))
+
     assert view["skills"] == []
     assert view["turns"] == 0
     context

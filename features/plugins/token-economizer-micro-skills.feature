@@ -169,7 +169,7 @@ Feature: TokenEconomizer's micro-skills
     Given micro-skills ask the model for facts every 4 turns
     And the project's saved micro-skills are not valid JSON
     When Claude repairs the test command in 4 turns in the thread "Learning"
-    Then TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON
+    Then TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON and naming it
     And the project's saved micro-skills are as they were
     And the model was asked for facts 0 times
     And the person cannot drop a fact on the project, being told it is held
@@ -187,3 +187,12 @@ Feature: TokenEconomizer's micro-skills
     When the person drops the fact there
     Then a new conversation in that project is not told the fact
     And the page lists it as dropped, with a way to restore it
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui
+  Scenario: The plugin's page shows a held project with why and where, and reads it again once repaired
+    Given TokenEconomizer holds a project's micro-skills, its saved file not being valid JSON
+    When the person opens TokenEconomizer's page
+    Then the page shows the project as held, saying why and naming its file
+    And the page offers no way to drop or forget there
+    When the person repairs the file and reads it again from the page
+    Then the fact is listed with how many turns confirmed it and how often it fires
