@@ -678,8 +678,13 @@ impl Composer {
             }
         }
         // A thread keeps its own provider and model, unavailable as they may
-        // be; a draft starts on the first provider that can run instead.
-        if is_thread { chosen } else { first_ready() }
+        // be; a draft starts on the first provider that can run instead, and
+        // keeps its own while none can (the providers have not arrived).
+        if is_thread {
+            return chosen;
+        }
+        let ready = first_ready();
+        if ready.is_empty() { chosen } else { ready }
     }
 
     fn plan_mode_on(&self, engine: &Engine, instance: Option<&Instance>) -> bool {
