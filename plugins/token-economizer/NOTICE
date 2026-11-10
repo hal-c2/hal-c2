@@ -22,4 +22,18 @@ file in mc/ names the upstream files it was ported from and what it changed. In 
   notice that offers the person a stop.
 - What counts as stuck is learned per project and provider from turns that ended
   green, kept as JSON in the plugin's data directory.
-- Upstream's tool pruning, micro-skills and distiller are not part of this port yet.
+- The micro-skills' environment facts are learned from the turns the MC hears,
+  per project, and stated ahead of a new conversation's first message instead
+  of at a session-start hook; their state is JSON in the plugin's data
+  directory, and a turn the feed partly missed is read back from its thread
+  before it is learned from. Only upstream's generic vocabulary is ported
+  (the plugin's reading), not the experiments' Python/git and Node
+  vocabularies, and not its per-call directory tracking: the MC does not give
+  a directory per call, so a `cd` inside one command still shapes its forms
+  but a directory an earlier call left the shell in is not known. A person
+  may drop a fact so it is never learned again, and restore it, which
+  upstream had no way to do. The paid distiller that proposes facts beyond
+  the environment's is not part of this port yet; `microSkills=on` does the
+  same as `envfacts` until it lands, and its candidates will go through the
+  lifecycle this port already has.
+- Upstream's tool pruning is not part of this port yet.

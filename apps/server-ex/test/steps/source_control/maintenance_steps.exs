@@ -394,7 +394,7 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
 
   step "the user opens its pull request", context do
     {reply, context} = plugin(context, "publish", %{"runId" => context.run["id"]})
-    Map.put(context, :reply, reply)
+    Map.merge(context, %{reply: reply, publish_reply: reply})
   end
 
   step "its branch is pushed to {string}", %{args: [_repository]} = context do
@@ -418,6 +418,13 @@ defmodule HalC2.Steps.SourceControl.Maintenance do
   end
 
   step "the run is published with the pull request's address", context do
+    # The user's publish answers once it is over, so one that failed says here why,
+    # rather than as a frame that never comes.
+    if reply = context[:publish_reply] do
+      assert match?({:ok, %{"status" => "published"}}, reply),
+             "opening the pull request answered #{inspect(reply)}; the run is #{inspect(run!(context))}"
+    end
+
     {run, context} = await_run(context, &(&1["status"] == "published"))
     assert run["prUrl"] == @pr_url
     context
