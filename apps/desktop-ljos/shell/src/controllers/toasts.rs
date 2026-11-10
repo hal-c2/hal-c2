@@ -27,6 +27,8 @@ pub const DEFAULT_TIMEOUT_MS: i64 = 5000;
 /// call this one again (show a toast of its own).
 pub type Run = Rc<dyn Fn(&Engine)>;
 pub type ClosedByUser = Rc<dyn Fn(&Engine, &str)>;
+/// Runs a row's button, given the row's id.
+type RunRow = Rc<dyn Fn(&Engine, &str)>;
 
 /// A toast's button. Clicking it dismisses the toast first, unless it
 /// `keeps_toast` (a clone's Cancel and Retry, whose toast changes with what
@@ -82,7 +84,7 @@ struct Toast {
     actions: Vec<Action>,
     rows: Vec<Row>,
     /// Runs a row's button, by row id ([`Toasts::set_rows`]).
-    run_row: Option<Rc<dyn Fn(&Engine, &str)>>,
+    run_row: Option<RunRow>,
     /// Set while its time runs; while the stack is expanded the time left
     /// sits in `remaining` instead.
     deadline: Option<Time>,
