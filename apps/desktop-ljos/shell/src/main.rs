@@ -639,6 +639,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::runtime::set_wake(&engine, move || {
                 let _ = runtime_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
+            let update_handle = handle.clone();
+            hal_c2_shell::controllers::desktop_update::set_wake(&engine, move || {
+                let _ = update_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             // A connection even without an MC to open it at: the welcome
             // wizard or Connections settings may pair with one later
             // (hal_c2_shell::open).
@@ -661,6 +665,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     hal_c2_shell::runtime::deliver(engine);
                     hal_c2_shell::controllers::threads::deliver(engine);
                     hal_c2_shell::controllers::snap_shot::deliver(engine);
+                    hal_c2_shell::controllers::desktop_update::deliver(engine);
                 }
                 Message::Activated(key) => {
                     controller::with::<AlertController, _>(engine, |alerts, engine| {

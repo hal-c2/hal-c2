@@ -10,6 +10,7 @@ pub mod commands;
 pub mod composer_model;
 pub mod controller;
 pub mod controllers;
+pub mod desktop_update;
 pub mod device;
 pub mod device_screen;
 pub mod environment_settings;
@@ -23,6 +24,7 @@ pub mod macos_window;
 pub mod mc;
 pub mod project;
 pub mod provider;
+pub mod provider_updates;
 // The desktop's notification service is D-Bus's; elsewhere system
 // notifications stay quiet (desktop-qt's need HAL_C2_HAS_DBUS too).
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -220,6 +222,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     controllers::plugin::install(engine, launch.config_dir.clone());
     if let Some(cache) = &launch.cache_dir {
         controllers::mc_plugin::set_cache_dir(engine, cache.join("mc-plugins"));
+        controllers::desktop_update::set_cache_dir(engine, cache.join("updates"));
     }
     controllers::drafts::set_path(
         engine,

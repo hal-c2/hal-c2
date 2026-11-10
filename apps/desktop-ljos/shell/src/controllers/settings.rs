@@ -86,6 +86,7 @@ static ROWS: &[Row] = rows![
     "sidebarAutoSettleOnMerge", false, true;
     "sidebarAutoSettleAfterDays", false, 3;
     "sidebarShowSettledPluginThreads", false, false;
+    "sidebarWorkingShelfEnabled", true, true;
     "notificationMode", true, "off";
     "inAppNotificationsEnabled", true, false;
     "timestampFormat", true, "locale";
@@ -102,10 +103,12 @@ static ROWS: &[Row] = rows![
     "composerVimKeys", true, false;
     "sendShortcut", true, "enter";
     "followUpBehavior", true, "steer";
+    "nativeSubagents", false, "provider";
     "enableProviderUpdateChecks", false, true;
     "continueThreadsAfterServerUpdate", false, false;
     "newWorktreesStartFromOrigin", false, true;
     "addProjectBaseDirectory", false, "";
+    "enableAgentBrowserAccess", false, true;
     "confirmThreadUnpin", true, false;
     "confirmThreadArchive", true, false;
     "confirmThreadDelete", true, true;
@@ -113,12 +116,18 @@ static ROWS: &[Row] = rows![
     "planModeEnabled", true, false;
     "contextWindowMeterEnabled", true, false;
     "legacySidebarEnabled", true, false;
+    // The legacy sidebar's (the sidebar's tree): its options menu sorts,
+    // Settings counts.
+    "sidebarProjectSortOrder", true, "updated_at";
+    "sidebarThreadSortOrder", true, "updated_at";
+    "sidebarThreadPreviewCount", true, 6;
     // Appearance.
     "appearanceContrast", true, 100;
     "glassOpacity", true, 96;
     "environmentIdentificationMode", true, "artwork";
     "diffColorScheme", true, "red-green";
     "persistComposerContextStrip", true, false;
+    "effortDisplay", true, "label";
     "panelAnimationDurationMs", true, 0;
     "reduceMotion", true, false;
     "fontSizeInterface", true, 16;

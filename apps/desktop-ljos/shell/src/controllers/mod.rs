@@ -9,6 +9,7 @@ pub mod cluster;
 pub mod composer;
 pub mod connection_health;
 pub mod connections;
+pub mod desktop_update;
 pub mod device_settings;
 pub mod diagnostics;
 pub mod drafts;
@@ -40,6 +41,7 @@ pub mod pull_request_thread;
 pub mod quit;
 pub mod rewind;
 pub mod scheduled_tasks;
+pub mod server_updates;
 pub mod settings;
 pub mod settings_scope;
 pub mod sidebar;
@@ -98,6 +100,11 @@ pub fn registrations() -> Vec<Registration> {
             "connections",
             &["connections"],
             Scope::Window,
+        ),
+        Registration::new::<desktop_update::DesktopUpdate>(
+            "desktopUpdate",
+            &["desktopUpdate"],
+            Scope::Shared,
         ),
         Registration::new::<device_settings::DeviceSettings>(
             "deviceSettings",
@@ -158,7 +165,7 @@ pub fn registrations() -> Vec<Registration> {
         ),
         Registration::new::<provider_update_notice::ProviderUpdateNotice>(
             "providerUpdateNotice",
-            &[],
+            &["providerUpdates"],
             Scope::Shared,
         ),
         Registration::new::<pull_request_list::PullRequestList>(
@@ -177,6 +184,11 @@ pub fn registrations() -> Vec<Registration> {
             "scheduledTasks",
             &["scheduledTasks"],
             Scope::Window,
+        ),
+        Registration::new::<server_updates::ServerUpdates>(
+            "serverUpdates",
+            &["serverUpdates"],
+            Scope::Shared,
         ),
         Registration::new::<settings::SettingsController>("settings", &[], Scope::Shared),
         Registration::new::<settings_scope::SettingsScopeController>(

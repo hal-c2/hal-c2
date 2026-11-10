@@ -20,6 +20,7 @@ use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::archived_threads::ArchivedThreads;
 use hal_c2_shell::controllers::panel::RightPanel;
+use hal_c2_shell::controllers::provider_update_notice::ProviderUpdateNotice;
 use hal_c2_shell::controllers::threads::ThreadStore;
 use hal_c2_shell::controllers::toasts::Toasts;
 use hal_c2_shell::controllers::usage::Usage;
@@ -230,6 +231,7 @@ impl World {
         hal_c2_shell::controllers::plugin::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::local_transcriber::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::theme::set_wake(&engine, wake(&self.signal));
+        hal_c2_shell::controllers::desktop_update::set_wake(&engine, wake(&self.signal));
         Platform::of(&engine).set_waker(wake(&self.signal));
         // A real host fetches an Image's http source; the fake MC serves it.
         Platform::of(&engine).set_fetcher(Arc::new(LocalFetcher));
@@ -470,6 +472,10 @@ impl World {
         let _ = controller::with::<Usage, _>(&engine, |c, _| c.set_clock(move || time));
         let _ = controller::with::<ArchivedThreads, _>(&engine, |c, _| c.set_clock(move || time));
         let _ = controller::with::<Toasts, _>(&engine, |c, engine| c.expire(engine));
+        let _ = controller::with::<ProviderUpdateNotice, _>(&engine, |c, engine| {
+            c.set_clock(move || time);
+            c.expire(engine);
+        });
     }
 
     /// The desktop quits and starts again: a new shell, the same files.
@@ -870,6 +876,7 @@ impl World {
                     hal_c2_shell::theme::deliver(engine);
                     hal_c2_shell::controllers::threads::deliver(engine);
                     hal_c2_shell::controllers::snap_shot::deliver(engine);
+                    hal_c2_shell::controllers::desktop_update::deliver(engine);
                 });
                 any |= Platform::of(engine).deliver(engine) > 0;
                 shell.window.settle().map_err(|e| Failure(e.to_string()))?;

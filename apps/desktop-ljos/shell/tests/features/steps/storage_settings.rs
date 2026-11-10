@@ -227,6 +227,73 @@ pub fn register(steps: &mut Steps) {
         open_storage(world)
     });
     steps.step(
+        "deleting idle threads' temporary files reads 7 days",
+        |world, _, _| {
+            world.sync_until_with(
+                |w| rule(w, "threadTempAfterDays")["value"] == json!(7),
+                |w| {
+                    format!(
+                        "idle threads' temporary files at 7 days; storage is {}",
+                        show(&storage(w))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        &format!("the machine's temporary files folder is set to {Q}"),
+        |world, c, _| {
+            // This machine's document is the fake's own settings.
+            let fake = fake_config(&mut world.mc);
+            let mut cleanup = fake
+                .settings
+                .get("storageCleanup")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            cleanup.insert("temporaryFilesFolder".into(), json!(c[0]));
+            fake.settings
+                .insert("storageCleanup".into(), Value::Object(cleanup));
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user sets the temporary files folder to {Q}"),
+        |world, c, _| {
+            // The page shows the field once the documents are read; a change
+            // before that has nothing to edit.
+            world.sync_until_with(
+                |w| {
+                    storage(w)["status"] == "ready" && !storage(w)["temporaryFilesFolder"].is_null()
+                },
+                |w| format!("the folder to be offered; storage is {}", show(&storage(w))),
+            )?;
+            world.dispatch(
+                "storageSettings.temporaryFilesFolder",
+                json!({"folder": c[0]}),
+            )
+        },
+    );
+    steps.step(
+        &format!("the machine's temporary files folder is {Q}"),
+        |world, c, _| {
+            let folder = |w: &World| {
+                w.mc.peek::<crate::steps::settings::FakeConfig>()
+                    .and_then(|fake| {
+                        fake.settings
+                            .get("storageCleanup")
+                            .and_then(|cleanup| cleanup["temporaryFilesFolder"].as_str())
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_default()
+            };
+            world.sync_until_with(
+                |w| folder(w) == c[0],
+                move |w| format!("the folder to be saved; it is {}", folder(w)),
+            )
+        },
+    );
+    steps.step(
         "the user is asked to update that machine first",
         |world, _, _| {
             world.sync_until_with(

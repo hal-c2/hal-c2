@@ -4,6 +4,7 @@
 //! device's defaults (features/settings/search-and-navigation.feature).
 //! desktop-qt's SettingsSearchSteps.cpp and SettingsShell.h.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use hal_c2_shell::controller;
@@ -14,8 +15,10 @@ use ljos::item::KeyEvent;
 use ljos::prelude::{ObjectId, Value};
 use serde_json::json;
 
+use super::settings::{document_of, fake_config};
+use super::settings_scoped_rows::{announce_here, with_capabilities};
 use crate::brick::{Brick, Shown};
-use crate::harness::{Failure, Outcome, Q, Steps, at, show};
+use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -94,9 +97,26 @@ pub fn is_result(row: &Json) -> bool {
     row["result"] == json!(true)
 }
 
-pub fn describe_rows(world: &mut World) -> String {
-    let lines: Vec<String> = rows(world)
-        .unwrap_or_default()
+/// The nav's rows as they stand, for waits that hold only `&World`.
+fn rows_now(world: &World) -> Vec<Json> {
+    let Some(brick) = world.peek_part::<Shown>().and_then(|shown| shown.0) else {
+        return Vec::new();
+    };
+    let Ok(Some(nav)) = brick.find(world, "nav") else {
+        return Vec::new();
+    };
+    match shell_json::from_value(world.engine(), &brick.read(world, nav, "rows")) {
+        Json::Array(list) => list,
+        _ => Vec::new(),
+    }
+}
+
+fn describe_now(world: &World) -> String {
+    describe_list(&rows_now(world))
+}
+
+fn describe_list(list: &[Json]) -> String {
+    let lines: Vec<String> = list
         .iter()
         .map(|row| {
             if is_result(row) {
@@ -111,6 +131,10 @@ pub fn describe_rows(world: &mut World) -> String {
         })
         .collect();
     format!("settings list {}", lines.join(", "))
+}
+
+pub fn describe_rows(world: &mut World) -> String {
+    describe_list(&rows(world).unwrap_or_default())
 }
 
 fn describe_choices(world: &World) -> String {
@@ -240,6 +264,160 @@ fn route_target(world: &World) -> String {
         .as_str()
         .unwrap_or_default()
         .to_owned()
+}
+
+const BROWSER_ACCESS: &str = "enableAgentBrowserAccess";
+const SETTLES: &str = "threadAutoSettlement";
+
+fn scope_of(world: &World) -> Json {
+    world.state("settingsScope")
+}
+
+/// A project in the sidebar, added when this machine has none by that name.
+fn add_project(world: &mut World, title: &str) -> Outcome {
+    let sidebar = world.state("sidebar");
+    let exists = sidebar["projects"]
+        .as_array()
+        .is_some_and(|projects| projects.iter().any(|p| p["displayName"] == title));
+    if exists {
+        return Ok(());
+    }
+    let row = json!({"id": title, "title": title,
+        "workspaceRoot": format!("/work/{title}"), "scripts": []});
+    world.mc.projects.insert(title.to_owned(), row.clone());
+    world.mc.send_row_of(title, &row, "project");
+    world.sync()
+}
+
+/// Settings for one project, as the scope's project picker chooses it.
+fn pick_project(world: &mut World, title: &str) -> Outcome {
+    add_project(world, title)?;
+    let find = |w: &World| {
+        scope_of(w)["projects"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["title"] == title))
+            .map(|row| text(&row["key"]))
+            .filter(|key| !key.is_empty())
+    };
+    world.wait_for_with(
+        |w| find(w).is_some(),
+        |w| format!("{title} to be offered; the scope is {}", show(&scope_of(w))),
+    )?;
+    let key = find(world).unwrap_or_default();
+    world.dispatch("settingsScope.project", json!({"key": key}))?;
+    world.wait_for_with(
+        |w| scope_of(w)["kind"] == "project" && scope_of(w)["projectLabel"] == title,
+        |w| format!("the project scope; it is {}", show(&scope_of(w))),
+    )
+}
+
+/// This machine and another, by label: the environment each is, and the one
+/// the settings are scoped to.
+#[derive(Default)]
+struct Environments {
+    ids: HashMap<String, String>,
+    scoped: String,
+}
+
+/// This machine labelled `here` and a linked machine `other`, each saying
+/// whether its MC settles threads; both in the settings scope.
+fn two_environments(
+    world: &mut World,
+    here: &str,
+    here_settles: bool,
+    other: &str,
+    other_settles: bool,
+) -> Outcome {
+    let environment_id = world.mc.environment_id.clone();
+    {
+        let environments = world.part::<Environments>();
+        environments.ids.insert(here.to_owned(), environment_id);
+        environments.ids.insert(other.to_owned(), other.to_owned());
+    }
+    world.mc.label = here.to_owned();
+    world.mc.announce_environment();
+    announce_here(world, json!({SETTLES: here_settles}))?;
+    fake_config(&mut world.mc).elsewhere.insert(
+        other.to_owned(),
+        with_capabilities(serde_json::Map::new(), json!({SETTLES: other_settles})),
+    );
+    document_of(&mut world.mc, other).settings = serde_json::Map::new();
+    world.mc.join_named(other);
+    let settles = |w: &World, label: &str, expected: bool| {
+        scope_of(w)["environments"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|environment| environment["label"] == label)
+            .is_some_and(|environment| {
+                environment["online"].as_bool() == Some(true)
+                    && environment["capabilities"]
+                        .get(SETTLES)
+                        .and_then(Json::as_bool)
+                        == Some(expected)
+            })
+    };
+    let (here, other) = (here.to_owned(), other.to_owned());
+    world.wait_for_with(
+        |w| {
+            scope_of(w)["targets"]
+                .as_array()
+                .is_some_and(|t| t.len() == 2)
+                && settles(w, &here, here_settles)
+                && settles(w, &other, other_settles)
+        },
+        |w| {
+            format!(
+                "{here} and {other} in the scope; it is {}",
+                show(&scope_of(w))
+            )
+        },
+    )
+}
+
+fn scope_to(world: &mut World, label: &str) -> Outcome {
+    let id = world
+        .part::<Environments>()
+        .ids
+        .get(label)
+        .cloned()
+        .unwrap_or_default();
+    world.dispatch("settingsScope.environment", json!({"id": id}))?;
+    let label = label.to_owned();
+    world.wait_for_with(
+        |w| text(&scope_of(w)["environmentId"]) == id,
+        move |w| format!("the scope on {label}; it is {}", show(&scope_of(w))),
+    )
+}
+
+/// The page shows `text` where the opened setting would be.
+fn expect_notice(world: &mut World, expected: &str) -> Outcome {
+    let brick = shell(world)?;
+    let expected = expected.to_owned();
+    world.wait_for_with(
+        |w| {
+            brick
+                .find(w, "settingsNotice")
+                .ok()
+                .flatten()
+                .is_some_and(|notice| brick.flag(w, notice, "visible"))
+                && brick.shows(w, &expected).unwrap_or(false)
+        },
+        |w| {
+            format!(
+                "the notice \"{expected}\"; the route is {}, the scope {}",
+                show(&w.state("route")),
+                show(&scope_of(w))
+            )
+        },
+    )?;
+    let target = route_target(world);
+    let setting = brick.find(world, &target)?;
+    expect!(
+        setting.is_none_or(|item| !brick.flag(world, item, "visible")),
+        "{target} shows beside the notice"
+    );
+    Ok(())
 }
 
 pub fn register(steps: &mut Steps) {
@@ -656,4 +834,558 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+
+    // Focus.
+    steps.step(
+        "the user has focus in the settings search",
+        |world, _, _| {
+            let brick = shell(world)?;
+            brick.click(world, "search")?;
+            let field = brick.item(world, "search")?;
+            expect!(
+                brick.flag(world, field, "activeFocus"),
+                "the search did not take the keyboard"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the list of sections has focus, on the current section",
+        |world, _, _| {
+            let brick = shell(world)?;
+            let list = brick.item(world, "sections")?;
+            let nav = brick.item(world, "nav")?;
+            let current = brick.text_of(world, nav, "currentSection");
+            let index: usize = brick
+                .text_of(world, list, "currentIndex")
+                .parse()
+                .unwrap_or(usize::MAX);
+            let list_rows = rows(world)?;
+            let row = list_rows.get(index);
+            expect!(
+                brick.flag(world, list, "activeFocus")
+                    && row.is_some_and(|row| row["to"] == current.as_str()),
+                "the sections {} the keyboard, at {}; the section showing is {current}",
+                if brick.flag(world, list, "activeFocus") {
+                    "have"
+                } else {
+                    "do not have"
+                },
+                show(row.unwrap_or(&Json::Null))
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user presses escape on the settings page",
+        |world, _, _| {
+            let brick = shell(world)?;
+            let host = brick.item(world, "host")?;
+            let _ = world.engine().invoke_by_name(host, "forceActiveFocus", &[]);
+            brick.press(world, "escape")?;
+            world.sync()
+        },
+    );
+
+    // The project section.
+    steps.step(
+        "the user is editing (?:settings for )?all projects",
+        |world, _, _| {
+            shell(world)?;
+            world.dispatch("settingsScope.project", json!({"key": ""}))?;
+            world.wait_for_with(
+                |w| scope_of(w)["kind"] != "project",
+                |w| format!("all projects; the scope is {}", show(&scope_of(w))),
+            )
+        },
+    );
+    steps.step("there is no project section", |world, _, _| {
+        let list = rows(world)?;
+        expect!(
+            list.iter().all(|row| row["label"] != "Project"),
+            "{}",
+            describe_rows(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the user chooses the project {Q}"),
+        |world, c, _| pick_project(world, &c[0]),
+    );
+    steps.step("the project section is listed first", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                rows_now(w)
+                    .first()
+                    .is_some_and(|row| row["label"] == "Project")
+            },
+            describe_now,
+        )
+    });
+
+    // What the search finds.
+    steps.step(
+        "no connected environment has provider settings",
+        |world, _, _| {
+            shell(world)?;
+            world.mc.stop_accepting();
+            world.mc.drop_connection();
+            world.wait_for("the shell to see the drop", |w| !w.client_ready())
+        },
+    );
+    steps.step(&format!("{Q} is the only result"), |world, c, _| {
+        let title = c[0].clone();
+        world.wait_for_with(
+            |w| {
+                let list = rows_now(w);
+                list.len() == 1 && list[0]["title"] == title.as_str()
+            },
+            describe_now,
+        )
+    });
+    steps.step(
+        &format!("the user searches settings for {Q} with an accent on the e"),
+        |world, c, _| {
+            // Typed as the keyboard composes it, which key clicks cannot.
+            let brick = shell(world)?;
+            let field = brick.item(world, "search")?;
+            brick.write(world, field, "text", Value::from(c[0].as_str()))?;
+            world.sync()
+        },
+    );
+    steps.step(&format!("{Q} is the first result"), |world, c, _| {
+        let title = c[0].clone();
+        world.wait_for_with(
+            |w| {
+                rows_now(w)
+                    .first()
+                    .is_some_and(|row| row["title"] == title.as_str())
+            },
+            describe_now,
+        )
+    });
+    steps.step(
+        "the results are the unpin, archive and delete confirmations in that order",
+        |world, _, _| {
+            let titles: Vec<String> = rows(world)?.iter().map(|row| text(&row["title"])).collect();
+            expect!(
+                titles.iter().take(3).cloned().collect::<Vec<_>>()
+                    == [
+                        "Unpin confirmation",
+                        "Archive confirmation",
+                        "Delete confirmation"
+                    ],
+                "{}",
+                describe_rows(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the first result is the {Q} keybinding"),
+        |world, c, _| {
+            let list = rows(world)?;
+            let first = list.first().cloned().unwrap_or(Json::Null);
+            expect!(
+                first["title"] == c[0].as_str()
+                    && first["sectionLabel"] == "Keybindings"
+                    && text(&first["targetId"]).starts_with("keybinding:"),
+                "{}",
+                describe_rows(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the model picker keybinding is listed after {Q}"),
+        |world, c, _| {
+            let list = rows(world)?;
+            let mut setting = None;
+            let mut command = None;
+            for (index, row) in list.iter().enumerate() {
+                if row["title"] == c[0].as_str() {
+                    setting = Some(index);
+                }
+                if row["sectionLabel"] == "Keybindings"
+                    && text(&row["title"]).to_lowercase().contains("model picker")
+                {
+                    command = Some(index);
+                }
+            }
+            expect!(
+                matches!((setting, command), (Some(s), Some(k)) if k > s),
+                "{}",
+                describe_rows(world)
+            );
+            Ok(())
+        },
+    );
+
+    // Where a result opens.
+    steps.step(
+        &format!("the user opens the search result for the {Q} command"),
+        |world, c, _| {
+            let brick = settings_shell(world, 900.0, 600.0)?;
+            let field = brick.item(world, "search")?;
+            brick.write(world, field, "text", Value::from(c[0].as_str()))?;
+            world.sync()?;
+            let list = rows(world)?;
+            for (index, row) in list.iter().enumerate() {
+                if row["targetId"] != format!("keybinding:{}", c[0]).as_str() {
+                    continue;
+                }
+                world.part::<Opened>().target = text(&row["title"]);
+                brick.click(world, &format!("settingsRow{index}"))?;
+                return world.sync();
+            }
+            fail!(
+                "no result is the {} command; {}",
+                c[0],
+                describe_rows(world)
+            )
+        },
+    );
+    steps.step(
+        "the Keybindings section opens at that command's row",
+        |world, _, _| {
+            let brick = shell(world)?;
+            let label = world.part::<Opened>().target.clone();
+            world.wait_for_with(
+                |w| {
+                    if at(&w.state("route"), "section") != "/settings/keybindings" {
+                        return false;
+                    }
+                    let draft = brick.find(w, "keybindingDraft").ok().flatten();
+                    let command = brick.find(w, "command").ok().flatten();
+                    draft.is_some_and(|d| brick.flag(w, d, "visible"))
+                        && command
+                            .is_some_and(|cmd| brick.text_of(w, cmd, "displayText") == label)
+                },
+                |w| {
+                    let command = brick.find(w, "command").ok().flatten();
+                    format!(
+                        "a new keybinding for \"{label}\"; the route is {}, the command shows \"{}\"",
+                        show(&w.state("route")),
+                        command
+                            .map(|cmd| brick.text_of(w, cmd, "displayText"))
+                            .unwrap_or_else(|| "(none)".into())
+                    )
+                },
+            )
+        },
+    );
+    steps.step("window capture is off", |world, _, _| {
+        settings_shell(world, 900.0, 300.0)?;
+        world.dispatch("settings.navigate", json!({"to": "/settings/snap-shot"}))?;
+        world.sync()?;
+        let brick = shell(world)?;
+        let toggle = brick
+            .find(world, "snapShot:enabled")?
+            .ok_or_else(|| Failure("the SnapShots page has no capture toggle".into()))?;
+        let control = brick.find_in(world, toggle, "control")?;
+        expect!(
+            control.is_some_and(|item| !brick.flag(world, item, "checked")),
+            "window capture is on"
+        );
+        Ok(())
+    });
+    steps.step(
+        "the window capture toggle is brought into view",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| in_view(w, "snapShot:enabled"),
+                |_| "the capture toggle to come into view".to_owned(),
+            )
+        },
+    );
+
+    // Settings some environments, or another scope, hold.
+    steps.step(
+        &format!("{Q} can settle threads and {Q} cannot"),
+        |world, c, _| {
+            settings_shell(world, 900.0, 600.0)?;
+            two_environments(world, &c[0].clone(), true, &c[1].clone(), false)
+        },
+    );
+    steps.step(
+        &format!("the settings are scoped to {Q}, which cannot settle threads"),
+        |world, c, _| {
+            settings_shell(world, 900.0, 600.0)?;
+            world.part::<Environments>().scoped = c[0].clone();
+            Ok(())
+        },
+    );
+    steps.step(&format!("{Q} can settle threads"), |world, c, _| {
+        let scoped = world.part::<Environments>().scoped.clone();
+        two_environments(world, &c[0].clone(), true, &scoped.clone(), false)?;
+        scope_to(world, &scoped)
+    });
+    steps.step("no environment can settle threads", |world, _, _| {
+        let scoped = world.part::<Environments>().scoped.clone();
+        two_environments(world, "laptop", false, &scoped.clone(), false)?;
+        scope_to(world, &scoped)
+    });
+    steps.step(&format!("{Q} and {Q} can settle threads"), |world, c, _| {
+        settings_shell(world, 900.0, 600.0)?;
+        two_environments(world, &c[0].clone(), true, &c[1].clone(), true)
+    });
+    steps.step(
+        &format!("the user scopes the settings to {Q}"),
+        |world, c, _| scope_to(world, &c[0]),
+    );
+    steps.step(&format!("{Q} goes offline"), |world, c, _| {
+        let id = world
+            .part::<Environments>()
+            .ids
+            .get(&c[0])
+            .cloned()
+            .unwrap_or_default();
+        world.mc.set_online(&id, false);
+        let label = c[0].clone();
+        world.wait_for_with(
+            |w| {
+                scope_of(w)["environments"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|environment| environment["id"] == id.as_str())
+                    .is_some_and(|environment| environment["online"].as_bool() == Some(false))
+            },
+            move |w| format!("{label} offline; the scope is {}", show(&scope_of(w))),
+        )
+    });
+    steps.step("the results are found", |world, _, _| {
+        let titles: Vec<String> = rows(world)?.iter().map(|row| text(&row["title"])).collect();
+        expect!(
+            titles.iter().any(|t| t == "Auto-settle merged threads")
+                && titles.iter().any(|t| t == "Auto-settle inactive threads"),
+            "{}",
+            describe_rows(world)
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("choosing one offers {Q} and not {Q}"),
+        |world, c, _| {
+            let brick = shell(world)?;
+            let list = rows(world)?;
+            for (index, row) in list.iter().enumerate() {
+                if row["title"] != "Auto-settle merged threads" {
+                    continue;
+                }
+                brick.click(world, &format!("settingsRow{index}"))?;
+                world.sync()?;
+                break;
+            }
+            let (offered, withheld) = {
+                let environments = world.part::<Environments>();
+                (
+                    format!(
+                        "choose:{}",
+                        environments.ids.get(&c[0]).cloned().unwrap_or_default()
+                    ),
+                    format!(
+                        "choose:{}",
+                        environments.ids.get(&c[1]).cloned().unwrap_or_default()
+                    ),
+                )
+            };
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                |w| {
+                    brick
+                        .find(w, &offered)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|button| {
+                            brick.flag(w, button, "visible")
+                                && brick.text_of(w, button, "text") == wanted
+                        })
+                        && brick.find(w, &withheld).ok().flatten().is_none()
+                },
+                |w| {
+                    format!(
+                        "{offered} offered and not {withheld}; the notice is {}",
+                        brick
+                            .find(w, "settingsNotice")
+                            .ok()
+                            .flatten()
+                            .is_some_and(|notice| brick.flag(w, notice, "visible"))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        &format!("the page says {Q} in place of the settings"),
+        |world, c, _| expect_notice(world, &c[0]),
+    );
+    steps.step(
+        &format!("the settings are scoped to the project {Q}"),
+        |world, c, _| {
+            settings_shell(world, 900.0, 600.0)?;
+            world.dispatch("settingsScope.environment", json!({"id": ""}))?;
+            pick_project(world, &c[0])
+        },
+    );
+    steps.step(
+        "the user opens the search result of a setting that is set per environment",
+        |world, _, _| {
+            // Automatic Git fetch interval is one setting for all of an
+            // environment's projects.
+            world.dispatch(
+                "settings.openResult",
+                json!({"to": "/settings/source-control", "targetId": "fetchInterval"}),
+            )?;
+            world.sync()
+        },
+    );
+    steps.step(
+        "the page says that setting is not available for the selected target and to choose its owning scope",
+        |world, _, _| {
+            expect_notice(
+                world,
+                "Automatic Git fetch interval is not available for the selected target. \
+                 Choose its owning scope to continue.",
+            )
+        },
+    );
+    steps.step(
+        "the user can choose the scope there to carry on to the setting",
+        |world, _, _| {
+            let brick = shell(world)?;
+            brick.click(world, "choose:allProjects")?;
+            world.wait_for_with(
+                |w| {
+                    let route = w.state("route");
+                    scope_of(w)["kind"] != "project"
+                        && brick
+                            .find(w, "settingsNotice")
+                            .ok()
+                            .flatten()
+                            .is_none_or(|notice| !brick.flag(w, notice, "visible"))
+                        && at(&route, "section") == "/settings/source-control"
+                        && at(&route, "target") == "fetchInterval"
+                },
+                |w| {
+                    format!(
+                        "the setting in its own scope; the scope is {}, the route {}",
+                        show(&scope_of(w)),
+                        show(&w.state("route"))
+                    )
+                },
+            )?;
+            world.wait_for_with(
+                |w| in_view(w, "fetchInterval"),
+                |_| "the setting to come into view".to_owned(),
+            )
+        },
+    );
+    steps.step("no environment is the primary one", |world, _, _| {
+        // Every environment, none of them first.
+        shell(world)?;
+        two_environments(world, "laptop", false, "server", false)?;
+        world.dispatch("settingsScope.environment", json!({"id": ""}))?;
+        world.wait_for_with(|w| scope_of(w)["kind"] == "all", |w| show(&scope_of(w)))
+    });
+
+    // Restoring, when there is nothing to restore, and the MC's settings.
+    steps.step(
+        "every setting the restore covers is at its default",
+        |world, _, _| {
+            let brick = shell(world)?;
+            let nav = brick.item(world, "nav")?;
+            let changed =
+                shell_json::from_value(world.engine(), &brick.read(world, nav, "changedLabels"));
+            let labels: Vec<String> = changed.as_array().into_iter().flatten().map(text).collect();
+            expect!(labels.is_empty(), "{} changed", labels.join(", "));
+            Ok(())
+        },
+    );
+    steps.step("the user looks at the settings page", |world, _, _| {
+        shell(world)?;
+        world.sync()
+    });
+    steps.step(
+        "restoring default settings cannot be chosen",
+        |world, _, _| {
+            let brick = shell(world)?;
+            let button = brick.item(world, "restoreDefaults")?;
+            expect!(
+                !brick.flag(world, button, "enabled"),
+                "restoring defaults is offered"
+            );
+            Ok(())
+        },
+    );
+    steps.step("the user turned agent browser access off", |world, _, _| {
+        shell(world)?;
+        world.wait_for_with(
+            |w| {
+                let controller = settings(w);
+                controller.ready()
+                    && controller
+                        .disabled_reason(w.engine(), BROWSER_ACCESS)
+                        .is_empty()
+            },
+            |w| {
+                format!(
+                    "the setting to be editable: {}",
+                    settings(w).disabled_reason(w.engine(), BROWSER_ACCESS)
+                )
+            },
+        )?;
+        settings(world).set(world.engine(), BROWSER_ACCESS, json!(false));
+        world.wait_for_with(
+            |w| {
+                w.mc.peek::<super::settings::FakeConfig>()
+                    .is_some_and(|fake| fake.settings.get(BROWSER_ACCESS) == Some(&json!(false)))
+                    && settings(w).setting(w.engine(), BROWSER_ACCESS) == Some(json!(false))
+            },
+            |w| {
+                format!(
+                    "the MC holds {}",
+                    show(&Json::Object(
+                        w.mc.peek::<super::settings::FakeConfig>()
+                            .map(|fake| fake.settings.clone())
+                            .unwrap_or_default()
+                    ))
+                )
+            },
+        )
+    });
+    steps.step(
+        "the confirmation lists agent browser access among the settings it will reset",
+        |world, _, _| {
+            let list = dialog_list(world)?;
+            let text = shell(world)?.text_of(world, list, "text");
+            expect!(
+                text.contains("Agent browser access"),
+                "the question reads \"{text}\""
+            );
+            world.answer_question = Some(Rc::new(answer_restore));
+            Ok(())
+        },
+    );
+    steps.step("agents have browser access again", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                let held =
+                    w.mc.peek::<super::settings::FakeConfig>()
+                        .and_then(|fake| fake.settings.get(BROWSER_ACCESS).cloned());
+                (held.is_none() || held == Some(json!(true)))
+                    && settings(w).setting(w.engine(), BROWSER_ACCESS) == Some(json!(true))
+            },
+            |w| {
+                format!(
+                    "the MC holds {}",
+                    show(&Json::Object(
+                        w.mc.peek::<super::settings::FakeConfig>()
+                            .map(|fake| fake.settings.clone())
+                            .unwrap_or_default()
+                    ))
+                )
+            },
+        )
+    });
 }

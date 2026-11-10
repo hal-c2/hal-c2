@@ -97,7 +97,49 @@ fn palette_row(world: &World, matches: impl Fn(&str, &str, &str) -> bool) -> Opt
 pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("the user searche[sd] settings for {Q}"),
-        |world, c, _| search(world, &c[0]),
+        |world, c, _| {
+            search(world, &c[0])?;
+            // What the palette, the sidebar and the archive say "listed" of,
+            // the search's results.
+            world.on_settings_page.insert(
+                "notListed".into(),
+                std::rc::Rc::new(|world, named| {
+                    let list = rows(world)?;
+                    expect!(
+                        list.iter().all(|row| row["title"] != named[0].as_str()),
+                        "{}",
+                        describe_rows(world)
+                    );
+                    Ok(())
+                }),
+            );
+            world.on_settings_page.insert(
+                "listedUnder".into(),
+                std::rc::Rc::new(|world, named| {
+                    let index = result_titled(world, &named[0])?;
+                    let list = rows(world)?;
+                    expect!(
+                        list[index]["sectionLabel"] == named[1].as_str(),
+                        "{}",
+                        describe_rows(world)
+                    );
+                    Ok(())
+                }),
+            );
+            world.on_settings_page.insert(
+                "onlyListed".into(),
+                std::rc::Rc::new(|world, named| {
+                    let list = rows(world)?;
+                    expect!(
+                        list.len() == 1 && list[0]["title"] == named[0].as_str(),
+                        "{}",
+                        describe_rows(world)
+                    );
+                    Ok(())
+                }),
+            );
+            Ok(())
+        },
     );
     steps.step("each result names its section", |world, _, _| {
         let list = rows(world)?;

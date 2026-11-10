@@ -2202,6 +2202,7 @@ dependencies = [
  "trash",
  "unicode-general-category",
  "unicode-normalization",
+ "ureq",
  "url",
  "zbus",
  "zune-jpeg",

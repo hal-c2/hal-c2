@@ -58,7 +58,7 @@ pub fn with_capabilities(
 }
 
 /// This machine's MC says what it can do, as its `config` snapshot does.
-fn announce_here(world: &mut World, capabilities: Value) -> Outcome {
+pub fn announce_here(world: &mut World, capabilities: Value) -> Outcome {
     let fake = fake_config(&mut world.mc);
     fake.config = with_capabilities(fake.config.clone(), capabilities);
     let mut config = fake.config.clone();

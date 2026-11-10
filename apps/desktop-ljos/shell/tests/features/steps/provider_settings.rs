@@ -3940,6 +3940,8 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+
+    register_notice(steps);
 }
 
 const CUSTOM_MODEL: &str = "my-model";
@@ -4353,4 +4355,895 @@ pub fn rename_provider_instance(world: &mut World, from: &str, to: &str) -> Outc
     seed_work(world, from, Value::Null)?;
     let id = fake(world).instance_id.clone();
     act(world, "rename", json!({"instanceId": id, "name": to}))
+}
+
+// Provider updates as the shell tells of them (ProviderUpdateNotice): the
+// sidebar's notice, the launch offer, and its rows when the cluster has
+// several environments: the MC's own plays Windows, a member its WSL backend.
+
+const WSL: &str = "wsl-ubuntu";
+const CHECKED_AT: &str = "2026-09-23T09:00:00.000Z";
+const FINISHED_AT: &str = "2026-09-23T09:30:00.000Z";
+
+fn behind(instance_id: &str, driver: &str, name: &str, latest: &str, advisory: Value) -> Value {
+    let mut version_advisory = json!({
+        "status": "behind_latest",
+        "currentVersion": "0.50.0",
+        "latestVersion": latest,
+        "updateCommand": UPDATE_COMMAND,
+        "canUpdate": true,
+    });
+    merge(&mut version_advisory, advisory);
+    provider(
+        instance_id,
+        driver,
+        name,
+        json!({
+            "version": "0.50.0",
+            "checkedAt": CHECKED_AT,
+            "versionAdvisory": version_advisory,
+        }),
+    )
+}
+
+fn behind_codex(latest: &str) -> Value {
+    behind("codex", "codex", "Codex", latest, Value::Null)
+}
+
+fn behind_claude() -> Value {
+    behind("claudeAgent", "claudeAgent", "Claude", "2.1.0", Value::Null)
+}
+
+/// A provider whose update went `status` (and finished then, unless it runs).
+fn updated(driver: &str, name: &str, status: &str, fields: Value, finished_at: &str) -> Value {
+    let mut state = json!({"status": status});
+    if status != "running" {
+        state["finishedAt"] = json!(finished_at);
+    }
+    let mut entry = json!({"checkedAt": CHECKED_AT, "updateState": state});
+    merge(&mut entry, fields);
+    provider(driver, driver, name, entry)
+}
+
+fn failed_to(driver: &str, name: &str, latest: &str) -> Value {
+    let fields = if latest.is_empty() {
+        Value::Null
+    } else {
+        json!({"versionAdvisory": {"status": "behind_latest", "latestVersion": latest}})
+    };
+    updated(driver, name, "failed", fields, FINISHED_AT)
+}
+
+fn notice_iso(world: &World) -> String {
+    stream_now_iso(world)
+}
+
+fn stream_now_iso(world: &World) -> String {
+    // The scenarios' clock as an ISO time with milliseconds.
+    use chrono::SecondsFormat;
+    world.now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+/// This machine's provider `instance_id`, changed as `fields` say.
+fn amend(world: &mut World, instance_id: &str, fields: Value) -> Outcome {
+    for value in config_providers(world) {
+        if value["instanceId"] != instance_id {
+            continue;
+        }
+        let mut entry = value;
+        merge(&mut entry, fields);
+        offer(world, entry);
+        return Ok(());
+    }
+    crate::fail!("no provider {instance_id} to change")
+}
+
+fn sidebar_notice(world: &World) -> Value {
+    world.state("providerUpdates")["notice"].clone()
+}
+
+fn wait_for_notice(world: &mut World, title: &str) -> Outcome {
+    let wanted = title.to_owned();
+    world.wait_for_with(
+        |w| sidebar_notice(w)["title"] == wanted.as_str(),
+        |w| {
+            format!(
+                "the sidebar notice \"{wanted}\"; it is {}",
+                show(&sidebar_notice(w))
+            )
+        },
+    )
+}
+
+fn expect_no_notice(world: &mut World) -> Outcome {
+    world.sync()?;
+    expect!(
+        sidebar_notice(world).is_null(),
+        "no sidebar notice; it is {}",
+        show(&sidebar_notice(world))
+    );
+    Ok(())
+}
+
+fn shown_toasts(world: &World) -> Vec<Value> {
+    world.state("toasts")["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn action_labels(toast: &Value) -> Vec<String> {
+    toast["actions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|action| text(&action["label"]))
+        .collect()
+}
+
+/// The one toast on screen.
+fn only_toast(world: &mut World) -> Outcome<Value> {
+    world.wait_for("a toast", |w| !shown_toasts(w).is_empty())?;
+    world.sync()?;
+    let toasts = shown_toasts(world);
+    expect!(
+        toasts.len() == 1,
+        "one toast; the shell shows {}",
+        show(&Value::Array(toasts.clone()))
+    );
+    Ok(toasts.into_iter().next().unwrap_or(Value::Null))
+}
+
+/// The update notice with a row per environment.
+fn rows_toast(world: &World) -> Option<Value> {
+    shown_toasts(world)
+        .into_iter()
+        .find(|toast| !toast["rows"].as_array().is_none_or(Vec::is_empty))
+}
+
+fn row_labels(world: &World) -> Vec<String> {
+    rows_toast(world)
+        .map(|toast| {
+            toast["rows"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|row| text(&row["label"]))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn row_of(world: &World, label: &str) -> Value {
+    rows_toast(world)
+        .and_then(|toast| {
+            toast["rows"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["label"] == label)
+                .cloned()
+        })
+        .unwrap_or(Value::Null)
+}
+
+fn wait_for_row(
+    world: &mut World,
+    label: &str,
+    ready: impl Fn(&Value) -> bool,
+    what: &str,
+) -> Outcome {
+    let label = label.to_owned();
+    let what = what.to_owned();
+    world.wait_for_with(
+        |w| {
+            let found = row_of(w, &label);
+            !found.is_null() && ready(&found)
+        },
+        |w| {
+            format!(
+                "the row of {label} {what}; the shell shows {}",
+                show(&Value::Array(shown_toasts(w)))
+            )
+        },
+    )
+}
+
+fn wait_for_rows(world: &mut World, labels: &[&str]) -> Outcome {
+    let wanted: Vec<String> = labels.iter().map(|label| label.to_string()).collect();
+    world.wait_for_with(
+        |w| row_labels(w) == wanted,
+        |w| {
+            format!(
+                "the update notice to list {}; the shell shows {}",
+                wanted.join(", "),
+                show(&Value::Array(shown_toasts(w)))
+            )
+        },
+    )
+}
+
+/// The user presses the row's button.
+fn choose_row(world: &mut World, label: &str, button: &str) -> Outcome {
+    let wanted = button.to_owned();
+    wait_for_row(
+        world,
+        label,
+        |found| found["action"] == wanted.as_str(),
+        &format!("to offer {button}"),
+    )?;
+    let toast = rows_toast(world).unwrap_or(Value::Null);
+    world.dispatch(
+        "notification.rowAction",
+        json!({"id": toast["id"], "rowId": row_of(world, label)["id"]}),
+    )?;
+    world.sync()
+}
+
+fn updates_on(world: &World, environment: &str) -> Vec<Rpc> {
+    recorded(world)
+        .updates
+        .iter()
+        .filter(|rpc| {
+            (if rpc.environment.is_empty() {
+                &world.mc.environment_id
+            } else {
+                &rpc.environment
+            }) == environment
+        })
+        .cloned()
+        .collect()
+}
+
+fn wait_for_update_on(world: &mut World, environment: &str, count: usize) -> Outcome<Rpc> {
+    let environment_owned = environment.to_owned();
+    world.wait_for_with(
+        |w| updates_on(w, &environment_owned).len() >= count,
+        |w| {
+            format!(
+                "{count} update(s) asked of {environment_owned}; {} were",
+                updates_on(w, &environment_owned).len()
+            )
+        },
+    )?;
+    Ok(updates_on(world, environment)
+        .into_iter()
+        .nth(count - 1)
+        .expect("the update call"))
+}
+
+fn answered(status: &str) -> Value {
+    json!({"providers": [updated("codex", "Codex", status, Value::Null, FINISHED_AT)]})
+}
+
+/// What an update's answer says of Codex on this machine.
+fn publish_providers_on(mc: &mut FakeMc, environment: &str, providers: Vec<Value>) {
+    fake_config(mc).elsewhere.insert(
+        environment.to_owned(),
+        Map::from_iter([("providers".to_owned(), Value::Array(providers.clone()))]),
+    );
+    super::settings::send_config(
+        mc,
+        environment,
+        json!({"t": "config.providers", "providers": providers}),
+    );
+}
+
+/// The MC is Windows; WSL "Ubuntu" is a member of its cluster, its
+/// providers as given, or none yet while it is still connecting.
+fn windows_with_wsl(world: &mut World, wsl: Option<Vec<Value>>) {
+    world.mc.label = "Windows".into();
+    world
+        .mc
+        .peer_labels
+        .insert(WSL.to_owned(), "WSL · Ubuntu".into());
+    if let Some(providers) = wsl {
+        fake_config(&mut world.mc).elsewhere.insert(
+            WSL.to_owned(),
+            Map::from_iter([("providers".to_owned(), Value::Array(providers))]),
+        );
+    }
+    world.mc.join("mc-wsl", WSL);
+}
+
+/// Codex behind on both, the notice listing both.
+fn listed_on_both(world: &mut World) -> Outcome {
+    windows_with_wsl(world, Some(vec![behind_codex("0.51.0")]));
+    offer(world, behind_codex("0.51.0"));
+    world.connect()?;
+    wait_for_rows(world, &["Windows", "WSL · Ubuntu"])
+}
+
+fn environment_of(world: &World, label: &str) -> String {
+    if label == world.mc.label {
+        world.mc.environment_id.clone()
+    } else {
+        WSL.to_owned()
+    }
+}
+
+fn time_out(world: &mut World, label: &str) -> Outcome {
+    choose_row(world, label, "Update")?;
+    wait_for_update_on(world, &environment_of(world, label), 1)?;
+    let later = world.now() + chrono::TimeDelta::seconds(6 * 60);
+    world.set_time(later);
+    Ok(())
+}
+
+fn expect_windows_unaffected(world: &mut World) -> Outcome {
+    wait_for_row(
+        world,
+        "Windows",
+        |found| found["kind"] == "idle" && found["text"] == "Codex" && found["action"] == "Update",
+        "to still offer its update",
+    )?;
+    let own = world.mc.environment_id.clone();
+    expect!(
+        updates_on(world, &own).is_empty(),
+        "no update to have run on Windows"
+    );
+    Ok(())
+}
+
+fn register_notice(steps: &mut Steps) {
+    // The sidebar's notice.
+    steps.step(
+        "(Codex is being updated|Codex and Claude are being updated|Codex was updated to 0.52.0|Codex and Claude were updated|the update of Codex to 0.52.0 failed|the updates of two providers failed|Codex was updated but is still out of date|Codex finished updating before the app connected)",
+        |world, c, _| {
+            let providers = match c[0].as_str() {
+                "Codex is being updated" => {
+                    vec![updated("codex", "Codex", "running", Value::Null, FINISHED_AT)]
+                }
+                "Codex and Claude are being updated" => vec![
+                    updated("codex", "Codex", "running", Value::Null, FINISHED_AT),
+                    updated(
+                        "claudeAgent",
+                        "Claude",
+                        "running",
+                        Value::Null,
+                        FINISHED_AT,
+                    ),
+                ],
+                "Codex was updated to 0.52.0" => vec![updated(
+                    "codex",
+                    "Codex",
+                    "succeeded",
+                    json!({"version": "0.52.0"}),
+                    FINISHED_AT,
+                )],
+                "Codex and Claude were updated" => vec![
+                    updated("codex", "Codex", "succeeded", Value::Null, FINISHED_AT),
+                    updated(
+                        "claudeAgent",
+                        "Claude",
+                        "succeeded",
+                        Value::Null,
+                        FINISHED_AT,
+                    ),
+                ],
+                "the update of Codex to 0.52.0 failed" => {
+                    vec![failed_to("codex", "Codex", "0.52.0")]
+                }
+                "the updates of two providers failed" => vec![
+                    failed_to("codex", "Codex", ""),
+                    failed_to("claudeAgent", "Claude", ""),
+                ],
+                "Codex was updated but is still out of date" => vec![updated(
+                    "codex",
+                    "Codex",
+                    "unchanged",
+                    Value::Null,
+                    FINISHED_AT,
+                )],
+                _ => vec![updated(
+                    "codex",
+                    "Codex",
+                    "succeeded",
+                    Value::Null,
+                    "2026-09-23T08:30:00.000Z",
+                )],
+            };
+            publish_providers(&mut world.mc, providers);
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user looks at the bottom of the sidebar",
+        |world, _, _| {
+            world.connect()?;
+            world.wait_for("the shell to start", |w| {
+                !w.state("providerUpdates").is_null() || w.client_ready()
+            })
+        },
+    );
+    steps.step(&format!("the sidebar notice says {Q}"), |world, c, _| {
+        wait_for_notice(world, &c[0])
+    });
+    steps.step(&format!("the sidebar says {Q}"), |world, c, _| {
+        if c[0] == "Codex updated: v0.52.0" {
+            publish_providers(
+                &mut world.mc,
+                vec![updated(
+                    "codex",
+                    "Codex",
+                    "succeeded",
+                    json!({"version": "0.52.0"}),
+                    FINISHED_AT,
+                )],
+            );
+        } else if c[0] == "Codex update failed" {
+            publish_providers(&mut world.mc, vec![failed_to("codex", "Codex", "")]);
+        } else {
+            crate::fail!("no sidebar state says \"{}\"", c[0]);
+        }
+        world.connect()?;
+        wait_for_notice(world, &c[0])
+    });
+    steps.step("three seconds pass", |world, _, _| {
+        let later = world.now() + chrono::TimeDelta::seconds(3);
+        world.set_time(later);
+        Ok(())
+    });
+    steps.step(
+        "(?:the (?:sidebar )?notice is gone|the sidebar shows no provider update notice)",
+        |world, _, _| {
+            if !super::run_notice::provider_notice_gone(world)? {
+                expect_no_notice(world)?;
+            }
+            Ok(())
+        },
+    );
+    steps.step("the user dismisses the notice", |world, _, _| {
+        if super::run_notice::dismiss_provider_notice(world)? {
+            return Ok(());
+        }
+        world.dispatch("providerUpdates.dismissNotice", json!({}))
+    });
+    steps.step("the user chooses the notice", |world, _, _| {
+        world.dispatch("providerUpdates.openNotice", json!({}))
+    });
+    steps.step(
+        "it does not return until the provider's update status changes",
+        |world, _, _| {
+            // The MC reports the same again: still gone.
+            let providers = config_providers(world);
+            publish_providers(&mut world.mc, providers);
+            expect_no_notice(world)?;
+            // It fails again, later.
+            publish_providers(
+                &mut world.mc,
+                vec![updated(
+                    "codex",
+                    "Codex",
+                    "failed",
+                    Value::Null,
+                    "2026-09-23T09:45:00.000Z",
+                )],
+            );
+            wait_for_notice(world, "Codex update failed")
+        },
+    );
+
+    // The launch offer.
+    steps.step(
+        &format!("{Q} and {Q} are behind their latest releases"),
+        |world, _, _| {
+            publish_providers(&mut world.mc, vec![behind_codex("0.51.0"), behind_claude()]);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("no update command runs for {Q} from here"),
+        |world, _, _| {
+            let mut advisory = behind_codex("0.51.0")["versionAdvisory"].clone();
+            advisory["canUpdate"] = json!(false);
+            amend(world, "codex", json!({"versionAdvisory": advisory}))
+        },
+    );
+    steps.step(
+        "that release is (known to be broken with this app|not supported by this app)",
+        |world, c, _| {
+            let status = if c[0].starts_with("known") {
+                "broken"
+            } else {
+                "unsupported"
+            };
+            amend(
+                world,
+                "codex",
+                json!({"compatibilityAdvisory": {"status": "supported", "latestVersionStatus": status}}),
+            )
+        },
+    );
+    steps.step(&format!("{Q} is turned off"), |world, _, _| {
+        amend(world, "codex", json!({"enabled": false}))
+    });
+    steps.step(
+        &format!("the user sees an? {Q} toast saying {Q}"),
+        |world, c, _| {
+            let toast = only_toast(world)?;
+            expect!(
+                toast["type"] == c[0].as_str() && toast["description"] == c[1].as_str(),
+                "the toast is {}",
+                show(&toast)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the (?:user sees a )?toast (?:that )?offers {Q} and not {Q}"),
+        |world, c, _| {
+            let toast = only_toast(world)?;
+            let labels = action_labels(&toast);
+            expect!(
+                labels.contains(&c[0]) && !labels.contains(&c[1]),
+                "the toast is {}",
+                show(&toast)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user dismissed the toast {Q}"),
+        |world, c, _| {
+            offer(world, behind_codex("0.51.0"));
+            world.connect()?;
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                |w| {
+                    shown_toasts(w)
+                        .first()
+                        .is_some_and(|toast| toast["title"] == wanted.as_str())
+                },
+                |w| {
+                    format!(
+                        "the toast \"{wanted}\"; the shell shows {}",
+                        show(&Value::Array(shown_toasts(w)))
+                    )
+                },
+            )?;
+            let toast = only_toast(world)?;
+            world.dispatch("notification.dismiss", json!({"id": toast["id"]}))?;
+            world.wait_for("the toast to close", |w| shown_toasts(w).is_empty())
+        },
+    );
+    steps.step(
+        &format!("{Q} v0.52.0 is released and the MC checks provider versions"),
+        |world, _, _| {
+            amend(
+                world,
+                "codex",
+                json!({
+                    "checkedAt": "2026-09-23T10:00:00.000Z",
+                    "versionAdvisory": behind_codex("0.52.0")["versionAdvisory"].clone(),
+                }),
+            )
+        },
+    );
+    steps.step(
+        &format!("the MC reports {Q} still outdated after the update"),
+        |world, _, _| {
+            let mut still = behind_codex("0.51.0");
+            still["updateState"] = json!({
+                "status": "unchanged",
+                "finishedAt": notice_iso(world),
+            });
+            let own = world.mc.environment_id.clone();
+            let rpc = wait_for_update_on(world, &own, 1)?;
+            world.mc.reply(&rpc, json!({"providers": [still]}));
+            Ok(())
+        },
+    );
+    steps.step("the update fails without saying why", |world, _, _| {
+        let own = world.mc.environment_id.clone();
+        let rpc = wait_for_update_on(world, &own, 1)?;
+        world.mc.reply(&rpc, answered("failed"));
+        Ok(())
+    });
+    steps.step(
+        &format!("{Q} is behind its latest release through two of its instances"),
+        |world, _, _| {
+            publish_providers(
+                &mut world.mc,
+                vec![
+                    behind_codex("0.51.0"),
+                    behind("codex_work", "codex", "Codex Work", "0.51.0", Value::Null),
+                ],
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("{Q} has two instances that would be updated by different commands"),
+        |world, _, _| {
+            publish_providers(
+                &mut world.mc,
+                vec![
+                    behind_codex("0.51.0"),
+                    behind(
+                        "codex_brew",
+                        "codex",
+                        "Codex (Homebrew)",
+                        "0.51.0",
+                        json!({"updateCommand": "brew upgrade codex"}),
+                    ),
+                ],
+            );
+            Ok(())
+        },
+    );
+    steps.step(&format!("the user sees one toast {Q}"), |world, c, _| {
+        let toast = only_toast(world)?;
+        expect!(
+            toast["title"] == c[0].as_str(),
+            "the toast is {}",
+            show(&toast)
+        );
+        Ok(())
+    });
+
+    // Several environments.
+    steps.step(
+        "the app runs on Windows with a WSL backend",
+        |world, _, _| {
+            windows_with_wsl(world, Some(Vec::new()));
+            Ok(())
+        },
+    );
+    steps.step(
+        "the app runs on Windows with a WSL backend that is still connecting",
+        |world, _, _| {
+            windows_with_wsl(world, None);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("{Q} is behind on Windows and on WSL {Q}"),
+        |world, _, _| {
+            offer(world, behind_codex("0.51.0"));
+            fake_config(&mut world.mc).elsewhere.insert(
+                WSL.to_owned(),
+                Map::from_iter([(
+                    "providers".to_owned(),
+                    Value::Array(vec![behind_codex("0.51.0")]),
+                )]),
+            );
+            Ok(())
+        },
+    );
+    steps.step(&format!("{Q} is behind on Windows"), |world, _, _| {
+        offer(world, behind_codex("0.51.0"));
+        Ok(())
+    });
+    steps.step("both environments connect", |world, _, _| {
+        world.connect()?;
+        world.wait_for("the shell to start", |w| w.client_ready())
+    });
+    steps.step(
+        &format!("the user sees one update notice listing {Q} and {Q}"),
+        |world, c, _| {
+            wait_for_rows(world, &[&c[0].clone(), &c[1].clone()])?;
+            expect!(
+                shown_toasts(world).len() == 1,
+                "one notice; the shell shows {}",
+                show(&Value::Array(shown_toasts(world)))
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "each environment has its own Update button",
+        |world, _, _| {
+            for label in row_labels(world) {
+                expect!(
+                    row_of(world, &label)["action"] == "Update",
+                    "the row of {label} is {}",
+                    show(&row_of(world, &label))
+                );
+            }
+            Ok(())
+        },
+    );
+    steps.step("no update notice is shown yet", |world, _, _| {
+        world.wait_for("the shell to start", |w| w.client_ready())?;
+        world.sync()?;
+        expect!(
+            shown_toasts(world).is_empty(),
+            "no notice yet; the shell shows {}",
+            show(&Value::Array(shown_toasts(world)))
+        );
+        Ok(())
+    });
+    steps.step("the WSL backend connects", |world, _, _| {
+        publish_providers_on(&mut world.mc, WSL, vec![behind_codex("0.51.0")]);
+        Ok(())
+    });
+    steps.step(
+        "the update notice is shown once for both environments",
+        |world, _, _| {
+            wait_for_rows(world, &["Windows", "WSL · Ubuntu"])?;
+            world.sync()?;
+            expect!(
+                shown_toasts(world).len() == 1,
+                "one notice; the shell shows {}",
+                show(&Value::Array(shown_toasts(world)))
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the update notice lists \"Windows\" and \"WSL · Ubuntu\"",
+        |world, _, _| listed_on_both(world),
+    );
+    steps.step(&format!("the update of {Q} is running"), |world, c, _| {
+        choose_row(world, &c[0].clone(), "Update")?;
+        wait_for_update_on(world, &environment_of(world, &c[0]), 1)?;
+        Ok(())
+    });
+    steps.step(
+        &format!("the update of {Q} (?:finally )?finishes"),
+        |world, c, _| {
+            if updates_on(world, &environment_of(world, &c[0])).is_empty() {
+                choose_row(world, &c[0].clone(), "Update")?;
+            }
+            let rpc = wait_for_update_on(world, &environment_of(world, &c[0]), 1)?;
+            world.mc.reply(&rpc, answered("succeeded"));
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the update of {Q} fails with {Q}"),
+        |world, c, _| {
+            fake(world).update_refusal = c[1].clone();
+            choose_row(world, &c[0].clone(), "Update")
+        },
+    );
+    steps.step(
+        &format!("the update of {Q} leaves the provider still outdated"),
+        |world, c, _| {
+            choose_row(world, &c[0].clone(), "Update")?;
+            wait_for_update_on(world, &environment_of(world, &c[0]), 1)?;
+            // The MC tells of it before it answers.
+            let mut still = behind_codex("0.51.0");
+            still["updateState"] = json!({
+                "status": "unchanged",
+                "finishedAt": notice_iso(world),
+            });
+            publish_providers_on(&mut world.mc, WSL, vec![still]);
+            Ok(())
+        },
+    );
+    steps.step(&format!("the row of {Q} says {Q}"), |world, c, _| {
+        let wanted = c[1].clone();
+        wait_for_row(
+            world,
+            &c[0].clone(),
+            |found| found["text"] == wanted.as_str(),
+            &format!("to say \"{}\"", c[1]),
+        )
+    });
+    steps.step("the row of \"Windows\" is unaffected", |world, _, _| {
+        expect_windows_unaffected(world)
+    });
+    steps.step(
+        &format!("the user dismissed the update notice for {Q} on Windows"),
+        |world, _, _| {
+            windows_with_wsl(
+                world,
+                Some(vec![provider(
+                    "claudeAgent",
+                    "claudeAgent",
+                    "Claude",
+                    Value::Null,
+                )]),
+            );
+            offer(world, behind_codex("0.51.0"));
+            world.connect()?;
+            wait_for_rows(world, &["Windows"])?;
+            let toast = rows_toast(world).unwrap_or(Value::Null);
+            world.dispatch("notification.dismiss", json!({"id": toast["id"]}))?;
+            world.wait_for("the notice to close", |w| shown_toasts(w).is_empty())
+        },
+    );
+    steps.step(&format!("{Q} also falls behind on {Q}"), |world, _, _| {
+        publish_providers_on(&mut world.mc, WSL, vec![behind_claude()]);
+        Ok(())
+    });
+    steps.step(
+        "the update notice is shown again listing both",
+        |world, _, _| wait_for_rows(world, &["Windows", "WSL · Ubuntu"]),
+    );
+    steps.step(
+        &format!("the update of {Q} has been running for six minutes without an answer"),
+        |world, c, _| time_out(world, &c[0].clone()),
+    );
+    steps.step(&format!("the update of {Q} timed out"), |world, c, _| {
+        listed_on_both(world)?;
+        time_out(world, &c[0].clone())?;
+        wait_for_row(
+            world,
+            &c[0].clone(),
+            |found| found["text"] == "Update timed out — try again.",
+            "to have timed out",
+        )
+    });
+    steps.step(
+        "the update can be started again from that row",
+        |world, _, _| {
+            choose_row(world, "WSL · Ubuntu", "Retry")?;
+            wait_for_update_on(world, WSL, 2)?;
+            wait_for_row(
+                world,
+                "WSL · Ubuntu",
+                |found| found["text"] == "Updating…",
+                "to be updating again",
+            )
+        },
+    );
+    steps.step(&format!("{Q} is not connected"), |world, c, _| {
+        let environment = environment_of(world, &c[0]);
+        world.mc.set_online(&environment, false);
+        world.sync()
+    });
+    steps.step(
+        &format!("the user starts the update of {Q}"),
+        |world, c, _| choose_row(world, &c[0].clone(), "Update"),
+    );
+
+    // features/settings/updates.feature's @shared scenario: "laptop" and its WSL backend.
+    steps.step(
+        &format!("Codex is behind on {Q} and on its WSL environment"),
+        |world, c, _| {
+            world.mc.label = c[0].clone();
+            world
+                .mc
+                .peer_labels
+                .insert(WSL.to_owned(), "WSL · Ubuntu".into());
+            fake_config(&mut world.mc).elsewhere.insert(
+                WSL.to_owned(),
+                Map::from_iter([(
+                    "providers".to_owned(),
+                    Value::Array(vec![behind_codex("0.51.0")]),
+                )]),
+            );
+            world.mc.join("mc-wsl", WSL);
+            offer(world, behind_codex("0.51.0"));
+            world.connect()?;
+            wait_for_rows(world, &[&c[0].clone(), "WSL · Ubuntu"])
+        },
+    );
+    steps.step("the user updates Codex on both", |world, _, _| {
+        let label = world.mc.label.clone();
+        choose_row(world, &label, "Update")?;
+        choose_row(world, "WSL · Ubuntu", "Update")?;
+        // This machine's goes through, the WSL backend's fails.
+        let own = world.mc.environment_id.clone();
+        let rpc = wait_for_update_on(world, &own, 1)?;
+        world.mc.reply(&rpc, answered("succeeded"));
+        let rpc = wait_for_update_on(world, WSL, 1)?;
+        world.mc.refuse_with(
+            &rpc,
+            "npm is not installed",
+            json!({"_tag": "ServerProviderUpdateError"}),
+        );
+        Ok(())
+    });
+    steps.step(
+        "each machine shows whether its update succeeded, was unchanged or failed",
+        |world, _, _| {
+            let label = world.mc.label.clone();
+            wait_for_row(
+                world,
+                &label,
+                |found| found["kind"] == "success" && found["text"] == "Updated",
+                "to say it updated",
+            )?;
+            wait_for_row(
+                world,
+                "WSL · Ubuntu",
+                |found| found["kind"] == "failed" && found["text"] == "npm is not installed",
+                "to say why it failed",
+            )
+        },
+    );
 }

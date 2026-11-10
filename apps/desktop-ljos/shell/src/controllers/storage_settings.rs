@@ -12,7 +12,8 @@
 //! mixed}] (worktrees empty while a project inherits or is off)}.
 //!
 //! Actions: `storageSettings.set {key, value}` (a days rule takes a number
-//! of days, or null to turn it off), `storageSettings.mode {mode}`.
+//! of days, or null to turn it off), `storageSettings.mode {mode}`,
+//! `storageSettings.temporaryFilesFolder {folder}`.
 
 use ljos::prelude::Engine;
 use serde_json::json;
@@ -35,15 +36,18 @@ struct Rule {
     /// A retention in days rather than a switch.
     days: bool,
     worktree: bool,
+    /// The days a rule that was never set reads as; none when it starts off.
+    unset: Option<i64>,
 }
 
-const RULES: [Rule; 6] = [
+const RULES: [Rule; 7] = [
     Rule {
         key: "worktreeOnDelete",
         title: "Delete worktrees with deleted threads",
         description: "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.",
         days: false,
         worktree: true,
+        unset: None,
     },
     Rule {
         key: "worktreeAfterDays",
@@ -51,6 +55,7 @@ const RULES: [Rule; 6] = [
         description: "Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept.",
         days: true,
         worktree: true,
+        unset: None,
     },
     Rule {
         key: "worktreeOnMerge",
@@ -58,6 +63,7 @@ const RULES: [Rule; 6] = [
         description: "Remove worktrees whose pull request is merged and whose commits are included in the default branch.",
         days: false,
         worktree: true,
+        unset: None,
     },
     Rule {
         key: "worktreeUnchanged",
@@ -65,6 +71,7 @@ const RULES: [Rule; 6] = [
         description: "Remove worktrees with no commits beyond the default branch.",
         days: false,
         worktree: true,
+        unset: None,
     },
     Rule {
         key: "browserArtifactsAfterDays",
@@ -72,6 +79,7 @@ const RULES: [Rule; 6] = [
         description: "Delete saved browser captures after this many days. Older capture links will no longer open.",
         days: true,
         worktree: false,
+        unset: None,
     },
     Rule {
         key: "logsAfterDays",
@@ -79,6 +87,15 @@ const RULES: [Rule; 6] = [
         description: "Delete inactive rotated log files after this many days. Current logs are kept.",
         days: true,
         worktree: false,
+        unset: None,
+    },
+    Rule {
+        key: "threadTempAfterDays",
+        title: "Delete idle threads' temporary files",
+        description: "Delete a thread's temporary files after it has been idle for this many days. They always go with the thread.",
+        days: true,
+        worktree: false,
+        unset: Some(7),
     },
 ];
 
@@ -221,6 +238,22 @@ impl Controller for StorageSettings {
                     );
                 }
             }
+            "storageSettings.temporaryFilesFolder" => {
+                let folder = settings_page::text(payload, "folder").trim().to_owned();
+                if scope.project_scope() {
+                    return true;
+                }
+                scope.write(
+                    engine,
+                    move |mut settings, _| {
+                        let mut storage = object(&settings, STORAGE);
+                        storage.insert("temporaryFilesFolder".into(), json!(folder.clone()));
+                        settings.insert(STORAGE.into(), Json::Object(storage));
+                        settings
+                    },
+                    "",
+                );
+            }
             "storageSettings.mode" => {
                 let mode = settings_page::text(payload, "mode").to_owned();
                 if !scope.project_scope() {
@@ -308,13 +341,13 @@ impl StorageSettings {
                 if find(key).is_some_and(|r| r.worktree) {
                     return worktree_rules(settings, project_id).get(key).cloned();
                 }
-                Some(
-                    object(settings, STORAGE)
-                        .get(key)
-                        .filter(|v| v.is_number())
-                        .cloned()
-                        .unwrap_or(Json::Null),
-                )
+                Some(match object(settings, STORAGE).get(key) {
+                    None => find(key)
+                        .and_then(|r| r.unset)
+                        .map_or(Json::Null, |d| json!(d)),
+                    Some(v) if v.is_number() => v.clone(),
+                    Some(_) => Json::Null,
+                })
             });
             let row = json!({
                 "key": rule.key,
@@ -345,6 +378,21 @@ impl StorageSettings {
         );
         state.insert("worktrees".into(), json!(worktrees));
         state.insert("artifacts".into(), json!(artifacts));
+        if !project {
+            let folder = scope.read(|settings, _| {
+                Some(json!(
+                    object(settings, STORAGE)
+                        .get("temporaryFilesFolder")
+                        .and_then(Json::as_str)
+                        .unwrap_or_default()
+                ))
+            });
+            state.insert(
+                "temporaryFilesFolder".into(),
+                json!({"value": folder.value.and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default(),
+                       "mixed": folder.mixed}),
+            );
+        }
         self.bridge.publish(engine, KEY, Json::Object(state));
     }
 }

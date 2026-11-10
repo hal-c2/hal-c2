@@ -545,6 +545,20 @@ impl SettingsScope {
             .unwrap_or_default()
     }
 
+    /// What the environment can do: its settings' word, else its MC's.
+    fn capabilities_of(&self, engine: &Engine, environment_id: &str) -> Json {
+        if let Some(known) = self.0.state.borrow().capabilities.get(environment_id) {
+            return Json::Object(known.clone());
+        }
+        store::with(engine, |store| {
+            store
+                .environment(environment_id)
+                .get("capabilities")
+                .cloned()
+                .unwrap_or_else(|| json!({}))
+        })
+    }
+
     /// The connected targets whose environment lacks the capability
     /// (ServerConfig environment.capabilities).
     pub fn lacking(&self, capability: &str) -> Vec<String> {
@@ -763,7 +777,12 @@ impl SettingsScope {
         let listed = self.listed(engine);
         let environments: Vec<Json> = listed
             .iter()
-            .map(|id| json!({"id": id, "label": self.label(engine, id), "online": self.online(engine, id)}))
+            .map(|id| {
+                json!({"id": id, "label": self.label(engine, id),
+                       "online": self.online(engine, id),
+                       "readable": self.settings(id).is_some(),
+                       "capabilities": self.capabilities_of(engine, id)})
+            })
             .collect();
         let mut project_label = "All projects".to_owned();
         let mut projects = Vec::new();
@@ -797,6 +816,7 @@ impl SettingsScope {
                 "message": resolved.message,
                 "projects": projects,
                 "environments": environments,
+                "targets": self.targets(),
                 "editable": reason.is_empty(),
                 "disabledReason": reason,
             }),

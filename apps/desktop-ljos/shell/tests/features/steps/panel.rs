@@ -1197,7 +1197,12 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the user retries", |world, _, _| {
-        // What failed is what is retried: the file, the project's listing or a folder's.
+        // What failed is what is retried: the app's update download, the
+        // file, the project's listing or a folder's.
+        if world.state("desktopUpdate")["state"]["errorContext"] == "download" {
+            world.dispatch("desktopUpdate.press", serde_json::json!({}))?;
+            return world.sync();
+        }
         if text_prop(world, "fileStatus") == "error" {
             update_files(world, |f| f.reload_file())?;
             return world.wait_for("the file to load", |w| {
