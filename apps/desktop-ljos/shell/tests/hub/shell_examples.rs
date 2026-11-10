@@ -256,11 +256,15 @@ fn the_folders_example_puts_its_explorer_beside_or_under_the_threads() {
         let explorer = example.item("folderExplorer");
         let centre = example.centre();
         let threads = example.item("threadSidebar");
-        // Under 768 the list and the explorer beside it are an overlay,
-        // shown over the centre when called for.
+        // Under 768 the list is a rail of icons, and the list and the
+        // explorer beside it an overlay shown over the centre when called for.
         let overlay = width < 768.0;
         if overlay {
-            assert!(!example.visible(threads));
+            assert_eq!(
+                example.engine.read_by_name(threads, "rail"),
+                Value::Bool(true),
+                "at {width}"
+            );
             Bridge::of(&example.engine).dispatch(&example.engine, "sidebar.toggle", Json::Null);
             example.window.settle().unwrap();
         }

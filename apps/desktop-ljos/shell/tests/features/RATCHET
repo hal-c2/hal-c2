@@ -33,7 +33,6 @@ composer/context-references.feature: A terminal excerpt is sent as a reference w
 composer/context-references.feature: Part of an assistant response can be quoted with a comment
 composer/drafting-and-sending.feature: A background prompt starts a thread without leaving the composer
 composer/drafting-and-sending.feature: A background prompt that fails can be restored
-composer/drafting-and-sending.feature: A message over the character limit is refused before sending
 composer/drafting-and-sending.feature: A new thread's first message leaves the composer as it is sent
 composer/drafting-and-sending.feature: A new thread's prompt that failed to start survives a restart
 composer/drafting-and-sending.feature: A send the MC rejects restores the draft
@@ -106,7 +105,6 @@ composer/model-and-mode.feature: The user sets what the agent may do without ask
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Full access]
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Supervised]
 composer/model-and-mode.feature: The user switches the model for the next turn
-composer/model-and-mode.feature: Ultrathink prefixes the prompt
 composer/model-and-mode.feature: Unavailable providers stay listed with the reason
 composer/qt-scenarios.feature: A disabled model shows its reason and cannot be chosen
 composer/qt-scenarios.feature: A jump shortcut chooses the numbered model
@@ -137,7 +135,6 @@ composer/question-answers.feature: A proposed plan is implemented from the compo
 composer/question-answers.feature: A question can be dismissed without an answer
 composer/question-answers.feature: A question with only fixed choices takes no attachments
 composer/question-answers.feature: Files can be attached to a typed answer and stay with that question
-composer/question-answers.feature: Questions asked while the composer is open are shown whole above its editor
 composer/queue-and-steer.feature: A held queue is resumed from the composer
 composer/queue-and-steer.feature: A held queue says its messages are safe
 composer/queue-and-steer.feature: A held queue that only waits on the provider can be resumed
@@ -152,7 +149,6 @@ composer/queue-and-steer.feature: An edit the MC refuses stays in the composer
 composer/queue-and-steer.feature: An edit whose message starts running is dropped when the draft had text
 composer/queue-and-steer.feature: An edit whose message starts running is kept when the draft was empty
 composer/queue-and-steer.feature: Editing the last queued message from the composer and cancelling restores the prior draft
-composer/queue-and-steer.feature: Leaving the thread ends the edit
 composer/queue-and-steer.feature: Queued messages are listed in the order they run
 composer/queue-and-steer.feature: Removing a queued message cancels its run
 composer/queue-and-steer.feature: Saving an edited queued message changes it and gives the draft back
@@ -499,7 +495,6 @@ navigation/appearance.feature: Font preferences change their part of the app [te
 navigation/appearance.feature: Font smoothing is offered only on macOS
 navigation/appearance.feature: Holding the appearance shortcut does not spin through modes
 navigation/appearance.feature: Interface sliders change the look [glass opacity, 50, toasts and floating buttons are more see-through]
-navigation/appearance.feature: Interface sliders change the look [glass opacity, 50, translucent surfaces are more see-through]
 navigation/appearance.feature: Panel animations can be slowed down
 navigation/appearance.feature: Panel animations respect reduced motion
 navigation/appearance.feature: Panels open and close immediately by default
@@ -820,7 +815,6 @@ navigation/layout.feature: Closing a right panel tab
 navigation/layout.feature: Hiding the sidebar
 navigation/layout.feature: Hiding the terminal
 navigation/layout.feature: Hiding the thread details panel
-navigation/layout.feature: Maximizing the right panel
 navigation/layout.feature: Opening and closing the right panel
 navigation/layout.feature: Resetting the sidebar width
 navigation/layout.feature: Resizing the right panel
@@ -873,7 +867,6 @@ navigation/palette-add-project.feature: Relative paths need a current project
 navigation/palette-add-project.feature: The folder browser names what Enter does
 navigation/palette-add-project.feature: The user chooses which environment receives the project
 navigation/palette-add-project.feature: mod+Enter adds the highlighted folder
-navigation/qt-scenarios.feature: The header's terminal toggle opens and closes the terminal drawer
 navigation/qt-shell-backlog.feature: A device tab streams a device screen
 navigation/qt-shell-backlog.feature: Opening a folder still reaches the running window after a launch without one
 navigation/qt-shell-backlog.feature: Opening a folder that is already a project reuses it
@@ -929,7 +922,6 @@ navigation/welcome-wizard.feature: Each selected computer is checked for an agen
 navigation/welcome-wizard.feature: Finishing setup can fail
 navigation/welcome-wizard.feature: Installing an agent opens a terminal with the command ready
 navigation/welcome-wizard.feature: Navigation pauses while an import runs
-navigation/welcome-wizard.feature: Saved and discovered computers are selected by default
 navigation/welcome-wizard.feature: Selecting all or none [Select all, every listed project is selected]
 navigation/welcome-wizard.feature: Selecting all or none [Select none, no project is selected]
 navigation/welcome-wizard.feature: The progress bar returns to an earlier step
@@ -1945,7 +1937,6 @@ threads/creating.feature: A new thread started while the list is scoped to a pro
 threads/creating.feature: A new thread starts in the project the user is looking at
 threads/creating.feature: A new thread uses the project default model when the project has one
 threads/creating.feature: A new worktree needs a base branch
-threads/creating.feature: A request to several models cut off by a quit comes back to its draft once
 threads/creating.feature: A thread cannot start from an empty task
 threads/creating.feature: Changing a draft's project picks an environment that has it
 threads/creating.feature: Each background start into a new worktree gets its own worktree
@@ -2077,11 +2068,6 @@ threads/pinning-and-order.feature: Unpinning asks first when the user wants conf
 threads/pull-request-links.feature: An environment that cannot find pull requests says it needs an update
 threads/pull-request-links.feature: Choosing a different pull request from a pull request link
 threads/pull-request-links.feature: Unlinking returns the thread to its branch pull request
-threads/qt-scenarios.feature: A new thread starts in the project in scope
-threads/qt-scenarios.feature: A snoozed thread offers to wake instead of settle
-threads/qt-scenarios.feature: Arrow keys and Enter open another thread
-threads/qt-scenarios.feature: Settling a thread from the list
-threads/qt-scenarios.feature: Shift+F10 opens the focused thread's menu beside it
 threads/search.feature: An offline environment is left out of the search
 threads/search.feature: Leaving a search
 threads/search.feature: Moving through search results with the keyboard
@@ -2102,7 +2088,6 @@ threads/sidebar-list.feature: Active threads are listed newest first
 threads/sidebar-list.feature: An open settled plugin thread stays listed
 threads/sidebar-list.feature: Hiding and showing the thread list
 threads/sidebar-list.feature: Jump hints appear while holding the modifier
-threads/sidebar-list.feature: Moving through the list with the keyboard [Enter, "Beta" opens]
 threads/sidebar-list.feature: Opening a draft from the list
 threads/sidebar-list.feature: Opening a thread from the list
 threads/sidebar-list.feature: Projects are ordered by recent use unless arranged by hand
@@ -2258,7 +2243,6 @@ timeline/markdown.feature: The user copies a code block
 timeline/markdown.feature: The user copies a table [CSV]
 timeline/markdown.feature: The user copies a table [Markdown]
 timeline/notifications.feature: A newer alert for a thread replaces its older one
-timeline/notifications.feature: A notification's action runs it
 timeline/notifications.feature: A system notification is not shown without permission
 timeline/notifications.feature: A thread that changes state raises an alert [asks for approval, Approval needed]
 timeline/notifications.feature: A thread that changes state raises an alert [asks the user a question, Input needed]
@@ -2267,7 +2251,6 @@ timeline/notifications.feature: A thread that changes state raises an alert [fai
 timeline/notifications.feature: A thread that changes state raises an alert [stops at the provider's usage limit, Usage limit reached]
 timeline/notifications.feature: Clicking a system notification opens its own thread
 timeline/notifications.feature: Coming back to the window clears its system notifications
-timeline/notifications.feature: Dismissing the last notification hides the notifications
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications only, shown, not played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications with sound, shown, played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Off, not shown, not played]

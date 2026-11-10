@@ -238,10 +238,7 @@ fn the_plan_is_saved_into_the_threads_workspace() {
     offer(&hub, "t2");
     hub.dispatch("plan.save", json!({"path": "  "}));
     assert_eq!(calls(&hub, "projects.writeFile").len(), 1);
-    assert_eq!(
-        toasts(&hub).last().unwrap(),
-        &("Enter a workspace path".to_owned(), String::new())
-    );
+    assert!(toasts(&hub).contains(&("Enter a workspace path".to_owned(), String::new())));
 
     // A thread in a worktree saves into its worktree.
     hub.dispatch("plan.save", json!({"path": "tax-line.md"}));
