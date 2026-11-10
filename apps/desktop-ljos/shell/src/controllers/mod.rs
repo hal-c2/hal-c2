@@ -213,8 +213,8 @@ pub fn registrations() -> Vec<Registration> {
             "sourceControlSettings",
             &["sourceControlSettings"],
             Scope::Window,
-        Registration::new::<space::Space>("space", &["space"], Scope::Window),
         ),
+        Registration::new::<space::Space>("space", &["space"], Scope::Window),
         Registration::new::<stage::Stage>("stage", &["stage"], Scope::Window),
         Registration::new::<storage_settings::StorageSettings>(
             "storageSettings",
