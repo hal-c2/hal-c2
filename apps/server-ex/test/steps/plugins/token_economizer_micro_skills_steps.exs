@@ -480,6 +480,27 @@ defmodule HalC2.Steps.Plugins.TokenEconomizerMicroSkills do
     end
   end
 
+  step "TokenEconomizer has not imported into the project", context do
+    {view, context} = micro_skills(context)
+    assert view["history"] == %{"state" => "none"}
+    context
+  end
+
+  step "the person cannot forget what TokenEconomizer learned on the project, being told it is held",
+       context do
+    {reply, context} =
+      World.call(context, "plugins.call", %{
+        "id" => @id,
+        "method" => "microSkills.forget",
+        "input" => %{"projectId" => project_id(context)}
+      })
+
+    assert {:error, message, _} = reply
+    assert message =~ "held"
+    assert message =~ "not valid JSON"
+    context
+  end
+
   step "TokenEconomizer has learned nothing on the project and imported nothing", context do
     {view, context} = micro_skills(context)
     assert view["skills"] == []

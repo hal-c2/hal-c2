@@ -1683,3 +1683,248 @@ defmodule HalC2.TokenEconomizerProposerPropTest do
       end
   end
 end
+
+defmodule HalC2.TokenEconomizerHeldPropTest do
+  @moduledoc """
+  A state machine model of a held project (`HalC2Plugins.TokenEconomizer`):
+  one whose saved micro-skills file does not read, found so by an MC
+  restarting over it, driven through turns, forgetting, settings saves
+  switching learning and the history import, and the file repaired under
+  the running process. Whatever the order, after every step:
+
+    * a project is held exactly while its file does not read, and is read
+      again, and learned from, at its first use after it is repaired;
+    * a held project has no fold from history and learns from no turn, and
+      its file keeps its bytes;
+    * forgetting a held project is refused, saying it is held; forgetting one
+      that reads is not;
+    * a turn in a project that reads, with learning and the import on, leaves
+      it a fold, so the hold is what keeps a held one from folding.
+  """
+  # The plugin keeps the micro-skills under the MC's home, which a scratch
+  # home sets for the whole VM.
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2Plugins.TokenEconomizer
+  alias HalC2Plugins.TokenEconomizer.MicroSkills.EnvFacts
+
+  @garbled "{\"facts\": not json"
+
+  property "a held project folds nothing, is never forgotten, and keeps its file until it reads",
+    numtests: HalC2.Prop.numtests(150) do
+    forall cmds <- more_commands(4, commands(__MODULE__)) do
+      home = HalC2.Prop.scratch_home("token-economizer-held")
+      readable()
+      {:ok, plugin} = TokenEconomizer.init(settings(initial_state()))
+      Process.put(:plugin, plugin)
+      {history, state, result} = run_commands(__MODULE__, cmds)
+      stop(Process.delete(:plugin))
+      HalC2.Prop.restore_env()
+      File.rm_rf!(home)
+
+      (result == :ok)
+      |> when_fail(
+        IO.puts("""
+        History: #{inspect(history, pretty: true, limit: 60)}
+        State: #{inspect(state, pretty: true)}
+        Result: #{inspect(result, pretty: true)}
+        """)
+      )
+      |> aggregate(command_names(cmds))
+    end
+  end
+
+  # The model: the settings in force, and whether project `p`'s file does not read.
+  def initial_state, do: %{micro: "envfacts", import: true, held: false}
+
+  def command(state) do
+    frequency(
+      [
+        {2, {:call, __MODULE__, :settings, [elements(~w(off envfacts on)), boolean()]}},
+        {5, {:call, __MODULE__, :turn, []}},
+        {3, {:call, __MODULE__, :forget, []}},
+        {2, {:call, __MODULE__, :garble, []}},
+        {1, {:call, __MODULE__, :restart, []}}
+      ] ++ if(state.held, do: [{2, {:call, __MODULE__, :repair, []}}], else: [])
+    )
+  end
+
+  def precondition(state, {:call, _, :repair, []}), do: state.held
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :settings, [micro, import]}),
+    do: %{state | micro: micro, import: import}
+
+  def next_state(state, _result, {:call, _, :garble, []}), do: %{state | held: true}
+  def next_state(state, _result, {:call, _, :repair, []}), do: %{state | held: false}
+  def next_state(state, _result, _call), do: state
+
+  def postcondition(state, call, seen) do
+    state = next_state(state, seen, call)
+
+    common =
+      if state.held,
+        do:
+          seen.entry["held"] =~ "not valid JSON" and seen.fold == nil and
+            seen.entry["turns"] == 0 and seen.file == @garbled,
+        else: seen.entry["held"] == nil
+
+    common and called(state, call, seen)
+  end
+
+  defp called(state, {:call, _, :forget, []}, %{reply: reply}) do
+    case {state.held, reply} do
+      {true, {:error, message}} -> message =~ "held" and message =~ "not valid JSON"
+      {false, {:ok, _view}} -> true
+      _ -> false
+    end
+  end
+
+  defp called(state, {:call, _, :turn, []}, %{fold: fold}) do
+    if not state.held and state.micro != "off" and state.import, do: fold != nil, else: true
+  end
+
+  defp called(_state, _call, _seen), do: true
+
+  # --- the commands, against the process's callbacks ---------------------------------------
+
+  defp settings(state),
+    do: %{
+      "microSkills" => state.micro,
+      "historyImport" => state.import,
+      "microSkillsProposeEvery" => 1000
+    }
+
+  def settings(micro, import) do
+    {:reply, :ok, plugin} =
+      TokenEconomizer.handle_call(
+        {:settings, settings(%{micro: micro, import: import})},
+        nil,
+        Process.get(:plugin)
+      )
+
+    seen(plugin)
+  end
+
+  # A turn in project `p` that would teach a fact: started, one call, finished.
+  def turn do
+    run = "run-#{System.unique_integer([:positive])}"
+    at = %{"threadId" => "a", "runId" => run}
+
+    observe(
+      Map.merge(at, %{
+        "type" => "turn.started",
+        "projectId" => "p",
+        "provider" => "claudeAgent",
+        "newConversation" => true
+      })
+    )
+
+    observe(
+      Map.merge(at, %{
+        "type" => "turn.item",
+        "itemType" => "command_execution",
+        "status" => "completed",
+        "input" => "pytest -q",
+        "output" => "3 passed in 0.10s",
+        "exitCode" => 0
+      })
+    )
+
+    observe(Map.merge(at, %{"type" => "turn.finished", "ordinal" => 1, "status" => "completed"}))
+    seen(Process.get(:plugin))
+  end
+
+  def forget do
+    {:reply, reply, plugin} =
+      TokenEconomizer.handle_call(
+        {:micro_skill_forget, %{"projectId" => "p"}},
+        nil,
+        Process.get(:plugin)
+      )
+
+    plugin |> seen() |> Map.put(:reply, reply)
+  end
+
+  # The MC restarts over a file that no longer reads.
+  def garble do
+    File.write!(path(), @garbled)
+    restart()
+  end
+
+  # The file reads again, under the running process.
+  def repair do
+    readable()
+    seen(Process.get(:plugin))
+  end
+
+  # The MC restarts: the process starts afresh from what it saved, with the
+  # settings it had.
+  def restart do
+    old = Process.get(:plugin)
+    stop(old)
+    {:ok, plugin} = TokenEconomizer.init(old.settings)
+    seen(plugin)
+  end
+
+  # Project `p` has learned a fact, so the import has nothing to read: a fold
+  # it starts is skipped at once, and no read leaves the process.
+  defp readable do
+    skills =
+      EnvFacts.add_candidate(EnvFacts.new(), %{
+        id: "form_repair:run_tests:pytest",
+        family: "form_repair",
+        high: false,
+        drift: false,
+        params: %{
+          "intent" => "run_tests",
+          "a" => "pytest",
+          "b_counts" => %{"python -m pytest" => 3},
+          "error_counts" => %{}
+        }
+      })
+
+    File.mkdir_p!(Path.dirname(path()))
+    File.write!(path(), JSON.encode!(Map.put(EnvFacts.dump(skills), "projectId", "p")))
+  end
+
+  defp path, do: TokenEconomizer.micro_skills_path("p")
+
+  defp observe(event) do
+    {:reply, :ok, plugin} =
+      TokenEconomizer.handle_call({:observe, event}, nil, Process.get(:plugin))
+
+    Process.put(:plugin, plugin)
+  end
+
+  # What a person would see of project `p`, looked at without keeping what
+  # looking loads, its fold, and its file's bytes.
+  defp seen(plugin) do
+    Process.put(:plugin, plugin)
+
+    {:reply, {:ok, %{"projects" => [entry]}}, _} =
+      TokenEconomizer.handle_call({:micro_skills, %{"projectId" => "p"}}, nil, plugin)
+
+    %{entry: entry, fold: plugin.folds["p"], file: File.read!(path())}
+  end
+
+  # Ends the process's tasks, as its end would, and forgets what they sent.
+  defp stop(plugin) do
+    ref = Process.monitor(plugin.sup)
+    Process.unlink(plugin.sup)
+    Process.exit(plugin.sup, :shutdown)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+    flush()
+  end
+
+  defp flush do
+    receive do
+      {kind, _, _, _, _} when kind in [:history, :verdict, :delivered, :DOWN] -> flush()
+      {:proposed, _, _} -> flush()
+    after
+      0 -> :ok
+    end
+  end
+end

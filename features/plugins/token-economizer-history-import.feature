@@ -15,8 +15,9 @@ Feature: TokenEconomizer learns from a project's earlier threads
   asked and nothing is said in any thread. The turns that end in the project
   meanwhile are learned from after the import, in order, and no turn is learned
   from twice. A project that already learned from its turns is never imported
-  into. Forgetting what a project learned takes the import back out, and runs
-  it again while it is on.
+  into, nor is one whose saved micro-skills cannot be read. Forgetting what a
+  project learned takes the import back out, and runs it again while it is on;
+  a project whose file cannot be read is not forgotten.
 
   Background:
     Given an MC running the TokenEconomizer plugin with micro-skills
@@ -68,6 +69,16 @@ Feature: TokenEconomizer learns from a project's earlier threads
     Then TokenEconomizer has learned nothing on the project and imported nothing
     When Claude starts the thread "Next" with "hello"
     Then Claude is not told anything about "pytest"
+
+  @mc
+  Scenario: A project whose saved micro-skills cannot be read is neither imported into nor forgotten
+    Given the project's saved micro-skills are not valid JSON
+    And the history import is on
+    When Claude repairs the test command in 1 turns in the thread "Learning"
+    Then TokenEconomizer holds the project's micro-skills, saying its file is not valid JSON
+    And TokenEconomizer has not imported into the project
+    And the person cannot forget what TokenEconomizer learned on the project, being told it is held
+    And the project's saved micro-skills are as they were
 
   @mc
   Scenario: An import left under way by an MC that stopped, with the import turned off since, stops and still learns from the turns that end
