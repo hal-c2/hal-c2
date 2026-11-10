@@ -129,6 +129,10 @@ jobs:
       - name: Compile
         run: mix compile --warnings-as-errors
 
+      # Waits in code a hot update changes, against credo/waits_baseline.exs.
+      - name: Credo
+        run: mix credo
+
       - name: Compile the property tests
         run: mix compile
         env:

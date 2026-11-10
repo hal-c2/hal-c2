@@ -27,6 +27,7 @@ defmodule HalC2.SubprocessSandboxedPropTest do
   alias HalC2.OpenShell
   alias HalC2.OpenShell.Client
   alias HalC2.Subprocess
+  alias HalC2.Subprocess.Sandboxed
   alias HalC2.Test.FakeOpenShell
 
   @moduletag timeout: :infinity
@@ -103,7 +104,8 @@ defmodule HalC2.SubprocessSandboxedPropTest do
     frequency(
       [
         {3, {:call, __MODULE__, :start, start}},
-        {1, {:call, __MODULE__, :abandon, [oneof([:cat, :stall])]}}
+        {1, {:call, __MODULE__, :abandon, [oneof([:cat, :stall])]}},
+        {1, {:call, __MODULE__, :reload, []}}
       ] ++
         on(open, [
           {3, {:call, __MODULE__, :write, [oneof(open), line]}},
@@ -162,6 +164,7 @@ defmodule HalC2.SubprocessSandboxedPropTest do
 
   def postcondition(_state, {:call, _, :start, _}, result), do: result == :ok
   def postcondition(_state, {:call, _, :abandon, _}, result), do: result == :gone
+  def postcondition(_state, {:call, _, :reload, _}, result), do: result == :ok
   def postcondition(_state, {:call, _, :write, [_, line]}, result), do: result == [line]
   def postcondition(_state, {:call, _, :close, _}, result), do: result == :ok
   def postcondition(state, {:call, _, :take, [i]}, result), do: result == state.progs[i].code
@@ -240,6 +243,27 @@ defmodule HalC2.SubprocessSandboxedPropTest do
     after
       @wait -> false
     end
+  end
+
+  # A hot update of the reader's modules. A reader waiting on its program must hold
+  # none of their code, or the next update could not load them; one busy with a
+  # message may, and that load waits for a later reload.
+  def reload do
+    readers = for {_, sub} <- Process.get(:sandboxed_prop).subs, do: sub.reader
+
+    holding =
+      for mod <- [Sandboxed, Subprocess],
+          pid <- readers,
+          Process.info(pid, :status) == {:status, :waiting},
+          :erlang.check_process_code(pid, mod),
+          do: {pid, mod}
+
+    for mod <- [Sandboxed, Subprocess], :code.soft_purge(mod) do
+      {^mod, beam, file} = :code.get_object_code(mod)
+      {:module, ^mod} = :code.load_binary(mod, file, beam)
+    end
+
+    if holding == [], do: :ok, else: {:holding, holding}
   end
 
   # The echo, as the owner gets it: one batch, which it acknowledges.

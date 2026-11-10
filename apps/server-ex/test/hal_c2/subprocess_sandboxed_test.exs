@@ -25,7 +25,7 @@ defmodule HalC2.SubprocessSandboxedTest do
           exec: exec,
           limit: 1_000_000,
           held_limit: Keyword.get(opts, :held_limit, 1_000),
-          on_limit: Keyword.get(opts, :on_limit, fn -> :ok end),
+          on_limit: Keyword.get(opts, :on_limit, {Function, :identity, [:ok]}),
           seen: 0,
           partial: "",
           lines: [],
@@ -60,7 +60,7 @@ defmodule HalC2.SubprocessSandboxedTest do
   # as a list cell than its two bytes.
   test "more lines held for a busy owner than its limit cancels the run and drops them" do
     test = self()
-    {reader, ref, exec} = reader(held_limit: 3, on_limit: fn -> send(test, :limited) end)
+    {reader, ref, exec} = reader(held_limit: 3, on_limit: {Kernel, :send, [test, :limited]})
 
     send(reader, {:openshell_exec, exec, {:stdout, "a\nb\n"}})
     send(reader, {:openshell_exec, exec, {:stdout, "c\nd\n"}})

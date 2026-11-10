@@ -17,8 +17,9 @@ defmodule HalC2.Upgrade.Appup do
   release's beams leaves as it is. A changed module names the other changed modules
   it calls as its dependencies, so they load first. Both purges are soft: an install
   that finds a process still running the module's previous old code stops before
-  anything changed, and old code a process holds after the install is purged by the
-  release handler once no process runs it, so none is ended for it.
+  anything changed. A process that waits in a module's code never leaves it, so one
+  that may wait for long waits in a `HalC2.Frozen` module instead, which changes only
+  at a restart (`HalC2.Upgrade.Release.plan/1`).
 
   Protocol modules are left out: a release loads their consolidation, which
   `HalC2.Upgrade.Release` loads itself.
@@ -35,7 +36,13 @@ defmodule HalC2.Upgrade.Appup do
   ]
   @supervisor_behaviours [:supervisor, Supervisor]
 
-  @type beam :: %{md5: binary(), behaviours: [module()], imports: [module()], nif?: boolean()}
+  @type beam :: %{
+          md5: binary(),
+          behaviours: [module()],
+          imports: [module()],
+          nif?: boolean(),
+          frozen?: boolean()
+        }
 
   @doc "The modules of `ebin` and what an appup needs of each."
   @spec modules(Path.t(), MapSet.t(module())) :: %{module() => beam()}
@@ -64,7 +71,8 @@ defmodule HalC2.Upgrade.Appup do
         (Keyword.get_values(attributes, :behaviour) ++ Keyword.get_values(attributes, :behavior))
         |> List.flatten(),
       imports: imports |> Enum.map(&elem(&1, 0)) |> Enum.uniq(),
-      nif?: {:erlang, :load_nif, 2} in imports
+      nif?: {:erlang, :load_nif, 2} in imports,
+      frozen?: Keyword.get(attributes, :hal_c2_frozen) == [true]
     }
   end
 
@@ -75,6 +83,24 @@ defmodule HalC2.Upgrade.Appup do
   @spec changed(%{module() => map()}, %{module() => beam()}) :: [module()]
   def changed(old, new) do
     for {mod, %{md5: md5}} <- new, (old[mod] && old[mod].md5) not in [md5, :unloaded], do: mod
+  end
+
+  @doc """
+  The changed or removed modules processes wait in (`HalC2.Frozen`), which take a
+  restart. Processes wait in the running version, so a module that stops being
+  frozen, or is dropped, counts too; one new to the release has nobody waiting in
+  it yet.
+  """
+  @spec frozen(%{module() => map()}, %{module() => beam()}) :: [module()]
+  def frozen(old, new) do
+    changed =
+      for mod <- changed(old, new),
+          was = old[mod],
+          was != nil and (was[:frozen?] == true or new[mod].frozen?),
+          do: mod
+
+    removed = for {mod, was} <- old, not Map.has_key?(new, mod), was[:frozen?] == true, do: mod
+    changed ++ removed
   end
 
   @doc """
