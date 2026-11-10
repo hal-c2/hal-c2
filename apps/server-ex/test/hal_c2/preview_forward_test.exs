@@ -95,6 +95,42 @@ defmodule HalC2.PreviewForwardTest do
     end
   end
 
+  # A port free at 127.0.0.1 and ::1 can be taken at the dev server's own address. Its start
+  # used to wait on that forever, until the test's time ran out.
+  describe "a dev server at a port in use" do
+    setup do
+      {:ok, taken} = :gen_tcp.listen(0, ip: @dev)
+      {:ok, port} = :inet.port(taken)
+      on_exit(fn -> :gen_tcp.close(taken) end)
+      %{taken: port}
+    end
+
+    test "fails to start, and says so", %{taken: port} do
+      for start <- [&DevServer.echo/3, &DevServer.websocket/3] do
+        assert_raise RuntimeError, ~r/the dev server did not start/, fn ->
+          start.(@dev, port, self())
+        end
+      end
+    end
+
+    test "is started again at another port", %{taken: taken} do
+      # The first port offered is taken at the dev server's address; the next is not.
+      start = fn port ->
+        tried = Process.get(:tried, [])
+        Process.put(:tried, [port | tried])
+        DevServer.websocket(@dev, if(tried == [], do: taken, else: port), self())
+      end
+
+      {{port, _}, busy} = DevServer.on_busy_port(start)
+      assert [^port, _first] = Process.get(:tried)
+      :gen_tcp.close(busy)
+
+      Process.delete(:tried)
+      assert {port, _} = DevServer.on_free_port(start)
+      assert [^port, _first] = Process.get(:tried)
+    end
+  end
+
   # A forward listens at the dev server's port only when that is free on this
   # machine's loopback, so the tests below use the port it gives.
   describe "connections" do
