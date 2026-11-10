@@ -108,8 +108,6 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer.LoopGuard.Turn.judge_stale_s/0" => "stale"
     },
     abstracts: %{
-      "HalC2Plugins.TokenEconomizer handle_call {:shape, _}" =>
-        "tool pruning shaping a conversation, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer handle_call {:toolprune, _, _}" =>
         "tool pruning's calls, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",
       "HalC2Plugins.TokenEconomizer handle_info {:toolprune_tick, _}" =>
@@ -124,7 +122,7 @@ defmodule HalC2.TokenEconomizerLoopGuardProofTest do
       "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_restore, _}" =>
         "a person's word restores a dropped fact; the guard never reads the facts",
       "HalC2Plugins.TokenEconomizer handle_call {:shape_run, _, _}" =>
-        "stages learned facts ahead of a new conversation's first message; it neither steers nor notices a turn under way, and decides nothing for the guard",
+        "stages learned facts ahead of a new conversation's first message and denies it the tools pruning turned off (modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs); it neither steers nor notices a turn under way, and decides nothing for the guard",
       "HalC2Plugins.TokenEconomizer handle_info _" => "any other message is ignored",
       "HalC2Plugins.TokenEconomizer state :prunes" =>
         "tool pruning's evidence, modelled in proof/hal_c2/token_economizer_tool_prune_proof_test.exs",

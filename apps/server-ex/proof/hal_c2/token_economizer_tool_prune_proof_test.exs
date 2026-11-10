@@ -58,6 +58,7 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
   # Until it is read back, though, every conversation shaped is denied nothing.
   @counts "the exact prompt and session counters and thresholds: prop/hal_c2/token_economizer_tool_prune_prop_test.exs and test/hal_c2/token_economizer_tool_prune_test.exs"
   @guard "the loop guard's, modelled in proof/hal_c2/token_economizer_loop_guard_proof_test.exs"
+  @micro "the micro-skills', which stage a project's facts beside the tools pruning denies and change none of them; their lifecycle is prop/hal_c2/token_economizer_micro_skills_prop_test.exs"
 
   use HalC2.Proof,
     model: "token_economizer_tool_prune.maude",
@@ -89,7 +90,8 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.used_in_item/2" => "use",
       "HalC2Plugins.TokenEconomizer.ToolPrune.Evidence.unrecorded/2" => ~w(reread rec),
       "HalC2Plugins.TokenEconomizer handle_call {:settings, _}" => "settings",
-      "HalC2Plugins.TokenEconomizer handle_call {:shape, _}" => ~w(shape-start shaped recover),
+      "HalC2Plugins.TokenEconomizer handle_call {:shape_run, _, _}" =>
+        ~w(shape-start shaped recover),
       "HalC2Plugins.TokenEconomizer handle_call {:toolprune, _, _}" =>
         ~w(apply apply-name restore),
       "HalC2Plugins.TokenEconomizer handle_call {:observe, _}" =>
@@ -155,7 +157,17 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer.toolprune_path/1" =>
         "where a project's evidence is kept; the model keeps it in tool",
       "HalC2Plugins.TokenEconomizer.call_of/1" => @guard,
-      "HalC2Plugins.TokenEconomizer.learns?/2" => @guard
+      "HalC2Plugins.TokenEconomizer.learns?/2" => @guard,
+      "HalC2Plugins.TokenEconomizer.micro_skills_path/1" => @micro,
+      "HalC2Plugins.TokenEconomizer.staged_path/0" => @micro,
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skills, _}" => @micro,
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_drop, _}" => @micro,
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_restore, _}" => @micro,
+      "HalC2Plugins.TokenEconomizer state :skills" => @micro,
+      "HalC2Plugins.TokenEconomizer state :known_skills" => @micro,
+      "HalC2Plugins.TokenEconomizer state :published_skills" => @micro,
+      "HalC2Plugins.TokenEconomizer state :staged" => @micro,
+      "HalC2Plugins.TokenEconomizer state :staged_order" => @micro
     },
     environment: %{
       "wait" => "no conversation under way and time passes, so the project has been quiet",
