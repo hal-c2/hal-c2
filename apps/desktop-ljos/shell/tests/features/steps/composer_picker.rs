@@ -705,8 +705,7 @@ pub fn register(steps: &mut Steps) {
             };
             expect!(!slug.is_empty(), "the picker listed one model");
             expect_switched(world, &instance_id, &slug)?;
-            expect!(!picker_open(world)?, "the picker stayed open");
-            Ok(())
+            closed_or_on_efforts(world)
         },
     );
     steps.step(
