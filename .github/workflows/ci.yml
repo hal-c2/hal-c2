@@ -303,7 +303,9 @@ jobs:
           fi
           plain() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
           failed=$(plain "$log" | sed -nE 's/^ +[0-9]+\) (property .*)$/\1/p')
-          if [ -z "$failed" ] || plain "$log" | grep -qE '^ +[0-9]+\) (test|doctest) '; then exit 1; fi
+          # grep reads a file, not a pipe: under pipefail its early exit would SIGPIPE sed and
+          # read as "no plain test failed".
+          if [ -z "$failed" ] || grep -qE '^ +[0-9]+\) (test|doctest) ' <(plain "$log"); then exit 1; fi
           mix prop --failed 2>&1 | tee "$RUNNER_TEMP/retry.log"
           passed=$(plain "$RUNNER_TEMP/retry.log" | sed -nE 's/^Result: ([0-9]+) passed.*/\1/p')
           if [ "${passed:-0}" -lt "$(wc -l <<<"$failed")" ]; then exit 1; fi

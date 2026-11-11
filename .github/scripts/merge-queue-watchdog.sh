@@ -35,7 +35,7 @@ while IFS=$'\t' read -r sha pr number; do
   run=$(gh api "repos/$repo/actions/runs?head_sha=$sha&event=merge_group&per_page=20" \
     --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")] | max_by(.run_attempt) // empty
           | [.id, .status, .created_at] | @tsv')
-  why=
+  why='' failed=''
   if [ -n "$run" ]; then
     IFS=$'\t' read -r id status created <<<"$run"
     if [ "$status" = completed ]; then
@@ -44,6 +44,8 @@ while IFS=$'\t' read -r sha pr number; do
       # `completed` sorts first, so `last` is any status that has not finished.
       if [ "$result" != completed ]; then
         why="CI run $id ended while its \`CI result\` check is $result"
+        failed=$(gh api "repos/$repo/actions/runs/$id/jobs?per_page=100" \
+          --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
       fi
     elif [ "$status" = queued ] && [ "$(age_minutes "$created")" -ge "$stuck" ]; then
       jobs=$(gh api "repos/$repo/actions/runs/$id/jobs?per_page=1" --jq .total_count)
@@ -57,6 +59,12 @@ while IFS=$'\t' read -r sha pr number; do
   echo "#$number: $why"
   [ -z "${DRY_RUN:-}" ] || continue
   gh api graphql -F id="$pr" -f query='
-    mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' >/dev/null
-  gh pr comment "$number" --repo "$repo" --body "Dropped from the merge queue: GitHub wedged its run ($why). Waiting would have held the queue for the 120-minute check timeout. Nothing in the change failed; re-queue it."
+    mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' >/dev/null ||
+    { echo "#$number: could not drop it, it may have left the queue already"; continue; }
+  if [ -n "$failed" ]; then
+    verdict="These jobs failed before it wedged, so fix them first: $failed."
+  else
+    verdict="No job in it failed; re-queue it."
+  fi
+  gh pr comment "$number" --repo "$repo" --body "Dropped from the merge queue: GitHub wedged its run ($why). Waiting would have held the queue for the 120-minute check timeout. $verdict"
 done <<<"$entries"
