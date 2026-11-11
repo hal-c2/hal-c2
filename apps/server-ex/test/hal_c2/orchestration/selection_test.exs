@@ -57,6 +57,21 @@ defmodule HalC2.Orchestration.SelectionTest do
       end
     end
 
+    test "the revision rides in the thread's own patch, and a create writes none" do
+      created = [{"thread", "t1", Patch.diff(nil, Map.delete(thread(), "selectionRevision"))}]
+      assert Selection.stamp(StreamState.new(), created) == created
+
+      state = state([{"thread", "t1", thread()}])
+      title = {"thread", "t1", %{"s" => %{"title" => "Renamed"}}, 42}
+      changes = [set(%{"modelSelection" => @other}), {"turn", "u1", %{"s" => %{}}}, title]
+
+      assert Selection.stamp(state, changes) == [
+               set(%{"modelSelection" => @other}),
+               {"turn", "u1", %{"s" => %{}}},
+               {"thread", "t1", %{"s" => %{"title" => "Renamed", "selectionRevision" => 4}}, 42}
+             ]
+    end
+
     test "a change to anything else leaves the revision and names no move" do
       state = state([{"thread", "t1", thread()}])
       changes = [set(%{"title" => "Renamed"})]

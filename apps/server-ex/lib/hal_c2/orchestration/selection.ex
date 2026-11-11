@@ -59,14 +59,31 @@ defmodule HalC2.Orchestration.Selection do
         changes
 
       {thread, rev, changed?} ->
+        # A thread without the field reads as 0, so a create writes nothing extra.
         changes =
-          if thread["selectionRevision"] == rev,
-            do: changes,
-            else: changes ++ [{"thread", id, %{"s" => %{"selectionRevision" => rev}}}]
+          if revision(thread) == rev, do: changes, else: fold_revision(changes, id, rev)
 
         if changed?, do: changes ++ queue_changes(state, thread, changes), else: changes
     end
   end
+
+  # The revision goes into the thread's own last patch in this commit, not a patch of
+  # its own, so a commit writes as many entries as it did without the counter. `next/3`
+  # finds a thread only in a commit that patches it, so there always is one.
+  defp fold_revision(changes, id, rev) do
+    at = changes |> Enum.reverse() |> Enum.find_index(&thread_change?(&1, id))
+    at = length(changes) - 1 - at
+    set = %{"s" => %{"selectionRevision" => rev}}
+
+    List.update_at(changes, at, fn
+      {"thread", ^id, patch} -> {"thread", id, Patch.compose(patch, set)}
+      {"thread", ^id, patch, stamp} -> {"thread", id, Patch.compose(patch, set), stamp}
+    end)
+  end
+
+  defp thread_change?({"thread", id, _}, id), do: true
+  defp thread_change?({"thread", id, _, _}, id), do: true
+  defp thread_change?(_change, _id), do: false
 
   @doc """
   The revision thread `id` moves to when `changes` are committed in `state`, when they
