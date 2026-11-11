@@ -15,7 +15,8 @@ stuck=${STUCK_MINUTES:-20}
 now=$(date -u +%s)
 
 # The jobs that failed, and those that timed out: a timeout ends a job cancelled, like the
-# stop jobs' own cancel, but before any stop job started. A matrix cancels the rest of its
+# stop jobs' own cancel, but before any stop job started (or with none started, which a
+# wedge that starves the stop job too can cause). A matrix cancels the rest of its
 # entries when one fails, so a cancel beside a failure in the same matrix is not a timeout.
 failed_jobs='
   def matrix: .name | sub(" \\(.*$"; "");
@@ -24,7 +25,7 @@ failed_jobs='
   | [.jobs[] | select(.conclusion == "failure") | matrix] as $failed
   | [.jobs[] | select(.name | startswith("Stop the queue run") | not)
      | select(.conclusion == "failure"
-              or (.conclusion == "cancelled" and $stopped != null and .completed_at < $stopped
+              or (.conclusion == "cancelled" and .completed_at < ($stopped // "9999")
                   and (matrix as $m | $failed | index($m) | not)))
      | .name]
   | unique | join(", ")'
