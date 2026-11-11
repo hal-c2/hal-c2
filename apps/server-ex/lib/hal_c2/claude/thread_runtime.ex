@@ -215,8 +215,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @doc """
   The thread's access changed. A running turn's session takes Claude's permission mode
-  for it at once, and when that is bypassing permissions the tool approvals it has
-  open are allowed. Sent without waiting: the thread record already holds the change,
+  for it at once, and when that is bypassing permissions the tool approvals Claude
+  asked only for its old mode are allowed. Sent without waiting: the thread record already holds the change,
   and a busy Claude must not hold up the user's switch. Between turns the next turn
   takes the mode as it starts (`ensure_session/2`).
   """
@@ -301,9 +301,13 @@ defmodule HalC2.Claude.ThreadRuntime do
        # (`:once` for rules when Claude forbids remembering the answer) or
        # `{:question, control id, input}`.
        requests: %{},
-       # The open prompts Claude raises in every mode (its ask rules and safety
-       # checks), which a switch to Full access leaves to the user.
-       asks_anyway: MapSet.new(),
+       # The open tool approvals Claude asked only because of its permission mode,
+       # which a switch to Full access approves (`allow_mode_asks/1`).
+       mode_asks: MapSet.new(),
+       # A switch to Full access Claude took, until the marker it sent itself arrives
+       # (`{:mode_switched, ref}`): an ask for its mode before then was written before
+       # Claude read the switch.
+       switching: nil,
        # The session's permission mode, switched before a turn that needs another.
        permission_mode: nil,
        # How the session's CLI was started (`Provider.launch/3`); a turn on another model
@@ -896,16 +900,23 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     state = %{state | requests: Map.put(state.requests, request_id, request)}
 
-    # Claude reuses an answered request's id, so each ask sets whether its own id
-    # asks anyway.
-    asks_anyway = state.asks_anyway
+    # Claude asks its ask rules, safety checks and hooks in every mode; with no reason
+    # or "mode" it asked only because its mode does. Claude reuses an answered
+    # request's id, so each ask sets its own id's place.
+    mode_ask? = context["decision_reason_type"] in [nil, "mode"] and not once?
 
-    asks_anyway =
-      if context["decision_reason_type"] in ["rule", "safetyCheck"],
-        do: MapSet.put(asks_anyway, request_id),
-        else: MapSet.delete(asks_anyway, request_id)
+    mode_asks =
+      if mode_ask?,
+        do: MapSet.put(state.mode_asks, request_id),
+        else: MapSet.delete(state.mode_asks, request_id)
 
-    {:noreply, Map.put(state, :asks_anyway, asks_anyway)}
+    state = %{state | mode_asks: mode_asks}
+
+    # Claude wrote it before it read the switch to Full access, so it goes as the
+    # switch's others did.
+    state = if mode_ask? and state.switching, do: allow_mode_asks(state), else: state
+
+    {:noreply, state}
   end
 
   def handle_info({:claude, session, {:elicitation, id, _request}}, %{turn: nil} = state) do
@@ -1028,8 +1039,16 @@ defmodule HalC2.Claude.ThreadRuntime do
       :ok ->
         state = announce_bypass(%{state | turn: turn, permission_mode: permission}, turn)
 
+        # The session hands on what Claude wrote before its answer to the switch ahead
+        # of that answer, so those asks are already in the mailbox, ahead of this marker.
         state =
-          if permission == "bypassPermissions", do: allow_open_permissions(state), else: state
+          if permission == "bypassPermissions" do
+            ref = make_ref()
+            send(self(), {:mode_switched, ref})
+            allow_mode_asks(%{state | switching: ref})
+          else
+            %{state | switching: nil}
+          end
 
         {:noreply, state}
 
@@ -1041,6 +1060,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_info({:runtime_mode, _mode}, state), do: {:noreply, state}
+
+  def handle_info({:mode_switched, ref}, %{switching: ref} = state),
+    do: {:noreply, %{state | switching: nil}}
 
   def handle_info(_other, state), do: {:noreply, state}
 
@@ -1058,20 +1080,15 @@ defmodule HalC2.Claude.ThreadRuntime do
     :exit, reason -> {:error, reason}
   end
 
-  # The tool approvals Claude asked before its session stopped asking, answered as the
-  # user's "Approve" would be. What it asks in every mode (its ask rules and safety
-  # checks, `asks_anyway`), its questions, dialogs and MCP confirmations still wait on
-  # the user.
-  defp allow_open_permissions(state) do
-    asks_anyway = state.asks_anyway
-
+  # The tool approvals Claude asked only for its mode (`mode_asks`), which a session
+  # bypassing permissions would not have asked, answered as the user's "Approve" would
+  # be. What Claude asks in every mode (ask rules, safety checks, hooks), its
+  # questions, dialogs and MCP confirmations still wait on the user.
+  defp allow_mode_asks(state) do
     state =
       Enum.reduce(state.requests, state, fn
-        {request_id, {:permission, control_id, _tool, suggestions}}, state
-        when suggestions != :once ->
-          if MapSet.member?(asks_anyway, request_id) do
-            state
-          else
+        {request_id, {:permission, control_id, _tool, _suggestions}}, state ->
+          if MapSet.member?(state.mode_asks, request_id) do
             Session.answer_permission(state.session, control_id, :allow)
 
             resolve_request(
@@ -1079,6 +1096,8 @@ defmodule HalC2.Claude.ThreadRuntime do
               request_id,
               "accept"
             )
+          else
+            state
           end
 
         _other, state ->
@@ -1086,7 +1105,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       end)
 
     # The prompts closed since they were asked are forgotten here.
-    Map.put(state, :asks_anyway, MapSet.filter(asks_anyway, &Map.has_key?(state.requests, &1)))
+    %{state | mode_asks: MapSet.filter(state.mode_asks, &Map.has_key?(state.requests, &1))}
   end
 
   # A turn the store fails to record fails, and stops (`HalC2.Orchestration.Unrecorded`).
@@ -1167,7 +1186,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:usage_instance, nil)
        |> Map.put_new(:wake, nil)
        |> Map.put_new(:permission_mode, nil)
-       |> Map.put_new(:asks_anyway, MapSet.new())
+       |> Map.put_new(:mode_asks, MapSet.new())
+       |> Map.put_new(:switching, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
        |> Map.put_new(:placed, nil)

@@ -244,13 +244,34 @@ Feature: Permission modes
     Then Claude's running session switches to the "bypassPermissions" permission mode
     And Claude's waiting command is approved without the user
 
-  # Claude asks its ask rules and its own safety checks in every mode, so Full access
-  # leaves those approvals to the user.
-  Scenario: Switching a running Claude turn to full access leaves an ask rule's approval waiting
-    Given a supervised Claude turn an ask rule in the user's Claude permissions asks to run a command
+  # Claude asks its ask rules, its own safety checks and its hooks in every mode, so Full
+  # access leaves those approvals to the user.
+  Scenario Outline: Switching a running Claude turn to full access leaves an approval Claude asks in every mode waiting
+    Given a supervised Claude turn <cause> asks to run a command
     When the user switches the thread to full access
     Then Claude's running session switches to the "bypassPermissions" permission mode
-    And the ask rule's approval still waits on the user
+    And Claude's approval still waits on the user
+
+    Examples:
+      | cause                                        |
+      | an ask rule in the user's Claude permissions |
+      | a hook in the user's Claude settings         |
+
+  # Claude can ask just before it reads the switch; that ask was for its old mode.
+  Scenario: A command Claude asks to run as it takes a switch to full access is approved
+    Given a supervised Claude thread with a running turn
+    When Claude asks to run a command just before it takes a switch to full access
+    Then Claude's asked command is approved without the user
+
+  # Settings that turn bypassing off limit a switch as they limit a turn started in Full
+  # access (providers/claude.feature): Claude runs as they allow, and nothing is approved.
+  Scenario: Switching a running Claude turn to full access its settings forbid keeps it asking
+    Given the project's or the managed Claude settings restrict bypassing permissions
+    And a Claude thread waiting on a command approval
+    When the user switches the thread to full access
+    Then Claude's running session switches to the "auto" permission mode
+    And Claude's approval still waits on the user
+    And the thread says Claude's settings limited Full access
 
   Scenario: Switching a running Claude turn to supervised makes it ask again
     Given a full access Claude thread with a running turn

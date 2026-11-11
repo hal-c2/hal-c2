@@ -462,58 +462,106 @@ defmodule HalC2.Steps.Providers.PermissionModes do
   end
 
   step "a full access Claude thread with a running turn", context do
+    running_claude(context, "full-access")
+  end
+
+  @ask_causes %{
+    "an ask rule in the user's Claude permissions" =>
+      {"rule", "Permission rule 'Bash(git push:*)' from user settings requires approval"},
+    "a hook in the user's Claude settings" =>
+      {"hook", "Hook PreToolUse:Bash asked for approval: pushes need a second look"}
+  }
+
+  defp running_claude(context, mode) do
     context =
       context
       |> World.fake_providers()
-      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{
-        "runtimeMode" => "full-access"
-      })
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{"runtimeMode" => mode})
 
     World.await_running(context, @thread)
     context
   end
 
-  step "a supervised Claude turn an ask rule in the user's Claude permissions asks to run a command",
-       context do
-    context =
-      context
-      |> World.fake_providers()
-      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{
-        "runtimeMode" => "approval-required"
-      })
-
-    World.await_running(context, @thread)
+  defp claude_runtime(context) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
-
-    send(
-      pid,
-      {:claude, :sys.get_state(pid).session,
-       {:permission, "perm-rule", "Bash", %{"command" => "git push"},
-        %{
-          "title" => "Claude wants to run git push",
-          "decision_reason" => "Permission rule Bash(git push:*) requires approval",
-          "decision_reason_type" => "rule"
-        }}}
-    )
-
-    id = "runtime-request:claudeAgent:perm-rule"
-
-    World.await_value(context, @thread, fn state ->
-      match?(%{"status" => "pending"}, StreamState.get(state, "runtime-request")[id])
-    end)
-
-    Map.put(context, :request, %{"id" => id})
+    pid
   end
 
-  step "the ask rule's approval still waits on the user", context do
+  # What `session` hands the runtime for Claude's `can_use_tool` under `control_id`,
+  # and the request it opens.
+  defp claude_ask(pid, session, control_id, context_fields) do
+    send(
+      pid,
+      {:claude, session,
+       {:permission, control_id, "Bash", %{"command" => "git push"},
+        Map.put(context_fields, "title", "Claude wants to run git push")}}
+    )
+
+    %{"id" => "runtime-request:claudeAgent:#{control_id}"}
+  end
+
+  step ~r/^a supervised Claude turn (?<cause>.+) asks to run a command$/,
+       %{args: [cause]} = context do
+    {type, reason} = Map.fetch!(@ask_causes, cause)
+    context = running_claude(context, "approval-required")
+    pid = claude_runtime(context)
+
+    request =
+      claude_ask(pid, :sys.get_state(pid).session, "perm-why", %{
+        "decision_reason" => reason,
+        "decision_reason_type" => type
+      })
+
+    World.await_value(context, @thread, fn state ->
+      match?(%{"status" => "pending"}, StreamState.get(state, "runtime-request")[request["id"]])
+    end)
+
+    Map.put(context, :request, request)
+  end
+
+  step "Claude's approval still waits on the user", context do
     # The runtime has handled the switch once it answers a state read.
-    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
-    _ = :sys.get_state(pid)
+    _ = :sys.get_state(claude_runtime(context))
 
     assert %{"status" => "pending"} =
              StreamState.get(World.state(context, @thread), "runtime-request")[
                context.request["id"]
              ]
+
+    context
+  end
+
+  step "a supervised Claude thread with a running turn", context do
+    running_claude(context, "approval-required")
+  end
+
+  # The ask reaches the runtime after the switch and before the switch is done: the
+  # order the session hands on an ask Claude wrote before it read the switch.
+  step "Claude asks to run a command just before it takes a switch to full access", context do
+    pid = claude_runtime(context)
+    session = :sys.get_state(pid).session
+    :ok = :sys.suspend(pid)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.runtime-mode.set",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "runtimeMode" => "full-access"
+      })
+
+    request = claude_ask(pid, session, "perm-race", %{})
+    :ok = :sys.resume(pid)
+    Map.put(context, :request, request)
+  end
+
+  step "Claude's asked command is approved without the user", context do
+    World.await_value(context, @thread, fn state ->
+      match?(
+        %{"status" => "resolved", "decision" => "accept"},
+        StreamState.get(state, "runtime-request")[context.request["id"]]
+      )
+    end)
 
     context
   end
