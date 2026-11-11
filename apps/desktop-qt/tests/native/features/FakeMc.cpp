@@ -463,12 +463,13 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   }
 }
 
-// A thread's row takes a mode change; one that names a selection revision
+// A thread's row takes a mode or model change; one that names a selection revision
 // moves to the next, and the answer names it.
 void FakeMc::applyMode(const QJsonObject& command, QJsonObject& result) {
   const QString type = command.value(QLatin1String("type")).toString();
   const QString field = type == QLatin1String("thread.runtime-mode.set")       ? QStringLiteral("runtimeMode")
                         : type == QLatin1String("thread.interaction-mode.set") ? QStringLiteral("interactionMode")
+                        : type == QLatin1String("thread.model-selection.set")  ? QStringLiteral("modelSelection")
                                                                                : QString();
   const QString id = command.value(QLatin1String("threadId")).toString();
   if (field.isEmpty() || !threads.contains(id) || threads.value(id).value(field) == command.value(field)) return;
@@ -482,6 +483,31 @@ void FakeMc::applyMode(const QJsonObject& command, QJsonObject& result) {
   sendRow(id, row);
 }
 
+// A choice made against a revision the thread has moved on from is refused,
+// unless it is what the thread has now (selection.ex `stale/2`).
+std::optional<QJsonObject> FakeMc::stale(const QJsonObject& command) const {
+  const QJsonValue base = command.value(QLatin1String("selectionBase"));
+  const QJsonObject row = threads.value(command.value(QLatin1String("threadId")).toString());
+  if (!base.isDouble() || row.isEmpty()) return std::nullopt;
+  const double revision = row.value(QLatin1String("selectionRevision")).toDouble();
+  if (base.toDouble() == revision) return std::nullopt;
+  const auto runs = [](const QJsonObject& selection) {
+    return QJsonArray{selection.value(QLatin1String("instanceId")), selection.value(QLatin1String("model")),
+                      selection.value(QLatin1String("options"))};
+  };
+  bool same = true;
+  for (const char* field : {"modelSelection", "runtimeMode", "interactionMode"}) {
+    const QJsonValue picked = command.value(QLatin1String(field));
+    if (picked.isUndefined() || picked.isNull()) continue;
+    same = same && (picked.isObject() ? runs(picked.toObject()) == runs(row.value(QLatin1String(field)).toObject())
+                                      : picked == row.value(QLatin1String(field)));
+  }
+  if (same) return std::nullopt;
+  return QJsonObject{{QStringLiteral("code"), QStringLiteral("selection-stale")},
+                     {QStringLiteral("selectionRevision"), revision},
+                     {QStringLiteral("modelSelection"), row.value(QLatin1String("modelSelection"))}};
+}
+
 void FakeMc::dispatchCommand(const Rpc& rpc) {
   commands.append(rpc.payload);
   commandEnvironments.append(rpc.environment);
@@ -493,6 +519,8 @@ void FakeMc::dispatchCommand(const Rpc& rpc) {
                  detail = refusalDetails.value(refused)] {
     if (known) {
       refuse(rpc, refusal, detail);
+    } else if (const auto moved = appliesModes ? stale(rpc.payload) : std::nullopt) {
+      refuse(rpc, QStringLiteral("This thread moved elsewhere. Check it and send again."), *moved);
     } else {
       for (const auto& effect : std::as_const(effects)) effect(rpc.payload);
       QJsonObject result{{QStringLiteral("sequence"), commands.size()}};

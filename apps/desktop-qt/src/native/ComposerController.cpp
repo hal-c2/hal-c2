@@ -4566,8 +4566,14 @@ QJsonObject ComposerController::selection(const QString& target) const {
   // A started thread shows what it holds, unavailable as it may be: what a
   // send with no pick runs on is the thread's, never one made up here.
   if (instanceId.isEmpty()) return isThread ? chosen : firstReady();
-  const QString model = chosen.value(QLatin1String("model")).toString();
   const composer::Instance* instance = instanceOf(chosen);
+  // A model saved under an alias is the built-in model it names, its options
+  // kept; a custom model of that name is not it.
+  if (const QString slug = instance ? composer::fallbackModelSlug(*instance, chosen.value(QLatin1String("model")).toString()) : QString();
+      !slug.isEmpty()) {
+    chosen.insert(QStringLiteral("model"), slug);
+  }
+  const QString model = chosen.value(QLatin1String("model")).toString();
   if (instance && instance->ready()) {
     if (model.isEmpty()) {
       chosen.insert(QStringLiteral("model"), composer::defaultModel(*instance));

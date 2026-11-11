@@ -16,6 +16,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <typeindex>
 #include <unordered_map>
 
@@ -261,6 +262,7 @@ private:
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
   void applyMode(const QJsonObject& command, QJsonObject& result);
+  std::optional<QJsonObject> stale(const QJsonObject& command) const;
   // An environment's id, the MC's capabilities and its descriptorFields.
   QJsonObject describe(const QString& environment) const;
   QJsonObject peerEnvironment(const QString& environment) const;
