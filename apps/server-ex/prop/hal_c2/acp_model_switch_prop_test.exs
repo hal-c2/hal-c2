@@ -245,7 +245,9 @@ defmodule HalC2.AcpModelSwitchPropTest do
     get_in(StreamState.get(state, "thread"), [@tid, "modelSelection", "model"])
   end
 
-  defp await_turn(id) do
+  # Waits on the thread's stream until turn `id`'s run completes or fails; the
+  # deadline, as long as `World.await_stream/3`'s, only stops a hung case.
+  defp await_turn(id, deadline \\ System.monotonic_time(:millisecond) + 30_000) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(@tid))
     run = state |> StreamState.list("run") |> Enum.find(&(&1["userMessageId"] == id))
 
@@ -259,9 +261,10 @@ defmodule HalC2.AcpModelSwitchPropTest do
       {run["status"], text}
     else
       receive do
-        {:hal_c2_stream, @tid, _} -> await_turn(id)
+        {:hal_c2_stream, @tid, _} -> await_turn(id, deadline)
       after
-        10_000 -> raise "model turn did not finish"
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          raise "turn #{id} did not finish in 30 s (its run: #{inspect(run)})"
       end
     end
   end
@@ -454,7 +457,9 @@ defmodule HalC2.AcpOpencodeVariantPropTest do
     end
   end
 
-  defp await_turn(id) do
+  # Waits on the thread's stream until turn `id`'s run completes or fails; the
+  # deadline, as long as `World.await_stream/3`'s, only stops a hung case.
+  defp await_turn(id, deadline \\ System.monotonic_time(:millisecond) + 30_000) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(@tid))
     run = state |> StreamState.list("run") |> Enum.find(&(&1["userMessageId"] == id))
 
@@ -468,9 +473,10 @@ defmodule HalC2.AcpOpencodeVariantPropTest do
       {run["status"], text}
     else
       receive do
-        {:hal_c2_stream, @tid, _} -> await_turn(id)
+        {:hal_c2_stream, @tid, _} -> await_turn(id, deadline)
       after
-        10_000 -> raise "OpenCode turn did not finish"
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          raise "OpenCode turn #{id} did not finish in 30 s (its run: #{inspect(run)})"
       end
     end
   end
