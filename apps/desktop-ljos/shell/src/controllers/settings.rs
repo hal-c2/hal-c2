@@ -1312,7 +1312,10 @@ fn read_preferences(path: &Path) -> Option<Map> {
 
 /// What `next` changed from `base`, put on `disk`: a key another desktop
 /// on this home saved since `base` was read stays unless this change is
-/// to that key (the MC's `carry_over`, hal_c2/settings.ex).
+/// to that key. Objects merge key by key (one provider's model beside
+/// another's), as the MC's `carry_over` (hal_c2/settings.ex) does, one
+/// this desktop had not read yet as if it were empty; any other value, a
+/// list among them, is replaced whole.
 fn carry_over(mut disk: Map, base: &Map, next: &Map) -> Map {
     let mut keys: Vec<&String> = base.keys().chain(next.keys()).collect();
     keys.sort();
@@ -1327,9 +1330,19 @@ fn carry_over(mut disk: Map, base: &Map, next: &Map) -> Map {
         if !changed {
             continue;
         }
-        match is {
+        let merged = match (is, was, disk.get(key)) {
+            (Some(Json::Object(is)), None | Some(Json::Object(_)), Some(Json::Object(held))) => {
+                let was = match was {
+                    Some(Json::Object(was)) => was.clone(),
+                    _ => Map::new(),
+                };
+                Some(Json::Object(carry_over(held.clone(), &was, is)))
+            }
+            _ => is.cloned(),
+        };
+        match merged {
             Some(value) => {
-                let _ = disk.insert(key.clone(), value.clone());
+                let _ = disk.insert(key.clone(), value);
             }
             None => {
                 let _ = disk.remove(key);

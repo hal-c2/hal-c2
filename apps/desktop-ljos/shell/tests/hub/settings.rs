@@ -399,6 +399,39 @@ fn a_save_keeps_what_another_desktop_on_this_home_saved() {
     assert_eq!(first.device_value("appearance"), Some(json!("dark")));
 }
 
+#[test]
+fn a_save_of_one_entry_keeps_the_entries_another_desktop_saved() {
+    // providerModelPreferences is saved whole, built from the desktop's own
+    // copy: each desktop changes one provider's entry without having heard
+    // of the other's.
+    let dir = config_dir("device-shared-entries");
+    let one = with_config(&dir);
+    let two = with_config(&dir);
+    let first = Settings::of(&one.engine);
+    let second = Settings::of(&two.engine);
+    let key = "providerModelPreferences";
+    assert!(first.write_device(
+        &one.engine,
+        key,
+        json!({"codex": {"modelOrder": ["a", "b"]}})
+    ));
+    assert!(second.write_device(&two.engine, key, json!({"claude": {"modelOrder": ["c"]}})));
+    // A list is replaced whole: the first desktop's stale copy names no
+    // claude entry, which stays as the second saved it.
+    assert!(first.write_device(
+        &one.engine,
+        key,
+        json!({"codex": {"modelOrder": ["b", "a"]}})
+    ));
+    assert_eq!(
+        on_disk(&dir),
+        map(json!({key: {
+            "codex": {"modelOrder": ["b", "a"]},
+            "claude": {"modelOrder": ["c"]},
+        }}))
+    );
+}
+
 /// Another desktop's save of the preferences file: written whole, by a
 /// rename over it, as [`Settings`] saves.
 fn saved_elsewhere(dir: &Path, text: &str) {
