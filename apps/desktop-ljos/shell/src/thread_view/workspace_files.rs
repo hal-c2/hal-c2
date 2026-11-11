@@ -45,7 +45,7 @@
 //! [`search_entries`].
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
@@ -641,8 +641,12 @@ pub struct Files {
     /// An edit waits to be written; a write is on its way.
     pending: bool,
     saving: bool,
-    /// Writes sent and not yet answered, a closing one among them.
-    writes_out: usize,
+    /// Writes waiting their turn: one is under way at a time, as the MC
+    /// answers each call on its own and two under way could land in either
+    /// order, older text over newer.
+    writes: VecDeque<QueuedWrite>,
+    /// The file (environment, root, path) of the write under way.
+    under_way: Option<(String, String, String)>,
     revision: u32,
     /// The workspace changed while the user's text or a read was on its
     /// way: the file is read again once that settles.
@@ -750,7 +754,8 @@ impl Files {
             editing: false,
             pending: false,
             saving: false,
-            writes_out: 0,
+            writes: VecDeque::new(),
+            under_way: None,
             revision: 0,
             reread_later: false,
             read_after_writes: false,
@@ -1355,7 +1360,7 @@ impl Files {
         }
         // A read now would show the text from before the writes still to
         // land.
-        if self.saving {
+        if self.writing_open_file() {
             self.read_after_writes = true;
             return;
         }
@@ -1381,9 +1386,24 @@ impl Files {
 
     /// The read a reload held for its writes, once none is on its way.
     fn read_after_writes_if_waiting(&mut self) {
-        if !self.saving && std::mem::take(&mut self.read_after_writes) {
+        if self.read_after_writes && !self.writing_open_file() {
+            self.read_after_writes = false;
             self.read_open_file();
         }
+    }
+
+    /// Whether a write of the open file waits or is under way.
+    fn writing_open_file(&self) -> bool {
+        let open = |environment: &str, root: &str, path: &str| {
+            environment == self.environment && root == self.root && path == self.open_path
+        };
+        self.under_way
+            .as_ref()
+            .is_some_and(|(environment, root, path)| open(environment, root, path))
+            || self
+                .writes
+                .iter()
+                .any(|w| open(&w.environment, &w.root, &w.path))
     }
 
     fn read_open_file(&mut self) {
@@ -1562,6 +1582,7 @@ impl Files {
             // file goes, and is never written to the file opened next.
             if closing {
                 self.pending = false;
+                self.saving = false;
             }
             return;
         }
@@ -1573,29 +1594,62 @@ impl Files {
         if closing {
             self.pending = false;
         }
-        self.writes_out += 1;
-        self.effects.push(Effect::Call {
+        self.writes.push_back(QueuedWrite {
             environment: self.environment.clone(),
-            method: "projects.writeFile",
-            payload: json!({
-                "cwd": self.root,
-                "relativePath": self.open_path,
-                "contents": self.text,
-            }),
-            then: Then::Write {
-                path: self.open_path.clone(),
-                root: self.root.clone(),
-                environment: self.environment.clone(),
-                revision: self.revision,
-                request: self.file_request,
-                closing,
-            },
+            root: self.root.clone(),
+            path: self.open_path.clone(),
+            contents: self.text.clone(),
+            revision: self.revision,
+            request: self.file_request,
+            closing,
         });
+        self.write_next();
+    }
+
+    /// Sends the next write waiting, once none is under way.
+    fn write_next(&mut self) {
+        if self.under_way.is_some() {
+            return;
+        }
+        while let Some(write) = self.writes.pop_front() {
+            if self.host_writes_refused_on == write.environment && host_path(&write.path) {
+                // Refused while this one waited. The edit stays on screen,
+                // if it still is.
+                if !write.closing && write.request == self.file_request {
+                    self.saving = false;
+                }
+                continue;
+            }
+            self.under_way = Some((
+                write.environment.clone(),
+                write.root.clone(),
+                write.path.clone(),
+            ));
+            self.effects.push(Effect::Call {
+                environment: write.environment.clone(),
+                method: "projects.writeFile",
+                payload: json!({
+                    "cwd": write.root,
+                    "relativePath": write.path,
+                    "contents": write.contents,
+                }),
+                then: Then::Write {
+                    path: write.path,
+                    root: write.root,
+                    environment: write.environment,
+                    revision: write.revision,
+                    request: write.request,
+                    closing: write.closing,
+                },
+            });
+            break;
+        }
+        self.read_after_writes_if_waiting();
     }
 
     /// Whether a write is on its way, unanswered (desktop-qt's `writing()`).
     pub fn writing(&self) -> bool {
-        self.writes_out > 0
+        self.under_way.is_some() || !self.writes.is_empty()
     }
 
     /// Writes what waits, now: the window is closing, or the app is
@@ -1772,76 +1826,89 @@ impl Files {
                 }
                 self.media_ready(request);
             }
-            Then::Write {
-                path,
-                root,
-                environment,
-                revision,
-                request,
-                closing,
-            } => {
-                self.writes_out = self.writes_out.saturating_sub(1);
-                // A session without terminal access may not write outside the
-                // workspace (Rpc.required_scope/2).
-                let host_refused = result.as_ref().err().is_some_and(|e| {
-                    e.detail.get("_tag").and_then(Json::as_str)
-                        == Some("EnvironmentScopeRequiredError")
-                        && e.detail.get("requiredScope").and_then(Json::as_str)
-                            == Some("terminal:operate")
-                });
-                if host_refused {
-                    self.host_writes_refused_on = environment;
-                }
-                let failed = result.as_ref().err().map(|e| {
-                    if host_refused {
-                        HOST_WRITE_REFUSAL.to_owned()
-                    } else {
-                        defaulted(&e.message, "Unable to save this file.")
-                    }
-                });
-                if let Some(problem) = &failed {
-                    self.signals.push(Sig::SaveFailed {
-                        path: path.clone(),
-                        problem: problem.clone(),
-                    });
-                }
-                // The file closed, or another opened, meanwhile.
-                if closing
-                    || path != self.open_path
-                    || root != self.root
-                    || request != self.file_request
-                {
-                    self.read_after_writes_if_waiting();
-                    return;
-                }
-                self.saving = false;
-                if let Some(problem) = failed {
-                    self.save_problem = problem;
-                    if host_refused {
-                        // The file is read-only now; the view shows the edit
-                        // that was not saved, to copy.
-                        self.editing = false;
-                        self.effects.push(Effect::Lines(self.text.clone()));
-                        self.signals.push(Sig::Rendered);
-                    }
-                    // Else the edit stays, to be written with the next one.
-                    self.read_after_writes_if_waiting();
-                    return;
-                }
-                self.save_problem.clear();
-                if revision == self.revision {
-                    self.pending = false;
-                    if !self.editing {
-                        self.effects.push(Effect::Lines(self.text.clone()));
-                    }
-                } else {
-                    self.effects.push(Effect::SaveTimer(true));
-                }
-                self.reread_if_due();
-                self.read_after_writes_if_waiting();
+            then @ Then::Write { .. } => {
+                self.under_way = None;
+                self.write_answered(then, result);
+                self.write_next();
             }
         }
     }
+
+    /// A write's answer, the next write going after it whatever it was.
+    fn write_answered(&mut self, then: Then, result: Result<Json, McError>) {
+        let Then::Write {
+            path,
+            root,
+            environment,
+            revision,
+            request,
+            closing,
+        } = then
+        else {
+            return;
+        };
+        // A session without terminal access may not write outside the
+        // workspace (Rpc.required_scope/2).
+        let host_refused = result.as_ref().err().is_some_and(|e| {
+            e.detail.get("_tag").and_then(Json::as_str) == Some("EnvironmentScopeRequiredError")
+                && e.detail.get("requiredScope").and_then(Json::as_str) == Some("terminal:operate")
+        });
+        if host_refused {
+            self.host_writes_refused_on = environment;
+        }
+        let failed = result.as_ref().err().map(|e| {
+            if host_refused {
+                HOST_WRITE_REFUSAL.to_owned()
+            } else {
+                defaulted(&e.message, "Unable to save this file.")
+            }
+        });
+        if let Some(problem) = &failed {
+            self.signals.push(Sig::SaveFailed {
+                path: path.clone(),
+                problem: problem.clone(),
+            });
+        }
+        // The file closed, or another opened, meanwhile.
+        if closing || path != self.open_path || root != self.root || request != self.file_request {
+            return;
+        }
+        self.saving = false;
+        if let Some(problem) = failed {
+            self.save_problem = problem;
+            if host_refused {
+                // The file is read-only now; the view shows the edit
+                // that was not saved, to copy.
+                self.editing = false;
+                self.effects.push(Effect::Lines(self.text.clone()));
+                self.signals.push(Sig::Rendered);
+            }
+            // Else the edit stays, to be written with the next one.
+            return;
+        }
+        self.save_problem.clear();
+        if revision == self.revision {
+            self.pending = false;
+            if !self.editing {
+                self.effects.push(Effect::Lines(self.text.clone()));
+            }
+        } else {
+            self.effects.push(Effect::SaveTimer(true));
+        }
+        self.reread_if_due();
+    }
+}
+
+/// A write waiting its turn ([`Files::write_next`]).
+#[derive(Debug)]
+struct QueuedWrite {
+    environment: String,
+    root: String,
+    path: String,
+    contents: String,
+    revision: u32,
+    request: u32,
+    closing: bool,
 }
 
 /// Why a read failed, worded for the viewer: a file that is not text says

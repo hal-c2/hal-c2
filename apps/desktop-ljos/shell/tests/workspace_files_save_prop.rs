@@ -215,6 +215,17 @@ fn check(model: &Model, sut: &Sut) -> Result<(), TestCaseError> {
     if model.open_path.is_empty() {
         return Ok(());
     }
+    // A file whose write is still out is read once that lands, so the text
+    // shown is never older than what was written.
+    // Its write may wait behind another file's, still held.
+    if files.writing() {
+        prop_assert!(
+            ["ready", "loading"].contains(&files.file_status()),
+            "{}",
+            files.file_status()
+        );
+        return Ok(());
+    }
     prop_assert_eq!(files.file_status(), "ready");
     let read_only = outside(&model.open_path) && sut.refused.contains(&model.environment);
     prop_assert_eq!(files.editable(), !read_only);
@@ -320,4 +331,41 @@ proptest! {
     ) {
         run(ops)?;
     }
+}
+
+/// A file outside the workspace edited, closed, opened and edited again,
+/// whose first write the MC then refuses: the next file outside it still
+/// opens.
+#[test]
+fn a_refused_write_of_a_file_opened_again_does_not_hold_up_the_next_file() {
+    run(vec![
+        Op::Target(1),
+        Op::Open(1),
+        Op::Edit,
+        Op::Close,
+        Op::Open(1),
+        Op::Edit,
+        Op::Answer(0),
+        Op::Open(2),
+    ])
+    .unwrap();
+}
+
+/// A file edited, left for another, opened and edited again, its two writes
+/// answered newest first: the older text never lands over the newer, as one
+/// write goes at a time.
+#[test]
+fn writes_of_one_file_land_in_the_order_they_were_made() {
+    run(vec![
+        Op::Target(0),
+        Op::Open(0),
+        Op::Edit,
+        Op::Open(1),
+        Op::Open(0),
+        Op::Edit,
+        Op::Answer(2),
+        Op::Answer(0),
+        Op::Settle,
+    ])
+    .unwrap();
 }

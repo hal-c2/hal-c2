@@ -905,10 +905,11 @@ fn entries_are_read_from_a_listing() {
 // --- Writes when the viewer goes away ---
 
 // A window closing or the app quitting waits on `writing`: it counts the
-// closing write sent while another was under way, until both are answered
-// (desktop-qt's WorkspaceFiles::writing).
+// closing write queued while another was under way, until both are answered
+// (desktop-qt's WorkspaceFiles::writing). The closing write goes only once
+// the first is answered, so the older text cannot land over it.
 #[test]
-fn writing_lasts_until_every_write_sent_is_answered() {
+fn writing_lasts_until_every_write_queued_is_answered() {
     let mut files = files_in("/w");
     editing(&mut files, "a.txt", "a\n");
     assert!(!files.writing());
@@ -918,10 +919,11 @@ fn writing_lasts_until_every_write_sent_is_answered() {
     assert!(files.writing());
     files.edit("a12\n");
     files.finish_writes();
+    assert!(calls(&mut files).is_empty(), "one write at a time");
+    files.answer(first, Ok(json!({})));
+    assert!(files.writing(), "the closing write is still to go");
     let (_, payload, closing) = call(&mut files);
     assert_eq!(payload["contents"], "a12\n");
-    files.answer(first, Ok(json!({})));
-    assert!(files.writing(), "the closing write is still on its way");
     files.answer(closing, Ok(json!({})));
     assert!(!files.writing());
 }
