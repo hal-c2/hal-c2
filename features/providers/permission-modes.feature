@@ -259,6 +259,10 @@ Feature: Permission modes
       | a hook in the user's Claude settings         |
       | a safety check Claude never bypasses         |
       | the organisation's ask ceiling for the tool  |
+      | an ask rule Claude reports by another reason |
+      | a tool that needs the user                   |
+      | a sandbox override under the read block      |
+      | a compound command under the read block      |
 
   # Every other approval was Claude's mode asking, which Full access answers.
   Scenario Outline: Switching a running Claude turn to full access approves what only its mode asked

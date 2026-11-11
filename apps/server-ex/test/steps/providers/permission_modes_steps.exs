@@ -485,6 +485,23 @@ defmodule HalC2.Steps.Providers.PermissionModes do
       "decision_reason_type" => "other",
       "decision_reason_code" => "org_ask_ceiling"
     },
+    "an ask rule Claude reports by another reason" => %{
+      "decision_reason_type" => "other",
+      "matched_ask_rule" => %{
+        "source" => "userSettings",
+        "tool_name" => "Bash",
+        "rule_content" => "git push:*"
+      }
+    },
+    "a tool that needs the user" => %{
+      "decision_reason_type" => "other",
+      "requires_user_interaction" => true
+    },
+    "a sandbox override under the read block" => %{"decision_reason_type" => "sandboxOverride"},
+    "a compound command under the read block" => %{
+      "decision_reason_type" => "subcommandResults",
+      "decision_reason_code" => "outside_reads_blocked"
+    },
     "a compound command" => %{"decision_reason_type" => "subcommandResults"},
     "a path outside the working directories" => %{
       "decision_reason_type" => "workingDir",
