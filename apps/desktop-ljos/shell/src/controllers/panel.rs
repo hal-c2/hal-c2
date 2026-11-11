@@ -49,6 +49,7 @@ use crate::store;
 use crate::this_machine;
 use crate::thread_view::agents::AgentsModel;
 use crate::thread_view::diff::DiffModel;
+use crate::thread_view::preview_history::PreviewHistory;
 use crate::thread_view::previews::ThreadPreviews;
 use crate::thread_view::pull_request_links::{LinkPreviews, ThreadLinks};
 use crate::thread_view::pull_request_review::{PullRequestReview, Review};
@@ -91,6 +92,31 @@ pub fn kind_of(id: &str) -> &str {
         "device"
     } else {
         id
+    }
+}
+
+/// The recent pages kept before they were kept per project go, once, to
+/// the first project shown.
+fn keep_untimed_pages(engine: &Engine, project: &str) {
+    let settings = Settings::of(engine);
+    let Some(recent) = settings.device_value("previewRecentPages") else {
+        return;
+    };
+    if project.is_empty() {
+        return;
+    }
+    let urls: Vec<String> = recent
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Json::as_str)
+        .map(str::to_owned)
+        .collect();
+    let mut history = PreviewHistory::from_json(settings.device_value("previewHistory").as_ref());
+    if !history.keep_untimed(project, &urls)
+        || settings.write_device(engine, "previewHistory", history.to_json())
+    {
+        settings.write_device(engine, "previewRecentPages", Json::Null);
     }
 }
 
@@ -439,19 +465,14 @@ impl Controller for RightPanel {
         }
         if let Some(previews) = previews {
             ThreadPreviews::set_connected_here(engine, previews, this_machine::mc_here);
-            // The pages this device opened from a browser tab, kept with its
-            // preferences.
-            ThreadPreviews::set_recents(
+            // The pages this device's browser tabs visited, per project,
+            // kept with its preferences.
+            ThreadPreviews::set_history(
                 engine,
                 previews,
-                |e| {
-                    Settings::of(e)
-                        .device_value("previewRecentPages")
-                        .and_then(|v| serde_json::from_value(v).ok())
-                        .unwrap_or_default()
-                },
-                |e, urls| {
-                    Settings::of(e).write_device(e, "previewRecentPages", json!(urls));
+                |e| Settings::of(e).device_value("previewHistory"),
+                |e, history| {
+                    Settings::of(e).write_device(e, "previewHistory", history.clone());
                 },
             );
         }
@@ -933,7 +954,7 @@ impl RightPanel {
             self.recent.retain(|k| *k != thread_key);
             self.recent.push(thread_key.clone());
             let (environment, rest) = thread_key.split_once(':').unwrap_or(("", &thread_key));
-            let (thread_id, root, folder, configured, mc) = store::with(engine, |s| {
+            let (thread_id, root, folder, configured, mc, project_id) = store::with(engine, |s| {
                 let row = s.thread_row(&thread_key).cloned().unwrap_or_default();
                 let thread_id = text(&row, "id");
                 let thread_id = if thread_id.is_empty() {
@@ -974,6 +995,7 @@ impl RightPanel {
                     folder,
                     configured,
                     s.mc_serving(environment),
+                    text(&row, "projectId").to_owned(),
                 )
             });
             let timeline = threads::timeline_of(engine, &thread_key);
@@ -993,7 +1015,15 @@ impl RightPanel {
                 ThreadPullRequests::set_thread(engine, obj, &thread_key);
             }
             if let Some(previews) = self.previews {
+                // The project's pages, on this device, are its environment's.
+                let pages_of = if project_id.is_empty() {
+                    String::new()
+                } else {
+                    format!("{environment}:{project_id}")
+                };
+                keep_untimed_pages(engine, &pages_of);
                 ThreadPreviews::update(engine, previews, |p| {
+                    p.set_project(&pages_of);
                     p.set_thread(environment, &thread_id, &mc);
                     p.set_configured(configured);
                 });

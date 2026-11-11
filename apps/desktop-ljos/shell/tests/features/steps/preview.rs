@@ -9,6 +9,7 @@ use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controllers::palette::Palette;
 use hal_c2_shell::controllers::panel::{PanelObject, RightPanel};
 use hal_c2_shell::controllers::settings::Settings;
+use hal_c2_shell::thread_view::preview_history::PreviewHistory;
 use hal_c2_shell::thread_view::previews::{Previews, ThreadPreviews};
 use ljos::prelude::{ObjectId, Value};
 use serde_json::{Value as Json, json};
@@ -738,15 +739,18 @@ pub fn register(steps: &mut Steps) {
             world.connect()?;
             world.sync()?;
             look_at_thread(world, PROJECT)?;
-            // Twelve pages opened from browser tabs on this device, the
-            // newest first.
-            let pages: Vec<String> = (1..=12)
-                .rev()
-                .map(|n| format!("https://docs.example.com/page-{n}"))
-                .collect();
+            // Twelve pages opened from browser tabs of the project on this
+            // device, page-12 last, before the tab here loads (tab_at).
+            let mut pages = PreviewHistory::default();
+            let now = 1_790_154_000_000; // 2026-09-23T09:00:00Z
+            let project = format!("{}:{PROJECT}", world.mc.environment_id);
+            for n in 1..=12 {
+                let url = format!("https://docs.example.com/page-{n}");
+                pages.visit(&project, &url, "", now - (13 - n) * 60_000);
+            }
             let settings = Settings::of(world.engine());
             expect!(
-                settings.write_device(world.engine(), "previewRecentPages", json!(pages)),
+                settings.write_device(world.engine(), "previewHistory", pages.to_json()),
                 "{}",
                 settings.device_error()
             );
@@ -823,13 +827,13 @@ pub fn register(steps: &mut Steps) {
             wait_for_urls(world, &["http://localhost:5173"])?;
             // And it is the newest recent page from now on.
             world.wait_for("the page to be remembered", |w| {
+                let project = format!("{}:{PROJECT}", w.mc.environment_id);
+                let kept = Settings::of(w.engine()).device_value("previewHistory");
                 suggested(w, "server").len() == 1
-                    && Settings::of(w.engine())
-                        .device_value("previewRecentPages")
-                        .and_then(|pages| pages.get(0).cloned())
-                        .is_some_and(|first| {
-                            first.as_str().is_some_and(|u| u.trim_end_matches('/') == "http://localhost:5173")
-                        })
+                    && PreviewHistory::from_json(kept.as_ref())
+                        .pages(&project)
+                        .first()
+                        .is_some_and(|first| first.url == "http://localhost:5173")
             })
         },
     );

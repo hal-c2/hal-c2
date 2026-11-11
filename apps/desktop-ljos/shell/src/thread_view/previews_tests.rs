@@ -10,6 +10,7 @@ use serde_json::json;
 
 use super::super::rows::{Mirror, RowChange, RowSource};
 use super::{Effect, Json, MAX_RECENTS, PreviewNote, Previews, Then, shown, web_address};
+use crate::thread_view::preview_history::{PreviewHistory, TIMED_SINCE};
 
 const ENVIRONMENT: &str = "env-a";
 const MC: &str = "mc-a";
@@ -72,7 +73,13 @@ fn show() -> (Previews, Then) {
     previews.set_thread(ENVIRONMENT, THREAD, MC);
     previews.set_active(true);
     let effects = previews.take_effects();
-    assert_eq!(effects[0], Effect::Follow(MC.to_owned()));
+    assert_eq!(
+        effects[..2],
+        [
+            Effect::FollowServers(MC.to_owned()),
+            Effect::Follow(MC.to_owned())
+        ]
+    );
     let list = effects
         .into_iter()
         .find_map(|e| match e {
@@ -256,23 +263,35 @@ fn a_new_tab_suggests_servers_configured_pages_and_recent_ones() {
         "http://localhost:5173/".into(),
         "http://localhost:4000/".into(),
     ]);
-    p.set_recents(
-        (0..12)
-            .map(|n| format!("http://localhost:{}/", 7000 + n))
-            .collect(),
+    let mut history = PreviewHistory::default();
+    for n in 0..12 {
+        let url = format!("http://localhost:{}/", 7000 + n);
+        history.visit("env:p", &url, "", TIMED_SINCE + n);
+    }
+    // One already offered, by another anchor.
+    history.visit(
+        "env:p",
+        "http://localhost:4000/#top",
+        "Docs",
+        TIMED_SINCE + 20,
     );
+    p.set_history(Some(history));
+    p.set_project("env:p");
     let suggestions = p.suggestions();
-    assert_eq!(suggestions.len(), 2 + MAX_RECENTS);
+    assert_eq!(suggestions.len(), 2 + MAX_RECENTS - 1);
     assert_eq!(
         suggestions[0],
-        json!({"url": "http://localhost:5173/", "label": "vite", "kind": "server"})
+        json!({
+            "url": "http://localhost:5173/", "label": "vite", "kind": "server",
+            "title": "vite", "detail": "localhost:5173",
+        })
     );
     assert_eq!(suggestions[1]["kind"], "configured");
+    assert_eq!(suggestions[1]["title"], "localhost:4000");
     assert_eq!(suggestions[2]["kind"], "recent");
-    assert_eq!(
-        p.take_notes(),
-        [PreviewNote::Suggestions, PreviewNote::Suggestions]
-    );
+    assert_eq!(suggestions[2]["url"], "http://localhost:7011");
+    assert_eq!(suggestions[2]["visitedAt"], TIMED_SINCE + 11);
+    assert_eq!(p.take_notes(), vec![PreviewNote::Suggestions; 4]);
 }
 
 #[test]
@@ -280,26 +299,24 @@ fn navigating_remembers_the_page_and_opens_it() {
     let (mut p, list_call) = show();
     p.answer(list_call, Ok(list(vec![tab("tab-1")], 1, "epoch-1")));
     assert_eq!(p.empty_tab(), "tab-1");
-    p.set_recents(vec![
-        "http://localhost:3000/".into(),
-        "http://a.test/".into(),
-    ]);
+    p.set_history(Some(PreviewHistory::default()));
+    p.set_project("env:p");
     p.navigate("tab-1", "  localhost:3000 ");
     let then = held(&mut p, "preview.navigate");
     assert!(matches!(&then, Then::Navigate { url, .. } if url == "http://localhost:3000/"));
-    let snapshot = tab_at(
+    let mut snapshot = tab_at(
         "tab-1",
         json!({"_tag": "Success", "url": "http://localhost:3000/"}),
     );
+    snapshot["updatedAt"] = json!("2026-09-23T09:00:00.000Z");
     p.answer(then, Ok(snapshot));
     assert_eq!(p.empty_tab(), "");
+    let mut kept = PreviewHistory::default();
+    kept.visit("env:p", "http://localhost:3000/", "", 1_790_154_000_000);
     assert_eq!(
         p.take_effects(),
         [
-            Effect::Remember(vec![
-                "http://localhost:3000/".into(),
-                "http://a.test/".into()
-            ]),
+            Effect::KeepHistory(kept.to_json()),
             Effect::Open("http://localhost:3000/".into()),
         ]
     );
@@ -438,6 +455,40 @@ fn other_addresses_open_as_they_are() {
     p.set_connection(ENVIRONMENT, true);
     p.set_thread("env-b", "t2", "");
     opened(&mut p, "http://localhost:3000/");
+}
+
+// Embedded, a page on this machine opens in a tab of the panel; one the MC
+// opened after the panel stopped showing tabs asked to be shown anyway (the
+// property found it).
+#[test]
+fn a_page_opened_in_a_tab_shows_only_while_the_panel_shows_tabs() {
+    let (mut p, list_call) = show();
+    p.set_embedded(true);
+    p.answer(list_call, Ok(list(vec![], 1, "epoch-1")));
+    p.take_effects();
+    p.take_notes();
+    p.open_address("http://localhost:3000/");
+    let open = held(&mut p, "preview.open");
+    p.answer(
+        open,
+        Ok(tab_at("tab-1", json!({"url": "http://localhost:3000/"}))),
+    );
+    assert!(p.take_notes().contains(&PreviewNote::Show("tab-1".into())));
+    p.open_address("http://localhost:4000/");
+    let open = held(&mut p, "preview.open");
+    p.set_embedded(false);
+    p.take_notes();
+    p.answer(
+        open,
+        Ok(tab_at("tab-2", json!({"url": "http://localhost:4000/"}))),
+    );
+    let notes = p.take_notes();
+    assert!(
+        !notes
+            .iter()
+            .any(|note| matches!(note, PreviewNote::Show(_))),
+        "{notes:?}"
+    );
 }
 
 // A link opened for a thread on another MC gets a tab there first; when the
@@ -583,6 +634,13 @@ struct Sim {
     link_errors: usize,
     misrouted: Vec<String>,
     stray: Vec<String>,
+    /// The panel shows tabs itself (desktop's browser tabs), and an empty
+    /// tab or the overview offers the servers.
+    embedded: bool,
+    suggesting: bool,
+    following_servers: bool,
+    /// In-tab opens (embedded) the MC refused: each says why.
+    shows_failed: usize,
 }
 
 impl Sim {
@@ -608,6 +666,10 @@ impl Sim {
             link_errors: 0,
             misrouted: Vec::new(),
             stray: Vec::new(),
+            embedded: false,
+            suggesting: false,
+            following_servers: false,
+            shows_failed: 0,
         }
     }
 
@@ -630,6 +692,12 @@ impl Sim {
                         self.following = true;
                     }
                     Effect::Unfollow => self.following = false,
+                    Effect::FollowServers(mc) => {
+                        assert_eq!(mc, mc_of(&self.thread));
+                        assert!(!self.following_servers, "servers followed twice");
+                        self.following_servers = true;
+                    }
+                    Effect::UnfollowServers => self.following_servers = false,
                     Effect::Call {
                         method,
                         payload,
@@ -655,7 +723,7 @@ impl Sim {
                         }
                     }
                     Effect::Open(url) => self.browsed(&url),
-                    Effect::Remember(_) => {}
+                    _ => {}
                 }
             }
         }
@@ -796,6 +864,9 @@ impl Sim {
             let url = call.payload["url"].as_str().unwrap_or("").to_owned();
             Ok(self.new_tab(&thread, &url))
         };
+        if result.is_err() && matches!(call.then, Then::Show { .. }) {
+            self.shows_failed += 1;
+        }
         self.previews.answer(call.then, result);
         self.pump();
     }
@@ -814,6 +885,8 @@ enum Action {
     /// The connected MC is on this machine, or on another (as one reached
     /// over the network).
     SetHere(bool),
+    SetEmbedded(bool),
+    SetSuggesting(bool),
     /// The MC answers one held call (the `at`th, wrapping), or refuses it;
     /// a list read when asked, or only now.
     Answer(usize, bool, bool),
@@ -847,6 +920,8 @@ fn action() -> impl Strategy<Value = Action> {
         1 => Just(Action::UserNewTab),
         2 => prop::sample::select(LINKS).prop_map(Action::OpenLink),
         1 => any::<bool>().prop_map(Action::SetHere),
+        1 => any::<bool>().prop_map(Action::SetEmbedded),
+        1 => any::<bool>().prop_map(Action::SetSuggesting),
         2 => (0..4usize, prop::bool::weighted(0.8), any::<bool>())
             .prop_map(|(at, ok, fresh)| Action::Answer(at, ok, fresh)),
         1 => Just(Action::AnswerAll),
@@ -878,14 +953,32 @@ fn row_of_tab(tab: &Json) -> Vec<Value> {
         .collect()
 }
 
+fn id_of(value: &Value) -> String {
+    match value {
+        Value::String(id) => id.to_string(),
+        _ => String::new(),
+    }
+}
+
 fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
     let before = rows(&sim.previews);
     let before_redrawn = sim.mirror.redrawn.len();
     let before_resets = sim.mirror.resets;
     let mut counted = false;
+    let mut showed = Vec::new();
+    let mut tabbed = HashSet::new();
     let mut note = |sim: &mut Sim| {
         let notes = sim.previews.take_notes();
         counted |= notes.contains(&PreviewNote::Count);
+        for note in notes {
+            match note {
+                PreviewNote::Show(tab) => showed.push(tab),
+                PreviewNote::Tab(tab) => {
+                    tabbed.insert(tab);
+                }
+                _ => {}
+            }
+        }
     };
     match action {
         Action::SetThread(thread) => {
@@ -904,17 +997,30 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
             if !sim.thread.is_empty() {
                 let remote = environment_of(&sim.thread) != ENVIRONMENT;
                 let loopback = url::Url::parse(url).is_ok_and(|at| sim_loopback(&at));
-                sim.links.push(Link {
-                    thread: sim.thread.clone(),
-                    url: (*url).to_owned(),
-                    forwards: remote && loopback && sim.here,
-                });
+                let forwards = remote && loopback && sim.here;
+                // Embedded, a page on this machine opens in a tab of the
+                // panel rather than the system browser.
+                if !(sim.embedded && loopback && !forwards) {
+                    sim.links.push(Link {
+                        thread: sim.thread.clone(),
+                        url: (*url).to_owned(),
+                        forwards,
+                    });
+                }
                 sim.previews.open_address(url);
             }
         }
         Action::SetHere(here) => {
             sim.here = *here;
             sim.previews.set_connection(ENVIRONMENT, *here);
+        }
+        Action::SetEmbedded(embedded) => {
+            sim.embedded = *embedded;
+            sim.previews.set_embedded(*embedded);
+        }
+        Action::SetSuggesting(suggesting) => {
+            sim.suggesting = *suggesting;
+            sim.previews.set_suggesting(*suggesting);
         }
         Action::Answer(at, ok, fresh) => {
             if !sim.held.is_empty() {
@@ -989,6 +1095,9 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
             // Every call in flight fails as the socket closes, then the MC
             // is back on a new epoch and the subscriptions are sent again.
             for call in std::mem::take(&mut sim.held) {
+                if matches!(call.then, Then::Show { .. }) {
+                    sim.shows_failed += 1;
+                }
                 sim.previews.answer(call.then, Err("closed".into()));
                 note(sim);
             }
@@ -1046,9 +1155,41 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
     );
     // Once nothing is held, every link opened or said why not.
     if sim.held.is_empty() {
-        prop_assert_eq!(sim.links.len(), sim.link_errors);
+        prop_assert_eq!(sim.links.len() + sim.shows_failed, sim.link_errors);
         sim.links.clear();
         sim.link_errors = 0;
+        sim.shows_failed = 0;
+    }
+    // The servers are followed with the previews, and embedded only while
+    // something offers them.
+    prop_assert_eq!(
+        sim.following_servers,
+        sim.following && (!sim.embedded || sim.suggesting)
+    );
+    // A tab is shown only where the panel shows tabs, and only one the MC
+    // has for the thread shown, listed or not yet (its page fills in once
+    // it is).
+    prop_assert!(
+        showed.is_empty() || sim.embedded,
+        "shown unembedded {:?}",
+        showed
+    );
+    for tab in &showed {
+        prop_assert_eq!(sim.thread_of.get(tab), Some(&sim.thread), "{} shown", tab);
+    }
+    // Every row that came, went or changed says so to its page.
+    for row in now.iter().filter(|row| !before.contains(row)) {
+        prop_assert!(
+            tabbed.contains(&id_of(&row[0])),
+            "{:?} changed unsaid",
+            row[0]
+        );
+    }
+    for row in before
+        .iter()
+        .filter(|row| !now.iter().any(|kept| kept[0] == row[0]))
+    {
+        prop_assert!(tabbed.contains(&id_of(&row[0])), "{:?} went unsaid", row[0]);
     }
     if !sim.held.is_empty() || !sim.active || sim.thread.is_empty() {
         return Ok(());

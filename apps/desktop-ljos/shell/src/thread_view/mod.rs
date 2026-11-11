@@ -15,6 +15,7 @@ pub mod command_label;
 pub mod diff;
 pub mod file_render;
 pub mod file_tree;
+pub mod preview_history;
 pub mod previews;
 pub mod pull_request_links;
 pub mod pull_request_review;

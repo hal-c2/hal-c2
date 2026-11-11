@@ -12,7 +12,18 @@
 //! (its `localServers` shape, followed only while the list shows), the
 //! project's configured preview addresses and the pages this device opened
 //! last. `navigate(tabId, url)` is `preview.navigate`, and opens the page in
-//! the browser.
+//! the browser. Each page a tab of the thread loads joins the project's
+//! history on this device ([`PreviewHistory`]), which `forget(url)` takes a
+//! page off.
+//!
+//! Embedded (`set_embedded`, the desktop with its in-app browser): each tab
+//! is a page in the panel (BrowserPage) rather than the user's browser. The
+//! tabs are followed while a thread shows at all; the MC's machine's servers
+//! only while `suggesting`. `navigate` points the tab at the page without
+//! opening it elsewhere, and a dev server's address (`openAddress`) opens in
+//! a tab of its own, or the one already showing it (`showRequested`). A page
+//! reports how it loads ([`Previews::report`], `preview.reportStatus`) and the
+//! size it is shown at ([`Previews::resize_tab`]).
 //!
 //! A page opens with `openAddress(url)`: a dev server's loopback address on
 //! a thread of another cluster MC opens through the port the connected MC
@@ -36,13 +47,14 @@ use ljos::prelude::{Atom, Cx, Engine, ObjectId, QmlObject, Value, qml_impl};
 use ljos::prelude::{EngineError, RowKey};
 use serde_json::json;
 
+use super::preview_history::{self, PreviewHistory, TIMED_SINCE};
 use super::rows::{ListRows, RowChange, RowSource, int};
 use crate::json::Json;
 use crate::mc::{Mc, McError, SubId};
 
 pub const ROLES: &[&str] = &["tabId", "url", "title", "status", "problem"];
 
-/// The pages this device opened last that a new tab offers.
+/// The pages of the project a new tab offers, its newest visits.
 pub const MAX_RECENTS: usize = 10;
 
 /// The thread a page opens for, as it was when the user asked: another may
@@ -84,19 +96,35 @@ pub enum Then {
         url: String,
         port: u16,
     },
+    /// Embedded: a tab opened for an address, to show.
+    Show {
+        generation: u64,
+        to: For,
+    },
     /// The row the tab was at, to bring it back.
     Close {
         row: usize,
         tab: String,
+    },
+    /// A page's report: its answer is [`Effect::Heard`] with `id`.
+    Report {
+        id: u64,
+    },
+    /// A tab's resize: its answer is [`Effect::Resized`] with `id`.
+    Resize {
+        id: u64,
     },
 }
 
 /// What the previews ask of their owner, in order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
-    /// Follow this MC's `localServers` and `preview` shapes.
+    /// Follow this MC's `preview` shape.
     Follow(String),
     Unfollow,
+    /// Follow this MC's `localServers` shape: the servers a new tab offers.
+    FollowServers(String),
+    UnfollowServers,
     /// An RPC where the thread's environment is served; its answer goes to
     /// [`Previews::answer`] with `then`.
     Call {
@@ -112,17 +140,48 @@ pub enum Effect {
     },
     /// A page for the user's browser.
     Open(String),
-    /// The pages this device opened last, newest first, to keep.
-    Remember(Vec<String>),
+    /// The pages this device's tabs visited ([`PreviewHistory::to_json`]),
+    /// to keep.
+    KeepHistory(Json),
+    /// How the MC took report `id` ([`Previews::report`]).
+    Heard {
+        id: u64,
+        unheard: Unheard,
+    },
+    /// The MC answered resize `id` ([`Previews::resize_tab`]), with why it
+    /// refused.
+    Resized {
+        id: u64,
+        error: Option<String>,
+    },
 }
 
 /// What changed besides the rows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PreviewNote {
     Count,
     /// status or message.
     Status,
     Suggestions,
+    /// The tab's snapshot changed, came or went (`tabChanged`).
+    Tab(String),
+    /// A list was read (`listed`).
+    Listed,
+    /// Embedded: the panel shows this tab (`showRequested`).
+    Show(String),
+}
+
+/// How the MC took a page's report ([`Previews::report`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unheard {
+    /// The MC refused it: the page goes back to its tab.
+    Refused,
+    /// It never left: the connection was down.
+    Unsent,
+    /// It may have reached the MC, or not: a connection that went with it
+    /// written, a member out of reach, a timeout.
+    Dropped,
+    Heard,
 }
 
 fn text<'a>(object: &'a Json, key: &str) -> &'a str {
@@ -141,6 +200,22 @@ fn tab_of(snapshot: &Json) -> &str {
 /// QJsonValue::toInteger(-1).
 fn revision_of(event: &Json) -> i64 {
     event.get("revision").and_then(Json::as_i64).unwrap_or(-1)
+}
+
+/// When the MC last changed the tab (`updatedAt`), ms since the epoch; 0
+/// when it does not say.
+fn stamp_of(snapshot: &Json) -> i64 {
+    crate::sidebar_model::parse_iso(snapshot.get("updatedAt").and_then(Json::as_str)).unwrap_or(0)
+}
+
+/// The page the tab has loaded, or "".
+fn loaded_url(snapshot: &Json) -> &str {
+    let nav = nav_of(snapshot);
+    if text(nav, "_tag") == "Success" {
+        text(nav, "url")
+    } else {
+        ""
+    }
 }
 
 /// What a row of `snapshot` shows as `role`.
@@ -227,6 +302,12 @@ pub fn web_address(address: &str) -> Option<String> {
     (matches!(url.scheme(), "http" | "https") && url.host().is_some()).then(|| url.to_string())
 }
 
+/// Whether embedded `open_address` shows `url` in a tab here: a dev
+/// server's (loopback) web address.
+pub fn opens_here(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| loopback(&url))
+}
+
 /// A dev server's address on the machine it names: one only that machine
 /// reaches.
 fn loopback(url: &url::Url) -> bool {
@@ -295,9 +376,24 @@ pub struct Previews {
     early: Vec<Json>,
     /// The MC's machine's web servers: {url, processName}.
     servers: Vec<Json>,
+    following_servers: bool,
     configured: Vec<String>,
-    /// As the owner last read them.
-    recents: Vec<String>,
+    /// The device's history as the owner last read it; none without a store.
+    history: Option<PreviewHistory>,
+    /// The project the thread is in, whose pages the history keeps.
+    project: String,
+    /// The newest `updatedAt` the MC has sent: when a page taken off the
+    /// list was taken off, on the MC's clock.
+    newest_stamp: i64,
+    /// The wall clock, as the owner last read it: when a page with no
+    /// `updatedAt` loaded.
+    now: i64,
+    embedded: bool,
+    suggesting: bool,
+    /// The kind of event that last changed each tab; none when a list did.
+    last_event: HashMap<String, String>,
+    /// A report went unanswered: the next event lists the tabs again.
+    unreached: bool,
     /// The environment the shell is connected to, and whether its MC runs
     /// on this machine, as the owner last read them.
     connected: String,
@@ -325,8 +421,16 @@ impl Default for Previews {
             listing: false,
             early: Vec::new(),
             servers: Vec::new(),
+            following_servers: false,
             configured: Vec::new(),
-            recents: Vec::new(),
+            history: None,
+            project: String::new(),
+            newest_stamp: 0,
+            now: 0,
+            embedded: false,
+            suggesting: false,
+            last_event: HashMap::new(),
+            unreached: false,
             connected: String::new(),
             connected_here: true,
             status: "idle",
@@ -350,6 +454,11 @@ impl Previews {
             return;
         }
         let moved = environment != self.environment || thread != self.thread;
+        // Another MC's clock: a removal falls back to the kept page's time
+        // until this one's stamps arrive.
+        if environment != self.environment || mc != self.mc {
+            self.newest_stamp = 0;
+        }
         environment.clone_into(&mut self.environment);
         thread.clone_into(&mut self.thread);
         if mc != self.mc {
@@ -365,12 +474,17 @@ impl Previews {
             self.closing.clear();
             self.listing = false;
             self.early.clear();
+            // Not ready before the rows go: what follows the tabs keeps them
+            // until the new thread's are listed.
+            self.set_status("idle", "");
             if !self.rows.is_empty() {
-                self.rows.clear();
+                let gone = std::mem::take(&mut self.rows);
                 self.changes.push(RowChange::Reset(Vec::new()));
                 self.notes.push(PreviewNote::Count);
+                for row in &gone {
+                    self.notes.push(PreviewNote::Tab(tab_of(row).to_owned()));
+                }
             }
-            self.set_status("idle", "");
         }
         if self.active {
             self.follow();
@@ -406,7 +520,43 @@ impl Previews {
         }
     }
 
+    /// Pages open in the app's own browser (the module doc).
+    pub fn set_embedded(&mut self, embedded: bool) {
+        if embedded != self.embedded {
+            self.embedded = embedded;
+            self.follow_servers_if_wanted();
+        }
+    }
+
+    pub fn embedded(&self) -> bool {
+        self.embedded
+    }
+
+    /// Embedded, the MC's machine's servers are followed only while an empty
+    /// tab or the overview offers them.
+    pub fn set_suggesting(&mut self, suggesting: bool) {
+        if suggesting != self.suggesting {
+            self.suggesting = suggesting;
+            self.follow_servers_if_wanted();
+        }
+    }
+
+    fn wants_servers(&self) -> bool {
+        self.active && (!self.embedded || self.suggesting)
+    }
+
+    fn follow_servers_if_wanted(&mut self) {
+        if self.wants_servers() {
+            self.follow_servers();
+        } else {
+            self.unfollow_servers();
+        }
+    }
+
     fn follow(&mut self) {
+        if self.wants_servers() {
+            self.follow_servers();
+        }
         if self.following || self.mc.is_empty() {
             return;
         }
@@ -415,8 +565,23 @@ impl Previews {
     }
 
     fn unfollow(&mut self) {
+        self.unfollow_servers();
         if std::mem::replace(&mut self.following, false) {
             self.effects.push(Effect::Unfollow);
+        }
+    }
+
+    fn follow_servers(&mut self) {
+        if self.following_servers || self.mc.is_empty() {
+            return;
+        }
+        self.following_servers = true;
+        self.effects.push(Effect::FollowServers(self.mc.clone()));
+    }
+
+    fn unfollow_servers(&mut self) {
+        if std::mem::replace(&mut self.following_servers, false) {
+            self.effects.push(Effect::UnfollowServers);
         }
     }
 
@@ -439,9 +604,93 @@ impl Previews {
         self.connected_here = here;
     }
 
-    /// The pages this device opened last, newest first, as kept.
-    pub fn set_recents(&mut self, recents: Vec<String>) {
-        self.recents = recents;
+    /// The device's history as kept, or none where nothing keeps it.
+    pub fn set_history(&mut self, history: Option<PreviewHistory>) {
+        if history != self.history {
+            self.history = history;
+            self.notes.push(PreviewNote::Suggestions);
+        }
+    }
+
+    /// The project the thread is in, whose history the suggestions show and
+    /// visits join.
+    pub fn set_project(&mut self, project: &str) {
+        if project != self.project {
+            project.clone_into(&mut self.project);
+            self.notes.push(PreviewNote::Suggestions);
+        }
+    }
+
+    /// The wall clock, ms since the epoch.
+    pub fn set_now(&mut self, now: i64) {
+        self.now = now;
+    }
+
+    /// When the tab's page loaded: its `updatedAt`, else now.
+    fn loaded_at(&self, snapshot: &Json) -> i64 {
+        match stamp_of(snapshot) {
+            at if at > 0 => at,
+            _ => self.now,
+        }
+    }
+
+    /// Changes the history and, if that changed it, keeps it.
+    fn keep(&mut self, change: impl FnOnce(&mut PreviewHistory, &str) -> bool) {
+        if self.project.is_empty() {
+            return;
+        }
+        let Some(history) = self.history.as_mut() else {
+            return;
+        };
+        if !change(history, &self.project) {
+            return;
+        }
+        self.effects.push(Effect::KeepHistory(history.to_json()));
+        self.notes.push(PreviewNote::Suggestions);
+    }
+
+    /// The pages `snapshots` show join the history: as visits when they
+    /// loaded just now, else as pages seen again.
+    fn remember(&mut self, snapshots: &[Json], loaded: bool) {
+        for snapshot in snapshots {
+            self.newest_stamp = self.newest_stamp.max(stamp_of(snapshot));
+        }
+        let pages: Vec<(String, String, i64)> = snapshots
+            .iter()
+            .filter(|snapshot| text(nav_of(snapshot), "_tag") == "Success")
+            .map(|snapshot| {
+                let nav = nav_of(snapshot);
+                let at = self.loaded_at(snapshot);
+                (
+                    text(nav, "url").to_owned(),
+                    text(nav, "title").to_owned(),
+                    at,
+                )
+            })
+            .collect();
+        if pages.is_empty() {
+            return;
+        }
+        self.keep(|history, project| {
+            let mut changed = false;
+            for (url, title, at) in &pages {
+                changed |= if loaded {
+                    history.visit(project, url, title, *at)
+                } else {
+                    history.seen(project, url, title, *at)
+                };
+            }
+            changed
+        });
+    }
+
+    /// Takes the page off the project's recent pages.
+    pub fn forget(&mut self, url: &str) {
+        // Timed on the MC's clock, as visits are: a later load brings the
+        // page back whatever this device's clock says, and nothing the MC
+        // said so far does.
+        let at = self.newest_stamp;
+        self.keep(|history, project| history.remove(project, url, at));
     }
 
     /// A `localServers` frame's servers.
@@ -453,24 +702,52 @@ impl Previews {
         self.notes.push(PreviewNote::Suggestions);
     }
 
-    /// What an empty tab offers: `{url, label, kind}`, kind "server",
-    /// "configured" or "recent"; each address once.
+    /// What an empty tab offers: `{url, label, kind, title, detail}`, kind
+    /// "server", "configured" or "recent", a recent page also with
+    /// `visitedAt` (ms since the epoch); each page once, whatever its anchor.
     pub fn suggestions(&self) -> Vec<Json> {
         let mut list = Vec::new();
         let mut seen = HashSet::new();
-        let mut add = |url: &str, label: &str, kind: &str| {
-            if !url.is_empty() && seen.insert(url.to_owned()) {
-                list.push(json!({"url": url, "label": label, "kind": kind}));
+        let mut add = |url: &str, label: &str, kind: &str, title: &str, visited: Option<i64>| {
+            let tidy = preview_history::tidy(url);
+            // A page is one suggestion whatever its anchor: the first one's.
+            let key = match tidy.split_once('#') {
+                _ if tidy.is_empty() => url.to_owned(),
+                Some((page, _)) => page.to_owned(),
+                None => tidy.clone(),
+            };
+            if url.is_empty() || !seen.insert(key) {
+                return;
             }
+            let shown = preview_history::shown(if tidy.is_empty() { url } else { &tidy });
+            let title = if title.is_empty() { &shown } else { title };
+            let mut row = json!({
+                "url": url, "label": label, "kind": kind, "title": title, "detail": shown,
+            });
+            if let Some(at) = visited {
+                row["visitedAt"] = json!(at);
+            }
+            list.push(row);
         };
         for server in &self.servers {
-            add(text(server, "url"), text(server, "processName"), "server");
+            let process = text(server, "processName");
+            let title = if process.is_empty() {
+                "Listening"
+            } else {
+                process
+            };
+            add(text(server, "url"), process, "server", title, None);
         }
         for url in &self.configured {
-            add(url, "", "configured");
+            add(url, "", "configured", "", None);
         }
-        for url in self.recents.iter().take(MAX_RECENTS) {
-            add(url, "", "recent");
+        if !self.project.is_empty()
+            && let Some(history) = &self.history
+        {
+            for page in history.pages(&self.project).iter().take(MAX_RECENTS) {
+                let visited = (page.at >= TIMED_SINCE).then_some(page.at);
+                add(&page.url, "", "recent", &page.title, visited);
+            }
         }
         list
     }
@@ -584,6 +861,16 @@ impl Previews {
     /// machine, another MC's.
     pub fn open_address(&mut self, address: &str) {
         let to = self.shown_for();
+        // Embedded, a dev server on the thread's machine opens in a tab here:
+        // the one showing it, else a new one. Another MC's machine's goes
+        // through its forward to the user's browser, as below.
+        if self.embedded
+            && opens_here(address)
+            && !self.thread.is_empty()
+            && !self.forwards(address, &to)
+        {
+            return self.show_address(address);
+        }
         if !self.forwards(address, &to) {
             self.effects.push(Effect::Open(address.to_owned()));
             return;
@@ -600,6 +887,81 @@ impl Previews {
             to,
         };
         self.call("preview.list", payload, then);
+    }
+
+    /// Embedded: shows the tab at `address`, else opens one for it.
+    fn show_address(&mut self, address: &str) {
+        // Rows being listed again (after a reconnect, say), or that a list
+        // failed to read again, may be tabs the MC no longer has.
+        let listed = self.status == "ready" && !self.listing;
+        let same = |url: &str| {
+            let tidy = |url: &str| {
+                url::Url::parse(url).map(|u| u.to_string().trim_end_matches('/').to_owned())
+            };
+            tidy(url).is_ok_and(|url| Ok(url) == tidy(address))
+        };
+        if listed && let Some(row) = self.rows.iter().find(|row| same(text(nav_of(row), "url"))) {
+            let tab = tab_of(row).to_owned();
+            return self.notes.push(PreviewNote::Show(tab));
+        }
+        let url = url::Url::parse(address).map_or_else(|_| address.to_owned(), |u| u.to_string());
+        let payload = json!({"threadId": self.thread, "url": url});
+        let then = Then::Show {
+            generation: self.generation,
+            to: self.shown_for(),
+        };
+        self.call("preview.open", payload, then);
+    }
+
+    /// Embedded: shows the tab in the panel (`showRequested`).
+    pub fn show(&mut self, tab: &str) {
+        if self.row_of(tab).is_some() {
+            self.notes.push(PreviewNote::Show(tab.to_owned()));
+        }
+    }
+
+    /// The tab as the MC last said, or null when there is none.
+    pub fn tab(&self, tab: &str) -> Json {
+        self.row_of(tab)
+            .map_or(Json::Null, |row| self.rows[row].clone())
+    }
+
+    /// The kind of MC event ("navigated", "resized", ...) that last changed
+    /// the tab, "" when a list did: what a page reads to tell a report's
+    /// echo from news that is not about its address.
+    pub fn last_event(&self, tab: &str) -> &str {
+        self.last_event.get(tab).map_or("", String::as_str)
+    }
+
+    /// What the page showing the tab did: `preview.reportStatus`, `nav` a
+    /// PreviewNavStatus. Its answer is [`Effect::Heard`] with `id`; false
+    /// (and none comes) when no call was made.
+    pub fn report(&mut self, tab: &str, nav: Json, back: bool, forward: bool, id: u64) -> bool {
+        if self.row_of(tab).is_none() || self.thread.is_empty() || self.closing.contains_key(tab) {
+            return false;
+        }
+        // The MC's event says it back.
+        let payload = json!({
+            "threadId": self.thread, "tabId": tab, "navStatus": nav,
+            "canGoBack": back, "canGoForward": forward,
+        });
+        self.call("preview.reportStatus", payload, Then::Report { id });
+        true
+    }
+
+    /// The size the tab's page is shown at: `preview.resize`, `viewport` a
+    /// PreviewViewportSetting. Its answer is [`Effect::Resized`] with `id`;
+    /// the tab changes with the MC's event.
+    pub fn resize_tab(&mut self, tab: &str, viewport: Json, id: u64) {
+        if self.row_of(tab).is_none() || self.thread.is_empty() {
+            let error = Some("no such tab".to_owned());
+            return self.effects.push(Effect::Resized { id, error });
+        }
+        // The tab's new size comes in the MC's `resized` event, in order
+        // with the rest; the answer's snapshot may be older than an event
+        // read before it.
+        let payload = json!({"threadId": self.thread, "tabId": tab, "viewport": viewport});
+        self.call("preview.resize", payload, Then::Resize { id });
     }
 
     /// Whether one of `tabs` names `address`'s port.
@@ -698,11 +1060,53 @@ impl Previews {
                 match result {
                     Err(error) => self.notify("Could not open a browser tab", error),
                     // Its `opened` event may be behind the answer.
-                    Ok(snapshot) if snapshot.is_object() && self.status == "ready" => {
-                        self.upsert(snapshot);
+                    Ok(snapshot) if snapshot.is_object() => {
+                        let tab = tab_of(&snapshot).to_owned();
+                        if self.status == "ready" {
+                            self.upsert(snapshot);
+                        }
+                        if self.embedded {
+                            self.notes.push(PreviewNote::Show(tab));
+                        }
                     }
                     Ok(_) => {}
                 }
+            }
+            Then::Show { generation, to } => {
+                let snapshot = match result {
+                    Err(error) => return self.notify("Could not open the page", error),
+                    Ok(snapshot) => snapshot,
+                };
+                // Shown while its thread is, though the list was read again
+                // meanwhile.
+                if to.environment != self.environment
+                    || to.thread != self.thread
+                    || !snapshot.is_object()
+                {
+                    return;
+                }
+                let tab = tab_of(&snapshot).to_owned();
+                if generation == self.generation && self.status == "ready" {
+                    self.upsert(snapshot);
+                }
+                // The panel stopped showing tabs while it was opened.
+                if self.embedded {
+                    self.notes.push(PreviewNote::Show(tab));
+                }
+            }
+            Then::Report { id } => {
+                let unheard = match result {
+                    Ok(_) => Unheard::Heard,
+                    Err(error) => self.unheard(&error),
+                };
+                self.effects.push(Effect::Heard { id, unheard });
+            }
+            Then::Resize { id } => {
+                let error = result.err();
+                if let Some(error) = &error {
+                    self.notify("Unable to resize browser viewport", error.clone());
+                }
+                self.effects.push(Effect::Resized { id, error });
             }
             Then::Navigate {
                 generation,
@@ -714,17 +1118,20 @@ impl Previews {
                     Ok(snapshot) => snapshot,
                 };
                 if generation == self.generation && snapshot.is_object() && self.status == "ready" {
-                    self.upsert(snapshot);
+                    self.upsert(snapshot.clone());
                 }
-                let mut recents = std::mem::take(&mut self.recents);
-                recents.retain(|r| *r != url);
-                recents.insert(0, url.clone());
-                recents.truncate(MAX_RECENTS);
-                self.recents = recents.clone();
-                self.effects.push(Effect::Remember(recents));
-                self.notes.push(PreviewNote::Suggestions);
-                // The thread it was asked for, though another may show by now.
-                self.open_for(&url, &to);
+                // Remembered as the user went there, though the page never
+                // loads here (opened in the user's browser).
+                if to.environment == self.environment && to.thread == self.thread {
+                    self.newest_stamp = self.newest_stamp.max(stamp_of(&snapshot));
+                    let at = self.loaded_at(&snapshot);
+                    self.keep(|history, project| history.visit(project, &url, "", at));
+                }
+                // The thread it was asked for, though another may show by
+                // now; embedded, the tab's own page loads it.
+                if !self.embedded {
+                    self.open_for(&url, &to);
+                }
             }
             Then::ListFor { url, to } => match result {
                 Err(error) => self.notify("Could not open the page", error),
@@ -787,10 +1194,31 @@ impl Previews {
                         keys: vec![key_of(&tab)],
                     });
                     self.notes.push(PreviewNote::Count);
+                    self.notes.push(PreviewNote::Tab(tab));
                 }
                 self.notify("Could not close the browser tab", error);
             }
         }
+    }
+
+    /// Why the MC did not take a report. Only "not connected" (no socket)
+    /// proves it never had it. A connection that went with it written, a
+    /// cluster member that could not be reached and a timeout can all come
+    /// after the MC took it: the next word from the environment lists the
+    /// tabs again.
+    fn unheard(&mut self, error: &str) -> Unheard {
+        if error == "not connected" {
+            return Unheard::Unsent;
+        }
+        if error == "disconnected"
+            || error.ends_with(" is not connected.")
+            || error.starts_with("MC unavailable:")
+            || error == "preview.reportStatus timed out"
+        {
+            self.unreached = true;
+            return Unheard::Dropped;
+        }
+        Unheard::Refused
     }
 
     fn listed(&mut self, generation: u64, result: Result<Json, String>) {
@@ -827,6 +1255,7 @@ impl Previews {
             .collect();
         text(&list, "serverEpoch").clone_into(&mut self.epoch);
         self.revision = revision_of(&list);
+        self.last_event.clear();
         // What changed while the list was on its way, if the list is older:
         // a tab already gone does not come back.
         let mut restarted = false;
@@ -873,12 +1302,23 @@ impl Previews {
             self.changes.push(RowChange::Reset(
                 rows.iter().map(|r| key_of(tab_of(r))).collect(),
             ));
+            let mut touched: Vec<String> = Vec::new();
+            for row in self.rows.iter().chain(&rows) {
+                let tab = tab_of(row);
+                if !touched.iter().any(|t| t == tab) {
+                    touched.push(tab.to_owned());
+                }
+            }
             self.rows = rows;
             if counted {
                 self.notes.push(PreviewNote::Count);
             }
+            self.notes.extend(touched.into_iter().map(PreviewNote::Tab));
         }
         self.set_status("ready", "");
+        let rows = self.rows.clone();
+        self.remember(&rows, false);
+        self.notes.push(PreviewNote::Listed);
         if restarted {
             self.reload();
         }
@@ -888,6 +1328,11 @@ impl Previews {
     pub fn on_event(&mut self, event: &Json) {
         if text(event, "threadId") != self.thread {
             return;
+        }
+        // Heard from an environment that was out of reach: what was missed
+        // is listed.
+        if std::mem::take(&mut self.unreached) {
+            self.reload();
         }
         if self.listing {
             self.early.push(event.clone());
@@ -907,11 +1352,28 @@ impl Previews {
         if self.follow_closing(event) {
             return;
         }
-        let tab = tab_of(event);
-        let current = self.row_of(tab).map(|row| &self.rows[row]);
-        match after(event, current) {
-            Some(next) => self.upsert(next),
-            None => self.remove(tab),
+        let tab = tab_of(event).to_owned();
+        let row = self.row_of(&tab);
+        let current = row.map(|row| &self.rows[row]);
+        let next = after(event, current);
+        let opened = next.is_some() && row.is_none() && text(event, "type") == "opened";
+        match next {
+            Some(next) => {
+                let loaded = current.is_none_or(|before| loaded_url(before) != loaded_url(&next));
+                self.last_event
+                    .insert(tab.clone(), text(event, "type").to_owned());
+                self.upsert(next.clone());
+                self.remember(&[next], loaded);
+            }
+            None => {
+                self.last_event.remove(&tab);
+                self.remove(&tab);
+            }
+        }
+        // A tab someone opened just now (an agent, another window), not one
+        // listed.
+        if self.embedded && opened {
+            self.notes.push(PreviewNote::Show(tab));
         }
     }
 
@@ -959,6 +1421,7 @@ impl Previews {
                     roles: &[],
                 });
             }
+            self.notes.push(PreviewNote::Tab(tab));
             return;
         }
         self.rows.push(snapshot);
@@ -967,6 +1430,7 @@ impl Previews {
             keys: vec![key_of(&tab)],
         });
         self.notes.push(PreviewNote::Count);
+        self.notes.push(PreviewNote::Tab(tab));
     }
 
     fn remove(&mut self, tab: &str) {
@@ -979,6 +1443,7 @@ impl Previews {
             count: 1,
         });
         self.notes.push(PreviewNote::Count);
+        self.notes.push(PreviewNote::Tab(tab.to_owned()));
     }
 
     pub fn take_effects(&mut self) -> Vec<Effect> {
@@ -1021,29 +1486,42 @@ impl RowSource for Previews {
 pub type Notify = Rc<dyn Fn(&Engine, &str, &str, &str)>;
 /// A page for the user's browser.
 pub type Open = Rc<dyn Fn(&Engine, &str)>;
-/// The pages this device opened last, newest first: read, and written.
-pub type ReadRecents = Rc<dyn Fn(&Engine) -> Vec<String>>;
-pub type WriteRecents = Rc<dyn Fn(&Engine, &[String])>;
+/// The device's history as it keeps it ([`PreviewHistory::to_json`]): read,
+/// and written.
+pub type ReadHistory = Rc<dyn Fn(&Engine) -> Option<Json>>;
+pub type WriteHistory = Rc<dyn Fn(&Engine, &Json)>;
 /// Whether the MC the shell is connected to runs on this machine.
 pub type Here = Rc<dyn Fn(&Engine) -> bool>;
+/// How the MC took a page's report.
+pub type OnHeard = Box<dyn FnOnce(&Engine, Unheard)>;
+/// The MC's answer to a resize: why it refused.
+pub type OnResized = Box<dyn FnOnce(&Engine, Option<String>)>;
 
 struct Inner {
     rows: Rc<ListRows<Previews>>,
     mc: Rc<dyn Mc>,
     notify: Notify,
     open: Open,
-    recents: RefCell<Option<(ReadRecents, WriteRecents)>>,
+    history: RefCell<Option<(ReadHistory, WriteHistory)>>,
+    /// What the store last held, as read or written: it is parsed again
+    /// only when that changes.
+    kept: RefCell<Option<Json>>,
     /// Without one every MC counts as here.
     here: RefCell<Option<Here>>,
-    /// localServers, then preview.
-    subscriptions: RefCell<Option<(SubId, SubId)>>,
+    servers: RefCell<Option<SubId>>,
+    events: RefCell<Option<SubId>>,
+    next_call: std::cell::Cell<u64>,
+    heard: RefCell<HashMap<u64, OnHeard>>,
+    resized: RefCell<HashMap<u64, OnResized>>,
 }
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        if let Some((servers, events)) = self.subscriptions.get_mut().take() {
-            self.mc.unsubscribe(servers);
-            self.mc.unsubscribe(events);
+        for sub in [self.servers.get_mut().take(), self.events.get_mut().take()]
+            .into_iter()
+            .flatten()
+        {
+            self.mc.unsubscribe(sub);
         }
     }
 }
@@ -1056,7 +1534,8 @@ impl std::fmt::Debug for Inner {
     }
 }
 
-/// A thread's browser tabs: the Previews tab.
+/// A thread's browser tabs: the Previews tab, and embedded, the browser
+/// tabs' pages.
 #[derive(Debug, QmlObject)]
 #[qml(module = "HalC2.Shell", name = "ThreadPreviews", uncreatable)]
 pub struct ThreadPreviews {
@@ -1067,7 +1546,7 @@ pub struct ThreadPreviews {
     status: Atom,
     #[qml(readonly, notify)]
     message: Atom,
-    /// What an empty tab offers: [{url, label, kind}].
+    /// What an empty tab offers: [{url, label, kind, title, detail}].
     #[qml(readonly, notify)]
     suggestions: Value,
     /// The first tab with no page yet, or "".
@@ -1099,9 +1578,14 @@ impl ThreadPreviews {
             mc: mc.clone(),
             notify: Rc::new(notify),
             open: Rc::new(open),
-            recents: RefCell::new(None),
+            history: RefCell::new(None),
+            kept: RefCell::new(None),
             here: RefCell::new(None),
-            subscriptions: RefCell::new(None),
+            servers: RefCell::new(None),
+            events: RefCell::new(None),
+            next_call: std::cell::Cell::new(0),
+            heard: RefCell::new(HashMap::new()),
+            resized: RefCell::new(HashMap::new()),
         });
         let previews = ThreadPreviews {
             count: 0,
@@ -1120,17 +1604,18 @@ impl ThreadPreviews {
         Ok(obj)
     }
 
-    /// Where the pages this device opened last are kept: the right panel
-    /// passes the device's previewRecentPages.
-    pub fn set_recents(
+    /// Where the pages this device's tabs visited are kept: the right panel
+    /// passes the device's previewHistory.
+    pub fn set_history(
         engine: &Engine,
         obj: ObjectId,
-        read: impl Fn(&Engine) -> Vec<String> + 'static,
-        write: impl Fn(&Engine, &[String]) + 'static,
+        read: impl Fn(&Engine) -> Option<Json> + 'static,
+        write: impl Fn(&Engine, &Json) + 'static,
     ) {
         if let Some(inner) = inner_of(engine, obj) {
-            *inner.recents.borrow_mut() = Some((Rc::new(read), Rc::new(write)));
-            ThreadPreviews::update(engine, obj, |p| p.notes.push(PreviewNote::Suggestions));
+            *inner.history.borrow_mut() = Some((Rc::new(read), Rc::new(write)));
+            *inner.kept.borrow_mut() = None;
+            ThreadPreviews::update(engine, obj, |_| ());
         }
     }
 
@@ -1146,6 +1631,46 @@ impl ThreadPreviews {
         }
     }
 
+    /// [`Previews::report`]; `unheard` runs with how the MC took it. False
+    /// (and it never runs) when no call was made.
+    pub fn report(
+        engine: &Engine,
+        obj: ObjectId,
+        tab: &str,
+        nav: Json,
+        back: bool,
+        forward: bool,
+        unheard: impl FnOnce(&Engine, Unheard) + 'static,
+    ) -> bool {
+        let Some(inner) = inner_of(engine, obj) else {
+            return false;
+        };
+        let id = call_id(&inner);
+        inner.heard.borrow_mut().insert(id, Box::new(unheard));
+        let made = ThreadPreviews::update(engine, obj, |p| p.report(tab, nav, back, forward, id));
+        if made != Some(true) {
+            inner.heard.borrow_mut().remove(&id);
+        }
+        made == Some(true)
+    }
+
+    /// [`Previews::resize_tab`]; `done` runs once the MC answers, with why
+    /// it refused.
+    pub fn resize_tab(
+        engine: &Engine,
+        obj: ObjectId,
+        tab: &str,
+        viewport: Json,
+        done: impl FnOnce(&Engine, Option<String>) + 'static,
+    ) {
+        let Some(inner) = inner_of(engine, obj) else {
+            return done(engine, Some("no such tab".to_owned()));
+        };
+        let id = call_id(&inner);
+        inner.resized.borrow_mut().insert(id, Box::new(done));
+        ThreadPreviews::update(engine, obj, |p| p.resize_tab(tab, viewport, id));
+    }
+
     /// Runs `f` on the previews of `obj`, then tells the views and the
     /// properties what it changed and asks the MC what it said to. None when
     /// `obj` is not live.
@@ -1155,18 +1680,31 @@ impl ThreadPreviews {
         f: impl FnOnce(&mut Previews) -> R,
     ) -> Option<R> {
         let inner = inner_of(engine, obj)?;
-        let recents = inner
-            .recents
+        let read = inner
+            .history
             .borrow()
             .as_ref()
             .map(|(read, _)| read.clone());
-        let recents = recents.map(|read| read(engine)).unwrap_or_default();
+        // Another window may have kept a visit since.
+        let history = read.map(|read| read(engine).unwrap_or(Json::Null));
+        let parsed = match &history {
+            Some(json) if inner.kept.borrow().as_ref() != Some(json) => {
+                *inner.kept.borrow_mut() = Some(json.clone());
+                Some(Some(PreviewHistory::from_json(Some(json))))
+            }
+            Some(_) => None,
+            None => Some(None),
+        };
         let connected = inner.mc.environment();
         let here = inner.here.borrow().clone();
         let here = here.is_none_or(|here| here(engine));
+        let now = crate::controllers::sidebar::now_ms(engine);
         let (result, notes, effects) = inner.rows.update(engine, |p| {
-            p.set_recents(recents);
+            if let Some(history) = parsed {
+                p.set_history(history);
+            }
             p.set_connection(&connected, here);
+            p.set_now(now);
             let result = f(p);
             (result, p.take_notes(), p.take_effects())
         });
@@ -1181,6 +1719,12 @@ impl ThreadPreviews {
     pub fn read<R>(engine: &Engine, obj: ObjectId, f: impl FnOnce(&Previews) -> R) -> Option<R> {
         Some(inner_of(engine, obj)?.rows.read(f))
     }
+}
+
+fn call_id(inner: &Inner) -> u64 {
+    let id = inner.next_call.get() + 1;
+    inner.next_call.set(id);
+    id
 }
 
 fn warn(engine: &Engine, result: Result<(), EngineError>) {
@@ -1218,18 +1762,29 @@ fn tell(engine: &Engine, obj: ObjectId, inner: &Inner, notes: &[PreviewNote]) {
             PreviewNote::Status => engine
                 .set_internal(obj, ThreadPreviews::STATUS, status.clone())
                 .and_then(|()| engine.set_internal(obj, ThreadPreviews::MESSAGE, message.clone())),
-            PreviewNote::Suggestions => Ok(()),
+            _ => Ok(()),
         });
     }
     warn(engine, result);
     if notes.contains(&PreviewNote::Suggestions) {
         tell_suggestions(engine, obj, &inner.rows);
     }
+    // The signals last: what they tell of is in place.
+    let cx = Cx::new(engine, obj);
+    for note in notes {
+        let emitted = match note {
+            PreviewNote::Tab(tab) => ThreadPreviews::emit_tab_changed(&cx, Atom::new(tab)),
+            PreviewNote::Listed => ThreadPreviews::emit_listed(&cx),
+            PreviewNote::Show(tab) => ThreadPreviews::emit_show_requested(&cx, Atom::new(tab)),
+            _ => Ok(()),
+        };
+        warn(engine, emitted);
+    }
 }
 
 fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
     match effect {
-        Effect::Follow(mc) => {
+        Effect::FollowServers(mc) => {
             // The servers on the MC's machine, not this one's: the MC scans
             // while someone watches.
             let servers = inner.mc.subscribe(
@@ -1248,6 +1803,15 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
                 }),
                 None,
             );
+            *inner.servers.borrow_mut() = Some(servers);
+        }
+        Effect::UnfollowServers => {
+            let servers = inner.servers.borrow_mut().take();
+            if let Some(servers) = servers {
+                inner.mc.unsubscribe(servers);
+            }
+        }
+        Effect::Follow(mc) => {
             let events = inner.mc.subscribe(
                 json!({"type": "preview", "mc": mc}),
                 Box::new(move |engine, frame| {
@@ -1256,12 +1820,11 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
                 }),
                 None,
             );
-            *inner.subscriptions.borrow_mut() = Some((servers, events));
+            *inner.events.borrow_mut() = Some(events);
         }
         Effect::Unfollow => {
-            let subscriptions = inner.subscriptions.borrow_mut().take();
-            if let Some((servers, events)) = subscriptions {
-                inner.mc.unsubscribe(servers);
+            let events = inner.events.borrow_mut().take();
+            if let Some(events) = events {
                 inner.mc.unsubscribe(events);
             }
         }
@@ -1283,10 +1846,23 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
             (inner.notify)(engine, "error", title, &description);
         }
         Effect::Open(url) => (inner.open)(engine, &url),
-        Effect::Remember(urls) => {
-            let write = inner.recents.borrow().as_ref().map(|(_, w)| w.clone());
+        Effect::KeepHistory(history) => {
+            let write = inner.history.borrow().as_ref().map(|(_, w)| w.clone());
             if let Some(write) = write {
-                write(engine, &urls);
+                write(engine, &history);
+                *inner.kept.borrow_mut() = Some(history);
+            }
+        }
+        Effect::Heard { id, unheard } => {
+            let heard = inner.heard.borrow_mut().remove(&id);
+            if let Some(heard) = heard {
+                heard(engine, unheard);
+            }
+        }
+        Effect::Resized { id, error } => {
+            let resized = inner.resized.borrow_mut().remove(&id);
+            if let Some(resized) = resized {
+                resized(engine, error);
             }
         }
     }
@@ -1294,6 +1870,21 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
 
 #[qml_impl]
 impl ThreadPreviews {
+    /// The MC said something new of the tab, or it went.
+    #[qml(signal)]
+    fn tab_changed(tab_id: Atom);
+
+    /// The MC listed the thread's tabs (on showing, a reload, a reconnect);
+    /// the rows that changed said so first.
+    #[qml(signal)]
+    fn listed();
+
+    /// Embedded: the tab is to be shown: the user asked (show, newTab,
+    /// openAddress), or someone opened it just now (an agent, another
+    /// window).
+    #[qml(signal)]
+    fn show_requested(tab_id: Atom);
+
     #[qml(invokable)]
     fn reload(cx: &Cx) {
         ThreadPreviews::update(cx.engine, cx.this, Previews::reload);
@@ -1303,6 +1894,12 @@ impl ThreadPreviews {
     #[qml(invokable)]
     fn open(cx: &Cx, tab_id: Atom) {
         ThreadPreviews::update(cx.engine, cx.this, |p| p.open(&tab_id));
+    }
+
+    /// Takes the page off the project's recent pages.
+    #[qml(invokable)]
+    fn forget(cx: &Cx, url: Atom) {
+        ThreadPreviews::update(cx.engine, cx.this, |p| p.forget(&url));
     }
 
     #[qml(invokable)]
@@ -1328,6 +1925,12 @@ impl ThreadPreviews {
     #[qml(invokable)]
     fn open_address(cx: &Cx, url: Atom) {
         ThreadPreviews::update(cx.engine, cx.this, |p| p.open_address(&url));
+    }
+
+    /// Embedded: shows the tab in the panel (`showRequested`).
+    #[qml(invokable)]
+    fn show(cx: &Cx, tab_id: Atom) {
+        ThreadPreviews::update(cx.engine, cx.this, |p| p.show(&tab_id));
     }
 }
 

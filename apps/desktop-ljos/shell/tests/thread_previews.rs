@@ -11,6 +11,7 @@ use std::rc::Rc;
 use common::{call, number, text};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Disconnected, Mc, McError, OnFrame, OnReady, Reply, Resume, SubId};
+use hal_c2_shell::thread_view::preview_history::{PreviewHistory, TIMED_SINCE};
 use hal_c2_shell::thread_view::previews::ThreadPreviews;
 use ljos::prelude::{Engine, ObjectId, Value};
 use serde_json::json;
@@ -167,7 +168,7 @@ struct Fixture {
     previews: ObjectId,
     mc: Rc<HoldingMc>,
     seen: Rc<RefCell<Seen>>,
-    recents: Rc<RefCell<Vec<String>>>,
+    history: Rc<RefCell<Option<Json>>>,
 }
 
 fn fixture() -> Fixture {
@@ -194,13 +195,15 @@ fn fixture() -> Fixture {
         move |_, url| opened.borrow_mut().opened.push(url.to_owned()),
     )
     .expect("the previews are made");
-    let recents = Rc::new(RefCell::new(vec!["http://a.test/".to_owned()]));
-    let (read_from, write_to) = (recents.clone(), recents.clone());
-    ThreadPreviews::set_recents(
+    let mut kept = PreviewHistory::default();
+    kept.visit("env-1:p1", "http://a.test/", "", 2 * TIMED_SINCE);
+    let history = Rc::new(RefCell::new(Some(kept.to_json())));
+    let (read_from, write_to) = (history.clone(), history.clone());
+    ThreadPreviews::set_history(
         &engine,
         previews,
         move |_| read_from.borrow().clone(),
-        move |_, urls| *write_to.borrow_mut() = urls.to_vec(),
+        move |_, kept| *write_to.borrow_mut() = Some(kept.clone()),
     );
     engine
         .write_by_name(root, "previews", Value::Object(previews))
@@ -211,7 +214,7 @@ fn fixture() -> Fixture {
         previews,
         mc,
         seen,
-        recents,
+        history,
     }
 }
 
@@ -231,6 +234,7 @@ impl Fixture {
     /// The thread's tab shown, listing `sessions`.
     fn show(&self, sessions: Vec<Json>) {
         ThreadPreviews::update(&self.engine, self.previews, |p| {
+            p.set_project("env-1:p1");
             p.set_thread("env-1", "t1", "mc-1");
             p.set_active(true);
         });
@@ -260,7 +264,8 @@ impl Fixture {
 #[test]
 fn the_tabs_list_and_follow_the_mc() {
     let f = fixture();
-    assert_eq!(f.suggested(), "recent:http://a.test/");
+    // The history is the project's: none before a thread shows.
+    assert_eq!(f.suggested(), "");
     f.show(vec![
         tab("tab-1", json!({"_tag": "Idle"})),
         tab(
@@ -280,7 +285,8 @@ fn the_tabs_list_and_follow_the_mc() {
     );
     assert_eq!(
         f.suggested(),
-        "server:http://localhost:5173/,recent:http://a.test/"
+        // The listed tab's page joined the history, offered once.
+        "server:http://localhost:5173/,recent:http://a.test"
     );
 
     // An agent's page loads; another tab closes on the MC.
@@ -336,13 +342,16 @@ fn navigating_opens_the_page_and_remembers_it() {
     assert_eq!(asked["url"], "http://localhost:3000/");
     assert_eq!(f.labels(), "tab-1 App loaded");
     assert_eq!(f.seen.borrow().opened, ["http://localhost:3000/"]);
-    assert_eq!(
-        *f.recents.borrow(),
-        ["http://localhost:3000/", "http://a.test/"]
-    );
+    let kept = PreviewHistory::from_json(f.history.borrow().as_ref());
+    let pages: Vec<String> = kept
+        .pages("env-1:p1")
+        .into_iter()
+        .map(|page| page.url)
+        .collect();
+    assert_eq!(pages, ["http://localhost:3000", "http://a.test"]);
     assert_eq!(
         f.suggested(),
-        "recent:http://localhost:3000/,recent:http://a.test/"
+        "recent:http://localhost:3000,recent:http://a.test"
     );
 }
 
