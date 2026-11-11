@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+default-run = "hal-c2-ljos"
 
 [[bin]]
 name = "hal-c2-ljos"
@@ -38,8 +39,10 @@ mcp = ["ljos/mcp"]
 # stream decoder (src/device/decoder.rs). collation: names sort by the
 # locale's alphabet (sidebar_model::locale_compare, `localeCompare`). woff:
 # the terminal's bundled symbol font (TerminalSplits' FontLoader) is WOFF2.
-# webengine: the browser tabs, below.
-ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d", "woff", "webengine"] }
+# webengine (the browser tabs, below) waits on what BrowserPanel handles that
+# Ljós's WebEngineView lacks (hal-c2/ljos-ui#354, #355, #356): with it,
+# QtWebEngine's types are checked and the panel no longer compiles.
+ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d", "woff"] }
 # QtQuick3D for the device tab's 3D body (DeviceBody3D), registered by
 # device::register.
 ljos_quick3d.workspace = true

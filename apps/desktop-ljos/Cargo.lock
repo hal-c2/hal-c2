@@ -3554,7 +3554,6 @@ dependencies = [
  "ljos_runtime",
  "ljos_shell",
  "ljos_text",
- "ljos_webengine",
  "qml_front",
  "thiserror 2.0.21",
 ]
@@ -4115,7 +4114,6 @@ dependencies = [
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
- "ljos_webengine",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-core-graphics",
