@@ -226,14 +226,76 @@ Feature: Permission modes
     When the user opens the permission mode choices
     Then auto is not offered
 
-  # A provider that can change a running turn's access takes it at once instead; Muse
-  # Code does (providers/muse.feature).
+  # Codex takes the mode with each turn. A provider that can change a running turn's
+  # access takes it at once instead: Claude does (below), as does Muse Code
+  # (providers/muse.feature).
   @tui
   Scenario: Changing the mode mid-thread applies from the next turn
     Given a supervised thread with a running turn
     When the user switches the thread to full access
     Then the running turn keeps supervised
     And the next turn runs in full access
+
+  # Claude Code changes a running session's permission mode (`set_permission_mode`), so a
+  # turn waiting on an approval does not keep asking until it ends.
+  Scenario: Switching a running Claude turn to full access stops it asking
+    Given a Claude thread waiting on a command approval
+    When the user switches the thread to full access
+    Then Claude's running session switches to the "bypassPermissions" permission mode
+    And Claude's waiting command is approved without the user
+
+  # Claude still asks some approvals while it bypasses permissions: its ask rules, its
+  # hooks, the safety checks it never bypasses, and an organisation's ask ceiling. Full
+  # access leaves those to the user.
+  Scenario Outline: Switching a running Claude turn to full access leaves an approval Claude asks in every mode waiting
+    Given a supervised Claude turn asks to run a command because of <cause>
+    When the user switches the thread to full access
+    Then Claude's running session switches to the "bypassPermissions" permission mode
+    And Claude's approval still waits on the user
+
+    Examples:
+      | cause                                        |
+      | an ask rule in the user's Claude permissions |
+      | a hook in the user's Claude settings         |
+      | a safety check Claude never bypasses         |
+      | the organisation's ask ceiling for the tool  |
+      | an ask rule Claude reports by another reason |
+      | a tool that needs the user                   |
+      | a sandbox override under the read block      |
+      | a compound command under the read block      |
+
+  # Every other approval was Claude's mode asking, which Full access answers.
+  Scenario Outline: Switching a running Claude turn to full access approves what only its mode asked
+    Given a supervised Claude turn asks to run a command because of <cause>
+    When the user switches the thread to full access
+    Then Claude's asked command is approved without the user
+
+    Examples:
+      | cause                                  |
+      | a compound command                     |
+      | a path outside the working directories |
+      | a shell operator Claude asks about     |
+
+  # Claude can ask just before it reads the switch; that ask was for its old mode.
+  Scenario: A command Claude asks to run as it takes a switch to full access is approved
+    Given a supervised Claude thread with a running turn
+    When Claude asks to run a command just before it takes a switch to full access
+    Then Claude's asked command is approved without the user
+
+  # Settings that turn bypassing off limit a switch as they limit a turn started in Full
+  # access (providers/claude.feature): Claude runs as they allow, and nothing is approved.
+  Scenario: Switching a running Claude turn to full access its settings forbid keeps it asking
+    Given the project's or the managed Claude settings restrict bypassing permissions
+    And a Claude thread waiting on a command approval
+    When the user switches the thread to full access
+    Then Claude's running session switches to the "auto" permission mode
+    And Claude's approval still waits on the user
+    And the thread says Claude's settings limited Full access
+
+  Scenario: Switching a running Claude turn to supervised makes it ask again
+    Given a full access Claude thread with a running turn
+    When the user switches the thread to supervised
+    Then Claude's running session switches to the "default" permission mode
 
   @tui
   Scenario: Switching back to a stricter mode applies from the next turn
