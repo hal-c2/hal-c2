@@ -312,3 +312,241 @@ defmodule HalC2.AcpModelSwitchPropTest do
     :ok = HalC2.Streams.subscribe(@tid, self(), nil)
   end
 end
+
+defmodule HalC2.AcpOpencodeVariantPropTest do
+  @moduledoc """
+  OpenCode's reasoning variants belong to a model. A turn that picks a variant runs on
+  it, and a turn that picks none runs on its model's own: the variant OpenCode reported
+  when the session first landed on that model. That holds whichever models earlier
+  turns switched between and came back to, whatever they picked, and whether OpenCode
+  keeps a model's last variant across switches or not. The turn is never sent a
+  variant its model does not offer, and an options report in the middle of a turn
+  never changes what the session opened on.
+  """
+
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2.{Orchestration, StreamState}
+
+  @moduletag timeout: :infinity
+  @tid "opencode-variant-thread"
+  @fake Path.expand("../../test/support/fake_acp_scripted.py", __DIR__)
+  # Each model's variants and its own one, the variant OpenCode lands on. A session
+  # opens on the first.
+  @variants %{
+    "oc/a" => {~w(high max), "max"},
+    "oc/b" => {~w(low medium high), "medium"},
+    "oc/c" => {~w(minimal low), "low"}
+  }
+  @models Map.keys(@variants)
+  @opens "oc/a"
+
+  property "a turn runs on the variant it picks, else on its model's own",
+    numtests: HalC2.Prop.numtests(20),
+    max_size: 14 do
+    forall keep <- boolean() do
+      forall cmds <- commands(__MODULE__) do
+        trap_exit do
+          start_case(keep)
+
+          try do
+            {history, state, result} = run_commands(__MODULE__, cmds)
+
+            if result != :ok,
+              do: IO.puts(HalC2.Prop.report(cmds, history, state, result))
+
+            result == :ok
+          after
+            HalC2.Prop.stop_services()
+            HalC2.Acp.forget("opencode")
+            Application.delete_env(:hal_c2, :acp_commands)
+          end
+          |> aggregate(command_names(cmds))
+        end
+      end
+    end
+  end
+
+  # `session`: the model the session is on, nil when there is none (the next turn
+  # opens one, on `@opens`).
+  def initial_state, do: %{sends: 0, session: nil}
+
+  def command(state) do
+    frequency([
+      {6, turn(state.sends)},
+      {1, {:call, __MODULE__, :reset, []}}
+    ])
+  end
+
+  # A turn on any model (so turns switch away and come back), picking one of its
+  # variants or none, with or without OpenCode reporting its options mid-turn.
+  defp turn(n) do
+    let model <- oneof(@models) do
+      {variants, _own} = @variants[model]
+      {:call, __MODULE__, :turn, [n, model, oneof([nil | variants]), boolean()]}
+    end
+  end
+
+  def precondition(state, {:call, _, :turn, [n, model, pick, _]}),
+    do: n == state.sends and (pick == nil or pick in elem(@variants[model], 0))
+
+  def precondition(_state, _call), do: true
+
+  def next_state(state, _result, {:call, _, :turn, [_, model, _, _]}),
+    do: %{state | sends: state.sends + 1, session: model}
+
+  def next_state(state, _result, {:call, _, :reset, []}), do: %{state | session: nil}
+
+  def postcondition(state, {:call, _, :turn, [_, model, pick, _]}, {result, sets}) do
+    {_variants, own} = @variants[model]
+
+    result == {"completed", "model: #{model} at #{pick || own}"} and
+      offered?(sets, state.session || @opens)
+  end
+
+  def postcondition(_state, {:call, _, :reset, []}, result), do: result == :ok
+
+  # Every variant set is one the model the session is on at that point offers.
+  defp offered?([], _model), do: true
+  defp offered?([{"model", model} | rest], _model), do: offered?(rest, model)
+
+  defp offered?([{"effort", value} | rest], model),
+    do: value in elem(@variants[model], 0) and offered?(rest, model)
+
+  defp offered?([_ | rest], model), do: offered?(rest, model)
+
+  def reset do
+    {:ok, _} = HalC2.Acp.ThreadRuntime.rollback(@tid, %{})
+    :ok
+  end
+
+  # The turn's outcome and what OpenCode was asked to set for it, in order.
+  def turn(n, model, pick, report) do
+    id = "m#{n}"
+    seen = length(log())
+    options = if pick, do: [%{"id" => "variant", "value" => pick}], else: []
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => @tid,
+        "messageId" => id,
+        "text" => if(report, do: "report, then which variant", else: "which variant"),
+        "modelSelection" => %{"instanceId" => "opencode", "model" => model, "options" => options}
+      })
+
+    result = await_turn(id)
+
+    sets =
+      for %{"recv" => %{"method" => "session/set_config_option", "params" => p}} <-
+            Enum.drop(log(), seen),
+          do: {p["configId"], p["value"]}
+
+    {result, sets}
+  end
+
+  defp log do
+    case File.read(Path.join(Process.get(:fake_dir), "log.jsonl")) do
+      {:ok, body} -> for line <- String.split(body, "\n", trim: true), do: JSON.decode!(line)
+      {:error, :enoent} -> []
+    end
+  end
+
+  defp await_turn(id) do
+    state = HalC2.Streams.Server.state(HalC2.Streams.ensure(@tid))
+    run = state |> StreamState.list("run") |> Enum.find(&(&1["userMessageId"] == id))
+
+    if run && run["status"] in ~w(completed failed) do
+      text =
+        state
+        |> StreamState.list("message")
+        |> Enum.filter(&(&1["role"] == "assistant" and &1["runId"] == run["id"]))
+        |> Enum.map_join(&(&1["text"] || ""))
+
+      {run["status"], text}
+    else
+      receive do
+        {:hal_c2_stream, @tid, _} -> await_turn(id)
+      after
+        10_000 -> raise "OpenCode turn did not finish"
+      end
+    end
+  end
+
+  defp effort({variants, own}),
+    do: %{
+      "id" => "effort",
+      "name" => "Effort",
+      "type" => "select",
+      "currentValue" => own,
+      "options" => Enum.map(variants, &%{"value" => &1, "name" => &1})
+    }
+
+  # `keep`: OpenCode keeps a model's last variant across switches, so back on a model
+  # it reports that one rather than the model's own.
+  defp start_case(keep) do
+    home = HalC2.Prop.scratch_home("acp-opencode-variant")
+    dir = Path.join(home, "fake")
+    work = Path.join(home, "work")
+    File.mkdir_p!(dir)
+    File.mkdir_p!(work)
+    Process.put(:fake_dir, dir)
+    {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
+
+    model = %{
+      "id" => "model",
+      "name" => "Model",
+      "type" => "select",
+      "currentValue" => @opens,
+      "options" => Enum.map(@models, &%{"value" => &1, "name" => &1})
+    }
+
+    echo = %{"echoOptions" => true}
+
+    File.write!(
+      Path.join(dir, "config.json"),
+      JSON.encode!(%{
+        "version" => "1.14.19",
+        "configOptions" => [model, effort(@variants[@opens])],
+        "modelOptions" => Map.new(@variants, fn {m, v} -> {m, [effort(v)]} end),
+        "rejectUnknownValues" => true,
+        "keepModelOptions" => keep,
+        "turns" => [
+          %{"match" => "report", "steps" => [%{"reportOptions" => true}, echo]},
+          %{"match" => "which", "steps" => [echo]}
+        ]
+      })
+    )
+
+    Application.put_env(:hal_c2, :acp_commands, %{
+      "opencode" => ["env", "FAKE_DIR=#{dir}", "python3", "-u", @fake]
+    })
+
+    HalC2.Prop.start_services([
+      HalC2.Settings,
+      {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
+      HalC2.Streams,
+      HalC2.Shell,
+      {Registry, keys: :unique, name: HalC2.Acp.Registry},
+      {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one}
+    ])
+
+    HalC2.Acp.forget("opencode")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.create",
+        "threadId" => @tid,
+        "projectId" => "project-1",
+        "title" => "Variants",
+        "modelSelection" => %{"instanceId" => "opencode", "model" => @opens},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "worktreePath" => work
+      })
+
+    :ok = HalC2.Streams.subscribe(@tid, self(), nil)
+  end
+end
