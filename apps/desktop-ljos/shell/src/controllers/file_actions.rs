@@ -3,7 +3,8 @@
 //! it in the Files tab (`files.open {path}`), show it in the file manager
 //! (`files.reveal {path}`), open it in an editor (`files.openInEditor {path,
 //! editorId}`), copy its mention (`files.copyMention {path}`) or add it to
-//! the chat (`files.addToChat {path}`). Paths are relative to the checkout,
+//! the chat (`files.addToChat {path}`), or edit it as a page in its project's
+//! section (`files.editAsPage {path}`, Space's open_file). Paths are relative to the checkout,
 //! or full paths of files the agent left outside it. Editors and file
 //! managers start on this machine (`workspace::open_in_editor`).
 //!
@@ -25,6 +26,7 @@ use crate::controller::{self, Controller, Init};
 use crate::controllers::composer;
 use crate::controllers::panel::RightPanel;
 use crate::controllers::settings::Settings;
+use crate::controllers::space::Space;
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::workspace;
 use crate::json::Json;
@@ -299,6 +301,18 @@ impl Controller for FileActions {
                 }
             }
             COPY_CONTENTS => copy_contents(engine),
+            "files.editAsPage" => {
+                let (environment, project) = controller::with::<RightPanel, _>(engine, |p, _| {
+                    (p.environment_id().to_owned(), p.project_id().to_owned())
+                })
+                .unwrap_or_default();
+                let path = path.to_owned();
+                Bridge::of(engine).defer(engine, move |e| {
+                    controller::with::<Space, _>(e, |s, e| {
+                        s.open_file(e, &environment, &project, &path)
+                    });
+                });
+            }
             "files.addToChat" => {
                 if !composer::insert_at_end(engine, &path_link(path)) {
                     error(
