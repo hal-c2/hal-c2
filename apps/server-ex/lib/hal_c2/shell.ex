@@ -701,8 +701,8 @@ defmodule HalC2.Shell do
   # A project row with the defaults a new thread there gets, without reading the
   # provider list here: it probes provider CLIs. Until the list is read (`providers`
   # nil), a project with no configured default keeps the selection its row already
-  # has, from the last run where the shell restarted, or none: a null selection means
-  # no provider can run, not that it is not known yet.
+  # has, from the last run where the shell restarted, while its provider is on, or
+  # none: a null selection means no provider can run, not that it is not known yet.
   defp with_defaults(id, {"project", row}, providers) do
     defaults = HalC2.Orchestration.NewThread.defaults(row, providers)
     row = Map.put(row, "newThreadRuntimeMode", defaults["runtimeMode"])
@@ -720,10 +720,19 @@ defmodule HalC2.Shell do
 
   defp with_defaults(_id, kind_row, _providers), do: kind_row
 
+  # Kept only while its provider is still on for the project: settings can have turned
+  # it off since, while this MC was down or before the provider list was read.
   defp kept_selection(id) do
     case :ets.lookup(@table, {node(), id}) do
-      [{_, {"project", %{"newThreadModelSelection" => selection}}}] -> {:ok, selection}
-      _ -> :error
+      [{_, {"project", %{"newThreadModelSelection" => %{"instanceId" => instance} = selection}}}]
+      when is_binary(instance) ->
+        if HalC2.Settings.provider_on?(id, instance), do: {:ok, selection}, else: :error
+
+      [{_, {"project", %{"newThreadModelSelection" => nil}}}] ->
+        {:ok, nil}
+
+      _ ->
+        :error
     end
   end
 

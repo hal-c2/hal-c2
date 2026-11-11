@@ -47,10 +47,11 @@ defmodule HalC2.Orchestration.NewThread do
 
   @doc """
   A thread's creation `input` with what it runs on filled in where it names nothing,
-  each field alone: what its project's row in the shell says a new thread there gets
-  (`HalC2.Shell`), as a client drafting it showed, else the defaults of its project
-  (`defaults/1`). What it does name is kept as it is. The provider list, which probes
-  provider CLIs, is read only for a model the row does not have yet.
+  each field alone. What it does name is kept as it is. Both come from the settings as
+  they are now, so a create right after a settings change gets the new default
+  (`defaults/2`). A model that settings do not name is the first one that can run,
+  which the project's row in the shell already has (`HalC2.Shell`) while its provider
+  is on: the provider list probes provider CLIs and is read only when the row has none.
   """
   @spec complete(map) :: map
   def complete(input) do
@@ -58,14 +59,13 @@ defmodule HalC2.Orchestration.NewThread do
       input
     else
       row = project(input["projectId"])
+      configured = defaults(row, nil)
 
       input
       |> fill("modelSelection", fn ->
-        from_row(row, "newThreadModelSelection", fn -> defaults(row)["modelSelection"] end)
+        configured["modelSelection"] || first_ready_from_row(row)
       end)
-      |> fill("runtimeMode", fn ->
-        from_row(row, "newThreadRuntimeMode", fn -> defaults(row, nil)["runtimeMode"] end)
-      end)
+      |> fill("runtimeMode", fn -> configured["runtimeMode"] end)
     end
   end
 
@@ -73,15 +73,22 @@ defmodule HalC2.Orchestration.NewThread do
     if input[key] == nil, do: Map.put(input, key, default.()), else: input
   end
 
-  # A null selection on the row is known: no provider can run.
-  defp from_row(%{} = row, key, otherwise) do
-    case Map.fetch(row, key) do
-      {:ok, value} -> value
-      :error -> otherwise.()
+  # A null selection on the row is known: no provider can run. One whose provider has
+  # been turned off since the row was made is not used.
+  defp first_ready_from_row(row) do
+    case row do
+      %{"newThreadModelSelection" => nil} ->
+        nil
+
+      %{"newThreadModelSelection" => selection} = row ->
+        if on?(selection, HalC2.Settings.settings(), row["id"]),
+          do: selection,
+          else: defaults(row)["modelSelection"]
+
+      row ->
+        defaults(row)["modelSelection"]
     end
   end
-
-  defp from_row(nil, _key, otherwise), do: otherwise.()
 
   defp on?(%{"instanceId" => instance}, settings, project_id) when is_binary(instance),
     do: HalC2.Settings.provider_on?(settings, project_id, instance)
