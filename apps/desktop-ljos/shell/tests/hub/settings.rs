@@ -1112,30 +1112,102 @@ proptest! {
 //
 // The state machine of desktop-qt's tst_DevicePreferencesProp: two desktops
 // share preferences.json, each saves, hears the other's saves only once its
-// watcher is delivered, and quits and starts again. The file holds every
-// preference as it was last saved, by either, and a desktop that has heard
-// of a save, or started after it, shows it. A save of the value a desktop
-// already shows changes nothing, even if the other saved another since.
+// watcher is delivered, and quits and starts again; and the file is broken
+// by hand and repaired. The file holds every preference as it was last
+// saved, by either, down to one entry of an object (one provider's models
+// beside another's), and a desktop that has heard of a save, or started
+// after it, shows it. A save of the value a desktop already shows changes
+// nothing, even if the other saved another since. While the file does not
+// read, a desktop that has found that out refuses saves and keeps what it
+// showed, until it hears the file read again, or hears it deleted: then the
+// next save writes what that desktop shows, with its change.
 
 #[derive(Clone, Debug)]
 enum SharedOp {
     Save(usize, usize, usize),
+    SaveEntry(usize, usize, usize),
     Hear,
     Restart(usize),
+    Break,
+    Repair,
+    Delete,
 }
 
 fn shared_op() -> impl Strategy<Value = SharedOp> {
     prop_oneof![
-        3 => (0..2usize, 0..3usize, 0..3usize)
+        2 => (0..2usize, 0..3usize, 0..3usize)
             .prop_map(|(d, k, v)| SharedOp::Save(d, k, v)),
+        2 => (0..2usize, 0..2usize, 0..3usize)
+            .prop_map(|(d, k, v)| SharedOp::SaveEntry(d, k, v)),
         1 => Just(SharedOp::Hear),
         1 => (0..2usize).prop_map(SharedOp::Restart),
+        1 => Just(SharedOp::Break),
+        1 => Just(SharedOp::Repair),
+        1 => Just(SharedOp::Delete),
     ]
 }
 
 const SHARED_KEYS: [&str; 3] = ["appearance", "timestampFormat", "fontSizeInterface"];
 /// Index 0 removes the preference.
 const SHARED_VALUES: [&str; 3] = ["", "one", "two"];
+/// A preference whose value is an object each save changes one entry of, as
+/// providerModelPreferences is. No desktop holds it until one saves an entry.
+const SHARED_OBJECT: &str = "providerModelPreferences";
+const SHARED_ENTRIES: [&str; 2] = ["codex", "claude"];
+const SHARED_BROKEN: &str = "{ not json";
+
+/// The model: preferences.json as last saved, what each desktop holds,
+/// whether the file is broken by hand or was deleted since it was last
+/// written, and which desktop has found out the file does not read.
+#[derive(Default)]
+struct SharedModel {
+    file: Map,
+    view: [Map; 2],
+    broken: bool,
+    gone: bool,
+    unreadable: [bool; 2],
+}
+
+impl SharedModel {
+    /// One save: `next` is the desktop's view with its change, `change`
+    /// that change alone. Whether the model expects it saved.
+    fn save(&mut self, desktop: usize, next: &Map, change: impl FnOnce(&mut Map)) -> bool {
+        if hal_c2_shell::controllers::settings::same_map(&self.view[desktop], next) {
+            return true;
+        }
+        if self.broken {
+            self.unreadable[desktop] = true;
+        }
+        if self.unreadable[desktop] {
+            return false;
+        }
+        if self.gone {
+            self.file = next.clone();
+        } else {
+            change(&mut self.file);
+        }
+        self.gone = false;
+        self.view[desktop] = self.file.clone();
+        true
+    }
+}
+
+/// `object` with one entry set, or removed for an empty value.
+fn with_entry(mut object: Map, entry: &str, value: &str) -> Map {
+    if value.is_empty() {
+        object.remove(entry);
+    } else {
+        object.insert(entry.into(), json!(value));
+    }
+    object
+}
+
+fn entries_of(map: &Map) -> Map {
+    match map.get(SHARED_OBJECT) {
+        Some(Json::Object(entries)) => entries.clone(),
+        _ => Map::new(),
+    }
+}
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
@@ -1160,9 +1232,26 @@ proptest! {
         for (hub, sender) in hubs.iter().zip(&senders) {
             arm(hub, sender);
         }
-        // The model: the file, and what each desktop holds.
-        let mut file = Map::new();
-        let mut view = [Map::new(), Map::new()];
+        let mut model = SharedModel::default();
+        // After a save: as the model says, the file, the saver's view of
+        // it, and whether it refuses.
+        macro_rules! check {
+            ($desktop:expr, $saved:expr, $expected:expr) => {{
+                let (desktop, saved, expected) = ($desktop, $saved, $expected);
+                prop_assert_eq!(saved, expected);
+                if model.broken {
+                    prop_assert_eq!(
+                        std::fs::read_to_string(dir.join("preferences.json")).unwrap(),
+                        SHARED_BROKEN
+                    );
+                } else {
+                    prop_assert_eq!(on_disk(&dir), model.file.clone());
+                }
+                let settings = Settings::of(&hubs[desktop].engine);
+                prop_assert_eq!(settings.device(), model.view[desktop].clone());
+                prop_assert_eq!(settings.device_unreadable(), model.unreadable[desktop]);
+            }};
+        }
         for op in ops {
             match op {
                 SharedOp::Save(desktop, key, value) => {
@@ -1175,48 +1264,117 @@ proptest! {
                     } else {
                         json!(value)
                     };
-                    prop_assert!(settings.write_device(&hub.engine, key, written));
-                    let mut next = view[desktop].clone();
-                    if value.is_empty() {
-                        next.remove(key);
-                    } else {
-                        next.insert(key.into(), json!(value));
-                    }
-                    if !hal_c2_shell::controllers::settings::same_map(&next, &view[desktop]) {
-                        if value.is_empty() {
-                            file.remove(key);
-                        } else {
-                            file.insert(key.into(), json!(value));
-                        }
-                        view[desktop] = file.clone();
-                    }
-                    prop_assert_eq!(on_disk(&dir), file.clone());
-                    prop_assert_eq!(settings.device(), view[desktop].clone());
+                    let saved = settings.write_device(&hub.engine, key, written);
+                    let next = with_entry(model.view[desktop].clone(), key, value);
+                    let expected = model.save(desktop, &next, |file| {
+                        *file = with_entry(file.clone(), key, value);
+                    });
+                    check!(desktop, saved, expected);
+                }
+                SharedOp::SaveEntry(desktop, entry, value) => {
+                    let entry = SHARED_ENTRIES[entry];
+                    let value = SHARED_VALUES[value];
+                    let hub = &hubs[desktop];
+                    let settings = Settings::of(&hub.engine);
+                    // One entry of the object, built from what the desktop
+                    // holds, as the callers of write_device do.
+                    let entries =
+                        with_entry(entries_of(&model.view[desktop]), entry, value);
+                    let saved = settings.write_device(
+                        &hub.engine,
+                        SHARED_OBJECT,
+                        Json::Object(entries.clone()),
+                    );
+                    let mut next = model.view[desktop].clone();
+                    next.insert(SHARED_OBJECT.into(), Json::Object(entries.clone()));
+                    // Only the entry this desktop changed: one it never
+                    // held, removed, is left as the other saved it. A file
+                    // without the object takes this desktop's whole, as
+                    // the MC's carry_over does.
+                    let wanted = (!value.is_empty()).then(|| json!(value));
+                    let changed = entries_of(&model.view[desktop]).get(entry) != wanted.as_ref();
+                    let expected = model.save(desktop, &next, |file| {
+                        let entries = match file.get(SHARED_OBJECT) {
+                            Some(Json::Object(held)) => {
+                                if changed {
+                                    with_entry(held.clone(), entry, value)
+                                } else {
+                                    held.clone()
+                                }
+                            }
+                            _ => entries,
+                        };
+                        file.insert(SHARED_OBJECT.into(), Json::Object(entries));
+                    });
+                    check!(desktop, saved, expected);
                 }
                 SharedOp::Hear => {
-                    view = [file.clone(), file.clone()];
+                    if model.broken {
+                        model.unreadable = [true, true];
+                    } else if model.gone {
+                        model.unreadable = [false, false];
+                    } else {
+                        model.view = [model.file.clone(), model.file.clone()];
+                        model.unreadable = [false, false];
+                    }
                     for (desktop, hub) in hubs.iter().enumerate() {
+                        let view = model.view[desktop].clone();
+                        let unreadable = model.unreadable[desktop];
                         delivered(hub, &receivers[desktop], |hub| {
+                            let settings = Settings::of(&hub.engine);
                             hal_c2_shell::controllers::settings::same_map(
-                                &Settings::of(&hub.engine).device(),
-                                &on_disk(&dir),
-                            )
+                                &settings.device(),
+                                &view,
+                            ) && settings.device_unreadable() == unreadable
                         });
+                        let settings = Settings::of(&hub.engine);
+                        prop_assert_eq!(settings.device(), model.view[desktop].clone());
                         prop_assert_eq!(
-                            Settings::of(&hub.engine).device(),
-                            view[desktop].clone()
+                            settings.device_unreadable(),
+                            model.unreadable[desktop]
                         );
                     }
-                    prop_assert_eq!(on_disk(&dir), file.clone());
+                    if !model.broken {
+                        prop_assert_eq!(on_disk(&dir), model.file.clone());
+                    }
                 }
                 SharedOp::Restart(desktop) => {
-                    view[desktop] = file.clone();
+                    model.view[desktop] =
+                        if model.broken { Map::new() } else { model.file.clone() };
+                    model.unreadable[desktop] = model.broken;
                     hubs[desktop] = with_config(&dir);
                     arm(&hubs[desktop], &senders[desktop]);
+                    let settings = Settings::of(&hubs[desktop].engine);
+                    prop_assert_eq!(settings.device(), model.view[desktop].clone());
                     prop_assert_eq!(
-                        Settings::of(&hubs[desktop].engine).device(),
-                        view[desktop].clone()
+                        settings.device_unreadable(),
+                        model.unreadable[desktop]
                     );
+                }
+                SharedOp::Break => {
+                    if !model.broken {
+                        saved_elsewhere(&dir, SHARED_BROKEN);
+                        model.broken = true;
+                        model.gone = false;
+                    }
+                }
+                SharedOp::Repair => {
+                    if model.broken {
+                        let text =
+                            serde_json::to_string(&Json::Object(model.file.clone()))
+                                .unwrap();
+                        saved_elsewhere(&dir, &text);
+                        model.broken = false;
+                    }
+                }
+                // The person deletes it, damaged or not.
+                SharedOp::Delete => {
+                    if !model.gone {
+                        let _ = std::fs::remove_file(dir.join("preferences.json"));
+                        model.file = Map::new();
+                        model.broken = false;
+                        model.gone = true;
+                    }
                 }
             }
         }
