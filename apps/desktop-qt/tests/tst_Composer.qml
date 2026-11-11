@@ -193,6 +193,24 @@ Item {
             return shown;
         }
 
+        // A started thread's toolbar always names its permissions, the
+        // default included, so switching back to it still shows.
+        function test_theToolbarAlwaysNamesThePermissions() {
+            Shell.state = crowded({ runtimeMode: "full-access", defaultRuntimeMode: "full-access" });
+            let composer = createTemporaryObject(composerComponent, root);
+            waitForRendering(composer);
+            const chip = findChild(composer, "runtimeModePicker");
+            verify(chip.present);
+            verify(chip.visible);
+            compare(chip.displayText, "Full access");
+            // Narrowed past fitting, it folds like the other chips rather
+            // than vanishing: still present, in the overflow menu's reach.
+            composer.width = 240;
+            waitForRendering(composer);
+            verify(chip.present);
+            verify(composer.folded.includes(chip) || chip.visible);
+        }
+
         // However narrow, the toolbar is one line: what does not fit folds
         // into the overflow chip, the context window first and the effort
         // next, and a chip that folded stays folded as the composer narrows.

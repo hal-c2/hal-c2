@@ -434,7 +434,8 @@ Item {
             publishComposer({
                 options: effortOptions(),
                 runtimeModes: [{ value: "approval-required", label: "Ask first" }, { value: "full-access", label: "Full access" }],
-                // At their default, the permissions are the control's alone.
+                // The thread's permissions are their default; the toolbar
+                // names them and the control holds them too.
                 defaultRuntimeMode: "approval-required"
             });
             return picker;

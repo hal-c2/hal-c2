@@ -319,16 +319,18 @@ Rectangle {
             "composer.host": hostPicker,
             "composer.workspace": envModePicker
         }[command];
-        // The permissions are named in the strip or on the toolbar, else
-        // they open in the model control. That control is shut while a
-        // message is on its way to the MC (isSendBusy), and so is this key,
-        // as the model key is; it opens again once the send lands.
+        // The permissions key opens them where they are named: in the
+        // strip for a new thread, in the model control where the model's
+        // options live there, and otherwise on the toolbar chip (below).
+        // The model control is shut while a message is on its way to the
+        // MC (isSendBusy), and so is this key then, as the model key is;
+        // it opens again once the send lands.
         // The effort is the model control's, on its current level.
         if (command === "composer.effort" && optionsInModelControl) {
             modelPicker.openEffort();
             return;
         }
-        if (command === "composer.mode" && !runtimeModePicker.present) {
+        if (command === "composer.mode" && (optionsInModelControl || !runtimeModePicker.present)) {
             if (contextPermissions.visible && contextPermissions.enabled) {
                 contextPermissions.forceActiveFocus();
                 contextPermissions.popup.open();
@@ -437,10 +439,12 @@ Rectangle {
             icon: runtimeIcon(mode.value),
             description: runtimeDescription(mode.value)
         }, mode)) : []
-    // A new thread's context strip names its permissions; the toolbar then
-    // names them only when a thread's differ from the default.
+    // A new thread's context strip names its permissions; otherwise the
+    // toolbar always names a thread's, the default included, so choosing
+    // the default still shows that the choice landed. (Upstream #25869
+    // named them only when they differed from the default.)
     readonly property bool stripNamesPermissions: permissionModes.length > 0 && model.routeKind === "draft" && contextStrip.visible
-    readonly property bool chipNamesPermissions: permissionModes.length > 0 && !stripNamesPermissions && model.runtimeMode !== model.defaultRuntimeMode
+    readonly property bool chipNamesPermissions: permissionModes.length > 0 && !stripNamesPermissions
 
     function runtimeDescription(mode) {
         switch (mode) {

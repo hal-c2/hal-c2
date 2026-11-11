@@ -251,7 +251,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/model-and-mode.feature:Planning and building are toggled on the desktop only*"),
     QStringLiteral("composer/model-and-mode.feature:Only the permissions the provider supports are offered"),
     QStringLiteral("composer/model-and-mode.feature:A thread whose saved permissions its provider no longer offers*"),
-    QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
+    QStringLiteral("composer/model-and-mode.feature:A started thread always names its permissions"),
     QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
     QStringLiteral("composer/model-and-mode.feature:One control chooses the model*"),
     QStringLiteral("composer/model-and-mode.feature:A key opens the model control*"),

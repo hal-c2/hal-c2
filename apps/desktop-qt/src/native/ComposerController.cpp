@@ -4386,8 +4386,7 @@ QString ComposerController::runtimeModeOf(const QString& target) const {
   return QStringLiteral("full-access");
 }
 
-// The permissions a new thread of the target's project starts in: the
-// composer names a thread's own only when they differ from these.
+// The permissions a new thread of the target's project starts in.
 QString ComposerController::defaultRuntimeModeOf(const QString& target) const {
   if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(pageProject());
   if (const auto thread = m_store->thread(target)) return newThreadRuntimeMode(thread->projectId);
