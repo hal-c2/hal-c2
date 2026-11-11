@@ -114,6 +114,21 @@ Feature: Saving settings from the desktop
       When the desktop shell starts
       Then the app is drawn dark
 
+    # Every desktop on one home (a second desktop process, the Ljós desktop) shares the file.
+    @desktop
+    Scenario: A save keeps the preferences another app on this device saved
+      Given the desktop shell is connected to its MC
+      And another app on this device saved the device preference "timestampFormat" as "24-hour"
+      When the desktop saves the device preference "appearance" as "dark"
+      Then this device's preferences file holds "timestampFormat" as "24-hour"
+      And this device's preferences file holds "appearance" as "dark"
+
+    @desktop
+    Scenario: A preference another app on this device saves reaches the desktop
+      Given the desktop shell is connected to its MC
+      When another app on this device saves the device preference "timestampFormat" as "24-hour"
+      Then the desktop holds the device preference "timestampFormat" as "24-hour"
+
     @desktop
     Scenario: A device preference that cannot be saved is reported and left as it was
       Given this device's preferences cannot be saved

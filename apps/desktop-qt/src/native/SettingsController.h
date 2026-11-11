@@ -13,6 +13,7 @@
 #include "NativeController.h"
 
 class NativeWindow;
+class QFileSystemWatcher;
 class SettingsScopeController;
 class McClient;
 class ShellBridge;
@@ -81,7 +82,10 @@ public:
   // Sets one value by dotted path; null removes it.
   Q_INVOKABLE void write(const QString& path, const QVariant& value);
 
-  // This device's preferences file; read now, and saved there on change.
+  // This device's preferences file; read now, saved there on change, and
+  // read again when another app on this home saves it. A save writes only
+  // the keys it changes over what the file holds, so no app's change is lost
+  // to another's stale copy.
   void setDevicePath(const QString& path);
   QString devicePath() const { return m_devicePath; }
   QJsonObject deviceSettings() const { return m_device; }
@@ -148,6 +152,8 @@ private:
   // Follows the config of the environment the client's MC serves.
   void follow();
   void fail(const QString& error);
+  void watchDevice();
+  void deviceFileChanged();
   // In `window` (the one that made the change), else the one in use.
   void toast(const QString& title, const QString& reason, NativeWindow* window = nullptr);
   QVariantMap documentVariant() const { return m_settings.toVariantMap(); }
@@ -173,5 +179,6 @@ private:
   QJsonObject m_device;
   QString m_deviceError;
   bool m_deviceUnreadable = false;
+  QFileSystemWatcher* m_deviceWatcher = nullptr;
   mutable bool m_followsScope = false;
 };
