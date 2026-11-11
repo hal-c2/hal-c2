@@ -12,6 +12,11 @@
 use std::path::{Path, PathBuf};
 
 fn main() {
+    // hal-c2-ljos and its web engine helper find CEF's libcef.so beside
+    // themselves, where the cef crate copies it (Cargo.toml).
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        println!("cargo::rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
+    }
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets it"));
     let dirs = [Path::new("../../desktop-qt/qml"), Path::new("../qml")];
     let files = ljos::build::compile_dirs_with_types_to_rust(

@@ -11,6 +11,12 @@ publish.workspace = true
 name = "hal-c2-ljos"
 path = "src/main.rs"
 
+# What CEF starts the browser pages' other processes (renderer, GPU,
+# utility) from, found beside hal-c2-ljos (and beside a test's `deps/`).
+[[bin]]
+name = "ljos-webengine-helper"
+path = "src/webengine_helper.rs"
+
 # desktop-qt's Gherkin scenarios (features/) against this shell; see
 # tests/features/main.rs. Opt-in, as Ljós's own: `cargo test` skips it,
 # `mise run features:desktop-ljos` runs it with `--test features`.
@@ -32,10 +38,17 @@ mcp = ["ljos/mcp"]
 # stream decoder (src/device/decoder.rs). collation: names sort by the
 # locale's alphabet (sidebar_model::locale_compare, `localeCompare`). woff:
 # the terminal's bundled symbol font (TerminalSplits' FontLoader) is WOFF2.
-ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d", "woff"] }
+# webengine: the browser tabs, below.
+ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d", "woff", "webengine"] }
 # QtQuick3D for the device tab's 3D body (DeviceBody3D), registered by
 # device::register.
 ljos_quick3d.workspace = true
+# The browser tabs (QtWebEngine: BrowserPanel): pages Chromium draws
+# off-screen through CEF. The cef crate fetches CEF's distribution once into
+# CEF_PATH (README, "Browser pages") and copies its runtime beside the
+# binaries; on macOS CEF loads from the app's bundle instead.
+ljos_webengine = { workspace = true, features = ["cef"] }
+cef = { version = "=156.3.0", default-features = false }
 hal_c2_mc.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true
@@ -84,7 +97,6 @@ zune-jpeg = "0.5"
 # as desktop-qt's QImage: the pictures a prompt carries are PNG or JPEG.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
-# The transcription helper's session and its signals (src/local_transcriber).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

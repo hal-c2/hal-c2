@@ -55,6 +55,16 @@ shell's keymap, not the focused control.
 `DeviceScreen` (its `DeviceStream`'s newest picture) and `Terminal` (`import Ghostty`, libghostty-vt through
 Ljós Hof's `hof_vt`). Building the terminal needs Zig (`mise.toml` pins it) and fetches Ghostty's source once.
 
+## Browser pages
+
+The browser tabs (`BrowserPanel`'s `WebEngineView`) are Chromium pages drawn off-screen through CEF, Ljós's
+`ljos_webengine`. The `cef` crate fetches CEF's distribution (about 335 MB, 1.5 GB unpacked) when a build first
+needs it: point `CEF_PATH` at a directory outside the repository and it is fetched there once, and copied beside the
+binaries (`libcef.so` and its resources, found through an `$ORIGIN` rpath) on every build. `strip --strip-debug` on
+`libcef.so` there takes it to under 500 MB; CI keeps it that way by CEF's version. CEF starts its other processes
+from `ljos-webengine-helper`, built beside `hal-c2-ljos`. On macOS CEF loads from an application bundle that
+Ljós's `ljos-webengine-bundle` makes; until the build makes one, a browser tab says it cannot load.
+
 ## Inspect
 
 Built with the `mcp` feature, the window serves Ljós's MCP inspector (the scene, clicks, timings and how the

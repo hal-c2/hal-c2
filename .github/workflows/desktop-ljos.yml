@@ -118,6 +118,26 @@ jobs:
           path: ~/.cache/zig/p
           key: zig-packages-${{ steps.zig.outputs.ghostty }}
 
+      # Chromium for the browser tabs (ljos_webengine): the cef crate fetches
+      # CEF's distribution (about 335 MB) into CEF_PATH when it is not there.
+      # It is kept by the version Cargo.lock pins, without its debug info
+      # (libcef.so goes from 1.5 GB to under 500 MB): restored here, and saved
+      # by the last steps when this job fetched it.
+      - &cef-version
+        name: CEF version
+        id: cef-version
+        run: |
+          echo "version=$(sed -n '/^name = "cef-dll-sys"$/{n;s/^version = "\(.*\)"$/\1/p}' Cargo.lock)" >> "$GITHUB_OUTPUT"
+          echo "CEF_PATH=$HOME/cef" >> "$GITHUB_ENV"
+
+      - &cef
+        name: Restore CEF
+        id: cef
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/cef
+          key: cef-${{ steps.cef-version.outputs.version }}
+
       # Font discovery links fontconfig and the audio sink links ALSA (Ljós's
       # own CI installs the same two).
       - &packages
@@ -136,6 +156,26 @@ jobs:
 
       - run: cargo clippy -q -p hal_c2_shell -p hal_c2_mc --lib --tests --bins -- -D warnings
 
+      - &cef-strip
+        name: Strip CEF for the cache
+        id: cef-strip
+        if: always() && steps.cef.outputs.cache-hit != 'true'
+        run: |
+          for json in "$CEF_PATH"/*/*/archive.json; do
+            [[ -f $json ]] || continue
+            strip --strip-debug "$(dirname "$json")/libcef.so"
+            echo "fetched=true" >> "$GITHUB_OUTPUT"
+          done
+          rm -f "$CEF_PATH"/*/*.tar.bz2
+
+      - &cef-save
+        name: Save CEF
+        if: always() && steps.cef-strip.outputs.fetched == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/cef
+          key: ${{ steps.cef.outputs.cache-primary-key }}
+
   check:
     name: QML compile check
     runs-on: ubuntu-24.04
@@ -145,6 +185,8 @@ jobs:
       - *rust
       - *zig
       - *zig-packages
+      - *cef-version
+      - *cef
       - *packages
 
       - uses: Swatinem/rust-cache@v2
@@ -157,6 +199,9 @@ jobs:
       # shell's native types; fails when a file does not compile.
       - run: cargo run --release -q -p hal_c2_shell -- --check
 
+      - *cef-strip
+      - *cef-save
+
   test:
     name: Unit and hub tests
     runs-on: ubuntu-24.04
@@ -166,6 +211,8 @@ jobs:
       - *rust
       - *zig
       - *zig-packages
+      - *cef-version
+      - *cef
       - *packages
 
       # dbus-daemon: the notification tests start a session bus of their own.
@@ -184,6 +231,9 @@ jobs:
       # The features suite is opt-in in Cargo.toml (`test = false`), so this
       # runs everything else. All of it, so one run shows every failure.
       - run: cargo test --no-fail-fast
+
+      - *cef-strip
+      - *cef-save
 
   features:
     name: Features (${{ matrix.shard.name }})
@@ -212,6 +262,8 @@ jobs:
       - *rust
       - *zig
       - *zig-packages
+      - *cef-version
+      - *cef
       - *packages
 
       - name: Install test packages
@@ -230,3 +282,6 @@ jobs:
         env:
           HAL_C2_FEATURES: ${{ matrix.shard.globs }}
         run: cargo test -p hal_c2_shell --test features
+
+      - *cef-strip
+      - *cef-save
