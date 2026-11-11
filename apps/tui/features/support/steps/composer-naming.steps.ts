@@ -1,7 +1,8 @@
-// What the composer's footer names (composer/model-and-mode.feature): the
-// permissions only when they differ from the default (upstream #25869), the
-// model as the user would say it (upstream #24205), and its effort as a word
-// or rising bars, as the user chose (upstream #25869).
+// What the composer's footer names (composer/model-and-mode.feature): a
+// started thread's permissions always (HAL-C2 departs from upstream
+// #25869's differ-from-the-default rule here), the model as the user would
+// say it (upstream #24205), and its effort as a word or rising bars, as the
+// user chose (upstream #25869).
 import { expect } from "bun:test";
 
 import { DEFAULT_SERVER_SETTINGS, type RuntimeMode, type ServerProvider } from "@hal-c2/contracts";
@@ -62,11 +63,6 @@ step(
 step("the user looks at the composer", async (ctx: World) => {
   await settle(ctx);
   await snapshot(ctx);
-});
-
-step("the composer does not name the permissions", async (ctx: World) => {
-  expect(geometry(access(ctx)).visible).toBe(false);
-  expect(await snapshot(ctx)).not.toContain(composer(ctx).runtimeModeLabel);
 });
 
 // The terminal's effort picker holds only the efforts; the permissions key

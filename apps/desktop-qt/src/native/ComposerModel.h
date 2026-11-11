@@ -40,6 +40,9 @@ struct Instance {
   QJsonArray slashCommands;
   QJsonObject usageLimits;  // ServerProviderUsageLimits, when the provider reports them
   QJsonArray skills;
+  // Each folder's own skills and commands (ServerProviderWorkspaceSnapshot,
+  // with its `cwd`), read when a composer asked for that folder.
+  QJsonArray workspaceSnapshots;
 
   bool ready() const { return enabled && available && status == QLatin1String("ready"); }
 };
@@ -47,6 +50,12 @@ struct Instance {
 // The instances, grouped by driver in first-seen order, defaults first.
 QList<Instance> instances(const QJsonArray& providers);
 const Instance* find(const QList<Instance>& list, const QString& instanceId);
+// The instance as a thread working in `cwd` sees it: that folder's snapshot's
+// skills and commands first, then the entry's own, one per name. Without a
+// snapshot for `cwd`, the entry as it is.
+Instance inFolder(const Instance& instance, const QString& cwd);
+// The entry carries a snapshot the MC read for `cwd`.
+bool hasRead(const Instance& instance, const QString& cwd);
 // The instance's model named by slug, name or alias; empty when none.
 QJsonObject findModel(const Instance& instance, const QString& model);
 // The model a thread starts on with this instance: its default one.

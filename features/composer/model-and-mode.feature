@@ -677,15 +677,19 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
       | Max        | Bars    | "Max"                     |
 
   # Upstream #25869: the composer names the permissions only when they are not the user's
-  # default; they change from the effort menu or the permissions key.
+  # default; they change from the effort menu or the permissions key. HAL-C2 departs from
+  # upstream here: a started thread always names its permissions, because switching a
+  # thread back to the default left no sign that the switch happened.
   @shared @backlog-mobile @priority-high
-  Scenario: The composer names the permissions only when they differ from the default
+  Scenario: A started thread always names its permissions
     Given the default permissions are Supervised
     And the open thread runs in Supervised
     When the user looks at the composer
-    Then the composer does not name the permissions
+    Then the composer names "Supervised" beside the model
     When the user sets the thread's permissions to Full access from the effort menu
     Then the composer names "Full access" beside the model
+    When the user sets the thread's permissions to Supervised from the effort menu
+    Then the composer names "Supervised" beside the model
 
   # The phone's system back steps out of the model control's permissions menu
   # before it leaves the control (MobileShell.stepBack). The steps are in

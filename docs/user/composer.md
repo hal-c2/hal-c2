@@ -207,6 +207,9 @@ provider. On mobile, both are also available before starting a thread on
 
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
+They include the skills and commands of the folder the thread works in, its
+project or worktree, read when the composer first opens there and again after
+five minutes, so a skill added to the project shortly shows up.
 
 Provider commands must start the message to run. HAL-C2 commands such as
 `/model` and `/plan`, and skill mentions, work on any line. After other text, the menu

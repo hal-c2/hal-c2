@@ -13,9 +13,21 @@ attempt() {
     timeout -k 10 120 "${apt[@]}" install -y "$@"
 }
 
+# A package the runner image already has needs no mirror at all.
+missing=()
+for package in "$@"; do
+  dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q '^install ok installed$' || missing+=("$package")
+done
+[ ${#missing[@]} -eq 0 ] && echo "Already installed: $*" && exit 0
+set -- "${missing[@]}"
+
 attempt "$@" && exit 0
 echo "::warning::apt-get failed or timed out, retrying in 15s"
 sleep 15
 # A killed install can leave dpkg half-configured, which would fail the retry.
 timeout -k 10 30 sudo dpkg --configure -a
+# The retry goes straight to the Ubuntu archive: the runner's mirror list falls back to
+# it only after the stalled Azure mirror's timeouts have used up the attempt.
+sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' \
+  /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
 attempt "$@"
