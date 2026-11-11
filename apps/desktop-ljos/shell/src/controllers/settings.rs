@@ -12,7 +12,12 @@
 //!
 //! This device's preferences (`<config dir>/preferences.json`): what
 //! belongs to this desktop and no other client, such as its appearance.
-//! They are here before the MC is.
+//! They are here before the MC is. Every desktop on one home (a second
+//! desktop process, the Qt desktop) shares the file, so a save puts only
+//! the keys it changes over what the file holds now, and the file is
+//! watched for another desktop's saves: no one's change is lost to a
+//! stale copy. Its watcher thread wakes the shell through [`set_wake`],
+//! which calls [`deliver`] on the Engine thread.
 //!
 //! Controllers reach it through [`Settings::of`], a handle that is never
 //! busy: its state is not the controller's, so a QML binding that reads a
@@ -33,9 +38,11 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use ljos::prelude::QmlValue;
 use ljos::prelude::{Atom, Cx, Engine, QmlObject, Value, qml_impl, qml_singleton};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::json;
 
 use crate::bridge::Bridge;
@@ -259,6 +266,35 @@ struct State {
     /// refused until it reads again, so defaults never replace what the
     /// user saved.
     device_unreadable: bool,
+    /// The preferences file's watcher, while there is a file to watch.
+    device_watcher: Option<RecommendedWatcher>,
+}
+
+type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// What the watcher thread leaves for the Engine thread.
+#[derive(Default)]
+struct DeviceChanges {
+    pending: Mutex<bool>,
+    wake: Mutex<Option<Wake>>,
+}
+
+impl DeviceChanges {
+    fn push(&self) {
+        *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        let wake = self
+            .wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(wake) = wake {
+            wake();
+        }
+    }
+
+    fn take(&self) -> bool {
+        std::mem::take(&mut *self.pending.lock().unwrap_or_else(PoisonError::into_inner))
+    }
 }
 
 #[derive(Default)]
@@ -283,6 +319,7 @@ enum Signal {
 struct Inner {
     state: RefCell<State>,
     hooks: RefCell<Hooks>,
+    device_changes: Arc<DeviceChanges>,
 }
 
 #[derive(Default)]
@@ -818,29 +855,99 @@ impl Settings {
 
     // -- This device's preferences ---------------------------------------
 
-    /// This device's preferences file; read now, and saved there on change.
+    /// This device's preferences file; read now, saved there on change,
+    /// and read again when another desktop on this home saves it. A save
+    /// writes only the keys it changes over what the file holds, so no
+    /// desktop's change is lost to another's stale copy.
     pub fn set_device_path(&self, engine: &Engine, path: Option<PathBuf>) {
-        let mut device = Map::new();
-        let mut error = String::new();
-        if let Some(path) = &path
-            && path.exists()
-        {
-            match std::fs::read(path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
-            {
-                Some(Json::Object(read)) => device = read,
-                _ => error = format!("Cannot read {}", path.display()),
-            }
-        }
+        let saved = path.as_deref().and_then(read_preferences);
+        let error = match (&path, &saved) {
+            (Some(path), None) => format!("Cannot read {}", path.display()),
+            _ => String::new(),
+        };
         {
             let mut s = self.0.state.borrow_mut();
+            s.device_unreadable = path.is_some() && saved.is_none();
+            s.device = saved.unwrap_or_default();
             s.device_path = path;
-            s.device = device;
-            s.device_unreadable = !error.is_empty();
             s.device_error = error;
         }
+        self.watch_device();
         self.emit(engine, Signal::Device);
+    }
+
+    /// Watches the preferences file and the directory it is in: a save
+    /// replaces the file (see [`save`]), which ends a watch on the file
+    /// itself, so the directory is watched too and the file again
+    /// whenever it is back.
+    fn watch_device(&self) {
+        let Some(path) = self.0.state.borrow().device_path.clone() else {
+            self.0.state.borrow_mut().device_watcher = None;
+            return;
+        };
+        let Some(name) = path.file_name().map(ToOwned::to_owned) else {
+            return;
+        };
+        let changes = self.0.device_changes.clone();
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            if let Ok(event) = event
+                && !event.kind.is_access()
+                && event.paths.iter().any(|p| p.file_name() == Some(&name))
+            {
+                changes.push();
+            }
+        })
+        .ok();
+        let mut s = self.0.state.borrow_mut();
+        s.device_watcher = watcher;
+        watch_paths(&mut s);
+    }
+
+    /// The preferences file changed on disk, as [`deliver`] tells it:
+    /// show what it holds. One that cannot be read keeps the preferences
+    /// last read and refuses saves until it reads again; one that is
+    /// gone is written whole by the next save.
+    fn device_file_changed(&self, engine: &Engine) {
+        {
+            let mut s = self.0.state.borrow_mut();
+            watch_paths(&mut s);
+        }
+        let Some(path) = self.device_path() else {
+            return;
+        };
+        if !path.exists() {
+            return;
+        }
+        let Some(saved) = read_preferences(&path) else {
+            let fresh = {
+                let mut s = self.0.state.borrow_mut();
+                if s.device_unreadable {
+                    false
+                } else {
+                    s.device_unreadable = true;
+                    s.device_error = format!("Cannot read {}", path.display());
+                    true
+                }
+            };
+            if fresh {
+                self.emit(engine, Signal::Device);
+            }
+            return;
+        };
+        let changed = {
+            let mut s = self.0.state.borrow_mut();
+            if same_map(&saved, &s.device) && !s.device_unreadable {
+                false
+            } else {
+                s.device = saved;
+                s.device_unreadable = false;
+                s.device_error.clear();
+                true
+            }
+        };
+        if changed {
+            self.emit(engine, Signal::Device);
+        }
     }
 
     /// Reads the preferences file again.
@@ -852,33 +959,58 @@ impl Settings {
     /// Replaces this device's preferences; false (and `device_error`) when
     /// they cannot be saved, leaving them as they were.
     pub fn set_device_settings(&self, engine: &Engine, device: Map) -> bool {
-        let (unchanged, unreadable, path) = {
+        let (unchanged, unreadable, path, base) = {
             let s = self.0.state.borrow();
             (
                 same_map(&device, &s.device),
                 s.device_unreadable,
                 s.device_path.clone(),
+                s.device.clone(),
             )
         };
         if unchanged {
             return true;
         }
+        let mut merged = Map::new();
+        let mut mark_unreadable = false;
         let error = match (&path, unreadable) {
             (Some(path), true) => Some(format!("Cannot read {}", path.display())),
             (None, _) => Some(NOWHERE.to_owned()),
-            (Some(path), false) => save(path, &device)
-                .err()
-                .map(|_| format!("Cannot save {}", path.display())),
+            (Some(path), false) => match read_preferences(path) {
+                // Edited by hand into something that does not read: left
+                // for the user to repair.
+                None => {
+                    mark_unreadable = true;
+                    Some(format!("Cannot read {}", path.display()))
+                }
+                Some(disk) => {
+                    // Only what this change touches goes over what the
+                    // file holds now. A file that is gone holds what
+                    // this desktop does.
+                    let on_disk = if path.exists() { disk } else { base.clone() };
+                    merged = carry_over(on_disk, &base, &device);
+                    save(path, &merged)
+                        .err()
+                        .map(|_| format!("Cannot save {}", path.display()))
+                }
+            },
         };
         let saved = error.is_none();
         {
             let mut s = self.0.state.borrow_mut();
+            if mark_unreadable {
+                s.device_unreadable = true;
+            }
             match error {
                 Some(error) => s.device_error = error,
                 None => {
-                    s.device = device;
+                    s.device = merged;
                     s.device_error.clear();
                 }
+            }
+            if saved {
+                // The file was replaced: watched again.
+                watch_paths(&mut s);
             }
         }
         self.emit(engine, Signal::Device);
@@ -1160,6 +1292,87 @@ impl Settings {
                 }
             },
         );
+    }
+}
+
+/// The preferences file's object: empty when there is no file, nothing
+/// when it cannot be read.
+fn read_preferences(path: &Path) -> Option<Map> {
+    if !path.exists() {
+        return Some(Map::new());
+    }
+    match std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
+    {
+        Some(Json::Object(read)) => Some(read),
+        _ => None,
+    }
+}
+
+/// What `next` changed from `base`, put on `disk`: a key another desktop
+/// on this home saved since `base` was read stays unless this change is
+/// to that key (the MC's `carry_over`, hal_c2/settings.ex).
+fn carry_over(mut disk: Map, base: &Map, next: &Map) -> Map {
+    let mut keys: Vec<&String> = base.keys().chain(next.keys()).collect();
+    keys.sort();
+    keys.dedup();
+    for key in keys {
+        let (was, is) = (base.get(key), next.get(key));
+        let changed = match (was, is) {
+            (Some(was), Some(is)) => !same(was, is),
+            (None, None) => false,
+            _ => true,
+        };
+        if !changed {
+            continue;
+        }
+        match is {
+            Some(value) => {
+                let _ = disk.insert(key.clone(), value.clone());
+            }
+            None => {
+                let _ = disk.remove(key);
+            }
+        }
+    }
+    disk
+}
+
+/// The watcher's paths, as they are now: the directory, and the file
+/// while it is there. A save replaces the file, which ends its watch.
+fn watch_paths(s: &mut State) {
+    let (Some(watcher), Some(path)) = (s.device_watcher.as_mut(), s.device_path.clone()) else {
+        return;
+    };
+    if let Some(dir) = path.parent()
+        && dir.is_dir()
+    {
+        let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
+    }
+    if path.exists() {
+        let _ = watcher.watch(&path, RecursiveMode::NonRecursive);
+    }
+}
+
+/// Says what to run, on any thread, when the preferences file changed:
+/// post a message to the Engine thread, which calls [`deliver`].
+pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
+    let wake: Wake = Arc::new(wake);
+    *Settings::of(engine)
+        .0
+        .device_changes
+        .wake
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(wake);
+}
+
+/// Reads the preferences file again when another desktop saved it. On
+/// the Engine thread.
+pub fn deliver(engine: &Engine) {
+    let settings = Settings::of(engine);
+    if settings.0.device_changes.take() {
+        settings.device_file_changed(engine);
     }
 }
 

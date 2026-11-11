@@ -227,6 +227,7 @@ impl World {
         hal_c2_shell::local_transcriber::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::theme::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::controllers::desktop_update::set_wake(&engine, wake(&self.signal));
+        hal_c2_shell::controllers::settings::set_wake(&engine, wake(&self.signal));
         Platform::of(&engine).set_waker(wake(&self.signal));
         // A real host fetches an Image's http source; the fake MC serves it.
         Platform::of(&engine).set_fetcher(Arc::new(LocalFetcher));
@@ -896,6 +897,7 @@ impl World {
                     hal_c2_shell::controllers::threads::deliver(engine);
                     hal_c2_shell::controllers::snap_shot::deliver(engine);
                     hal_c2_shell::controllers::desktop_update::deliver(engine);
+                    hal_c2_shell::controllers::settings::deliver(engine);
                 });
                 any |= Platform::of(engine).deliver(engine) > 0;
                 shell.window.settle().map_err(|e| Failure(e.to_string()))?;

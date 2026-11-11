@@ -6,6 +6,8 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use hal_c2_shell::Launch;
 use hal_c2_shell::controllers::settings::{
@@ -366,6 +368,99 @@ fn a_device_preference_is_saved_on_this_device_only() {
     let file: Json =
         serde_json::from_slice(&std::fs::read(dir.join("preferences.json")).unwrap()).unwrap();
     assert_eq!(file, json!({}));
+}
+
+#[test]
+fn a_save_keeps_what_another_desktop_on_this_home_saved() {
+    // Two desktops on one home share the file; neither has heard of the
+    // other's save when it makes its own.
+    let dir = config_dir("device-shared");
+    let one = with_config(&dir);
+    let two = with_config(&dir);
+    let first = Settings::of(&one.engine);
+    let second = Settings::of(&two.engine);
+    let file = |dir: &Path| -> Json {
+        serde_json::from_slice(&std::fs::read(dir.join("preferences.json")).unwrap()).unwrap()
+    };
+    assert!(first.write_device(&one.engine, "timestampFormat", json!("24-hour")));
+    assert!(second.write_device(&two.engine, "appearance", json!("dark")));
+    assert_eq!(
+        file(&dir),
+        json!({"timestampFormat": "24-hour", "appearance": "dark"})
+    );
+    // The saver keeps what it saved over, not only its own change.
+    assert_eq!(
+        second.device_value("timestampFormat"),
+        Some(json!("24-hour"))
+    );
+    // A removal is carried over the same way, and keeps the rest.
+    assert!(first.write_device(&one.engine, "timestampFormat", Json::Null));
+    assert_eq!(file(&dir), json!({"appearance": "dark"}));
+    assert_eq!(first.device_value("appearance"), Some(json!("dark")));
+}
+
+/// Another desktop's save of the preferences file: written whole, by a
+/// rename over it, as [`Settings`] saves.
+fn saved_elsewhere(dir: &Path, text: &str) {
+    let path = dir.join("preferences.json");
+    let staging = dir.join("preferences.json.other.tmp");
+    std::fs::write(&staging, text).unwrap();
+    std::fs::rename(&staging, &path).unwrap();
+}
+
+/// Waits for the watcher to see the preferences file change, then hands
+/// it over as the shell's loop does.
+fn delivered(hub: &Hub, woken: &mpsc::Receiver<()>, until: impl Fn(&Hub) -> bool) {
+    while !until(hub) {
+        woken
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the watcher wakes the shell");
+        hal_c2_shell::controllers::settings::deliver(&hub.engine);
+    }
+}
+
+#[test]
+fn a_preference_another_desktop_saves_reaches_this_one() {
+    let dir = config_dir("device-watched");
+    std::fs::create_dir_all(&dir).unwrap();
+    let hub = with_config(&dir);
+    let settings = Settings::of(&hub.engine);
+    let (wake, woken) = mpsc::channel();
+    hal_c2_shell::controllers::settings::set_wake(&hub.engine, move || {
+        let _ = wake.send(());
+    });
+    saved_elsewhere(&dir, "{\"timestampFormat\": \"24-hour\"}");
+    delivered(&hub, &woken, |hub| {
+        Settings::of(&hub.engine).device_value("timestampFormat") == Some(json!("24-hour"))
+    });
+    // Damaged by hand: what was last read stays, and saving is refused.
+    saved_elsewhere(&dir, "[1, 2");
+    delivered(&hub, &woken, |hub| {
+        Settings::of(&hub.engine).device_unreadable()
+    });
+    assert_eq!(
+        settings.device_value("timestampFormat"),
+        Some(json!("24-hour"))
+    );
+    let reason = format!("Cannot read {}", dir.join("preferences.json").display());
+    assert_eq!(settings.device_error(), reason);
+    // Gone: left as it is, for the next save to write whole.
+    std::fs::remove_file(dir.join("preferences.json")).unwrap();
+    woken
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the watcher wakes the shell");
+    hal_c2_shell::controllers::settings::deliver(&hub.engine);
+    assert_eq!(
+        settings.device_value("timestampFormat"),
+        Some(json!("24-hour"))
+    );
+    // Repaired: read again, the error gone.
+    saved_elsewhere(&dir, "{\"wordWrap\": false}");
+    delivered(&hub, &woken, |hub| {
+        let s = Settings::of(&hub.engine);
+        !s.device_unreadable() && s.device_value("wordWrap") == Some(json!(false))
+    });
+    assert_eq!(settings.device_error(), "");
 }
 
 #[test]
@@ -968,5 +1063,131 @@ proptest! {
             .unwrap();
             prop_assert_eq!(file, Json::Object(world.device.clone()));
         }
+    }
+}
+
+// -- Two desktops on one home -------------------------------------------------
+//
+// The state machine of desktop-qt's tst_DevicePreferencesProp: two desktops
+// share preferences.json, each saves, hears the other's saves only once its
+// watcher is delivered, and quits and starts again. The file holds every
+// preference as it was last saved, by either, and a desktop that has heard
+// of a save, or started after it, shows it. A save of the value a desktop
+// already shows changes nothing, even if the other saved another since.
+
+#[derive(Clone, Debug)]
+enum SharedOp {
+    Save(usize, usize, usize),
+    Hear,
+    Restart(usize),
+}
+
+fn shared_op() -> impl Strategy<Value = SharedOp> {
+    prop_oneof![
+        3 => (0..2usize, 0..3usize, 0..3usize)
+            .prop_map(|(d, k, v)| SharedOp::Save(d, k, v)),
+        1 => Just(SharedOp::Hear),
+        1 => (0..2usize).prop_map(SharedOp::Restart),
+    ]
+}
+
+const SHARED_KEYS: [&str; 3] = ["appearance", "timestampFormat", "fontSizeInterface"];
+/// Index 0 removes the preference.
+const SHARED_VALUES: [&str; 3] = ["", "one", "two"];
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+
+    #[test]
+    fn two_desktops_on_one_home_keep_every_preference_either_saved(
+        ops in proptest::collection::vec(shared_op(), 1..20),
+    ) {
+        static CASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let case = CASE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = config_dir(&format!("device-shared-prop-{case}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (senders, receivers): (Vec<_>, Vec<_>) =
+            (0..2).map(|_| mpsc::channel::<()>()).unzip();
+        let arm = |hub: &Hub, sender: &mpsc::Sender<()>| {
+            let sender = sender.clone();
+            hal_c2_shell::controllers::settings::set_wake(&hub.engine, move || {
+                let _ = sender.send(());
+            });
+        };
+        let mut hubs = [with_config(&dir), with_config(&dir)];
+        for (hub, sender) in hubs.iter().zip(&senders) {
+            arm(hub, sender);
+        }
+        // The model: the file, and what each desktop holds.
+        let mut file = Map::new();
+        let mut view = [Map::new(), Map::new()];
+        for op in ops {
+            match op {
+                SharedOp::Save(desktop, key, value) => {
+                    let key = SHARED_KEYS[key];
+                    let value = SHARED_VALUES[value];
+                    let hub = &hubs[desktop];
+                    let settings = Settings::of(&hub.engine);
+                    let written = if value.is_empty() {
+                        Json::Null
+                    } else {
+                        json!(value)
+                    };
+                    prop_assert!(settings.write_device(&hub.engine, key, written));
+                    let mut next = view[desktop].clone();
+                    if value.is_empty() {
+                        next.remove(key);
+                    } else {
+                        next.insert(key.into(), json!(value));
+                    }
+                    if !hal_c2_shell::controllers::settings::same_map(&next, &view[desktop]) {
+                        if value.is_empty() {
+                            file.remove(key);
+                        } else {
+                            file.insert(key.into(), json!(value));
+                        }
+                        view[desktop] = file.clone();
+                    }
+                    prop_assert_eq!(on_disk(&dir), file.clone());
+                    prop_assert_eq!(settings.device(), view[desktop].clone());
+                }
+                SharedOp::Hear => {
+                    view = [file.clone(), file.clone()];
+                    for (desktop, hub) in hubs.iter().enumerate() {
+                        delivered(hub, &receivers[desktop], |hub| {
+                            hal_c2_shell::controllers::settings::same_map(
+                                &Settings::of(&hub.engine).device(),
+                                &on_disk(&dir),
+                            )
+                        });
+                        prop_assert_eq!(
+                            Settings::of(&hub.engine).device(),
+                            view[desktop].clone()
+                        );
+                    }
+                    prop_assert_eq!(on_disk(&dir), file.clone());
+                }
+                SharedOp::Restart(desktop) => {
+                    view[desktop] = file.clone();
+                    hubs[desktop] = with_config(&dir);
+                    arm(&hubs[desktop], &senders[desktop]);
+                    prop_assert_eq!(
+                        Settings::of(&hubs[desktop].engine).device(),
+                        view[desktop].clone()
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The preferences file as a map; empty while there is none.
+fn on_disk(dir: &Path) -> Map {
+    match std::fs::read(dir.join("preferences.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
+    {
+        Some(Json::Object(map)) => map,
+        _ => Map::new(),
     }
 }

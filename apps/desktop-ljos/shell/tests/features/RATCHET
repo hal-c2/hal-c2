@@ -1977,6 +1977,8 @@ settings/saving-settings.feature: A change that keeps meeting newer settings is 
 settings/saving-settings.feature: A change the MC refuses is reported
 settings/saving-settings.feature: A device preference is saved in the desktop's own file
 settings/saving-settings.feature: A device preference that cannot be saved is reported and left as it was
+settings/saving-settings.feature: A preference another app on this device saves reaches the desktop
+settings/saving-settings.feature: A save keeps the preferences another app on this device saved
 settings/saving-settings.feature: After a reconnect the desktop saves at the restarted MC's version
 settings/saving-settings.feature: Device preferences are read back when the desktop starts
 settings/saving-settings.feature: Settings another client saves reach the desktop

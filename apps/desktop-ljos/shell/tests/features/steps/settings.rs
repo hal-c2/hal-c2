@@ -767,6 +767,42 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    // Another desktop on this home writes the file itself, whole or not
+    // at all as the shell's save does.
+    steps.step(
+        &format!("another app on this device (?:saved|saves) the device preference {Q} as {Q}"),
+        |world, c, _| {
+            let path = preferences_path(world);
+            let mut saved = match std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            {
+                Some(Value::Object(saved)) => saved,
+                _ => Map::new(),
+            };
+            saved.insert(c[0].clone(), json!(c[1]));
+            let staging = path.with_extension("json.other.tmp");
+            let written = std::fs::write(&staging, Value::Object(saved).to_string())
+                .and_then(|()| std::fs::rename(&staging, &path));
+            written.map_err(|e| Failure(format!("cannot write {}: {e}", path.display())))
+        },
+    );
+    steps.step(
+        &format!("the desktop holds the device preference {Q} as {Q}"),
+        |world, c, _| {
+            let (key, value) = (c[0].clone(), json!(c[1]));
+            let shown = c[0].clone();
+            world.wait_for_with(
+                move |w| settings(w).device_value(&key) == Some(value.clone()),
+                move |w| {
+                    format!(
+                        "this device to hold {shown}; it holds {}",
+                        show(&Value::Object(settings(w).device()))
+                    )
+                },
+            )
+        },
+    );
     steps.step(
         &format!("the device preference {Q} is not set"),
         |world, c, _| {
