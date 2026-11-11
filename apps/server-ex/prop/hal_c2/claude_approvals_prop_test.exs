@@ -8,7 +8,9 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     safety check raised and forbade remembering (`suppressAlwaysAllowRule`), and
     for an MCP tool's elicitation. Claude asks ("approve", "approve once", "mcp
     confirm"), and then, in any
-    order: the user answers (`ThreadRuntime.respond/3` with accept, decline or
+    order: the user switches the thread's access (to Full access, which approves an
+    open command approval but never a safety check or an elicitation, or back to
+    Supervised), the user answers (`ThreadRuntime.respond/3` with accept, decline or
     cancel), Claude withdraws the request (its `control_cancel_request`, which the
     session forwards as `{:permission_cancelled, id}`), withdrawal or an answer
     arrives a second time or names a request that never existed, and the user
@@ -51,10 +53,12 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     max_size: 16 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
+        config_dir = System.get_env("CLAUDE_CONFIG_DIR")
         start()
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :claude_command)
+        restore_env("CLAUDE_CONFIG_DIR", config_dir)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -63,12 +67,20 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     end
   end
 
+  defp restore_env(name, nil), do: System.delete_env(name)
+  defp restore_env(name, value), do: System.put_env(name, value)
+
   defp start do
     home = HalC2.Prop.scratch_home("claude-approvals")
     work = Path.join(home, "work")
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
     Application.put_env(:hal_c2, :claude_command, ["python3", "-u", @fake_claude])
+    # Full access reads Claude's settings for whether bypassing is allowed: an empty
+    # config of the case's own, never this machine's.
+    claude_config = Path.join(home, "claude")
+    File.mkdir_p!(claude_config)
+    System.put_env("CLAUDE_CONFIG_DIR", claude_config)
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -144,6 +156,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
   end
 
   @control_ids ["perm-1", "perm-once", "elicit-1", "perm-nope"]
+  @modes ["full-access", "approval-required"]
 
   def command(%{phase: :idle, n: n, kind: kind}) do
     frequency([
@@ -152,7 +165,8 @@ defmodule HalC2.ClaudeApprovalsPropTest do
       {2, {:call, __MODULE__, :compact_only, [n]}},
       {2, {:call, __MODULE__, :grow, [n]}},
       {1, {:call, __MODULE__, :withdraw, [oneof(@control_ids)]}},
-      {1, {:call, __MODULE__, :answer, [kind, oneof(["accept", "decline"])]}}
+      {1, {:call, __MODULE__, :answer, [kind, oneof(["accept", "decline"])]}},
+      {1, {:call, __MODULE__, :switch, [oneof(@modes)]}}
     ])
   end
 
@@ -169,6 +183,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
       {1, {:call, __MODULE__, :answer, [kind, "cancel"]}},
       {3, {:call, __MODULE__, :withdraw, [control_id(kind)]}},
       {1, {:call, __MODULE__, :withdraw, [oneof(@control_ids)]}},
+      {2, {:call, __MODULE__, :switch, [oneof(@modes)]}},
       {1, {:call, __MODULE__, :stop, []}}
     ])
   end
@@ -177,6 +192,7 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     frequency([
       {2, {:call, __MODULE__, :answer, [kind, oneof(["accept", "decline", "cancel"])]}},
       {1, {:call, __MODULE__, :withdraw, [oneof(@control_ids)]}},
+      {1, {:call, __MODULE__, :switch, [oneof(@modes)]}},
       {3, {:call, __MODULE__, :stop, []}}
     ])
   end
@@ -249,6 +265,18 @@ defmodule HalC2.ClaudeApprovalsPropTest do
     do: %{close(state, kind, "cancelled", :kept) | phase: :idle}
 
   def next_state(state, _result, {:call, _, :stop, []}), do: %{state | phase: :idle}
+
+  # Switching to Full access approves an open command approval, and the turn finishes
+  # on it. A safety check and an elicitation stay open: bypassing permissions still
+  # asks them. Every other switch leaves the requests as they are.
+  def next_state(
+        %{phase: :pending, kind: :permission} = state,
+        _result,
+        {:call, _, :switch, ["full-access"]}
+      ),
+      do: %{close(state, :permission, "resolved", "accept") | phase: :idle}
+
+  def next_state(state, _result, {:call, _, :switch, [_mode]}), do: state
 
   defp sent(state), do: %{state | msgs: state.msgs + 1, n: state.n + 1, talked: true}
 
@@ -351,6 +379,29 @@ defmodule HalC2.ClaudeApprovalsPropTest do
         _ = :sys.get_state(pid)
         snapshot()
     end
+  end
+
+  # The user switches the thread's access. The runtime has taken it once it answers a
+  # state read; a command approval that closed on it lets the turn finish.
+  def switch(mode) do
+    before = snapshot().reqs.permission.status
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.runtime-mode.set",
+        "commandId" => "switch-#{System.unique_integer([:positive])}",
+        "threadId" => @tid,
+        "runtimeMode" => mode
+      })
+
+    if pid = runtime_pid(), do: :sys.get_state(pid)
+
+    if before == "pending" and snapshot().reqs.permission.status != "pending" do
+      run = current() |> StreamState.list("run") |> List.last()
+      await_run(run["id"], &(&1["status"] in ["completed", "failed", "interrupted"]))
+    end
+
+    snapshot()
   end
 
   # The user stops the running turn.

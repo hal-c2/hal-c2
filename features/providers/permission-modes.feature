@@ -226,14 +226,36 @@ Feature: Permission modes
     When the user opens the permission mode choices
     Then auto is not offered
 
-  # A provider that can change a running turn's access takes it at once instead; Muse
-  # Code does (providers/muse.feature).
+  # Codex takes the mode with each turn. A provider that can change a running turn's
+  # access takes it at once instead: Claude does (below), as does Muse Code
+  # (providers/muse.feature).
   @tui
   Scenario: Changing the mode mid-thread applies from the next turn
     Given a supervised thread with a running turn
     When the user switches the thread to full access
     Then the running turn keeps supervised
     And the next turn runs in full access
+
+  # Claude Code changes a running session's permission mode (`set_permission_mode`), so a
+  # turn waiting on an approval does not keep asking until it ends.
+  Scenario: Switching a running Claude turn to full access stops it asking
+    Given a Claude thread waiting on a command approval
+    When the user switches the thread to full access
+    Then Claude's running session switches to the "bypassPermissions" permission mode
+    And Claude's waiting command is approved without the user
+
+  # Claude asks its ask rules and its own safety checks in every mode, so Full access
+  # leaves those approvals to the user.
+  Scenario: Switching a running Claude turn to full access leaves an ask rule's approval waiting
+    Given a supervised Claude turn an ask rule in the user's Claude permissions asks to run a command
+    When the user switches the thread to full access
+    Then Claude's running session switches to the "bypassPermissions" permission mode
+    And the ask rule's approval still waits on the user
+
+  Scenario: Switching a running Claude turn to supervised makes it ask again
+    Given a full access Claude thread with a running turn
+    When the user switches the thread to supervised
+    Then Claude's running session switches to the "default" permission mode
 
   @tui
   Scenario: Switching back to a stricter mode applies from the next turn

@@ -461,6 +461,89 @@ defmodule HalC2.Steps.Providers.PermissionModes do
     context
   end
 
+  step "a full access Claude thread with a running turn", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{
+        "runtimeMode" => "full-access"
+      })
+
+    World.await_running(context, @thread)
+    context
+  end
+
+  step "a supervised Claude turn an ask rule in the user's Claude permissions asks to run a command",
+       context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{
+        "runtimeMode" => "approval-required"
+      })
+
+    World.await_running(context, @thread)
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+
+    send(
+      pid,
+      {:claude, :sys.get_state(pid).session,
+       {:permission, "perm-rule", "Bash", %{"command" => "git push"},
+        %{
+          "title" => "Claude wants to run git push",
+          "decision_reason" => "Permission rule Bash(git push:*) requires approval",
+          "decision_reason_type" => "rule"
+        }}}
+    )
+
+    id = "runtime-request:claudeAgent:perm-rule"
+
+    World.await_value(context, @thread, fn state ->
+      match?(%{"status" => "pending"}, StreamState.get(state, "runtime-request")[id])
+    end)
+
+    Map.put(context, :request, %{"id" => id})
+  end
+
+  step "the ask rule's approval still waits on the user", context do
+    # The runtime has handled the switch once it answers a state read.
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    _ = :sys.get_state(pid)
+
+    assert %{"status" => "pending"} =
+             StreamState.get(World.state(context, @thread), "runtime-request")[
+               context.request["id"]
+             ]
+
+    context
+  end
+
+  step "Claude's running session switches to the {string} permission mode",
+       %{args: [mode]} = context do
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "request"]) == %{"subtype" => "set_permission_mode", "mode" => mode})
+    )
+
+    context
+  end
+
+  step "Claude's waiting command is approved without the user", context do
+    assert %{"behavior" => "allow"} = claude_answer(context)
+
+    World.await_value(context, @thread, fn state ->
+      match?(
+        %{"status" => "resolved", "decision" => "accept"},
+        StreamState.get(state, "runtime-request")[context.request["id"]]
+      )
+    end)
+
+    World.await_idle(context, @thread)
+    assert "allowed" in World.replies(context, @thread)
+    context
+  end
+
   step "a full access thread", context do
     context |> World.fake_providers() |> World.run_turns(@thread, "codex", ["hello"])
   end
