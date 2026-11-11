@@ -20,6 +20,7 @@
 //! The palette steps ([`ask_repository`], [`submit_repository`],
 //! [`ask_destination`], [`start`]) are the functions the palette calls back.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -270,6 +271,12 @@ struct Discovery {
     asking: bool,
 }
 
+/// What each environment's source control scan found, for every window.
+/// Add project's sources read it without the clone controller, so they are
+/// listed while it runs and in a window that has none.
+#[derive(Default)]
+struct Discoveries(RefCell<HashMap<String, Discovery>>);
+
 /// How a clone's toast reads: kind, title, description, actions, time.
 struct Reading {
     kind: &'static str,
@@ -283,7 +290,6 @@ pub struct ProjectClone {
     me: Me<ProjectClone>,
     mc: std::rc::Rc<dyn Mc>,
     active: bool,
-    discovery: HashMap<String, Discovery>,
     /// A lookup or a start on its way, which Enter does not repeat.
     busy: bool,
     lookup: u64,
@@ -302,7 +308,6 @@ impl Controller for ProjectClone {
             me: init.me,
             mc: init.mc,
             active: false,
-            discovery: HashMap::new(),
             busy: false,
             lookup: 0,
             started: None,
@@ -340,143 +345,6 @@ impl ProjectClone {
             self.started = None;
             open_project(engine, &environment_id, &project_id);
         }
-    }
-
-    /// Add project's clone sources on `environment_id`, after Local folder.
-    pub fn sources(&mut self, engine: &Engine, environment_id: &str) -> Vec<Choice> {
-        // Asked again each time they are shown; a new answer refreshes them.
-        self.discover(engine, environment_id);
-        // Git URL, then the providers ready first, each part by label.
-        let mut providers = PROVIDERS;
-        providers.sort_by(|a, b| {
-            let ready = |p: &Source| self.readiness(environment_id, p.kind).0;
-            ready(b)
-                .cmp(&ready(a))
-                .then_with(|| model::locale_compare(a.label, b.label))
-        });
-        std::iter::once(URL)
-            .chain(providers)
-            .map(|source| self.choice(environment_id, source))
-            .collect()
-    }
-
-    fn choice(&self, environment_id: &str, source: Source) -> Choice {
-        let url = source.kind == URL.kind;
-        let title = if url {
-            "Git URL".to_owned()
-        } else {
-            format!("{} repository", source.label)
-        };
-        let environment = environment_id.to_owned();
-        let mut choice = Choice::new(&format!("clone-{}", source.kind), &title, |_| {});
-        choice.run = None;
-        choice.description = if url {
-            "Clone from a remote URL".into()
-        } else {
-            format!("Clone {} {}", source.label, source.hint)
-        };
-        choice.terms = ["clone", "remote", "repository", "repo", "git", source.label]
-            .map(String::from)
-            .to_vec();
-        let (ready, hint) = self.readiness(environment_id, source.kind);
-        if ready {
-            choice.keep_open = true;
-            choice.run = Some(std::rc::Rc::new(move |engine| {
-                ask_repository(engine, &environment, source);
-            }));
-        } else {
-            // The web disables it and offers its Setup Required button, which
-            // opens the settings; here choosing the row is pressing that
-            // button.
-            let reason = if hint.is_empty() {
-                "Open Settings -> Source Control to configure this provider.".to_owned()
-            } else {
-                plain_detail(&hint)
-            };
-            choice.description = format!("Setup Required · {reason}");
-            choice.terms.push("setup required".into());
-            choice.run = Some(std::rc::Rc::new(|engine| {
-                controller::with::<Navigation, _>(engine, |n, e| {
-                    n.open(e, Route::Settings(SOURCE_CONTROL_SECTION.into()));
-                });
-            }));
-        }
-        choice
-    }
-
-    /// Whether the source can be cloned from, and if not what to do about it.
-    fn readiness(&self, environment_id: &str, kind: &str) -> (bool, String) {
-        if kind == URL.kind {
-            return (true, String::new());
-        }
-        let unavailable = (
-            false,
-            "Provider status unavailable. Open Settings -> Source Control and rescan.".to_owned(),
-        );
-        let Some(discovery) = self
-            .discovery
-            .get(environment_id)
-            .and_then(|d| d.result.as_ref())
-        else {
-            return unavailable;
-        };
-        let providers = discovery
-            .get("sourceControlProviders")
-            .and_then(Json::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let Some(provider) = providers.iter().find(|p| text(p, "kind") == kind) else {
-            return unavailable;
-        };
-        if text(provider, "status") != "available" {
-            return (false, text(provider, "installHint"));
-        }
-        let auth = &provider["auth"];
-        if text(auth, "status") == "unauthenticated" {
-            let detail = option_value(auth.get("detail"));
-            return (
-                false,
-                if detail.is_empty() {
-                    format!(
-                        "{} is not authenticated. Open Settings -> Source Control for setup guidance.",
-                        text(provider, "label")
-                    )
-                } else {
-                    detail
-                },
-            );
-        }
-        (true, String::new())
-    }
-
-    fn discover(&mut self, engine: &Engine, environment_id: &str) {
-        let online = store::with(engine, |s| s.environment_online(environment_id));
-        let discovery = self.discovery.entry(environment_id.to_owned()).or_default();
-        if discovery.asking || !online {
-            return;
-        }
-        discovery.asking = true;
-        let me = self.me.clone();
-        let environment = environment_id.to_owned();
-        self.mc.call(
-            environment_id,
-            "server.discoverSourceControl",
-            json!({}),
-            Box::new(move |engine, result| {
-                me.run(engine, |c, engine| {
-                    let discovery = c.discovery.entry(environment).or_default();
-                    discovery.asking = false;
-                    // A failed scan keeps what the last one found.
-                    let Ok(result) = result else { return };
-                    if discovery.result.as_ref() == Some(&result) {
-                        return;
-                    }
-                    discovery.result = Some(result);
-                    // The open sources menu reads the new answer.
-                    palette::refresh_menu(engine);
-                });
-            }),
-        );
     }
 
     fn follow(&mut self, engine: &Engine) {
@@ -683,10 +551,157 @@ fn reading_of(clone: &Json, environment_id: &str, project_id: &str) -> Reading {
     }
 }
 
-/// Add project's clone sources on `environment_id`, after Local folder.
+/// Add project's clone sources on `environment_id`, after Local folder:
+/// asked for again each time they are shown, and refreshed by a new answer.
 pub fn sources(engine: &Engine, environment_id: &str) -> Vec<Choice> {
-    controller::with::<ProjectClone, _>(engine, |c, engine| c.sources(engine, environment_id))
-        .unwrap_or_default()
+    discover(engine, environment_id);
+    let found = engine.extension::<Discoveries>();
+    let found = found.0.borrow();
+    // Git URL, then the providers ready first, each part by label.
+    let mut providers = PROVIDERS;
+    providers.sort_by(|a, b| {
+        let ready = |p: &Source| readiness(&found, environment_id, p.kind).0;
+        ready(b)
+            .cmp(&ready(a))
+            .then_with(|| model::locale_compare(a.label, b.label))
+    });
+    std::iter::once(URL)
+        .chain(providers)
+        .map(|source| choice(&found, environment_id, source))
+        .collect()
+}
+
+/// Asks `environment_id` which providers it has, unless it is offline or
+/// already asked; the answer comes back as the window that asked.
+fn discover(engine: &Engine, environment_id: &str) {
+    let online = store::with(engine, |s| s.environment_online(environment_id));
+    let Some(mc) = controller::mc(engine) else {
+        return;
+    };
+    let found = engine.extension::<Discoveries>();
+    {
+        let mut found = found.0.borrow_mut();
+        let discovery = found.entry(environment_id.to_owned()).or_default();
+        if discovery.asking || !online {
+            return;
+        }
+        discovery.asking = true;
+    }
+    let environment = environment_id.to_owned();
+    mc.call(
+        environment_id,
+        "server.discoverSourceControl",
+        json!({}),
+        Box::new(move |engine, result| {
+            let changed = {
+                let found = engine.extension::<Discoveries>();
+                let mut found = found.0.borrow_mut();
+                let discovery = found.entry(environment).or_default();
+                discovery.asking = false;
+                // A failed scan keeps what the last one found.
+                match result {
+                    Ok(result) if discovery.result.as_ref() != Some(&result) => {
+                        discovery.result = Some(result);
+                        true
+                    }
+                    _ => false,
+                }
+            };
+            // The open sources menu reads the new answer.
+            if changed {
+                palette::refresh_menu(engine);
+            }
+        }),
+    );
+}
+
+fn choice(found: &HashMap<String, Discovery>, environment_id: &str, source: Source) -> Choice {
+    let url = source.kind == URL.kind;
+    let title = if url {
+        "Git URL".to_owned()
+    } else {
+        format!("{} repository", source.label)
+    };
+    let environment = environment_id.to_owned();
+    let mut choice = Choice::new(&format!("clone-{}", source.kind), &title, |_| {});
+    choice.run = None;
+    choice.description = if url {
+        "Clone from a remote URL".into()
+    } else {
+        format!("Clone {} {}", source.label, source.hint)
+    };
+    choice.terms = ["clone", "remote", "repository", "repo", "git", source.label]
+        .map(String::from)
+        .to_vec();
+    let (ready, hint) = readiness(found, environment_id, source.kind);
+    if ready {
+        choice.keep_open = true;
+        choice.run = Some(std::rc::Rc::new(move |engine| {
+            ask_repository(engine, &environment, source);
+        }));
+    } else {
+        // The web disables it and offers its Setup Required button, which
+        // opens the settings; here choosing the row is pressing that
+        // button.
+        let reason = if hint.is_empty() {
+            "Open Settings -> Source Control to configure this provider.".to_owned()
+        } else {
+            plain_detail(&hint)
+        };
+        choice.description = format!("Setup Required · {reason}");
+        choice.terms.push("setup required".into());
+        choice.run = Some(std::rc::Rc::new(|engine| {
+            controller::with::<Navigation, _>(engine, |n, e| {
+                n.open(e, Route::Settings(SOURCE_CONTROL_SECTION.into()));
+            });
+        }));
+    }
+    choice
+}
+
+/// Whether the source can be cloned from, and if not what to do about it.
+fn readiness(
+    found: &HashMap<String, Discovery>,
+    environment_id: &str,
+    kind: &str,
+) -> (bool, String) {
+    if kind == URL.kind {
+        return (true, String::new());
+    }
+    let unavailable = (
+        false,
+        "Provider status unavailable. Open Settings -> Source Control and rescan.".to_owned(),
+    );
+    let Some(discovery) = found.get(environment_id).and_then(|d| d.result.as_ref()) else {
+        return unavailable;
+    };
+    let providers = discovery
+        .get("sourceControlProviders")
+        .and_then(Json::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let Some(provider) = providers.iter().find(|p| text(p, "kind") == kind) else {
+        return unavailable;
+    };
+    if text(provider, "status") != "available" {
+        return (false, text(provider, "installHint"));
+    }
+    let auth = &provider["auth"];
+    if text(auth, "status") == "unauthenticated" {
+        let detail = option_value(auth.get("detail"));
+        return (
+            false,
+            if detail.is_empty() {
+                format!(
+                    "{} is not authenticated. Open Settings -> Source Control for setup guidance.",
+                    text(provider, "label")
+                )
+            } else {
+                detail
+            },
+        );
+    }
+    (true, String::new())
 }
 
 fn toast_error(engine: &Engine, title: &str, reason: &str) {
@@ -1012,6 +1027,39 @@ fn remove_project(engine: &Engine, environment_id: &str, project_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn titles(choices: &[Choice]) -> Vec<String> {
+        choices.iter().map(|c| c.title.clone()).collect()
+    }
+
+    #[test]
+    fn the_sources_are_listed_where_no_clone_controller_answers() {
+        // The acting window's controllers not found, or the clone
+        // controller running: the sources still come, unknown providers
+        // pointing at the settings.
+        let engine = ljos::App::new("test")
+            .register(crate::register)
+            .build_engine();
+        let choices = sources(&engine, "env-b");
+        assert_eq!(
+            titles(&choices),
+            [
+                "Git URL",
+                "Azure DevOps repository",
+                "Bitbucket repository",
+                "Forgejo / Gitea repository",
+                "GitHub repository",
+                "GitLab repository",
+            ]
+        );
+        assert!(
+            choices[1]
+                .description
+                .starts_with("Setup Required · Provider status unavailable"),
+            "{}",
+            choices[1].description
+        );
+    }
 
     #[test]
     fn a_shorthand_is_a_github_repository_and_an_address_stays() {

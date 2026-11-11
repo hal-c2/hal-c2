@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use hal_c2_shell::commands::Commands;
 use hal_c2_shell::controllers::drafts;
 use hal_c2_shell::controllers::palette::Palette;
+use hal_c2_shell::store;
 use serde_json::{Value, json};
 
 use super::fake_files::fake_files;
@@ -237,6 +238,11 @@ fn open_sources(world: &mut World) -> Outcome {
         let engine = world.engine().clone();
         Commands::of(&engine).run(&engine, "project.add");
     }
+    wait_for_providers(world)
+}
+
+/// Until the palette shows GitHub ready: the environment's providers are known.
+fn wait_for_providers(world: &mut World) -> Outcome {
     world.wait_for_with(
         |w| {
             find_row(w, "GitHub repository")
@@ -491,6 +497,52 @@ pub fn register(steps: &mut Steps) {
         "the user looks at repository sources while adding a project",
         |world, _, _| open_sources(world),
     );
+    steps.step(&format!("the machine {Q} is connected"), |world, c, _| {
+        world.mc.join_named(&c[0]);
+        world.sync()?;
+        let name = c[0].clone();
+        world.wait_for("the machine", |w| {
+            store::with(w.engine(), |s| s.environment_online(&name))
+        })
+    });
+    steps.step(
+        &format!("the user types {Q} while adding a project and chooses {Q}"),
+        |world, c, _| {
+            let engine = world.engine().clone();
+            Commands::of(&engine).run(&engine, "project.add");
+            world.sync()?;
+            // As the brick hands them on: the field's text after each key,
+            // then Enter on the highlighted row.
+            let typed: Vec<char> = c[0].chars().collect();
+            for end in 1..=typed.len() {
+                let prefix: String = typed[..end].iter().collect();
+                super::add_project::set_query(world, &prefix)?;
+            }
+            world.sync()?;
+            let title = c[1].clone();
+            world.wait_for_with(
+                |w| find_row(w, &title) == Some(0),
+                |w| format!("{title} to be highlighted; {}", describe(w)),
+            )?;
+            expect!(
+                super::add_project::invoke_ok(world, "runHighlighted", &[])?,
+                "Enter did nothing; {}",
+                describe(world)
+            );
+            world.sync()?;
+            expect!(
+                super::add_project::prop(world, "submenu")? == title,
+                "{}",
+                describe(world)
+            );
+            wait_for_providers(world)
+        },
+    );
+    steps.step("the palette's search is empty", |world, _, _| {
+        let query = palette(world, |p, _| p.query().to_owned())?;
+        expect!(query.is_empty(), "{}", describe(world));
+        Ok(())
+    });
     steps.step(&format!("GitLab is marked {Q}"), |world, c, _| {
         let description = description_of(world, "GitLab repository")?;
         expect!(
