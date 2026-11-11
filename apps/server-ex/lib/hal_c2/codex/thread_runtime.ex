@@ -27,7 +27,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   alias HalC2.Codex.{GeneratedImages, Goals}
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.{Entities, TurnWatch, Unrecorded}
+  alias HalC2.Orchestration.{AppliedModel, Entities, TurnWatch, Unrecorded}
   alias HalC2.JsonRpc.Connection
   alias HalC2.Subprocess.Durable
 
@@ -1113,8 +1113,10 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp begin_turn({:leftover, message, state}, _turn), do: {:error, {:leftover, message}, state}
 
+  # A model a turn's native thread opened on is that turn's: one whose turn never
+  # started (`native_turn_started/3`) is not the next turn's on the same thread.
   defp begin_turn(state, turn) do
-    state = goal_thread(state, turn)
+    state = state |> Map.delete(:opened_model) |> goal_thread(turn)
 
     case Goals.command(turn) do
       nil -> begin_native_turn(state, turn)
@@ -1192,7 +1194,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       :ok ->
         state = state |> Map.put(:last_turn, native_turn) |> Map.put(:turn, turn)
         observe_started(state)
-        {:ok, state}
+        {opened, state} = Map.pop(state, :opened_model)
+        {:ok, AppliedModel.record(state, opened)}
 
       # The run ended while Codex started its turn: nothing wants the turn now. Codex
       # took the prompt all the same, which the run's start says: a run that ended
@@ -1671,8 +1674,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       end
 
     case result do
-      {:ok, %{"thread" => %{"id" => id}}} ->
-        {:ok, %{state | native_thread_id: id}}
+      {:ok, %{"thread" => %{"id" => id}} = reply} ->
+        {:ok, opened(state, id, reply)}
 
       {:error, reason} when turn.native_thread_id != nil ->
         resume_failed(state, params, reason)
@@ -1680,6 +1683,16 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:error, reason} ->
         {:error, reason, state}
     end
+  end
+
+  # The native thread Codex opened, and the model it says the thread runs on, which
+  # the turn records once it starts (`native_turn_started/3`). A thread of another id
+  # holds none of the options earlier turns set on the last one (`selected_options/3`).
+  defp opened(state, id, reply) do
+    state
+    |> Map.put(:opened_model, reply["model"])
+    |> then(&if(id != state.native_thread_id, do: Map.put(&1, :sent_options, %{}), else: &1))
+    |> Map.put(:native_thread_id, id)
   end
 
   @thread_in_use "This conversation is open in another Codex client, such as the Codex app, " <>
@@ -1697,8 +1710,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
       recoverable_resume?(reason) ->
         case Connection.call(state.conn, "thread/start", params) do
-          {:ok, %{"thread" => %{"id" => id}}} ->
-            {:ok, Map.put(%{state | native_thread_id: id}, :fresh_start, true)}
+          {:ok, %{"thread" => %{"id" => id}} = reply} ->
+            {:ok, Map.put(opened(state, id, reply), :fresh_start, true)}
 
           {:error, reason} ->
             {:error, reason, state}
@@ -1888,7 +1901,8 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     params = if context, do: Map.put(params, "additionalContext", context), else: params
 
-    params = Map.merge(params, selected_options(Map.get(turn, :options, %{})))
+    {options, state} = selected_options(state, turn)
+    params = Map.merge(params, options)
 
     case Connection.call(state.conn, "turn/start", params) do
       # Codex answering a new run's start with an earlier run's turn has not
@@ -2423,6 +2437,15 @@ defmodule HalC2.Codex.ThreadRuntime do
        )
        when turn_id != current,
        do: state
+
+  # Codex moving the turn to another model than the one it was started on (a model
+  # it routes a flagged request away from, say) is recorded on the run, with a notice.
+  defp notification(
+         "model/rerouted",
+         %{"threadId" => thread, "toModel" => model},
+         %{native_thread_id: thread} = state
+       ),
+       do: AppliedModel.record(state, model)
 
   # A turn's first final answer streams as it comes; a later one is held back
   # until it finishes, when a repeat of an earlier answer (or an empty one) is
@@ -3440,18 +3463,48 @@ defmodule HalC2.Codex.ThreadRuntime do
     %{state | items: Map.drop(state.items, Map.keys(persistent))}
   end
 
-  # The model options the user picked: reasoning effort and service tier.
-  defp selected_options(options) do
-    tier =
-      options["serviceTier"] || if(options["fastMode"] == true, do: "fast")
+  # The model options the user picked: reasoning effort and service tier. Codex keeps
+  # what `turn/start` sets for the thread's later turns, so an option an earlier turn
+  # set that this one leaves unpicked is set back: the tier to none (Standard, which
+  # "default" also names), the effort to the model's default. Unpicked from the start,
+  # neither is named, and Codex runs on its own config.
+  defp selected_options(state, turn) do
+    options = Map.get(turn, :options, %{})
+    tier = options["serviceTier"] || if(options["fastMode"] == true, do: "fast")
+    sent = Map.get(state, :sent_options, %{})
 
-    %{}
-    |> then(
-      &if is_binary(options["reasoningEffort"]),
-        do: Map.put(&1, "effort", options["reasoningEffort"]),
-        else: &1
-    )
-    |> then(&if is_binary(tier), do: Map.put(&1, "serviceTier", tier), else: &1)
+    picked =
+      %{}
+      |> then(
+        &if is_binary(options["reasoningEffort"]),
+          do: Map.put(&1, "effort", options["reasoningEffort"]),
+          else: &1
+      )
+      |> then(
+        &if is_binary(tier),
+          do: Map.put(&1, "serviceTier", if(tier != "default", do: tier)),
+          else: &1
+      )
+
+    reset =
+      %{}
+      |> then(
+        &if Map.has_key?(sent, "serviceTier"), do: Map.put(&1, "serviceTier", nil), else: &1
+      )
+      |> then(fn reset ->
+        default =
+          Map.has_key?(sent, "effort") &&
+            HalC2.Codex.Provider.default_option(
+              Entities.instance(turn.ids),
+              turn.model,
+              "reasoningEffort"
+            )
+
+        if is_binary(default), do: Map.put(reset, "effort", default), else: reset
+      end)
+
+    options = Map.merge(reset, picked)
+    {options, Map.put(state, :sent_options, Map.merge(sent, options))}
   end
 
   defp error_code(code) when is_binary(code), do: code

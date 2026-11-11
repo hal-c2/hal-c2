@@ -519,6 +519,11 @@ export const OrchestrationV2Run = Schema.Struct({
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   /** A failed run's own failure text, as its provider gave it. */
   failure: Schema.optional(Schema.String),
+  /**
+   * The model the provider reported running the run on, where it reports one. A
+   * different model than `modelSelection.model` also puts a notice on the thread.
+   */
+  appliedModel: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
