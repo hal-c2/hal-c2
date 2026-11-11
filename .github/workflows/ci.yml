@@ -217,7 +217,9 @@ jobs:
       # Regex content search needs ripgrep, which the runner image lacks (HalC2.Workspace).
       - name: Install fuse3 and ripgrep
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+        uses: ./.github/actions/apt-install
+        with:
+          packages: fuse3 ripgrep
 
       - name: Build the machine-files helper
         run: |
@@ -277,7 +279,9 @@ jobs:
 
       - name: Install fuse3
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3'
+        uses: ./.github/actions/apt-install
+        with:
+          packages: fuse3
 
       - name: Build the machine-files helper
         run: |
@@ -385,14 +389,18 @@ jobs:
       - name: Install zsh
         if: contains(matrix.dirs, 'terminal')
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh zsh'
+        uses: ./.github/actions/apt-install
+        with:
+          packages: zsh
 
       # Files on another machine mount them with FUSE; they skip without the helper.
       # Regex content search needs ripgrep, which the runner image lacks.
       - name: Install fuse3 and ripgrep
         if: contains(matrix.dirs, 'files')
         timeout-minutes: 10
-        run: '"$GITHUB_WORKSPACE"/.github/scripts/apt-install.sh fuse3 ripgrep'
+        uses: ./.github/actions/apt-install
+        with:
+          packages: fuse3 ripgrep
 
       - name: Build the machine-files helper
         if: contains(matrix.dirs, 'files')

@@ -1,0 +1,44 @@
+name: Install apt packages
+description: Installs apt packages from .debs kept in the Actions cache, and downloads them only when the cache lacks them (.github/scripts/apt-install.sh).
+
+inputs:
+  packages:
+    description: The packages, separated by spaces.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # By release, not runner image version: a new image every week would make every job
+    # download again, and an older .deb of these still installs on a newer image.
+    - name: Cache key
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        . /etc/os-release
+        echo "key=apt-v1-$ID-$VERSION_CODENAME-$RUNNER_ARCH-${PACKAGES// /-}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the .debs
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/${{ steps.key.outputs.key }}
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Install
+      id: install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        DEBS: ${{ runner.temp }}/${{ steps.key.outputs.key }}
+      # $PACKAGES unquoted: one argument per package.
+      run: '"$GITHUB_ACTION_PATH"/../../scripts/apt-install.sh "$DEBS" $PACKAGES'
+
+    - name: Save the .debs
+      if: steps.install.outputs.fetched == 'true' && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/${{ steps.key.outputs.key }}
+        key: ${{ steps.key.outputs.key }}
