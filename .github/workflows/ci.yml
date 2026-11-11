@@ -101,6 +101,7 @@ jobs:
       - name: Claimed desktop/mobile scenarios are selected by their runners
         run: python3 mise-tasks/features/check
 
+
   # The one job that saves the build every other MC job restores.
   mc_check:
     name: MC check
@@ -189,6 +190,7 @@ jobs:
       - name: Sobelow against its baseline
         run: mix sobelow.check
 
+
   mc:
     name: MC tests
     needs: [changes, mc_check]
@@ -242,6 +244,7 @@ jobs:
         env:
           HAL_C2_TEST_SLOWEST: 25
 
+
   # The matrix jobs' names leave the matrix out: GitHub appends its values to a running
   # job's name, and shows a skipped job's `${{ matrix.* }}` unexpanded.
   # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
@@ -294,6 +297,7 @@ jobs:
           fi
         env:
           SHARD: ${{ matrix.shard }}
+
 
   # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
   # Only the proofs whose model changed (ci-changes.sh); mc_check holds every model to the
@@ -417,6 +421,7 @@ jobs:
           echo "$globs"
           HAL_C2_FEATURES="$globs" mix test test/hal_c2/scenarios_test.exs
 
+
   tui:
     name: TUI
     needs: changes
@@ -469,6 +474,7 @@ jobs:
         env:
           MISE_CONFIG_ROOT: ${{ github.workspace }}
         run: ../../mise-tasks/features/tui/all
+
 
   # In the queue the first failure decides the entry: these stop the rest of the run so the
   # queue drops it now, not when the slowest proof ends. They hold the run's only write
@@ -555,8 +561,7 @@ jobs:
   # entries change their names. A skipped job passes; a failed or cancelled one does not.
   result:
     name: CI result
-    needs:
-      [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui]
+    needs: [changes, pr_assets, ledger, mc_check, mc_audit, mc, mc_props, mc_proofs, mc_scenarios, tui]
     # Also after a cancel in the queue, which the stop jobs cause: the queue needs an answer.
     if: ${{ always() && (github.event_name == 'merge_group' || !cancelled()) }}
     runs-on: ubuntu-24.04
