@@ -655,7 +655,7 @@ defmodule HalC2.AcpTest do
 
   # Found by HalC2.AcpLegacyModesPropTest (merge queue run 43116789842): a probe that
   # published after a running session had set its mode showed the agent's default mode.
-  test "a probe keeps the mode a running session set while the agent still offers it",
+  test "a probe or reload keeps the mode a running session set while the agent offers it",
        %{tmp_dir: dir} do
     id = "acpRegistry_modes"
     fake = Path.expand("../support/fake_acme_agent.py", __DIR__)
@@ -685,7 +685,7 @@ defmodule HalC2.AcpTest do
     )
 
     on_exit(fn ->
-      HalC2.Acp.forget(id)
+      HalC2.Acp.drop(id)
       Application.delete_env(:hal_c2, :acp_commands)
       :persistent_term.erase({HalC2.Acp.Catalog, :index})
     end)
@@ -718,6 +718,18 @@ defmodule HalC2.AcpTest do
     HalC2.Acp.put_option(id, "mode", "code")
     HalC2.Acp.load()
     assert mode.() == "code"
+
+    # A reload (a settings change, a sign-in) forgets what was read and probes again;
+    # the session is still in "code".
+    HalC2.Acp.forget(id)
+    assert mode.() == nil
+    HalC2.Acp.load()
+    assert mode.() == "code"
+
+    # A removed instance keeps nothing; read again, it shows the agent's default.
+    HalC2.Acp.drop(id)
+    HalC2.Acp.load()
+    assert mode.() == "ask"
 
     # A mode the agent no longer offers gives way to the probe's.
     HalC2.Acp.put_option(id, "mode", "gone")

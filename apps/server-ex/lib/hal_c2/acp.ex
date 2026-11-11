@@ -839,14 +839,15 @@ defmodule HalC2.Acp do
     do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
 
   # A probe's fresh session reports each option at the agent's default, but a running
-  # session may have set one since (`put_option/3`, as `session/set_mode` does). The
-  # probe decides which options and choices there are; a value set before stays while
-  # its option still offers it.
+  # session may have set one since (`put_option/3`, as `session/set_mode` does), before
+  # or across a `forget/1`. The probe decides which options and choices there are; a
+  # value set before stays while its option still offers it.
   defp publish_staged(id, :config, config) do
     set =
-      for %{"id" => key} = option <- :persistent_term.get({__MODULE__, id, :config}, []),
-          into: %{},
-          do: {key, option["currentValue"]}
+      Map.merge(
+        :persistent_term.get({__MODULE__, id, :set_values}, %{}),
+        set_values(:persistent_term.get({__MODULE__, id, :config}, []))
+      )
 
     config =
       Enum.map(config, fn option ->
@@ -855,6 +856,7 @@ defmodule HalC2.Acp do
       end)
 
     :persistent_term.put({__MODULE__, id, :config}, config)
+    :persistent_term.erase({__MODULE__, id, :set_values})
   end
 
   defp publish_staged(id, key, value),
@@ -2249,16 +2251,22 @@ defmodule HalC2.Acp do
   Forgets what was read from an instance's agent, so it is probed again. Workspace
   snapshots (`:workspaces`, kept by Pi and Cursor per folder) stay: they are what
   the user already saw for a folder, and only the next workspace refresh replaces
-  them. `drop/1` is for an instance that is gone.
+  them. So do the values a running session set on its options (`put_option/3`): the
+  next probe's options keep those they still offer. `drop/1` is for an instance that
+  is gone.
   """
   def forget(id) do
     locked(id, fn -> forget_now(id) end)
   end
 
-  @doc "Forgets an instance that was removed: `forget/1`, and its workspace snapshots too."
+  @doc """
+  Forgets an instance that was removed: `forget/1`, and its workspace snapshots and
+  session option values too.
+  """
   def drop(id) do
     locked(id, fn ->
       forget_now(id)
+      :persistent_term.erase({__MODULE__, id, :set_values})
       :persistent_term.erase({__MODULE__, id, :workspaces})
       :persistent_term.put({__MODULE__, id, :workspaces_epoch}, workspaces_epoch(id) + 1)
       :ok
@@ -2290,6 +2298,15 @@ defmodule HalC2.Acp do
   end
 
   defp forget_now(id) do
+    # The option values a running session set (only a registry agent's do, through
+    # `put_config/2`) outlive the options until the next probe publishes its own
+    # (`publish_staged/3`).
+    set = set_values(:persistent_term.get({__MODULE__, id, :config}, []))
+    key = {__MODULE__, id, :set_values}
+
+    if set != %{} and driver(id) == @registry,
+      do: :persistent_term.put(key, Map.merge(:persistent_term.get(key, %{}), set))
+
     for key <- [
           :models,
           :version,
@@ -2491,6 +2508,10 @@ defmodule HalC2.Acp do
   end
 
   defp plan_option?(_option), do: false
+
+  # Each option's current value in `config`, by option id.
+  defp set_values(config),
+    do: for(%{"id" => key, "currentValue" => value} <- config, into: %{}, do: {key, value})
 
   # Whether `value` is one `option` can hold: a choice it lists, or a boolean's.
   defp offers?(_option, nil), do: false

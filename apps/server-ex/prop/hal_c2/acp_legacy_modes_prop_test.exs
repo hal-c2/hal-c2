@@ -7,7 +7,8 @@ defmodule HalC2.AcpLegacyModesPropTest do
   last picked or taken, and the instance's "mode" option shows that mode, so picking
   the mode the agent left switches it back. A probe of the agent (as a settings change
   or a listing starts) reads its options from a fresh session in the default mode, and
-  must not make the option show that mode instead.
+  must not make the option show that mode instead, nor may a reload that forgets what
+  was read before it probes.
   """
 
   use ExUnit.Case, async: false
@@ -49,22 +50,23 @@ defmodule HalC2.AcpLegacyModesPropTest do
     frequency([
       {3, {:call, __MODULE__, :pick, [state.sends, oneof(@modes)]}},
       {2, {:call, __MODULE__, :drift, [state.sends, oneof(@modes)]}},
-      {1, {:call, __MODULE__, :probe, []}}
+      {1, {:call, __MODULE__, :probe, []}},
+      {1, {:call, __MODULE__, :reload, []}}
     ])
   end
 
   def precondition(state, {:call, _, _, [n, _]}), do: n == state.sends
-  def precondition(_state, {:call, _, :probe, []}), do: true
+  def precondition(_state, {:call, _, _, []}), do: true
 
   def next_state(state, _result, {:call, _, _, [_, mode]}),
     do: %{state | sends: state.sends + 1, mode: mode}
 
-  def next_state(state, _result, {:call, _, :probe, []}), do: state
+  def next_state(state, _result, {:call, _, _, []}), do: state
 
   def postcondition(_state, {:call, _, _, [_, mode]}, result),
     do: result == {{"completed", "mode: " <> mode}, mode}
 
-  def postcondition(state, {:call, _, :probe, []}, result), do: result == state.mode
+  def postcondition(state, {:call, _, _, []}, result), do: result == state.mode
 
   # A turn the user sends in `mode`; the agent says the mode it is in.
   def pick(n, mode), do: turn(n, "say your mode", [%{"id" => "mode", "value" => mode}])
@@ -77,6 +79,13 @@ defmodule HalC2.AcpLegacyModesPropTest do
   def probe do
     HalC2.Acp.load()
     shown()
+  end
+
+  # A reload, as a settings change or a sign-in makes: the MC forgets what it read from
+  # the agent and probes it again; returns the mode the option shows then.
+  def reload do
+    HalC2.Acp.forget(@instance)
+    probe()
   end
 
   defp turn(n, text, options) do
@@ -182,7 +191,7 @@ defmodule HalC2.AcpLegacyModesPropTest do
         version
       )
 
-    HalC2.Acp.forget(@instance)
+    HalC2.Acp.drop(@instance)
 
     {:ok, _} =
       Orchestration.dispatch(%{
@@ -201,7 +210,7 @@ defmodule HalC2.AcpLegacyModesPropTest do
 
   defp end_case do
     HalC2.Prop.stop_services()
-    HalC2.Acp.forget(@instance)
+    HalC2.Acp.drop(@instance)
     Application.delete_env(:hal_c2, :acp_commands)
     :persistent_term.erase({HalC2.Acp.Catalog, :index})
   end
