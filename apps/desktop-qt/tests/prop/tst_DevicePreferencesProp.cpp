@@ -1,11 +1,15 @@
 // SettingsController's device preferences as a state machine of two desktops on
 // one home (two processes of it, or desktop-qt beside the Ljós desktop), which
 // share preferences.json: each saves preferences, hears the other's saves only
-// once its event loop runs, and quits and starts again. The model is the
-// ledger's rule (features/settings/saving-settings.feature): the file holds
-// every preference as it was last saved, by either, and a desktop that has
-// heard of a save, or started after it, shows it. A save of the value a desktop
-// already shows changes nothing, even if the other saved another since.
+// once its event loop runs, and quits and starts again; and the file is broken
+// by hand and repaired. The model is the ledger's rule
+// (features/settings/saving-settings.feature): the file holds every preference
+// as it was last saved, by either, down to one entry of an object (one
+// provider's models beside another's), and a desktop that has heard of a save,
+// or started after it, shows it. A save of the value a desktop already shows
+// changes nothing, even if the other saved another since. While the file does
+// not read, a desktop that has found that out refuses saves and keeps what it
+// showed, until it hears the file read again.
 
 #include "Prop.h"
 
@@ -15,9 +19,11 @@
 
 #include <QFile>
 #include <QJsonDocument>
+#include <QSaveFile>
 #include <QTemporaryDir>
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -29,11 +35,24 @@ namespace {
 const std::array<std::string, 3> kKeys{"appearance", "timestampFormat", "fontSizeInterface"};
 // Empty removes the preference.
 const std::array<std::string, 3> kValues{"", "one", "two"};
+// A preference whose value is an object each save changes one entry of, as
+// providerModelPreferences is.
+const QString kObject = QStringLiteral("providerModelPreferences");
+const std::array<std::string, 2> kEntries{"codex", "claude"};
+
+QJsonValue jsonOf(const std::string& value) {
+  return value.empty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(QString::fromStdString(value));
+}
+
+QJsonObject initial() { return QJsonObject{{kObject, QJsonObject()}}; }
 
 struct Model {
-  // preferences.json, and what each desktop holds.
-  QJsonObject file;
-  std::array<QJsonObject, 2> view;
+  // preferences.json as last saved, and what each desktop holds.
+  QJsonObject file = initial();
+  std::array<QJsonObject, 2> view{initial(), initial()};
+  // The file is broken by hand; and which desktop has found that out.
+  bool broken = false;
+  std::array<bool, 2> unreadable{false, false};
 };
 
 struct Desktop {
@@ -46,6 +65,8 @@ struct Sut {
   QTemporaryDir home;
   std::array<std::unique_ptr<Desktop>, 2> desktops;
 
+  Sut() { write(QJsonDocument(initial()).toJson()); }
+
   QString path() const { return home.filePath(QStringLiteral("preferences.json")); }
 
   void start(int i) {
@@ -54,49 +75,127 @@ struct Sut {
     desktops[i]->settings()->setDevicePath(path());
   }
 
-  QJsonObject file() const {
-    QFile file(path());
-    if (!file.open(QIODevice::ReadOnly)) return {};
-    return QJsonDocument::fromJson(file.readAll()).object();
+  // As another app, or a person, saves it.
+  void write(const QByteArray& bytes) const {
+    QSaveFile file(path());
+    RC_ASSERT(file.open(QIODevice::WriteOnly));
+    RC_ASSERT(file.write(bytes) == bytes.size());
+    RC_ASSERT(file.commit());
   }
 
+  QByteArray bytes() const {
+    QFile file(path());
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    return file.readAll();
+  }
+  QJsonObject file() const { return QJsonDocument::fromJson(bytes()).object(); }
+
   QJsonObject view(int i) { return desktops[i]->settings()->deviceSettings(); }
+  bool refuses(int i) { return !desktops[i]->settings()->deviceError().isEmpty(); }
 };
 
+constexpr char kBroken[] = "{ not json";
+
 using Command = rc::state::Command<Model, Sut>;
+
+// One save: `next` is the desktop's view with its change. Returns whether the
+// model expects it saved.
+bool save(Model& model, int desktop, const QJsonObject& next, const std::function<void(QJsonObject&)>& change) {
+  if (model.view[desktop] == next) return true;
+  if (model.broken) model.unreadable[desktop] = true;
+  if (model.unreadable[desktop]) return false;
+  change(model.file);
+  model.view[desktop] = model.file;
+  return true;
+}
+
+void check(const Model& next, Sut& sut, int desktop, bool saved, bool expected) {
+  RC_ASSERT(saved == expected);
+  if (next.broken) RC_ASSERT(sut.bytes() == QByteArray(kBroken));
+  else RC_ASSERT(sut.file() == next.file);
+  RC_ASSERT(sut.view(desktop) == next.view[desktop]);
+  RC_ASSERT(sut.refuses(desktop) == next.unreadable[desktop]);
+}
 
 struct Save : Command {
   int desktop = *rc::gen::inRange(0, 2);
   std::string key = *rc::gen::elementOf(kKeys);
   std::string value = *rc::gen::elementOf(kValues);
 
-  void apply(Model& model) const override {
+  bool change(Model& model) const {
     const QString name = QString::fromStdString(key);
-    const QJsonValue next = value.empty() ? QJsonValue(QJsonValue::Undefined) : QJsonValue(QString::fromStdString(value));
-    if (model.view[desktop].value(name) == next) return;
-    if (value.empty()) model.file.remove(name);
-    else model.file.insert(name, next);
-    model.view[desktop] = model.file;
+    QJsonObject next = model.view[desktop];
+    if (value.empty()) next.remove(name);
+    else next.insert(name, jsonOf(value));
+    return save(model, desktop, next, [&](QJsonObject& file) {
+      if (value.empty()) file.remove(name);
+      else file.insert(name, jsonOf(value));
+    });
   }
+  void apply(Model& model) const override { change(model); }
   void run(const Model& model, Sut& sut) const override {
     Model next = model;
-    apply(next);
+    const bool expected = change(next);
     const QVariant saved = value.empty() ? QVariant() : QVariant(QString::fromStdString(value));
-    RC_ASSERT(sut.desktops[desktop]->settings()->writeDevice(QString::fromStdString(key), saved));
-    RC_ASSERT(sut.file() == next.file);
-    RC_ASSERT(sut.view(desktop) == next.view[desktop]);
+    check(next, sut, desktop, sut.desktops[desktop]->settings()->writeDevice(QString::fromStdString(key), saved), expected);
   }
   void show(std::ostream& os) const override {
     os << "Save desktop " << desktop << " " << key << " = " << (value.empty() ? "(removed)" : value);
   }
 };
 
-// Both event loops run: each desktop hears what the other saved.
-struct Hear : Command {
-  void apply(Model& model) const override { model.view = {model.file, model.file}; }
+// One entry of the object, built from what the desktop holds, as the callers
+// of writeDevice do.
+struct SaveEntry : Command {
+  int desktop = *rc::gen::inRange(0, 2);
+  std::string entry = *rc::gen::elementOf(kEntries);
+  std::string value = *rc::gen::elementOf(kValues);
+
+  static QJsonObject with(QJsonObject object, const QString& name, const std::string& value) {
+    if (value.empty()) object.remove(name);
+    else object.insert(name, jsonOf(value));
+    return object;
+  }
+  QJsonObject entries(const Model& model) const {
+    return with(model.view[desktop].value(kObject).toObject(), QString::fromStdString(entry), value);
+  }
+  bool change(Model& model) const {
+    const QString name = QString::fromStdString(entry);
+    QJsonObject next = model.view[desktop];
+    next.insert(kObject, entries(model));
+    return save(model, desktop, next,
+                [&](QJsonObject& file) { file.insert(kObject, with(file.value(kObject).toObject(), name, value)); });
+  }
+  void apply(Model& model) const override { change(model); }
   void run(const Model& model, Sut& sut) const override {
-    RC_ASSERT(prop::until([&] { return sut.view(0) == model.file && sut.view(1) == model.file; }));
-    RC_ASSERT(sut.file() == model.file);
+    const QVariant object = entries(model).toVariantMap();
+    Model next = model;
+    const bool expected = change(next);
+    check(next, sut, desktop, sut.desktops[desktop]->settings()->writeDevice(kObject, object), expected);
+  }
+  void show(std::ostream& os) const override {
+    os << "SaveEntry desktop " << desktop << " " << entry << " = " << (value.empty() ? "(removed)" : value);
+  }
+};
+
+// Both event loops run: each desktop hears what the file holds now.
+struct Hear : Command {
+  void apply(Model& model) const override {
+    if (model.broken) model.unreadable = {true, true};
+    else {
+      model.view = {model.file, model.file};
+      model.unreadable = {false, false};
+    }
+  }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    RC_ASSERT(prop::until([&] {
+      for (int i = 0; i < 2; ++i) {
+        if (sut.view(i) != next.view[i] || sut.refuses(i) != next.unreadable[i]) return false;
+      }
+      return true;
+    }));
   }
   void show(std::ostream& os) const override { os << "Hear"; }
 };
@@ -104,12 +203,34 @@ struct Hear : Command {
 struct Restart : Command {
   int desktop = *rc::gen::inRange(0, 2);
 
-  void apply(Model& model) const override { model.view[desktop] = model.file; }
+  void apply(Model& model) const override {
+    model.view[desktop] = model.broken ? QJsonObject() : model.file;
+    model.unreadable[desktop] = model.broken;
+  }
   void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
     sut.start(desktop);
-    RC_ASSERT(sut.view(desktop) == model.file);
+    RC_ASSERT(sut.view(desktop) == next.view[desktop]);
+    RC_ASSERT(sut.refuses(desktop) == next.unreadable[desktop]);
   }
   void show(std::ostream& os) const override { os << "Restart desktop " << desktop; }
+};
+
+// A hand edit leaves the file unreadable.
+struct Break : Command {
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.broken); }
+  void apply(Model& model) const override { model.broken = true; }
+  void run(const Model&, Sut& sut) const override { sut.write(kBroken); }
+  void show(std::ostream& os) const override { os << "Break"; }
+};
+
+// The person puts back what it held.
+struct Repair : Command {
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.broken); }
+  void apply(Model& model) const override { model.broken = false; }
+  void run(const Model& model, Sut& sut) const override { sut.write(QJsonDocument(model.file).toJson()); }
+  void show(std::ostream& os) const override { os << "Repair"; }
 };
 
 }  // namespace
@@ -123,7 +244,8 @@ private slots:
       Sut sut;
       sut.start(0);
       sut.start(1);
-      rc::state::check(Model{}, sut, rc::state::gen::execOneOfWithArgs<Save, Save, Save, Hear, Restart>());
+      rc::state::check(Model{}, sut,
+                       rc::state::gen::execOneOfWithArgs<Save, Save, SaveEntry, SaveEntry, Hear, Restart, Break, Repair>());
     }));
   }
 };

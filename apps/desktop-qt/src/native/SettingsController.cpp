@@ -518,13 +518,23 @@ std::optional<QJsonObject> readPreferences(const QString& path) {
 
 // What `next` changed from `base`, put on `disk`: a key another app on this
 // home saved since `base` was read stays unless this change is to that key.
+// Objects merge key by key (one provider's model beside another's), as the
+// MC's carry_over does; any other value, a list among them, is replaced whole.
 QJsonObject carryOver(QJsonObject disk, const QJsonObject& base, const QJsonObject& next) {
   QStringList keys = base.keys() + next.keys();
   keys.removeDuplicates();
   for (const QString& key : keys) {
-    if (base.value(key) == next.value(key)) continue;
-    if (next.contains(key)) disk.insert(key, next.value(key));
-    else disk.remove(key);
+    const QJsonValue value = next.value(key);
+    const QJsonValue read = base.value(key);
+    if (read == value) continue;
+    const QJsonValue held = disk.value(key);
+    if (value.isObject() && read.isObject() && held.isObject()) {
+      disk.insert(key, carryOver(held.toObject(), read.toObject(), value.toObject()));
+    } else if (next.contains(key)) {
+      disk.insert(key, value);
+    } else {
+      disk.remove(key);
+    }
   }
   return disk;
 }
