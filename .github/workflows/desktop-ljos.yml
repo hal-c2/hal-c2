@@ -99,12 +99,24 @@ jobs:
       # Zig, at the version mise.toml pins.
       - &zig
         name: Setup Zig
+        id: zig
         run: |
           version="$(sed -n 's/^zig = "\([0-9.]*\)"/\1/p' mise.toml)"
           mkdir -p "$RUNNER_TOOL_CACHE/zig"
           curl -fsSL "https://ziglang.org/download/$version/zig-x86_64-linux-$version.tar.xz" \
             | tar -xJ -C "$RUNNER_TOOL_CACHE/zig"
           echo "$RUNNER_TOOL_CACHE/zig/zig-x86_64-linux-$version" >> "$GITHUB_PATH"
+          echo "ghostty=$(grep -o 'libghostty-rs?rev=[0-9a-f]*' apps/desktop-ljos/Cargo.lock | head -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      # Ghostty's Zig packages, by the libghostty-rs revision that names
+      # them. Without them every libghostty build (each job's, until main's
+      # Rust cache covers the lock) fetches them from codeberg.org, which
+      # sometimes refuses.
+      - &zig-packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig/p
+          key: zig-packages-${{ steps.zig.outputs.ghostty }}
 
       # Font discovery links fontconfig and the audio sink links ALSA (Ljós's
       # own CI installs the same two).
@@ -132,6 +144,7 @@ jobs:
       - *checkout
       - *rust
       - *zig
+      - *zig-packages
       - *packages
 
       - uses: Swatinem/rust-cache@v2
@@ -152,6 +165,7 @@ jobs:
       - *checkout
       - *rust
       - *zig
+      - *zig-packages
       - *packages
 
       # dbus-daemon: the notification tests start a session bus of their own.
@@ -197,6 +211,7 @@ jobs:
       - *checkout
       - *rust
       - *zig
+      - *zig-packages
       - *packages
 
       - name: Install test packages
