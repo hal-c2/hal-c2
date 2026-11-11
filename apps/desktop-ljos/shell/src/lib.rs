@@ -35,6 +35,7 @@ pub mod preview_automation;
 pub mod qml;
 pub mod qr;
 pub mod runtime;
+pub mod saved_environments;
 pub mod scripted_run;
 pub mod session;
 pub mod settings_page;
@@ -234,6 +235,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .as_ref()
             .map(|dir| dir.join("shell-drafts.json")),
     );
+    controllers::saved_environments::set_data_dir(engine, launch.data_dir.clone());
     controllers::composer::set_store_path(
         engine,
         launch

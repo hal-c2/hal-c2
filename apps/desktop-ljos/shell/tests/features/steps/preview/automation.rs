@@ -6,9 +6,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use hal_c2_shell::browser::BrowserPage;
 use hal_c2_shell::controller;
-use hal_c2_shell::preview_automation::{AutomationPage, PreviewAutomationHost, ScriptDone};
-use ljos::prelude::Engine;
+use hal_c2_shell::preview_automation::{
+    AutomationPage, GrabDone, PreviewAutomationHost, ScriptDone,
+};
+use ljos::ObjectId;
+use ljos::prelude::{Engine, Value};
 use serde_json::{Value as Json, json};
 
 use super::fake;
@@ -66,12 +70,86 @@ impl AutomationPage for HeldPage {
     }
 }
 
+/// A browser tab's real page, driven as the desktop's would be.
+struct ViewPage {
+    page: ObjectId,
+    at: String,
+}
+
+fn script_text(value: Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.to_string()),
+        _ => None,
+    }
+}
+
+impl AutomationPage for ViewPage {
+    fn run_script(&self, engine: &Engine, script: &str, done: ScriptDone) {
+        BrowserPage::evaluate(engine, self.page, script, 0, move |e, v| {
+            done(e, script_text(v))
+        });
+    }
+    fn run_isolated(&self, engine: &Engine, script: &str, done: ScriptDone) {
+        BrowserPage::evaluate(engine, self.page, script, 1, move |e, v| {
+            done(e, script_text(v))
+        });
+    }
+    fn grab(&self, engine: &Engine, done: GrabDone) {
+        // TODO(ljos#357): Ljós's items have no grabToImage, so the page never
+        // has a picture to give; a PNG of the grabbed image once they do.
+        BrowserPage::grab(engine, self.page, move |e, _| done(e, None));
+    }
+    fn url(&self) -> String {
+        self.at.clone()
+    }
+    fn title(&self) -> String {
+        String::new()
+    }
+    fn loading(&self) -> bool {
+        false
+    }
+    fn load(&self, _: &str) {}
+    fn dev_tools_open(&self) -> bool {
+        false
+    }
+    fn on_screen(&self) -> bool {
+        true
+    }
+    fn viewport(&self) -> (i32, i32) {
+        (1280, 800)
+    }
+}
+
 #[derive(Default)]
 struct Automation {
     host: Option<PreviewAutomationHost>,
     held: Option<Rc<HeldPage>>,
     requests: usize,
     last: String,
+    /// The browser tab an agent drives on a real page.
+    driven: String,
+    took_ms: u128,
+}
+
+const PASSWORD: &str = "s3cret-Passw0rd";
+const PIN: &str = "4417-0096";
+
+/// The thread's browser tab on the dev server's `path`, driven by agents.
+fn drive_tab(world: &mut World, path: &str, title: &str, body: &str) -> Outcome {
+    super::browser::dev_server(world)?.page(path, title, body);
+    super::browser::show_tab(world, path)?;
+    super::browser::wait_for_title(world, title)?;
+    let page = super::browser::page(world)?;
+    let tab = super::browser::browsing(world).tab_id.clone();
+    let at = super::browser::server_url(world, path)?;
+    let host = host(world)?;
+    host.attach(world.engine(), THREAD, &tab, Rc::new(ViewPage { page, at }));
+    world.part::<Automation>().driven = tab;
+    Ok(())
+}
+
+fn error_of(answer: &Json) -> String {
+    text(&answer["error"]["message"])
 }
 
 /// What the MC was answered, by request id.
@@ -205,6 +283,115 @@ fn open_port(world: &mut World, port: i64, url: Option<&str>) -> Outcome {
 
 pub fn register(steps: &mut Steps) {
     steps.extension(extension);
+
+    // Snapshots and passwords.
+    steps.step(
+        "an agent's current tab shows a sign-in form with a password typed in",
+        |world, _, _| {
+            let body = format!(
+                "<form><label>Email <input id=email value=ada@example.com></label>\
+                 <label>Password <input id=password type=password></label>\
+                 <label>Code <input id=code style=\"-webkit-text-security: disc\"></label>\
+                 <p>PIN <span id=pin style=\"-webkit-text-security: disc\">{PIN}</span></p>\
+                 <button type=button>Sign in</button></form>"
+            );
+            drive_tab(world, "/sign-in", "Sign in", &body)?;
+            super::browser::evaluate(
+                world,
+                &format!(
+                    "document.getElementById('password').value = '{PASSWORD}'; \
+                     document.getElementById('code').value = '{PASSWORD}'; true"
+                ),
+            )?;
+            Ok(())
+        },
+    );
+    steps.step(
+        "an agent's current tab shows a password field whose value changes while the snapshot is taken",
+        |world, _, _| {
+            drive_tab(
+                world,
+                "/busy",
+                "Busy",
+                "<input id=password type=password><script>var n = 0; setInterval(function () { \
+                 document.getElementById('password').value = 'p' + (n++); }, 1);</script>",
+            )
+        },
+    );
+    steps.step("the agent takes a snapshot", |world, _, _| {
+        let tab = world.part::<Automation>().driven.clone();
+        let started = std::time::Instant::now();
+        let id = ask(world, "snapshot", json!({}), 30_000, &tab)?;
+        // A busy page is read three times, each with three tries at its
+        // picture: longer than one wait, within the request's own 30 s.
+        while let Err(waiting) = answer(world, &id) {
+            if started.elapsed().as_secs() >= 30 {
+                return Err(waiting);
+            }
+        }
+        world.part::<Automation>().took_ms = started.elapsed().as_millis();
+        Ok(())
+    });
+    steps.step(
+        "the snapshot shows the password field with its value masked",
+        |world, _, _| {
+            let id = world.part::<Automation>().last.clone();
+            let snapshot = answer(world, &id)?;
+            expect!(
+                snapshot["ok"] == json!(true),
+                "the snapshot failed: {snapshot}"
+            );
+            let elements = &snapshot["result"]["interactiveElements"];
+            let listed = elements.as_array().is_some_and(|all| {
+                all.iter()
+                    .any(|e| e["selector"] == "#password" && e["name"] == "Password")
+            });
+            expect!(listed, "the password field is not listed: {elements}");
+            Ok(())
+        },
+    );
+    steps.step(
+        "the password appears nowhere in the page text, including fields drawn as dots",
+        |world, _, _| {
+            let id = world.part::<Automation>().last.clone();
+            let mut result = answer(world, &id)?["result"].take();
+            if let Some(fields) = result.as_object_mut() {
+                fields.remove("screenshot");
+            }
+            let said = result.to_string();
+            expect!(
+                !said.contains(PASSWORD) && !said.contains(PIN),
+                "the snapshot says {}",
+                said.chars().take(2000).collect::<String>()
+            );
+            // What else the page says is still there.
+            let visible = text(&result["visibleText"]);
+            expect!(
+                visible.contains("PIN") && visible.contains('\u{2022}'),
+                "the page text is {visible}"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the tool fails saying the page was too busy to read safely",
+        |world, _, _| {
+            let id = world.part::<Automation>().last.clone();
+            let snapshot = answer(world, &id)?;
+            expect!(
+                snapshot["ok"] == json!(false)
+                    && error_of(&snapshot).contains("too busy to read safely"),
+                "the snapshot answered {snapshot}"
+            );
+            Ok(())
+        },
+    );
+    steps.step(r"it answers within (\d+) seconds", |world, captures, _| {
+        let took = world.part::<Automation>().took_ms;
+        let limit: u128 = captures[0].parse().unwrap_or(0);
+        expect!(took < limit * 1000, "it answered after {took}ms");
+        Ok(())
+    });
 
     steps.step(
         "an agent's click is queued behind another action in the same browser",

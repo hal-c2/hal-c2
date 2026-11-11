@@ -29,7 +29,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value};
 
 /// Bumped when a table changes: an older or newer database is dropped.
-pub const SCHEMA: i64 = 1;
+pub const SCHEMA: i64 = 2;
 /// The threads kept, most recently opened first.
 pub const THREADS: i64 = 100;
 /// The file in the cache directory.
@@ -143,6 +143,8 @@ enum Answer {
     Thread(Thread),
     Shell(Shell),
     Cleared(bool),
+    Providers(HashMap<String, Vec<Value>>),
+    Refs(Option<Map<String, Value>>),
 }
 
 enum Msg {
@@ -413,10 +415,16 @@ impl LocalCache {
 
     pub fn forget_environment(&self, environment_id: &str) {
         let prefix = format!("{environment_id}:");
+        let environment_id = environment_id.to_owned();
         self.post(move |worker| {
             if !worker.usable() {
                 return;
             }
+            let _ = worker.run(
+                "DELETE FROM providers WHERE environment = ?1",
+                [&environment_id],
+            );
+            worker.drop_refs(&environment_id);
             let Some(db) = &worker.db else { return };
             let length = prefix.chars().count() as i64;
             // Their cursors first; while those stay, so do the copies they
@@ -439,6 +447,94 @@ impl LocalCache {
                     params![length, prefix],
                 ),
             );
+        });
+    }
+
+    /// Keeps the providers `environment_id` reported (`config.providers`), so
+    /// a new task there offers their models while it is unreachable.
+    pub fn store_providers(&self, environment_id: &str, providers: Vec<Value>) {
+        let environment_id = environment_id.to_owned();
+        self.post(move |worker| {
+            if !worker.usable() {
+                return;
+            }
+            let json = serde_json::to_vec(&providers).unwrap_or_default();
+            let _ = worker.run(
+                "INSERT OR REPLACE INTO providers(environment, json) VALUES(?1, ?2)",
+                params![environment_id, json],
+            );
+        });
+    }
+
+    /// The providers every environment last reported, by environment.
+    pub fn load_providers(&self, reply: impl FnOnce(HashMap<String, Vec<Value>>) + 'static) {
+        self.ask(
+            Msg::Job,
+            |worker| Answer::Providers(worker.read_providers()),
+            move |answer| {
+                if let Answer::Providers(kept) = answer {
+                    reply(kept);
+                }
+            },
+            Answer::Providers(HashMap::new()),
+        );
+    }
+
+    /// Keeps the whole branch list (`vcs.listRefs`, `{refs, totalCount}`) of
+    /// `cwd` on `environment_id`: never a page or a search's matches.
+    pub fn store_refs(&self, environment_id: &str, cwd: &str, list: Map<String, Value>) {
+        let (environment_id, cwd) = (environment_id.to_owned(), cwd.to_owned());
+        self.post(move |worker| {
+            if !worker.usable() {
+                return;
+            }
+            if worker.lost.refs.contains(&environment_id) && !worker.drop_refs(&environment_id) {
+                return;
+            }
+            let _ = worker.run(
+                "INSERT OR REPLACE INTO refs(environment, cwd, json) VALUES(?1, ?2, ?3)",
+                params![environment_id, cwd, json(&list)],
+            );
+        });
+    }
+
+    /// The branch list kept of `cwd` on `environment_id`, if there is one.
+    pub fn load_refs(
+        &self,
+        environment_id: &str,
+        cwd: &str,
+        reply: impl FnOnce(Option<Map<String, Value>>) + 'static,
+    ) {
+        let (environment_id, cwd) = (environment_id.to_owned(), cwd.to_owned());
+        self.ask(
+            Msg::Job,
+            move |worker| {
+                Answer::Refs(
+                    if !worker.usable() || worker.lost.refs.contains(&environment_id) {
+                        None
+                    } else {
+                        worker.read_refs(&environment_id, &cwd)
+                    },
+                )
+            },
+            move |answer| {
+                if let Answer::Refs(list) = answer {
+                    reply(list);
+                }
+            },
+            Answer::Refs(None),
+        );
+    }
+
+    /// Branches are the repository's: after one is created or the checkout
+    /// moves, no list kept on `environment_id` is offered again until it is
+    /// read anew.
+    pub fn forget_refs(&self, environment_id: &str) {
+        let environment_id = environment_id.to_owned();
+        self.post(move |worker| {
+            if worker.usable() {
+                worker.drop_refs(&environment_id);
+            }
         });
     }
 
@@ -514,6 +610,8 @@ struct Lost {
     threads: HashSet<String>,
     /// By origin.
     shells: HashSet<String>,
+    /// Branch lists, by environment.
+    refs: HashSet<String>,
     /// After a commit that failed: every copy, until all of them are dropped.
     everything: bool,
 }
@@ -557,6 +655,11 @@ const TABLES: &[&str] = &[
      WITHOUT ROWID",
     "CREATE TABLE entities(thread TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL, run_ord INTEGER, json BLOB NOT NULL, \
      PRIMARY KEY(thread, kind, id)) WITHOUT ROWID",
+    // The providers each environment last reported, a JSON array.
+    "CREATE TABLE providers(environment TEXT PRIMARY KEY, json BLOB NOT NULL) WITHOUT ROWID",
+    // Whole branch lists, `{refs, totalCount}`, by environment and checkout.
+    "CREATE TABLE refs(environment TEXT NOT NULL, cwd TEXT NOT NULL, json BLOB NOT NULL, \
+     PRIMARY KEY(environment, cwd)) WITHOUT ROWID",
 ];
 
 impl Worker {
@@ -752,6 +855,54 @@ impl Worker {
         true
     }
 
+    /// A branch list that may have changed is not offered again: false when
+    /// it could not be dropped, and is then not read until it is.
+    fn drop_refs(&mut self, environment_id: &str) -> bool {
+        if self
+            .run("DELETE FROM refs WHERE environment = ?1", [environment_id])
+            .is_none()
+        {
+            self.lost.refs.insert(environment_id.to_owned());
+            return false;
+        }
+        self.lost.refs.remove(environment_id);
+        true
+    }
+
+    fn read_providers(&mut self) -> HashMap<String, Vec<Value>> {
+        let mut kept = HashMap::new();
+        if !self.usable() {
+            return kept;
+        }
+        let Some(db) = &self.db else { return kept };
+        let rows = (|| -> rusqlite::Result<Vec<(String, Vec<u8>)>> {
+            let mut statement = db.prepare("SELECT environment, json FROM providers")?;
+            let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect()
+        })();
+        for (environment, bytes) in logged("SELECT FROM providers", rows).unwrap_or_default() {
+            if let Ok(list) = serde_json::from_slice::<Vec<Value>>(&bytes) {
+                kept.insert(environment, list);
+            }
+        }
+        kept
+    }
+
+    fn read_refs(&self, environment_id: &str, cwd: &str) -> Option<Map<String, Value>> {
+        let db = self.db.as_ref()?;
+        let bytes: Option<Vec<u8>> = logged(
+            "SELECT FROM refs",
+            db.query_row(
+                "SELECT json FROM refs WHERE environment = ?1 AND cwd = ?2",
+                params![environment_id, cwd],
+                |row| row.get(0),
+            )
+            .optional(),
+        )
+        .flatten();
+        bytes.map(|bytes| object(&bytes))
+    }
+
     /// Every copy goes, cursors and versions first; whether all of them did.
     fn drop_everything(&mut self) -> bool {
         let threads = self.run("DELETE FROM threads", []).is_some();
@@ -762,7 +913,9 @@ impl Worker {
         if shells {
             let _ = self.run("DELETE FROM shell_rows", []);
         }
-        if !threads || !shells {
+        let kept = self.run("DELETE FROM providers", []).is_some()
+            && self.run("DELETE FROM refs", []).is_some();
+        if !threads || !shells || !kept {
             return false;
         }
         self.lost = Lost::default();

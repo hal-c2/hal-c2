@@ -184,12 +184,14 @@ const Steps steps([] {
     const QJsonObject stashed{{QStringLiteral("id"), QStringLiteral("s1")}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00.000Z")},
                               {QStringLiteral("text"), text}, {QStringLiteral("attachments"), QJsonArray()},
                               {QStringLiteral("terminalContexts"), excerpts}};
+    // Written while the app is closed: what it saves as it quits would replace it.
+    world.quit();
     QDir().mkpath(QDir(world.homeDir()).filePath(QStringLiteral("data")));
     QFile file(QDir(world.homeDir()).filePath(QStringLiteral("data/shell-composer.json")));
     expect(file.open(QIODevice::WriteOnly), QStringLiteral("cannot write %1").arg(file.fileName()));
     file.write(QJsonDocument(QJsonObject{{QStringLiteral("targets"), QJsonObject()}, {QStringLiteral("stash"), QJsonArray{stashed}}}).toJson());
     file.close();
-    world.restart();
+    world.launch();
     openTurnThread(world);
     world.bridge().dispatch(QStringLiteral("composer.stash.restore"), QVariantMap{{QStringLiteral("id"), QStringLiteral("s1")}});
     world.waitFor([&] { return chips(world).size() == count && at(world.state(QStringLiteral("composer")), QStringLiteral("text")) == text; },

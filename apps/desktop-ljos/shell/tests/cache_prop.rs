@@ -55,6 +55,23 @@ enum Op {
     ReadShell {
         origin: Option<usize>,
     },
+    StoreProviders {
+        env: usize,
+        n: i64,
+    },
+    LoadProviders,
+    StoreRefs {
+        env: usize,
+        cwd: usize,
+        n: i64,
+    },
+    LoadRefs {
+        env: usize,
+        cwd: usize,
+    },
+    ForgetRefs {
+        env: usize,
+    },
     Reopen,
 }
 
@@ -63,6 +80,7 @@ const ENVS: &[&str] = &["env-a", "env-ab", "env-b"];
 const IDS: &[&str] = &["a", "b", "c", "d"];
 const ORIGINS: &[&str] = &["http://one:1", "http://two:2"];
 const MCS: &[&str] = &["mc-a", "mc-b"];
+const CWDS: &[&str] = &["/work/a", "/work/a-fix"];
 
 fn entities() -> impl Strategy<Value = Vec<(usize, Option<i64>, i64)>> {
     prop::collection::vec((0..IDS.len(), prop::option::of(0i64..5), 0i64..100), 0..4)
@@ -112,6 +130,15 @@ fn op() -> impl Strategy<Value = Op> {
                 }
             ),
         prop::option::of(0..ORIGINS.len()).prop_map(|origin| Op::ReadShell { origin }),
+        (0..ENVS.len(), 0i64..100).prop_map(|(env, n)| Op::StoreProviders { env, n }),
+        Just(Op::LoadProviders),
+        (0..ENVS.len(), 0..CWDS.len(), 0i64..100).prop_map(|(env, cwd, n)| Op::StoreRefs {
+            env,
+            cwd,
+            n
+        }),
+        (0..ENVS.len(), 0..CWDS.len()).prop_map(|(env, cwd)| Op::LoadRefs { env, cwd }),
+        (0..ENVS.len()).prop_map(|env| Op::ForgetRefs { env }),
         Just(Op::Reopen),
     ]
 }
@@ -136,6 +163,10 @@ struct Model {
     threads: BTreeMap<String, (Cursor, Entities)>,
     /// origin -> its MCs
     shells: BTreeMap<String, Mcs>,
+    /// environment -> the n of its one provider
+    providers: BTreeMap<String, i64>,
+    /// (environment, cwd) -> the n of its branch list
+    refs: BTreeMap<(String, String), i64>,
 }
 
 fn load(cache: &LocalCache, key: &str) -> Thread {
@@ -204,6 +235,8 @@ proptest! {
                 Op::ForgetEnvironment { env } => {
                     let prefix = format!("{}:", ENVS[env]);
                     model.threads.retain(|key, _| !key.starts_with(&prefix));
+                    model.providers.remove(ENVS[env]);
+                    model.refs.retain(|(kept, _), _| kept != ENVS[env]);
                     cache.forget_environment(ENVS[env]);
                 }
                 Op::Load { key } => {
@@ -253,6 +286,36 @@ proptest! {
                             }
                         }
                     }
+                }
+                Op::StoreProviders { env, n } => {
+                    model.providers.insert(ENVS[env].into(), n);
+                    cache.store_providers(ENVS[env], vec![json!({"n": n})]);
+                }
+                Op::LoadProviders => {
+                    let read = Rc::new(RefCell::new(None));
+                    let slot = read.clone();
+                    cache.load_providers(move |p| *slot.borrow_mut() = Some(p));
+                    cache.drain();
+                    let read: BTreeMap<String, i64> = read.borrow_mut().take().expect("drain runs the reply")
+                        .into_iter().map(|(env, list)| (env, list[0]["n"].as_i64().unwrap())).collect();
+                    prop_assert_eq!(read, model.providers.clone());
+                }
+                Op::StoreRefs { env, cwd, n } => {
+                    model.refs.insert((ENVS[env].into(), CWDS[cwd].into()), n);
+                    cache.store_refs(ENVS[env], CWDS[cwd], fields(n));
+                }
+                Op::LoadRefs { env, cwd } => {
+                    let read = Rc::new(RefCell::new(None));
+                    let slot = read.clone();
+                    cache.load_refs(ENVS[env], CWDS[cwd], move |list| *slot.borrow_mut() = Some(list));
+                    cache.drain();
+                    let read = read.borrow_mut().take().expect("drain runs the reply")
+                        .map(|list| list["n"].as_i64().unwrap());
+                    prop_assert_eq!(read, model.refs.get(&(ENVS[env].to_owned(), CWDS[cwd].to_owned())).copied());
+                }
+                Op::ForgetRefs { env } => {
+                    model.refs.retain(|(kept, _), _| kept != ENVS[env]);
+                    cache.forget_refs(ENVS[env]);
                 }
                 Op::Reopen => {
                     drop(cache);

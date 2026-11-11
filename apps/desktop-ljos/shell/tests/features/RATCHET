@@ -173,6 +173,7 @@ composer/editors-and-keys.feature: The Menu key opens the draft's right-click me
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Copy, fix the old totals, old]
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Cut, fix the  totals, old]
 composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Paste, fix the cart totals, cart]
+composer/editors-and-keys.feature: The prompt wraps at the composer's width after the composer is resized
 composer/editors-and-keys.feature: The same prompt sent twice in a row is recalled once
 composer/editors-and-keys.feature: The stash keeps the 20 newest prompts
 composer/editors-and-keys.feature: Turning rich text off keeps the draft as plain Markdown
@@ -204,9 +205,11 @@ composer/model-and-mode.feature: A fallback keeps the effort of a model saved un
 composer/model-and-mode.feature: A favourite older model is listed outside the folded section
 composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+a, the permissions]
 composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+e, the current effort]
+composer/model-and-mode.feature: A machine is named the way its owner would know it [another one, , Rack, Rack]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [another one, server, Rack, server]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, , , This device]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, laptop, Work Mac, laptop]
+composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, local, Work Mac, Work Mac]
 composer/model-and-mode.feature: A model that cannot be used says why and cannot be chosen
 composer/model-and-mode.feature: A model the provider has just added is marked as new
 composer/model-and-mode.feature: A new thread can run on a machine that has other projects
@@ -432,6 +435,7 @@ connections/cluster.feature: The desktop says when only this machine can open an
 connections/cluster.feature: The desktop's settings show this machine's cluster
 connections/connection-health.feature: A blocked environment is tried again when the app returns to the foreground
 connections/connection-health.feature: A brief reconnect is not announced in the thread
+connections/connection-health.feature: A change to a repository's branches drops every kept branch list for it
 connections/connection-health.feature: A client opened without a network waits for it
 connections/connection-health.feature: A cluster connection resumes each stream from where it stopped
 connections/connection-health.feature: A computer restarting for an update shows the update, not a reconnect warning
@@ -451,12 +455,15 @@ connections/connection-health.feature: A failed renewal affects only its request
 connections/connection-health.feature: A failed shell subscription is not shown as reconnecting
 connections/connection-health.feature: A kept copy the client cannot read is dropped and never blocks live data
 connections/connection-health.feature: A network that comes back is tried at once
+connections/connection-health.feature: A new task offline still offers the models the environment last reported
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [a newer protocol than the client, update HAL-C2 on this device]
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [an older protocol than the client, update HAL-C2 on that environment]
 connections/connection-health.feature: A reconnect that fails says why
 connections/connection-health.feature: A reconnect within a second and a half is not shown
 connections/connection-health.feature: A refused credential waits for the user
 connections/connection-health.feature: A request the MC has not answered within 15 seconds is listed in a warning
+connections/connection-health.feature: A saved environment whose record or credential has gone is blocked, not retried [its connection record is gone, Connection profile studio is unavailable.]
+connections/connection-health.feature: A saved environment whose record or credential has gone is blocked, not retried [its credential is gone, Connection credential studio is unavailable.]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.3.2, 1.4.0, does not warn]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.3.2, warns of a version mismatch]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.4.0-nightly.20260901, does not warn]
@@ -482,6 +489,8 @@ connections/connection-health.feature: Disconnecting from a thread's notice hide
 connections/connection-health.feature: Foregrounding probes a healthy connection instead of replacing it
 connections/connection-health.feature: Foregrounding wakes a waiting retry
 connections/connection-health.feature: One connection serves every MC of a cluster
+connections/connection-health.feature: Only the whole branch list of a repository is kept
+connections/connection-health.feature: Pairing fails when the system's secure storage refuses to keep the credential
 connections/connection-health.feature: Pull request lookups and live subscriptions are never reported as slow
 connections/connection-health.feature: Reconnecting does not repeat the user's actions
 connections/connection-health.feature: Reconnecting to a computer on another version is not taken for an update
@@ -1451,6 +1460,7 @@ planning/planner.feature: The user picks the planner's Slack channel in its sett
 planning/planner.feature: What the user changes while the settings save is kept
 plugins/keymaps.feature: Resetting keybindings removes every override
 plugins/plugin-catalog.feature: An unverified plugin asks for confirmation before it loads
+plugins/plugin-catalog.feature: The plugin list has a section for each environment's MC plugins
 plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes
 plugins/plugin-contributions.feature: A disabled package can be checked to compile without enabling it
 plugins/plugin-contributions.feature: A failed plugin can be restarted from its settings
@@ -1688,11 +1698,91 @@ preview/remote.feature: A late tab list from before a change is ignored
 preview/remote.feature: A remote client suggests the MC's dev servers, not its own
 preview/remote.feature: The desktop opens a dev server on another machine through the forward
 preview/surfaces.feature: A browser tab whose close fails comes back
+preview/surfaces.feature: A browser tab's start page offers the thread's servers
 preview/surfaces.feature: A closed browser tab stays closed while the close is in flight
+preview/surfaces.feature: A custom size outside what the preview can render is not applied [239, 800]
+preview/surfaces.feature: A custom size outside what the preview can render is not applied [3840, 2161]
+preview/surfaces.feature: A custom size outside what the preview can render is not applied [3841, 800]
+preview/surfaces.feature: A custom size outside what the preview can render is not applied [800, 239]
+preview/surfaces.feature: A device size is shown whole, centred in the tab
+preview/surfaces.feature: A device-sized page that is bigger than the tab is shown scaled down
+preview/surfaces.feature: A link that targets a new window stays in the tab
+preview/surfaces.feature: A load the page itself cancelled is not shown as a failure
 preview/surfaces.feature: A new browser tab offers local servers and recent pages
+preview/surfaces.feature: A new browser tab with nothing to suggest says how to start
+preview/surfaces.feature: A page cannot open a local or inline address as a popup [data:text/html,<h1>hi</h1>]
+preview/surfaces.feature: A page cannot open a local or inline address as a popup [file:///etc/hosts]
+preview/surfaces.feature: A page cannot open a local or inline address as a popup [javascript:alert(1)]
+preview/surfaces.feature: A page cannot open a local or inline address as a popup [view-source:https://acme.dev]
+preview/surfaces.feature: A page taken off is timed by its own MC's clock, not another MC's
+preview/surfaces.feature: A page that fills its space cannot be resized from its edges
+preview/surfaces.feature: A page that opens a blank window keeps its own page
+preview/surfaces.feature: A page's title is remembered while its browser is not shown
+preview/surfaces.feature: A popup cannot open further popups
+preview/surfaces.feature: A project remembers its last fifty pages
+preview/surfaces.feature: A quiet tab can be muted ahead of time
+preview/surfaces.feature: A recent page can be taken off the new tab's list
+preview/surfaces.feature: A recent page shows its title, its address and when it was visited
+preview/surfaces.feature: A recent page without a title is listed by its address
+preview/surfaces.feature: A second size picked while one waits is turned away
+preview/surfaces.feature: A tab stays muted when its page navigates
+preview/surfaces.feature: A typed address gets the web scheme that fits the host it names [127.0.0.1:8080, http://127.0.0.1:8080]
+preview/surfaces.feature: A typed address gets the web scheme that fits the host it names [example.com, https://example.com]
+preview/surfaces.feature: A typed address gets the web scheme that fits the host it names [localhost:5173, http://localhost:5173]
+preview/surfaces.feature: A typed address with a scheme other than web is refused
+preview/surfaces.feature: A width typed with the aspect ratio locked is kept as typed
+preview/surfaces.feature: An address that is not a web page is refused in place
+preview/surfaces.feature: An address that is not a web page says what to type instead [http://]
+preview/surfaces.feature: An address that is not a web page says what to type instead [mailto:alice@example.com]
+preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_CERT_AUTHORITY_INVALID, Certificate authority is not trusted]
+preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_CONNECTION_TIMED_OUT, Connection timed out]
+preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_INTERNET_DISCONNECTED, No internet connection]
+preview/surfaces.feature: An unreachable page explains the failure in plain words [ERR_NAME_NOT_RESOLVED, DNS address could not be found]
+preview/surfaces.feature: Back and forward are offered only where the tab can go [follows an earlier page, available, unavailable]
+preview/surfaces.feature: Back and forward are offered only where the tab can go [is the first page, reached by going back, unavailable, available]
+preview/surfaces.feature: Back and forward are offered only where the tab can go [is the only one it has shown, unavailable, unavailable]
+preview/surfaces.feature: Changing the size another way ends a drag in progress
+preview/surfaces.feature: Each tab keeps its own device size
+preview/surfaces.feature: Escape puts the page's address back in the address field
+preview/surfaces.feature: Focusing the address field selects the whole address
+preview/surfaces.feature: Opening a suggested server visits it and shows it beside the thread
+preview/surfaces.feature: Pages the user visits are remembered per project for new tabs
+preview/surfaces.feature: Pages visited in a draft or a thread are remembered with their titles [a thread of the project]
+preview/surfaces.feature: Recent pages are kept tidy ["http://localhost:5173" then "http://127.0.0.1:5173", one page for that local server]
+preview/surfaces.feature: Recent pages are kept tidy ["https://user:secret@example.com/docs", "https://example.com/docs" without credentials]
+preview/surfaces.feature: Recent pages are kept tidy [the same page twice, the page once, as the most recent]
+preview/surfaces.feature: Recent pages kept before they were kept per project go to the first project shown
+preview/surfaces.feature: Reloading becomes stopping while the page loads
+preview/surfaces.feature: Returning to a thread keeps a page's newest title
+preview/surfaces.feature: The arrow keys resize a device-sized page from one of its edges [Left arrow, 390 by 800]
+preview/surfaces.feature: The arrow keys resize a device-sized page from one of its edges [Right arrow, 410 by 800]
+preview/surfaces.feature: The arrow keys resize a device-sized page from one of its edges [Shift and Right arrow, 450 by 800]
+preview/surfaces.feature: The aspect ratio can be locked while resizing
+preview/surfaces.feature: The aspect ratio cannot be locked on a size that cannot be used
 preview/surfaces.feature: The desktop lists the thread's browser tabs to open in the browser
+preview/surfaces.feature: The desktop remembers the history of the twenty most recently used projects
 preview/surfaces.feature: The desktop's list of browser tabs follows the MC
+preview/surfaces.feature: The device toolbar is closed from its own control
+preview/surfaces.feature: The history of one project does not appear in another
+preview/surfaces.feature: The page in a browser tab can be opened in the user's browser
+preview/surfaces.feature: The toolbar waits while a new size is being applied
 preview/surfaces.feature: The user adds a browser tab from the side panel
+preview/surfaces.feature: The user drags the edge of a device-sized page to resize it
+preview/surfaces.feature: The user loads a page by typing its address
+preview/surfaces.feature: The user opens a local dev server in a browser tab beside the thread
+preview/surfaces.feature: The user picks which devices appear in the Devices view
+preview/surfaces.feature: The user previews the page at a device size
+preview/surfaces.feature: The user previews the page at a size of their own
+preview/surfaces.feature: The user reloads a page after the dev server restarts
+preview/surfaces.feature: The user rotates the previewed device
+preview/surfaces.feature: The user shows a device toolbar above a tab's page
+preview/surfaces.feature: The user zooms a page through the preset steps [100%, in, 110%]
+preview/surfaces.feature: The user zooms a page through the preset steps [100%, out, 90%]
+preview/surfaces.feature: The user zooms a page through the preset steps [150%, reset, 100%]
+preview/surfaces.feature: The user zooms a page through the preset steps [25%, out, 25%]
+preview/surfaces.feature: The user zooms a page through the preset steps [500%, in, 500%]
+preview/surfaces.feature: Two configured addresses that differ only by their anchor are one suggestion
+preview/surfaces.feature: Zooming the app does not zoom the page in a browser tab
 providers/claude.feature: A Claude monitor shows as background work, not as a command
 providers/claude.feature: A Claude monitor stays listed while the next turn runs
 providers/codex.feature: A plan Codex marked finished can still be implemented

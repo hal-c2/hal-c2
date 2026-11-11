@@ -215,6 +215,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // Pages draw in the panel's browser tabs where CEF can run.
+    match ljos_webengine::unavailable() {
+        None => hal_c2_shell::browser::set_supported(true),
+        Some(why) => eprintln!("hal-c2-ljos: browser tabs open in the system browser: {why}"),
+    }
     // A brick with an error fails only what makes an object of it, as in Qt.
     let app = match options.roots.dirs().and_then(|dirs| {
         // The shell says when closing a window ends the app

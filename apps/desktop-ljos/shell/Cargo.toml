@@ -39,9 +39,8 @@ mcp = ["ljos/mcp"]
 # stream decoder (src/device/decoder.rs). collation: names sort by the
 # locale's alphabet (sidebar_model::locale_compare, `localeCompare`). woff:
 # the terminal's bundled symbol font (TerminalSplits' FontLoader) is WOFF2.
-# webengine (the browser tabs, below) waits on what BrowserPanel handles that
-# Ljós's WebEngineView lacks (hal-c2/ljos-ui#354, #355, #356): with it,
-# QtWebEngine's types are checked and the panel no longer compiles.
+# The browser tabs' QtWebEngine is ljos_webengine below, which
+# browser::register registers.
 ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d", "woff"] }
 # QtQuick3D for the device tab's 3D body (DeviceBody3D), registered by
 # device::register.

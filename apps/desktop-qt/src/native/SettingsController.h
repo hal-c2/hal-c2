@@ -10,6 +10,7 @@
 #include <functional>
 #include <optional>
 
+#include "CoalescingWriter.h"
 #include "NativeController.h"
 
 class NativeWindow;
@@ -90,7 +91,9 @@ public:
   QString devicePath() const { return m_devicePath; }
   QJsonObject deviceSettings() const { return m_device; }
   // Replaces this device's preferences; false (and `deviceError`) when they
-  // cannot be saved, leaving them as they were.
+  // cannot be saved, leaving them as they were. Written once changes pause,
+  // off the GUI thread (CoalescingWriter); a write that fails there later
+  // keeps the change, says `deviceError` and is tried again on the next.
   bool setDeviceSettings(const QJsonObject& device);
   Q_INVOKABLE QVariant deviceValue(const QString& key) const { return m_device.value(key).toVariant(); }
   // One preference; null removes it.
@@ -176,6 +179,7 @@ private:
   QJsonObject m_config;
   QJsonArray m_themes;
   QString m_devicePath;
+  CoalescingWriter m_deviceFile;
   QJsonObject m_device;
   QString m_deviceError;
   bool m_deviceUnreadable = false;

@@ -46,8 +46,14 @@ pub const THIS_MACHINE: &str = "5e1f00000000000000000000000000000000000000000000
 /// A machine that is not that one.
 pub const OTHER_MACHINE: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
 
-/// The longest a step waits for anything, as desktop-qt's qWaitFor.
+/// The longest a step waits for anything, as desktop-qt's World::waitFor:
+/// counted in time the wait was free to take an answer, each pass charged at
+/// most PASS.
 const WAIT: Duration = Duration::from_secs(5);
+/// The most one pass of a wait counts toward WAIT. Answers reach the shell
+/// only on this thread, in pump(), so a pass the machine's load held (a slow
+/// disk, a starved CPU) is time no answer could arrive in, not a lost one.
+const PASS: Duration = Duration::from_millis(50);
 /// The test window's size until a brick gives it its own (Brick::new).
 const WINDOW: (f64, f64) = (1280.0, 800.0);
 
@@ -170,6 +176,9 @@ pub struct World {
     /// restarts.
     home: tempfile::TempDir,
     shell: Option<Shell>,
+    /// The keyring saved environments keep their credentials in, across
+    /// restarts (desktop-qt's World::secrets): never the system's.
+    pub secrets: Rc<hal_c2_shell::saved_environments::MemorySecretStore>,
 }
 
 impl World {
@@ -202,6 +211,7 @@ impl World {
             recorded: Rc::default(),
             home,
             shell: None,
+            secrets: Rc::default(),
         };
         world.start();
         world
@@ -249,6 +259,10 @@ impl World {
             state_dir: Some(home.join("state")),
             ..Launch::default()
         };
+        hal_c2_shell::controllers::saved_environments::set_secret_store(
+            &engine,
+            self.secrets.clone(),
+        );
         hal_c2_shell::start(&engine, &launch, connection.clone() as Rc<dyn Mc>);
         hal_c2_shell::controllers::threads::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::controllers::sidebar::set_time_zone(
@@ -649,7 +663,7 @@ impl World {
     }
 
     /// Hands everything waiting to whoever it is for until `condition`
-    /// holds, for up to five seconds; `what` describes the state the wait
+    /// holds, for up to WAIT; `what` describes the state the wait
     /// gave up on. The shell's clock moves with the time it takes.
     pub fn wait_for_with(
         &mut self,
@@ -658,15 +672,19 @@ impl World {
     ) -> Outcome {
         let started = Instant::now();
         let mut moved = Duration::ZERO;
+        let mut charged = Duration::ZERO;
+        let mut pass = Instant::now();
         loop {
             self.pump()?;
             if condition(self) {
                 return Ok(());
             }
-            let waited = started.elapsed();
-            if waited >= WAIT {
+            charged += pass.elapsed().min(PASS);
+            pass = Instant::now();
+            if charged >= WAIT {
                 return Err(Failure(format!("timed out waiting for {}", what(self))));
             }
+            let waited = started.elapsed();
             // As much real time as has passed, on the shell's clock.
             let behind = waited.saturating_sub(moved);
             let whole = Duration::from_millis(behind.as_millis() as u64);
@@ -678,7 +696,7 @@ impl World {
             // Until something arrives, or the shell's next timer is due.
             // An animation is no timer, so a frame at a time: the shell's
             // clock moves only when this loop moves it.
-            let mut timeout = (WAIT - waited).min(FRAME);
+            let mut timeout = (WAIT - charged).min(FRAME);
             if let Some(shell) = &self.shell
                 && let Some(due) = shell.engine.next_timer_deadline()
             {

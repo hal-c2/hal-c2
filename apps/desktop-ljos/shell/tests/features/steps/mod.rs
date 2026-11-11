@@ -30,6 +30,8 @@ pub mod composer_picker;
 pub mod composer_workspace;
 pub mod connection;
 pub mod connection_health;
+pub mod connection_catalog;
+pub mod connection_kept;
 pub mod connections;
 pub mod context_references;
 pub mod context_window;
@@ -192,6 +194,8 @@ pub fn register(steps: &mut Steps) {
     composer_attach::register(steps);
     composer_brick::register(steps);
     composer_machine::register(steps);
+    connection_kept::register(steps);
+    connection_catalog::register(steps);
     composer_custom_models::register(steps);
     composer_defaults::register(steps);
     composer_effort::register(steps);

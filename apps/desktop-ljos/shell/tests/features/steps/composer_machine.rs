@@ -7,8 +7,10 @@
 
 use hal_c2_shell::commands::Commands;
 use hal_c2_shell::controllers::composer::kept;
+use hal_c2_shell::controllers::saved_environments::SavedEnvironments;
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::controllers::workspace;
+use hal_c2_shell::saved_environments::SavedEnvironment;
 use ljos::item::{KeyEvent, key};
 use ljos::prelude::{ObjectId, Value as QmlValue, file_url};
 use serde_json::{Value, json};
@@ -640,12 +642,6 @@ pub fn register(steps: &mut Steps) {
         "the machine is (the one being used|another one) and its own name is \"([^\"]*)\" and the user named it \"([^\"]*)\"",
         |world, c, _| {
             let own = c[0] == "the one being used";
-            // desktop-ljos keeps no name the user saved for a machine: the
-            // cluster's name for it is the one it has.
-            expect!(
-                c[2].is_empty() || !c[1].trim().is_empty() && c[1] != "local",
-                "desktop-ljos keeps no name the user saved for a machine (hal-c2/hal-c2#1515)"
-            );
             let id = if own {
                 two_machines(world, &c[1], OTHER)?;
                 world.mc.environment_id.clone()
@@ -660,6 +656,18 @@ pub fn register(steps: &mut Steps) {
                 world.sync()?;
                 OTHER.to_owned()
             };
+            // The name the user saved it under, as pairing saves it.
+            if !c[2].is_empty() {
+                let saved = SavedEnvironment {
+                    id: id.clone(),
+                    label: c[2].clone(),
+                    origin: "http://127.0.0.1:9".into(),
+                    expires_at: String::new(),
+                };
+                world
+                    .with::<SavedEnvironments, _>(|s, engine| s.save(engine, saved, "token"))?
+                    .map_err(crate::harness::Failure)?;
+            }
             machines(world).looked = id;
             Ok(())
         },

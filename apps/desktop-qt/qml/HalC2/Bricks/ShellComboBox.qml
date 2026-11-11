@@ -81,7 +81,7 @@ ComboBox {
 
         width: ListView.view.width
         height: Theme.control.md
-        text: item.model[control.textRole] ?? item.model.modelData ?? item.model.display ?? ""
+        text: control.textAt(item.index)
         readonly property bool selected: control.markCurrent && item.index === control.currentIndex
 
         enabled: !control.disabledRows.includes(item.index)

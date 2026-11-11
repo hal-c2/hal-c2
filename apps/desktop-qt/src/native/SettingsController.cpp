@@ -1,13 +1,11 @@
 #include "SettingsController.h"
 #include "SettingsScopeController.h"
 
-#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QJsonDocument>
 #include <QPointer>
-#include <QSaveFile>
 
 #include "NativeShell.h"
 #include "McClient.h"
@@ -21,6 +19,21 @@ const NativeControllerRegistrar<SettingsController> registrar(QStringLiteral("se
 // Saves over a stale copy before giving up: each retry is another editor
 // saving in between, which is rare, and never endless.
 constexpr int kStaleRetries = 3;
+
+// Whether a save to `path` can land, by what stat says (no write, no fsync):
+// a file there must be writable, as must the folder that holds it or the
+// nearest one that exists, where mkpath would make the rest.
+bool writable(const QString& path) {
+  const QFileInfo file(path);
+  if (file.exists() && (!file.isFile() || !file.isWritable())) return false;
+  QFileInfo folder(file.absolutePath());
+  while (!folder.exists()) {
+    const QString parent = folder.absolutePath();
+    if (parent == folder.absoluteFilePath()) return false;
+    folder = QFileInfo(parent);
+  }
+  return folder.isDir() && folder.isWritable();
+}
 
 QJsonObject withPath(QJsonObject object, const QStringList& path, const QJsonValue& value) {
   const QString& key = path.first();
@@ -129,6 +142,11 @@ const Row* rowOf(const QString& key) {
 
 SettingsController::SettingsController(ShellBridge*, McClient* client, QObject* parent)
     : QObject(parent), m_client(client) {
+  connect(&m_deviceFile, &CoalescingWriter::failed, this, [this] {
+    m_deviceError = QStringLiteral("Cannot save %1").arg(m_devicePath);
+    emit deviceChanged();
+    toast(QStringLiteral("Setting not saved"), m_deviceError);
+  });
   // A reconnect may reach a restarted MC, whose versions start again; the
   // config snapshot that follows the re-sent subscription reads them afresh.
   connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
@@ -543,6 +561,9 @@ QJsonObject carryOver(QJsonObject disk, const QJsonObject& base, const QJsonObje
 }  // namespace
 
 void SettingsController::setDevicePath(const QString& path) {
+  // What is still on its way lands before the file is read again.
+  m_deviceFile.setPath({});
+  m_deviceFile.setPath(path);
   m_devicePath = path;
   const std::optional<QJsonObject> saved = readPreferences(path);
   m_device = saved.value_or(QJsonObject());
@@ -611,15 +632,13 @@ bool SettingsController::setDeviceSettings(const QJsonObject& device) {
     // Edited by hand into something that does not read: left for the user to repair.
     m_deviceUnreadable = true;
     error = QStringLiteral("Cannot read %1").arg(m_devicePath);
+  } else if (!writable(m_devicePath)) {
+    error = QStringLiteral("Cannot save %1").arg(m_devicePath);
   } else {
     // Only what this change touches goes over what the file holds now. A file
     // that is gone holds what this app does.
     saved = carryOver(QFile::exists(m_devicePath) ? *disk : m_device, m_device, device);
-    QDir().mkpath(QFileInfo(m_devicePath).absolutePath());
-    QSaveFile file(m_devicePath);
-    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(saved).toJson()) < 0 || !file.commit()) {
-      error = QStringLiteral("Cannot save %1").arg(m_devicePath);
-    }
+    m_deviceFile.write(QJsonDocument(saved).toJson());
   }
   if (!error.isEmpty()) {
     m_deviceError = error;
@@ -628,8 +647,6 @@ bool SettingsController::setDeviceSettings(const QJsonObject& device) {
   }
   m_device = saved;
   m_deviceError.clear();
-  // The file was replaced: watched again.
-  if (m_deviceWatcher && !m_deviceWatcher->files().contains(m_devicePath)) m_deviceWatcher->addPath(m_devicePath);
   emit deviceChanged();
   return true;
 }

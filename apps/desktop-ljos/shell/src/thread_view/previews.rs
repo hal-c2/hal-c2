@@ -774,6 +774,11 @@ impl Previews {
         self.rows.len()
     }
 
+    /// The MC's tabs, in its order.
+    pub fn tab_ids(&self) -> Vec<String> {
+        self.rows.iter().map(|row| tab_of(row).to_owned()).collect()
+    }
+
     pub fn row_of(&self, tab: &str) -> Option<usize> {
         self.rows.iter().position(|row| tab_of(row) == tab)
     }

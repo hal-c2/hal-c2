@@ -358,6 +358,47 @@ pub fn register(steps: &mut Steps) {
         let typed = "line one\nline two";
         write(world, typed, typed.chars().count() as i64)
     });
+    // The prompt's wrap width against the composer's: typed a key at a
+    // time, so its wrapping starts while the composer has one width, then
+    // the window is resized under it.
+    steps.step(
+        "the user typed a prompt into the composer",
+        |world, _, _| type_in_composer(world, "what are you talking about terminal color theme"),
+    );
+    steps.step("the composer gets (narrower|wider)", |world, c, _| {
+        let brick = composer_brick(world)?;
+        let (width, height) = brick.size(world);
+        let width = if c[0] == "narrower" {
+            width * 0.5
+        } else {
+            width * 2.0
+        };
+        world.resize(width, height)?;
+        if let Some(root) = brick.root(world) {
+            brick.write(world, root, "width", QmlValue::from(width))?;
+        }
+        Ok(())
+    });
+    steps.step("the prompt wraps at the composer's width", |world, _, _| {
+        let (brick, input) = editor(world)?;
+        let scroll = brick.item(world, "promptScroll")?;
+        let real = move |w: &World, item: ObjectId, name: &str| {
+            brick
+                .text_of(w, item, name)
+                .parse::<f64>()
+                .unwrap_or(f64::NAN)
+        };
+        world.wait_for_with(
+            move |w| (real(w, input, "width") - real(w, scroll, "availableWidth")).abs() < 1.0,
+            move |w| {
+                format!(
+                    "the prompt is {} wide in a composer {} wide",
+                    real(w, input, "width"),
+                    real(w, scroll, "availableWidth")
+                )
+            },
+        )
+    });
     steps.step("the message is sent", |world, _, _| {
         let pressed = world.part::<Pressed>().text.clone();
         let sent = messages(world)?;

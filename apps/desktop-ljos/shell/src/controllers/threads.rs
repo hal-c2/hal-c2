@@ -183,6 +183,7 @@ pub fn deliver(engine: &Engine) {
         for (key, model, thread) in loaded {
             controller::with::<ThreadStore, _>(engine, |s, e| s.restored(e, &key, model, &thread));
         }
+        crate::controllers::workspace::deliver(engine);
     });
 }
 
