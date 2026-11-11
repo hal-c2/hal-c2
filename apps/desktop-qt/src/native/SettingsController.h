@@ -183,7 +183,8 @@ private:
   QJsonObject m_config;
   QJsonArray m_themes;
   QString m_devicePath;
-  CoalescingWriter m_deviceFile;
+  // A child, so a test can wait for its writes to land.
+  CoalescingWriter m_deviceFile{this};
   // What this desktop shows, and what the file held when it last read it.
   QJsonObject m_device;
   QJsonObject m_deviceRead;

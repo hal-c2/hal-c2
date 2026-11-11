@@ -18,15 +18,20 @@
 //
 // Which of two desktops' writes lands first is up to their timers, so one
 // desktop has saves waiting at a time, except that the other may save and
-// quit, which writes its save at once.
+// quit, which writes its save at once. A desktop's own write lands before
+// it hears the file: what it wrote is what it read, and a save made before it
+// hears is made over that.
 
 #include "Prop.h"
 
+#include "CoalescingWriter.h"
 #include "NativeShell.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
 
 #include <QFile>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QTemporaryDir>
@@ -104,6 +109,13 @@ void land(Model& model, int desktop) {
   model.pending[desktop] = false;
 }
 
+// The desktop reads the file: it shows what the file holds, with its saves
+// still to land over it.
+void hear(Model& model, int desktop) {
+  model.view[desktop] = over(model.file, model.read[desktop], model.view[desktop]);
+  model.read[desktop] = model.file;
+}
+
 // One save: `next` is the desktop's view with its change. Returns whether the
 // model expects it saved.
 bool save(Model& model, int desktop, const QJsonObject& next) {
@@ -157,6 +169,18 @@ struct Sut {
     return file.readAll();
   }
   QJsonObject file() const { return QJsonDocument::fromJson(bytes()).object(); }
+
+  QFileSystemWatcher* watcher(int i) { return desktops[i]->settings()->findChild<QFileSystemWatcher*>(); }
+  CoalescingWriter* writer(int i) { return desktops[i]->settings()->findChild<CoalescingWriter*>(); }
+  // The watchers' events, while they are not heard, are lost: told again.
+  void deafen(bool deaf) {
+    for (int i = 0; i < 2; ++i) watcher(i)->blockSignals(deaf);
+  }
+  void tell() {
+    for (int i = 0; i < 2; ++i) {
+      QMetaObject::invokeMethod(watcher(i), "directoryChanged", Q_ARG(QString, QFileInfo(path()).absolutePath()));
+    }
+  }
 
   QJsonObject view(int i) { return desktops[i]->settings()->deviceSettings(); }
   bool refuses(int i) { return !desktops[i]->settings()->deviceError().isEmpty(); }
@@ -287,16 +311,14 @@ struct Hear : Command {
     if (model.broken) model.unreadable = {true, true};
     else if (model.gone) model.unreadable = {false, false};
     else {
-      for (int i = 0; i < 2; ++i) {
-        model.view[i] = over(model.file, model.read[i], model.view[i]);
-        model.read[i] = model.file;
-      }
+      for (int i = 0; i < 2; ++i) hear(model, i);
       model.unreadable = {false, false};
     }
   }
   void run(const Model& model, Sut& sut) const override {
     Model next = model;
     apply(next);
+    sut.tell();
     RC_ASSERT(prop::until([&] {
       for (int i = 0; i < 2; ++i) {
         if (sut.view(i) != next.view[i] || sut.refuses(i) != next.unreadable[i] || sut.unsaved(i) != next.pending[i]) {
@@ -308,6 +330,33 @@ struct Hear : Command {
     checkFile(next, sut);
   }
   void show(std::ostream& os) const override { os << "Hear"; }
+};
+
+// The desktop's saves land before either desktop hears the file: it takes what
+// it wrote as what it read, as a fresh read would, and its next save goes over
+// that.
+struct Land : Command {
+  int desktop = *rc::gen::inRange(0, 2);
+
+  void checkPreconditions(const Model& model) const override {
+    RC_PRE(model.pending[desktop] && !model.broken && !model.unreadable[desktop]);
+  }
+  void apply(Model& model) const override {
+    land(model, desktop);
+    hear(model, desktop);
+  }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.deafen(true);
+    const bool landed = prop::until([&] { return sut.writer(desktop)->idle(); });
+    sut.deafen(false);
+    RC_ASSERT(landed);
+    checkFile(next, sut);
+    RC_ASSERT(sut.view(desktop) == next.view[desktop]);
+    RC_ASSERT(sut.refuses(desktop) == next.unreadable[desktop]);
+  }
+  void show(std::ostream& os) const override { os << "Land desktop " << desktop; }
 };
 
 struct Restart : Command {
@@ -369,7 +418,7 @@ private slots:
       sut.start(1);
       rc::state::check(Model{}, sut,
                        rc::state::gen::execOneOfWithArgs<Save, Save, SaveEntry, SaveEntry, SaveTwice, SaveAndQuit, Hear, Hear,
-                                                         Restart, Break, Repair, Delete>());
+                                                         Land, Land, Restart, Break, Repair, Delete>());
     }));
   }
 };
