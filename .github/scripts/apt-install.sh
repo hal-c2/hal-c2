@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Installs apt packages for a CI step: `apt-install.sh <package>...`.
 # The Azure mirror sometimes stalls mid-update and apt-get waits on it forever, so each
-# attempt is bounded, and a failed or timed-out attempt is retried once, from Ubuntu's
-# own archive, since the Azure mirror can also stay unreachable for minutes.
+# attempt is bounded, and a failed or timed-out attempt is retried once.
 set -uo pipefail
 
 apt=(sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
@@ -19,10 +18,4 @@ echo "::warning::apt-get failed or timed out, retrying in 15s"
 sleep 15
 # A killed install can leave dpkg half-configured, which would fail the retry.
 timeout -k 10 30 sudo dpkg --configure -a
-# The runner's sources read this mirror list, Azure first; apt waits out Azure's
-# timeouts on every index before it tries the next, longer than an attempt lasts.
-# Every runner is x86-64, which archive.ubuntu.com serves.
-if [ -f /etc/apt/apt-mirrors.txt ]; then
-  echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
-fi
 attempt "$@"
