@@ -1072,6 +1072,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   QVariantList projects;
   for (const ProjectGroup& group : input.projects) {
     QVariantMap project = group.summary;
+    project.insert(QStringLiteral("memberKeys"), group.memberKeys);
     project.insert(QStringLiteral("threadCount"), threadCounts.value(group.key));
     project.insert(QStringLiteral("status"), mostUrgentStatus(threadStatuses.value(group.key)));
     projects.append(project);

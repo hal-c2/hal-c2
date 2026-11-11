@@ -7,7 +7,13 @@ System.put_env("SHELL", "/bin/sh")
 # `mix test --include codex` / `--include claude`. Tests tagged :parity compare
 # against output HAL-C2 produced before the MC, from real data; see
 # HalC2.Projection.ShellParityTest.
-ExUnit.start(exclude: [:codex, :claude, :opencode, :parity, :backlog])
+# `HAL_C2_TEST_SLOWEST=25` ends the run with the 25 slowest tests and modules.
+slowest = if HalC2.Test.SlowestFormatter.count() > 0, do: [HalC2.Test.SlowestFormatter], else: []
+
+ExUnit.start(
+  exclude: [:codex, :claude, :opencode, :parity, :backlog],
+  formatters: [ExUnit.CLIFormatter | slowest]
+)
 
 # Keep the MC's git include, if we run inside one, out of the tests.
 HalC2.Test.GitEnv.scrub()

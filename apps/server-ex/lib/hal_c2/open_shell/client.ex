@@ -44,6 +44,12 @@ defmodule HalC2.OpenShell.Client do
 
   @type t :: %__MODULE__{channel: GRPC.Channel.t(), dial: {String.t(), keyword()}}
   @timeout 10_000
+  # CreateSandbox answers once the driver has pulled the sandbox's images, and
+  # DeleteSandbox once the container stopped, which on Podman may take its whole
+  # 45 s stop timeout (OpenShell 0.1.7); both get longer than other calls by default.
+  @create_timeout 300_000
+  @delete_call_timeout 90_000
+  @max_name 19
   # A label value the gateway accepts: what Kubernetes allows.
   @label_key ~r/\A([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*\/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?\z/
   @label_value ~r/\A([A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?\z/
@@ -244,6 +250,9 @@ defmodule HalC2.OpenShell.Client do
     end
   end
 
+  @doc "The longest sandbox name OpenShell 0.1.7 takes."
+  def max_name, do: @max_name
+
   @doc """
   Creates sandbox `name` and returns it (`sandbox/1`). Options:
 
@@ -255,10 +264,12 @@ defmodule HalC2.OpenShell.Client do
     * `:environment` - a map of variables
     * `:command` - the main process, a list (the image's otherwise)
     * `:providers` - provider names to attach
+    * `:timeout` - ms to wait for the answer (#{@create_timeout}: it comes once the
+      images are pulled)
 
-  `{:error, {:shared_gateway, environments}}`, and nothing made, once the gateway
-  holds another HAL-C2 environment's sandboxes, even on a connection made before
-  they came.
+  `name` is at most `max_name/0` characters. `{:error, {:shared_gateway,
+  environments}}`, and nothing made, once the gateway holds another HAL-C2
+  environment's sandboxes, even on a connection made before they came.
   """
   def create_sandbox(%__MODULE__{} = conn, name, opts \\ []) do
     with {:ok, labels} <- owned_labels(Keyword.get(opts, :labels, %{})),
@@ -287,7 +298,12 @@ defmodule HalC2.OpenShell.Client do
       }
 
       with {:ok, %Pb.SandboxResponse{sandbox: sandbox}} <-
-             call(conn, :create_sandbox, request, opts) do
+             call(
+               conn,
+               :create_sandbox,
+               request,
+               Keyword.put_new(opts, :timeout, @create_timeout)
+             ) do
         {:ok, sandbox(sandbox)}
       end
     end
@@ -389,7 +405,12 @@ defmodule HalC2.OpenShell.Client do
         }
 
         with {:ok, %Pb.DeleteSandboxResponse{} = response} <-
-               call(conn, :delete_sandbox, request, opts),
+               call(
+                 conn,
+                 :delete_sandbox,
+                 request,
+                 Keyword.put_new(opts, :timeout, @delete_call_timeout)
+               ),
              do: deleted(conn, name, id, response, opts)
 
       {:error, %{status: :not_found}} ->

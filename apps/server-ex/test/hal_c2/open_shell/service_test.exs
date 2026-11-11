@@ -135,7 +135,10 @@ defmodule HalC2.OpenShell.ServiceTest do
 
     test "the reaper runs openshell reap every minute with the MC's home", %{tmp_dir: dir} do
       previous =
-        Map.new(~w(HAL_C2_MC_HOME XDG_DATA_HOME XDG_STATE_HOME), &{&1, System.get_env(&1)})
+        Map.new(
+          ~w(HAL_C2_MC_HOME XDG_DATA_HOME XDG_STATE_HOME MIX_HOME RELEASE_ROOT),
+          &{&1, System.get_env(&1)}
+        )
 
       on_exit(fn ->
         for {name, value} <- previous,
@@ -145,6 +148,8 @@ defmodule HalC2.OpenShell.ServiceTest do
       System.put_env("HAL_C2_MC_HOME", Path.join(dir, "mc dir"))
       System.put_env("XDG_DATA_HOME", Path.join(dir, "xdg data"))
       System.delete_env("XDG_STATE_HOME")
+      System.put_env("MIX_HOME", Path.join(dir, "mix"))
+      System.delete_env("RELEASE_ROOT")
 
       [{service, unit}, {timer, schedule}] = Service.reaper(:systemd)
       assert Path.basename(service) == "hal-c2-openshell-#{OpenShell.instance()}-reap.service"
@@ -165,6 +170,9 @@ defmodule HalC2.OpenShell.ServiceTest do
       assert ~s(Environment=XDG_DATA_HOME="#{Path.join(dir, "xdg data")}") in lines
 
       assert "Environment=XDG_STATE_HOME=#{Path.join(HalC2.Paths.user_home(), ".local/state")}" in lines
+
+      # A checkout's reaper runs `mix`, which finds Hex through the MC's MIX_HOME.
+      assert ~s(Environment=MIX_HOME="#{Path.join(dir, "mix")}") in lines
 
       assert "OnUnitActiveSec=1min" in String.split(schedule, "\n")
       assert schedule =~ "WantedBy=timers.target"

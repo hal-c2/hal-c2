@@ -165,12 +165,16 @@ defmodule HalC2.TokenEconomizerToolPruneProofTest do
       "HalC2Plugins.TokenEconomizer handle_call {:micro_skills, _}" => @micro,
       "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_drop, _}" => @micro,
       "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_restore, _}" => @micro,
+      "HalC2Plugins.TokenEconomizer handle_call {:micro_skill_forget, _}" => @micro,
+      "HalC2Plugins.TokenEconomizer handle_info {:history, _, _, _, _}" => @micro,
       "HalC2Plugins.TokenEconomizer handle_info {:proposed, _, _}" => @micro,
       "HalC2Plugins.TokenEconomizer state :skills" => @micro,
       "HalC2Plugins.TokenEconomizer state :known_skills" => @micro,
       "HalC2Plugins.TokenEconomizer state :published_skills" => @micro,
       "HalC2Plugins.TokenEconomizer state :staged" => @micro,
-      "HalC2Plugins.TokenEconomizer state :staged_order" => @micro
+      "HalC2Plugins.TokenEconomizer state :staged_order" => @micro,
+      "HalC2Plugins.TokenEconomizer state :folds" => @micro,
+      "HalC2Plugins.TokenEconomizer state :reading" => @micro
     },
     environment: %{
       "wait" => "no conversation under way and time passes, so the project has been quiet",

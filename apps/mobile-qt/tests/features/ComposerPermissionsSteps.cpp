@@ -1,6 +1,6 @@
-// Where the phone's composer names a thread's permissions: on the toolbar only
-// when they differ from the default, in a new thread's context strip, and in
-// the model control's footer (features/composer/model-and-mode.feature). The
+// Where the phone's composer names a thread's permissions: always on a
+// started thread's toolbar, in a new thread's context strip, and in the
+// model control's footer (features/composer/model-and-mode.feature). The
 // composer is the desktop's brick; these are its steps with a finger.
 
 #include <algorithm>
@@ -133,12 +133,6 @@ const Steps steps([] {
                   [&] { return S("the thread in %1; the composer shows %2").arg(c[0], show(composer(world))); });
   });
   step(S("the user looks at the composer"), [](World& world, const Captures&, const Table&) { world.sync(); });
-  step(S("the composer does not name the permissions"), [](World& world, const Captures&, const Table&) {
-    expect(composer(world).value(S("runtimeMode")) == composer(world).value(S("defaultRuntimeMode")),
-           S("the thread's permissions are not the default; the composer shows %1").arg(show(composer(world))));
-    QQuickItem* chip = part(world, S("runtimeModePicker"));
-    expect(!chip->property("present").toBool() && !chip->isVisible() && !shown(world, S("contextPermissions")), S("the composer names the permissions"));
-  });
   step(S("the user sets the thread's permissions to (.+) from the effort menu"), [](World& world, const Captures& c, const Table&) {
     QQuickItem* picker = part(world, S("modelPicker"));
     world.tap(picker);

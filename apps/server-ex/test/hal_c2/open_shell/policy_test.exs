@@ -29,6 +29,29 @@ defmodule HalC2.OpenShell.PolicyTest do
     assert Policy.check(policy, policy) == :ok
   end
 
+  # 0.1.7's supervisor adds these once the sandbox is up; a review never asks for them,
+  # so a gateway that adds less leaves it narrower.
+  test "the supervisor's own paths pass the read-back, and only as it adds them" do
+    wanted = Policy.review(@review)
+    refute "/proc" in wanted.filesystem.read_only
+    refute "/dev/null" in wanted.filesystem.read_write
+
+    add = fn policy, read, write ->
+      update_in(
+        policy.filesystem,
+        &%{&1 | read_only: &1.read_only ++ read, read_write: &1.read_write ++ write}
+      )
+    end
+
+    assert Policy.check(add.(wanted, ~w(/var/log /proc /dev/urandom), ~w(/dev/null)), wanted) ==
+             :ok
+
+    for {read, write} <- [{~w(/home), []}, {[], ~w(/proc)}, {[], ~w(/var/log)}] do
+      assert Policy.check(add.(wanted, read, write), wanted) ==
+               {:error, "the gateway changes the paths it may read or write"}
+    end
+  end
+
   # A gateway may keep a rule's endpoints, ports and addresses in its own order; what
   # they let through is what decides.
   test "a policy kept in another order is the one asked for, and one wider is not" do
@@ -46,6 +69,29 @@ defmodule HalC2.OpenShell.PolicyTest do
 
     wider = reorder.(wanted, &%{&1 | allowed_ips: ["10.0.0.9" | &1.allowed_ips]})
     assert Policy.check(wider, wanted) == {:error, "network rule report is not the one asked for"}
+  end
+
+  # 0.1.7 adds one per provider attached, with nothing in it.
+  test "the empty rule the gateway adds for a provider is no widening, and one with an endpoint is" do
+    wanted = Policy.review(@review)
+    add = &put_in(wanted.network_policies["_provider_review-1"], &1)
+
+    assert Policy.check(add.(%Sb.NetworkPolicyRule{name: "_provider_review-1"}), wanted) == :ok
+
+    open = %Sb.NetworkPolicyRule{name: "_provider_review-1", endpoints: [model(wanted)]}
+    assert Policy.check(add.(open), wanted) == {:error, "the gateway adds network rules"}
+
+    binary = %Sb.NetworkPolicyRule{
+      name: "_provider_review-1",
+      binaries: [%Sb.NetworkBinary{path: "/bin/sh"}]
+    }
+
+    assert Policy.check(add.(binary), wanted) == {:error, "the gateway adds network rules"}
+
+    other = %Sb.NetworkPolicyRule{name: "extra"}
+
+    assert Policy.check(put_in(wanted.network_policies["extra"], other), wanted) ==
+             {:error, "the gateway adds network rules"}
   end
 
   test "the model's TLS is left to OpenShell to terminate, never skipped" do

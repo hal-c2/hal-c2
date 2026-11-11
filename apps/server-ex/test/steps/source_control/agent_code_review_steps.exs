@@ -1074,7 +1074,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   step "its agent runs Claude in a sandbox on {string}", %{args: [model]} = context do
-    assert_receive {:sandbox_exec, ["claude" | args], %{workdir: "/sandbox/review"}}, 15_000
+    assert_receive {:sandbox_exec, ["claude" | args], %{workdir: "/review/src"}}, 15_000
     # The model as named, its context window (`[1m]`) aside.
     models = for ["--model", named] <- Enum.chunk_every(args, 2, 1), do: named
     assert Enum.map(models, &String.replace(&1, ~r/\[\w+\]$/, "")) == [model]
@@ -1127,13 +1127,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "its agent runs in a sandbox, in a checkout of the head of \#{int}, with no credential in its environment",
        %{args: [number]} = context do
     assert_receive {:sandbox_exec, ["codex", "app-server"],
-                    %{workdir: "/sandbox/review", environment: env}},
+                    %{workdir: "/review/src", environment: env}},
                    15_000
 
     refute Enum.any?(Map.keys(env), &(&1 =~ ~r/KEY|TOKEN|SECRET/))
     refute Map.has_key?(env, "PATH")
-    assert env["HOME"] == "/sandbox/home"
-    checkout = Path.join(context.sandbox_root, "review")
+    assert env["HOME"] == "/review/home"
+    checkout = Path.join(context.sandbox_root, "src")
     assert World.git!(checkout, ~w(rev-parse HEAD)) == context.heads[number]
     assert World.git!(checkout, ~w(remote)) == ""
     context

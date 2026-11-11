@@ -176,6 +176,16 @@ under the plugin's **Settings**, set **Micro-skills** to **Learn environment
 facts**. Two settings there bound what a new conversation is told: **Most
 facts stated** and the facts' **token budget**.
 
+A project starts out knowing nothing. To have it learn from the threads it
+already has, also turn on **Learn from earlier threads** there. The first
+conversation in a project that has learned nothing yet then starts reading the
+project's earlier threads in the background, oldest first, and the
+conversations after it are told what they taught. It asks no model and says
+nothing in any thread. **Earlier threads from the last (days)** and **Most
+earlier threads** bound what it reads. A project that already learned from its
+own turns is left as it is. Turning the setting off stops a read under way, and
+turning it back on resumes it where it stopped.
+
 Set **Micro-skills** to **Learn and ask a model** to also have your text
 generation model propose facts the turns alone would not show, such as a build
 step the tests need first. Every few turns (**Turns between proposals**) it
@@ -187,8 +197,33 @@ out. Each proposal costs a model call; the plugin's status counts them and
 their tokens. Its facts are listed, dropped and restored like the others.
 
 A project whose saved micro-skills cannot be read is held rather than started
-afresh: nothing is learned or stated there, and its listing says why, until
-the file is fixed or removed.
+afresh: nothing is learned or stated there until the file reads again. The
+plugin's page marks the project held, says why and names the file; repair or
+remove it, then click **Read again** there.
+
+### TokenEconomizer's page
+
+On the desktop, TokenEconomizer has a tab of its own. It shows, for one machine
+at a time:
+
+- what the loop guard did lately, with a way to open each thread;
+- a project's facts, each with how many turns confirmed it and how often it
+  fires once stated. **Drop** keeps a fact from being stated or learned again
+  until you **Restore** it. **Forget** clears what the project learned (dropped
+  facts stay dropped) and, with **Learn from earlier threads** on, reads its
+  earlier threads again; the page shows how far that read got and what it left
+  out;
+- each project's tools per agent: those turned off (before the MC last
+  restarted too), proposed and given back, with how long each went unused. **Apply proposal** or **Turn off** applies
+  them, **Give back** returns them.
+
+Tool pruning turns nothing off for a project while a thread's turns it heard
+only in part cannot be read back: the page names those threads, and each new
+conversation in the project tries again. A thread moved to another machine is
+listed apart and holds nothing off. If tool uses saved earlier cannot be read,
+pruning is held for that agent until you apply or give back its tools, or
+change **Tool pruning** in **Settings → Plugins → TokenEconomizer**, where all
+of its settings are.
 
 ## Connect Slack for plugins
 

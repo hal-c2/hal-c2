@@ -13,8 +13,10 @@ defmodule HalC2.OpenShell.Config do
       `OPENSHELL_ENABLE_OPERATOR_AUTH` are pinned false in its environment).
     * Loopback only.
     * One compute driver, the runtime socket `HalC2.OpenShell.Platform` chose,
-      the images `HalC2.OpenShell.Manifest` pins, no caller-supplied driver JSON
-      and no host bind mounts.
+      the images `HalC2.OpenShell.Manifest` pins, and no host bind mounts. Driver
+      config is on: the MC is the gateway's only client, and a review bounds its
+      disk with tmpfs mounts through it (`HalC2.OpenShell.Review`); the gateway
+      refuses a review's sandbox without it.
     * A sandbox PID ceiling of #{512}, below OpenShell's 2048.
     * A Docker resource label or Podman network of this home's own
       (`HalC2.OpenShell.instance/0`).
@@ -116,7 +118,7 @@ defmodule HalC2.OpenShell.Config do
     sandbox_runtime_image = #{toml(images.sandbox_runtime)}
     supervisor_image = #{toml(images.supervisor)}
     image_pull_policy = "if_not_present"
-    allow_driver_config = false
+    allow_driver_config = true
     enable_bind_mounts = false
     sandbox_pids_limit = #{@pids_limit}
     """ <> driver_scope(config)

@@ -1391,7 +1391,7 @@ defmodule HalC2.CodeReviewTest do
     assert sha == context.shas[1]
     # Its sandbox was deleted, files and all; the fake's directory outlives it.
     assert_receive {:openshell_request, "DeleteSandbox", _}, 5_000
-    File.rm_rf!(Path.join(context.sandbox_root, "review"))
+    File.rm_rf!(Path.join(context.sandbox_root, "src"))
 
     {:ok, _} = call("unapprove", %{"key" => @key})
     assert %{"status" => "ready"} = review()
@@ -1903,12 +1903,16 @@ defmodule HalC2.CodeReviewTest do
 
       # Codex runs in the sandbox's checkout, with none of this machine's environment.
       assert_receive {:sandbox_exec, ["codex", "app-server"],
-                      %{workdir: "/sandbox/review", environment: env}},
+                      %{workdir: "/review/src", environment: env}},
                      15_000
 
       refute Map.has_key?(env, "OPENAI_API_KEY")
       refute Map.has_key?(env, "PATH")
-      assert env["HOME"] == "/sandbox/home"
+      assert env["HOME"] == "/review/home"
+
+      # Codex reads its key from its login only: it signs in with the placeholder
+      # OpenShell put in the sandbox's environment, never the key.
+      assert_received {:sandbox_login, "openshell:resolve:env:fake_OPENAI_API_KEY"}
 
       assert_receive {:sandbox_reported, 200, body}, 15_000
       refute JSON.decode!(body)["result"]["isError"]
@@ -1928,7 +1932,7 @@ defmodule HalC2.CodeReviewTest do
       start_untrusted()
 
       assert_receive {:sandbox_exec, ["claude" | args],
-                      %{workdir: "/sandbox/review", environment: env}},
+                      %{workdir: "/review/src", environment: env}},
                      15_000
 
       refute Map.has_key?(env, "ANTHROPIC_API_KEY")

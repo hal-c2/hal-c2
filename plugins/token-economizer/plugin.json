@@ -150,11 +150,37 @@
       "description": "The most tokens, more or less, the facts stated at the start of a conversation may take."
     },
     {
+      "key": "historyImport",
+      "label": "Learn from earlier threads",
+      "type": "boolean",
+      "default": false,
+      "description": "The first time the micro-skills are on in a project that has learned nothing yet, they first learn from its earlier threads, oldest first, as from turns that just ended. No model is asked and nothing is said in the threads. Turned off, the import stops where it is; turned on again, it goes on."
+    },
+    {
+      "key": "historyDays",
+      "label": "Earlier threads from the last (days)",
+      "type": "number",
+      "default": 365,
+      "description": "Threads last active longer ago than this are left out of the import."
+    },
+    {
+      "key": "historyMaxThreads",
+      "label": "Most earlier threads",
+      "type": "number",
+      "default": 200,
+      "description": "The import reads at most this many of a project's newest threads."
+    },
+    {
       "key": "microSkillsProposeEvery",
       "label": "Turns between proposals",
       "type": "number",
       "default": 3,
       "description": "How many of a project's turns pass between the model's proposals, when micro-skills ask a model."
     }
-  ]
+  ],
+  "contributes": {
+    "pages": [
+      { "id": "token-economizer", "title": "TokenEconomizer", "qml": "ui/TokenEconomizerPage.qml" }
+    ]
+  }
 }

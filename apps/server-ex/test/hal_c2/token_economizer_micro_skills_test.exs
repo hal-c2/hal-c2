@@ -8,7 +8,7 @@
 # the distiller's (`token_economizer_distiller_test.exs`).
 
 for file <-
-      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts micro_skills_distiller),
+      ~w(micro_skills_lifecycle micro_skills_observe micro_skills_envfacts loop_guard_state loop_guard_rules loop_guard_shell_edits loop_guard_turn loop_guard_envelope micro_skills_history micro_skills_distiller),
     do: Code.require_file("../../../../plugins/token-economizer/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.TokenEconomizerMicroSkillsTest do
