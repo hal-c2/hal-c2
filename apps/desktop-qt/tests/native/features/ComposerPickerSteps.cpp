@@ -525,7 +525,7 @@ const Steps steps([] {
   step(QStringLiteral("the composer offers its plan and access controls"), [](World& world, const Captures&, const Table&) {
     openTurnThread(world);
     publishProviders(world.mc, {provider(QStringLiteral("codex"), QStringLiteral("Codex"), {model(QStringLiteral("gpt-5.4"), QStringLiteral("GPT-5.4"))})});
-    // Permissions other than the default, which the toolbar names.
+    // The thread's permissions, which the toolbar always names.
     updateThread(world, {{QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5.4")}}},
                          {QStringLiteral("runtimeMode"), QStringLiteral("approval-required")}});
     expect(world.native().controller<SettingsController>()->writeDevice(QStringLiteral("planModeEnabled"), true), QStringLiteral("plan mode could not be turned on"));

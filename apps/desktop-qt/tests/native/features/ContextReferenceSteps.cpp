@@ -4,6 +4,7 @@
 // provider's skills and commands come from the MC's provider snapshot; the
 // files from its workspace search (FakeFiles).
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -19,6 +20,7 @@
 #include "SettingsController.h"
 #include "Stream.h"
 #include "Turn.h"
+#include "WorkspaceController.h"
 #include "World.h"
 
 namespace {
@@ -29,6 +31,10 @@ namespace {
 struct References {
   QJsonArray skills;
   QJsonArray commands;
+  // Each folder's own skills, which the MC reads only once a composer asks
+  // for that folder; and the folders it has read.
+  QHash<QString, QJsonArray> folderSkills;
+  QJsonArray snapshots;
   bool published = false;
   QString typed;
   QString offered;
@@ -84,8 +90,9 @@ QStringList quotedIn(const QString& text) {
   return found;
 }
 
-// The thread's provider, with the scenario's skills and commands.
-void publish(World& world) {
+// The thread's provider, with the scenario's skills and commands, announced
+// without a round trip, so an RPC handler can send it.
+void announce(World& world) {
   References& r = refs(world);
   r.published = true;
   publishProviders(world.mc, {QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")},
@@ -97,14 +104,34 @@ void publish(World& world) {
                                           {QStringLiteral("models"), QJsonArray{QJsonObject{{QStringLiteral("slug"), QStringLiteral("gpt-5")},
                                                                                             {QStringLiteral("name"), QStringLiteral("GPT-5")}}}},
                                           {QStringLiteral("slashCommands"), r.commands},
-                                          {QStringLiteral("skills"), r.skills}}});
+                                          {QStringLiteral("skills"), r.skills},
+                                          {QStringLiteral("workspaceSnapshots"), r.snapshots}}});
   // The open thread runs on it, as every thread the MC holds names a model.
   if (world.mc.threads.contains(stream::kThread) && !world.mc.threads.value(stream::kThread).contains(QLatin1String("modelSelection"))) {
     QJsonObject& row = world.mc.threads[stream::kThread];
     row.insert(QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("codex")}, {QStringLiteral("model"), QStringLiteral("gpt-5")}});
     world.mc.sendRow(stream::kThread, row);
   }
+}
+
+void publish(World& world) {
+  announce(world);
   world.sync();
+}
+
+// The MC reads a folder's skills when asked for it and announces them with
+// the providers (`server.refreshProviders` with a `cwd`).
+void readFoldersWhenAsked(World& world) {
+  world.mc.onRpc(QStringLiteral("server.refreshProviders"), [&world](const FakeMc::Rpc& rpc) {
+    References& r = refs(world);
+    const QString cwd = rpc.payload.value(QLatin1String("cwd")).toString();
+    if (r.folderSkills.contains(cwd)) {
+      r.snapshots.append(QJsonObject{{QStringLiteral("cwd"), cwd}, {QStringLiteral("skills"), r.folderSkills.value(cwd)},
+                                     {QStringLiteral("slashCommands"), QJsonArray()}});
+      announce(world);
+    }
+    world.mc.reply(rpc, QJsonObject{{QStringLiteral("providers"), fakeConfig(world.mc).config.value(QLatin1String("providers"))}});
+  });
 }
 
 void ensureProvider(World& world) {
@@ -276,6 +303,14 @@ const Steps steps([] {
     addSkill(world, QStringLiteral("release-notes"), {{QStringLiteral("description"), c[0]}});
     publish(world);
   });
+  step(QStringLiteral("the provider reports different skills for %1 and for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QString& folder : {c[0], c[1]}) {
+      refs(world).folderSkills.insert(folder, QJsonArray{QJsonObject{{QStringLiteral("name"), folder.section(u'/', -1) + QStringLiteral("-deploy")},
+                                                                     {QStringLiteral("enabled"), true}}});
+    }
+    readFoldersWhenAsked(world);
+    publish(world);
+  });
   step(QStringLiteral("skills are shown in the slash menu"), [](World& world, const Captures&, const Table&) {
     auto* settings = world.native().controller<SettingsController>();
     settings->set(QStringLiteral("showSkillsInSlashMenu"), true);
@@ -294,6 +329,17 @@ const Steps steps([] {
   });
 
   // Typing.
+  step(QStringLiteral("the user types %1 in a thread working in %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    openTurnThread(world);
+    QJsonObject& row = world.mc.threads[stream::kThread];
+    row.insert(QStringLiteral("worktreePath"), c[1]);
+    world.mc.sendRow(stream::kThread, row);
+    world.waitFor([&] {
+      const auto& place = world.native().controller<WorkspaceController>()->place();
+      return place && place->cwd() == c[1];
+    }, QStringLiteral("the thread to work in %1").arg(c[1]));
+    typeText(world, c[0]);
+  });
   step(QStringLiteral("the user types %1 and (no skill matches|no file or folder matches|no command matches)").arg(q),
        [](World& world, const Captures& c, const Table&) {
          ensureProvider(world);
@@ -381,6 +427,12 @@ const Steps steps([] {
     const QVariantList items = offered(world);
     const auto count = std::count_if(items.cbegin(), items.cend(), [&](const QVariant& item) { return nameOf(item) == c[0]; });
     expect(count == 1, QStringLiteral("\"%1\" is offered %2 times: %3").arg(c[0]).arg(count).arg(describeMenu(world)));
+  });
+  step(QStringLiteral("only the skills reported for %1 are offered").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = c[0].section(u'/', -1) + QStringLiteral("-deploy");
+    waitForMenu(world, [&](const QVariantList& items) {
+      return items.size() == 1 && kindOf(items.first()) == QLatin1String("skill") && nameOf(items.first()) == wanted;
+    }, QStringLiteral("only \"%1\" to be offered").arg(wanted));
   });
   step(QStringLiteral("the skill %1 is not offered").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForAnswer(world);

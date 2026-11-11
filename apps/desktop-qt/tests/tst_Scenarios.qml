@@ -275,9 +275,9 @@ Item {
 
         function test_given_the_shell_owns_a_toolbar_shortcut_when_it_opens_a_control_then_the_native_control_opens_data() {
             return [
-                // The effort is the model control's.
+                // The effort and the permissions are the model control's.
                 { tag: "effort", command: "composer.effort", picker: "modelPicker" },
-                { tag: "access mode", command: "composer.mode", picker: "runtimeModePicker" },
+                { tag: "access mode", command: "composer.mode", picker: "modelPicker" },
                 { tag: "host", command: "composer.host", picker: "hostPicker" },
                 { tag: "workspace", command: "composer.workspace", picker: "envModePicker" },
                 { tag: "branch", command: "composer.branch", picker: "branchPicker" }
@@ -295,7 +295,6 @@ Item {
                     choices: [{ id: "high", label: "High" }, { id: "low", label: "Low" }]
                 }],
                 runtimeModes: [{ value: "approval-required", label: "Ask" }, { value: "auto", label: "Auto" }],
-                // Not the thread's own, so the toolbar names them.
                 defaultRuntimeMode: "auto"
             });
             Shell.state = Object.assign({}, Shell.state, {
@@ -327,8 +326,9 @@ Item {
             tryCompare(picker.popup ?? picker, "visible", true);
         }
 
-        // A started thread at its default permissions names them nowhere:
-        // their key opens the model control at its permissions menu.
+        // A started thread at its default permissions still names them on
+        // the toolbar; their key opens the model control at its
+        // permissions menu.
         function permissionsAtTheirDefault(overrides) {
             const composer = createComposer(Object.assign({
                 selectedInstanceId: "codex",
@@ -337,7 +337,8 @@ Item {
                 defaultRuntimeMode: "approval-required"
             }, overrides ?? {}));
             Shell.state = Object.assign({}, Shell.state, { modelPicker: codexAndClaude() });
-            verify(!findChild(composer, "runtimeModePicker").visible);
+            verify(findChild(composer, "runtimeModePicker").visible);
+            compare(findChild(composer, "runtimeModePicker").displayText, "Ask");
             return composer;
         }
 

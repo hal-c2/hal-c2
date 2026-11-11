@@ -3686,6 +3686,7 @@ void ComposerController::follow() {
 void ComposerController::publish() {
   if (!m_active && !m_previewing) return;
   recoverQueuedEdits();
+  askFolder(target());
   const QVariantMap state = turnState();
   if (state != m_published) {
     m_published = state;
@@ -4430,7 +4431,8 @@ bool ComposerController::selectSuggestion(const QString& target, const QString& 
 QList<composer::Suggestion> ComposerController::suggestions(const QString& target,
                                                             const std::optional<composer::Trigger>& trigger) const {
   if (!trigger) return {};
-  const composer::Instance* instance = instanceOf(selection(target));
+  const std::optional<composer::Instance> folder = commandsOf(target);
+  const composer::Instance* instance = folder ? &*folder : nullptr;
   if (trigger->kind == QLatin1String("slash-command")) {
     return composer::slashItems(instance, *trigger, planModeOn(instance), setting(QStringLiteral("showSkillsInSlashMenu")).toBool(),
                                 draft(target).trimmed() == u'/' + trigger->query);
@@ -4507,8 +4509,9 @@ bool ComposerController::canSearchPaths(const QString& target) const {
 std::optional<composer::Trigger> ComposerController::triggerOf(const QString& target) const {
   const QString text = draft(target);
   std::optional<composer::Trigger> trigger = composer::trigger(text, m_drafts.value(target).cursor);
-  if (trigger && trigger->kind == QLatin1String("skill") && !composer::opensSkillMenu(instanceOf(selection(target)), trigger->query)) {
-    return std::nullopt;
+  if (trigger && trigger->kind == QLatin1String("skill")) {
+    const std::optional<composer::Instance> folder = commandsOf(target);
+    if (!composer::opensSkillMenu(folder ? &*folder : nullptr, trigger->query)) return std::nullopt;
   }
   // A slash word in a sentence that starts no name is prose: no menu, so
   // Enter sends it.
@@ -4540,10 +4543,50 @@ void ComposerController::refreshPathSearch() {
 void ComposerController::refreshCatalogue() {
   const QJsonObject config = NativeShell::of(this)->controller<WorkspaceController>()->environmentConfig();
   m_catalogue = composer::instances(config.value(QLatin1String("providers")).toArray());
+  ++m_catalogues;
 }
 
 const composer::Instance* ComposerController::instanceOf(const QJsonObject& selection) const {
   return composer::find(m_catalogue, selection.value(QLatin1String("instanceId")).toString());
+}
+
+std::optional<composer::Instance> ComposerController::commandsOf(const QString& target) const {
+  const composer::Instance* instance = instanceOf(selection(target));
+  if (!instance) return std::nullopt;
+  return composer::inFolder(*instance, searchPlace(target).second);
+}
+
+// Most providers' skills and many commands are a folder's own (Claude's and
+// Codex's entries carry none): the MC reads them when a composer asks for its
+// folder and announces them with the providers, as `workspaceSnapshots`.
+// Asked once the composer has an instance and a folder, one read at a time;
+// again after five minutes so a skill added to the project since shows up;
+// half a minute after a read that failed; and at once when a catalogue
+// announced since the MC kept the folder no longer has it (the MC restarted).
+void ComposerController::askFolder(const QString& target) {
+  if (target.isEmpty() || !m_client->isReady()) return;
+  const composer::Instance* instance = instanceOf(selection(target));
+  if (!instance || !instance->enabled) return;
+  const auto [environmentId, cwd] = searchPlace(target);
+  if (cwd.isEmpty() || !m_store->environmentOnline(environmentId)) return;
+  const QString key = environmentId + u'\n' + instance->instanceId + u'\n' + cwd;
+  if (const auto asked = m_foldersAsked.constFind(key); asked != m_foldersAsked.cend()) {
+    if (asked->reading) return;
+    const bool lost = asked->kept && m_catalogues > asked->answeredAt && !composer::hasRead(*instance, cwd);
+    if (!asked->stands.hasExpired() && !lost) return;
+  }
+  m_foldersAsked.insert(key, FolderAsk{.reading = true});
+  m_client->call(this, environmentId, QStringLiteral("server.refreshProviders"),
+                 QJsonObject{{QStringLiteral("instanceId"), instance->instanceId}, {QStringLiteral("cwd"), cwd}},
+                 [this, key, instanceId = instance->instanceId, cwd](const QJsonValue& result, const std::optional<QString>& error) {
+                   using namespace std::chrono;
+                   const QList<composer::Instance> answered =
+                       composer::instances(result.toObject().value(QLatin1String("providers")).toArray());
+                   const composer::Instance* entry = composer::find(answered, instanceId);
+                   m_foldersAsked.insert(key, FolderAsk{.kept = !error && entry && composer::hasRead(*entry, cwd),
+                                                        .answeredAt = m_catalogues,
+                                                        .stands = QDeadlineTimer(error ? seconds(30) : minutes(5))});
+                 });
 }
 
 QJsonObject ComposerController::selection(const QString& target) const {
@@ -4629,8 +4672,7 @@ QString ComposerController::runtimeModeOf(const QString& target) const {
   return QStringLiteral("full-access");
 }
 
-// The permissions a new thread of the target's project starts in: the
-// composer names a thread's own only when they differ from these.
+// The permissions a new thread of the target's project starts in.
 QString ComposerController::defaultRuntimeModeOf(const QString& target) const {
   if (onPage() && target == pageKey(m_pageId)) return newThreadRuntimeMode(m_client->environment(), pageProject());
   if (const auto thread = m_store->thread(target)) return newThreadRuntimeMode(thread->environmentId, thread->projectId);

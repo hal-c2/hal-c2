@@ -73,8 +73,8 @@ QJsonObject claude() {
   return provider(S("claudeAgent"), S("claudeAgent"), S("Claude"), {model(S("claude-haiku"), S("Claude Haiku"), {})});
 }
 
-// The thread on `slug` of `instanceId` in its default permissions, so the
-// toolbar leaves them to the model control.
+// The thread on `slug` of `instanceId` in its default permissions; the
+// toolbar names them and the permissions key opens the model control.
 void onModel(World& world, const QJsonArray& providers, const QString& instanceId, const QString& slug) {
   publishProviders(world.mc, providers);
   openTurnThread(world);

@@ -140,6 +140,69 @@ step(
   },
 );
 
+// --- A folder's own skills -------------------------------------------------------------
+
+const folderSkill = (folder: string) => `${folder.split("/").pop()}-deploy`;
+
+// The thread's provider has no skills of its own; the MC reads each folder's when asked.
+step(
+  /^the provider reports different skills for "([^"]+)" and for "([^"]+)"$/,
+  async (ctx: World, ...folders: string[]) => {
+    let providers = PROVIDERS.map((provider) =>
+      provider.instanceId === "codex"
+        ? { ...provider, skills: [], slashCommands: [], workspaceSnapshots: [] }
+        : provider,
+    ) as unknown as ServerProvider[];
+    ctx.fake!.server.providers = providers;
+    ctx.fake!.override(
+      "getServerConfig",
+      async () =>
+        ({
+          settings: ctx.fake!.server.settings,
+          providers,
+        }) as never,
+    );
+    ctx.fake!.settings.on("server.refreshProviders", (payload) => {
+      const { instanceId, cwd } = payload as { instanceId: string; cwd: string };
+      if (!folders.includes(cwd)) return { providers };
+      const snapshot = {
+        cwd,
+        checkedAt: "2026-11-11T12:00:00Z",
+        slashCommands: [],
+        skills: [{ name: folderSkill(cwd), path: `${cwd}/.codex/skills/deploy`, enabled: true }],
+      };
+      providers = providers.map((provider) =>
+        provider.instanceId === instanceId
+          ? { ...provider, workspaceSnapshots: [...(provider.workspaceSnapshots ?? []), snapshot] }
+          : provider,
+      ) as ServerProvider[];
+      return { providers };
+    });
+    await chooseCommand(ctx, "Refresh providers");
+    await settle(ctx);
+  },
+);
+
+step(
+  /^the user types "\$" in a thread working in "([^"]+)"$/,
+  async (ctx: World, folder: string) => {
+    // The Background's thread ("t1") moves to the folder.
+    ctx.fake!.emitThread({ ...ctx.fake!.currentThread("t1")!, worktreePath: folder });
+    await settle(ctx);
+    await typeText(ctx, "$");
+    await settle(ctx);
+  },
+);
+
+step(/^only the skills reported for "([^"]+)" are offered$/, (ctx: World, folder: string) => {
+  expect(select(ctx)).toMatchObject({ open: true, title: "skills" });
+  expect(labels(ctx)).toEqual([`$${folderSkill(folder)}`]);
+  // The folder was read once, for the thread's provider and folder.
+  expect(ctx.fake!.settings.callsTo("server.refreshProviders").map((call) => call.payload)).toEqual(
+    [{ instanceId: "codex", cwd: folder }],
+  );
+});
+
 // --- Chips ---------------------------------------------------------------------------
 
 async function addReference(ctx: World, path: string) {

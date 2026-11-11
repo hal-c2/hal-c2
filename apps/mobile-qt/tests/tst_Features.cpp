@@ -40,7 +40,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("composer/queue-and-steer.feature:An unchanged edit whose message starts running*"),
     QStringLiteral("composer/queue-and-steer.feature:Deleting a thread ends its queued edit"),
     QStringLiteral("composer/queue-and-steer.feature:An edit open when a question arrives*"),
-    QStringLiteral("composer/model-and-mode.feature:The composer names the permissions only when they differ*"),
+    QStringLiteral("composer/model-and-mode.feature:A started thread always names its permissions"),
     QStringLiteral("composer/model-and-mode.feature:A new thread says which permissions*"),
     QStringLiteral("composer/model-and-mode.feature:The phone's back leaves the permissions menu*"),
     QStringLiteral("files/adding-projects.feature"),

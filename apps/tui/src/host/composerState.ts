@@ -261,8 +261,10 @@ export interface TuiComposerState {
   readonly runtimeModeLabel: string;
   readonly runtimeModes: ReadonlyArray<{ value: string; label: string; description: string }>;
   /**
-   * The footer names the permissions: always for a new thread's first
-   * message, otherwise only when they differ from the project's default.
+   * The footer names the permissions whenever the prompt has a thread,
+   * a new thread or a page to run in — the default included, so choosing
+   * the default still shows that the choice landed. (Upstream #25869
+   * named them only when they differed from the default.)
    */
   readonly namesAccess: boolean;
   /** The footer shows only the model and the primary action. */
@@ -503,6 +505,36 @@ export interface Composer {
 }
 
 const OFFLINE_REASON = "not connected to the environment";
+/** How long a folder's skills and commands, once read, are offered before being read again. */
+const FOLDER_REREAD_MS = 5 * 60_000;
+/** How long after a failed read of a folder it is asked for again. */
+const FOLDER_RETRY_MS = 30_000;
+
+const hasFolder = (provider: ServerProvider, cwd: string) =>
+  provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd) ?? false;
+
+/**
+ * The provider as a thread working in `cwd` sees it: that folder's snapshot's
+ * skills and commands first, then the entry's own, one per name. Most
+ * providers' skills are a folder's own (Claude's and Codex's entries carry
+ * none), read by the MC when a composer asks for that folder.
+ */
+export const providerInFolder = (provider: ServerProvider, cwd: string): ServerProvider => {
+  const snapshot = provider.workspaceSnapshots?.find((candidate) => candidate.cwd === cwd);
+  if (!snapshot) return provider;
+  const byName = <T extends { readonly name: string }>(
+    first: ReadonlyArray<T>,
+    then: ReadonlyArray<T>,
+  ) => {
+    const seen = new Set(first.map((entry) => entry.name));
+    return [...first, ...then.filter((entry) => !seen.has(entry.name))];
+  };
+  return {
+    ...provider,
+    skills: byName(snapshot.skills, provider.skills ?? []),
+    slashCommands: byName(snapshot.slashCommands, provider.slashCommands ?? []),
+  };
+};
 
 export function createComposer(options: ComposerOptions): Composer {
   const { client, store, state } = options;
@@ -541,6 +573,15 @@ export function createComposer(options: ComposerOptions): Composer {
   let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
   // Every configured provider (signed out and disabled ones too), for the composer's notice.
   let providers: ReadonlyArray<ServerProvider> = [];
+  /**
+   * Each instance and folder whose own skills and commands were asked for:
+   * whether the read is still out, whether the MC kept what it read, and
+   * until when the answer stands.
+   */
+  const foldersAsked = new Map<
+    string,
+    { readonly reading: boolean; readonly kept: boolean; readonly stands: number }
+  >();
   /** The accounts the MC's usage hubs report, as its config last said. */
   let usageSources: UsageLimitSourceSnapshots = [];
   /** "/usage-limits" was asked in this thread: the driver whose limits show above the prompt. */
@@ -860,13 +901,6 @@ export function createComposer(options: ComposerOptions): Composer {
       : page
         ? pageRuntime(page)
         : (detail?.runtimeMode ?? "full-access");
-    const defaultRuntimeMode = page
-      ? pageDefaults(page).defaultRuntimeMode
-      : resolveProjectSettings(
-          settings,
-          (detail?.projectId ?? null) as never,
-          projects().find((candidate) => candidate.id === detail?.projectId),
-        ).settings.defaultRuntimeMode;
     const project = newProject();
     const placeholder = newDraft
       ? project
@@ -989,7 +1023,7 @@ export function createComposer(options: ComposerOptions): Composer {
         label: RUNTIME_MODE_META[mode].label,
         description: RUNTIME_MODE_META[mode].description,
       })),
-      namesAccess: !!newDraft || runtimeMode !== defaultRuntimeMode,
+      namesAccess: !!newDraft || !!page || !!detail,
       compact,
       rows: rowsOverride ?? autoRows(draft.text),
       surfaceWidth,
@@ -2586,7 +2620,7 @@ export function createComposer(options: ComposerOptions): Composer {
    */
   const openTriggerPicker = (trigger: "/" | "$" | "@") => {
     const model = activeModel();
-    const provider = providers.find((candidate) => candidate.instanceId === model?.instanceId);
+    const entry = providers.find((candidate) => candidate.instanceId === model?.instanceId);
     if (trigger === "@") {
       const key = target();
       // On a page, "@agent" leads the list: an ask, not a file.
@@ -2627,6 +2661,57 @@ export function createComposer(options: ComposerOptions): Composer {
       openKindPicker(page);
       return;
     }
+    // The folder's own skills and commands are read, one read at a time: the
+    // first time, again after five minutes as the desktop does, half a minute
+    // after a read that failed, and at once when the MC kept them but its
+    // providers no longer have them (it restarted). With nothing to offer
+    // until the first read answers, the picker opens then, if the character is
+    // still the last thing typed; otherwise it opens now on what there is.
+    const cwd = composerCwd();
+    const folder = entry && cwd ? `${entry.instanceId}\n${cwd}` : null;
+    const asked = folder ? foldersAsked.get(folder) : undefined;
+    if (
+      entry &&
+      folder &&
+      !asked?.reading &&
+      (asked === undefined || Date.now() >= asked.stands || (asked.kept && !hasFolder(entry, cwd)))
+    ) {
+      foldersAsked.set(folder, { reading: true, kept: false, stands: Infinity });
+      const own =
+        trigger === "/"
+          ? (withUsageLimitsCommands([entry], usageSources)[0]?.slashCommands ?? []).length > 0
+          : (entry.skills ?? []).some((skill) => skill.enabled);
+      const waits = !own && !hasFolder(entry, cwd);
+      const key = target();
+      const answered = (kept: boolean, after: number) => {
+        foldersAsked.set(folder, { reading: false, kept, stands: Date.now() + after });
+        if (waits && target() === key && picker === null && draftFor(key).text.endsWith(trigger)) {
+          openTriggerPicker(trigger);
+        }
+      };
+      void track(
+        client
+          .mcCall<{ readonly providers?: ReadonlyArray<ServerProvider> }>(
+            "server.refreshProviders",
+            {
+              instanceId: entry.instanceId,
+              cwd,
+            },
+          )
+          .then(
+            (result) => {
+              if (result?.providers) providers = result.providers;
+              const read = result?.providers?.find(
+                (candidate) => candidate.instanceId === entry.instanceId,
+              );
+              answered(read ? hasFolder(read, cwd) : false, FOLDER_REREAD_MS);
+            },
+            () => answered(false, FOLDER_RETRY_MS),
+          ),
+      );
+      if (waits) return;
+    }
+    const provider = entry ? providerInFolder(entry, cwd) : undefined;
     if (trigger === "/") {
       // A provider whose limits the MC knows also answers "/usage-limits" (here, not in a turn).
       const commands =
