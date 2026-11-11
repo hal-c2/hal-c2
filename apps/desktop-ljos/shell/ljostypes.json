@@ -1460,6 +1460,559 @@
           "methods": []
         },
         {
+          "name": "BrowserPage",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "previews",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "previewsChanged"
+            },
+            {
+              "name": "tabId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "tabIdChanged"
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "urlChanged"
+            },
+            {
+              "name": "title",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "titleChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "exists",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "existsChanged"
+            },
+            {
+              "name": "viewport",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "viewportChanged"
+            },
+            {
+              "name": "resizing",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "resizingChanged"
+            },
+            {
+              "name": "zoom",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "zoomChanged"
+            },
+            {
+              "name": "appearance",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "appearanceChanged"
+            },
+            {
+              "name": "muted",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "mutedChanged"
+            },
+            {
+              "name": "devTools",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "devToolsChanged"
+            },
+            {
+              "name": "view",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "viewChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "loadRequested",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "evaluateRequested",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "int"
+                },
+                {
+                  "name": "script",
+                  "type": "string"
+                },
+                {
+                  "name": "world",
+                  "type": "int"
+                }
+              ]
+            },
+            {
+              "name": "grabRequested",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "int"
+                }
+              ]
+            },
+            {
+              "name": "commandRequested",
+              "parameters": [
+                {
+                  "name": "command",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "logged",
+              "parameters": [
+                {
+                  "name": "level",
+                  "type": "string"
+                },
+                {
+                  "name": "text",
+                  "type": "string"
+                },
+                {
+                  "name": "source",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "loadFailed",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                },
+                {
+                  "name": "description",
+                  "type": "string"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "report",
+              "parameters": [
+                {
+                  "name": "phase",
+                  "type": "string"
+                },
+                {
+                  "name": "url",
+                  "type": "string"
+                },
+                {
+                  "name": "title",
+                  "type": "string"
+                },
+                {
+                  "name": "code",
+                  "type": "real"
+                },
+                {
+                  "name": "description",
+                  "type": "string"
+                },
+                {
+                  "name": "canGoBack",
+                  "type": "bool"
+                },
+                {
+                  "name": "canGoForward",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "navigate",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "setViewport",
+              "parameters": [
+                {
+                  "name": "viewport",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "evaluated",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "real"
+                },
+                {
+                  "name": "result",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "grabbed",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "real"
+                },
+                {
+                  "name": "image",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "consoleMessage",
+              "parameters": [
+                {
+                  "name": "level",
+                  "type": "real"
+                },
+                {
+                  "name": "message",
+                  "type": "string"
+                },
+                {
+                  "name": "line",
+                  "type": "real"
+                },
+                {
+                  "name": "source",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "PagePermissions",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "question",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "questionChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "request",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                },
+                {
+                  "name": "origin",
+                  "type": "string"
+                },
+                {
+                  "name": "kind",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "openLink",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                },
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "real"
+            },
+            {
+              "name": "answer",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "real"
+                },
+                {
+                  "name": "allow",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "setShown",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                },
+                {
+                  "name": "shown",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "forget",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "Browser",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "profile",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "devToolsDock",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "devToolsDockChanged"
+            },
+            {
+              "name": "devToolsShare",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "devToolsShareChanged"
+            },
+            {
+              "name": "devicesView",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "devicesViewChanged"
+            },
+            {
+              "name": "devicesPresetIds",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "devicesPresetIdsChanged"
+            },
+            {
+              "name": "devices3d",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "devices3dChanged"
+            },
+            {
+              "name": "permissions",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "permissionsChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "pagesChanged",
+              "parameters": []
+            }
+          ],
+          "methods": []
+        },
+        {
           "name": "DeviceStream",
           "since": "1.0",
           "base": null,
@@ -5383,7 +5936,30 @@
               "notify": "emptyTabChanged"
             }
           ],
-          "signals": [],
+          "signals": [
+            {
+              "name": "tabChanged",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "listed",
+              "parameters": []
+            },
+            {
+              "name": "showRequested",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                }
+              ]
+            }
+          ],
           "methods": [
             {
               "name": "reload",
@@ -5395,6 +5971,16 @@
               "parameters": [
                 {
                   "name": "tabId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "forget",
+              "parameters": [
+                {
+                  "name": "url",
                   "type": "string"
                 }
               ],
@@ -5434,6 +6020,16 @@
               "parameters": [
                 {
                   "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "show",
+              "parameters": [
+                {
+                  "name": "tabId",
                   "type": "string"
                 }
               ],

@@ -4,6 +4,7 @@
 
 pub mod attachment_files;
 pub mod bridge;
+pub mod browser;
 pub mod cache;
 pub mod code_highlighter;
 pub mod commands;
@@ -81,6 +82,7 @@ pub fn register(engine: &Engine) {
     folders::register(engine);
     highlighter::register(engine);
     code_highlighter::register(engine);
+    browser::register(engine);
     device::register(engine);
     device_screen::register(engine);
     local_transcriber::register(engine);
@@ -250,6 +252,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
             .as_ref()
             .map(|dir| dir.join("preferences.json")),
     );
+    browser::start(engine);
     match &launch.mc_origin {
         Some(origin) => {
             // NativeShell: what the cache kept of this MC shows while the
