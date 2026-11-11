@@ -38,11 +38,23 @@ pub mod tag {
     pub const UNREACHABLE: &str = "PreviewAutomationTargetUnreachableError";
     pub const OPEN_FAILED: &str = "PreviewAutomationOpenError";
     pub const UNSUPPORTED: &str = "PreviewAutomationUnsupportedClientError";
+    pub const CAPTURE_FAILED: &str = "PreviewAutomationCaptureError";
+    pub const INVALID_SELECTOR: &str = "PreviewAutomationInvalidSelectorError";
+    pub const TARGET_NOT_FOUND: &str = "PreviewAutomationTargetNotFoundError";
+    pub const NOT_EDITABLE: &str = "PreviewAutomationTargetNotEditableError";
+    pub const SCRIPT: &str = "PreviewAutomationScriptError";
 }
 
 /// How long a request may take when the MC names no limit (ms).
 pub const DEFAULT_WAIT_MS: i64 = 15_000;
 pub const MAX_EVALUATION_BYTES: usize = 64_000;
+/// The most console and network entries a snapshot carries.
+pub const MAX_ENTRIES: usize = 200;
+/// Snapshots taken before a page whose secrets keep changing is given up on,
+/// and tries at drawing a page, a second each.
+const SNAPSHOT_ATTEMPTS: u32 = 3;
+const CAPTURE_ATTEMPTS: u32 = 3;
+const CAPTURE_ATTEMPT_MS: i64 = 1000;
 /// An answer leaves this long before the MC's deadline.
 pub const ANSWER_MARGIN_MS: i64 = 300;
 
@@ -52,6 +64,10 @@ pub const OPERATIONS: [&str; 3] = ["status", "open", "evaluate"];
 /// What a page's script answered: its JSON string, or None when the page ran
 /// none (it went, or refused).
 pub type ScriptDone = Box<dyn FnOnce(&Engine, Option<String>)>;
+
+/// A page's picture, {mimeType: "image/png", data (base64), width, height},
+/// or None when it could not take one.
+pub type GrabDone = Box<dyn FnOnce(&Engine, Option<Json>)>;
 
 /// A tab's page, as the browser shows it.
 pub trait AutomationPage {
@@ -66,6 +82,22 @@ pub trait AutomationPage {
     fn on_screen(&self) -> bool;
     /// The page's rendered size, (0, 0) before it has one.
     fn viewport(&self) -> (i32, i32);
+    /// Runs `script` where it shares the page's document but not its
+    /// scripts, so the page cannot change what the runtime calls.
+    fn run_isolated(&self, engine: &Engine, script: &str, done: ScriptDone) {
+        self.run_script(engine, script, done);
+    }
+    /// The page's picture as the user would see it.
+    fn grab(&self, engine: &Engine, done: GrabDone) {
+        done(engine, None);
+    }
+    /// What the page logged, and the loads of it that failed, oldest first.
+    fn console_entries(&self) -> Vec<Json> {
+        Vec::new()
+    }
+    fn failed_loads(&self) -> Vec<Json> {
+        Vec::new()
+    }
 }
 
 /// A tab the MC asked for that has no page yet: the browser shows it, and
@@ -82,6 +114,7 @@ type Then = Box<dyn FnOnce(&Engine)>;
 type OnReveal = Rc<dyn Fn(&Engine, &Reveal)>;
 type Opened = Rc<dyn Fn(&Engine, String, bool)>;
 type RequestRef = Rc<RefCell<Request>>;
+type Captured = Box<dyn FnOnce(&Engine, &RequestRef, Json)>;
 
 struct Request {
     environment_id: String,
@@ -605,6 +638,7 @@ impl PreviewAutomationHost {
                 host.0.borrow_mut().current_tabs.insert(thread_id, tab);
                 match operation.as_str() {
                     "evaluate" => host.evaluate(engine, request, &page),
+                    "snapshot" => host.snapshot(engine, request, page, 0),
                     _ => {
                         let client = host.client_id();
                         host.fail(
@@ -1029,6 +1063,202 @@ impl PreviewAutomationHost {
         );
     }
 
+    /// The page's text, controls and picture. A page whose password fields
+    /// (or what it draws as dots) changed between reading its text and
+    /// drawing its picture may show what the text hid, so it is read again.
+    fn snapshot(
+        &self,
+        engine: &Engine,
+        request: &RequestRef,
+        page: Rc<dyn AutomationPage>,
+        attempt: u32,
+    ) {
+        let host = self.clone();
+        let read = page.clone();
+        self.runtime(engine, request, &page, "snapshot", json!({}), move |engine, request, value| {
+            let again = read.clone();
+            host.clone().capture(engine, request, read, 0, Box::new(move |engine, request, shot| {
+                let checked = again.clone();
+                host.clone().runtime(engine, request, &checked, "secrets", json!({}), move |engine, request, now| {
+                    if now["print"] != value["secrets"] {
+                        if attempt + 1 < SNAPSHOT_ATTEMPTS {
+                            host.snapshot(engine, request, again, attempt + 1);
+                        } else {
+                            let tab = request.borrow().tab_id.clone();
+                            host.fail(
+                                engine,
+                                request,
+                                tag::CAPTURE_FAILED,
+                                &format!(
+                                    "Preview tab {tab} was too busy to read safely: its password fields changed while each of {SNAPSHOT_ATTEMPTS} snapshots was taken."
+                                ),
+                            );
+                        }
+                        return;
+                    }
+                    let mut result = value;
+                    let mut network = result["networkEntries"].as_array().cloned().unwrap_or_default();
+                    network.extend(again.failed_loads());
+                    let over = network.len().saturating_sub(MAX_ENTRIES);
+                    network.drain(..over);
+                    if let Some(fields) = result.as_object_mut() {
+                        fields.remove("viewport");
+                        fields.remove("secrets");
+                        fields.insert("tabId".into(), json!(request.borrow().tab_id));
+                        fields.insert("networkEntries".into(), Json::Array(network));
+                        fields.insert("consoleEntries".into(), Json::Array(again.console_entries()));
+                        fields.insert("actionTimeline".into(), json!([]));
+                        fields.insert("screenshot".into(), shot);
+                    }
+                    host.succeed(engine, request, result);
+                });
+            }));
+        });
+    }
+
+    /// The page's picture: three tries, a second each, as a page that was
+    /// just shown may not have drawn.
+    fn capture(
+        self,
+        engine: &Engine,
+        request: &RequestRef,
+        page: Rc<dyn AutomationPage>,
+        attempt: u32,
+        then: Captured,
+    ) {
+        let settled = Rc::new(std::cell::Cell::new(false));
+        let then = Rc::new(RefCell::new(Some(then)));
+        let retry = {
+            let (host, request, page, settled, then) = (
+                self.clone(),
+                request.clone(),
+                page.clone(),
+                settled.clone(),
+                then.clone(),
+            );
+            Rc::new(move |engine: &Engine| {
+                if settled.replace(true) || request.borrow().done {
+                    return;
+                }
+                if attempt + 1 >= CAPTURE_ATTEMPTS {
+                    let tab = request.borrow().tab_id.clone();
+                    host.fail(
+                        engine,
+                        &request,
+                        tag::CAPTURE_FAILED,
+                        &format!("Preview tab {tab} could not be captured after {CAPTURE_ATTEMPTS} attempts."),
+                    );
+                    return;
+                }
+                let Some(then) = then.borrow_mut().take() else {
+                    return;
+                };
+                let (host, request, page) = (host.clone(), request.clone(), page.clone());
+                engine.call_at(after(engine, 100), move |engine| {
+                    if !request.borrow().done {
+                        host.capture(engine, &request, page, attempt + 1, then);
+                    }
+                });
+            })
+        };
+        let late = retry.clone();
+        engine.call_at(after(engine, CAPTURE_ATTEMPT_MS), move |engine| {
+            late(engine)
+        });
+        let request = request.clone();
+        page.grab(
+            engine,
+            Box::new(move |engine, shot| {
+                if settled.get() || request.borrow().done {
+                    return;
+                }
+                let Some(shot) = shot else {
+                    return retry(engine);
+                };
+                settled.set(true);
+                if let Some(then) = then.borrow_mut().take() {
+                    then(engine, &request, shot);
+                }
+            }),
+        );
+    }
+
+    /// Runs the automation runtime's `name` in the page; `then` gets its
+    /// value, and a failure fails the request.
+    fn runtime(
+        &self,
+        engine: &Engine,
+        request: &RequestRef,
+        page: &Rc<dyn AutomationPage>,
+        name: &str,
+        args: Json,
+        then: impl FnOnce(&Engine, &RequestRef, Json) + 'static,
+    ) {
+        let host = self.clone();
+        let asked = request.clone();
+        page.run_isolated(
+            engine,
+            &script::call(name, &args),
+            Box::new(move |engine, result| {
+                if asked.borrow().done {
+                    return;
+                }
+                let mut answer = script::parse(result.as_deref());
+                if answer["ok"] != json!(true) {
+                    host.fail_target(engine, &asked, &answer);
+                    return;
+                }
+                then(engine, &asked, answer["value"].take());
+            }),
+        );
+    }
+
+    /// The runtime's failure, said for the request.
+    fn fail_target(&self, engine: &Engine, request: &RequestRef, answer: &Json) {
+        let (operation, tab, target) = {
+            let r = request.borrow();
+            let target = ["locator", "selector"]
+                .iter()
+                .find_map(|key| r.input[*key].as_str().map(|v| format!("{key} {v}")))
+                .unwrap_or_else(|| "its target".to_owned());
+            (r.operation.clone(), r.tab_id.clone(), target)
+        };
+        let reason = text(&answer["reason"]);
+        match answer["kind"].as_str().unwrap_or_default() {
+            "invalid" => self.fail(
+                engine,
+                request,
+                tag::INVALID_SELECTOR,
+                &format!("Preview automation {operation} rejected {target} in tab {tab}: {reason}"),
+            ),
+            "missing" => self.fail(
+                engine,
+                request,
+                tag::TARGET_NOT_FOUND,
+                &format!("Preview automation {operation} could not find {target} in tab {tab}"),
+            ),
+            "notEditable" => self.fail(
+                engine,
+                request,
+                tag::NOT_EDITABLE,
+                &format!("Preview automation {operation} found {target}, but it is not editable in tab {tab}"),
+            ),
+            "error" => self.fail(
+                engine,
+                request,
+                tag::SCRIPT,
+                &format!("Preview automation {operation} failed in tab {tab}: {reason}"),
+            ),
+            // No answer at all: the page went, or navigated away mid-script.
+            _ => self.fail(
+                engine,
+                request,
+                tag::TAB_UNAVAILABLE,
+                &format!("Preview automation {operation} lost tab {tab}'s page before it answered."),
+            ),
+        }
+    }
+
     fn evaluated(&self, engine: &Engine, request: &RequestRef, outcome: &Json) {
         let tab = request.borrow().tab_id.clone();
         if let Some(error) = outcome.get("error") {
@@ -1107,6 +1337,15 @@ pub mod script {
   return JSON.stringify(settle(value));
 })
 "#;
+
+    /// desktop-qt's automation runtime: `(name, args)` answers
+    /// {ok: true, value} | {ok: false, kind, reason}.
+    const RUNTIME: &str = include_str!("preview_automation_runtime.js");
+
+    /// The runtime's `name` with `args`.
+    pub fn call(name: &str, args: &Json) -> String {
+        format!("{RUNTIME}({}, {args})", literal(name))
+    }
 
     fn literal(value: &str) -> String {
         Json::String(value.to_owned()).to_string()
