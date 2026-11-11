@@ -150,6 +150,10 @@ public:
   QString epoch = QStringLiteral("epoch-1");
   // False for an MC from before rows had versions: its frames carry none.
   bool versioned = true;
+  // Whether a taken access or interaction mode change reaches the thread's
+  // row in `threads`, as the MC's projection does; a test that moves rows
+  // itself leaves it off.
+  bool appliesModes = false;
   QList<QJsonObject> commands;
   // The environment each of `commands` was sent to ("" for the MC's own).
   QStringList commandEnvironments;
@@ -256,6 +260,7 @@ private:
   void answerHttp(QTcpSocket* socket, const QByteArray& request);
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
+  void applyMode(const QJsonObject& command, QJsonObject& result);
   // An environment's id, the MC's capabilities and its descriptorFields.
   QJsonObject describe(const QString& environment) const;
   QJsonObject peerEnvironment(const QString& environment) const;

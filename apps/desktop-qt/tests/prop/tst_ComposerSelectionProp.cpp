@@ -5,12 +5,12 @@
 // any change to the model, access or interaction mode moves the revision.
 //
 // The property: a send carries exactly what the composer showed, and never a
-// choice the user did not make against the current revision. Picks, sends,
-// this client's own access changes, changes made on another client, held and
+// model the user did not pick against the current revision; mode changes go
+// out at once and name no revision. Picks, sends, this client's own access and
+// interaction mode changes, changes made on another client, held and
 // reordered answers, rows that come before or after an answer, refusals and
-// reconnects are interleaved. Three MCs: one whose answers name the revision
-// they moved to, one whose answers name none (the client counts its own
-// changes), and one from before revisions (a pick is saved to the thread
+// reconnects are interleaved. Two MCs: one whose answers name the revision
+// they moved to, and one from before revisions (a pick is saved to the thread
 // before the send, and nothing carries a base).
 
 #include <QJsonArray>
@@ -29,7 +29,7 @@ namespace prop = halc2::prop;
 
 namespace {
 
-enum class Mc { Named, Unnamed, Old };
+enum class Mc { Named, Old };
 
 const QString kThread = QStringLiteral("t1");
 const QString kKey = QStringLiteral("env-a:t1");
@@ -106,7 +106,6 @@ struct Sut {
   QHash<QString, qint64> pickedAt;
   std::optional<Submission> submission;
   QStringList violations;
-  int named = 0;  // answers that named a revision
 
   explicit Sut(Mc mc_) : kind(mc_) {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{{QStringLiteral("id"), QStringLiteral("p1")},
@@ -149,14 +148,6 @@ struct Sut {
     RC_ASSERT(prop::until([this] { return online(); }));
     bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), kKey}});
     RC_ASSERT(prop::until([this] { return shown().value(QStringLiteral("target")).toString() == kKey && shownModel() == nameOf(selection); }));
-    // Until an MC that names revisions has named one, a change of this
-    // client's that moved nothing cannot be told from one that did
-    // (ComposerController::ownAnswered): one access change shows which it is.
-    if (kind == Mc::Named) {
-      bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), kOwnAccess.first()}});
-      RC_ASSERT(prop::until([this] { return named > 0; }));
-      barrier();
-    }
   }
 
   ~Sut() {
@@ -229,6 +220,7 @@ struct Sut {
     const bool based = command.contains(QLatin1String("selectionBase"));
     const qint64 base = qint64(command.value(QLatin1String("selectionBase")).toDouble());
     if (based && kind == Mc::Old) violate(QStringLiteral("%1 carries a base to an MC without revisions").arg(type));
+    if (based && (access || mode)) violate(QStringLiteral("%1 carries a base: a mode change goes as made").arg(type));
     if (type == QLatin1String("thread.model-selection.set") && kind != Mc::Old) {
       violate(QStringLiteral("a model saved apart from the send to an MC that counts revisions"));
     }
@@ -245,26 +237,20 @@ struct Sut {
                  {QStringLiteral("interactionMode"), interaction}});
       return;
     }
-    // A choice that moves the thread is the user's, made against what they saw.
-    const auto made = [&](const QString& field, bool movesIt) {
-      if (!movesIt || kind == Mc::Old || type == QLatin1String("thread.runtime-mode.set")) return;
-      if (!pickedAt.contains(field)) return violate(QStringLiteral("%1 sets the %2 the user never picked").arg(type, field));
-      if (foreignWithin(pickedAt.value(field), revision)) {
-        violate(QStringLiteral("%1 sets the %2 picked at %3 over a change made elsewhere by %4").arg(type, field).arg(pickedAt.value(field)).arg(revision));
+    // A model that moves the thread is the user's pick, made against what they saw.
+    if (movesModel && kind != Mc::Old) {
+      if (!pickedAt.contains(QStringLiteral("model"))) violate(QStringLiteral("%1 sets a model the user never picked").arg(type));
+      else if (foreignWithin(pickedAt.value(QStringLiteral("model")), revision)) {
+        violate(QStringLiteral("%1 sets the model picked at %2 over a change made elsewhere by %3").arg(type).arg(pickedAt.value(QStringLiteral("model"))).arg(revision));
       }
-    };
-    made(QStringLiteral("model"), movesModel);
-    made(QStringLiteral("interaction"), movesMode);
+    }
     if (movesModel) selection = selectionOf(model->value(QLatin1String("instanceId")).toString(), model->value(QLatin1String("model")).toString());
     if (movesAccess) runtime = *access;
     if (movesMode) interaction = *mode;
     if (moves) ++revision;
     if (type == QLatin1String("message.dispatch")) took(command);
     QJsonObject answer{{QStringLiteral("sequence"), mc.commands.size()}};
-    if (kind == Mc::Named && moves) {
-      answer.insert(QStringLiteral("selectionRevision"), double(revision));
-      ++named;
-    }
+    if (kind == Mc::Named && moves) answer.insert(QStringLiteral("selectionRevision"), double(revision));
     if (!moves) return mc.reply(rpc, answer);
     if (ackFirst) {
       mc.reply(rpc, answer);
@@ -369,15 +355,19 @@ struct PickModel : Command {
   void show(std::ostream& os) const override { os << "PickModel(" << kModels.at(index).second.toStdString() << ")"; }
 };
 
+// This client's own interaction mode change goes out at once, and moves the
+// revision; the composer shows it while it is on its way.
 struct PickInteraction : Command {
   QString mode = pick(kInteractions);
-  void run(const Model&, Sut& sut) const override {
-    sut.pickedAt.insert(QStringLiteral("interaction"), sut.seen());
+  bool ackFirst = *rc::gen::arbitrary<bool>();
+  void run(const Model& m0, Sut& sut) const override {
+    sut.ackFirst = ackFirst;
     sut.bridge->dispatch(QStringLiteral("composer.interactionMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
     RC_ASSERT(prop::until([&] { return sut.shown().value(QStringLiteral("interactionMode")).toString() == mode; }));
+    if (!m0.holding) sut.barrier();
     verify(sut);
   }
-  void show(std::ostream& os) const override { os << "PickInteraction(" << mode.toStdString() << ")"; }
+  void show(std::ostream& os) const override { os << "PickInteraction(" << mode.toStdString() << ", " << (ackFirst ? "answer first" : "row first") << ")"; }
 };
 
 // This client's own access change goes out at once, and moves the revision.
@@ -398,12 +388,6 @@ struct Elsewhere : Command {
   QString field = pick({QStringLiteral("model"), QStringLiteral("access"), QStringLiteral("interaction")});
   int index = *rc::gen::inRange(0, int(kModels.size()));
   QString access = pick(kOtherAccess);
-  void checkPreconditions(const Model& m) const override {
-    // Without named revisions a change of this client's that moved nothing
-    // looks like one that did, so a change elsewhere to the same value would
-    // pass for it (ComposerController::pastOwn); access elsewhere never is.
-    if (m.mc == Mc::Unnamed) RC_PRE(field == QLatin1String("access"));
-  }
   void run(const Model&, Sut& sut) const override {
     QString value;
     if (field == QLatin1String("model")) {
@@ -463,10 +447,7 @@ struct AnswerHeld : Command {
 
 // Rows wait while answers go: an answer reaches the client before its row.
 struct Lag : Command {
-  void checkPreconditions(const Model& m) const override {
-    RC_PRE(m.mc != Mc::Unnamed);
-    RC_PRE(!m.lagging);
-  }
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.lagging); }
   void apply(Model& m) const override { m.lagging = true; }
   void run(const Model&, Sut& sut) const override { sut.mc.lagRows = true; }
   void show(std::ostream& os) const override { os << "Lag"; }
@@ -521,12 +502,8 @@ class ComposerSelectionProp : public QObject {
 
 private slots:
   void namedRevisions() {
-    QVERIFY(rc::check("the send carries what the composer showed, and no choice the user did not make against the current revision (answers name revisions)",
+    QVERIFY(rc::check("the send carries what the composer showed, and no model the user did not pick against the current revision",
                       [] { check(Mc::Named); }));
-  }
-  void countedRevisions() {
-    QVERIFY(rc::check("the send carries what the composer showed, and no choice the user did not make against the current revision (answers name none)",
-                      [] { check(Mc::Unnamed); }));
   }
   void noRevisions() {
     QVERIFY(rc::check("the send carries what the composer showed, to an MC without revisions", [] { check(Mc::Old); }));

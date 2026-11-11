@@ -463,6 +463,25 @@ void FakeMc::onMessage(QWebSocket* socket, const QString& text) {
   }
 }
 
+// A thread's row takes a mode change; one that names a selection revision
+// moves to the next, and the answer names it.
+void FakeMc::applyMode(const QJsonObject& command, QJsonObject& result) {
+  const QString type = command.value(QLatin1String("type")).toString();
+  const QString field = type == QLatin1String("thread.runtime-mode.set")       ? QStringLiteral("runtimeMode")
+                        : type == QLatin1String("thread.interaction-mode.set") ? QStringLiteral("interactionMode")
+                                                                               : QString();
+  const QString id = command.value(QLatin1String("threadId")).toString();
+  if (field.isEmpty() || !threads.contains(id) || threads.value(id).value(field) == command.value(field)) return;
+  QJsonObject& row = threads[id];
+  row.insert(field, command.value(field));
+  if (row.contains(QLatin1String("selectionRevision"))) {
+    const double next = row.value(QLatin1String("selectionRevision")).toDouble() + 1;
+    row.insert(QStringLiteral("selectionRevision"), next);
+    result.insert(QStringLiteral("selectionRevision"), next);
+  }
+  sendRow(id, row);
+}
+
 void FakeMc::dispatchCommand(const Rpc& rpc) {
   commands.append(rpc.payload);
   commandEnvironments.append(rpc.environment);
@@ -477,8 +496,9 @@ void FakeMc::dispatchCommand(const Rpc& rpc) {
     } else {
       for (const auto& effect : std::as_const(effects)) effect(rpc.payload);
       QJsonObject result{{QStringLiteral("sequence"), commands.size()}};
-      // An access change names the version of the rows that holds it, as the MC does.
-      if (versioned && type == QLatin1String("thread.runtime-mode.set")) {
+      if (appliesModes) applyMode(rpc.payload, result);
+      // A mode change names the version of the rows that holds it, as the MC does.
+      if (versioned && (type == QLatin1String("thread.runtime-mode.set") || type == QLatin1String("thread.interaction-mode.set"))) {
         result.insert(QStringLiteral("shell"), QJsonObject{{QStringLiteral("mc"), name},
                                                            {QStringLiteral("epoch"), epoch},
                                                            {QStringLiteral("rev"), m_told.value(name).rev}});
