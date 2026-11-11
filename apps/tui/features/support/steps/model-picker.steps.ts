@@ -247,6 +247,38 @@ step("a thread runs on {string} here", async (ctx: ControlsWorld, name: string) 
   expect(composer(ctx).selectedModel).toBe(MODELS[name]!.model);
 });
 
+step(
+  "a thread runs on {string} on an MC that keeps no selection revision",
+  async (ctx: ControlsWorld, name: string) => {
+    const { selectionRevision: _none, ...detail } = thread();
+    await restartClient(ctx, {
+      detail: { ...detail, modelSelection: selectionOf(name) } as never,
+    });
+    expect(ctx.fake!.currentThread("t1")?.selectionRevision).toBeUndefined();
+    expect(composer(ctx).selectedModel).toBe(MODELS[name]!.model);
+  },
+);
+
+step(
+  "the thread is set to {string} before the message goes with that pick",
+  async (ctx: World, name: string) => {
+    await settle(ctx);
+    const calls = ctx.fake!.calls.filter(
+      (call) => call.method === "setThreadModel" || call.method === "sendReply",
+    );
+    expect(calls.map((call) => call.method)).toEqual(["setThreadModel", "sendReply"]);
+    expect(calls[0]!.args[1]).toMatchObject(selectionOf(name));
+    expect(calls[1]!.args[3]).toMatchObject(selectionOf(name));
+    // No revision to send against.
+    expect(calls[1]!.args[5]).toBeUndefined();
+    expect(ctx.fake!.currentThread("t1")?.modelSelection).toMatchObject(selectionOf(name));
+  },
+);
+
+step("the composer shows {string}, the thread's own now", (ctx: World, name: string) => {
+  expect(composer(ctx).selectedModel).toBe(MODELS[name]!.model);
+});
+
 step("the user picked {string} for its next turn", (ctx: World, name: string) =>
   pickModel(ctx, name),
 );
@@ -289,7 +321,7 @@ step(
     expect(sent).toHaveLength(1);
     expect(sent[0]!.args[3]).toMatchObject(selectionOf("gpt-5-codex"));
     expect(sent[0]!.args[5]).toBe(0);
-    expect(callsTo(ctx, "updateThreadMetadata")).toHaveLength(0);
+    expect(callsTo(ctx, "setThreadModel")).toHaveLength(0);
     expect(composer(ctx).text).toBe(text);
   },
 );

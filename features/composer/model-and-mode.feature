@@ -282,6 +282,17 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user sends "Carry on" without picking a model
     Then the message names no model, so the turn runs on "claude-opus"
 
+  # An MC that keeps no selection revision takes a message's model into the thread only on a
+  # steer or a provider switch, so the client makes the pick the thread's before it sends.
+  @shared @backlog-desktop @backlog-mobile @priority-high
+  Scenario: A pick reaches the thread on an MC that keeps no selection revision
+    Given a thread runs on "gpt-5" on an MC that keeps no selection revision
+    And the user picked "gpt-5-codex" for its next turn
+    When the user sends "Ship it"
+    Then the thread is set to "gpt-5-codex" before the message goes with that pick
+    And the composer shows "gpt-5-codex", the thread's own now
+    But a change made on another client after it replaces the pick
+
   @shared @backlog-desktop @backlog-mobile
   Scenario: The user's own access change keeps their unsent pick
     Given a thread runs on "gpt-5" here

@@ -70,6 +70,8 @@ import {
   modelPickerRows,
   modelSelectionForOption,
   nextPick,
+  ownChangeAhead,
+  pickOn,
   promptEffort,
   providerReady,
   reasoningChoicesForSelection,
@@ -79,6 +81,7 @@ import {
   withoutUltrathinkPrefix,
   type EffortBars,
   type ModelOption,
+  type OwnSelectionChange,
   type ThreadPick,
   type ModelOptionState,
 } from "../models.ts";
@@ -521,29 +524,55 @@ export function createComposer(options: ComposerOptions): Composer {
   const interactionOverrides = new Map<string, ProviderInteractionMode>();
   /** The model picked on each started thread, until the thread moves past it (`nextPick`). */
   const modelOverrides = new Map<string, ThreadPick>();
-  /** This client's mode changes on each thread the MC has not answered yet. */
-  const ownModeChanges = new Map<string, number>();
-  const pickOn = (detail: OrchestrationThread, selection: ModelSelection): ThreadPick => ({
-    selection,
-    base: detail.selectionRevision ?? null,
-    own: ownModeChanges.get(detail.id) ?? 0,
-  });
+  /** This client's own mode changes on each thread that may still move its revision on. */
+  const ownChanges = new Map<string, OwnSelectionChange[]>();
+  /** Once one reply names a revision, a reply that names none moved nothing. */
+  let repliesNameRevisions = false;
+  const pickHere = (detail: OrchestrationThread, selection: ModelSelection): ThreadPick =>
+    pickOn(detail, selection, ownChanges.get(detail.id) ?? []);
+  const ownModePending = (threadId: string) =>
+    (ownChanges.get(threadId) ?? []).some((change) => change.outcome === "pending");
   /**
-   * A mode change of this client's own moves the thread's revision on by one; the
-   * pick stands past it. A refused one moves nothing.
+   * A mode change of this client's own moves the thread's revision on without
+   * replacing the pick; its reply says to which revision (`nextPick`).
    */
-  const ownModeSent = (threadId: string) => {
-    ownModeChanges.set(threadId, (ownModeChanges.get(threadId) ?? 0) + 1);
-    const pick = modelOverrides.get(threadId);
-    if (pick) modelOverrides.set(threadId, { ...pick, own: pick.own + 1 });
+  const ownModeSent = (detail: OrchestrationThread): OwnSelectionChange => {
+    const change: OwnSelectionChange = {
+      sentAt: detail.selectionRevision ?? null,
+      outcome: "pending",
+    };
+    ownChanges.set(detail.id, [...(ownChanges.get(detail.id) ?? []), change]);
+    const pick = modelOverrides.get(detail.id);
+    if (pick) modelOverrides.set(detail.id, { ...pick, own: [...pick.own, change] });
+    return change;
   };
-  const ownModeAnswered = (threadId: string, accepted: boolean) => {
-    const pending = (ownModeChanges.get(threadId) ?? 1) - 1;
-    if (pending > 0) ownModeChanges.set(threadId, pending);
-    else ownModeChanges.delete(threadId);
-    const pick = modelOverrides.get(threadId);
-    if (!accepted && pick && pick.own > 0)
-      modelOverrides.set(threadId, { ...pick, own: pick.own - 1 });
+  /** The MC answered: the revision the change moved the thread to, or `null` when refused. */
+  const ownModeAnswered = (change: OwnSelectionChange, revision: number | undefined | null) => {
+    if (typeof revision === "number") repliesNameRevisions = true;
+    change.outcome =
+      revision === null ? "none" : (revision ?? (repliesNameRevisions ? "none" : "moved"));
+    settlePick(selectedDetail());
+    publish();
+  };
+  /**
+   * A pick gives way once the thread moves past it, its own send being taken
+   * included, so a later change made on another client shows (upstream #20886).
+   */
+  const settlePick = (detail: OrchestrationThread | null) => {
+    if (!detail) return;
+    const revision = detail.selectionRevision;
+    const own = (ownChanges.get(detail.id) ?? []).filter(
+      (change) =>
+        change.outcome === "pending" ||
+        (revision !== undefined && ownChangeAhead(change, revision)),
+    );
+    if (own.length > 0) ownChanges.set(detail.id, own);
+    else ownChanges.delete(detail.id);
+    const pick = modelOverrides.get(detail.id);
+    if (!pick) return;
+    const next = nextPick(modelOptions, pick, detail);
+    if (next === null) modelOverrides.delete(detail.id);
+    else if (next !== pick) modelOverrides.set(detail.id, next);
   };
   /** What the user chose on a page's prompt, by its key: an ask runs with it. */
   const pageChoices = new Map<
@@ -1777,7 +1806,7 @@ export function createComposer(options: ComposerOptions): Composer {
         );
         return;
       }
-      modelOverrides.set(detail.id, pickOn(detail, selection));
+      modelOverrides.set(detail.id, pickHere(detail, selection));
     }
     store.setStatus(`Model → ${option.model} (next turn)`, "success");
     publish();
@@ -1797,7 +1826,7 @@ export function createComposer(options: ComposerOptions): Composer {
     else {
       const detail = selectedDetail();
       if (!detail) return;
-      modelOverrides.set(detail.id, pickOn(detail, next));
+      modelOverrides.set(detail.id, pickHere(detail, next));
     }
     const label =
       modelOptionStates(modelOptions, selection).find((option) => option.id === id)?.label ??
@@ -1906,14 +1935,13 @@ export function createComposer(options: ComposerOptions): Composer {
     }
     const detail = selectedDetail();
     // A pick back to the thread's mode still goes while another is on its way.
-    if (!detail || (detail.runtimeMode === mode && !ownModeChanges.has(detail.id))) return;
-    const threadId = detail.id;
-    ownModeSent(threadId);
+    if (!detail || (detail.runtimeMode === mode && !ownModePending(detail.id))) return;
+    const change = ownModeSent(detail);
     void track(
-      client.setRuntimeMode(threadId, mode).then(
-        () => ownModeAnswered(threadId, true),
+      client.setRuntimeMode(detail.id, mode).then(
+        (revision) => ownModeAnswered(change, revision),
         (error) => {
-          ownModeAnswered(threadId, false);
+          ownModeAnswered(change, null);
           store.setStatus(`access change failed: ${String(error)}`, "error");
         },
       ),
@@ -1940,12 +1968,12 @@ export function createComposer(options: ComposerOptions): Composer {
     interactionOverrides.set(threadId, next);
     store.setStatus(next === "plan" ? "Plan mode." : "Build mode.", "success");
     publish();
-    ownModeSent(threadId);
+    const change = ownModeSent(detail);
     void track(
       client.setInteractionMode(threadId, next).then(
-        () => ownModeAnswered(threadId, true),
+        (revision) => ownModeAnswered(change, revision),
         (error) => {
-          ownModeAnswered(threadId, false);
+          ownModeAnswered(change, null);
           if (interactionOverrides.get(threadId) === next) interactionOverrides.delete(threadId);
           store.setStatus(`mode change failed: ${String(error)}`, "error");
           publish();
@@ -2343,8 +2371,13 @@ export function createComposer(options: ComposerOptions): Composer {
     replyPending = true;
     store.setStatus("Sending reply…", "busy");
     publish();
+    // An MC that keeps no selection revision takes a message's model into the thread
+    // only on a steer or a provider switch, so the pick is made the thread's first, as
+    // before: the thread then shows what the turn runs, and the pick is dropped.
+    const threadTakes = detail.selectionRevision === undefined ? pick?.selection : undefined;
     void track(
       Promise.resolve()
+        .then(() => (threadTakes ? client.setThreadModel(detail.id, threadTakes) : undefined))
         .then(() =>
           client.sendReply(
             { ...detail, interactionMode: threadInteraction(detail) },
@@ -2911,14 +2944,7 @@ export function createComposer(options: ComposerOptions): Composer {
     if (detail && interactionOverrides.get(detail.id) === detail.interactionMode) {
       interactionOverrides.delete(detail.id);
     }
-    // A pick gives way once the thread moves past it, its own send being taken
-    // included, so a later change made on another client shows (upstream #20886).
-    const pick = detail ? modelOverrides.get(detail.id) : undefined;
-    if (detail && pick) {
-      const next = nextPick(modelOptions, pick, detail);
-      if (next === null) modelOverrides.delete(detail.id);
-      else if (next !== pick) modelOverrides.set(detail.id, next);
-    }
+    settlePick(detail);
     publish();
   };
 

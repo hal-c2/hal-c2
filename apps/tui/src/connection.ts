@@ -683,8 +683,18 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
     requestId: string,
     answers: Record<string, string | string[]>,
   ) => Promise<void>;
-  readonly setRuntimeMode: (threadId: ThreadId, mode: RuntimeMode) => Promise<void>;
-  readonly setInteractionMode: (threadId: ThreadId, mode: ProviderInteractionMode) => Promise<void>;
+  /** Resolves to the selectionRevision the change moved the thread to, when the MC names one. */
+  readonly setRuntimeMode: (threadId: ThreadId, mode: RuntimeMode) => Promise<number | undefined>;
+  /** Resolves to the selectionRevision the change moved the thread to, when the MC names one. */
+  readonly setInteractionMode: (
+    threadId: ThreadId,
+    mode: ProviderInteractionMode,
+  ) => Promise<number | undefined>;
+  /**
+   * Make a model the thread's own, for an MC that keeps no selectionRevision: it
+   * takes a message's model into the thread only on a steer or a provider switch.
+   */
+  readonly setThreadModel: (threadId: ThreadId, modelSelection: ModelSelection) => Promise<void>;
   readonly renameThread: (threadId: ThreadId, title: string) => Promise<void>;
   readonly archiveThread: (threadId: ThreadId) => Promise<void>;
   readonly unarchiveThread: (threadId: ThreadId) => Promise<void>;
@@ -1105,8 +1115,8 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    // The message alone carries a pick: the MC takes it into the thread when the
-    // turn starts, so no separate model change can land over a newer one.
+    // The message carries the pick; an MC with selection revisions takes it into the
+    // thread when the turn starts (the composer sets it first on one without).
     sendReply: (thread, text, attachments = [], modelSelection, context, selectionBase) =>
       runtime.runPromise(
         Effect.gen(function* () {
@@ -1231,12 +1241,21 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
       ),
 
     setRuntimeMode: (threadId, mode) =>
-      runtime.runPromise(setThreadRuntimeMode({ threadId, runtimeMode: mode }).pipe(Effect.asVoid)),
+      runtime.runPromise(
+        setThreadRuntimeMode({ threadId, runtimeMode: mode }).pipe(
+          Effect.map((result) => result.selectionRevision),
+        ),
+      ),
 
     setInteractionMode: (threadId, mode) =>
       runtime.runPromise(
-        setThreadInteractionMode({ threadId, interactionMode: mode }).pipe(Effect.asVoid),
+        setThreadInteractionMode({ threadId, interactionMode: mode }).pipe(
+          Effect.map((result) => result.selectionRevision),
+        ),
       ),
+
+    setThreadModel: (threadId, modelSelection) =>
+      runtime.runPromise(updateThreadMetadata({ threadId, modelSelection }).pipe(Effect.asVoid)),
 
     renameThread: (threadId, title) =>
       runtime.runPromise(

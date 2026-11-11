@@ -429,12 +429,16 @@ export function fakeClient({
     threadSubscribers.get(next.id)?.(next, page);
   };
   // The server echoes a thread setting back through the live detail, a step on in
-  // its selection revision (an MC that keeps one).
+  // its selection revision (an MC that keeps one), before it answers with that
+  // revision, as the shell update can beat the reply.
   const echo =
     (patch: (mode: never) => Partial<OrchestrationThread>) =>
-    async (threadId: string, mode: never) => {
+    async (threadId: string, mode: never): Promise<number | undefined> => {
       const current = details.get(threadId);
-      if (current) emitThread(withSelection(current, patch(mode)));
+      if (!current) return undefined;
+      const next = withSelection(current, patch(mode));
+      emitThread(next);
+      return next.selectionRevision;
     };
   let currentVcsStatus: VcsStatusResult | null = vcsStatus ?? null;
   const vcsSubscribers = new Set<(status: VcsStatusResult) => void>();
@@ -614,6 +618,7 @@ export function fakeClient({
     setInteractionMode:
       setInteractionMode ?? echo((interactionMode) => ({ interactionMode }) as never),
     setRuntimeMode: echo((runtimeMode) => ({ runtimeMode }) as never),
+    setThreadModel: echo((modelSelection) => ({ modelSelection }) as never) as never,
     interrupt: async () => {},
     resumeQueue: async () => {},
     renameThread,

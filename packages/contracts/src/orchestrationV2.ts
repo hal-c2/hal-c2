@@ -2952,6 +2952,11 @@ export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   shell: Schema.optional(
     Schema.Struct({ mc: Schema.String, epoch: Schema.String, rev: NonNegativeInt }),
   ),
+  // Present exactly when this command changed what the thread runs on: the
+  // `selectionRevision` it moved the thread to. A client whose unsent pick was made at
+  // `r` moves its `selectionBase` to `r + 1` only when its own command answers `r + 1`;
+  // any other answer, or none, means the revision is not its own to take.
+  selectionRevision: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 
