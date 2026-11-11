@@ -146,6 +146,8 @@ pub struct ShellStore {
     previewing: bool,
     synchronized: bool,
     snapshots: u64,
+    /// News of the cluster's members, counted: see [`ShellStore::roster`].
+    roster: u64,
     problem: String,
     /// Which read of the cache's kept rows counts: an earlier one comes back
     /// for a store that has since moved on.
@@ -438,6 +440,7 @@ impl ShellStore {
             }
             "shell.mc" => {
                 let mc = text(frame.get("mc"));
+                self.roster += 1;
                 // A machine removed from the cluster takes its rows with it;
                 // an offline one keeps them.
                 if frame.get("removed").and_then(Value::as_bool) == Some(true) {
@@ -478,6 +481,7 @@ impl ShellStore {
         entry.environment_id = text(environment.get("environmentId"));
         entry.capabilities = object(environment.get("capabilities"));
         entry.environment = environment;
+        self.roster += 1;
         self.unsaved(mc);
     }
 
@@ -712,6 +716,13 @@ impl ShellStore {
         self.serving(environment_id)
             .map(|(_, mc)| mc.projects.values().collect())
             .unwrap_or_default()
+    }
+
+    /// Counts the news of the cluster's members: a descriptor, or a member
+    /// going online, offline or away. What the MC refused for an environment
+    /// it did not know (McPlugin) is asked again once this moves.
+    pub fn roster(&self) -> u64 {
+        self.roster
     }
 
     /// The environments the cluster serves.

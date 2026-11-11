@@ -1459,6 +1459,7 @@ planning/planner.feature: The user picks the board and its date fields from list
 planning/planner.feature: The user picks the planner's Slack channel in its settings
 planning/planner.feature: What the user changes while the settings save is kept
 plugins/keymaps.feature: Resetting keybindings removes every override
+plugins/plugin-catalog.feature: A member's MC plugins are listed once the cluster learns it
 plugins/plugin-catalog.feature: An unverified plugin asks for confirmation before it loads
 plugins/plugin-catalog.feature: The plugin list has a section for each environment's MC plugins
 plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes

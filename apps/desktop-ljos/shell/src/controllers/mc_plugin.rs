@@ -422,14 +422,96 @@ struct Files {
     pending: HashSet<String>,
 }
 
+/// The environments whose `plugins` shapes are followed, and the ones the MC
+/// refused because it did not know them then (as right after it restarts).
+/// A refused one is asked again once the store's roster has moved since it
+/// was asked: the cluster has news of its members. Not before, so an
+/// environment the MC does not know costs no frames while nothing changes.
+struct Follows<Id> {
+    /// Environment → its shape, the roster it was asked at, and its ask.
+    asked: BTreeMap<String, (Id, u64, u64)>,
+    /// Environment → the roster its refused shape was asked at.
+    refused: HashMap<String, u64>,
+    asks: u64,
+}
+
+impl<Id> Default for Follows<Id> {
+    fn default() -> Self {
+        Follows {
+            asked: BTreeMap::new(),
+            refused: HashMap::new(),
+            asks: 0,
+        }
+    }
+}
+
+impl<Id: Copy> Follows<Id> {
+    /// Forgets the environments no longer online: the shapes that followed
+    /// them, to drop.
+    fn leave(&mut self, online: &[String]) -> Vec<(String, Id)> {
+        self.refused
+            .retain(|environment, _| online.contains(environment));
+        let gone: Vec<String> = self
+            .asked
+            .keys()
+            .filter(|environment| !online.contains(environment))
+            .cloned()
+            .collect();
+        gone.into_iter()
+            .filter_map(|environment| {
+                let (id, _, _) = self.asked.remove(&environment)?;
+                Some((environment, id))
+            })
+            .collect()
+    }
+
+    /// The online environments to ask for at `roster`.
+    fn wanted(&self, online: &[String], roster: u64) -> Vec<String> {
+        online
+            .iter()
+            .filter(|environment| {
+                !self.asked.contains_key(*environment)
+                    && self.refused.get(*environment) != Some(&roster)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The number the next shape is asked as.
+    fn next_ask(&mut self) -> u64 {
+        self.asks += 1;
+        self.asks
+    }
+
+    fn ask(&mut self, environment: String, id: Id, roster: u64, ask: u64) {
+        self.refused.remove(&environment);
+        self.asked.insert(environment, (id, roster, ask));
+    }
+
+    /// The MC refused the shape asked as `ask`: the shape to drop, unless a
+    /// later one has replaced it.
+    fn refuse(&mut self, environment: &str, ask: u64) -> Option<Id> {
+        if self
+            .asked
+            .get(environment)
+            .is_none_or(|(_, _, asked)| *asked != ask)
+        {
+            return None;
+        }
+        let (id, roster, _) = self.asked.remove(environment)?;
+        self.refused.insert(environment.to_owned(), roster);
+        Some(id)
+    }
+}
+
 pub struct McPlugin {
     bridge: Bridge,
     me: Me<McPlugin>,
     mc: Rc<dyn Mc>,
     active: bool,
     cache_dir: PathBuf,
-    /// Environment → its `plugins` shape.
-    subscriptions: BTreeMap<String, SubId>,
+    /// Each online environment's `plugins` shape, or its refusal.
+    follows: Follows<SubId>,
     /// Environment → PluginEntry[].
     plugins: HashMap<String, Vec<Json>>,
     /// Environment → ids of the plugins running on it.
@@ -458,7 +540,7 @@ impl Controller for McPlugin {
             mc: init.mc,
             active: false,
             cache_dir,
-            subscriptions: BTreeMap::new(),
+            follows: Follows::default(),
             plugins: HashMap::new(),
             running: HashMap::new(),
             files: HashMap::new(),
@@ -472,8 +554,10 @@ impl Controller for McPlugin {
         if std::mem::replace(&mut self.active, true) {
             return;
         }
-        store::on_changed(engine, |engine| {
-            controller::with::<McPlugin, _>(engine, |c, engine| c.follow(engine));
+        // After a change the controller itself set off, rather than never.
+        let me = self.me.clone();
+        store::on_changed(engine, move |engine| {
+            me.run_after(engine, |c, engine| c.follow(engine));
         });
         self.follow(engine);
         self.publish(engine);
@@ -534,68 +618,80 @@ impl McPlugin {
     }
 
     /// Every online environment's plugins; an environment that goes offline
-    /// takes its plugins with it until it is back.
+    /// takes its plugins with it until it is back. One the MC refused as
+    /// unknown is asked again once the cluster has news of its members.
     fn follow(&mut self, engine: &Engine) {
         if !self.active {
             return;
         }
-        let online: Vec<String> = store::with(engine, |s| {
-            s.environments()
+        let (online, roster): (Vec<String>, u64) = store::with(engine, |s| {
+            let online = s
+                .environments()
                 .into_iter()
                 .filter(|environment| s.environment_online(environment))
-                .collect()
+                .collect();
+            (online, s.roster())
         });
-        let mut dropped = false;
-        let gone: Vec<String> = self
-            .subscriptions
-            .keys()
-            .filter(|environment| !online.contains(environment))
-            .cloned()
-            .collect();
-        for environment in gone {
-            if let Some(id) = self.subscriptions.remove(&environment) {
-                self.mc.unsubscribe(id);
-            }
+        let gone = self.follows.leave(&online);
+        let dropped = !gone.is_empty();
+        for (environment, id) in gone {
+            self.mc.unsubscribe(id);
             self.plugins.remove(&environment);
             // What could not be fetched from it is asked for again once it
             // is back.
             let prefix = format!("{environment}/");
             self.files.retain(|key, _| !key.starts_with(&prefix));
-            dropped = true;
         }
-        for environment in online {
-            if self.subscriptions.contains_key(&environment) {
-                continue;
-            }
+        for environment in self.follows.wanted(&online, roster) {
             let shape = json!({"type": "plugins", "environment": environment});
             let (me, followed) = (self.me.clone(), environment.clone());
+            let ask = self.follows.next_ask();
             let id = self.mc.subscribe(
                 shape,
                 Box::new(move |engine, frame| {
-                    if frame.get("t").and_then(Json::as_str) != Some("plugins") {
-                        return;
-                    }
-                    let plugins = frame
-                        .get("plugins")
-                        .and_then(Json::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    me.run(engine, |c, engine| {
+                    let plugins = match frame.get("t").and_then(Json::as_str) {
+                        Some("plugins") => frame
+                            .get("plugins")
+                            .and_then(Json::as_array)
+                            .cloned()
+                            .unwrap_or_default(),
+                        Some("error") => {
+                            let followed = followed.clone();
+                            me.run_after(engine, move |c, engine| {
+                                c.refused(engine, &followed, ask)
+                            });
+                            return;
+                        }
+                        _ => return,
+                    };
+                    let followed = followed.clone();
+                    me.run_after(engine, move |c, engine| {
+                        // Recorded first, as the publish the files set off reads it.
+                        c.plugins.insert(followed.clone(), plugins.clone());
                         for entry in &plugins {
                             c.fetch(&followed, entry);
                         }
-                        c.plugins.insert(followed.clone(), plugins.clone());
                         c.publish(engine);
                         c.note_running(engine);
                     });
                 }),
                 None,
             );
-            self.subscriptions.insert(environment, id);
+            self.follows.ask(environment, id, roster, ask);
         }
         if dropped {
             self.publish(engine);
             self.note_running(engine);
+        }
+    }
+
+    /// The MC refused `environment`'s shape asked as `ask`: it did not know
+    /// the environment then.
+    fn refused(&mut self, engine: &Engine, environment: &str, ask: u64) {
+        if let Some(id) = self.follows.refuse(environment, ask) {
+            self.mc.unsubscribe(id);
+            // News of the member may have come while the shape was out.
+            self.follow(engine);
         }
     }
 
@@ -1071,5 +1167,137 @@ impl McPlugin {
                 });
             }),
         );
+    }
+}
+
+#[cfg(test)]
+mod follows_prop {
+    use std::collections::BTreeSet;
+
+    use proptest::prelude::*;
+
+    use super::Follows;
+
+    const POOL: [&str; 3] = ["a", "b", "c"];
+
+    #[derive(Clone, Debug)]
+    enum Op {
+        /// The environments online now.
+        Online(Vec<bool>),
+        /// The cluster has news of its members.
+        News,
+        /// The MC refuses an environment's current shape.
+        Refuse(usize),
+        /// A refusal of a shape that has since been replaced.
+        RefuseStale(usize),
+    }
+
+    fn op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            proptest::collection::vec(any::<bool>(), 3).prop_map(Op::Online),
+            Just(Op::News),
+            (0usize..3).prop_map(Op::Refuse),
+            (0usize..3).prop_map(Op::RefuseStale),
+        ]
+    }
+
+    /// What `McPlugin::follow` does with them: drops what left, asks for
+    /// what is wanted (each shape's id is its ask).
+    fn step(
+        follows: &mut Follows<u64>,
+        online: &[String],
+        roster: u64,
+        dropped: &mut BTreeSet<u64>,
+    ) -> Vec<String> {
+        for (_, id) in follows.leave(online) {
+            dropped.insert(id);
+        }
+        let wanted = follows.wanted(online, roster);
+        for environment in wanted.clone() {
+            let ask = follows.next_ask();
+            follows.ask(environment, ask, roster, ask);
+        }
+        wanted
+    }
+
+    proptest! {
+        // Whatever the order of members coming and going, news of them and
+        // the MC's refusals: each online environment is followed, or was
+        // refused since the last news, and only a refused one waits; each is
+        // asked for once per news at most.
+        #[test]
+        fn every_online_environment_is_followed_or_waits_for_news(
+            ops in proptest::collection::vec(op(), 0..60)
+        ) {
+            let mut follows: Follows<u64> = Follows::default();
+            let mut online: Vec<String> = POOL.iter().map(|e| (*e).to_owned()).collect();
+            let mut roster = 0u64;
+            let mut dropped: BTreeSet<u64> = BTreeSet::new();
+            step(&mut follows, &online, roster, &mut dropped);
+            for op in ops {
+                let before: Vec<(String, u64)> = follows
+                    .asked
+                    .iter()
+                    .map(|(e, (id, _, _))| (e.clone(), *id))
+                    .collect();
+                let mut changed = false;
+                match op {
+                    Op::Online(flags) => {
+                        let next: Vec<String> = POOL
+                            .iter()
+                            .zip(flags)
+                            .filter(|(_, on)| *on)
+                            .map(|(e, _)| (*e).to_owned())
+                            .collect();
+                        changed = next != online;
+                        online = next;
+                    }
+                    Op::News => {
+                        roster += 1;
+                        changed = true;
+                    }
+                    Op::Refuse(i) => {
+                        let ask = follows.asked.get(POOL[i]).map(|(_, _, ask)| *ask);
+                        if let Some(ask) = ask {
+                            let id = follows.refuse(POOL[i], ask);
+                            prop_assert_eq!(id, Some(ask));
+                            changed = true;
+                        }
+                    }
+                    Op::RefuseStale(i) => {
+                        let stale = follows.asked.get(POOL[i]).map(|(_, _, ask)| *ask).unwrap_or(1) - 1;
+                        prop_assert_eq!(follows.refuse(POOL[i], stale), None);
+                        let after: Vec<(String, u64)> = follows
+                            .asked
+                            .iter()
+                            .map(|(e, (id, _, _))| (e.clone(), *id))
+                            .collect();
+                        prop_assert_eq!(&after, &before);
+                    }
+                }
+                let wanted = step(&mut follows, &online, roster, &mut dropped);
+                if !changed {
+                    prop_assert!(wanted.is_empty(), "asked again with nothing new: {:?}", wanted);
+                }
+                for environment in POOL {
+                    let is_online = online.iter().any(|e| e == environment);
+                    let asked = follows.asked.contains_key(environment);
+                    let refused = follows.refused.get(environment).copied();
+                    prop_assert!(!(asked && refused.is_some()), "{} both asked and refused", environment);
+                    if is_online {
+                        prop_assert!(
+                            asked || refused == Some(roster),
+                            "{} is online but neither followed nor waiting for news", environment
+                        );
+                    } else {
+                        prop_assert!(!asked && refused.is_none(), "{} is offline but kept", environment);
+                    }
+                }
+                // What is followed now was never dropped.
+                for (id, _, _) in follows.asked.values() {
+                    prop_assert!(!dropped.contains(id));
+                }
+            }
+        }
     }
 }

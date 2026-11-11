@@ -74,19 +74,21 @@ QString McPluginController::label(const QString& environment) const {
 }
 
 // Every online environment's plugins; an environment that goes offline takes
-// its plugins with it until it is back.
+// its plugins with it until it is back. One the MC refused as unknown is asked
+// again once the cluster has news of its members (ShellStore::roster).
 void McPluginController::follow() {
   QStringList online;
   for (const QString& environment : m_store->environments()) {
     if (m_store->environmentOnline(environment)) online.append(environment);
   }
+  for (auto it = m_refused.begin(); it != m_refused.end();) it = online.contains(it.key()) ? std::next(it) : m_refused.erase(it);
   bool dropped = false;
   for (auto it = m_subscriptions.begin(); it != m_subscriptions.end();) {
     if (online.contains(it.key())) {
       ++it;
       continue;
     }
-    m_client->unsubscribe(it.value());
+    m_client->unsubscribe(it->subscription);
     m_plugins.remove(it.key());
     // What could not be fetched from it is asked for again once it is back.
     const QString prefix = it.key() + QLatin1Char('/');
@@ -94,21 +96,38 @@ void McPluginController::follow() {
     dropped = true;
     it = m_subscriptions.erase(it);
   }
+  const quint64 roster = m_store->roster();
   for (const QString& environment : online) {
     if (m_subscriptions.contains(environment)) continue;
+    if (const auto refused = m_refused.constFind(environment); refused != m_refused.cend() && *refused == roster) continue;
+    m_refused.remove(environment);
+    const int ask = m_nextAsk++;
     const QJsonObject shape{{QStringLiteral("type"), QStringLiteral("plugins")}, {QStringLiteral("environment"), environment}};
-    m_subscriptions.insert(environment, m_client->subscribe(this, shape, [this, environment](const QJsonObject& frame) {
-      if (frame.value(QLatin1String("t")).toString() != QLatin1String("plugins")) return;
+    const int subscription = m_client->subscribe(this, shape, [this, environment, ask](const QJsonObject& frame) {
+      const QString t = frame.value(QLatin1String("t")).toString();
+      if (t == QLatin1String("error")) return refused(environment, ask);
+      if (t != QLatin1String("plugins")) return;
       const QJsonArray plugins = frame.value(QLatin1String("plugins")).toArray();
       m_plugins.insert(environment, plugins);
       for (const QJsonValue& entry : plugins) fetch(environment, entry.toObject());
       publish();
       noteRunning();
-    }));
+    });
+    m_subscriptions.insert(environment, {subscription, roster, ask});
   }
   if (!dropped) return;
   publish();
   noteRunning();
+}
+
+void McPluginController::refused(const QString& environment, int ask) {
+  const auto it = m_subscriptions.find(environment);
+  if (it == m_subscriptions.end() || it->ask != ask) return;
+  m_client->unsubscribe(it->subscription);
+  m_refused.insert(environment, it->roster);
+  m_subscriptions.erase(it);
+  // News of the member may have come while the shape was out.
+  follow();
 }
 
 bool McPluginController::keepsUnlisted(const QString& environment, const QString& id) const {
