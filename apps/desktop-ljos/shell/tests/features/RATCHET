@@ -1698,9 +1698,28 @@ preview/remote.feature: The desktop opens a dev server on another machine throug
 preview/surfaces.feature: A browser tab whose close fails comes back
 preview/surfaces.feature: A closed browser tab stays closed while the close is in flight
 preview/surfaces.feature: A new browser tab offers local servers and recent pages
+preview/surfaces.feature: A new browser tab with nothing to suggest says how to start
+preview/surfaces.feature: A page taken off is timed by its own MC's clock, not another MC's
+preview/surfaces.feature: A page's title is remembered while its browser is not shown
+preview/surfaces.feature: A project remembers its last fifty pages
+preview/surfaces.feature: A recent page can be taken off the new tab's list
+preview/surfaces.feature: A recent page shows its title, its address and when it was visited
+preview/surfaces.feature: A recent page without a title is listed by its address
+preview/surfaces.feature: Opening a suggested server visits it and shows it beside the thread
+preview/surfaces.feature: Pages the user visits are remembered per project for new tabs
+preview/surfaces.feature: Pages visited in a draft or a thread are remembered with their titles [a thread of the project]
+preview/surfaces.feature: Recent pages are kept tidy ["http://localhost:5173" then "http://127.0.0.1:5173", one page for that local server]
+preview/surfaces.feature: Recent pages are kept tidy ["https://user:secret@example.com/docs", "https://example.com/docs" without credentials]
+preview/surfaces.feature: Recent pages are kept tidy [the same page twice, the page once, as the most recent]
+preview/surfaces.feature: Recent pages kept before they were kept per project go to the first project shown
+preview/surfaces.feature: Returning to a thread keeps a page's newest title
 preview/surfaces.feature: The desktop lists the thread's browser tabs to open in the browser
+preview/surfaces.feature: The desktop remembers the history of the twenty most recently used projects
 preview/surfaces.feature: The desktop's list of browser tabs follows the MC
+preview/surfaces.feature: The history of one project does not appear in another
 preview/surfaces.feature: The user adds a browser tab from the side panel
+preview/surfaces.feature: The user opens a local dev server in a browser tab beside the thread
+preview/surfaces.feature: Two configured addresses that differ only by their anchor are one suggestion
 providers/claude.feature: A Claude monitor shows as background work, not as a command
 providers/claude.feature: A Claude monitor stays listed while the next turn runs
 providers/codex.feature: A plan Codex marked finished can still be implemented

@@ -7985,6 +7985,1498 @@
       ]
     },
     {
+      "uri": "QtWebEngine",
+      "versions": [
+        "6.0"
+      ],
+      "types": [
+        {
+          "name": "WebEngineView",
+          "since": "6.0",
+          "base": "Item",
+          "baseModule": "QtQuick",
+          "singleton": false,
+          "enums": [
+            {
+              "name": "LoadStatus",
+              "keys": [
+                [
+                  "LoadStartedStatus",
+                  0
+                ],
+                [
+                  "LoadStoppedStatus",
+                  1
+                ],
+                [
+                  "LoadSucceededStatus",
+                  2
+                ],
+                [
+                  "LoadFailedStatus",
+                  3
+                ]
+              ]
+            },
+            {
+              "name": "ErrorDomain",
+              "keys": [
+                [
+                  "NoErrorDomain",
+                  0
+                ],
+                [
+                  "InternalErrorDomain",
+                  1
+                ],
+                [
+                  "ConnectionErrorDomain",
+                  2
+                ],
+                [
+                  "CertificateErrorDomain",
+                  3
+                ],
+                [
+                  "HttpErrorDomain",
+                  4
+                ],
+                [
+                  "FtpErrorDomain",
+                  5
+                ],
+                [
+                  "DnsErrorDomain",
+                  6
+                ],
+                [
+                  "HttpStatusCodeDomain",
+                  7
+                ]
+              ]
+            },
+            {
+              "name": "JavaScriptConsoleMessageLevel",
+              "keys": [
+                [
+                  "InfoMessageLevel",
+                  0
+                ],
+                [
+                  "WarningMessageLevel",
+                  1
+                ],
+                [
+                  "ErrorMessageLevel",
+                  2
+                ]
+              ]
+            },
+            {
+              "name": "RenderProcessTerminationStatus",
+              "keys": [
+                [
+                  "NormalTerminationStatus",
+                  0
+                ],
+                [
+                  "AbnormalTerminationStatus",
+                  1
+                ],
+                [
+                  "CrashedTerminationStatus",
+                  2
+                ],
+                [
+                  "KilledTerminationStatus",
+                  3
+                ]
+              ]
+            },
+            {
+              "name": "NewViewDestination",
+              "keys": [
+                [
+                  "NewViewInWindow",
+                  0
+                ],
+                [
+                  "NewViewInTab",
+                  1
+                ],
+                [
+                  "NewViewInDialog",
+                  2
+                ],
+                [
+                  "NewViewInBackgroundTab",
+                  3
+                ]
+              ]
+            },
+            {
+              "name": "WebAction",
+              "keys": [
+                [
+                  "NoWebAction",
+                  -1
+                ],
+                [
+                  "Back",
+                  0
+                ],
+                [
+                  "Forward",
+                  1
+                ],
+                [
+                  "Stop",
+                  2
+                ],
+                [
+                  "Reload",
+                  3
+                ]
+              ]
+            }
+          ],
+          "creatable": true,
+          "defaultProperty": "data",
+          "attached": null,
+          "properties": [
+            {
+              "name": "url",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "urlChanged"
+            },
+            {
+              "name": "title",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "titleChanged"
+            },
+            {
+              "name": "icon",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "iconChanged"
+            },
+            {
+              "name": "loading",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "loadingChanged"
+            },
+            {
+              "name": "loadProgress",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "loadProgressChanged"
+            },
+            {
+              "name": "canGoBack",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "canGoBackChanged"
+            },
+            {
+              "name": "canGoForward",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "canGoForwardChanged"
+            },
+            {
+              "name": "zoomFactor",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "zoomFactorChanged"
+            },
+            {
+              "name": "profile",
+              "type": "WebEngineProfile",
+              "kind": "object",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "profileChanged"
+            },
+            {
+              "name": "settings",
+              "type": "WebEngineSettings",
+              "kind": "group",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": true,
+              "notify": null
+            },
+            {
+              "name": "userScripts",
+              "type": "WebEngineScriptCollection",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "audioMuted",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "audioMutedChanged"
+            },
+            {
+              "name": "recentlyAudible",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "recentlyAudibleChanged"
+            },
+            {
+              "name": "backgroundColor",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "backgroundColorChanged"
+            },
+            {
+              "name": "isFullScreen",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "isFullScreenChanged"
+            },
+            {
+              "name": "activeFocusOnPress",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "activeFocusOnPressChanged"
+            },
+            {
+              "name": "devToolsView",
+              "type": "WebEngineView",
+              "kind": "object",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "devToolsViewChanged"
+            },
+            {
+              "name": "inspectedView",
+              "type": "WebEngineView",
+              "kind": "object",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "inspectedViewChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "loadingChanged",
+              "parameters": [
+                {
+                  "name": "loadRequest",
+                  "type": "QtObject"
+                }
+              ]
+            },
+            {
+              "name": "javaScriptConsoleMessage",
+              "parameters": [
+                {
+                  "name": "level",
+                  "type": "int"
+                },
+                {
+                  "name": "message",
+                  "type": "string"
+                },
+                {
+                  "name": "lineNumber",
+                  "type": "int"
+                },
+                {
+                  "name": "sourceId",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "newWindowRequested",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "QtObject"
+                }
+              ]
+            },
+            {
+              "name": "windowCloseRequested",
+              "parameters": []
+            },
+            {
+              "name": "renderProcessTerminated",
+              "parameters": [
+                {
+                  "name": "terminationStatus",
+                  "type": "int"
+                },
+                {
+                  "name": "exitCode",
+                  "type": "int"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "goBack",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "goForward",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "reload",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "stop",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "loadHtml",
+              "parameters": [
+                {
+                  "name": "html",
+                  "type": "var"
+                },
+                {
+                  "name": "baseUrl",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "runJavaScript",
+              "parameters": [
+                {
+                  "name": "script",
+                  "type": "var"
+                },
+                {
+                  "name": "a",
+                  "type": "var"
+                },
+                {
+                  "name": "b",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "triggerWebAction",
+              "parameters": [
+                {
+                  "name": "action",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "WebEngineProfile",
+          "since": "6.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [
+            {
+              "name": "HttpCacheType",
+              "keys": [
+                [
+                  "MemoryHttpCache",
+                  0
+                ],
+                [
+                  "DiskHttpCache",
+                  1
+                ],
+                [
+                  "NoCache",
+                  2
+                ]
+              ]
+            },
+            {
+              "name": "PersistentCookiesPolicy",
+              "keys": [
+                [
+                  "NoPersistentCookies",
+                  0
+                ],
+                [
+                  "AllowPersistentCookies",
+                  1
+                ],
+                [
+                  "ForcePersistentCookies",
+                  2
+                ]
+              ]
+            }
+          ],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "storageName",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "storageNameChanged"
+            },
+            {
+              "name": "offTheRecord",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "offTheRecordChanged"
+            },
+            {
+              "name": "persistentStoragePath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "persistentStoragePathChanged"
+            },
+            {
+              "name": "cachePath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "cachePathChanged"
+            },
+            {
+              "name": "httpUserAgent",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "httpUserAgentChanged"
+            },
+            {
+              "name": "httpAcceptLanguage",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "httpAcceptLanguageChanged"
+            },
+            {
+              "name": "httpCacheType",
+              "type": "HttpCacheType",
+              "kind": "enum",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "httpCacheTypeChanged"
+            },
+            {
+              "name": "persistentCookiesPolicy",
+              "type": "PersistentCookiesPolicy",
+              "kind": "enum",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "persistentCookiesPolicyChanged"
+            },
+            {
+              "name": "httpCacheMaximumSize",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "httpCacheMaximumSizeChanged"
+            },
+            {
+              "name": "downloadPath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "downloadPathChanged"
+            },
+            {
+              "name": "spellCheckEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "spellCheckEnabledChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "clearHttpCacheCompleted",
+              "parameters": []
+            }
+          ],
+          "methods": [
+            {
+              "name": "clearHttpCache",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "WebEngineScript",
+          "since": "6.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [
+            {
+              "name": "InjectionPoint",
+              "keys": [
+                [
+                  "Deferred",
+                  0
+                ],
+                [
+                  "DocumentReady",
+                  1
+                ],
+                [
+                  "DocumentCreation",
+                  2
+                ]
+              ]
+            },
+            {
+              "name": "ScriptWorldId",
+              "keys": [
+                [
+                  "MainWorld",
+                  0
+                ],
+                [
+                  "ApplicationWorld",
+                  1
+                ],
+                [
+                  "UserWorld",
+                  2
+                ]
+              ]
+            }
+          ],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "name",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "nameChanged"
+            },
+            {
+              "name": "sourceUrl",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "sourceUrlChanged"
+            },
+            {
+              "name": "sourceCode",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "sourceCodeChanged"
+            },
+            {
+              "name": "injectionPoint",
+              "type": "InjectionPoint",
+              "kind": "enum",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "injectionPointChanged"
+            },
+            {
+              "name": "worldId",
+              "type": "ScriptWorldId",
+              "kind": "enum",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "worldIdChanged"
+            },
+            {
+              "name": "runsOnSubFrames",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "runsOnSubFramesChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "WebEngineScriptCollection",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "collection",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "collectionChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "insert",
+              "parameters": [
+                {
+                  "name": "script",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "remove",
+              "parameters": [
+                {
+                  "name": "script",
+                  "type": "var"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "contains",
+              "parameters": [
+                {
+                  "name": "script",
+                  "type": "var"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "find",
+              "parameters": [
+                {
+                  "name": "name",
+                  "type": "var"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "clear",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "WebEngineSettings",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "javascriptEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "javascriptEnabledChanged"
+            },
+            {
+              "name": "javascriptCanOpenWindows",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "javascriptCanOpenWindowsChanged"
+            },
+            {
+              "name": "javascriptCanAccessClipboard",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "javascriptCanAccessClipboardChanged"
+            },
+            {
+              "name": "javascriptCanPaste",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "javascriptCanPasteChanged"
+            },
+            {
+              "name": "autoLoadImages",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "autoLoadImagesChanged"
+            },
+            {
+              "name": "localStorageEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "localStorageEnabledChanged"
+            },
+            {
+              "name": "localContentCanAccessRemoteUrls",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "localContentCanAccessRemoteUrlsChanged"
+            },
+            {
+              "name": "localContentCanAccessFileUrls",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "localContentCanAccessFileUrlsChanged"
+            },
+            {
+              "name": "errorPageEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "errorPageEnabledChanged"
+            },
+            {
+              "name": "focusOnNavigationEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "focusOnNavigationEnabledChanged"
+            },
+            {
+              "name": "pluginsEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pluginsEnabledChanged"
+            },
+            {
+              "name": "webglEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "webglEnabledChanged"
+            },
+            {
+              "name": "accelerated2dCanvasEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "accelerated2dCanvasEnabledChanged"
+            },
+            {
+              "name": "scrollAnimatorEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "scrollAnimatorEnabledChanged"
+            },
+            {
+              "name": "showScrollBars",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "showScrollBarsChanged"
+            },
+            {
+              "name": "playbackRequiresUserGesture",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "playbackRequiresUserGestureChanged"
+            },
+            {
+              "name": "spatialNavigationEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "spatialNavigationEnabledChanged"
+            },
+            {
+              "name": "hyperlinkAuditingEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "hyperlinkAuditingEnabledChanged"
+            },
+            {
+              "name": "fullscreenSupportEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fullscreenSupportEnabledChanged"
+            },
+            {
+              "name": "screenCaptureEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "screenCaptureEnabledChanged"
+            },
+            {
+              "name": "allowRunningInsecureContent",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "allowRunningInsecureContentChanged"
+            },
+            {
+              "name": "dnsPrefetchEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "dnsPrefetchEnabledChanged"
+            },
+            {
+              "name": "pdfViewerEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pdfViewerEnabledChanged"
+            },
+            {
+              "name": "printElementBackgrounds",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "printElementBackgroundsChanged"
+            },
+            {
+              "name": "defaultTextEncoding",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "defaultTextEncodingChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "WebEngineLoadingInfo",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [
+            {
+              "name": "LoadStatus",
+              "keys": [
+                [
+                  "LoadStartedStatus",
+                  0
+                ],
+                [
+                  "LoadStoppedStatus",
+                  1
+                ],
+                [
+                  "LoadSucceededStatus",
+                  2
+                ],
+                [
+                  "LoadFailedStatus",
+                  3
+                ]
+              ]
+            },
+            {
+              "name": "ErrorDomain",
+              "keys": [
+                [
+                  "NoErrorDomain",
+                  0
+                ],
+                [
+                  "InternalErrorDomain",
+                  1
+                ],
+                [
+                  "ConnectionErrorDomain",
+                  2
+                ],
+                [
+                  "CertificateErrorDomain",
+                  3
+                ],
+                [
+                  "HttpErrorDomain",
+                  4
+                ],
+                [
+                  "FtpErrorDomain",
+                  5
+                ],
+                [
+                  "DnsErrorDomain",
+                  6
+                ],
+                [
+                  "HttpStatusCodeDomain",
+                  7
+                ]
+              ]
+            }
+          ],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "url",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "isErrorPage",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "status",
+              "type": "LoadStatus",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "errorString",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "errorDomain",
+              "type": "ErrorDomain",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "errorCode",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "httpStatusCode",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "WebEngineNewWindowRequest",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [
+            {
+              "name": "DestinationType",
+              "keys": [
+                [
+                  "InNewWindow",
+                  0
+                ],
+                [
+                  "InNewTab",
+                  1
+                ],
+                [
+                  "InNewDialog",
+                  2
+                ],
+                [
+                  "InNewBackgroundTab",
+                  3
+                ]
+              ]
+            }
+          ],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "destination",
+              "type": "DestinationType",
+              "kind": "enum",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "requestedUrl",
+              "type": "url",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "requestedGeometry",
+              "type": "rect",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "userInitiated",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "openIn",
+              "parameters": [
+                {
+                  "name": "view",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "WebEngine",
+          "since": "6.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "defaultProfile",
+              "type": "WebEngineProfile",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "script",
+              "parameters": [],
+              "returnType": "var"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "uri": "QtQuick3D",
       "versions": [
         "6.0"

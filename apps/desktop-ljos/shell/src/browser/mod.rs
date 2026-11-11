@@ -50,11 +50,27 @@ fn warn(engine: &Engine, result: Result<(), EngineError>) {
     }
 }
 
-/// Registers the browser's types. Ljós's web engine (`QtWebEngine`) waits
-/// on the signals BrowserPanel handles that `WebEngineView` lacks
-/// (hal-c2/ljos-ui#354, #355, #356): registered, its types are checked and
-/// the panel no longer compiles.
+static SUPPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this run draws pages in the panel's browser tabs: the app says so
+/// once its web engine can run (main.rs), and a test once it embeds.
+/// Without it a thread's pages are the Previews tab's, opened in the
+/// system browser.
+pub fn set_supported(supported: bool) {
+    SUPPORTED.store(supported, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn supported() -> bool {
+    SUPPORTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Registers the browser's types and Ljós's web engine (`QtWebEngine`).
+/// TODO(ljos#354, ljos#355, ljos#356): `WebEngineView` lacks
+/// `permissionRequested`, `navigationRequested` and
+/// `desktopMediaRequested`, which BrowserPanel handles in a `Connections`
+/// that ignores them until it has them.
 pub fn register(engine: &Engine) {
+    ljos_webengine::register(engine);
     engine
         .register_module(ljos::module!("HalC2.Shell" 1.0 => [BrowserPage, PagePermissionsObject]));
     engine.register_singleton::<BrowserObject>(MODULE, Version::new(1, 0));
@@ -752,6 +768,14 @@ fn next_request(inner: &PageInner) -> i32 {
     request
 }
 
+/// Whether the page's view is there and has not loaded anything.
+fn view_is_empty(engine: &Engine, obj: ObjectId) -> bool {
+    BrowserPage::view(engine, obj).is_some_and(|view| match engine.read_by_name(view, "url") {
+        Value::Undefined | Value::Null => true,
+        url => engine.to_js_string(&url).is_empty(),
+    })
+}
+
 fn tell(engine: &Engine, obj: ObjectId, inner: &PageInner, notes: &[PageNote]) {
     let cx = Cx::new(engine, obj);
     for note in notes {
@@ -766,11 +790,25 @@ fn tell(engine: &Engine, obj: ObjectId, inner: &PageInner, notes: &[PageNote]) {
                         core.exists(),
                     )
                 };
+                let empty = !url.as_str().is_empty() && view_is_empty(engine, obj);
+                let at = url.clone();
                 engine
                     .set_internal(obj, BrowserPage::URL, url)
                     .and_then(|()| engine.set_internal(obj, BrowserPage::TITLE, title))
                     .and_then(|()| engine.set_internal(obj, BrowserPage::STATUS, status))
                     .and_then(|()| engine.set_internal(obj, BrowserPage::EXISTS, exists))
+                    // The brick loads where the tab is when tabIdChanged
+                    // fires, but the page hears of its tab a tick later
+                    // (keep_tab_id, keep_previews), and TODO(ljos#381) of
+                    // its view once the brick is made: a view that has
+                    // shown nothing yet loads it now.
+                    .and_then(|()| {
+                        if empty {
+                            BrowserPage::emit_load_requested(&cx, at)
+                        } else {
+                            Ok(())
+                        }
+                    })
             }
             PageNote::Viewport => {
                 let viewport = inner.core.borrow().viewport().to_value();

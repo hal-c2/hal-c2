@@ -220,6 +220,29 @@ fn title_of(engine: &Engine, devices: Option<ObjectId>, id: &str) -> String {
     }
 }
 
+/// A browser tab's title: its page's, else its address's host, else "New tab".
+fn browser_title(tab: &Json) -> String {
+    let nav = tab.get("navStatus");
+    let field = |name: &str| {
+        nav.and_then(|n| n.get(name))
+            .and_then(Json::as_str)
+            .unwrap_or("")
+    };
+    if !field("title").is_empty() {
+        return field("title").to_owned();
+    }
+    match url::Url::parse(field("url")) {
+        Ok(url) => {
+            let host = url.host_str().unwrap_or("").to_owned();
+            match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host,
+            }
+        }
+        Err(_) => "New tab".into(),
+    }
+}
+
 /// Whether a stored tab is one the panel can show again: not a terminal,
 /// whose terminals ended with the app.
 fn known(tab: &str) -> bool {
@@ -507,6 +530,31 @@ impl Controller for RightPanel {
                     Settings::of(e).write_device(e, "previewHistory", history.clone());
                 },
             );
+            // Pages draw in the panel's own browser tabs where this run can
+            // draw them (browser::supported): the MC's tabs are the panel's.
+            ThreadPreviews::update(engine, previews, |p| {
+                p.set_embedded(crate::browser::supported())
+            });
+            let hook = me.clone();
+            warn(
+                engine,
+                engine.connect_by_name(previews, "showRequested", move |e, args| {
+                    let tab = args.first().map_or(Json::Null, |v| json::from_value(e, v));
+                    let tab = tab.as_str().unwrap_or("").to_owned();
+                    later(e, &hook, move |p, e| {
+                        p.show_tab(e, &format!("{BROWSER_TAB}{tab}"))
+                    });
+                }),
+            );
+            for signal in ["tabChanged", "statusChanged"] {
+                let hook = me.clone();
+                warn(
+                    engine,
+                    engine.connect_by_name(previews, signal, move |e, _| {
+                        later(e, &hook, |p, e| p.follow_browser_tabs(e));
+                    }),
+                );
+            }
         }
         if let Some(diff) = diff {
             // A note on the diff's lines joins the prompt.
@@ -779,6 +827,16 @@ impl RightPanel {
         self.panels.entry(self.thread.clone()).or_default()
     }
 
+    /// Whether pages draw in the panel's own browser tabs, as
+    /// browser::supported says at startup: the feature tests embed per
+    /// scenario.
+    pub fn set_embedded(&mut self, engine: &Engine, embedded: bool) {
+        if let Some(previews) = self.previews {
+            ThreadPreviews::update(engine, previews, |p| p.set_embedded(embedded));
+            self.update(engine);
+        }
+    }
+
     pub fn is_open(&self) -> bool {
         self.on_thread && self.current().open
     }
@@ -846,6 +904,57 @@ impl RightPanel {
     /// The shown thread's stage.
     pub fn stage(&self) -> PanelStage {
         self.current().stage
+    }
+
+    /// What the MC last said of browser tab `id` ("browser:<tab>"), or null.
+    fn browser_tab(&self, engine: &Engine, id: &str) -> Json {
+        let (Some(tab), Some(previews)) = (id.strip_prefix(BROWSER_TAB), self.previews) else {
+            return Json::Null;
+        };
+        ThreadPreviews::read(engine, previews, |p| p.tab(tab)).unwrap_or(Json::Null)
+    }
+
+    /// Whether pages draw in the panel's browser tabs.
+    fn embedded(&self, engine: &Engine) -> bool {
+        self.previews
+            .and_then(|previews| ThreadPreviews::read(engine, previews, |p| p.embedded()))
+            .unwrap_or(false)
+    }
+
+    /// The shown thread's browser tabs are its MC tabs: one the MC lists
+    /// that is not here yet comes in behind the others, and one it no longer
+    /// has goes.
+    fn follow_browser_tabs(&mut self, engine: &Engine) {
+        let Some(previews) = self.previews.filter(|_| self.on_thread) else {
+            return;
+        };
+        let listed = ThreadPreviews::read(engine, previews, |p| {
+            (p.embedded() && p.status() == "ready").then(|| p.tab_ids())
+        })
+        .flatten();
+        let Some(listed) = listed else {
+            return;
+        };
+        let listed: Vec<String> = listed.iter().map(|t| format!("{BROWSER_TAB}{t}")).collect();
+        let state = self.panel();
+        let mut changed = false;
+        for id in state.tabs.clone() {
+            if id.starts_with(BROWSER_TAB) && !listed.contains(&id) {
+                changed = remove_tab(state, &id) || changed;
+            }
+        }
+        for id in listed {
+            if !state.tabs.contains(&id) {
+                state.tabs.push(id);
+                changed = true;
+            }
+        }
+        if changed {
+            self.update(engine);
+        } else {
+            // A page's title is its tab's.
+            self.publish(engine);
+        }
     }
 
     /// Every tab showing, in the panel or on the stage (the stage's focused
@@ -1330,13 +1439,14 @@ impl RightPanel {
             return;
         }
         let groups = self.terminal_groups(engine).unwrap_or_default();
-        let state = self.panel();
         let allowed = match kind_of(id) {
             "terminal" => groups.iter().any(|g| *g == id[TERMINAL_TAB.len()..]),
             "pull-request" => reviewed_of(&id[REVIEW_TAB.len()..]).2 > 0,
             _ if id.starts_with(DEVICE_TAB) => device_target_of(id).is_some(),
+            "browser" => !self.browser_tab(engine, id).is_null(),
             kind => NATIVE_KINDS.contains(&kind),
         };
+        let state = self.panel();
         if !allowed {
             return;
         }
@@ -1386,6 +1496,13 @@ impl RightPanel {
         if closing.is_empty() || !state.tabs.contains(&closing) {
             return;
         }
+        // A browser tab is the MC's: closing it here closes it there.
+        if let Some(tab) = closing.strip_prefix(BROWSER_TAB)
+            && let Some(previews) = self.previews
+        {
+            ThreadPreviews::update(engine, previews, |p| p.close(tab));
+        }
+        let state = self.panel();
         if kind_of(&closing) != "terminal" {
             if remove_tab(state, &closing) {
                 self.update(engine);
@@ -1432,9 +1549,11 @@ impl RightPanel {
                 }
             }
             "browser" => {
-                // A new browser tab: an empty one on the MC, filled from the
-                // Previews tab.
-                self.show_tab(engine, "previews");
+                // A new browser tab: an empty one on the MC, shown here once
+                // it is (showRequested), else filled from the Previews tab.
+                if !self.embedded(engine) {
+                    self.show_tab(engine, "previews");
+                }
                 if let Some(previews) = self.previews {
                     ThreadPreviews::update(engine, previews, |p| p.new_tab());
                 }
@@ -1961,8 +2080,26 @@ impl RightPanel {
             });
         }
         if let Some(previews) = self.previews {
+            let on_thread = self.on_thread;
             ThreadPreviews::update(engine, previews, |p| {
-                p.set_active(shown.iter().any(|id| id == "previews"))
+                if p.embedded() {
+                    // The thread's browser tabs are followed while it shows;
+                    // its machine's servers while the overview or an empty
+                    // browser tab offers them.
+                    let empty = shown.iter().any(|id| {
+                        id.strip_prefix(BROWSER_TAB).is_some_and(|tab| {
+                            p.tab(tab)
+                                .pointer("/navStatus/url")
+                                .and_then(Json::as_str)
+                                .unwrap_or("")
+                                .is_empty()
+                        })
+                    });
+                    p.set_active(on_thread);
+                    p.set_suggesting(shown.iter().any(|id| id == "previews") || empty);
+                } else {
+                    p.set_active(shown.iter().any(|id| id == "previews"));
+                }
             });
         }
         if let Some(agents) = self.agents {
@@ -2062,10 +2199,18 @@ impl RightPanel {
         self.published_thread = self.thread.clone();
         self.published_open = state.open;
         let tab_of = |id: &str| {
+            let title = state
+                .titles
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| match kind_of(id) {
+                    "browser" => browser_title(&self.browser_tab(engine, id)),
+                    _ => title_of(engine, self.devices, id),
+                });
             json!({
                 "id": id,
                 "kind": kind_of(id),
-                "title": state.titles.get(id).cloned().unwrap_or_else(|| title_of(engine, self.devices, id)),
+                "title": title,
                 "dock": if state.stage.contains(id) { "stage" } else { "panel" },
             })
         };
@@ -2214,6 +2359,7 @@ impl RightPanel {
         };
         let stored: Json = serde_json::from_slice(&bytes).unwrap_or(Json::Null);
         self.saved = bytes;
+        let embedded = self.previews.is_some() && crate::browser::supported();
         let width = int(stored.get("width")).map_or(DEFAULT_WIDTH, |w| w as i32);
         self.width = width.max(MINIMUM_WIDTH);
         let threads = stored
@@ -2241,8 +2387,11 @@ impl RightPanel {
                     state.tabs.push(tab);
                 }
             }
+            // A browser tab on the stage comes back there: the MC's list
+            // keeps it once the thread shows, or takes it off
+            // (follow_browser_tabs).
             state.stage = PanelStage::from_json(thread.get("stage").unwrap_or(&Json::Null), |id| {
-                state.tabs.iter().any(|t| t == id)
+                state.tabs.iter().any(|t| t == id) || (embedded && id.starts_with(BROWSER_TAB))
             });
             for id in state.stage.tabs.clone() {
                 if !state.tabs.contains(&id) {
