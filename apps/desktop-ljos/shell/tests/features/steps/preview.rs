@@ -26,7 +26,9 @@ use crate::{expect, fail};
 
 mod automation;
 mod browser;
+mod device;
 mod history;
+mod navigation;
 
 /// The MC's browser tabs, oldest change first, and how it answers a close.
 struct FakePreviews {
@@ -466,6 +468,8 @@ pub fn register(steps: &mut Steps) {
     automation::register(steps);
     browser::register(steps);
     history::register(steps);
+    navigation::register(steps);
+    device::register(steps);
 
     steps.step(
         &format!("the thread has browser tabs at {Q} and {Q}"),

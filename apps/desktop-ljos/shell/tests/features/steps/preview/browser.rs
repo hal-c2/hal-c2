@@ -59,7 +59,15 @@ impl DevServer {
         if self.listener.is_some() {
             return true;
         }
-        let Ok(listener) = TcpListener::bind(("127.0.0.1", self.port)) else {
+        // After stop() the accept thread lets go of the old port as soon as
+        // the wake-up connection reaches it, which may be a moment later.
+        let bound = (0..100).find_map(|attempt| {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            TcpListener::bind(("127.0.0.1", self.port)).ok()
+        });
+        let Some(listener) = bound else {
             return false;
         };
         self.port = listener.local_addr().map_or(0, |a| a.port());
@@ -233,6 +241,12 @@ pub struct Browsing {
     pub typed: String,
 }
 
+impl Browsing {
+    pub fn server(&self) -> Option<&DevServer> {
+        self.server.as_ref()
+    }
+}
+
 pub fn browsing(world: &mut World) -> &mut Browsing {
     world.mc.part::<Browsing>()
 }
@@ -350,11 +364,11 @@ pub fn page(world: &mut World) -> Outcome<ObjectId> {
     }
 }
 
-fn view(world: &World, brick: Brick) -> Option<ObjectId> {
+pub fn view(world: &World, brick: Brick) -> Option<ObjectId> {
     find(world, brick, "browserView")
 }
 
-fn read_text(world: &World, item: ObjectId, name: &str) -> String {
+pub fn read_text(world: &World, item: ObjectId, name: &str) -> String {
     let engine = world.engine();
     match engine.read_by_name(item, name) {
         Value::Undefined | Value::Null => String::new(),
@@ -362,7 +376,7 @@ fn read_text(world: &World, item: ObjectId, name: &str) -> String {
     }
 }
 
-fn read_flag(world: &World, item: ObjectId, name: &str) -> bool {
+pub fn read_flag(world: &World, item: ObjectId, name: &str) -> bool {
     matches!(world.engine().read_by_name(item, name), Value::Bool(true))
 }
 
@@ -448,7 +462,7 @@ pub fn evaluate(world: &mut World, script: &str) -> Outcome<Json> {
     Ok(result.borrow_mut().take().unwrap_or(Json::Null))
 }
 
-fn evaluated(world: &mut World, script: &str) -> Outcome<String> {
+pub fn evaluated(world: &mut World, script: &str) -> Outcome<String> {
     Ok(match evaluate(world, script)? {
         Json::String(s) => s,
         other => other.to_string(),
