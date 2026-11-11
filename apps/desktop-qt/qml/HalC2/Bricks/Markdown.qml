@@ -894,6 +894,8 @@ Item {
                         Component.onCompleted: {
                             syncLines();
                             measure();
+                            for (let r = 0; r < lines.count; ++r)
+                                lineAt(r)?.layout();
                             tableBody.forceLayout();
                             measureCells.restart();
                         }
@@ -940,8 +942,14 @@ Item {
                                             const box = boxAt(c);
                                             return box ? box.text : null;
                                         }
+                                        // Sizes the row now, not at the next frame.
+                                        function layout() {
+                                            cellRow.forceLayout();
+                                        }
                                         width: tableScroll.contentWidth
-                                        height: cellRow.rowHeight + 1
+                                        height: cellRow.height + 1
+                                        // As tall as its tallest cell: each cell sizes itself,
+                                        // so the row follows cells made after it.
                                         Row {
                                             id: cellRow
                                             Repeater {
@@ -955,7 +963,7 @@ Item {
                                                     readonly property string html: line.modelData[index] ?? ""
                                                     readonly property alias text: cellText
                                                     width: (grid.widths[index] ?? 0) * grid.stretch
-                                                    height: cellRow.rowHeight
+                                                    height: (grid.expanded && !line.head ? cellText.height : 19.5) + (line.head ? 17.6 : 14.4)
                                                     clip: true
                                                     RichText {
                                                         id: cellText
@@ -971,18 +979,9 @@ Item {
                                                     }
                                                 }
                                             }
-                                            readonly property real rowHeight: {
-                                                let h = 0;
-                                                for (let c = 0; c < cells.count; ++c) {
-                                                    const text = line.cell(c);
-                                                    if (text)
-                                                        h = Math.max(h, grid.expanded && !line.head ? text.height : 19.5);
-                                                }
-                                                return h + (line.head ? 17.6 : 14.4);
-                                            }
                                         }
                                         Rectangle {
-                                            y: cellRow.rowHeight
+                                            y: cellRow.height
                                             width: parent.width
                                             height: 1
                                             color: Qt.alpha(root.borderColor, root.borderColor.a * 0.6)

@@ -3556,6 +3556,7 @@ timeline/markdown.feature: A reply being written keeps what is already shown
 timeline/markdown.feature: A reply shows its formatting
 timeline/markdown.feature: A reply's right-click menu cannot change the reply
 timeline/markdown.feature: A reply's selected text is copied from its right-click menu
+timeline/markdown.feature: A table's rows grow to fit their wrapped cells
 timeline/markdown.feature: A user message keeps its line breaks
 timeline/markdown.feature: Code follows the theme without being read again
 timeline/markdown.feature: Inline code stays whole and reads as written

@@ -1083,6 +1083,33 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
 
+    steps.step(
+        "every row of the table holds its cells' text",
+        |world, _, _| {
+            let message = reply(world, 1)?;
+            let cells = within(world, message, "tableCell");
+            expect!(!cells.is_empty(), "the table has no cells");
+            let real = |item: ObjectId, name: &str| match world.engine().read_by_name(item, name) {
+                Value::Real(r) => r,
+                Value::Int(n) => f64::from(n),
+                _ => f64::NAN,
+            };
+            for (i, cell) in cells.into_iter().enumerate() {
+                // The cell's box is its row's height and clips the text.
+                let Value::Object(cell_box) = world.engine().read_by_name(cell, "parent") else {
+                    fail!("a table cell has no box");
+                };
+                let bottom = real(cell, "y") + real(cell, "height");
+                let row = real(cell_box, "height");
+                expect!(
+                    real(cell, "y") >= 0.0 && bottom <= row,
+                    "cell {i}'s text ends at {bottom} in a row {row} tall"
+                );
+            }
+            Ok(())
+        },
+    );
+
     // Untrusted text.
     steps.step("the agent answers with HTML and an image", |world, _, _| {
         answer(
