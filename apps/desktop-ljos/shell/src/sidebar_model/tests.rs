@@ -509,6 +509,8 @@ fn rows_carry_their_project_offline_state_and_selection() {
     assert_eq!(state["projects"][0]["displayName"], "Shop");
     assert_eq!(state["projects"][0]["threadCount"], 2);
     assert_eq!(state["projects"][0]["status"], "working");
+    // Every machine's project in the group, as a page names the group by.
+    assert_eq!(state["projects"][0]["memberKeys"], json!(["e:p1"]));
     assert_eq!(state["localProjects"][0]["key"], "e:p1");
     assert_eq!(state["selectedKeys"], json!(["e:t2"]));
     let first = &state["active"][0];

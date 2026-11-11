@@ -167,6 +167,7 @@ pub mod timeline;
 pub mod timeline_activity;
 pub mod timeline_details;
 pub mod toast;
+pub mod token_economizer;
 pub mod turn;
 pub mod usage;
 pub mod usage_limits_command;
@@ -336,6 +337,7 @@ pub fn register(steps: &mut Steps) {
     timeline_activity::register(steps);
     timeline_details::register(steps);
     toast::register(steps);
+    token_economizer::register(steps);
     turn::register(steps);
     usage::register(steps);
     usage_limits_command::register(steps);

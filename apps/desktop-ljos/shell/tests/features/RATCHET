@@ -1468,6 +1468,14 @@ plugins/plugin-contributions.feature: The same plugin on two environments is one
 plugins/plugin-contributions.feature: The settings of a plugin that did not load say why
 plugins/plugin-contributions.feature: There are no tabs while no plugin adds a page
 plugins/plugin-contributions.feature: UI parts that watch the same topic share it
+plugins/token-economizer-history-import.feature: The person sees a project's import and forgets what it learned from the plugin's page
+plugins/token-economizer-micro-skills.feature: A project that learns its first fact while the plugin's page is open shows up there
+plugins/token-economizer-micro-skills.feature: The person sees a project's learned facts and drops one from the plugin's page
+plugins/token-economizer-micro-skills.feature: The plugin's page shows a held project with why and where, and reads it again once repaired
+plugins/token-economizer-tool-prune.feature: The plugin's page shows a thread moved away apart from those holding pruning off
+plugins/token-economizer-tool-prune.feature: The plugin's page shows that pruning is held off while a thread's turns cannot be read back
+plugins/token-economizer-tool-prune.feature: The plugin's page shows tools turned off before the MC restarted, before the project's next conversation
+plugins/token-economizer-tool-prune.feature: The plugin's page shows what is off, proposed and kept, and lets the person apply and restore
 plugins/turn-hooks.feature: A notice folded behind later tool calls still offers Stop
 plugins/turn-hooks.feature: A notice's Stop stops only the turn it is in
 plugins/turn-hooks.feature: A plugin's notice offers Stop while its turn works

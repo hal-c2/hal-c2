@@ -1825,6 +1825,17 @@ pub fn build(
         .map(|group| {
             let mut project = group.summary.clone();
             project.insert(
+                "memberKeys".into(),
+                Value::Array(
+                    group
+                        .member_keys
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+            project.insert(
                 "threadCount".into(),
                 thread_counts
                     .get(group.key.as_str())
