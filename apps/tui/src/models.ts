@@ -165,6 +165,41 @@ export function pickMatchesThread(
   return left.size === right.size && [...left].every(([id, value]) => right.get(id) === value);
 }
 
+/**
+ * A model pick on a started thread, made against the thread's `selectionRevision`
+ * (`base`, null from an MC that sends none). `own` counts this client's own mode
+ * changes since, each of which moves the revision on by one without replacing it.
+ */
+export interface ThreadPick {
+  readonly selection: ModelSelection;
+  readonly base: number | null;
+  readonly own: number;
+}
+
+/**
+ * What becomes of a pick once the thread changes: it stands, rebased past this
+ * client's own mode changes, until any other change moves the revision on, its
+ * own send being taken included. An MC without revisions drops it once the
+ * thread runs it.
+ */
+export function nextPick(
+  options: ReadonlyArray<ModelOption>,
+  pick: ThreadPick,
+  thread: {
+    readonly modelSelection: ModelSelection;
+    readonly selectionRevision?: number | undefined;
+  },
+): ThreadPick | null {
+  const revision = thread.selectionRevision;
+  if (revision === undefined || pick.base === null) {
+    return pickMatchesThread(options, pick.selection, thread.modelSelection) ? null : pick;
+  }
+  if (revision < pick.base || revision > pick.base + pick.own) return null;
+  return revision === pick.base + pick.own && pick.own > 0
+    ? { ...pick, base: revision, own: 0 }
+    : pick;
+}
+
 /** Create a complete selection for a newly chosen model, using its defaults. */
 export function modelSelectionForOption(option: ModelOption): ModelSelection {
   const descriptors = option.capabilities

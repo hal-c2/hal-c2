@@ -8,6 +8,7 @@ import {
   flattenModelOptions,
   modelPickerRows,
   modelSelectionForOption,
+  nextPick,
   pickMatchesThread,
   promptEffort,
   providerReady,
@@ -434,5 +435,32 @@ describe("fallback accounts", () => {
     expect(providerReady(codex([builtIn], { enabled: false }))).toBe(false);
     expect(providerReady(codex([builtIn], { status: "error" }))).toBe(false);
     expect(providerReady(codex([builtIn], { availability: "unavailable" }))).toBe(false);
+  });
+});
+
+describe("nextPick", () => {
+  const codex = ProviderInstanceId.make("codex");
+  const picked = { instanceId: codex, model: "gpt-5-codex" };
+  const running = { instanceId: codex, model: "gpt-5" };
+
+  it("drops a pick once the thread changes elsewhere, even back to what was picked", () => {
+    const pick = { selection: picked, base: 3, own: 0 };
+    expect(nextPick([], pick, { modelSelection: running, selectionRevision: 3 })).toBe(pick);
+    expect(nextPick([], pick, { modelSelection: running, selectionRevision: 4 })).toBeNull();
+    expect(nextPick([], pick, { modelSelection: picked, selectionRevision: 4 })).toBeNull();
+  });
+
+  it("keeps a pick across this client's own mode changes, then gives way to the next", () => {
+    const pick = { selection: picked, base: 3, own: 2 };
+    expect(nextPick([], pick, { modelSelection: running, selectionRevision: 4 })).toBe(pick);
+    const rebased = nextPick([], pick, { modelSelection: running, selectionRevision: 5 });
+    expect(rebased).toEqual({ selection: picked, base: 5, own: 0 });
+    expect(nextPick([], rebased!, { modelSelection: running, selectionRevision: 6 })).toBeNull();
+  });
+
+  it("drops a pick the thread runs when the MC sends no revision", () => {
+    const pick = { selection: picked, base: null, own: 0 };
+    expect(nextPick([], pick, { modelSelection: running })).toBe(pick);
+    expect(nextPick([], pick, { modelSelection: picked })).toBeNull();
   });
 });

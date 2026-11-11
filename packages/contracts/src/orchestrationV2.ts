@@ -364,6 +364,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** Bumped by every change to the model, provider, runtime or interaction mode; absent from older MCs. */
+  selectionRevision: Schema.optional(NonNegativeInt),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   /** Pull request the user linked to this thread (#8160); optional so
@@ -1612,6 +1614,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** Bumped by every change to the model, provider, runtime or interaction mode; absent from older MCs. */
+  selectionRevision: Schema.optional(NonNegativeInt),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   /** Pull request the user linked to this thread (#8160). */
@@ -2604,18 +2608,24 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runtimeMode: RuntimeMode,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.interaction-mode.set"),
     commandId: CommandId,
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.model-selection.set"),
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -2639,6 +2649,8 @@ export const OrchestrationV2Command = Schema.Union([
     /** Seed the temporary title and generate a durable replacement for the first message. */
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
+    /** The thread's selectionRevision the user's choice was made against (selection-stale when moved past). */
+    selectionBase: Schema.optional(NonNegativeInt),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),

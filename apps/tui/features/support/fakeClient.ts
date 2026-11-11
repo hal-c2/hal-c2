@@ -117,9 +117,24 @@ export function thread(activities: OrchestrationThread["activities"] = []): Orch
     activities,
     checkpoints: [],
     modelSelection: { instanceId: "codex", model: "gpt-5" },
+    selectionRevision: 0,
     proposedPlans: [],
     hasMoreActivities: false,
   } as unknown as OrchestrationThread;
+}
+
+/** The thread after a change to its selection, its revision moved on when it keeps one. */
+export function withSelection(
+  detail: OrchestrationThread,
+  change: Partial<OrchestrationThread>,
+): OrchestrationThread {
+  return {
+    ...detail,
+    ...change,
+    ...(detail.selectionRevision === undefined
+      ? {}
+      : { selectionRevision: detail.selectionRevision + 1 }),
+  };
 }
 
 export function shell(
@@ -413,12 +428,13 @@ export function fakeClient({
     details.set(next.id, next);
     threadSubscribers.get(next.id)?.(next, page);
   };
-  // The server echoes a thread setting back through the live detail.
+  // The server echoes a thread setting back through the live detail, a step on in
+  // its selection revision (an MC that keeps one).
   const echo =
     (patch: (mode: never) => Partial<OrchestrationThread>) =>
     async (threadId: string, mode: never) => {
       const current = details.get(threadId);
-      if (current) emitThread({ ...current, ...patch(mode) });
+      if (current) emitThread(withSelection(current, patch(mode)));
     };
   let currentVcsStatus: VcsStatusResult | null = vcsStatus ?? null;
   const vcsSubscribers = new Set<(status: VcsStatusResult) => void>();

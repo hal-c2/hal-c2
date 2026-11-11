@@ -219,6 +219,7 @@ export function buildThreadReplyTurn(input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<UploadChatImageAttachment>;
   readonly modelSelection?: ModelSelection;
+  readonly selectionBase?: number;
   readonly context?: OrchestrationMessageContext;
 }) {
   return {
@@ -233,6 +234,9 @@ export function buildThreadReplyTurn(input: {
     runtimeMode: input.thread.runtimeMode,
     interactionMode: input.thread.interactionMode,
     ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+    ...(input.modelSelection && input.selectionBase !== undefined
+      ? { selectionBase: input.selectionBase }
+      : {}),
   };
 }
 
@@ -652,9 +656,12 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
     thread: Pick<OrchestrationThread, "id" | "runtimeMode" | "interactionMode">,
     text: string,
     attachments?: ReadonlyArray<UploadChatImageAttachment>,
+    /** Only the user's pick: with none the turn runs on the thread's own selection. */
     modelSelection?: ModelSelection,
     /** The typed payloads behind the message's context references (terminal output, diff notes). */
     context?: OrchestrationMessageContext,
+    /** The thread's selectionRevision the pick was made against (refused as selection-stale once moved past). */
+    selectionBase?: number,
   ) => Promise<void>;
   /** Register a local workspace as a project and return its generated id. */
   readonly createProject: (workspaceRoot: string) => Promise<ProjectId>;
@@ -1098,16 +1105,12 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
       return drainStreamUntilUnsubscribe(stream);
     },
 
-    sendReply: (thread, text, attachments = [], modelSelection, context) =>
+    // The message alone carries a pick: the MC takes it into the thread when the
+    // turn starts, so no separate model change can land over a newer one.
+    sendReply: (thread, text, attachments = [], modelSelection, context, selectionBase) =>
       runtime.runPromise(
         Effect.gen(function* () {
           const messageId = MessageIdSchema.make(yield* randomUuid);
-          if (modelSelection) {
-            // Keep thread metadata and the active provider session in sync. The
-            // turn-level selection is what makes an existing session actually
-            // switch models; metadata alone only updates the persisted label.
-            yield* updateThreadMetadata({ threadId: thread.id, modelSelection });
-          }
           yield* startThreadTurn(
             buildThreadReplyTurn({
               thread,
@@ -1115,6 +1118,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
               text,
               attachments,
               ...(modelSelection ? { modelSelection } : {}),
+              ...(selectionBase === undefined ? {} : { selectionBase }),
               ...(context ? { context } : {}),
             }),
           );
