@@ -337,6 +337,8 @@ composer/question-answers.feature: Moving by hand right after a pick is not move
 composer/question-answers.feature: Picking an option of a single-choice question moves on to the next question
 composer/question-answers.feature: Questions asked while the composer is open are shown above its editor
 composer/question-answers.feature: Several questions are stepped through and answered together
+composer/question-answers.feature: The answer button moves on while a question still waits
+composer/question-answers.feature: The answer button on the last question goes back to one left unanswered
 composer/question-answers.feature: The first question still unanswered is the one shown
 composer/question-answers.feature: The question is folded away on the desktop to read the conversation
 composer/queue-and-steer.feature: A held queue is resumed from the composer

@@ -329,6 +329,53 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
+        &format!("the user types {Q} as the answer to {Q}"),
+        |world, c, _| {
+            settle_question(world)?;
+            expect_question_shown(world, &c[1])?;
+            let Some((id, _)) = asked(&c[1]) else {
+                fail!("no question \"{}\" was asked", c[1]);
+            };
+            typed_answer(world, id, &c[0])
+        },
+    );
+    steps.step(
+        &format!("the user went on to {Q} without answering {Q}"),
+        |world, c, _| {
+            expect_question_shown(world, &c[1])?;
+            click_part(world, "questionNext")?;
+            expect_question_shown(world, &c[0])
+        },
+    );
+    steps.step(&format!("the answer button reads {Q}"), |world, c, _| {
+        let brick = composer_brick(world)?;
+        let button = part(world, "questionSubmit")?;
+        let read = brick.text_of(world, button, "text");
+        expect!(
+            read == c[0] && brick.flag(world, button, "visible"),
+            "the answer button reads \"{read}\""
+        );
+        Ok(())
+    });
+    steps.step("the user presses Enter in the answer", |world, _, _| {
+        let event = KeyEvent::press(key::RETURN).with_text("\r");
+        world.key(&event)?;
+        world.key(&KeyEvent::release(key::RETURN).with_text("\r"))?;
+        world.sync()
+    });
+    steps.step("the user presses the answer button", |world, _, _| {
+        click_part(world, "questionSubmit")
+    });
+    steps.step("no answer has been sent", |world, _, _| {
+        settle_question(world)?;
+        expect!(
+            commands_of(world, "runtime-request.respond")?.is_empty(),
+            "the MC has {}",
+            world.describe_commands()
+        );
+        Ok(())
+    });
+    steps.step(
         &format!("the user answered {Q} and left the thread"),
         |world, c, _| {
             expect_question_shown(world, &c[0])?;
