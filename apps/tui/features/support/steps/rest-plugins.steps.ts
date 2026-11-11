@@ -46,6 +46,8 @@ const status = (ctx: PluginWorld) =>
   ctx.host!.state.get("status") as { text: string; kind: string };
 /** The page's words: columns are padded and long values wrap, so blanks are joined. */
 const pageText = (ctx: PluginWorld) => section(ctx).lines.join("\n").replace(/\s+/g, " ");
+/** The page with no spaces at all: a long plugin path wraps mid-word, and TMPDIR may be long. */
+const unspaced = (text: string) => text.replace(/\s+/g, "");
 
 // --- A slot this surface does not have ---------------------------------------------------
 
@@ -101,7 +103,7 @@ step("{string} is shown with its error message", async (ctx: PluginWorld, id: st
   expect(problem).toMatchObject({ level: "error" });
   expect(problem!.message.length).toBeGreaterThan(0);
   expect(pageText(ctx)).toContain("Failed");
-  expect(pageText(ctx)).toContain(`${id}: ${problem!.message}`);
+  expect(unspaced(pageText(ctx))).toContain(unspaced(`${id}: ${problem!.message}`));
   const screen = await snapshot(ctx);
   expect(screen).toContain("Failed");
   expect(screen).toContain(`${id}: `);
@@ -132,7 +134,7 @@ step("{string} stays in the installed list as disabled", async (ctx: PluginWorld
   expect(NodeFS.existsSync(clockFile(ctx, id))).toBe(true);
   expect(ctx.cleanupLog).toContain(id);
   await openPluginList(ctx);
-  expect(pageText(ctx)).toContain(`${id} disabled · ${clockFile(ctx, id)}`);
+  expect(unspaced(pageText(ctx))).toContain(unspaced(`${id} disabled · ${clockFile(ctx, id)}`));
 });
 
 step("the plugin {string} is disabled", async (ctx: PluginWorld, id: string) => {
