@@ -253,6 +253,7 @@ def run_turn(mid, sid, text):
 
 
 sessions = 0
+chosen = {}  # configId -> value this process's session/set_config_option set
 while True:
     msg = read()
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
@@ -309,6 +310,8 @@ while True:
         send({"id": mid, "error": error})
     elif method in ("session/new", "session/resume", "session/load"):
         sessions += 1
+        if method == "session/new":
+            chosen = {}
         result = {"configOptions": cfg.get("configOptions", default_options())}
         if cfg.get("modes") is not None:
             result["modes"] = cfg["modes"]
@@ -335,7 +338,12 @@ while True:
               {"options": []})["options"]]):
         send({"id": mid, "error": {"code": -32602, "message": "Model not found: %s" % params.get("value")}})
     elif method in ("session/set_config_option", "session/set_mode", "session/set_model"):
-        send({"id": mid, "result": {"configOptions": cfg.get("configOptions", default_options())}})
+        # An option set is its current value from then on, as an agent reports it.
+        if method == "session/set_config_option":
+            chosen[params.get("configId")] = params.get("value")
+        options = [dict(o, currentValue=chosen[o["id"]]) if o.get("id") in chosen else o
+                   for o in cfg.get("configOptions", default_options())]
+        send({"id": mid, "result": {"configOptions": options}})
     elif method == "session/prompt":
         text = "\n".join(b.get("text", "") for b in params.get("prompt") or [])
         run_turn(mid, params.get("sessionId"), text)

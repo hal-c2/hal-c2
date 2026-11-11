@@ -370,6 +370,12 @@ Feature: Grok
     When a turn runs with Grok's default model chosen
     Then Grok is not asked to switch models
 
+  # `grok-build` names whatever model the session has, so the session's model is the selected one.
+  Scenario: A turn on Grok's default model shows no notice of another model
+    Given a Grok session that started on the model Grok picked
+    When a turn runs with Grok's default model chosen
+    Then the run records the model the session is on, with no notice
+
   Scenario: A reasoning level Grok could not accept is not sent
     Given a Grok thread whose saved reasoning level is not a plain word
     When the user sends a message
@@ -551,6 +557,13 @@ Feature: Grok
     Given a Grok session running on a model at the reasoning level Grok chose
     When a turn runs on that model with no reasoning level chosen
     Then Grok is not asked to change its reasoning level
+
+  # Grok keeps the level a turn set for the session's later turns, so taking it off the thread
+  # has to set it back, or the next turn runs on the old level.
+  Scenario: A reasoning level taken off a Grok thread goes back to the level the model started at
+    Given a Grok session running on a model at the reasoning level Grok chose
+    When a turn runs on that model at reasoning "low" and the next with no reasoning level chosen
+    Then Grok is asked for "low" and then for the level the model started at
 
   # XAiAcpExtension.ts: the corners of turn completion.
   Scenario: Each Grok prompt carries an id that Grok's completion notice can name

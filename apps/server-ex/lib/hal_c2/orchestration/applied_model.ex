@@ -13,8 +13,9 @@ defmodule HalC2.Orchestration.AppliedModel do
   alias HalC2.Orchestration.TurnWriter
 
   # Names that pick a model by the provider's own rule: what they resolve to is not
-  # known here, so no report differs from them.
-  @open ~w(default auto best opusplan)
+  # known here, so no report differs from them. Grok's `grok-build` keeps the model
+  # the session has (`HalC2.Acp.ThreadRuntime`).
+  @open ~w(default auto best opusplan grok-build)
 
   @doc """
   Records `reported` as the running turn's applied model, once per model, with a

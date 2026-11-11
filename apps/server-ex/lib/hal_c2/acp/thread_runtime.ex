@@ -1917,8 +1917,19 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = remember_config(state, result)
 
+    # What the session opened on is what a pick taken off the thread goes back to.
+    state = Map.put(state, :opened_config, state.config)
+
     state =
-      if grok?(state), do: Map.put(state, :reasoning, session_reasoning(result)), else: state
+      if grok?(state) do
+        levels = session_reasoning(result)
+
+        state
+        |> Map.put(:opened_reasoning, levels)
+        |> Map.put(:reasoning, levels[get_in(result, ["models", "currentModelId"])])
+      else
+        state
+      end
 
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
       %{"currentValue" => model} ->
@@ -1986,15 +1997,22 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
     end
 
+    # An agent or variant taken off the thread goes back to the one the session opened
+    # on (build, when it opened in plan), as OpenCode keeps what was set last.
+    opened = Map.get(state, :opened_config, %{})
+
     agent =
       value.("agent") ||
         cond do
           turn.interaction_mode == "plan" -> "plan"
+          opened["mode"] not in [nil, "plan"] -> opened["mode"]
           state.config["mode"] == "plan" -> "build"
           true -> nil
         end
 
-    state |> set_config("mode", agent) |> set_config("effort", value.("variant"))
+    state
+    |> set_config("mode", agent)
+    |> set_config("effort", value.("variant") || opened["effort"])
   end
 
   # Any other agent with a mode of its own for planning (a mode option offering `plan`
@@ -2292,18 +2310,24 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Grok's `grok-build` is the CLI's product name, not a model it accepts: choosing it
   # keeps the model the session has. A reasoning level goes with the model, as
   # `session/set_model`'s `_meta.reasoningEffort`, and only when it is a plain word and
-  # differs from the level the session is on. Omitting a level on the same model leaves
-  # Grok's own default alone, so only a changed model or a changed level is sent.
+  # differs from the level the session is on. No level picked is the level the model
+  # started at when the session opened: Grok keeps a level set by an earlier turn, so
+  # one taken off the thread is set back, and Grok's own level is otherwise left alone.
   @grok_default_model "grok-build"
   @grok_effort ~r/^[a-z0-9][a-z0-9._-]{0,31}$/i
 
   defp grok_model(state, model, options) do
     requested = if model in [nil, "", @grok_default_model], do: nil, else: model
+    target = requested || state.model
     provided = options["reasoningEffort"]
-    effort = if is_binary(provided) and provided =~ @grok_effort, do: provided
+
+    effort =
+      if is_binary(provided) and provided =~ @grok_effort,
+        do: provided,
+        else: Map.get(state, :opened_reasoning, %{})[target]
+
     model_changed = requested != nil and requested != state.model
     effort_changed = effort != nil and effort != Map.get(state, :reasoning)
-    target = requested || state.model
 
     cond do
       (not model_changed and not effort_changed) or target == nil ->
@@ -2333,19 +2357,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # The level of reasoning the model a Grok session starts on is at.
-  defp session_reasoning(%{"models" => %{"currentModelId" => current} = models}) do
-    with model when is_map(model) <-
-           Enum.find(models["availableModels"] || [], &(&1["modelId"] == current)),
-         effort when is_binary(effort) <- get_in(model, ["_meta", "reasoningEffort"]),
-         true <- effort =~ @grok_effort do
-      effort
-    else
-      _ -> nil
-    end
+  # The level of reasoning each model a Grok session offers starts at, by model.
+  defp session_reasoning(%{"models" => %{"availableModels" => [_ | _] = models}}) do
+    for %{"modelId" => id, "_meta" => %{"reasoningEffort" => effort}} <- models,
+        is_binary(effort) and effort =~ @grok_effort,
+        into: %{},
+        do: {id, effort}
   end
 
-  defp session_reasoning(_result), do: nil
+  defp session_reasoning(_result), do: %{}
 
   # "Pi default" leaves the model to the user's own Pi settings, and a registry agent's
   # default to the agent when its session offers no model of that name.

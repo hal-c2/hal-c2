@@ -79,6 +79,36 @@ defmodule HalC2.Steps.Providers.GrokCorners do
     context |> model_thread(context.grok_effort, @picked, nil) |> run_turn()
   end
 
+  step "a turn runs on that model at reasoning {string} and the next with no reasoning level chosen",
+       %{args: [level]} = context do
+    context = context |> model_thread(context.grok_effort, @picked, level) |> run_turn()
+
+    context
+    |> FakeAcp.send_message("again", nil, %{
+      "modelSelection" => %{"instanceId" => "grok", "model" => @picked, "options" => []}
+    })
+    |> tap(&FakeAcp.await_runs(&1, 2))
+  end
+
+  step "Grok is asked for {string} and then for the level the model started at",
+       %{args: [level]} = context do
+    started = context.grok_effort
+
+    assert [
+             %{"params" => %{"modelId" => @picked, "_meta" => %{"reasoningEffort" => ^level}}},
+             %{"params" => %{"modelId" => @picked, "_meta" => %{"reasoningEffort" => ^started}}}
+           ] = model_calls(context)
+
+    context
+  end
+
+  step "the run records the model the session is on, with no notice", context do
+    state = FakeAcp.await_run(context, "completed")
+    assert [%{"appliedModel" => @picked}] = HalC2.StreamState.list(state, "run")
+    refute Enum.any?(HalC2.StreamState.list(state, "turn-item"), &(&1["type"] == "system_notice"))
+    context
+  end
+
   step "Grok is not asked to switch models", context do
     assert model_calls(context) == []
     context

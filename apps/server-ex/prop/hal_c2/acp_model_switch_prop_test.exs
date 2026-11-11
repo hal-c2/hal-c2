@@ -8,6 +8,9 @@ defmodule HalC2.AcpModelSwitchPropTest do
   A model the session will not switch to fails the turn before the agent hears it, and
   leaves the model the session had for the next turn.
 
+  A reasoning level a turn picks is the one it runs at, and a turn that picks none runs
+  at the level its model starts at, whatever level an earlier turn set (Grok keeps it).
+
   A restart may also lose the agent's sessions. The next turn then runs in a new
   session that is handed every earlier turn, and the new session switches models as
   the agent's sessions do.
@@ -25,6 +28,8 @@ defmodule HalC2.AcpModelSwitchPropTest do
   @refused "The active ACP session does not expose a model-switch capability."
   @models ["acme/fast", "acme/smart"]
   @broken "acme/broken"
+  # The level each model starts at, on an agent that can switch them.
+  @levels %{"acme/fast" => "medium", "acme/smart" => "high"}
   @unswitched "Could not switch to the model acme/broken (model not available), " <>
                 "so the turn was not sent. Try again, or pick another."
 
@@ -68,7 +73,7 @@ defmodule HalC2.AcpModelSwitchPropTest do
 
   def command(state) do
     frequency([
-      {4, {:call, __MODULE__, :turn, [state.sends, oneof(@models)]}},
+      {4, {:call, __MODULE__, :turn, [state.sends, oneof(@models), level(state)]}},
       {3, {:call, __MODULE__, :set_model, [oneof(@models)]}},
       {1, {:call, __MODULE__, :reset, []}},
       {1, {:call, __MODULE__, :detach, []}},
@@ -77,14 +82,18 @@ defmodule HalC2.AcpModelSwitchPropTest do
     ])
   end
 
-  def precondition(state, {:call, _, :turn, [n, _]}), do: n == state.sends
+  # A level picked, or none (`nil`), which takes an earlier turn's pick off.
+  defp level(%{switchable: true}), do: oneof([nil, "low", "max"])
+  defp level(_state), do: nil
+
+  def precondition(state, {:call, _, :turn, [n, _, _]}), do: n == state.sends
   # An agent that cannot switch refuses every change up front (`refused?/2`).
   def precondition(state, {:call, _, :broken_turn, [n]}),
     do: state.switchable and n == state.sends
 
   def precondition(_state, _call), do: true
 
-  def next_state(state, _result, {:call, _, :turn, [_, model]}) do
+  def next_state(state, _result, {:call, _, :turn, [_, model, _]}) do
     state = %{state | sends: state.sends + 1}
     # A message's model is its run's; the thread keeps its own.
     if refused?(state, model),
@@ -105,13 +114,18 @@ defmodule HalC2.AcpModelSwitchPropTest do
 
   def next_state(state, _result, _call), do: state
 
-  def postcondition(state, {:call, _, :turn, [_, model]}, result) do
+  def postcondition(state, {:call, _, :turn, [_, model, level]}, result) do
     handed = if state.lost, do: " with #{state.turns} earlier turns", else: ""
 
     cond do
-      refused?(state, model) -> result == {:error, @refused}
-      state.switchable -> result == {"completed", "model: " <> model <> handed}
-      true -> handed?(result, handed)
+      refused?(state, model) ->
+        result == {:error, @refused}
+
+      state.switchable ->
+        result == {"completed", "model: #{model} at #{level || @levels[model]}" <> handed}
+
+      true ->
+        handed?(result, handed)
     end
   end
 
@@ -186,15 +200,16 @@ defmodule HalC2.AcpModelSwitchPropTest do
     {reply, thread_model()}
   end
 
-  def turn(n, model) do
+  def turn(n, model, level) do
     id = "m#{n}"
+    options = if level, do: [%{"id" => "reasoningEffort", "value" => level}], else: []
 
     case Orchestration.dispatch(%{
            "type" => "message.dispatch",
            "threadId" => @tid,
            "messageId" => id,
            "text" => "which model",
-           "modelSelection" => %{"instanceId" => "grok", "model" => model}
+           "modelSelection" => %{"instanceId" => "grok", "model" => model, "options" => options}
          }) do
       {:ok, _} -> await_turn(id)
       {:error, _} = refused -> refused
@@ -259,7 +274,11 @@ defmodule HalC2.AcpModelSwitchPropTest do
     File.mkdir_p!(work)
     {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
 
-    control = if switchable, do: %{"refuseModels" => [@broken]}, else: %{"models" => []}
+    control =
+      if switchable,
+        do: %{"refuseModels" => [@broken], "reasoning" => @levels},
+        else: %{"models" => []}
+
     control = Map.put(control, "loseSessions", true)
     File.write!(Path.join(home, "control.json"), JSON.encode!(%{"grok" => control}))
 

@@ -4,7 +4,7 @@
 # creates the file NAME ("edit NAME" reports a change to it; "run command", "indent", "fill", "fail" and "say" are below;
 # steering with "say ..." ends a waiting turn with that answer). "where are we" says which native thread
 # the turn ran on and whether handed-off history or merged work came with the message; "exit before
-# starting" makes the process exit on turn/start. With FAKE_CODEX_LOG set, every request the MC sends
+# starting" makes the process exit on turn/start, and "refuse to start" refuses it. With FAKE_CODEX_LOG set, every request the MC sends
 # is appended to that file as one JSON line, and every answer to our own requests as
 # {"method": "response", "params": {"id": ..., "result": ...}}; while the file FAKE_CODEX_REJECT_STEER
 # names exists, turn/steer is refused, and while FAKE_CODEX_HOLD_STEER's exists it waits. "stream ..." turns pace themselves by gate files
@@ -356,7 +356,9 @@ for line in sys.stdin:
                 send({"id": mid, "error": {"code": -32600, "message": f"no rollout found for thread id {params['threadId']}"}})
                 continue
             thread_id = params["threadId"]
-        send({"id": mid, "result": {"thread": {"id": thread_id}}})
+        # FAKE_CODEX_THREAD_MODEL: the model the opened thread says it runs on.
+        opened = {"model": os.environ["FAKE_CODEX_THREAD_MODEL"]} if os.environ.get("FAKE_CODEX_THREAD_MODEL") else {}
+        send({"id": mid, "result": {"thread": {"id": thread_id}, **opened}})
     elif method == "turn/start":
         # FAKE_CODEX_INPUT_LOG collects every turn's input, one JSON line each.
         if os.environ.get("FAKE_CODEX_INPUT_LOG"):
@@ -375,6 +377,9 @@ for line in sys.stdin:
         rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}})
         if "exit before starting" in text:
             sys.exit(1)
+        if "refuse to start" in text:
+            send({"id": mid, "error": {"code": -32600, "message": "turn refused"}})
+            continue
         # With FAKE_CODEX_HOLD_TURN_START set, the turn is not started (and its
         # result not sent) until the test creates the gate file "turn-start".
         if os.environ.get("FAKE_CODEX_HOLD_TURN_START"):

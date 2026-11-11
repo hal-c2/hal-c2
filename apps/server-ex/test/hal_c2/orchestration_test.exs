@@ -5215,6 +5215,27 @@ defmodule HalC2.OrchestrationTest do
       assert run_id == run["id"]
     end
 
+    # The model a native thread opened on belongs to the turn that opened it: a turn
+    # Codex refused leaves none for the next turn on the same thread to record.
+    test "a Codex turn after a refused one records no model the refused one opened on" do
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_THREAD_MODEL=gpt-5.4-mini",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("refuse to start")
+      await_statuses(thread_id, ["failed"])
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "hello")
+      state = await_statuses(thread_id, ["failed", "completed"])
+      [_, run] = runs(state)
+      refute Map.has_key?(run, "appliedModel")
+      refute Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "system_notice"))
+    end
+
     test "provider.switch moves the next run to the new provider, with the conversation" do
       thread_id = launch("hello")
       await_statuses(thread_id, ["completed"])

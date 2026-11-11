@@ -383,6 +383,13 @@ Feature: OpenCode
     When the user switches an OpenCode thread to plan mode
     Then the turn runs with OpenCode's plan agent
 
+  # OpenCode keeps the agent and variant a turn set for the session's later turns, so taking
+  # them off the thread has to set them back, or the next turn runs on the old ones.
+  Scenario: An OpenCode agent and variant taken off the thread go back to the session's own
+    Given an OpenCode session that opened on the agent "build" and the "low" variant
+    When a turn runs with the agent "reviewer" and the "high" variant and the next with neither
+    Then the next turn sets the agent back to "build" and the variant back to "low"
+
   Scenario: An OpenCode turn can be steered while it runs
     Given an OpenCode turn is running
     When the user sends a follow-up message

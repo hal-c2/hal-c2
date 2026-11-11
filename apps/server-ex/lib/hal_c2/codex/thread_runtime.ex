@@ -1113,8 +1113,10 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp begin_turn({:leftover, message, state}, _turn), do: {:error, {:leftover, message}, state}
 
+  # A model a turn's native thread opened on is that turn's: one whose turn never
+  # started (`native_turn_started/3`) is not the next turn's on the same thread.
   defp begin_turn(state, turn) do
-    state = goal_thread(state, turn)
+    state = state |> Map.delete(:opened_model) |> goal_thread(turn)
 
     case Goals.command(turn) do
       nil -> begin_native_turn(state, turn)
