@@ -988,23 +988,30 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   }
   const QJsonObject shownSelection = selection(target);
   const QJsonObject modelSelection = modelPicked ? shownSelection : QJsonObject();
-  // The modes are set as the user picks them (setThreadMode). The send sets
-  // one again wherever the composer shows another than the thread's row has,
-  // even while the user's own change is on its way: a connection lost under
-  // that change must not send the message in the old mode, and setting the
-  // mode a thread already has moves nothing. It also sets a saved mode the
-  // provider no longer offers, and the mode a plan's follow-up chooses. Like
-  // the user's, these name no revision, and are this client's own changes,
-  // which the model pick stands past.
+  // The modes are set as the user picks them (setThreadMode), and a change on
+  // its way carries its mode. The send sets one where the composer shows
+  // another than the thread will have: a saved mode the provider no longer
+  // offers, or the mode a plan's follow-up chooses. The phone's outbox also
+  // sets one still on its way: the connection may be lost under that change,
+  // and the message, sent again later, must not run in the old mode (setting
+  // the mode a thread has moves nothing). Like the user's, these name no
+  // revision, and are this client's own changes, which the model pick stands
+  // past.
   const composer::Instance* shownInstance = instanceOf(shownSelection);
+  const auto held = [&](ModeKind kind, const QString& rowMode) {
+    const auto setting = settingModes(kind).constFind(target);
+    return setting != settingModes(kind).cend() && !m_waitsOffline ? setting->mode : rowMode;
+  };
   QString runtimeMode;
+  const QString heldRuntime = held(ModeKind::Runtime, thread->runtimeMode);
   const QString pickedRuntime = m_drafts.value(target).runtimeMode;
-  if (const QString wanted = pickedRuntime.isEmpty() ? thread->runtimeMode : pickedRuntime; !wanted.isEmpty()) {
-    if (const QString shown = composer::shownRuntimeMode(shownInstance, wanted); shown != thread->runtimeMode) runtimeMode = shown;
+  if (const QString wanted = pickedRuntime.isEmpty() ? heldRuntime : pickedRuntime; !wanted.isEmpty()) {
+    if (const QString shown = composer::shownRuntimeMode(shownInstance, wanted); shown != heldRuntime) runtimeMode = shown;
   }
+  const QString heldInteraction = held(ModeKind::Interaction, thread->interactionMode);
   QString interactionMode = planFollowUp ? (implement ? QStringLiteral("default") : QStringLiteral("plan")) : interactionModeOf(target);
   // A thread the MC has no mode for keeps the MC's default.
-  if (interactionMode == thread->interactionMode || (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default"))) {
+  if (interactionMode == heldInteraction || (heldInteraction.isEmpty() && interactionMode == QLatin1String("default"))) {
     interactionMode.clear();
   }
   // The pick names the revision it was made against; dispatchAll moves it on

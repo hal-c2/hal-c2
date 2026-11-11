@@ -143,6 +143,8 @@ void seed(World& world) {
             {{S("id"), S("reply:run-1")}, {S("type"), S("assistant_message")}, {S("runId"), S("run-1")}, {S("ordinal"), 2},
              {S("status"), S("completed")}, {S("text"), kLastSeen}, {S("updatedAt"), kNow}});
   offerClaude(world);
+  // Every thread the MC holds names the model it runs on.
+  updateRow(world.mc, world.thread, {{S("modelSelection"), QJsonObject{{S("instanceId"), S("claudeAgent")}, {S("model"), S("claude-sonnet")}}}});
   // The screen the scenario is on stays.
   const QString shown = shownThread(world);
   // The thread list is under the thread screen.

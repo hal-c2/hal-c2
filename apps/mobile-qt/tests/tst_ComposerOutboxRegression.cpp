@@ -31,10 +31,13 @@ struct Phone {
                                                          {QStringLiteral("createdAt"), QStringLiteral("2026-11-01T09:00:00Z")},
                                                          {QStringLiteral("updatedAt"), QStringLiteral("2026-11-01T09:00:00Z")},
                                                          {QStringLiteral("scripts"), QJsonArray()}});
+    // Every thread the MC holds names the model it runs on.
     for (const QString& id : {QStringLiteral("t1"), QStringLiteral("t2")}) {
       mc.threads.insert(id, QJsonObject{{QStringLiteral("id"), id},
                                         {QStringLiteral("projectId"), QStringLiteral("p1")},
                                         {QStringLiteral("title"), id},
+                                        {QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")},
+                                                                                       {QStringLiteral("model"), QStringLiteral("claude-sonnet")}}},
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-11-07T09:00:00Z")},
                                         {QStringLiteral("updatedAt"), QStringLiteral("2026-11-07T09:00:00Z")}});
     }
@@ -188,8 +191,8 @@ private slots:
   }
 
   // Review of #1159: a send whose answer the connection took goes again as
-  // the message alone. Its mode change went with the first attempt, and sent
-  // again under a fresh command id it could undo one made since elsewhere.
+  // the message alone. Its mode change went before it, and sent again under
+  // a fresh command id it could undo one made since elsewhere.
   void aResentMessageLeavesItsModeChangeBehind() {
     Phone phone;
     phone.start();
@@ -201,7 +204,11 @@ private slots:
     phone.send(QStringLiteral("plan the fix"));
     QTRY_COMPARE(phone.sent(), (QStringList{QStringLiteral("plan the fix"), QStringLiteral("plan the fix")}));
     QTRY_VERIFY(phone.outbox().isEmpty());
-    QCOMPARE(phone.sent(QStringLiteral("thread.interaction-mode.set")).size(), 1);
+    // The mode change went when the user picked it (and again with the
+    // message while the MC had not shown it); none goes with the resend.
+    const QStringList types = phone.types();
+    QCOMPARE(types.mid(types.indexOf(QStringLiteral("message.dispatch"))),
+             (QStringList{QStringLiteral("message.dispatch"), QStringLiteral("message.dispatch")}));
   }
 
   // Review of #1159: a mode change whose answer the connection took is not

@@ -521,6 +521,17 @@ private slots:
       rc::state::runAll(commands, model, sut);
       // Every message the MC was sent twice was sent again after a drop.
       const QStringList ids = sut.dispatched();
+      // Names each send the MC never kept, for a failure that has not
+      // replayed from its seed (hal-c2/hal-c2#1547).
+      for (const QJsonObject& command : sut.mc.commands) {
+        if (command.value(QLatin1String("type")) != QLatin1String("message.dispatch")) continue;
+        const QString thread = command.value(QLatin1String("threadId")).toString();
+        const QString id = command.value(QLatin1String("messageId")).toString();
+        const auto& kept = sut.messages[thread];
+        if (std::none_of(kept.cbegin(), kept.cend(), [&](const QJsonObject& message) { return message.value(QLatin1String("id")) == id; })) {
+          RC_LOG() << "never kept: " << thread.toStdString() << " " << command.value(QLatin1String("text")).toString().toStdString() << " " << id.toStdString() << std::endl;
+        }
+      }
       RC_ASSERT(QSet<QString>(ids.cbegin(), ids.cend()).size() == qsizetype(sut.sent(kThreads[0]).size() + sut.sent(kThreads[1]).size()));
     }));
   }
