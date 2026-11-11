@@ -163,7 +163,8 @@ defmodule HalC2.Steps.Composer.ModelAndMode do
     context
   end
 
-  step ~r/^(?:its turn|the queued message) runs on "(?<model>[^"]+)"$/, %{args: [model]} = context do
+  step ~r/^(?:its turn|the queued message) runs on "(?<model>[^"]+)"$/,
+       %{args: [model]} = context do
     started = context[:turns_before] || 0
 
     World.await_thread(context, context.current, fn state ->
