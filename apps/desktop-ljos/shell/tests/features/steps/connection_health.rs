@@ -1478,6 +1478,9 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "(?:the connection|it) is blocked(?: before opening a socket)?",
         |world, _, _| {
+            if super::connection_catalog::saved_environment_blocked(world)? {
+                return Ok(());
+            }
             wait_for_phase(world, &["blocked"])?;
             world.pump()?;
             let before = watched(world).connections_before;

@@ -45,6 +45,7 @@ pub mod pull_request_thread;
 pub mod quit;
 pub mod rewind;
 pub mod sandbox_settings;
+pub mod saved_environments;
 pub mod scheduled_tasks;
 pub mod server_updates;
 pub mod settings;
@@ -108,6 +109,11 @@ pub fn registrations() -> Vec<Registration> {
             "connections",
             &["connections"],
             Scope::Window,
+        ),
+        Registration::new::<saved_environments::SavedEnvironments>(
+            "savedEnvironments",
+            &["savedEnvironments"],
+            Scope::Shared,
         ),
         Registration::new::<desktop_update::DesktopUpdate>(
             "desktopUpdate",

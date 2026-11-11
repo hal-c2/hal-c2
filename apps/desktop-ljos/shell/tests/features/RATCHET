@@ -204,9 +204,11 @@ composer/model-and-mode.feature: A fallback keeps the effort of a model saved un
 composer/model-and-mode.feature: A favourite older model is listed outside the folded section
 composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+a, the permissions]
 composer/model-and-mode.feature: A key opens the model control at its part [mod+shift+e, the current effort]
+composer/model-and-mode.feature: A machine is named the way its owner would know it [another one, , Rack, Rack]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [another one, server, Rack, server]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, , , This device]
 composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, laptop, Work Mac, laptop]
+composer/model-and-mode.feature: A machine is named the way its owner would know it [the one being used, local, Work Mac, Work Mac]
 composer/model-and-mode.feature: A model that cannot be used says why and cannot be chosen
 composer/model-and-mode.feature: A model the provider has just added is marked as new
 composer/model-and-mode.feature: A new thread can run on a machine that has other projects
@@ -432,6 +434,7 @@ connections/cluster.feature: The desktop says when only this machine can open an
 connections/cluster.feature: The desktop's settings show this machine's cluster
 connections/connection-health.feature: A blocked environment is tried again when the app returns to the foreground
 connections/connection-health.feature: A brief reconnect is not announced in the thread
+connections/connection-health.feature: A change to a repository's branches drops every kept branch list for it
 connections/connection-health.feature: A client opened without a network waits for it
 connections/connection-health.feature: A cluster connection resumes each stream from where it stopped
 connections/connection-health.feature: A computer restarting for an update shows the update, not a reconnect warning
@@ -451,12 +454,15 @@ connections/connection-health.feature: A failed renewal affects only its request
 connections/connection-health.feature: A failed shell subscription is not shown as reconnecting
 connections/connection-health.feature: A kept copy the client cannot read is dropped and never blocks live data
 connections/connection-health.feature: A network that comes back is tried at once
+connections/connection-health.feature: A new task offline still offers the models the environment last reported
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [a newer protocol than the client, update HAL-C2 on this device]
 connections/connection-health.feature: A protocol mismatch blocks the connection with advice [an older protocol than the client, update HAL-C2 on that environment]
 connections/connection-health.feature: A reconnect that fails says why
 connections/connection-health.feature: A reconnect within a second and a half is not shown
 connections/connection-health.feature: A refused credential waits for the user
 connections/connection-health.feature: A request the MC has not answered within 15 seconds is listed in a warning
+connections/connection-health.feature: A saved environment whose record or credential has gone is blocked, not retried [its connection record is gone, Connection profile studio is unavailable.]
+connections/connection-health.feature: A saved environment whose record or credential has gone is blocked, not retried [its credential is gone, Connection credential studio is unavailable.]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.3.2, 1.4.0, does not warn]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.3.2, warns of a version mismatch]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.4.0-nightly.20260901, does not warn]
@@ -482,6 +488,8 @@ connections/connection-health.feature: Disconnecting from a thread's notice hide
 connections/connection-health.feature: Foregrounding probes a healthy connection instead of replacing it
 connections/connection-health.feature: Foregrounding wakes a waiting retry
 connections/connection-health.feature: One connection serves every MC of a cluster
+connections/connection-health.feature: Only the whole branch list of a repository is kept
+connections/connection-health.feature: Pairing fails when the system's secure storage refuses to keep the credential
 connections/connection-health.feature: Pull request lookups and live subscriptions are never reported as slow
 connections/connection-health.feature: Reconnecting does not repeat the user's actions
 connections/connection-health.feature: Reconnecting to a computer on another version is not taken for an update

@@ -170,6 +170,9 @@ pub struct World {
     /// restarts.
     home: tempfile::TempDir,
     shell: Option<Shell>,
+    /// The keyring saved environments keep their credentials in, across
+    /// restarts (desktop-qt's World::secrets): never the system's.
+    pub secrets: Rc<hal_c2_shell::saved_environments::MemorySecretStore>,
 }
 
 impl World {
@@ -202,6 +205,7 @@ impl World {
             recorded: Rc::default(),
             home,
             shell: None,
+            secrets: Rc::default(),
         };
         world.start();
         world
@@ -248,6 +252,10 @@ impl World {
             state_dir: Some(home.join("state")),
             ..Launch::default()
         };
+        hal_c2_shell::controllers::saved_environments::set_secret_store(
+            &engine,
+            self.secrets.clone(),
+        );
         hal_c2_shell::start(&engine, &launch, connection.clone() as Rc<dyn Mc>);
         hal_c2_shell::controllers::threads::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::controllers::sidebar::set_time_zone(

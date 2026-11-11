@@ -36,6 +36,7 @@ use crate::commands::Commands;
 use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::drafts;
 use crate::controllers::navigation::{self, Route};
+use crate::controllers::saved_environments::SavedEnvironments;
 use crate::controllers::settings::Settings;
 use crate::controllers::terminals::Terminals;
 use crate::controllers::thread_menu::ThreadMenu;
@@ -175,6 +176,39 @@ struct Shared {
     place_changed: RefCell<Vec<Hook>>,
     git_changed: RefCell<Vec<Hook>>,
     config_changed: RefCell<Vec<Hook>>,
+    /// The providers each environment last reported, kept in the cache
+    /// between runs, until it reports them again.
+    kept_providers: RefCell<HashMap<String, Vec<Json>>>,
+    /// The cache's answers, run by [`deliver`] on this window's engine.
+    answered: Rc<RefCell<Vec<Box<dyn FnOnce(&Engine)>>>>,
+}
+
+/// Runs what the cache answered the workspace (`threads::deliver`).
+pub fn deliver(engine: &Engine) {
+    let answered = std::mem::take(&mut *shared(engine).answered.borrow_mut());
+    for answer in answered {
+        answer(engine);
+    }
+}
+
+/// Asks the cache, `then` running with the answer in [`deliver`].
+fn ask_cache<T: 'static>(
+    engine: &Engine,
+    ask: impl FnOnce(&crate::cache::LocalCache, Box<dyn FnOnce(T)>),
+    then: impl FnOnce(&Engine, T) + 'static,
+) {
+    let Some(cache) = store::cache(engine) else {
+        return;
+    };
+    let answered = shared(engine).answered.clone();
+    ask(
+        &cache,
+        Box::new(move |value| {
+            answered
+                .borrow_mut()
+                .push(Box::new(move |engine| then(engine, value)));
+        }),
+    );
 }
 
 fn shared(engine: &Engine) -> Rc<Shared> {
@@ -233,12 +267,51 @@ pub fn environment_config(engine: &Engine) -> Map<String, Json> {
         .as_ref()
         .map(|p| p.environment_id.clone())
         .filter(|env| Some(env) != own.as_ref());
-    match elsewhere {
+    let (environment_id, mut config) = match elsewhere {
         Some(env) if env == *shared.config_environment.borrow() => {
-            shared.config_elsewhere.borrow().clone()
+            let config = shared.config_elsewhere.borrow().clone();
+            (env, config)
         }
-        Some(_) => Map::new(),
-        None => Settings::of(engine).config(),
+        Some(env) => (env, Map::new()),
+        None => (own.unwrap_or_default(), Settings::of(engine).config()),
+    };
+    // Until it reports them, the providers it reported last, so a new task
+    // can still offer their models. Live always wins, even an empty list.
+    if !config.contains_key("providers")
+        && store::with(engine, |s| s.serves_environment(&environment_id))
+        && let Some(kept) = shared.kept_providers.borrow().get(&environment_id)
+    {
+        config.insert("providers".into(), Json::Array(kept.clone()));
+    }
+    config
+}
+
+/// Keeps `providers` as what `environment_id` last reported.
+fn keep_providers(engine: &Engine, environment_id: &str, providers: Option<&Json>) {
+    let Some(Json::Array(list)) = providers else {
+        return;
+    };
+    if environment_id.is_empty() {
+        return;
+    }
+    let shared = shared(engine);
+    if shared.kept_providers.borrow().get(environment_id) == Some(list) {
+        return;
+    }
+    shared
+        .kept_providers
+        .borrow_mut()
+        .insert(environment_id.to_owned(), list.clone());
+    if let Some(cache) = store::cache(engine) {
+        cache.store_providers(environment_id, list.clone());
+    }
+}
+
+/// Every branch list kept of `environment_id` lacks a change to its
+/// repository (a new branch, a checkout on another one).
+fn forget_refs(engine: &Engine, environment_id: &str) {
+    if let Some(cache) = store::cache(engine) {
+        cache.forget_refs(environment_id);
     }
 }
 
@@ -698,13 +771,23 @@ fn local_branch_of(remote_ref: &str) -> String {
     }
 }
 
-/// BranchToolbar.logic: the machine's own name, unless it is a generic one.
-fn primary_label(label: &str) -> String {
-    let lowered = label.trim().to_lowercase();
-    if lowered.is_empty() || lowered == "local" || lowered == "local environment" {
+/// WorkspaceController::machineLabel: a machine's own name; for the one
+/// being used, unless it is a generic one ("local"). Then the name the user
+/// saved it under, then "This device" for the one being used and its id for
+/// another.
+fn machine_label(primary: bool, own: &str, saved: &str, id: &str) -> String {
+    let generic = |label: &str| {
+        let lowered = label.trim().to_lowercase();
+        lowered.is_empty() || primary && (lowered == "local" || lowered == "local environment")
+    };
+    if !generic(own) {
+        own.trim().to_owned()
+    } else if !generic(saved) {
+        saved.trim().to_owned()
+    } else if primary {
         "This device".into()
     } else {
-        label.trim().to_owned()
+        id.to_owned()
     }
 }
 
@@ -766,6 +849,9 @@ pub struct Workspace {
     refs_next_cursor: Option<i64>,
     refs_loading_more: bool,
     refs_loading: bool,
+    /// The list shown is the MC's answer, or the whole one the cache kept.
+    refs_live: bool,
+    refs_kept: bool,
     refs_generation: Rc<Cell<u64>>,
 
     /// In memory as well as on the device, by project ("env:projectId").
@@ -809,6 +895,8 @@ impl Controller for Workspace {
             refs_next_cursor: None,
             refs_loading_more: false,
             refs_loading: false,
+            refs_live: false,
+            refs_kept: false,
             refs_generation: Rc::new(Cell::new(0)),
             last_script: HashMap::new(),
             rename_request_id: 0,
@@ -838,9 +926,34 @@ impl Controller for Workspace {
         let settings = Settings::of(engine);
         let publish = later(&self.me, Workspace::publish);
         settings.on_config_changed(move |engine| {
+            if let Some(mc) = controller::mc(engine) {
+                let config = Settings::of(engine).config();
+                keep_providers(engine, &mc.environment(), config.get("providers"));
+            }
             publish(engine);
             emit(engine, &shared(engine).config_changed);
         });
+        ask_cache(
+            engine,
+            |cache, reply| cache.load_providers(reply),
+            |engine, kept: HashMap<String, Vec<Json>>| {
+                let shared = shared(engine);
+                let mut any = false;
+                {
+                    // What arrived live meanwhile is newer.
+                    let mut held = shared.kept_providers.borrow_mut();
+                    for (environment, list) in kept {
+                        held.entry(environment).or_insert_with(|| {
+                            any = true;
+                            list
+                        });
+                    }
+                }
+                if any {
+                    emit(engine, &shared.config_changed);
+                }
+            },
+        );
         settings.on_device_changed(later(&self.me, Workspace::publish));
         // The environment's default actions reach every project without its
         // own.
@@ -1187,6 +1300,12 @@ impl Workspace {
             _ => return,
         }
         let reference = text(&next.local, "refName");
+        // A checkout on another branch changes which branch the kept lists
+        // mark current, wherever the switch came from.
+        if tag == "localUpdated" && !previous_ref.is_empty() && previous_ref != reference {
+            let environment = place(engine).map(|p| p.environment_id).unwrap_or_default();
+            forget_refs(engine, &environment);
+        }
         let error = git_error(engine);
         self.set_git(engine, Some(next), error);
         if tag == "localUpdated" {
@@ -1247,6 +1366,9 @@ impl Workspace {
                 _ => return,
             }
         }
+        let environment = shared.config_environment.borrow().clone();
+        let providers = shared.config_elsewhere.borrow().get("providers").cloned();
+        keep_providers(engine, &environment, providers.as_ref());
         emit(engine, &shared.config_changed);
         // Its settings resolve the project's actions.
         self.refresh(engine);
@@ -1272,6 +1394,44 @@ impl Workspace {
         self.refs_generation.set(generation);
         self.refs_cwd = here.cwd().to_owned();
         self.refs_loading = self.refs.is_empty();
+        self.refs_live = false;
+        self.refs_kept = false;
+        let environment_id = here.environment_id.clone();
+        let cwd = here.cwd().to_owned();
+        let whole = ref_name(&self.query).is_empty();
+        // The whole list kept from before, until the MC answers: never in
+        // place of a search's matches.
+        if whole {
+            let me = self.me.clone();
+            let current = self.refs_generation.clone();
+            ask_cache(
+                engine,
+                |cache, reply| cache.load_refs(&environment_id, &cwd, reply),
+                move |engine, list: Option<Map<String, Json>>| {
+                    if current.get() != generation {
+                        return;
+                    }
+                    me.run(engine, |c, engine| {
+                        let Some(list) = list.filter(|_| !c.refs_live) else {
+                            return;
+                        };
+                        c.refs_kept = true;
+                        c.refs_loading = false;
+                        c.refs = list
+                            .get("refs")
+                            .and_then(Json::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        c.refs_total = list
+                            .get("totalCount")
+                            .and_then(Json::as_i64)
+                            .unwrap_or(c.refs.len() as i64);
+                        c.refs_next_cursor = None;
+                        c.publish(engine);
+                    });
+                },
+            );
+        }
         let me = self.me.clone();
         let current = self.refs_generation.clone();
         self.mc.call(
@@ -1283,9 +1443,17 @@ impl Workspace {
                     return;
                 }
                 me.run(engine, |c, engine| {
+                    c.refs_loading = false;
+                    c.refs_loading_more = false;
+                    // Unanswered, the kept list still stands, or may yet arrive.
+                    if result.is_err() && c.refs_kept {
+                        c.publish(engine);
+                        return;
+                    }
+                    c.refs_live = result.is_ok();
+                    let answered = result.is_ok();
                     let list = result.ok().and_then(|r| r.as_object().cloned());
                     let list = list.unwrap_or_default();
-                    c.refs_loading = false;
                     c.refs = list
                         .get("refs")
                         .and_then(Json::as_array)
@@ -1296,12 +1464,22 @@ impl Workspace {
                         .and_then(Json::as_i64)
                         .unwrap_or(c.refs.len() as i64);
                     c.refs_next_cursor = list.get("nextCursor").and_then(Json::as_i64);
-                    c.refs_loading_more = false;
+                    // Only the whole list is kept, never a first page passing for it.
+                    if answered && whole && c.refs_next_cursor.is_none() {
+                        c.keep_refs(engine, &environment_id, &cwd);
+                    }
                     c.publish(engine);
                 });
             }),
         );
         self.publish(engine);
+    }
+
+    fn keep_refs(&self, engine: &Engine, environment_id: &str, cwd: &str) {
+        if let Some(cache) = store::cache(engine) {
+            let list = json!({ "refs": self.refs, "totalCount": self.refs_total });
+            cache.store_refs(environment_id, cwd, object(list));
+        }
     }
 
     /// The next page of the ref list, after the ones shown.
@@ -1319,6 +1497,9 @@ impl Workspace {
         self.refs_loading_more = true;
         let me = self.me.clone();
         let current = self.refs_generation.clone();
+        let environment_id = here.environment_id.clone();
+        let cwd = here.cwd().to_owned();
+        let whole = ref_name(&self.query).is_empty();
         self.mc.call(
             &here.environment_id,
             "vcs.listRefs",
@@ -1329,6 +1510,7 @@ impl Workspace {
                     return;
                 }
                 me.run(engine, |c, engine| {
+                    let answered = result.is_ok();
                     let list = result.ok().and_then(|r| r.as_object().cloned());
                     let list = list.unwrap_or_default();
                     c.refs_loading_more = false;
@@ -1340,6 +1522,10 @@ impl Workspace {
                         .and_then(Json::as_i64)
                         .unwrap_or(c.refs_total);
                     c.refs_next_cursor = list.get("nextCursor").and_then(Json::as_i64);
+                    // Paged to its end, the list is whole.
+                    if answered && whole && c.refs_next_cursor.is_none() {
+                        c.keep_refs(engine, &environment_id, &cwd);
+                    }
                     c.publish(engine);
                 });
             }),
@@ -1583,13 +1769,11 @@ impl Workspace {
         });
         for (environment_id, label, mut projects) in environments {
             let primary = environment_id == own;
-            let label = if primary {
-                primary_label(&label)
-            } else if label.is_empty() {
-                environment_id.clone()
-            } else {
-                label
-            };
+            let saved = crate::controller::with::<SavedEnvironments, _>(engine, |c, _| {
+                c.label(&environment_id)
+            })
+            .unwrap_or_default();
+            let label = machine_label(primary, &label, &saved, &environment_id);
             projects.sort_by_key(|row| text(row, "title"));
             let checkout = projects.iter().find(|row| {
                 (environment_id == here.environment_id && text(row, "id") == here.project_id)
@@ -2217,6 +2401,7 @@ impl Workspace {
         let previous = self.optimistic_branch.replace(local.clone());
         self.switching = true;
         self.publish(engine);
+        let environment_id = here.environment_id.clone();
         let thread_key = here.thread_key();
         let me = self.me.clone();
         self.mc.call(
@@ -2226,6 +2411,10 @@ impl Workspace {
             Box::new(move |engine, result| {
                 me.run(engine, |c, engine| {
                     c.switching = false;
+                    // The lists kept mark another branch current now.
+                    if result.is_ok() {
+                        forget_refs(engine, &environment_id);
+                    }
                     let now = place(engine).filter(|p| p.thread_key() == thread_key);
                     match result {
                         Err(error) => {
@@ -2266,6 +2455,7 @@ impl Workspace {
         let previous = self.optimistic_branch.replace(name.clone());
         self.switching = true;
         self.publish(engine);
+        let environment_id = here.environment_id.clone();
         let thread_key = here.thread_key();
         let me = self.me.clone();
         self.mc.call(
@@ -2275,6 +2465,11 @@ impl Workspace {
             Box::new(move |engine, result| {
                 me.run(engine, |c, engine| {
                     c.switching = false;
+                    // Branches are the repository's: every list kept of it, a
+                    // worktree's too, lacks the new one.
+                    if result.is_ok() {
+                        forget_refs(engine, &environment_id);
+                    }
                     let now = place(engine).filter(|p| p.thread_key() == thread_key);
                     match result {
                         Err(error) => {
@@ -2421,9 +2616,19 @@ mod tests {
 
     #[test]
     fn a_generic_machine_name_reads_this_device() {
-        assert_eq!(primary_label(""), "This device");
-        assert_eq!(primary_label(" Local Environment "), "This device");
-        assert_eq!(primary_label(" studio "), "studio");
+        assert_eq!(machine_label(true, "", "", "env"), "This device");
+        assert_eq!(
+            machine_label(true, " Local Environment ", "", "env"),
+            "This device"
+        );
+        assert_eq!(machine_label(true, " studio ", "Work Mac", "env"), "studio");
+        assert_eq!(
+            machine_label(true, "local", " Work Mac ", "env"),
+            "Work Mac"
+        );
+        assert_eq!(machine_label(false, "", "Rack", "env"), "Rack");
+        assert_eq!(machine_label(false, "local", "Rack", "env"), "local");
+        assert_eq!(machine_label(false, "", "", "env"), "env");
     }
 
     #[test]
