@@ -15,7 +15,10 @@
 //! What it publishes (`panel`): null off a thread, else
 //! `{threadKey, isOpen, transitionMs, activeId, floatingDevice,
 //! tabs: [{id, kind, title, dock}], width, stage, shownTabs, detailsOpen,
-//! details, canAdd, addReasons}`.
+//! details, canAdd, addReasons, spaceProjectId, onWorktree}`: spaceProjectId
+//! is the project whose Space files the tab offers as pages (this MC's
+//! only), and onWorktree says the thread works in a worktree, whose copy a
+//! page never follows.
 
 #[path = "panel_stage.rs"]
 pub mod panel_stage;
@@ -38,12 +41,14 @@ use crate::controllers::menus::{Answer, Item, Menus};
 use crate::controllers::navigation::{self, Navigation, Route};
 use crate::controllers::palette::Palette;
 use crate::controllers::settings::Settings;
+use crate::controllers::space::Space;
 use crate::controllers::terminals::{self, Terminals};
 use crate::controllers::threads;
 use crate::controllers::toasts::{self, Toasts};
 use crate::device::devices::ThreadDevices;
 use crate::json::{self, Json};
 use crate::keybindings::command_label;
+use crate::mc::Mc;
 use crate::sidebar_model;
 use crate::store;
 use crate::this_machine;
@@ -151,6 +156,22 @@ pub fn file_link(link: &str) -> Option<(String, i32)> {
     let path = POSITIONS.replace(&path, "");
     let path = bridge::percent_decode(&path);
     (!path.is_empty()).then_some((path, line))
+}
+
+/// `path` under `root`, as the project's files name it: a relative path as
+/// it is, an absolute one only inside `root`.
+fn relative_to(path: &str, root: &str) -> String {
+    if !path.starts_with('/') {
+        return path.strip_prefix("./").unwrap_or(path).to_owned();
+    }
+    let root = root.trim_end_matches('/');
+    if root.is_empty() {
+        return String::new();
+    }
+    path.strip_prefix(root)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or("")
+        .to_owned()
 }
 
 /// A review tab's pull request: host, repository and number of
@@ -331,6 +352,14 @@ pub struct RightPanel {
     devices: Option<ObjectId>,
     /// The thread's checkout, for the Files tab.
     files_root: String,
+    mc: Rc<dyn Mc>,
+    /// The shown thread's project.
+    project_id: String,
+    /// Whether the thread works in a worktree rather than the project folder.
+    on_worktree: bool,
+    /// The project whose Space files were last asked for, so a thread's row
+    /// changing does not ask again.
+    listed_files: String,
 }
 
 /// Runs `f` on the panel once it is free.
@@ -567,6 +596,10 @@ impl Controller for RightPanel {
             files,
             devices,
             files_root: String::new(),
+            mc: init.mc.clone(),
+            project_id: String::new(),
+            on_worktree: false,
+            listed_files: String::new(),
         };
         // Its window's: none keeps them for this run only.
         panel.load(controller::state_file(engine, "shell-panel.json"));
@@ -728,6 +761,16 @@ impl Controller for RightPanel {
 }
 
 impl RightPanel {
+    /// The environment of the thread shown, or shown last.
+    pub fn environment_id(&self) -> &str {
+        self.thread.split_once(':').map_or("", |(e, _)| e)
+    }
+
+    /// The project of the thread shown, or shown last.
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
     fn current(&self) -> Panel {
         self.panels.get(&self.thread).cloned().unwrap_or_default()
     }
@@ -986,50 +1029,68 @@ impl RightPanel {
             self.recent.retain(|k| *k != thread_key);
             self.recent.push(thread_key.clone());
             let (environment, rest) = thread_key.split_once(':').unwrap_or(("", &thread_key));
-            let (thread_id, root, folder, configured, mc, project_id) = store::with(engine, |s| {
-                let row = s.thread_row(&thread_key).cloned().unwrap_or_default();
-                let thread_id = text(&row, "id");
-                let thread_id = if thread_id.is_empty() {
-                    rest
-                } else {
-                    thread_id
-                }
-                .to_owned();
-                let project = s
-                    .project_row(environment, text(&row, "projectId"))
-                    .cloned()
-                    .unwrap_or_default();
-                let mut root = text(&row, "worktreePath").to_owned();
-                if root.is_empty() {
-                    root = text(&project, "workspaceRoot").to_owned();
-                }
-                // The project may be a folder inside its repository.
-                let repository = project
-                    .get("repositoryIdentity")
-                    .and_then(|identity| identity.pointer("/rootPath"))
-                    .and_then(Json::as_str)
-                    .unwrap_or("");
-                let folder = repository_folder(repository, text(&project, "workspaceRoot"));
-                // The project's own preview addresses (its scripts'
-                // previewUrl).
-                let configured: Vec<String> = project
-                    .get("scripts")
-                    .and_then(Json::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|script| script.get("previewUrl").and_then(Json::as_str))
-                    .filter(|url| !url.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                (
-                    thread_id,
-                    root,
-                    folder,
-                    configured,
-                    s.mc_serving(environment),
-                    text(&row, "projectId").to_owned(),
-                )
-            });
+            let (thread_id, root, folder, configured, mc, project_id, on_worktree) =
+                store::with(engine, |s| {
+                    let row = s.thread_row(&thread_key).cloned().unwrap_or_default();
+                    let thread_id = text(&row, "id");
+                    let thread_id = if thread_id.is_empty() {
+                        rest
+                    } else {
+                        thread_id
+                    }
+                    .to_owned();
+                    let project = s
+                        .project_row(environment, text(&row, "projectId"))
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut root = text(&row, "worktreePath").to_owned();
+                    // A page follows the project folder's file, never the
+                    // worktree's copy.
+                    let on_worktree = !root.is_empty()
+                        && root.trim_end_matches('/')
+                            != text(&project, "workspaceRoot").trim_end_matches('/');
+                    if root.is_empty() {
+                        root = text(&project, "workspaceRoot").to_owned();
+                    }
+                    // The project may be a folder inside its repository.
+                    let repository = project
+                        .get("repositoryIdentity")
+                        .and_then(|identity| identity.pointer("/rootPath"))
+                        .and_then(Json::as_str)
+                        .unwrap_or("");
+                    let folder = repository_folder(repository, text(&project, "workspaceRoot"));
+                    // The project's own preview addresses (its scripts'
+                    // previewUrl).
+                    let configured: Vec<String> = project
+                        .get("scripts")
+                        .and_then(Json::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|script| script.get("previewUrl").and_then(Json::as_str))
+                        .filter(|url| !url.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                    (
+                        thread_id,
+                        root,
+                        folder,
+                        configured,
+                        s.mc_serving(environment),
+                        text(&row, "projectId").to_owned(),
+                        on_worktree,
+                    )
+                });
+            self.on_worktree = on_worktree;
+            self.project_id = project_id.clone();
+            // Which of the project's files are edited as pages, for the tab's
+            // menus and the links.
+            let listed = format!("{environment}:{project_id}@{}", self.mc.environment());
+            if std::mem::replace(&mut self.listed_files, listed) != self.listed_files {
+                let (environment, project) = (environment.to_owned(), project_id.clone());
+                Bridge::of(engine).defer(engine, move |e| {
+                    controller::with::<Space, _>(e, |s, e| s.list_files(e, &environment, &project));
+                });
+            }
             let timeline = threads::timeline_of(engine, &thread_key);
             if let Some(diff) = self.diff {
                 ThreadDiff::update(engine, diff, |t| t.set_folder(&folder));
@@ -1729,9 +1790,30 @@ impl RightPanel {
                 "copy",
             ),
         ];
+        let environment = self.thread.split_once(':').map_or("", |(e, _)| e);
+        // A file of the project that is Space content is edited as a page
+        // too.
+        let relative = file
+            .as_ref()
+            .map(|(path, _)| relative_to(path, &self.files_root))
+            .unwrap_or_default();
+        if self.on_thread
+            && !relative.is_empty()
+            && controller::with::<Space, _>(engine, |s, _| {
+                s.is_space_file(environment, &self.project_id, &relative)
+            })
+            .unwrap_or(false)
+        {
+            let label = if self.on_worktree {
+                "Edit the project's copy as a page"
+            } else {
+                "Edit as a page"
+            };
+            items.insert(1, item("edit-as-page", label, "book"));
+        }
+        let (space_environment, project) = (environment.to_owned(), self.project_id.clone());
         // A link naming a pull request links it to the thread, where its
         // environment links them.
-        let environment = self.thread.split_once(':').map_or("", |(e, _)| e);
         if self.on_thread
             && pull_requests::parse_url(&url).is_some()
             && store::with(engine, |s| {
@@ -1752,6 +1834,15 @@ impl RightPanel {
             m.open(e, x, y, items, move |e, id| {
                 let bridge = Bridge::of(e);
                 match (id, &file) {
+                    ("edit-as-page", _) => {
+                        let (environment, project, relative) =
+                            (space_environment.clone(), project.clone(), relative.clone());
+                        Bridge::of(e).defer(e, move |e| {
+                            controller::with::<Space, _>(e, |s, e| {
+                                s.open_file(e, &environment, &project, &relative)
+                            });
+                        });
+                    }
                     ("open", None) => {
                         let url = url.clone();
                         later(e, &me, move |p, e| p.open_address(e, &url));
@@ -2009,6 +2100,8 @@ impl RightPanel {
                 "shownTabs": self.shown_tabs(),
                 "detailsOpen": state.details,
                 "details": details,
+                "spaceProjectId": if self.environment_id() == self.mc.environment() { self.project_id.as_str() } else { "" },
+                "onWorktree": self.on_worktree,
                 "canAdd": {
                     "diff": true,
                     "files": files,

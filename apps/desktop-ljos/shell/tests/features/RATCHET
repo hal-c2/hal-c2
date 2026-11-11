@@ -2883,7 +2883,10 @@ space/presence.feature: Opening a deck leaves the page
 space/presence.feature: Opening the images leaves the page
 space/presence.feature: The user on several devices counts once
 space/presence.feature: Who else is on the page comes back when the MC can say again
+space/project-files.feature: A client asks for a project's files once while its thread runs
+space/project-files.feature: A file only in a thread's worktree has no page to edit
 space/project-files.feature: A file opened as a page opens the folders it is in
+space/project-files.feature: A file that is not Space content is not offered
 space/project-files.feature: A file-backed page shows its file
 space/project-files.feature: A page the file won over says where the user's edit went
 space/project-files.feature: A page whose file is gone says so
@@ -2892,13 +2895,17 @@ space/project-files.feature: Collapsing a folder hides its files
 space/project-files.feature: Collapsing a project's section hides its files
 space/project-files.feature: Expanding a folder shows its files
 space/project-files.feature: Expanding a project's section shows its folders collapsed
+space/project-files.feature: From a worktree thread the user edits the project's copy
 space/project-files.feature: Going to a page's file passes over a thread in a worktree
 space/project-files.feature: Showing a file-backed page reads its file again
 space/project-files.feature: The client remembers which folders are expanded
 space/project-files.feature: The client remembers which sections are expanded
 space/project-files.feature: The sidebar has a section for each project with Space files
+space/project-files.feature: The user edits a file as a page from the file explorer
 space/project-files.feature: The user edits a file from its project's section
+space/project-files.feature: The user edits a file the agent mentioned as a page
 space/project-files.feature: The user edits a project file as a page from the command palette
+space/project-files.feature: The user edits the file they are reading as a page
 space/project-files.feature: The user folds a folder from the keyboard
 space/project-files.feature: The user goes back to the Space's pages in one step
 space/project-files.feature: The user goes from a page to its file

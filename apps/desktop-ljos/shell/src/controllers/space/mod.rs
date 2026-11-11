@@ -2490,7 +2490,8 @@ impl Space {
         }
     }
 
-    fn list_files(&mut self, _engine: &Engine, environment: &str, project_id: &str) {
+    /// Asks the MC for `project_id`'s Space files, this MC's only.
+    pub fn list_files(&mut self, _engine: &Engine, environment: &str, project_id: &str) {
         if project_id.is_empty() || environment != self.mc.environment() {
             return;
         }
@@ -2754,7 +2755,8 @@ impl Space {
         })
     }
 
-    fn open_file(
+    /// The project's file as a page, in the project's section.
+    pub fn open_file(
         &mut self,
         engine: &Engine,
         environment: &str,
