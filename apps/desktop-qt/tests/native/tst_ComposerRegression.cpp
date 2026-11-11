@@ -767,8 +767,8 @@ private slots:
     QStringList types;
     for (const QJsonObject& command : std::as_const(shell.mc.commands)) types.append(command.value(QLatin1String("type")).toString());
     QCOMPARE(types, QStringList{QStringLiteral("message.dispatch")});
-    const QJsonObject message = shell.mc.commands.constLast();
-    QCOMPARE(message.value(QLatin1String("modelSelection")).toObject().value(QLatin1String("instanceId")).toString(), QStringLiteral("codex"));
+    // With no pick the message names no model: the MC runs the thread on its own.
+    QVERIFY(!shell.mc.commands.constLast().contains(QLatin1String("modelSelection")));
   }
 
   // A model picked in a started thread's draft stayed the draft's after the

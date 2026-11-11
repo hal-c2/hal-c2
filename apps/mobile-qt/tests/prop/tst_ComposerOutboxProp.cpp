@@ -82,12 +82,15 @@ struct Sut {
                                                  {QStringLiteral("updatedAt"), QStringLiteral("2026-11-01T09:00:00Z")},
                                                  {QStringLiteral("scripts"), QJsonArray()},
                                              });
+    // Every thread the MC holds names the model it runs on.
     for (const QString& id : kThreads) {
       mc.threads.insert(id, QJsonObject{{QStringLiteral("id"), id},
                                         {QStringLiteral("projectId"), QStringLiteral("p1")},
                                         {QStringLiteral("title"), id},
                                         {QStringLiteral("createdAt"), QStringLiteral("2026-11-07T09:00:00Z")},
-                                        {QStringLiteral("updatedAt"), QStringLiteral("2026-11-07T09:00:00Z")}});
+                                        {QStringLiteral("updatedAt"), QStringLiteral("2026-11-07T09:00:00Z")},
+                                        {QStringLiteral("modelSelection"), QJsonObject{{QStringLiteral("instanceId"), QStringLiteral("claudeAgent")},
+                                                                                       {QStringLiteral("model"), QStringLiteral("claude-sonnet")}}}});
     }
     const QJsonArray providers{QJsonObject{
         {QStringLiteral("instanceId"), QStringLiteral("claudeAgent")},
