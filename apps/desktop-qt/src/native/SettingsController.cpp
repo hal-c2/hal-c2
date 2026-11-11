@@ -570,13 +570,20 @@ void SettingsController::watchDevice() {
 }
 
 // Another app saved the file: show what it holds. One that cannot be read
-// keeps the preferences last read and refuses saves until it reads again;
-// one that is gone is written whole by the next save.
+// keeps the preferences last read and refuses saves until it reads again or
+// is deleted; one that is gone is written whole by the next save.
 void SettingsController::deviceFileChanged() {
   if (QFile::exists(m_devicePath) && !m_deviceWatcher->files().contains(m_devicePath)) {
     m_deviceWatcher->addPath(m_devicePath);
   }
-  if (!QFile::exists(m_devicePath)) return;
+  if (!QFile::exists(m_devicePath)) {
+    // Deleting a damaged file repairs it: the next save writes it whole.
+    if (!m_deviceUnreadable) return;
+    m_deviceUnreadable = false;
+    m_deviceError.clear();
+    emit deviceChanged();
+    return;
+  }
   const std::optional<QJsonObject> saved = readPreferences(m_devicePath);
   if (!saved) {
     if (m_deviceUnreadable) return;

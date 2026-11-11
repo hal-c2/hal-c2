@@ -9,7 +9,8 @@
 // or started after it, shows it. A save of the value a desktop already shows
 // changes nothing, even if the other saved another since. While the file does
 // not read, a desktop that has found that out refuses saves and keeps what it
-// showed, until it hears the file read again.
+// showed, until it hears the file read again, or hears it deleted: then the
+// next save writes what that desktop shows, with its change.
 
 #include "Prop.h"
 
@@ -50,6 +51,8 @@ struct Model {
   std::array<QJsonObject, 2> view;
   // The file is broken by hand; and which desktop has found that out.
   bool broken = false;
+  // The file was deleted since it was last written.
+  bool gone = false;
   std::array<bool, 2> unreadable{false, false};
 };
 
@@ -100,7 +103,9 @@ bool save(Model& model, int desktop, const QJsonObject& next, const std::functio
   if (model.view[desktop] == next) return true;
   if (model.broken) model.unreadable[desktop] = true;
   if (model.unreadable[desktop]) return false;
-  change(model.file);
+  if (model.gone) model.file = next;
+  else change(model.file);
+  model.gone = false;
   model.view[desktop] = model.file;
   return true;
 }
@@ -160,11 +165,13 @@ struct SaveEntry : Command {
     QJsonObject next = model.view[desktop];
     next.insert(kObject, entries(model));
     // Only the entry this desktop changed: one it never held, removed, is
-    // left as the other saved it.
+    // left as the other saved it. A file without the object takes this
+    // desktop's whole, as the MC's carry_over does.
     const bool changed = model.view[desktop].value(kObject).toObject().value(name) != jsonOf(value);
     return save(model, desktop, next, [&](QJsonObject& file) {
-      const QJsonObject held = file.value(kObject).toObject();
-      file.insert(kObject, changed ? with(held, name, value) : held);
+      const QJsonValue held = file.value(kObject);
+      if (!held.isObject()) file.insert(kObject, next.value(kObject));
+      else file.insert(kObject, changed ? with(held.toObject(), name, value) : held.toObject());
     });
   }
   void apply(Model& model) const override { change(model); }
@@ -183,6 +190,7 @@ struct SaveEntry : Command {
 struct Hear : Command {
   void apply(Model& model) const override {
     if (model.broken) model.unreadable = {true, true};
+    else if (model.gone) model.unreadable = {false, false};
     else {
       model.view = {model.file, model.file};
       model.unreadable = {false, false};
@@ -221,7 +229,10 @@ struct Restart : Command {
 // A hand edit leaves the file unreadable.
 struct Break : Command {
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.broken); }
-  void apply(Model& model) const override { model.broken = true; }
+  void apply(Model& model) const override {
+    model.broken = true;
+    model.gone = false;
+  }
   void run(const Model&, Sut& sut) const override { sut.write(kBroken); }
   void show(std::ostream& os) const override { os << "Break"; }
 };
@@ -232,6 +243,18 @@ struct Repair : Command {
   void apply(Model& model) const override { model.broken = false; }
   void run(const Model& model, Sut& sut) const override { sut.write(QJsonDocument(model.file).toJson()); }
   void show(std::ostream& os) const override { os << "Repair"; }
+};
+
+// The person deletes it, damaged or not.
+struct Delete : Command {
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.gone); }
+  void apply(Model& model) const override {
+    model.file = {};
+    model.broken = false;
+    model.gone = true;
+  }
+  void run(const Model&, Sut& sut) const override { QFile::remove(sut.path()); }
+  void show(std::ostream& os) const override { os << "Delete"; }
 };
 
 }  // namespace
@@ -246,7 +269,7 @@ private slots:
       sut.start(0);
       sut.start(1);
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Save, Save, SaveEntry, SaveEntry, Hear, Restart, Break, Repair>());
+                       rc::state::gen::execOneOfWithArgs<Save, Save, SaveEntry, SaveEntry, Hear, Restart, Break, Repair, Delete>());
     }));
   }
 };
