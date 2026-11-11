@@ -14,6 +14,21 @@ repo=${GITHUB_REPOSITORY:?}
 stuck=${STUCK_MINUTES:-20}
 now=$(date -u +%s)
 
+# The jobs that failed, and those that timed out: a timeout ends a job cancelled, like the
+# stop jobs' own cancel, but before any stop job started. A matrix cancels the rest of its
+# entries when one fails, so a cancel beside a failure in the same matrix is not a timeout.
+failed_jobs='
+  def matrix: .name | sub(" \\(.*$"; "");
+  ([.jobs[] | select(.name | startswith("Stop the queue run")) | select(.started_at and .conclusion != "skipped")
+    | .started_at] | min) as $stopped
+  | [.jobs[] | select(.conclusion == "failure") | matrix] as $failed
+  | [.jobs[] | select(.name | startswith("Stop the queue run") | not)
+     | select(.conclusion == "failure"
+              or (.conclusion == "cancelled" and $stopped != null and .completed_at < $stopped
+                  and (matrix as $m | $failed | index($m) | not)))
+     | .name]
+  | unique | join(", ")'
+
 age_minutes() { echo $(((now - $(date -u -d "$1" +%s)) / 60)); }
 
 entries=$(gh api graphql -F owner="${repo%/*}" -F name="${repo#*/}" -f query='
@@ -45,7 +60,7 @@ while IFS=$'\t' read -r sha pr number; do
       if [ "$result" != completed ]; then
         why="CI run $id ended while its \`CI result\` check is $result"
         failed=$(gh api "repos/$repo/actions/runs/$id/jobs?per_page=100" \
-          --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
+          --jq "$failed_jobs")
       fi
     elif [ "$status" = queued ] && [ "$(age_minutes "$created")" -ge "$stuck" ]; then
       jobs=$(gh api "repos/$repo/actions/runs/$id/jobs?per_page=1" --jq .total_count)
@@ -62,7 +77,7 @@ while IFS=$'\t' read -r sha pr number; do
     mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' >/dev/null ||
     { echo "#$number: could not drop it, it may have left the queue already"; continue; }
   if [ -n "$failed" ]; then
-    verdict="These jobs failed before it wedged, so fix them first: $failed."
+    verdict="These jobs failed or timed out before it wedged, so fix them first: $failed."
   else
     verdict="No job in it failed; re-queue it."
   fi
