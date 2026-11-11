@@ -80,6 +80,7 @@ pub const STORED_THREADS: usize = 100;
 const TERMINAL_TAB: &str = "terminal:";
 const REVIEW_TAB: &str = "pull-request:";
 const DEVICE_TAB: &str = "device:";
+const BROWSER_TAB: &str = "browser:";
 
 /// A tab's kind: "terminal:<group>" is a terminal, and so on; a native
 /// tab's id is its kind.
@@ -90,6 +91,8 @@ pub fn kind_of(id: &str) -> &str {
         "pull-request"
     } else if id.starts_with(DEVICE_TAB) {
         "device"
+    } else if id.starts_with(BROWSER_TAB) {
+        "browser"
     } else {
         id
     }
@@ -870,6 +873,35 @@ impl RightPanel {
                     later(e, &me, move |p, e| p.set_stage_layout(e, &layout));
                 },
             );
+        }
+        // The page in the browser tab showing: the panel's active tab, else
+        // the stage's focused one.
+        for command in [
+            "preview.refresh",
+            "preview.focusUrl",
+            "preview.zoomIn",
+            "preview.zoomOut",
+            "preview.resetZoom",
+        ] {
+            let me = self.me.clone();
+            commands.add(engine, command, &command_label(command), move |e| {
+                later(e, &me, move |p, e| {
+                    if !p.on_thread {
+                        return;
+                    }
+                    let tab = if p.is_open() && kind_of(&p.active_tab()) == "browser" {
+                        p.active_tab()
+                    } else {
+                        p.current().stage.focused_tab().to_owned()
+                    };
+                    if let Some(page) = tab
+                        .strip_prefix(BROWSER_TAB)
+                        .and_then(|id| crate::browser::page(e, id))
+                    {
+                        crate::browser::BrowserPage::command(e, page, command);
+                    }
+                });
+            });
         }
         labelled("threadPanel.toggle", Self::toggle_details);
         labelled("diff.toggle", Self::toggle_diff);
