@@ -311,11 +311,20 @@ async fn socket(stream: TcpStream, shared: Arc<Shared>) {
     let mut query = String::new();
     let accepting = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
         query = request.uri().query().unwrap_or_default().to_owned();
-        let ticketed = query
+        // As the MC: a socket that names no protocol it speaks is told to
+        // update (426), before its credential is looked at.
+        let Some(credential) = query.strip_suffix("&protocol=3") else {
+            let mut refusal = ErrorResponse::new(Some("protocol_incompatible".to_owned()));
+            *refusal.status_mut() =
+                tokio_tungstenite::tungstenite::http::StatusCode::UPGRADE_REQUIRED;
+            return Err(refusal);
+        };
+        let credential = credential.to_owned();
+        let ticketed = credential
             .strip_prefix("wsTicket=")
             .is_some_and(|ticket| shared.tickets.lock().unwrap().iter().any(|t| t == ticket));
         let tokened =
-            query == format!("token={TOKEN}") && shared.token_on_socket.load(Ordering::SeqCst);
+            credential == format!("token={TOKEN}") && shared.token_on_socket.load(Ordering::SeqCst);
         if ticketed || tokened {
             Ok(response)
         } else {

@@ -479,7 +479,11 @@ impl Core {
         });
         url.set_path("/ws");
         url.set_fragment(None);
-        url.query_pairs_mut().clear().append_pair("token", &token);
+        // The MC refuses (426) a socket that names no protocol it speaks.
+        url.query_pairs_mut()
+            .clear()
+            .append_pair("token", &token)
+            .append_pair("protocol", &PROTOCOL.to_string());
         self.origin = Some(origin);
         self.ws_url = Some(url);
         self.token = token;
@@ -808,7 +812,8 @@ impl Core {
         if let Some(ticket) = ticket {
             url.query_pairs_mut()
                 .clear()
-                .append_pair("wsTicket", ticket);
+                .append_pair("wsTicket", ticket)
+                .append_pair("protocol", &PROTOCOL.to_string());
         }
         self.socket = Some(self.attempt);
         self.setup_by = Some(self.now + self.setup_timeout);

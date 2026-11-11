@@ -1369,6 +1369,14 @@ async fn socket(stream: TcpStream, port: u16, io: Arc<Io>) {
             .path_and_query()
             .map(|p| p.as_str().to_owned())
             .unwrap_or_default();
+        // As the MC: a socket that names no protocol it speaks is told to
+        // update (426).
+        if !target.split(['?', '&']).any(|pair| pair == "protocol=3") {
+            let mut refusal = ErrorResponse::new(Some("protocol_incompatible".to_owned()));
+            *refusal.status_mut() =
+                tokio_tungstenite::tungstenite::http::StatusCode::UPGRADE_REQUIRED;
+            return Err(refusal);
+        }
         Ok(response)
     };
     let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(stream, accepting).await else {

@@ -342,7 +342,7 @@ fn a_token_the_socket_refuses_gets_a_ticket_for_it() {
     assert_eq!(
         harness.mc_sees(|seen| matches!(seen, Seen::Rejected { .. })),
         Seen::Rejected {
-            query: format!("token={TOKEN}")
+            query: format!("token={TOKEN}&protocol=3")
         }
     );
     assert_eq!(
@@ -356,7 +356,7 @@ fn a_token_the_socket_refuses_gets_a_ticket_for_it() {
     else {
         unreachable!()
     };
-    assert_eq!(query, "wsTicket=tk-1");
+    assert_eq!(query, "wsTicket=tk-1&protocol=3");
     harness.until(McClient::is_ready);
 
     // A ticketed session takes a fresh ticket for every socket after.
@@ -366,7 +366,7 @@ fn a_token_the_socket_refuses_gets_a_ticket_for_it() {
     else {
         unreachable!()
     };
-    assert_eq!(query, "wsTicket=tk-2");
+    assert_eq!(query, "wsTicket=tk-2&protocol=3");
     harness.until(McClient::is_ready);
 }
 
