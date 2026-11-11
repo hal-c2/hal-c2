@@ -607,6 +607,7 @@ files/adding-projects.feature: A folder the environment refuses to add says why
 files/adding-projects.feature: A user with no projects is invited to add one
 files/adding-projects.feature: Adding a folder from the desktop and mobile apps registers it and starts a thread
 files/adding-projects.feature: Adding an existing project from the desktop and mobile apps opens its latest thread
+files/adding-projects.feature: Adding an existing project's folder written another way opens its latest thread
 files/adding-projects.feature: Clone progress is shown while the user keeps working
 files/adding-projects.feature: Dragging a single local folder over the window offers to open it as a project
 files/adding-projects.feature: Dropping a folder adds it as a project and starts a thread
@@ -628,50 +629,154 @@ files/file-explorer.feature: File actions available from a file entry [reveal in
 files/file-explorer.feature: Filtering the tree can hide entries that do not match
 files/file-explorer.feature: The tree follows the file open in the viewer
 files/file-explorer.feature: The tree refreshes when the agent changes files
+files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [JSON, Show accessibility JSON]
+files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [text, Show extracted text]
+files/file-viewer-and-editing.feature: A Snap Shot's text is read in the large view and the picture comes back
+files/file-viewer-and-editing.feature: A closed window goes once its edits are written
+files/file-viewer-and-editing.feature: A coloured line too long to show is cut with its colours
+files/file-viewer-and-editing.feature: A comment in progress is not dropped by a click outside the file
+files/file-viewer-and-editing.feature: A draft's attachment that failed to load can be tried again
 files/file-viewer-and-editing.feature: A failed save is reported and the edit is kept
+files/file-viewer-and-editing.feature: A failed save of an attachment is reported
+files/file-viewer-and-editing.feature: A file of no known language, or too large to colour, is shown plain [data/blob.zzz, holds plain text]
+files/file-viewer-and-editing.feature: A file of no known language, or too large to colour, is shown plain [notes/todo.txt, holds plain text]
+files/file-viewer-and-editing.feature: A file of no known language, or too large to colour, is shown plain [src/bundle.ts, holds more than 512K characters of code]
 files/file-viewer-and-editing.feature: A file opens in the user's editor when the thread runs on this computer
 files/file-viewer-and-editing.feature: A file outside the project the agent left can be edited [on another machine of the cluster]
 files/file-viewer-and-editing.feature: A file outside the project the agent left can be edited [on this computer]
 files/file-viewer-and-editing.feature: A file outside the project turns read-only when the MC refuses to save it
+files/file-viewer-and-editing.feature: A file that cannot be opened in the preview browser says so
 files/file-viewer-and-editing.feature: A file that fails to load can be retried
+files/file-viewer-and-editing.feature: A file that is not text says why it is not shown [assets/a.dat, contains null bytes, This file contains binary data and cannot be shown as text.]
+files/file-viewer-and-editing.feature: A file that is not text says why it is not shown [notes/old.txt, is written in a non-UTF-8 text encoding, This file is not UTF-8 text. Open it in another app to view its contents.]
 files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing ["lib" is empty, This folder is empty.]
 files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing ["lib" was deleted after the file was opened, This folder is no longer available.]
 files/file-viewer-and-editing.feature: A folder in the path trail explains why it lists nothing [the project index is partial and has nothing in "lib", No entries from this folder are available in the partial workspace index.]
 files/file-viewer-and-editing.feature: A folder in the path trail lists what is in it
+files/file-viewer-and-editing.feature: A folder in the path trail that fails to load can be retried
+files/file-viewer-and-editing.feature: A large image cannot be zoomed beyond eight times its fitted size
 files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [0, returns to its fitted size]
+files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [Enter, zooms to twice its fitted size or returns]
+files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [Space, zooms to twice its fitted size or returns]
 files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [minus, zooms out one step]
 files/file-viewer-and-editing.feature: A large image is zoomed with the keyboard [plus, zooms in one step]
+files/file-viewer-and-editing.feature: A large image is zoomed with the pointer [clicks the image again, back to its fitted size]
+files/file-viewer-and-editing.feature: A large image is zoomed with the pointer [clicks the image, zoomed to twice its fitted size]
+files/file-viewer-and-editing.feature: A large image is zoomed with the pointer [pinches or holds Control and turns the wheel, zoomed faster than the wheel alone]
+files/file-viewer-and-editing.feature: A large image is zoomed with the pointer [turns the wheel down at its fitted size, left at its fitted size]
+files/file-viewer-and-editing.feature: A large image is zoomed with the pointer [turns the wheel up over a point, zoomed in around that point]
+files/file-viewer-and-editing.feature: A large image or video is closed from where the user is [clicks beside the image]
+files/file-viewer-and-editing.feature: A large image or video is closed from where the user is [presses Escape in the viewer]
+files/file-viewer-and-editing.feature: A large image or video is closed from where the user is [uses the close button]
+files/file-viewer-and-editing.feature: A large image says which of the images it is
+files/file-viewer-and-editing.feature: A large image that cannot be loaded offers its original
+files/file-viewer-and-editing.feature: A large image that cannot be loaded says so [that has an address on the web, This image could not be loaded.]
+files/file-viewer-and-editing.feature: A large image that cannot be loaded says so [that has no address on the web, Image unavailable. The file may have been moved or deleted.]
+files/file-viewer-and-editing.feature: A large table shows only its first rows and columns
+files/file-viewer-and-editing.feature: A large video starts playing
+files/file-viewer-and-editing.feature: A line selection in a file is let go of without a comment [clicks outside the file]
+files/file-viewer-and-editing.feature: A line selection in a file is let go of without a comment [presses Escape while the file's text is focused]
 files/file-viewer-and-editing.feature: A media preview that fails to load can be retried [assets/logo.png, image, is shown]
+files/file-viewer-and-editing.feature: A narrow Files tab keeps the file's buttons in the file
+files/file-viewer-and-editing.feature: A page that cannot be read as text can still be shown rendered
 files/file-viewer-and-editing.feature: A partial preview says how much of the file is shown
+files/file-viewer-and-editing.feature: A path that becomes a file is noticed while it is open
+files/file-viewer-and-editing.feature: A remote environment with no SSH route cannot open an editor
+files/file-viewer-and-editing.feature: A remote environment's workspace opens in the local editor over SSH
 files/file-viewer-and-editing.feature: A requested line is revealed even when it is past the end of the file
+files/file-viewer-and-editing.feature: A save goes on after the viewer closes
+files/file-viewer-and-editing.feature: A save that failed is tried again when the file is closed
+files/file-viewer-and-editing.feature: A saved edit stays on screen while the file is read again
+files/file-viewer-and-editing.feature: A single image has nothing to step through
+files/file-viewer-and-editing.feature: A table keeps a final quoted empty row that has no line ending
+files/file-viewer-and-editing.feature: A table keeps quoted commas, doubled quotes and multi-line cells in one cell
+files/file-viewer-and-editing.feature: A task ticked just before an edit does not tick another task
+files/file-viewer-and-editing.feature: A text attachment is coloured by the language its name says [cart.ts, coloured as TypeScript]
+files/file-viewer-and-editing.feature: A text attachment is coloured by the language its name says [notes.txt, plain]
+files/file-viewer-and-editing.feature: A web page in a draft shows its source
+files/file-viewer-and-editing.feature: A web page or document can be opened in the preview browser [docs/manual.pdf]
+files/file-viewer-and-editing.feature: A web page or document can be opened in the preview browser [public/index.html]
+files/file-viewer-and-editing.feature: A zoomed image is dragged to look around
 files/file-viewer-and-editing.feature: An attachment can be removed from the draft while it is open
+files/file-viewer-and-editing.feature: An attachment can be saved to this device
+files/file-viewer-and-editing.feature: An attachment in a sent message opens in the same viewer
+files/file-viewer-and-editing.feature: An attachment is shown as it was captured, not as the project's file of that name
+files/file-viewer-and-editing.feature: An attachment opened long ago is fetched with fresh access
+files/file-viewer-and-editing.feature: An attachment opens in a viewer for its kind [build.log, text]
+files/file-viewer-and-editing.feature: An attachment opens in a viewer for its kind [invoice.pdf, a document the user can page through]
+files/file-viewer-and-editing.feature: An attachment opens in a viewer for its kind [notes.md, rendered Markdown that can switch to source]
+files/file-viewer-and-editing.feature: An attachment opens in a viewer for its kind [receipt.png, an image]
+files/file-viewer-and-editing.feature: An attachment that cannot be fetched says why and can be retried [the attachment's environment is unreachable, Reconnect to the environment and try again.]
+files/file-viewer-and-editing.feature: An attachment that cannot be fetched says why and can be retried [the environment no longer has the attachment, The attachment is unavailable.]
+files/file-viewer-and-editing.feature: An edit made while a save is under way is saved too
 files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC on another machine the client is paired with, opens "src/app.ts" in an editor]
 files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC on another machine the client is paired with, opens the thread's workspace in an editor from the thread's details]
 files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC on another machine the client is paired with, reveals "src/app.ts" in the file manager]
 files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC reached through an SSH port forward, follows the path "src/app.ts" in a terminal]
 files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC reached through an SSH port forward, opens "src/app.ts" in an editor]
 files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC reached through an SSH port forward, opens the thread in their editor]
+files/file-viewer-and-editing.feature: An open file follows the agent's changes
+files/file-viewer-and-editing.feature: An open file follows the theme without being read again
+files/file-viewer-and-editing.feature: An open file sits beside the file tree
+files/file-viewer-and-editing.feature: An opened file is coloured by its language [lib/shop/cart.ex, Elixir]
+files/file-viewer-and-editing.feature: An opened file is coloured by its language [src/cart.ts, TypeScript]
+files/file-viewer-and-editing.feature: An opened file is coloured by its language [ui/Cart.qml, QML]
 files/file-viewer-and-editing.feature: Closing a file returns to the tree
 files/file-viewer-and-editing.feature: Closing the file saves pending edits first
 files/file-viewer-and-editing.feature: Copying a file larger than one megabyte copies its first megabyte and says so [from the command palette]
 files/file-viewer-and-editing.feature: Copying a file larger than one megabyte copies its first megabyte and says so [from the viewer]
 files/file-viewer-and-editing.feature: Copying an attachment's text [over the preview limit, only the part shown, and the action says so]
+files/file-viewer-and-editing.feature: Copying an attachment's text [within the preview limit, all of its text]
 files/file-viewer-and-editing.feature: Edits save themselves shortly after the user stops typing
+files/file-viewer-and-editing.feature: Edits waiting to be written are saved when the app goes away [closes this window, leaving another]
+files/file-viewer-and-editing.feature: Edits waiting to be written are saved when the app goes away [quits the app]
+files/file-viewer-and-editing.feature: Escape closes a menu of the viewer before the viewer
+files/file-viewer-and-editing.feature: Images in the conversation open large and can be stepped through
+files/file-viewer-and-editing.feature: Media and documents are not read again when the workspace changes
 files/file-viewer-and-editing.feature: Media files are previewed instead of shown as text [assets/logo.png, an image]
+files/file-viewer-and-editing.feature: Media files are previewed instead of shown as text [docs/manual.pdf, a document]
+files/file-viewer-and-editing.feature: Media files are previewed instead of shown as text [media/intro.mp4, a video]
+files/file-viewer-and-editing.feature: Media files are previewed instead of shown as text [media/theme.mp3, audio]
+files/file-viewer-and-editing.feature: Media files are previewed instead of shown as text [public/index.html, a web page]
 files/file-viewer-and-editing.feature: Media files of a thread on another machine are previewed
 files/file-viewer-and-editing.feature: Mermaid diagrams are drawn in a rendered file [docs/flow.md, a "mermaid" code block]
 files/file-viewer-and-editing.feature: Mermaid diagrams are drawn in a rendered file [docs/flow.mmd, the whole file]
+files/file-viewer-and-editing.feature: Only editors on this computer that can work over SSH are offered for a remote environment
+files/file-viewer-and-editing.feature: Opening a file at a line shows its source even when the rendered view is preferred
+files/file-viewer-and-editing.feature: Quitting does not wait for ever for an MC that does not answer
 files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [README.md]
 files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [data/orders.csv]
 files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [public/index.html]
+files/file-viewer-and-editing.feature: Revealing a file is named after the host's file manager [Linux where reveal runs through Windows (WSL), Reveal in File Explorer]
+files/file-viewer-and-editing.feature: Revealing a file is named after the host's file manager [Linux, Reveal in Files]
+files/file-viewer-and-editing.feature: Revealing a file is named after the host's file manager [Windows, Reveal in File Explorer]
+files/file-viewer-and-editing.feature: Revealing a file is named after the host's file manager [macOS, Reveal in Finder]
 files/file-viewer-and-editing.feature: Some files open read-only [a file larger than one megabyte]
+files/file-viewer-and-editing.feature: Stepping past the last image comes back to the first
+files/file-viewer-and-editing.feature: Stepping to another image starts at its fitted size
+files/file-viewer-and-editing.feature: The arrow keys belong to a video that has focus
 files/file-viewer-and-editing.feature: The arrow keys look around a zoomed image and step through images otherwise
+files/file-viewer-and-editing.feature: The arrow keys step through the images
+files/file-viewer-and-editing.feature: The file tree beside a file is shown only for project files [hide, "src/app.ts", hidden]
+files/file-viewer-and-editing.feature: The file tree beside a file is shown only for project files [show, "src/app.ts", shown]
+files/file-viewer-and-editing.feature: The file tree beside a file is shown only for project files [show, a file outside the project on the host, hidden]
+files/file-viewer-and-editing.feature: The file tree beside a file is shown only for project files [show, an attachment, hidden]
+files/file-viewer-and-editing.feature: The file tree can be hidden while a file is open
 files/file-viewer-and-editing.feature: The open file's text is copied whole [from the command palette]
 files/file-viewer-and-editing.feature: The open file's text is copied whole [from the viewer]
 files/file-viewer-and-editing.feature: The path trail lets the user jump to a sibling file
+files/file-viewer-and-editing.feature: The preferred editor gives way when it is no longer available
 files/file-viewer-and-editing.feature: The rendered or source choice is remembered on this device
 files/file-viewer-and-editing.feature: The thread's workspace opens in the preferred editor from the thread's details
+files/file-viewer-and-editing.feature: The zoom is announced
 files/file-viewer-and-editing.feature: Ticking a Markdown task writes the file
+files/file-viewer-and-editing.feature: Ticking a task in a document that changed underneath leaves the file alone
+files/file-viewer-and-editing.feature: Two tasks ticked before the file has been read again are both recorded
+files/file-viewer-and-editing.feature: Which files are shown as a table [data/a.csv, application/json, the file is not shown as a table]
+files/file-viewer-and-editing.feature: Which files are shown as a table [data/a.csv, text/csv, the file is shown as a comma table]
+files/file-viewer-and-editing.feature: Which files are shown as a table [data/a.csv, text/plain, the file is shown as a comma table]
+files/file-viewer-and-editing.feature: Which files are shown as a table [data/a.tsv, text/tab-separated-values, the file is shown as a tab table]
+files/file-viewer-and-editing.feature: Which files are shown as a table [data/a.txt, text/plain, the file is not shown as a table]
 files/file-viewer-and-editing.feature: Word wrap can be turned on and off
 files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [follows the path "src/cart.ts" in a terminal, the editor]
 files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [opens "src/cart.ts" in "VS Code", "VS Code"]
@@ -1930,20 +2035,215 @@ settings/search-and-navigation.feature: The page names where the user is [the op
 settings/search-and-navigation.feature: The project section appears only while editing a project
 settings/search-and-navigation.feature: The slash key starts a settings search
 settings/search-and-navigation.feature: Thread confirmations are listed in the order of the page
+settings/snap-shot.feature: A GNOME version the extension does not support falls back to choosing a window
+settings/snap-shot.feature: A Hyprland capture helper that does not answer fails the capture
+settings/snap-shot.feature: A Hyprland shortcut session says whether the capture action is registered [HAL-C2 is still connecting to Hyprland's shortcuts, Connecting to Hyprland shortcuts…]
+settings/snap-shot.feature: A Hyprland shortcut session says whether the capture action is registered [Hyprland does not register the capture action, Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart HAL-C2.]
+settings/snap-shot.feature: A Hyprland shortcut session says whether the capture action is registered [Hyprland registers the capture action, Managed by Hyprland. Add the binding to your config and save it.]
+settings/snap-shot.feature: A Hyprland shortcut session says whether the capture action is registered [Hyprland's shortcut session cannot be reached, Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart HAL-C2.]
+settings/snap-shot.feature: A Hyprland that cannot list its shortcuts blocks the change
+settings/snap-shot.feature: A Hyprland that reports config errors after a reload fails the save
+settings/snap-shot.feature: A Niri config is checked before it replaces the user's file
+settings/snap-shot.feature: A Niri or Hyprland shortcut is reviewed before it is written
+settings/snap-shot.feature: A capture helper is never written over a link [Hyprland, the helper is a link, The capture helper must be a regular file, not a link.]
+settings/snap-shot.feature: A capture helper is never written over a link [Hyprland, the helper's folder is a link, The capture helper directory must not be a link.]
+settings/snap-shot.feature: A capture helper is never written over a link [KDE Plasma, another program's launcher entry has the helper's name, Another desktop entry uses the capture helper's name. Rename it before continuing.]
+settings/snap-shot.feature: A capture helper is never written over a link [KDE Plasma, the helper or its launcher entry is a link, Capture helper files must be regular files. Remove the conflicting link before trying again.]
+settings/snap-shot.feature: A capture helper is never written over a link [KDE Plasma, the helper's folder is a link, The capture helper directory is not a regular directory.]
+settings/snap-shot.feature: A capture helper that cannot be set up says why [KDE has not granted the helper screen capture access, KDE hasn't granted capture access. Reinstall the capture helper in setup, then try again.]
+settings/snap-shot.feature: A capture helper that cannot be set up says why [KDE's service tools are not installed, KDE couldn't register the capture helper. Make sure KDE's service tools (kbuildsycoca6) are installed, then reinstall the helper.]
+settings/snap-shot.feature: A capture helper that cannot be set up says why [the helper does not answer a check, The KDE capture helper did not respond. Reopen capture setup and check access.]
+settings/snap-shot.feature: A capture helper that this build does not carry is reported [Hyprland]
+settings/snap-shot.feature: A capture helper that this build does not carry is reported [KDE Plasma]
+settings/snap-shot.feature: A capture sound can be heard before choosing it
+settings/snap-shot.feature: A common app shortcut HAL-C2 does not bind says why [composer.stash, mod+alt+s, Ctrl+S, This shortcut is Save in most apps.]
+settings/snap-shot.feature: A common app shortcut HAL-C2 does not bind says why [thread.undo, mod+alt+z, Ctrl+Z, This shortcut is Undo in most apps.]
+settings/snap-shot.feature: A config change that is running cannot be walked away from
+settings/snap-shot.feature: A config file that is too big or not text is refused [the settings file and its included files add up to more than 1 MB, This config has too many included files. Use manual setup in Advanced.]
+settings/snap-shot.feature: A config file that is too big or not text is refused [the settings file is larger than 1 MB, Choose a config file smaller than 1 MB.]
+settings/snap-shot.feature: A config file that is too big or not text is refused [the settings file is not a text file, Choose a text config file.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [a Hyprland Lua config returns early or uses long strings, This Lua config needs a manual edit. Choose your bindings file or use manual setup in Advanced.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [a Niri config has more than one binds section, This Niri config has an unexpected binds section. Check it in Advanced.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [a Niri config includes files by pattern or variable, This config uses a dynamic include. Use manual setup in Advanced.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [a Niri config includes more than 64 files or nests deeper than 10 levels, This config has too many included files. Use manual setup in Advanced.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [a Niri include cannot be read, Couldn't read an included Niri config. Check its location in Advanced.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [the settings file belongs to another user or to Omarchy defaults, Choose your own config, not system or Omarchy defaults.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [the settings file cannot be read, Couldn't read your settings file. Choose a different file in Advanced.]
+settings/snap-shot.feature: A config that is not safe to edit is refused with a reason [the settings file has an unexpected extension, Choose a .kdl Niri config or a .conf/.lua Hyprland config.]
+settings/snap-shot.feature: A desktop that can only pick a window says so
+settings/snap-shot.feature: A desktop without capture says why instead of offering setup
+settings/snap-shot.feature: A failed write asks for another review
+settings/snap-shot.feature: A failing capture helper suggests reinstalling it
+settings/snap-shot.feature: A missing optional include that appears after review is not ignored
+settings/snap-shot.feature: A modifier key the system will not let HAL-C2 watch is reported [Windows]
+settings/snap-shot.feature: A modifier key the system will not let HAL-C2 watch is reported [macOS]
+settings/snap-shot.feature: A modifier-pair shortcut is not offered in a Wayland session that cannot watch keys
+settings/snap-shot.feature: A newer GNOME extension is not replaced by an older bundle
+settings/snap-shot.feature: A permission check that fails is retried on its own
+settings/snap-shot.feature: A permission error is shown once and can be retried
+settings/snap-shot.feature: A permission that macOS grants again brings the shortcut back
+settings/snap-shot.feature: A portal desktop suggests a letter-based shortcut
+settings/snap-shot.feature: A preference that fails to save stays as it was
+settings/snap-shot.feature: A reload that fails is not reported as success
+settings/snap-shot.feature: A review that is no longer current cannot be saved
+settings/snap-shot.feature: A setup step that belongs to another desktop is refused [on Linux without GNOME, install the GNOME extension]
+settings/snap-shot.feature: A setup step that belongs to another desktop is refused [on Linux, allow screen recording the way macOS does]
+settings/snap-shot.feature: A setup step that belongs to another desktop is refused [on Linux, test a capture the way macOS does]
+settings/snap-shot.feature: A setup step that belongs to another desktop is refused [on a GNOME session, install the KDE Plasma capture helper]
+settings/snap-shot.feature: A setup step that belongs to another desktop is refused [on a KDE Plasma session, install the Hyprland capture helper]
+settings/snap-shot.feature: A shortcut already in the config is not written again
+settings/snap-shot.feature: A shortcut already used elsewhere is refused before it is written
+settings/snap-shot.feature: A shortcut is saved only when the user saves it
+settings/snap-shot.feature: A shortcut kept in the compositor is changed through setup
+settings/snap-shot.feature: A shortcut of one modifier key warns that it is observed, not reserved [Windows, Alt, This key can also activate app menu bars.]
+settings/snap-shot.feature: A shortcut of one modifier key warns that it is observed, not reserved [Windows, Super, This key can also open the system's own menu.]
+settings/snap-shot.feature: A shortcut of one modifier key warns that it is observed, not reserved [macOS, Shift, no further note]
+settings/snap-shot.feature: A shortcut on an arrow key or Home is named to the Wayland portal [Ctrl+Alt+Home, CTRL+ALT+Home]
+settings/snap-shot.feature: A shortcut on an arrow key or Home is named to the Wayland portal [Ctrl+Alt+Up, CTRL+ALT+Up]
+settings/snap-shot.feature: A shortcut service that fails says what to do [the desktop closes HAL-C2's shortcut session, Your desktop closed the capture shortcut. Retry the shortcut request.]
+settings/snap-shot.feature: A shortcut service that fails says what to do [the desktop's shortcut service cannot be reached, Could not connect to your desktop's shortcut service.]
+settings/snap-shot.feature: A shortcut service that fails says what to do [the desktop's shortcut service restarts, The desktop shortcut service restarted. Retry the shortcut request.]
+settings/snap-shot.feature: A shortcut service that fails says what to do [the permission prompt is not answered in time, Shortcut permission request timed out. Try again.]
+settings/snap-shot.feature: A shortcut that cannot be checked is reported, not assumed free
+settings/snap-shot.feature: A shortcut that cannot be read is replaced, not guessed
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a modifier with no key on Linux, Linux shortcuts need a letter, number or function key]
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a shortcut HAL-C2 already uses, it collides with a HAL-C2 keybinding]
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a shortcut the system reserves, the system reserves it]
+settings/snap-shot.feature: A shortcut that changed must be saved before setup finishes
+settings/snap-shot.feature: A shortcut that is not a letter, number or function key with Ctrl, Alt or Super is refused for the config
+settings/snap-shot.feature: A shortcut the system or common apps already use says why [Alt+Tab, The system uses Alt+Tab to switch apps.]
+settings/snap-shot.feature: A shortcut the system or common apps already use says why [Ctrl+C, This shortcut is Copy in most apps.]
+settings/snap-shot.feature: A shortcut the system or common apps already use says why [Shift+K, Shift combinations are used for typing and text selection. Add another modifier.]
+settings/snap-shot.feature: A shortcut the system or common apps already use says why [Super+L, The system already uses this shortcut.]
+settings/snap-shot.feature: A shortcut waiting for the compositor says what is missing
+settings/snap-shot.feature: An access check that changes nothing says so
+settings/snap-shot.feature: An extension folder that is a link is left to GNOME Extensions
+settings/snap-shot.feature: App text is not offered where the desktop only gives a screenshot
+settings/snap-shot.feature: Asking again is not offered when it cannot help
+settings/snap-shot.feature: Asking again without a shortcut session starts a new one
+settings/snap-shot.feature: Asking for the shortcut again is not offered for a Hyprland binding
+settings/snap-shot.feature: Cancelling a reviewed diff writes nothing
 settings/snap-shot.feature: Cancelling shortcut recording
 settings/snap-shot.feature: Capture effects that the desktop cannot show
+settings/snap-shot.feature: Capture shortcuts are paused while a new one is recorded
+settings/snap-shot.feature: Capturing before the capture helper is ready points to setup
+settings/snap-shot.feature: Changing the keys while reviewing needs a new diff
+settings/snap-shot.feature: Checking capture access that cannot be read is not reported as a success
+settings/snap-shot.feature: Choosing the capture cues [animation, the image flying into the draft]
+settings/snap-shot.feature: Choosing the capture cues [flash, a flash on the captured window]
 settings/snap-shot.feature: Choosing the capture cues [sound, a sound]
 settings/snap-shot.feature: Choosing the capture sound
+settings/snap-shot.feature: Finishing later restores capture to how it was before setup opened
+settings/snap-shot.feature: Finishing needs capture access to still be there
+settings/snap-shot.feature: Finishing setup later
 settings/snap-shot.feature: Finishing setup later leaves Snap Shot off
+settings/snap-shot.feature: GNOME extensions turned off by the user are not turned on for them
+settings/snap-shot.feature: Hyprland may ask for permission the first time
+settings/snap-shot.feature: Including app text
+settings/snap-shot.feature: Including app text asks for the permission on macOS
+settings/snap-shot.feature: Installing the extension needs no download or administrator password
+settings/snap-shot.feature: Leaving setup while the desktop's prompt is open is allowed, a refusal is not
+settings/snap-shot.feature: Niri older than 25.11 cannot capture
+settings/snap-shot.feature: On macOS, turning on capture needs a test capture that works
+settings/snap-shot.feature: Only one config change is prepared at a time
+settings/snap-shot.feature: Only the newest shortcut check counts
+settings/snap-shot.feature: Preparing config changes shows progress and can fail
+settings/snap-shot.feature: Pressing Tab while recording moves on without recording a shortcut
 settings/snap-shot.feature: Recording a new shortcut
+settings/snap-shot.feature: Recording a shortcut cannot start when the desktop will not pause capture
+settings/snap-shot.feature: Saving ends a recording, so no key can replace the review being saved
+settings/snap-shot.feature: Saving keeps the file's permissions and line endings
+settings/snap-shot.feature: Saving the shortcut finishes setup with a message
+settings/snap-shot.feature: Saving unrelated settings leaves the shortcut registered
+settings/snap-shot.feature: Setup asks for the permissions the platform needs [Windows, nothing]
+settings/snap-shot.feature: Setup asks for the permissions the platform needs [macOS with app text included, Screen Recording and Accessibility]
+settings/snap-shot.feature: Setup asks for the permissions the platform needs [macOS, Screen Recording]
+settings/snap-shot.feature: Setup cannot be dismissed while it is working
 settings/snap-shot.feature: Setup continues after macOS restarts the app for a permission
+settings/snap-shot.feature: Setup errors stay in setup
+settings/snap-shot.feature: Setup has two steps, access then shortcut
+settings/snap-shot.feature: Setup installs or removes only what the user chose
+settings/snap-shot.feature: Setup is closed with Close once it has been on, otherwise Finish later [off, Finish later]
+settings/snap-shot.feature: Setup is closed with Close once it has been on, otherwise Finish later [on, Close]
+settings/snap-shot.feature: Setup lists each permission and lets the user continue only when all are allowed
+settings/snap-shot.feature: Setup that cannot save the opt-in keeps finishing later available
+settings/snap-shot.feature: Setup that is complete reads as managing capture
+settings/snap-shot.feature: Shortcut permission can be asked for again
+settings/snap-shot.feature: Shortcut settings in Niri and Hyprland are changed in the compositor
 settings/snap-shot.feature: Snap Shot is off until the user turns it on
+settings/snap-shot.feature: The Niri binding endpoint refuses calls with arguments
+settings/snap-shot.feature: The Niri capture shortcut endpoint reports why it is not working [another HAL-C2 instance already owns the endpoint, Could not start the Niri capture endpoint. Another HAL-C2 instance may be using it.]
+settings/snap-shot.feature: The Niri capture shortcut endpoint reports why it is not working [the endpoint disconnects while HAL-C2 is running, The Niri capture endpoint disconnected. Restart HAL-C2.]
+settings/snap-shot.feature: The Niri capture shortcut endpoint reports why it is not working [the endpoint is up and the binding is not in the config yet, Set up the shortcut to add it to your Niri config.]
+settings/snap-shot.feature: The access step offers the capture helper on KDE Plasma and Hyprland [Hyprland, failing its check, Check again]
+settings/snap-shot.feature: The access step offers the capture helper on KDE Plasma and Hyprland [Hyprland, not installed, Install the capture helper]
+settings/snap-shot.feature: The access step offers the capture helper on KDE Plasma and Hyprland [KDE Plasma, failing its check, Check again]
+settings/snap-shot.feature: The access step offers the capture helper on KDE Plasma and Hyprland [KDE Plasma, not installed, Install the capture helper]
+settings/snap-shot.feature: The access step offers the capture helper on KDE Plasma and Hyprland [KDE Plasma, out of date, Update the capture helper]
+settings/snap-shot.feature: The access step walks through the GNOME extension [enabled and answering, Capture is ready, Continue]
+settings/snap-shot.feature: The access step walks through the GNOME extension [failing to start, Couldn't set up the extension, Check again]
+settings/snap-shot.feature: The access step walks through the GNOME extension [installed but too old, Update the extension, Update extension]
+settings/snap-shot.feature: The access step walks through the GNOME extension [installed but turned off, Enable the extension, Enable extension]
+settings/snap-shot.feature: The access step walks through the GNOME extension [installed but waiting for a new login, Extension installed, Check again]
+settings/snap-shot.feature: The access step walks through the GNOME extension [installed while GNOME extensions are off, Allow GNOME extensions, Check again]
+settings/snap-shot.feature: The access step walks through the GNOME extension [not installed, Install the extension, Install extension]
+settings/snap-shot.feature: The binding can be set up by hand
+settings/snap-shot.feature: The config file can be chosen by the user
+settings/snap-shot.feature: The config that was written is backed up and its path shown
+settings/snap-shot.feature: The default shortcut presses both Shift keys
 settings/snap-shot.feature: The desktop does not allow the shortcut
+settings/snap-shot.feature: The macOS test capture is discarded
+settings/snap-shot.feature: The panel catches up when the user returns or the shortcut changes elsewhere
+settings/snap-shot.feature: The panel explains why capture effects are not available [GNOME setup has not been finished, Finish extension setup to enable effects.]
+settings/snap-shot.feature: The panel explains why capture effects are not available [Hyprland has its helper ready but no effects, Capture effects aren't available on this desktop.]
+settings/snap-shot.feature: The panel explains why capture effects are not available [Hyprland has no helper or an outdated one, Install or update the capture helper to enable effects.]
+settings/snap-shot.feature: The panel explains why capture effects are not available [KDE Plasma has its helper ready but no effects, Capture effects aren't available on this desktop.]
+settings/snap-shot.feature: The panel explains why capture effects are not available [KDE Plasma has no helper or an outdated one, Install or update the capture helper to enable effects.]
+settings/snap-shot.feature: The panel explains why capture effects are not available [any other desktop but Niri, Capture effects aren't available on this desktop.]
+settings/snap-shot.feature: The panel explains why capture effects are not available [the GNOME extension is installed but is the first version, Update the GNOME extension, then sign out and back in to enable effects.]
+settings/snap-shot.feature: The panel says where capture setup stands [off, Turn this on to set up snapshots.]
+settings/snap-shot.feature: The panel says where capture setup stands [on and waiting for the user to approve the shortcut, Waiting for shortcut permission]
+settings/snap-shot.feature: The panel says where capture setup stands [on but the capture helper is not installed, Install the capture helper to continue]
+settings/snap-shot.feature: The panel says where capture setup stands [on but the capture helper's access check failed, Check capture access in setup]
+settings/snap-shot.feature: The panel says where capture setup stands [on but the desktop reports a problem, Capture needs attention]
+settings/snap-shot.feature: The panel says where capture setup stands [on with a shortcut that has been seen to work, Ready to capture]
+settings/snap-shot.feature: The panel says where capture setup stands [on with no shortcut chosen yet, Finish shortcut setup]
+settings/snap-shot.feature: The panel says where capture setup stands [on with only a manual window picker available, Manual capture only — you'll choose a window each time]
+settings/snap-shot.feature: The panel says where capture setup stands [on with the GNOME extension not enabled, Set up active-window snapshots]
+settings/snap-shot.feature: The panel says where capture setup stands [still being checked, Checking snapshots…]
+settings/snap-shot.feature: The permission panel goes away when it is no longer needed
+settings/snap-shot.feature: The portal's shortcut prompt is waited for up to two minutes
+settings/snap-shot.feature: The setup button names the desktop it sets up [GNOME, Set up GNOME capture]
+settings/snap-shot.feature: The setup button names the desktop it sets up [KDE Plasma, Set up KDE capture]
+settings/snap-shot.feature: The setup button names the desktop it sets up [a desktop HAL-C2 cannot name, Continue setup]
+settings/snap-shot.feature: The shortcut can be removed from the compositor config
+settings/snap-shot.feature: The shortcut row says what is happening with a new shortcut [recording starts, Press your shortcut. Esc cancels.]
+settings/snap-shot.feature: The shortcut row says what is happening with a new shortcut [the desktop is being asked if the shortcut is free, Checking shortcut…]
+settings/snap-shot.feature: The shortcut row says what is happening with a new shortcut [the desktop says the shortcut is free, Ready to save.]
+settings/snap-shot.feature: The shortcut row says what is happening with a new shortcut [the shortcut is one HAL-C2 uses for "Terminal: Toggle", HAL-C2 already uses this for "Terminal: Toggle".]
+settings/snap-shot.feature: The shortcut row says what is happening with a new shortcut [the user presses only modifier keys on a Wayland desktop, Add a letter, number, or function key to your shortcut.]
+settings/snap-shot.feature: The shortcut row says what the desktop did with the shortcut request [the desktop grants the shortcut and shows it as "Ctrl+Alt+S", Desktop shortcut: Ctrl+Alt+S]
+settings/snap-shot.feature: The shortcut row says what the desktop did with the shortcut request [the desktop grants the shortcut but assigns no keys, and can ask again, No shortcut is assigned. Open shortcut permissions to choose one.]
+settings/snap-shot.feature: The shortcut row says what the desktop did with the shortcut request [the desktop grants the shortcut but assigns no keys, and cannot ask again, No shortcut is assigned. Choose one in your desktop's shortcut settings.]
+settings/snap-shot.feature: The shortcut row says what the desktop did with the shortcut request [the user refuses the permission prompt on a desktop that can ask again, Shortcut permission wasn't granted. Open shortcut permissions to allow it.]
+settings/snap-shot.feature: The shortcut row says what the desktop did with the shortcut request [the user refuses the permission prompt on a desktop that cannot ask again, Shortcut permission wasn't granted. Allow HAL-C2 in your desktop's shortcut settings.]
+settings/snap-shot.feature: The shortcut step explains what to press [a desktop that gives shortcuts by portal, Choose your keys, then approve the permission prompt if asked.]
+settings/snap-shot.feature: The shortcut step explains what to press [a desktop that records modifier pairs, Use both Shift keys, or record a different shortcut.]
+settings/snap-shot.feature: The shortcut step explains what to press [while recording, Click the shortcut, then press the keys you want.]
+settings/snap-shot.feature: The sound menu offers Off, Whoosh and Click [Click]
+settings/snap-shot.feature: The sound menu offers Off, Whoosh and Click [Off]
+settings/snap-shot.feature: The sound menu offers Off, Whoosh and Click [Whoosh (Default)]
+settings/snap-shot.feature: The user can remove the capture helper setup installed
+settings/snap-shot.feature: The user can turn the GNOME extension off and on again from setup
 settings/snap-shot.feature: Turning Snap Shot off
+settings/snap-shot.feature: Turning capture off drops a review, which does not come back with setup
 settings/snap-shot.feature: Turning on Snap Shot starts setup
+settings/snap-shot.feature: Updating the GNOME extension keeps the version it replaces
+settings/snap-shot.feature: Watching for both Shift keys adds no second app to the Dock
+settings/snap-shot.feature: Windows turns capture on without any setup
+settings/snap-shot.feature: macOS hides setup once permissions and the shortcut are in place
+settings/snap-shot.feature: macOS permissions are granted one at a time
+settings/snap-shot.feature: macOS shows where to drop the app when a permission must be granted by hand
 settings/source-control-writing.feature: A writer model that cannot be used is explained
 settings/source-control-writing.feature: A writer model that could not be saved
 settings/source-control-writing.feature: Choosing a separate writer model
@@ -2118,11 +2418,15 @@ settings/usage.feature: Usage of one environment leaves the others out
 settings/usage.feature: Usage remembers the view the user last chose
 settings/usage.feature: Usage that could not be read can be read again
 settings/usage.feature: Without limits to show the page says so
+source-control/agent-code-review.feature: A push while the reviews page is open is shown before it can be approved
 source-control/agent-code-review.feature: A review thread is marked as a review in the thread list
 source-control/agent-code-review.feature: A review thread shows the pull request and the verdict above the conversation
+source-control/agent-code-review.feature: Publishing from a review thread first shows what will be posted
 source-control/agent-code-review.feature: Resetting the prompt leaves the user's other changes unsaved
 source-control/agent-code-review.feature: The reviews page lets the user review here what a machine out of reach had
+source-control/agent-code-review.feature: The reviews page lets the user withdraw an approval of any commit
 source-control/agent-code-review.feature: The reviews page lists reviews by state
+source-control/agent-code-review.feature: The reviews page says why a pull request is not reviewed and lets the user approve it
 source-control/agent-code-review.feature: The reviews page shows a check the machine blocked as a problem of the machine
 source-control/agent-code-review.feature: The reviews page shows a review's findings and publishes them
 source-control/agent-code-review.feature: The reviews page shows which machine reviews a pull request
@@ -2133,6 +2437,7 @@ source-control/checkpoint-diffs.feature: A large file's changes start collapsed 
 source-control/checkpoint-diffs.feature: A turn's diff that cannot be loaded can be asked for again
 source-control/checkpoint-diffs.feature: Every file of a diff can be collapsed and expanded at once
 source-control/checkpoint-diffs.feature: Picking a turn's diff from the thread
+source-control/checkpoint-diffs.feature: The diff opens on all changes when the latest turn changed nothing
 source-control/commit-and-generated-messages.feature: A blank message is written by the writer model
 source-control/commit-and-generated-messages.feature: A commit offers to push it
 source-control/commit-and-generated-messages.feature: A failed action is reported
@@ -2304,42 +2609,83 @@ source-control/refs-and-branches.feature: The thread's branch follows the checko
 source-control/repository-discovery-clone-publish.feature: A host that is not ready is explained before publishing
 source-control/repository-discovery-clone-publish.feature: Publishing walks through provider, repository and summary
 source-control/repository-discovery-clone-publish.feature: Starting to publish from the git actions
+source-control/review-diffs.feature: A base that exists only on the remote is offered and marked
+source-control/review-diffs.feature: A branch that exists locally and on the remote is offered once
+source-control/review-diffs.feature: A changed file outside the thread's folder has no file actions
+source-control/review-diffs.feature: A diff file offers the file actions the environment has [has a file manager and the editors "VS Code", "Zed", open, reveal in the file manager and open with either editor]
+source-control/review-diffs.feature: A diff file offers the file actions the environment has [has no file manager, only opening with the editors is offered]
+source-control/review-diffs.feature: A diff file offers the file actions the environment has [has nothing that can open files, no menu is shown]
+source-control/review-diffs.feature: A diff too large to load whole loads each file's changes when it is opened
+source-control/review-diffs.feature: A diff too narrow to wrap scrolls sideways instead
+source-control/review-diffs.feature: A diff with nothing to show says why [a selection that changed nothing, No net changes in this selection.]
+source-control/review-diffs.feature: A diff with nothing to show says why [a selection the MC has no patch for, No patch available for this selection.]
+source-control/review-diffs.feature: A file replaced by a link of the same name is listed once as modified
+source-control/review-diffs.feature: A file too large to show in full is marked as a partial preview
+source-control/review-diffs.feature: A file whose changes failed to load can be loaded again
+source-control/review-diffs.feature: A file's changes that the checkout no longer has say the diff is gone
+source-control/review-diffs.feature: A file's path can be copied from the diff
+source-control/review-diffs.feature: A line comment is added from the keyboard
+source-control/review-diffs.feature: A refreshed diff keeps the folders of the tree the user opened and closed
+source-control/review-diffs.feature: A review comment is sent with a pasted code fence intact
 source-control/review-diffs.feature: A thread in its own worktree reviews that worktree
+source-control/review-diffs.feature: A turn that no longer exists falls back to the latest turn
+source-control/review-diffs.feature: An empty line comment is not added from the keyboard
 source-control/review-diffs.feature: Browsing the changed files as a tree
+source-control/review-diffs.feature: Choosing a collapsed file in the tree opens it and scrolls to it, again each time
 source-control/review-diffs.feature: Choosing what to compare against
 source-control/review-diffs.feature: Collapsing and expanding every file
 source-control/review-diffs.feature: Commenting on lines adds review context to the composer
+source-control/review-diffs.feature: Each thread keeps its own choice of what to review
 source-control/review-diffs.feature: Opening a diff file in the editor
 source-control/review-diffs.feature: Refreshing the diff by hand
 source-control/review-diffs.feature: Removing a line comment before sending
 source-control/review-diffs.feature: Switching between stacked and split views on the desktop and phone
+source-control/review-diffs.feature: The branch diff compares against the branch's own base unless another is chosen
+source-control/review-diffs.feature: The branch under review is not offered as its own base
+source-control/review-diffs.feature: The changed files are listed in the order the diff shows them
+source-control/review-diffs.feature: The open diff follows the checkout without being refreshed
 source-control/review-diffs.feature: Wrapping long lines
 source-control/snap-shot.feature: A cancelled capture attaches nothing
 source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [Linux on Niri, Niri has no focused window]
 source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [Windows, an earlier Windows window capture is still running]
 source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [Windows, the Windows window capture does not answer in time]
 source-control/snap-shot.feature: A capture that cannot be taken says so and leaves nothing behind [macOS, macOS returns an empty image for the window]
+source-control/snap-shot.feature: A capture uses one backend and never falls back
 source-control/snap-shot.feature: A capture with no window in front is explained [Windows]
 source-control/snap-shot.feature: A capture with no window in front is explained [macOS]
+source-control/snap-shot.feature: A config that changed after review is not overwritten
+source-control/snap-shot.feature: A disabled GNOME extension is explained
+source-control/snap-shot.feature: A sandboxed HAL-C2 never uses a compositor's own capture [Flatpak, GNOME]
+source-control/snap-shot.feature: A sandboxed HAL-C2 never uses a compositor's own capture [Flatpak, KDE Plasma]
+source-control/snap-shot.feature: A sandboxed HAL-C2 never uses a compositor's own capture [Snap, Hyprland]
+source-control/snap-shot.feature: A sandboxed HAL-C2 never uses a compositor's own capture [Snap, Niri]
 source-control/snap-shot.feature: A slow platform step ends the capture instead of hanging [macOS taking the picture of the window, 15 seconds]
 source-control/snap-shot.feature: A very large window is captured at a bounded size [Windows]
 source-control/snap-shot.feature: A very large window is captured at a bounded size [macOS]
 source-control/snap-shot.feature: An oversize capture is discarded
+source-control/snap-shot.feature: Capture effects that do not start do not hold up the capture
 source-control/snap-shot.feature: Captures waiting to be sent survive a restart
 source-control/snap-shot.feature: Capturing the window in front
 source-control/snap-shot.feature: Capturing while HAL-C2 is in front captures HAL-C2
 source-control/snap-shot.feature: Capturing with no project
 source-control/snap-shot.feature: Capturing with no thread open starts a draft
+source-control/snap-shot.feature: Editing a compositor config is reviewed and backed up
+source-control/snap-shot.feature: Hyprland access being denied is shown plainly
 source-control/snap-shot.feature: Including the app's text and controls
 source-control/snap-shot.feature: Other Wayland desktops choose a window each time
 source-control/snap-shot.feature: Reduced motion turns the animation off
+source-control/snap-shot.feature: The GNOME extension needs a new login
+source-control/snap-shot.feature: The Linux desktop decides how capture works [GNOME, the HAL-C2 GNOME extension]
 source-control/snap-shot.feature: The Linux desktop decides how capture works [Hyprland, the capture helper and a Hyprland binding]
+source-control/snap-shot.feature: The Linux desktop decides how capture works [KDE Plasma, the capture helper]
 source-control/snap-shot.feature: The Linux desktop decides how capture works [Niri, a Niri binding]
 source-control/snap-shot.feature: The Linux desktop decides how capture works [another compositor, the desktop portal]
 source-control/snap-shot.feature: The attachment names the app the way the user knows it [Windows, the window belongs to the program "Code.exe", Code]
 source-control/snap-shot.feature: The attachment names the app the way the user knows it [Windows, the window reports no program name, Window]
 source-control/snap-shot.feature: The capture plays its cues
+source-control/snap-shot.feature: The desktop portal is preferred to the GNOME extension
 source-control/snap-shot.feature: Turning Snap Shot off stops capturing
+source-control/snap-shot.feature: Two HAL-C2 instances do not capture at the same time
 source-control/snap-shot.feature: X11 sessions are not supported
 source-control/snap-shot.feature: XWayland apps can be captured on Wayland
 source-control/stacked-pull-requests.feature: A stack that could not be refreshed says it may be stale
@@ -2349,13 +2695,24 @@ source-control/stacked-pull-requests.feature: The thread's pull request shows it
 source-control/status-and-changes.feature: Initializing a repository in a plain folder
 source-control/status-and-changes.feature: Status follows the checkout while the thread is open
 source-control/worktrees-and-setup-scripts.feature: A new worktree starts as the setting says, and the thread can differ
+source-control/worktrees-and-setup-scripts.feature: A previous worktree with no branch is just called the previous worktree
 source-control/worktrees-and-setup-scripts.feature: A project that starts in a new worktree starts it as the setting says
+source-control/worktrees-and-setup-scripts.feature: A thread that has started keeps its workspace [in a worktree, Worktree]
+source-control/worktrees-and-setup-scripts.feature: A thread that has started keeps its workspace [in the project folder, Local checkout]
 source-control/worktrees-and-setup-scripts.feature: Choosing a new worktree for a new thread
 source-control/worktrees-and-setup-scripts.feature: Going back to the project folder
+source-control/worktrees-and-setup-scripts.feature: No previous worktree is offered when there is none
 source-control/worktrees-and-setup-scripts.feature: Picking the base ref for a new worktree
 source-control/worktrees-and-setup-scripts.feature: Returning to the previous worktree
 source-control/worktrees-and-setup-scripts.feature: Several chosen models always get a worktree each
+source-control/worktrees-and-setup-scripts.feature: Some worktrees are not offered as the previous worktree [belongs only to an archived thread]
+source-control/worktrees-and-setup-scripts.feature: Some worktrees are not offered as the previous worktree [is the worktree the new thread is already in]
+source-control/worktrees-and-setup-scripts.feature: The base of a new worktree can be started from origin
+source-control/worktrees-and-setup-scripts.feature: The choice to start from origin belongs to the new thread
+source-control/worktrees-and-setup-scripts.feature: The previous worktree is named after its branch
 source-control/worktrees-and-setup-scripts.feature: The setup card shows the base, branch and path
+source-control/worktrees-and-setup-scripts.feature: The workspace choice is named for what it is [in an existing worktree, Current worktree]
+source-control/worktrees-and-setup-scripts.feature: The workspace choice is named for what it is [in the project folder, Current checkout]
 space/agent-in-page.feature: A deleted thread ends what the page says, and the page says why
 space/agent-in-page.feature: A failure shows on the page and leaves it as the agent last wrote it
 space/agent-in-page.feature: A page that updates itself says what its agent and its update are doing apart

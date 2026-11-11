@@ -4,14 +4,16 @@
 //! brick, and a draft's attachment opened from its chip.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Write as _;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use hal_c2_shell::controllers::attachment_viewer::AttachmentViewer;
 use ljos::item::{MouseButtons, PointerEvent};
 use ljos::prelude::{ObjectId, Value};
 use serde_json::json;
+
+use crate::fake_mc::Download;
 
 use super::fake_files::media_fixture;
 use super::stream::{PROJECT, look_at_thread, set, start_run};
@@ -35,10 +37,11 @@ fn now_ms() -> u64 {
 /// has, the signatures it made, and whether it is cut off.
 #[derive(Default)]
 struct FakeAttachments {
-    bytes: HashMap<String, Vec<u8>>,
-    gone: HashSet<String>,
+    // Shared with the I/O thread, which answers the GETs for them.
+    bytes: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    gone: Arc<Mutex<HashSet<String>>>,
     unsigned: HashSet<String>,
-    broken: HashSet<String>,
+    broken: Arc<Mutex<HashSet<String>>>,
     unreachable: bool,
     signatures: usize,
     saves: Option<tempfile::TempDir>,
@@ -94,38 +97,37 @@ fn serve(world: &mut World) {
         );
         Ok(())
     });
+    // Answered on the I/O thread: a picture being fetched is waited for
+    // where the scenario's thread pumps nothing.
+    let (bytes, gone, broken) = {
+        let fake = world.mc.part::<FakeAttachments>();
+        (fake.bytes.clone(), fake.gone.clone(), fake.broken.clone())
+    };
     world
         .mc
-        .on_raw("/api/assets/attachment/", |mc, mut stream, head| {
-            let path = head
-                .lines()
-                .next()
-                .and_then(|line| line.split(' ').nth(1))
-                .unwrap_or("");
-            let id = path.split('/').nth(4).unwrap_or("").to_owned();
-            let fake = mc.part::<FakeAttachments>();
-            if fake.gone.contains(&id) || fake.broken.contains(&id) || !fake.bytes.contains_key(&id)
-            {
-                let _ = stream.write_all(
-                    b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
-                );
-            } else {
-                let body = fake.bytes[&id].clone();
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
-                    body.len()
-                );
-                let _ = stream.write_all(&body);
+        .on_download("/api/assets/attachment/", move |path| {
+            let id = path.split('/').nth(4).unwrap_or("");
+            let lock = |set: &Mutex<HashSet<String>>| {
+                set.lock().unwrap_or_else(|e| e.into_inner()).contains(id)
+            };
+            let body = bytes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(id)
+                .cloned()
+                .filter(|_| !lock(&gone) && !lock(&broken));
+            match body {
+                Some(body) => Download {
+                    status: 200,
+                    content_type: "application/octet-stream",
+                    body,
+                },
+                None => Download {
+                    status: 404,
+                    content_type: "text/plain",
+                    body: Vec::new(),
+                },
             }
-            let _ = stream.flush();
-            // Closing with the request unread resets the connection, which
-            // cuts off a large body still on its way: end the reply and read
-            // until the client hangs up.
-            let _ = stream.shutdown(std::net::Shutdown::Write);
-            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-            let _ = std::io::copy(&mut stream, &mut std::io::sink());
-            Ok(())
         });
 }
 
@@ -157,6 +159,8 @@ fn message_with_images(world: &mut World, count: usize, first: serde_json::Value
             .mc
             .part::<FakeAttachments>()
             .bytes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(format!("image-{n}"), picture());
         let mut image = json!({
             "type": "image", "id": format!("image-{n}"),
@@ -404,6 +408,8 @@ fn open_sent(
         .mc
         .part::<FakeAttachments>()
         .bytes
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .insert("file-1".to_owned(), bytes.clone());
     look_at_thread(world, PROJECT)?;
     let run = start_run(world, 0, "running")?;
@@ -876,6 +882,8 @@ pub fn register(steps: &mut Steps) {
                     .mc
                     .part::<FakeAttachments>()
                     .broken
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
                     .insert("image-1".to_owned());
             }
             message_with_images(world, 1, json!(null))?;
@@ -1340,6 +1348,8 @@ pub fn register(steps: &mut Steps) {
                 .mc
                 .part::<FakeAttachments>()
                 .gone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert("file-1".to_owned());
             open_sent(world, "build.log", "text/plain", b"built\n".to_vec(), true)
         },
@@ -1350,7 +1360,7 @@ pub fn register(steps: &mut Steps) {
             {
                 let fake = world.mc.part::<FakeAttachments>();
                 fake.unreachable = false;
-                fake.gone.clear();
+                fake.gone.lock().unwrap_or_else(|e| e.into_inner()).clear();
             }
             brick_shown(world)?.click(world, "attachmentViewerRetry")
         },
@@ -1411,6 +1421,8 @@ pub fn register(steps: &mut Steps) {
                 .mc
                 .part::<FakeAttachments>()
                 .bytes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
                 .insert("file-1".to_owned(), b"<h1>caf\xe9</h1>".to_vec());
             Ok(())
         },
