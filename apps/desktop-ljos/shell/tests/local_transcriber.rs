@@ -188,10 +188,23 @@ wait"#,
     assert_eq!(f.get("heardCount"), "0");
     // SAFETY: signal 0 only asks whether the process exists.
     let alive = |pid| unsafe { libc::kill(pid, 0) == 0 };
-    // Gone, or a zombie awaiting its reaper: the group was signalled.
+    // Gone, a zombie awaiting its reaper, or not yet scheduled to act on the
+    // SIGTERM or SIGKILL waiting for it: the group was signalled.
     let zombie =
         std::fs::read_to_string(format!("/proc/{child}/stat")).is_ok_and(|s| s.contains(") Z "));
-    assert!(!alive(child) || zombie, "the helper's child outlived it");
+    let fatal = (1u64 << (libc::SIGTERM - 1)) | (1u64 << (libc::SIGKILL - 1));
+    let pending = std::fs::read_to_string(format!("/proc/{child}/status")).is_ok_and(|status| {
+        status.lines().any(|line| {
+            line.strip_prefix("SigPnd:")
+                .or_else(|| line.strip_prefix("ShdPnd:"))
+                .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+                .is_some_and(|mask| mask & fatal != 0)
+        })
+    });
+    assert!(
+        !alive(child) || zombie || pending,
+        "the helper's child outlived it"
+    );
 }
 
 #[test]

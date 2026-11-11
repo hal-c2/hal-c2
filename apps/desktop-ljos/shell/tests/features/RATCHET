@@ -629,6 +629,7 @@ files/file-explorer.feature: File actions available from a file entry [reveal in
 files/file-explorer.feature: Filtering the tree can hide entries that do not match
 files/file-explorer.feature: The tree follows the file open in the viewer
 files/file-explorer.feature: The tree refreshes when the agent changes files
+files/file-viewer-and-editing.feature: A Mermaid file that cannot be drawn shows its source and says why
 files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [JSON, Show accessibility JSON]
 files/file-viewer-and-editing.feature: A Snap Shot offers the form of what it captured [text, Show extracted text]
 files/file-viewer-and-editing.feature: A Snap Shot's text is read in the large view and the picture comes back
@@ -677,6 +678,7 @@ files/file-viewer-and-editing.feature: A large video starts playing
 files/file-viewer-and-editing.feature: A line selection in a file is let go of without a comment [clicks outside the file]
 files/file-viewer-and-editing.feature: A line selection in a file is let go of without a comment [presses Escape while the file's text is focused]
 files/file-viewer-and-editing.feature: A media preview that fails to load can be retried [assets/logo.png, image, is shown]
+files/file-viewer-and-editing.feature: A media preview that fails to load can be retried [media/theme.mp3, audio, plays]
 files/file-viewer-and-editing.feature: A narrow Files tab keeps the file's buttons in the file
 files/file-viewer-and-editing.feature: A page that cannot be read as text can still be shown rendered
 files/file-viewer-and-editing.feature: A partial preview says how much of the file is shown
@@ -875,8 +877,14 @@ mc/platform/openshell.feature: Settings shows whether review sandboxes can run, 
 mc/platform/storage-layout.feature: The desktop app's control socket lives in the runtime directory [XDG_RUNTIME_DIR is "/run/user/1000", /run/user/1000/hal-c2]
 mc/platform/websocket-protocol.feature: A client refuses a server speaking an unknown protocol
 mc/platform/websocket-protocol.feature: A client skips an event type it does not know
+navigation/appearance.feature: A development build is identified as Dev [Artwork, the app shows "DEV" by the wordmark]
+navigation/appearance.feature: A development build is identified as Dev [None, the app shows no environment marker]
+navigation/appearance.feature: A development build is identified as Dev [Version pill, the app shows a Dev version pill]
 navigation/appearance.feature: A font preference can be reset to the system font
 navigation/appearance.feature: A new interface font reaches the text already on screen
+navigation/appearance.feature: A shell without the brand band still shows which build it is [Artwork, the sidebar shows a "Dev" pill above the list]
+navigation/appearance.feature: A shell without the brand band still shows which build it is [None, the sidebar shows no stage above the list]
+navigation/appearance.feature: A shell without the brand band still shows which build it is [Version pill, the sidebar shows a "Dev" pill above the list]
 navigation/appearance.feature: A theme choice that cannot be saved is reported
 navigation/appearance.feature: A theme with only one appearance fills only that half
 navigation/appearance.feature: An appearance setting can be put back to its default [composer context]
@@ -911,6 +919,9 @@ navigation/appearance.feature: Panels open and close immediately by default
 navigation/appearance.feature: Settings → Appearance marks the theme in use, the standard theme included
 navigation/appearance.feature: Switching threads never replays panel transitions
 navigation/appearance.feature: System appearance follows the operating system as it changes
+navigation/appearance.feature: The app's name carries its stage unless it is the latest release [Dev, HAL-C2 (Dev)]
+navigation/appearance.feature: The app's name carries its stage unless it is the latest release [Latest, HAL-C2]
+navigation/appearance.feature: The app's name carries its stage unless it is the latest release [Nightly, HAL-C2 (Nightly)]
 navigation/appearance.feature: The appearance shortcut cycles through the modes [Dark, System]
 navigation/appearance.feature: The appearance shortcut cycles through the modes [Light, Dark]
 navigation/appearance.feature: The appearance shortcut cycles through the modes [System, Light]
@@ -1055,6 +1066,7 @@ navigation/keybinding-settings.feature: Commands have readable names [thread.cop
 navigation/keybinding-settings.feature: Commands have readable names [thread.editQueuedMessage, Queue: Edit Last Queued Message]
 navigation/keybinding-settings.feature: Commands have readable names [thread.steerQueuedMessage, Queue: Send First Queued Message as Steer]
 navigation/keybinding-settings.feature: Conditions are built from variables, negation and groups
+navigation/keybinding-settings.feature: Conditions read as words
 navigation/keybinding-settings.feature: Conflicting bindings are called out
 navigation/keybinding-settings.feature: Default bindings cannot be removed, only rebound
 navigation/keybinding-settings.feature: Every command is listed with where its binding comes from
@@ -1228,6 +1240,7 @@ navigation/layout.feature: Hiding the sidebar
 navigation/layout.feature: Hiding the terminal
 navigation/layout.feature: Hiding the thread details panel
 navigation/layout.feature: Opening and closing the right panel
+navigation/layout.feature: Opening the right panel's tab in the thread's centre
 navigation/layout.feature: Resetting the sidebar width
 navigation/layout.feature: Resizing the right panel
 navigation/layout.feature: Resizing the sidebar is remembered
@@ -1238,6 +1251,7 @@ navigation/layout.feature: Settings replace the thread list with the settings se
 navigation/layout.feature: Showing the sidebar again from the header
 navigation/layout.feature: Showing the terminal from the header
 navigation/layout.feature: Switching between right panel tabs
+navigation/layout.feature: The header gives up its project, labels, then pills, only when they do not fit
 navigation/layout.feature: The header names the project and thread
 navigation/layout.feature: The header offers no action to run when the project has none
 navigation/layout.feature: The header offers no editor when the environment has none
@@ -1427,6 +1441,7 @@ planning/planner.feature: The user picks the board and its date fields from list
 planning/planner.feature: The user picks the planner's Slack channel in its settings
 planning/planner.feature: What the user changes while the settings save is kept
 plugins/keymaps.feature: Resetting keybindings removes every override
+plugins/plugin-catalog.feature: An unverified plugin asks for confirmation before it loads
 plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes
 plugins/plugin-contributions.feature: A disabled package can be checked to compile without enabling it
 plugins/plugin-contributions.feature: A failed plugin can be restarted from its settings
@@ -1480,10 +1495,17 @@ plugins/turn-hooks.feature: A notice folded behind later tool calls still offers
 plugins/turn-hooks.feature: A notice's Stop stops only the turn it is in
 plugins/turn-hooks.feature: A plugin's notice offers Stop while its turn works
 plugins/ui-plugins.feature: A disabled plugin stays disabled after a restart
+plugins/ui-plugins.feature: A hot reload that breaks the plugin keeps the last working version
 plugins/ui-plugins.feature: A plugin URL that cannot be reached is reported
+plugins/ui-plugins.feature: A plugin can be loaded from a pasted URL
 plugins/ui-plugins.feature: A plugin shows times in the time format the user chose
 plugins/ui-plugins.feature: A slot a surface does not have is skipped quietly
+plugins/ui-plugins.feature: Disabling a plugin keeps it installed but hides its contributions
+plugins/ui-plugins.feature: Editing a plugin file in dev reloads it without restarting
 plugins/ui-plugins.feature: Plugin errors are visible to the user
+plugins/ui-plugins.feature: Re-enabling a plugin restores its contributions
+plugins/ui-plugins.feature: The desktop shell exposes the same slots as the TUI where the surfaces match
+plugins/ui-plugins.feature: The same plugin file works on every surface
 preview/automation.feature: A dev-server port wins over an address given with it
 preview/automation.feature: A queued browser action whose caller gave up is not started
 preview/automation.feature: An agent opens a dev server's port in one step
@@ -3060,6 +3082,7 @@ terminal/io.feature: The cursor blinks only while the terminal has focus
 terminal/io.feature: The cursor stays steady when the user prefers reduced motion
 terminal/io.feature: The desktop says what it has read in batches, not per chunk
 terminal/io.feature: The scrollbar's thumb stays large enough to grab
+terminal/io.feature: The terminal draws prompt symbols without an installed symbol font
 terminal/io.feature: The terminal shows a scrollbar for its history
 terminal/io.feature: The user copies, pastes and clears from the terminal's menu [Copy, the selected text is on the clipboard]
 terminal/io.feature: The user copies, pastes and clears from the terminal's menu [Paste, the clipboard text is sent to the shell]
@@ -3113,6 +3136,7 @@ terminal/tabs.feature: A single terminal shows its actions without a terminal li
 terminal/tabs.feature: A split group holds at most four terminals
 terminal/tabs.feature: A terminal tab runs its own terminal beside the drawer's
 terminal/tabs.feature: A terminal the user just closed does not come back from a late list
+terminal/tabs.feature: Clicking a terminal in a split makes it the active one
 terminal/tabs.feature: Closing a terminal asks before stopping its process
 terminal/tabs.feature: Closing a terminal tab stops its terminals
 terminal/tabs.feature: Closing a terminal that is not active keeps the active one
@@ -3501,12 +3525,16 @@ timeline/markdown.feature: A GitHub alert shows its kind [IMPORTANT, Important]
 timeline/markdown.feature: A GitHub alert shows its kind [NOTE, Note]
 timeline/markdown.feature: A GitHub alert shows its kind [TIP, Tip]
 timeline/markdown.feature: A GitHub alert shows its kind [WARNING, Warning]
+timeline/markdown.feature: A Mermaid diagram being written is drawn once it is finished
+timeline/markdown.feature: A Mermaid diagram in a reply is drawn
+timeline/markdown.feature: A Mermaid diagram that cannot be drawn shows its source and says why
 timeline/markdown.feature: A code block is coloured only when its fence names a language [, as plain text]
 timeline/markdown.feature: A code block is coloured only when its fence names a language [exs, coloured as Elixir]
 timeline/markdown.feature: A code block is coloured only when its fence names a language [klingon, as plain text]
 timeline/markdown.feature: A code block is coloured only when its fence names a language [py, coloured as Python]
 timeline/markdown.feature: A code block is coloured only when its fence names a language [qml, coloured as QML]
 timeline/markdown.feature: A code block is coloured only when its fence names a language [ts, coloured as TypeScript]
+timeline/markdown.feature: A code block is shown as code while it is written
 timeline/markdown.feature: A code block still being written keeps the colours of its finished lines
 timeline/markdown.feature: A link to a script is not a link
 timeline/markdown.feature: A linked image opens as a preview

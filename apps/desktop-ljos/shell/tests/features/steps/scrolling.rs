@@ -143,7 +143,7 @@ fn seed_long(world: &mut World) -> Outcome {
                    "requestedAt": iso(started), "startedAt": iso(started),
                    "completedAt": iso(started + Duration::seconds(30))}),
         )?;
-        let mut item = |world: &mut World, kind: &str, more: Json| -> Outcome {
+        let item = |world: &mut World, kind: &str, more: Json| -> Outcome {
             let ordinal = next(world);
             let mut fields = json!({"type": kind, "runId": run, "status": "completed",
                                     "updatedAt": iso(started), "ordinal": ordinal});

@@ -30,8 +30,9 @@ mcp = ["ljos/mcp"]
 # what build.rs compiled ahead of time runs for the files it was made from.
 # render: `--render`. media: the Device tab's screen is decoded with Ljós's
 # stream decoder (src/device/decoder.rs). collation: names sort by the
-# locale's alphabet (sidebar_model::locale_compare, `localeCompare`).
-ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d"] }
+# locale's alphabet (sidebar_model::locale_compare, `localeCompare`). woff:
+# the terminal's bundled symbol font (TerminalSplits' FontLoader) is WOFF2.
+ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation", "pdf", "quick3d", "woff"] }
 # QtQuick3D for the device tab's 3D body (DeviceBody3D), registered by
 # device::register.
 ljos_quick3d.workspace = true

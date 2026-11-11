@@ -214,12 +214,7 @@ impl World {
             .locale("en_US")
             .register(hal_c2_shell::register)
             .build_engine();
-        // What `App::qml_dirs` gives main.rs: a plugin page is QML text.
-        let dirs = hal_c2_shell::qml::Roots::checkout()
-            .dirs()
-            .expect("the shell's QML");
-        let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-        ljos::dev::install_text_compiler(&engine, &paths);
+        install_text_compiler(&engine);
         // Before the shell starts, for its timers to start on the window's clock.
         let window = TestWindow::new(&engine, WINDOW.0, WINDOW.1);
         let wake = |signal: &Arc<Signal>| {
@@ -782,7 +777,14 @@ impl World {
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
-        let item = ljos::create_root(&shell.engine, source, root)
+        // As runtime.rs after a reload: the texts' compiler goes over the
+        // brick's source, whose files are named by key, so a URL a brick
+        // makes of its directory (PluginRegistry's "plugin") is a key's too.
+        shell.engine.set_component_source(source);
+        install_text_compiler(&shell.engine);
+        let item = shell
+            .engine
+            .create_from_url(root, None, Vec::new())
             .map_err(|e| Failure(format!("{root} cannot be made: {e:?}")))?;
         shell
             .window
@@ -1109,5 +1111,35 @@ impl ljos::prelude::Fetcher for LocalFetcher {
             return Err(Failed(format!("{url}: {status}")));
         }
         Ok(reply[split + 4..].to_vec())
+    }
+}
+
+/// What `App::qml_dirs` gives main.rs: a plugin page is QML text. A
+/// brick's pack names its files by key (`file:///HalC2/Bricks/X.qml`), so
+/// what they name beside themselves (TerminalSplits' bundled font) is
+/// mounted from where the keys' files are, as the app finds it on disk.
+fn install_text_compiler(engine: &ljos::Engine) {
+    let dirs = hal_c2_shell::qml::Roots::checkout()
+        .dirs()
+        .expect("the shell's QML");
+    for dir in &dirs {
+        mount_modules(engine, dir, dir);
+    }
+    let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+    ljos::dev::install_text_compiler(engine, &paths);
+}
+
+/// Mounts each module (a directory with a qmldir) under `dir` at the URL
+/// its key gives, `file:///HalC2/Bricks/` for `root/HalC2/Bricks`.
+fn mount_modules(engine: &ljos::Engine, root: &Path, dir: &Path) {
+    if dir.join("qmldir").is_file()
+        && let Ok(key) = dir.strip_prefix(root)
+    {
+        Platform::of(engine).mount_resources(&format!("file:///{}/", key.display()), dir);
+    }
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            mount_modules(engine, root, &entry.path());
+        }
     }
 }
