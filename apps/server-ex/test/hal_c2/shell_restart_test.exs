@@ -117,6 +117,31 @@ defmodule HalC2.ShellRestartTest do
     assert_receive {:client, {:rows, _, [{"th-1", _}], %{epoch: ^epoch, rev: 1, reset: false}}}
   end
 
+  # The provider list is read after the shell starts; until then a project keeps the
+  # new-thread model it had, so clients are not told it changed and then back.
+  test "a project's new-thread model is no change when the shell starts again" do
+    project = %{"id" => "p1", "title" => "p1", "defaultModelSelection" => nil}
+    {:ok, _} = Store.append([{:project, "p1", [{"project", "p1", %{"s" => project}}]}])
+    :ok = Store.put_shell("p1", 1, {"project", project})
+    ref = make_ref()
+    :sys.replace_state(Shell, &%{&1 | providers: nil, providers_read: ref})
+    ready = %{"instanceId" => "fake", "models" => [%{"slug" => "fake-1"}]}
+    send(Shell, {:new_thread_providers, ref, [ready]})
+    Shell.put_row("p1", {"project", project})
+    :ok = Shell.sync()
+
+    assert {"project", %{"newThreadModelSelection" => %{"model" => "fake-1"}}} =
+             Shell.row(node(), "p1")
+
+    :ok = Shell.subscribe(self())
+    stop_shell()
+    start_shell()
+
+    # Subscribers are sent what differs from the rows kept from the last run.
+    assert_receive {:hal_c2_shell, {:rows, _, changed}}
+    refute List.keymember?(changed, "p1", 0)
+  end
+
   test "rows a forgotten member sent before it was forgotten do not bring it back" do
     send(Shell, {:nodeup, @peer})
     cast_from_peer([{"r1", row("r1", "a"), 1}])

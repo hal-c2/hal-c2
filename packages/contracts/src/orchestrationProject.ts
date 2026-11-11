@@ -13,7 +13,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
-  /** What a new thread here gets, resolved by the MC that owns the project; absent from older MCs. */
+  /** What a new thread here gets, resolved by the MC that owns the project; absent from older MCs, and the selection until that MC has read its providers. Null: no provider can run. */
   newThreadModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   newThreadRuntimeMode: Schema.optional(RuntimeMode),
   // Per-project override for where new threads start. Null/absent means

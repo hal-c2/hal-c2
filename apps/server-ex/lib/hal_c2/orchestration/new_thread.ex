@@ -46,25 +46,42 @@ defmodule HalC2.Orchestration.NewThread do
   end
 
   @doc """
-  A thread's creation `input` with what it runs on filled in where it names nothing:
-  the defaults of its project (`defaults/1`). What it does name is kept as it is.
+  A thread's creation `input` with what it runs on filled in where it names nothing,
+  each field alone: what its project's row in the shell says a new thread there gets
+  (`HalC2.Shell`), as a client drafting it showed, else the defaults of its project
+  (`defaults/1`). What it does name is kept as it is. The provider list, which probes
+  provider CLIs, is read only for a model the row does not have yet.
   """
   @spec complete(map) :: map
   def complete(input) do
     if is_map(input["modelSelection"]) and is_binary(input["runtimeMode"]) do
       input
     else
-      defaults = defaults(project(input["projectId"]))
+      row = project(input["projectId"])
 
       input
-      |> Map.update(
-        "modelSelection",
-        defaults["modelSelection"],
-        &(&1 || defaults["modelSelection"])
-      )
-      |> Map.update("runtimeMode", defaults["runtimeMode"], &(&1 || defaults["runtimeMode"]))
+      |> fill("modelSelection", fn ->
+        from_row(row, "newThreadModelSelection", fn -> defaults(row)["modelSelection"] end)
+      end)
+      |> fill("runtimeMode", fn ->
+        from_row(row, "newThreadRuntimeMode", fn -> defaults(row, nil)["runtimeMode"] end)
+      end)
     end
   end
+
+  defp fill(input, key, default) do
+    if input[key] == nil, do: Map.put(input, key, default.()), else: input
+  end
+
+  # A null selection on the row is known: no provider can run.
+  defp from_row(%{} = row, key, otherwise) do
+    case Map.fetch(row, key) do
+      {:ok, value} -> value
+      :error -> otherwise.()
+    end
+  end
+
+  defp from_row(nil, _key, otherwise), do: otherwise.()
 
   defp on?(%{"instanceId" => instance}, settings, project_id) when is_binary(instance),
     do: HalC2.Settings.provider_on?(settings, project_id, instance)

@@ -56,7 +56,9 @@ defmodule HalC2.Shell do
   (`newThreadModelSelection`, `newThreadRuntimeMode`; `HalC2.Orchestration.NewThread`),
   so a client drafting a thread on any machine shows that machine's defaults. They
   follow settings and the provider list, which is read outside this server and kept,
-  and are not stored: the store holds rows as their streams wrote them.
+  and are not stored: the store holds rows as their streams wrote them. Until the list
+  is first read, a project with no configured default has no `newThreadModelSelection`
+  (or the one its row kept from the last run): null means no provider can run.
   """
 
   use GenServer
@@ -333,7 +335,7 @@ defmodule HalC2.Shell do
     changed =
       replace_rows(
         node(),
-        Map.new(stored, fn {id, kind, row} -> {id, with_defaults({kind, row}, nil)} end)
+        Map.new(stored, fn {id, kind, row} -> {id, with_defaults(id, {kind, row}, nil)} end)
       )
 
     :ets.match_delete(@revs, {{node(), :_}, :_})
@@ -540,7 +542,7 @@ defmodule HalC2.Shell do
 
   @impl true
   def handle_cast({:put_row, stream_id, kind_row}, state) do
-    {:noreply, put_own(state, [{stream_id, with_defaults(kind_row, state.providers)}])}
+    {:noreply, put_own(state, [{stream_id, with_defaults(stream_id, kind_row, state.providers)}])}
   end
 
   # Like rows, a descriptor from a peer that is not online was sent before it was
@@ -697,23 +699,38 @@ defmodule HalC2.Shell do
   end
 
   # A project row with the defaults a new thread there gets, without reading the
-  # provider list here: it probes provider CLIs.
-  defp with_defaults({"project", row}, providers) do
+  # provider list here: it probes provider CLIs. Until the list is read (`providers`
+  # nil), a project with no configured default keeps the selection its row already
+  # has, from the last run where the shell restarted, or none: a null selection means
+  # no provider can run, not that it is not known yet.
+  defp with_defaults(id, {"project", row}, providers) do
     defaults = HalC2.Orchestration.NewThread.defaults(row, providers)
+    row = Map.put(row, "newThreadRuntimeMode", defaults["runtimeMode"])
 
-    {"project",
-     Map.merge(row, %{
-       "newThreadModelSelection" => defaults["modelSelection"],
-       "newThreadRuntimeMode" => defaults["runtimeMode"]
-     })}
+    selection =
+      if providers != nil or defaults["modelSelection"] != nil,
+        do: {:ok, defaults["modelSelection"]},
+        else: kept_selection(id)
+
+    case selection do
+      {:ok, selection} -> {"project", Map.put(row, "newThreadModelSelection", selection)}
+      :error -> {"project", Map.delete(row, "newThreadModelSelection")}
+    end
   end
 
-  defp with_defaults(kind_row, _providers), do: kind_row
+  defp with_defaults(_id, kind_row, _providers), do: kind_row
+
+  defp kept_selection(id) do
+    case :ets.lookup(@table, {node(), id}) do
+      [{_, {"project", %{"newThreadModelSelection" => selection}}}] -> {:ok, selection}
+      _ -> :error
+    end
+  end
 
   defp redecorate(state) do
     rows =
       for [id, {"project", _} = kind_row] <- :ets.match(@table, {{node(), :"$1"}, :"$2"}),
-          do: {id, with_defaults(kind_row, state.providers)}
+          do: {id, with_defaults(id, kind_row, state.providers)}
 
     put_own(state, rows)
   end
