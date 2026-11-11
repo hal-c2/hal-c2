@@ -3021,12 +3021,16 @@ terminal/drawer.feature: A thread whose project the MC does not know has no term
 terminal/drawer.feature: A worktree thread's terminal starts in its worktree
 terminal/drawer.feature: Closing the active terminal ends it and selects the last one left
 terminal/drawer.feature: Closing the last terminal hides the drawer
+terminal/drawer.feature: Going between threads gives the drawer's room to the thread showing it [in the built-in layout]
+terminal/drawer.feature: Going between threads gives the drawer's room to the thread showing it [under its thread in a column of its own]
 terminal/drawer.feature: Hiding the drawer keeps its terminals running and attached
 terminal/drawer.feature: Keys typed while a write is on its way follow it in one write
 terminal/drawer.feature: Opening the drawer starts the thread's first terminal in its project
 terminal/drawer.feature: Output reaches the terminal
 terminal/drawer.feature: The drawer follows the user's own terminal chords
 terminal/drawer.feature: The drawer shows the terminals the thread already has
+terminal/drawer.feature: The drawer's buttons and its list of terminals are inside the window [in the built-in layout]
+terminal/drawer.feature: The drawer's buttons and its list of terminals are inside the window [under its thread in a column of its own]
 terminal/drawer.feature: The drawer's height and open terminals survive a restart
 terminal/errors.feature: A failed terminal action is written into the terminal [clearing from the keyboard, , Failed to clear terminal]
 terminal/errors.feature: A failed terminal action is written into the terminal [copying a link from the terminal's menu, , Unable to copy link]

@@ -211,6 +211,43 @@ Feature: The desktop's terminal drawer
       Then the script runs in a terminal of the terminal drawer
       And the other terminal receives no writes
 
+  Rule: The drawer has its own room under the thread
+
+    # On macOS the desktop-ljos drawer ran past the window's right edge: its buttons were
+    # gone and its list showed only icons.
+    @desktop
+    Scenario Outline: The drawer's buttons and its list of terminals are inside the window
+      Given the MC runs these terminals for "t1":
+        | terminal | label      |
+        | term-1   | Terminal 1 |
+        | term-2   | Terminal 2 |
+      And the user's shell has the drawer <where>
+      When the user toggles the terminal drawer
+      Then the drawer's buttons are inside the window
+      And the drawer's list names "Terminal 1" and "Terminal 2" under "Single (1)" inside the window
+
+      Examples:
+        | where                                    |
+        | in the built-in layout                   |
+        | under its thread in a column of its own  |
+
+    # Going from a thread with the drawer open to one without it left the drawer's room
+    # blank under the composer, until the user showed the terminal again. It took a window
+    # that came up with the drawer already open.
+    @desktop
+    Scenario Outline: Going between threads gives the drawer's room to the thread showing it
+      Given the user toggles the terminal drawer
+      And the user's shell has the drawer <where>
+      When the user goes to "env-a:t2"
+      Then the terminal drawer takes no room
+      When the user goes to "env-a:t1"
+      Then the terminal drawer is drawn under the thread with its terminals
+
+      Examples:
+        | where                                    |
+        | in the built-in layout                   |
+        | under its thread in a column of its own  |
+
   Rule: The drawer keeps the user's chords and its place
 
     @desktop

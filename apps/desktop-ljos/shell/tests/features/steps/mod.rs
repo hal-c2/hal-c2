@@ -145,6 +145,7 @@ pub mod terminal_errors;
 pub mod terminal_input;
 pub mod terminal_links;
 pub mod terminal_menu;
+pub mod terminal_room;
 pub mod terminal_session;
 pub mod theme;
 pub mod theme_library;
@@ -312,6 +313,7 @@ pub fn register(steps: &mut Steps) {
     terminal_context::register(steps);
     terminal_menu::register(steps);
     terminal_input::register(steps);
+    terminal_room::register(steps);
     terminal_links::register(steps);
     terminal_errors::register(steps);
     terminal_session::register(steps);
