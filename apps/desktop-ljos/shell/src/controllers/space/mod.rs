@@ -2975,10 +2975,7 @@ impl Space {
     }
 
     fn add_image_file(&mut self, engine: &Engine, url: &str) {
-        let path = url
-            .strip_prefix("file://")
-            .map(|rest| percent_decode(rest.strip_prefix("localhost").unwrap_or(rest)))
-            .unwrap_or_else(|| url.to_owned());
+        let path = crate::bridge::local_path(url).unwrap_or_else(|| url.to_owned());
         let name = PathBuf::from(&path)
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -4097,12 +4094,7 @@ impl Controller for Space {
                 self.import_markdown(engine, &field("markdown"));
             }
             "space.page.importFile" => {
-                let path = percent_decode(
-                    field("url")
-                        .strip_prefix("file://")
-                        .map(|rest| rest.strip_prefix("localhost").unwrap_or(rest))
-                        .unwrap_or(""),
-                );
+                let path = crate::bridge::local_path(&field("url")).unwrap_or_default();
                 match std::fs::read_to_string(&path) {
                     Ok(markdown) if !path.is_empty() => self.import_markdown(engine, &markdown),
                     _ => {

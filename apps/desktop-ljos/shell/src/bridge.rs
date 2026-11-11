@@ -269,12 +269,13 @@ fn file_urls(engine: &Engine, urls: &Value) -> Vec<String> {
     }
 }
 
-/// The path of a `file:` URL on this machine (no host). A file reference
+/// The path of a `file:` URL on this machine (no host, or `localhost`). A file reference
 /// URL (`file:///.file/id=…`), which Finder puts on a drag's pasteboard,
 /// is resolved to the file's path, as Qt's `filePathURL` does.
 /// TODO(ljos#365): Ljós should hand drops over resolved.
-fn local_path(url: &str) -> Option<String> {
+pub(crate) fn local_path(url: &str) -> Option<String> {
     let path = url.strip_prefix("file://")?;
+    let path = path.strip_prefix("localhost").unwrap_or(path);
     if !path.starts_with('/') {
         return None;
     }
@@ -1021,6 +1022,10 @@ mod tests {
         assert_eq!(
             local_path("file:///home/u/caf%C3%A9.png").as_deref(),
             Some("/home/u/café.png")
+        );
+        assert_eq!(
+            local_path("file://localhost/a%20b.png").as_deref(),
+            Some("/a b.png")
         );
         assert_eq!(local_path("file://host/a.png"), None);
         assert_eq!(local_path("https://example.com/a.png"), None);
