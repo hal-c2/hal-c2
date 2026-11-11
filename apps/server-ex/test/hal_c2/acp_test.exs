@@ -680,6 +680,14 @@ defmodule HalC2.AcpTest do
            "distribution" => %{
              "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => "", "cmd" => "./acme"}}
            }
+         },
+         %{
+           "id" => "other-agent",
+           "name" => "Other agent",
+           "version" => "1.0.0",
+           "distribution" => %{
+             "binary" => %{HalC2.Acp.Catalog.platform() => %{"archive" => "", "cmd" => "./acme"}}
+           }
          }
        ]}
     )
@@ -745,6 +753,29 @@ defmodule HalC2.AcpTest do
       Path.join(dir, "control.json"),
       JSON.encode!(%{"acme" => %{"legacyModes" => ["debug", "ask", "code"]}})
     )
+
+    HalC2.Acp.load()
+    assert mode.() == "debug"
+
+    # The instance pointed at another agent: a mode the old one's session set is not
+    # the new one's, even where it offers the same.
+    HalC2.Acp.put_option(id, "mode", "code")
+    HalC2.Acp.load()
+    assert mode.() == "code"
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            id => %{
+              "driver" => "acpRegistry",
+              "enabled" => true,
+              "config" => %{"agentId" => "other-agent"}
+            }
+          }
+        },
+        1
+      )
 
     HalC2.Acp.load()
     assert mode.() == "debug"
