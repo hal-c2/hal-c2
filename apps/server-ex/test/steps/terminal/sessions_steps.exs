@@ -148,7 +148,7 @@ defmodule HalC2.Steps.Terminal.Sessions do
   step "the user's login shell is not set", context do
     context = Terminal.ensure(context)
     Terminal.put_env("SHELL", nil)
-    context
+    if File.exists?("/bin/zsh"), do: context, else: stand_in_zsh(context)
   end
 
   step "the user's login shell is not set, no zsh", context do
@@ -374,6 +374,17 @@ defmodule HalC2.Steps.Terminal.Sessions do
     Terminal.put_env("HOME", context.mc.home)
     Application.put_env(:hal_c2, :terminal_shells, shells)
     ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :terminal_shells) end)
+    context
+  end
+
+  # Not installed here (the CI runners lack it): a zsh in the common shells' place that
+  # answers to the name. A script, since the MC hands zsh options sh would reject.
+  defp stand_in_zsh(context) do
+    context = fallback_shells(context, ["/bin/zsh"])
+    path = Terminal.folder(context, "/bin/zsh")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, ~s(#!/bin/sh\necho stand-in-zsh\nread _\n))
+    File.chmod!(path, 0o755)
     context
   end
 
