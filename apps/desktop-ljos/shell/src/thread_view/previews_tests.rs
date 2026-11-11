@@ -1112,6 +1112,28 @@ fn a_link_opened_at_once_does_not_take_one_waiting_on_the_mc() {
     assert_eq!(sim.granted, vec![("t2".to_owned(), 5173)]);
 }
 
+/// A tab closed while the list asked after a restart is on its way, which
+/// that list says is gone, stays gone when the MC then refuses the close.
+#[test]
+fn a_close_refused_after_the_list_says_the_tab_is_gone_brings_nothing_back() {
+    let mut sim = Sim::new();
+    for action in [
+        Action::McOpen("t1", ""),
+        Action::SetThread("t1"),
+        Action::UserNewTab,
+        Action::McOpen("t1", ""),
+        Action::McOpen("t1", ""),
+        Action::SetActive(true),
+        Action::AnswerAll,
+        Action::McRestart(false),
+        Action::UserClose("tab-1"),
+        Action::Answer(0, true, false),
+        Action::Answer(0, false, false),
+    ] {
+        step(&mut sim, &action).unwrap();
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 

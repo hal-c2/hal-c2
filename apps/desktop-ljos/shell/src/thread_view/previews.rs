@@ -5,7 +5,7 @@
 //!
 //! `close(tabId)` is `preview.close`: the row goes at once and stays gone
 //! while the close is in flight; a close that fails brings it back where it
-//! was.
+//! was, unless a list since says the MC no longer has it.
 //!
 //! `newTab()` is `preview.open` with no address: an empty tab the user
 //! fills from `suggestions`: the web servers listening on the MC's machine
@@ -807,6 +807,9 @@ impl Previews {
             }
             Ok(list) => list,
         };
+        // The tabs being closed that the MC still has, as the list and what
+        // came after it say.
+        let mut still_open = HashSet::new();
         let mut rows: Vec<Json> = list
             .get("sessions")
             .and_then(Json::as_array)
@@ -815,6 +818,7 @@ impl Previews {
             .filter(|s| match self.closing.get_mut(tab_of(s)) {
                 Some(closing) => {
                     closing.clone_from(s);
+                    still_open.insert(tab_of(s).to_owned());
                     false
                 }
                 None => true,
@@ -838,6 +842,7 @@ impl Previews {
             }
             self.revision = revision;
             if self.follow_closing(&event) {
+                still_open.insert(tab.to_owned());
                 continue;
             }
             let at = rows.iter().position(|row| tab_of(row) == tab);
@@ -850,6 +855,9 @@ impl Previews {
                 (None, None) => {}
             }
         }
+        // One the MC no longer has (closed, or gone with a restart) is not
+        // brought back by a close that then fails.
+        self.closing.retain(|tab, _| still_open.contains(tab));
         let same_tabs = rows.len() == self.rows.len()
             && rows
                 .iter()
