@@ -90,6 +90,26 @@ defmodule HalC2.Steps.Providers.GrokCorners do
     |> tap(&FakeAcp.await_runs(&1, 2))
   end
 
+  step "a turn at reasoning {string} during which Grok reports its options, then one with no level chosen",
+       %{args: [level]} = context do
+    # A mid-session options report names no models, so it says nothing of their levels.
+    report = %{"update" => %{"sessionUpdate" => "config_option_update", "configOptions" => []}}
+
+    context =
+      context
+      |> model_thread(context.grok_effort, @picked, level)
+      |> FakeAcp.configure("grok", fn config ->
+        Map.update!(config, "turns", &[%{"match" => "hello grok", "steps" => [report]} | &1])
+      end)
+      |> run_turn()
+
+    context
+    |> FakeAcp.send_message("again", nil, %{
+      "modelSelection" => %{"instanceId" => "grok", "model" => @picked, "options" => []}
+    })
+    |> tap(&FakeAcp.await_runs(&1, 2))
+  end
+
   step "Grok is asked for {string} and then for the level the model started at",
        %{args: [level]} = context do
     started = context.grok_effort

@@ -390,6 +390,19 @@ Feature: OpenCode
     When a turn runs with the agent "reviewer" and the "high" variant and the next with neither
     Then the next turn sets the agent back to "build" and the variant back to "low"
 
+  # OpenCode reports its options as a turn changes them; what the session opened on stays the same.
+  Scenario: An OpenCode agent and variant taken off the thread go back even after OpenCode reports its options
+    Given an OpenCode session that opened on the agent "build" and the "low" variant
+    And OpenCode reports its options in the middle of each turn
+    When a turn runs with the agent "reviewer" and the "high" variant and the next with neither
+    Then the next turn sets the agent back to "build" and the variant back to "low"
+
+  # Variants belong to a model, so the variant the session opened on goes back only on that model.
+  Scenario: An OpenCode turn on another model is not sent a variant that model does not offer
+    Given an OpenCode session that opened on "anthropic/claude-sonnet-4" at the "max" variant
+    When a turn runs on a model that offers no "max" variant, with no variant chosen
+    Then the turn runs and OpenCode is not asked for the "max" variant
+
   Scenario: An OpenCode turn can be steered while it runs
     Given an OpenCode turn is running
     When the user sends a follow-up message

@@ -15,6 +15,9 @@
 #   modes              session/new's modes
 #   sessionModels      session/new's `models` (currentModelId, availableModels), as Grok reports them
 #   rejectUnknownModels  session/set_config_option refuses a model configOptions lacks
+#   modelOptions       {model: [configOption]} options that belong to a model (OpenCode's
+#                      variants): setting the model swaps them in, at their currentValue
+#   rejectUnknownValues  session/set_config_option refuses a value its option does not offer
 #   turns              [{"match": substring, "steps": [...]}], first match wins
 #   sessionId          session/new's sessionId (default: a fake one)
 #   hangMethods        methods the agent never answers (it reads on regardless)
@@ -254,6 +257,15 @@ def run_turn(mid, sid, text):
 
 sessions = 0
 chosen = {}  # configId -> value this process's session/set_config_option set
+
+
+def current_options(cfg):
+    options = cfg.get("configOptions", default_options())
+    owned = {o["id"]: o for o in (cfg.get("modelOptions") or {}).get(chosen.get("model"), [])}
+    options = [owned.get(o.get("id"), o) for o in options]
+    return [dict(o, currentValue=chosen[o["id"]]) if o.get("id") in chosen else o for o in options]
+
+
 while True:
     msg = read()
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
@@ -337,13 +349,20 @@ while True:
               (c for c in cfg.get("configOptions", default_options()) if c["id"] == "model"),
               {"options": []})["options"]]):
         send({"id": mid, "error": {"code": -32602, "message": "Model not found: %s" % params.get("value")}})
+    elif (method == "session/set_config_option" and cfg.get("rejectUnknownValues")
+          and any(o.get("id") == params.get("configId") and "options" in o
+                  and params.get("value") not in [c["value"] for c in o["options"]]
+                  for o in current_options(cfg))):
+        send({"id": mid, "error": {"code": -32602, "message": "Invalid value: %s" % params.get("value")}})
     elif method in ("session/set_config_option", "session/set_mode", "session/set_model"):
-        # An option set is its current value from then on, as an agent reports it.
+        # An option set is its current value from then on, as an agent reports it; a
+        # model brings its own options at their own values.
         if method == "session/set_config_option":
+            if params.get("configId") == "model":
+                for o in (cfg.get("modelOptions") or {}).get(params.get("value"), []):
+                    chosen.pop(o["id"], None)
             chosen[params.get("configId")] = params.get("value")
-        options = [dict(o, currentValue=chosen[o["id"]]) if o.get("id") in chosen else o
-                   for o in cfg.get("configOptions", default_options())]
-        send({"id": mid, "result": {"configOptions": options}})
+        send({"id": mid, "result": {"configOptions": current_options(cfg)}})
     elif method == "session/prompt":
         text = "\n".join(b.get("text", "") for b in params.get("prompt") or [])
         run_turn(mid, params.get("sessionId"), text)

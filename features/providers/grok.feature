@@ -565,6 +565,12 @@ Feature: Grok
     When a turn runs on that model at reasoning "low" and the next with no reasoning level chosen
     Then Grok is asked for "low" and then for the level the model started at
 
+  # An options report mid-session names no models, so it must not lose the levels they started at.
+  Scenario: A reasoning level taken off a Grok thread goes back even after Grok reports its options
+    Given a Grok session running on a model at the reasoning level Grok chose
+    When a turn at reasoning "low" during which Grok reports its options, then one with no level chosen
+    Then Grok is asked for "low" and then for the level the model started at
+
   # XAiAcpExtension.ts: the corners of turn completion.
   Scenario: Each Grok prompt carries an id that Grok's completion notice can name
     When the user sends a message in a Grok thread

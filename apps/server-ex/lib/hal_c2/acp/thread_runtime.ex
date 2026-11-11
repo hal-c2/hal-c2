@@ -1891,10 +1891,19 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     if named? or new?, do: record_model_switch(state, turn, named?)
     # A session without older modes drops those of the session before it.
-    remember_model(
-      if(named?, do: state, else: %{state | model: nil}),
-      Map.put_new(result, "modes", nil)
-    )
+    state =
+      remember_model(
+        if(named?, do: state, else: %{state | model: nil}),
+        Map.put_new(result, "modes", nil)
+      )
+
+    # What the session opened on is what a pick taken off the thread goes back to. Only
+    # the open sets it: a mid-session update reports the current state, picks included.
+    state = Map.put(state, :opened_config, state.config)
+
+    if grok?(state),
+      do: Map.put(state, :opened_reasoning, session_reasoning(result)),
+      else: state
   end
 
   defp record_model_switch(state, turn, switches?) do
@@ -1917,16 +1926,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = remember_config(state, result)
 
-    # What the session opened on is what a pick taken off the thread goes back to.
-    state = Map.put(state, :opened_config, state.config)
-
+    # Only a result naming the session's models says which level it is on.
     state =
-      if grok?(state) do
-        levels = session_reasoning(result)
-
-        state
-        |> Map.put(:opened_reasoning, levels)
-        |> Map.put(:reasoning, levels[get_in(result, ["models", "currentModelId"])])
+      if grok?(state) and is_map(result["models"]) do
+        Map.put(
+          state,
+          :reasoning,
+          session_reasoning(result)[get_in(result, ["models", "currentModelId"])]
+        )
       else
         state
       end
@@ -1998,8 +2005,11 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
 
     # An agent or variant taken off the thread goes back to the one the session opened
-    # on (build, when it opened in plan), as OpenCode keeps what was set last.
+    # on (build, when it opened in plan), as OpenCode keeps what was set last. Variants
+    # belong to a model, so the opened one goes back only on the model it opened with;
+    # on another model OpenCode's own variant for it is left alone.
     opened = Map.get(state, :opened_config, %{})
+    opened_variant = if state.model == opened["model"], do: opened["effort"]
 
     agent =
       value.("agent") ||
@@ -2012,7 +2022,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state
     |> set_config("mode", agent)
-    |> set_config("effort", value.("variant") || opened["effort"])
+    |> set_config("effort", value.("variant") || opened_variant)
   end
 
   # Any other agent with a mode of its own for planning (a mode option offering `plan`
