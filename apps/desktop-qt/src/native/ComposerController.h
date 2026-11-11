@@ -323,6 +323,10 @@ private:
     // The model and mode came with a new thread from the thread it was
     // started on, not from a pick here; the next new thread replaces them.
     bool carried = false;
+    // The thread's selectionRevision the picks above were made against: they
+    // give way to any change the thread takes after it. None from an MC that
+    // counts no revisions, or for a pick kept by an older build.
+    std::optional<qint64> pickBase;
     // A new thread's prompt goes to each of these instead: one thread per
     // model, each in its own worktree.
     std::optional<QList<QJsonObject>> multipleModels;
@@ -426,7 +430,7 @@ private:
   QJsonObject projectSelection(const QString& environmentId, const QString& projectId) const;
   // A new thread started from `from` (a thread's key or a draft's id) keeps its model and mode.
   void carryInto(const QString& draftId, const QString& from);
-  QString newThreadRuntimeMode(const QString& projectId) const;
+  QString newThreadRuntimeMode(const QString& environmentId, const QString& projectId) const;
   QString defaultRuntimeModeOf(const QString& target) const;
   // The Space page on show, when no thread or draft is.
   QString openPage() const;
@@ -473,6 +477,28 @@ private:
   // thread's newest message as their `after` once it is known.
   void reconcileUnsent();
   void forgetTakenPicks();
+  // The pick about to be made on the target is made against what its thread
+  // holds now.
+  void notePick(const QString& target);
+  // A change to the thread's selection sent from here, and its answer.
+  // False for a thread without revisions, which counts none.
+  bool ownSent(const QString& target);
+  void ownAnswered(const QString& target, const QJsonValue& reply, bool took);
+  bool ownPending(const QString& target) const;
+  bool movesSelection(const QString& target, const QJsonObject& command) const;
+  // The target's picks made against `base`, at the row's `revision`: the
+  // revision they stand on past this client's own changes, or none when
+  // another client's change came between.
+  std::optional<qint64> pastOwn(const QString& target, qint64 base, qint64 revision) const;
+  qint64 sendBase(const QString& target, qint64 base) const;
+  void pruneOwn(const QString& target, qint64 revision);
+  // Drops the target's picks, which the thread has moved past.
+  void dropPicks(Draft& draft) const;
+  // A send the MC refused for a choice made against a selection the thread
+  // has since left (`selection-stale`): says what the thread is on now.
+  void toastStale(const QJsonValue& detail);
+  // An outbox send's picks back in its draft, with the revision they were made against.
+  static void restoreChoices(Draft& draft, const QJsonObject& choices);
   // Sends the outbox's waiting messages of each thread whose environment is
   // connected, in the order they were written; drops those of a thread the
   // environment no longer has. One window drains it.
@@ -490,13 +516,14 @@ private:
   bool deleteWaiting(const QString& target, const QString& messageId);
   // A refused outbox send: its prompt ahead of what was typed since, with the
   // model and modes it was written with.
-  void restoreRefused(const QString& target, const QList<Send>& sends, const QString& error);
+  void restoreRefused(const QString& target, const QList<Send>& sends, const QString& error, const QJsonValue& detail);
   std::optional<QString> newestBefore(const QString& thread) const;
   static QJsonObject excerptJson(const Excerpt& excerpt);
   static Excerpt excerptOf(const QJsonObject& kept);
   // The send's commands in order; `done` has the first error and its detail.
   using Dispatched = std::function<void(const std::optional<QString>& error, const QJsonValue& detail)>;
   void dispatchAll(const Send& send, qsizetype index, Dispatched done);
+  void rebase(Send& send, qsizetype index, qint64 base);
   bool attach(const QVariantList& files);
   static QString thumbnail(const QString& dataUrl);
   // A terminal selection joins the route's draft; blank ones are dropped.
@@ -695,6 +722,23 @@ private:
   };
   // By draft target.
   QHash<QString, SettingMode> m_settingMode;
+  // This client's changes to a thread's selection, in the order sent, until
+  // the row reaches them: `sentAt` is the revision the row had then, and
+  // `revision` the one the MC's answer named.
+  struct OwnChange {
+    qint64 sentAt = 0;
+    bool answered = false;
+    std::optional<qint64> revision;
+  };
+  // By draft target.
+  QHash<QString, QList<OwnChange>> m_own;
+  // The revisions the changes whose answer names none would make, in order.
+  static QList<qint64> guessesOf(const QList<OwnChange>& changes);
+  // Sends waiting for the target's own changes to be answered.
+  QHash<QString, QList<std::function<void()>>> m_afterOwn;
+  // Environments whose MC has named the revision a change moved a thread to:
+  // an answer from one that names none moved nothing.
+  QSet<QString> m_namesRevisions;
   // Drafts whose first send is on the way.
   QSet<QString> m_launching;
   // The thumbnails of the draft images the composer has shown, by attachment id.
