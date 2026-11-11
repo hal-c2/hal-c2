@@ -1,0 +1,396 @@
+sload model-checker
+
+--- What a thread runs on (HalC2.Orchestration.Selection), changed by two clients that
+--- each show their own, possibly stale, view of it and by one writer that sends no base,
+--- an agent's hal_c2_thread_configure or an old client. Commands reach the MC in any
+--- order; stream updates and replies arrive in any order or not at all, and a client
+--- that missed one resubscribes. A turn runs while messages queue behind it.
+--- proof/hal_c2/model_selection_proof_test.exs maps it to the code and checks it.
+---
+--- A pick is a model only: clients send modes at once, without a base (each is itself
+--- the newest choice), and a message carries the model its user picked with the
+--- revision it was picked against, or nothing at all.
+
+mod MODEL-SELECTION is
+  protecting NAT .
+
+  sorts Cid Mdl MPick Mode Base RS Run Runs Item Conf Sys .
+  subsort Mdl < MPick .
+  subsort Nat < Base .
+  subsort Nat < RS .
+  subsort Item < Conf .
+
+  ops c1 c2 : -> Cid [ctor] .
+  --- m1 and m2 are what users pick, m3 what the writer sets, mx another account's model
+  --- that nobody picks.
+  ops m1 m2 m3 mx : -> Mdl [ctor] .
+  op nop : -> MPick [ctor] .
+  ops ma mb : -> Mode [ctor] .
+  op nb : -> Base [ctor] .
+
+  --- Sets of revisions, for the ghosts.
+  op noRev : -> RS [ctor] .
+  op _;_ : RS RS -> RS [ctor assoc comm id: noRev] .
+
+  --- The parts of the fix, each switched on: the base check (stale/2); a send with no
+  --- pick carries nothing; a client drops a pick once the revision moves, not once the
+  --- thread equals it; queued picks give way to a later change (stamp/2); a reply names
+  --- a revision only when its command moved the thread there (moved/3); a message's
+  --- pick on the same account becomes the thread's at its turn start (new_run/5); and a
+  --- client sends no selection it did not show.
+  op cfg : Bool Bool Bool Bool Bool Bool Bool -> Item [ctor] .
+
+  --- The thread: model, mode, selectionRevision, and (a ghost) the decision its model
+  --- came from; the clock that numbers decisions on the model, in the order the MC
+  --- takes them.
+  op th : Mdl Mode Nat Nat -> Item [ctor] .
+  op clock : Nat -> Item [ctor] .
+
+  --- The turn: none, one the session is asked to start, one running. The session's
+  --- model, and the MC's ask to the session.
+  op idle : -> Item [ctor] .
+  op starting : Mdl -> Item [ctor] .
+  op running : Mdl -> Item [ctor] .
+  op sess : Mdl -> Item [ctor] .
+  op ask : Mdl -> Item [ctor] .
+
+  --- A queued run: whose message, the model its entity shows, whether that is the
+  --- message's own pick (`selectionPicked`), the decision it was taken as, and (a
+  --- ghost) the model its client showed when it sent.
+  op rn : Cid Mdl Bool Nat Mdl -> Run [ctor] .
+  op noRuns : -> Runs [ctor] .
+  subsort Run < Runs .
+  op _,_ : Runs Runs -> Runs [ctor assoc id: noRuns] .
+  op q : Runs -> Item [ctor] .
+
+  --- A client: its view of the thread (model, mode, revision); its unsent pick (model,
+  --- base and, a ghost, the revision it was picked at); its
+  --- own commands awaiting a reply; a missed update; what is left for its user to do.
+  op cl : Cid Mdl Mode Nat -> Item [ctor] .
+  op pk : Cid Mdl Nat RS -> Item [ctor] .
+  op nopk : Cid -> Item [ctor] .
+  op pend : Cid Nat -> Item [ctor] .
+  op gap : Cid -> Item [ctor] .
+  ops picks sends modes : Cid Nat -> Item [ctor] .
+  op writes : Nat -> Item [ctor] .
+
+  --- In flight. To the MC: a message (pick or nop, base, the ghost revisions it was
+  --- picked against, the model its client showed) and a mode set. To a client: a
+  --- stream update, a reply to its mode set (the revision it names, or nb), a refusal
+  --- naming the thread's selection.
+  op msg : Cid MPick Base RS Mdl -> Item [ctor] .
+  op mset : Cid Mode -> Item [ctor] .
+  op upd : Cid Mdl Mode Nat -> Item [ctor] .
+  op rep : Cid Base -> Item [ctor] .
+  op ref : Cid Mdl Mode Nat -> Item [ctor] .
+
+  --- Ghosts: a choice replaced by a client that did not pick against it, or by an
+  --- older decision (lost); a turn that ran on something but what its client showed,
+  --- its queued entity showed or its thread names (wrong); the model of the last turn
+  --- started and whether a choice was made since.
+  ops lost wrong : -> Item [ctor] .
+  op ran : Mdl -> Item [ctor] .
+  op since : Bool -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars C : Cid .
+  vars M M' M0 Sh : Mdl .
+  var P : MPick .
+  vars D D' : Mode .
+  vars R R' T T' N K B0 : Nat .
+  var B : Base .
+  vars AG AG' : RS .
+  vars BC NP RD GW MV SA HO KP F : Bool .
+  var Q : Runs .
+  var Rn : Run .
+  var X : Conf .
+
+  eq R ; R = R .
+
+  op _in_ : Nat RS -> Bool .
+  eq R in (R ; AG) = true .
+  eq R in AG = false [owise] .
+
+  op lostIf : Bool -> Conf .
+  eq lostIf(true) = lost .
+  eq lostIf(false) = empty .
+  op wrongIf : Bool -> Conf .
+  eq wrongIf(true) = wrong .
+  eq wrongIf(false) = empty .
+
+  --- A change, streamed to both clients.
+  op bc : Mdl Mode Nat -> Conf .
+  eq bc(M, D, R) = upd(c1, M, D, R) upd(c2, M, D, R) .
+
+  --- stamp/2's queue: every queued run follows the thread's new choice, or, when the
+  --- change is a queued pick taken at its start (or picks do not give way), only those
+  --- that picked nothing.
+  op follow : Mdl Runs -> Runs .
+  eq follow(M, noRuns) = noRuns .
+  eq follow(M, (rn(C, M', KP, T, Sh), Q)) = rn(C, M, false, T, Sh), follow(M, Q) .
+  op followUnpicked : Mdl Runs -> Runs .
+  eq followUnpicked(M, noRuns) = noRuns .
+  eq followUnpicked(M, (rn(C, M', true, T, Sh), Q)) = rn(C, M', true, T, Sh), followUnpicked(M, Q) .
+  eq followUnpicked(M, (rn(C, M', false, T, Sh), Q)) = rn(C, M, false, T, Sh), followUnpicked(M, Q) .
+  op queueFollows : Bool Mdl Runs -> Runs .
+  eq queueFollows(GW, M, Q) = if GW then follow(M, Q) else followUnpicked(M, Q) fi .
+
+  --- A ghost: C's own mode set took the thread from revision R to the next.
+  op own : Cid Nat -> Item [ctor] .
+
+  --- Whether, of the revisions in AG, one reaches R by C's own mode sets alone: then
+  --- nothing has changed since C showed it but what C itself did.
+  op seen : Cid RS Nat Conf -> Bool .
+  eq seen(C, (R ; AG), R, X) = true .
+  eq seen(C, (R' ; AG), R, own(C, R') X) = seen(C, (s R' ; AG), R, X) .
+  eq seen(C, AG, R, X) = false [owise] .
+
+  --- A resubscribe: what was in flight to C on the old socket is gone.
+  op forget : Cid Conf -> Conf .
+  eq forget(C, upd(C, M, D, R) X) = forget(C, X) .
+  eq forget(C, rep(C, B) X) = forget(C, X) .
+  eq forget(C, ref(C, M, D, R) X) = forget(C, X) .
+  eq forget(C, gap(C) X) = forget(C, X) .
+  eq forget(C, X) = X [owise] .
+
+  --- new_run/5, for a run starting while the thread is at th(M, D, R, T): a run that
+  --- kept its pick runs on it, and (same-account rule on) the thread takes it, moving
+  --- the revision on, while the runs behind keep theirs; a run that picked nothing, or
+  --- whose pick gave way, runs on the thread's.
+  op takes : Bool Run Mdl -> Bool .
+  eq takes(SA, rn(C, M', KP, T, Sh), M) = SA and KP and M' =/= M .
+  op runsOn : Run Mdl -> Mdl .
+  eq runsOn(rn(C, M', KP, T, Sh), M) = if KP then M' else M fi .
+
+  op launch : Run Conf -> Conf .
+  eq launch(rn(C, M', KP, T', Sh), cfg(BC, NP, RD, GW, MV, SA, HO) th(M, D, R, T) q(Q) ran(M0) since(F) idle X)
+    = if takes(SA, rn(C, M', KP, T', Sh), M)
+      then th(M', D, s R, T') q(followUnpicked(M', Q)) bc(M', D, s R)
+           lostIf(T' < T) wrongIf(M' =/= Sh)
+      else th(M, D, R, T) q(Q)
+           wrongIf(runsOn(rn(C, M', KP, T', Sh), M) =/= M or (KP and M' =/= Sh) or (not KP and M' =/= M))
+      fi
+      cfg(BC, NP, RD, GW, MV, SA, HO) ran(runsOn(rn(C, M', KP, T', Sh), M)) since(false)
+      starting(runsOn(rn(C, M', KP, T', Sh), M)) ask(runsOn(rn(C, M', KP, T', Sh), M)) X .
+
+  --- Clients and their users, the environment.
+
+  --- The user picks a model other than the one shown, against the revision shown.
+  rl [pick] : picks(C, s N) nopk(C) cl(C, M, D, R)
+    => picks(C, N) pk(C, other(M), R, R) cl(C, M, D, R) .
+  op other : Mdl -> Mdl .
+  eq other(m1) = m2 .
+  eq other(M) = m1 [owise] .
+
+  --- A send with the pick: its model and base; the pick is gone from the draft.
+  rl [sendPicked] : sends(C, s N) pk(C, M', B0, AG) cl(C, M, D, R)
+    => sends(C, N) nopk(C) cl(C, M, D, R) msg(C, M', B0, AG, M') .
+  --- A send with no pick carries nothing; with that switched off, it carries what it
+  --- shows with no base, as clients did; with invented selections, c2 sends another
+  --- account's model as if it showed it.
+  rl [sendNoPick] : sends(C, s N) nopk(C) cl(C, M, D, R) cfg(BC, NP, RD, GW, MV, SA, HO)
+    => sends(C, N) nopk(C) cl(C, M, D, R) cfg(BC, NP, RD, GW, MV, SA, HO)
+       if not HO and C == c2 then msg(C, mx, R, R, M)
+       else if NP then msg(C, nop, nb, noRev, M) else msg(C, M, nb, R, M) fi fi .
+  --- The user changes the mode: shown at once, sent with no base.
+  crl [setMode] : modes(C, s N) cl(C, M, D, R) pend(C, K)
+    => modes(C, N) cl(C, M, D', R) pend(C, s K) mset(C, D')
+    if D' := flip(D) .
+  op flip : Mode -> Mode .
+  eq flip(ma) = mb .
+  eq flip(mb) = ma .
+
+  --- An update newer than the view replaces it; an older one changes nothing.
+  rl [deliver] : upd(C, M, D, R') cl(C, M0, D', R)
+    => if R' > R then cl(C, M, D, R') else cl(C, M0, D', R) fi .
+  --- A reply to the client's own mode set: one naming the revision just after the
+  --- pick's base, which only its own set can have moved the thread to, moves the base
+  --- there (the view waits for the update).
+  rl [reply] : rep(C, B) pend(C, s K) nopk(C) => pend(C, K) nopk(C) .
+  rl [replyPick] : rep(C, R') pend(C, s K) pk(C, M', B0, AG)
+    => pend(C, K) if R' == s B0 then pk(C, M', R', AG) else pk(C, M', B0, AG) fi .
+  rl [replyNone] : rep(C, nb) pend(C, s K) pk(C, M', B0, AG) => pend(C, K) pk(C, M', B0, AG) .
+  --- A refusal names the thread's selection, which the view takes when newer.
+  rl [refused] : ref(C, M, D, R') cl(C, M0, D', R)
+    => if R' > R then cl(C, M, D, R') else cl(C, M0, D', R) fi .
+  --- A pick is dropped once the revision moves past its base with no reply of the
+  --- client's own still to come; with that switched off, once the thread equals it.
+  crl [dropPick] : pk(C, M', B0, AG) pend(C, 0) cl(C, M, D, R) cfg(BC, NP, RD, GW, MV, SA, HO)
+    => nopk(C) pend(C, 0) cl(C, M, D, R) cfg(BC, NP, RD, GW, MV, SA, HO)
+    if (RD and R > B0) or (not RD and M == M') .
+
+  --- Faults: an update or a reply lost with its connection; the client resubscribes
+  --- and has the thread as it is, its replies on the old socket gone with it.
+  rl [loseUpdate] : upd(C, M, D, R) => gap(C) .
+  rl [loseReply] : rep(C, B) => gap(C) .
+  rl [reconnect] : { gap(C) cl(C, M0, D', R') pend(C, K) th(M, D, R, T) X }
+    => { cl(C, M, D, R) pend(C, 0) th(M, D, R, T) forget(C, X) } .
+  --- A reply that comes for an RPC the client gave up with its socket is ignored.
+  rl [replyLate] : rep(C, B) pend(C, 0) => pend(C, 0) .
+
+  --- The MC.
+
+  --- An agent's hal_c2_thread_configure (or an old client's set): no base, so it is
+  --- taken as it is. stamp/2 moves the revision on and the queue follows.
+  rl [configure] : writes(s N) th(M, D, R, T) clock(T') q(Q) since(F) cfg(BC, NP, RD, GW, MV, SA, HO)
+    => writes(N) cfg(BC, NP, RD, GW, MV, SA, HO)
+       if M == m3 and D == mb
+       then th(M, D, R, T) clock(T') q(Q) since(F)
+       else th(m3, mb, s R, s T') clock(s T') q(queueFollows(GW, m3, Q)) since(true)
+            bc(m3, mb, s R)
+       fi .
+
+  --- thread.runtime-mode.set from a client: no base. A change moves the revision on,
+  --- the queue follows, and the reply names the revision (moved/3); with that switched
+  --- off, the reply names the thread's revision whether or not this set moved it.
+  rl [setThreadMode] : { mset(C, D') th(M, D, R, T) clock(T') q(Q) since(F) cfg(BC, NP, RD, GW, MV, SA, HO) X }
+    => if D' == D
+       then { th(M, D, R, T) clock(T') q(Q) since(F) cfg(BC, NP, RD, GW, MV, SA, HO)
+              rep(C, if MV then nb else R fi) X }
+       else { th(M, D', s R, T) clock(T') q(queueFollows(GW, M, Q)) since(F)
+              cfg(BC, NP, RD, GW, MV, SA, HO) rep(C, s R) bc(M, D', s R) own(C, R) X }
+       fi .
+
+  --- message.dispatch with a pick made against another revision, when the pick is not
+  --- what the thread has (stale/2): refused, naming the thread's selection.
+  crl [dispatchStale] : msg(C, M', R', AG, Sh) th(M, D, R, T) cfg(true, NP, RD, GW, MV, SA, HO)
+    => ref(C, M, D, R) th(M, D, R, T) cfg(true, NP, RD, GW, MV, SA, HO)
+    if R' =/= R /\ M' =/= M .
+
+  --- A message taken. A pick that replaces a choice its client did not see, one made
+  --- since it was picked by anything but the client's own mode sets, is a lost update.
+  op fresh : Base Nat Mdl Mdl -> Bool .
+  eq fresh(nb, R, M', M) = true .
+  eq fresh(R', R, M', M) = R' == R or M' == M .
+
+  op taken : Cid MPick Base RS Mdl Conf -> Conf .
+  ceq taken(C, M', B, AG, Sh, th(M, D, R, T) clock(T') q(Q) idle X)
+    = launch(rn(C, M', true, s T', Sh), th(M, D, R, T) clock(s T') q(Q) idle X)
+    if Q == noRuns .
+  ceq taken(C, M', B, AG, Sh, th(M, D, R, T) clock(T') q(Q) X)
+    = th(M, D, R, T) clock(s T') q((Q, rn(C, M', true, s T', Sh))) X
+    if Q =/= noRuns or not idleIn(X) .
+  ceq taken(C, nop, B, AG, Sh, th(M, D, R, T) q(Q) idle X)
+    = launch(rn(C, M, false, 0, Sh), th(M, D, R, T) q(Q) idle X)
+    if Q == noRuns .
+  ceq taken(C, nop, B, AG, Sh, th(M, D, R, T) q(Q) X)
+    = th(M, D, R, T) q((Q, rn(C, M, false, 0, Sh))) X
+    if Q =/= noRuns or not idleIn(X) .
+
+  op idleIn : Conf -> Bool .
+  eq idleIn(idle X) = true .
+  eq idleIn(X) = false [owise] .
+
+  crl [dispatch] : { msg(C, P, B, AG, Sh) th(M, D, R, T) cfg(BC, NP, RD, GW, MV, SA, HO) X }
+    => { taken(C, P, B, AG, Sh, th(M, D, R, T) cfg(BC, NP, RD, GW, MV, SA, HO) X)
+         lostIf(P =/= nop and pickOf(P) =/= M and not seen(C, AG, R, X)) }
+    if P == nop or not BC or fresh(B, R, pickOf(P), M) .
+  op pickOf : MPick -> Mdl .
+  eq pickOf(M) = M .
+  eq pickOf(nop) = m1 .
+
+  --- The session starts the turn on what the MC asked; the turn ends.
+  rl [sessionStarts] : starting(M) ask(M) sess(M0) => running(M) sess(M) .
+  rl [turnEnd] : running(M) => idle .
+  --- The next queued run starts (start_next).
+  rl [startNext] : { idle q((Rn, Q)) X } => { launch(Rn, idle q(Q) X) } .
+endm
+
+mod MODEL-SELECTION-PROPS is
+  including MODEL-SELECTION .
+  including MODEL-CHECKER .
+  subsort Sys < State .
+
+  vars C : Cid .
+  vars M M' M0 Sh : Mdl .
+  vars D D' : Mode .
+  vars R R' T B0 K N : Nat .
+  var AG : RS .
+  var Q : Runs .
+  vars BC NP RD GW MV SA HO F : Bool .
+  var X : Conf .
+  var S : Sys .
+
+  --- A thread running a turn on m1, seen by c1 and c2, with what each user has left to
+  --- do (picks, sends, mode changes, c1's then c2's), what the writer has, and which
+  --- parts of the fix are on.
+  op start : Nat Nat Nat Nat Nat Nat Nat Item -> Sys .
+  vars P1 S1 D1 P2 S2 D2 W : Nat .
+  var Cf : Item .
+  eq start(P1, S1, D1, P2, S2, D2, W, Cf)
+    = { Cf th(m1, ma, 0, 0) clock(0) running(m1) sess(m1) q(noRuns) ran(m1) since(false)
+        cl(c1, m1, ma, 0) nopk(c1) pend(c1, 0) picks(c1, P1) sends(c1, S1) modes(c1, D1)
+        cl(c2, m1, ma, 0) nopk(c2) pend(c2, 0) picks(c2, P2) sends(c2, S2) modes(c2, D2)
+        writes(W) } .
+
+  --- The fix, and the fix with one part switched off (cfg/7).
+  ops fix noBaseCheck pickless equalityDrop picksStay replyAlways noSameAccount inventing
+    : -> Item .
+  eq fix = cfg(true, true, true, true, true, true, true) .
+  eq noBaseCheck = cfg(false, true, true, true, true, true, true) .
+  eq pickless = cfg(true, false, true, true, true, true, true) .
+  eq equalityDrop = cfg(true, true, false, true, true, true, true) .
+  eq picksStay = cfg(true, true, true, false, true, true, true) .
+  eq replyAlways = cfg(true, true, true, true, false, true, true) .
+  eq noSameAccount = cfg(true, true, true, true, true, false, true) .
+  eq inventing = cfg(true, true, true, true, true, true, false) .
+
+  --- NoLostUpdate.
+  op lostUpdate : Sys -> Bool .
+  eq lostUpdate({ lost X }) = true .
+  eq lostUpdate(S) = false [owise] .
+
+  --- RunsWhatItShowed.
+  op wrongRun : Sys -> Bool .
+  eq wrongRun({ wrong X }) = true .
+  eq wrongRun(S) = false [owise] .
+  --- The thread names what its turn runs on once that turn starts.
+  ceq wrongRun({ th(M, D, R, T) ran(M') since(false) X }) = true if M =/= M' .
+
+  --- SessionMatches: a running turn runs on its session's model.
+  op sessionDiffers : Sys -> Bool .
+  ceq sessionDiffers({ running(M) sess(M') X }) = true if M =/= M' .
+  eq sessionDiffers(S) = false [owise] .
+
+  --- Converges: every client is connected and shows the thread's selection, holds no
+  --- pick made against another revision, and the thread names the model its last turn
+  --- ran on unless a choice was made since.
+  op agreed : -> Prop [ctor] .
+  op agreedIn : Conf -> Bool .
+  eq agreedIn(gap(C) X) = false .
+  ceq agreedIn(cl(C, M', D', R') th(M, D, R, T) X) = false
+    if M' =/= M or D' =/= D or R' =/= R .
+  ceq agreedIn(pk(C, M', B0, AG) th(M, D, R, T) X) = false if B0 =/= R .
+  ceq agreedIn(th(M, D, R, T) ran(M') since(false) X) = false if M =/= M' .
+  eq agreedIn(X) = true [owise] .
+  eq { X } |= agreed = agreedIn(X) .
+
+  --- Nothing left for the code to do: nothing in flight, no turn, no queue, no missed
+  --- update, no pick its client would drop. Its users and the writer may still act.
+  op quiet : Sys -> Bool .
+  op busy : Conf -> Bool .
+  eq busy(msg(C, P:MPick, B:Base, AG, Sh) X) = true .
+  eq busy(mset(C, D) X) = true .
+  eq busy(upd(C, M, D, R) X) = true .
+  eq busy(rep(C, B:Base) X) = true .
+  eq busy(ref(C, M, D, R) X) = true .
+  eq busy(ask(M) X) = true .
+  eq busy(starting(M) X) = true .
+  eq busy(running(M) X) = true .
+  eq busy(gap(C) X) = true .
+  eq busy(q((Rn:Run, Q)) X) = true .
+  ceq busy(pk(C, M', B0, AG) pend(C, 0) cl(C, M, D, R) cfg(BC, NP, RD, GW, MV, SA, HO) X)
+    = true if (RD and R > B0) or (not RD and M == M') .
+  eq busy(X) = false [owise] .
+  eq quiet({ X }) = not busy(X) .
+
+  op done : Sys -> Bool .
+  eq done(S) = quiet(S) .
+
+  --- Quiet but not agreed: with no more for the code to do, it never comes to agree.
+  op unsettled : Sys -> Bool .
+  eq unsettled({ X }) = not busy(X) and not agreedIn(X) .
+endm

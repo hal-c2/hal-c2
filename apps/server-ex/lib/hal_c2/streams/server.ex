@@ -325,6 +325,12 @@ defmodule HalC2.Streams.Server do
     # One time for the log and this process, so a restart reads back the same `at`.
     at = System.os_time(:millisecond)
 
+    # Whatever wrote them, a thread's changes keep what it runs on counted.
+    changes =
+      if stream_kind == :thread,
+        do: HalC2.Orchestration.Selection.stamp(state.stream, changes),
+        else: changes
+
     case Store.append(Store, [{stream_kind, state.id, changes}], at) do
       {:ok, last} -> commit_events(state, changes, at, last)
       {:error, error} -> {:reply, {:error, error}, state, timeout(state)}

@@ -4,6 +4,7 @@ import { IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts"
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectIconOverride, ProjectScript } from "./project.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Project summary shared by the V2 shell and application project APIs. */
 export const OrchestrationProjectShell = Schema.Struct({
@@ -22,6 +23,14 @@ export const OrchestrationProjectShell = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
+  /**
+   * What a new thread here runs on when nothing picks it, as the MC that owns the
+   * project resolves it (its settings, the project, its providers). A draft shows these,
+   * whichever machine it is on. Optional so rows from older servers still decode; null
+   * when no provider there can run.
+   */
+  newThreadModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  newThreadRuntimeMode: Schema.optional(RuntimeMode),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

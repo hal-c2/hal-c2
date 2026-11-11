@@ -159,9 +159,12 @@ defmodule HalC2.Settings do
   the project's switch where it has one, and one the project turned off says so. What
   an agent in that project may pick a provider from.
   """
-  def providers_for(project_id) do
+  def providers_for(project_id), do: providers_for(project_id, HalC2.Environment.providers())
+
+  @doc "`providers` (`HalC2.Environment.providers/0`, read once) as `providers_for/1` gives them."
+  def providers_for(project_id, providers) do
     settings = settings()
-    Enum.map(HalC2.Environment.providers(), &project_provider(settings, &1, project_id))
+    Enum.map(providers, &project_provider(settings, &1, project_id))
   end
 
   defp project_provider(settings, %{"instanceId" => instance} = entry, project_id) do

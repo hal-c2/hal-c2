@@ -106,6 +106,7 @@ defmodule HalC2.Projection.Shell do
       "modelSelection" => model_selection(get(thread, "modelSelection")),
       "runtimeMode" => get(thread, "runtimeMode"),
       "interactionMode" => get(thread, "interactionMode"),
+      "selectionRevision" => HalC2.Orchestration.Selection.revision(thread),
       "branch" => get(thread, "branch"),
       "worktreePath" => get(thread, "worktreePath"),
       "pullRequests" => PullRequests.of(thread),
