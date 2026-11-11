@@ -91,6 +91,31 @@ const Steps steps([] {
     world.waitFor([&] { return composer(world).value(QStringLiteral("target")) == key && composer(world).value(QStringLiteral("runtimeMode")) == mode; },
                   [&] { return QStringLiteral("the thread in %1; the composer shows %2").arg(c[0], show(composer(world))); });
   });
+  step(QStringLiteral("the app quits before the MC answers and starts again on the thread"), [](World& world, const Captures&, const Table&) {
+    // The answer goes with the connection it was for.
+    world.mc.dropHeld();
+    world.restart();
+    world.connect();
+    world.sync();
+    look(world, world.mc.environmentId + QLatin1Char(':') + kThread);
+  });
+  step(QStringLiteral("another device gives the thread Full access"), [](World& world, const Captures&, const Table&) {
+    QJsonObject& row = world.mc.threads[kThread];
+    row.insert(QStringLiteral("runtimeMode"), QStringLiteral("full-access"));
+    world.mc.sendRow(kThread, row);
+    world.sync();
+  });
+  step(QStringLiteral("the model control's permissions read %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    drawn(world);
+    QQuickItem* picker = part(world, QStringLiteral("modelPicker"));
+    if (!popupOf(picker)->property("opened").toBool()) click(world, picker);
+    world.waitFor([&] { return popupOf(picker)->property("opened").toBool(); }, QStringLiteral("the model control to open"));
+    QQuickItem* permissions = part(world, QStringLiteral("modelPickerPermissions"));
+    world.waitFor([&] { return permissions->property("displayText") == c[0]; }, [&] {
+      return QStringLiteral("the footer to read %1; it reads %2 and the composer shows %3")
+          .arg(c[0], permissions->property("displayText").toString(), show(composer(world)));
+    });
+  });
   step(QStringLiteral("the composer does not name the permissions"), [](World& world, const Captures&, const Table&) {
     drawn(world);
     expect(composer(world).value(QStringLiteral("runtimeMode")) == composer(world).value(QStringLiteral("defaultRuntimeMode")),

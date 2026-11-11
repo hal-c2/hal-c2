@@ -234,6 +234,27 @@ Feature: Answering the agent's questions from the composer
     Then the user can go back to the previous question to change its answer
     And submitting sends both answers to the agent together
 
+  # The web's primary button read "Next question" until the last question and then
+  # "Submit answers"; an "Answer" button that stayed off gave no hint a question still waited.
+  @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
+  Scenario: The answer button moves on while a question still waits
+    Given the agent asked "Which database?" and "Which cache?" in one request
+    When the user types "MySQL" as the answer to "Which database?"
+    Then the answer button reads "Next question"
+    When the user presses Enter in the answer
+    Then "Which cache?" is shown
+    And the answer button reads "Submit answers"
+
+  @desktop @mobile @tui @backlog-mobile @backlog-tui @priority-high
+  Scenario: The answer button on the last question goes back to one left unanswered
+    Given the agent asked "Which database?" and "Which cache?" in one request
+    And the user went on to "Which cache?" without answering "Which database?"
+    When the user types "Redis" as the answer to "Which cache?"
+    Then the answer button reads "Next question"
+    When the user presses the answer button
+    Then "Which database?" is shown
+    And no answer has been sent
+
   # Upstream #23626: Enter moved past an unanswered question, and the last question could then
   # never be submitted.
   @backlog @shared @priority-high

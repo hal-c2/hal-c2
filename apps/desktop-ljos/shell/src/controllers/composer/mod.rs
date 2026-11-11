@@ -699,13 +699,25 @@ impl Composer {
         self.plan_mode_on(engine, self.instance_of(&selection))
     }
 
-    fn runtime_mode_of(&self, engine: &Engine, target: &str) -> String {
-        let own = kept::read(engine, |d| {
+    /// The mode the user picked for the target, empty when none counts: a
+    /// new thread keeps its pick until it starts, an existing thread only
+    /// while the MC has not taken it. One kept past that (the app quit
+    /// first, or a new thread's draft carried it in) would hide what the
+    /// thread was given since, here or on another device.
+    fn picked_runtime_mode(&self, engine: &Engine, target: &str) -> String {
+        if thread_of(engine, target).is_some() && !self.setting_mode.contains_key(target) {
+            return String::new();
+        }
+        kept::read(engine, |d| {
             d.drafts
                 .get(target)
                 .map(|k| k.runtime_mode.clone())
                 .unwrap_or_default()
-        });
+        })
+    }
+
+    fn runtime_mode_of(&self, engine: &Engine, target: &str) -> String {
+        let own = self.picked_runtime_mode(engine, target);
         if !own.is_empty() {
             return own;
         }

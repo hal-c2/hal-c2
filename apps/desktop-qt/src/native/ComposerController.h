@@ -571,6 +571,12 @@ private:
   std::optional<composer::Trigger> triggerOf(const QString& target) const;
   void refreshPathSearch();
 
+  // The mode the user picked for the target, empty when none counts: a new
+  // thread keeps its pick until it starts, an existing thread only while the
+  // MC has not taken it. One kept past that (the app quit first, or a new
+  // thread's draft carried it in) would hide what the thread was given since.
+  QString pickedRuntimeMode(const QString& target) const;
+
   // The catalogue of the route's environment.
   void refreshCatalogue();
   const composer::Instance* instanceOf(const QJsonObject& selection) const;

@@ -661,6 +661,37 @@ const Steps steps([] {
     expect(sent.size() == 1 && answers.value(QLatin1String("database")) == QLatin1String("SQLite") && answers.value(QLatin1String("cache")) == QLatin1String("Redis"),
            QStringLiteral("the MC has %1").arg(world.describeCommands()));
   });
+  step(QStringLiteral("the user types %1 as the answer to %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    settleQuestion(world);
+    expectQuestionShown(world, c[1]);
+    Brick& brick = composerBrick(world);
+    QQuickItem* field = composerPart(world, QStringLiteral("questionAnswer-") + kAsked.value(c[1]).first);
+    expect(field && field->isVisible(), QStringLiteral("\"%1\" takes no typed answer").arg(c[1]));
+    QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(field));
+    typeInComposer(world, c[0]);
+    expect(field->property("text") == c[0], QStringLiteral("the answer reads \"%1\"").arg(field->property("text").toString()));
+  });
+  step(QStringLiteral("the user went on to %1 without answering %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectQuestionShown(world, c[1]);
+    clickPart(world, QStringLiteral("questionNext"));
+    expectQuestionShown(world, c[0]);
+  });
+  step(QStringLiteral("the answer button reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QQuickItem* button = composerPart(world, QStringLiteral("questionSubmit"));
+    expect(button && button->isVisible() && button->property("text") == c[0],
+           QStringLiteral("the answer button reads \"%1\"").arg(button ? button->property("text").toString() : QString()));
+  });
+  step(QStringLiteral("the user presses Enter in the answer"), [](World& world, const Captures&, const Table&) {
+    QTest::keyClick(&composerBrick(world).window(), Qt::Key_Return);
+    world.sync();
+  });
+  step(QStringLiteral("the user presses the answer button"), [](World& world, const Captures&, const Table&) {
+    clickPart(world, QStringLiteral("questionSubmit"));
+  });
+  step(QStringLiteral("no answer has been sent"), [](World& world, const Captures&, const Table&) {
+    settleQuestion(world);
+    expect(commandsOf(world, QStringLiteral("runtime-request.respond")).isEmpty(), QStringLiteral("the MC has %1").arg(world.describeCommands()));
+  });
   step(QStringLiteral("the user answered %1 and left the thread").arg(q), [](World& world, const Captures& c, const Table&) {
     expectQuestionShown(world, c[0]);
     clickPart(world, QStringLiteral("questionOption-Postgres"));

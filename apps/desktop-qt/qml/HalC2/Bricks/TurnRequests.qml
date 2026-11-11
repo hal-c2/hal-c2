@@ -117,16 +117,25 @@ Item {
         id: advance
 
         interval: 200
-        onTriggered: {
-            if (requests.questionIndex < requests.asked.length - 1)
-                requests.questionIndex += 1;
-            else if (requests.answers() === null)
-                requests.questionIndex = requests.firstUnanswered();  // one was skipped
-            else
-                requests.submit();
-        }
+        onTriggered: requests.moveOn()
     }
     readonly property bool advancing: advance.running
+
+    // The answer button, as the web's: once the question shown has an
+    // answer, "Next question" until the last question, which sends every
+    // answer. On the last with another left unanswered, it goes back to that.
+    readonly property bool lastAnswer: questionIndex >= asked.length - 1 && asked.every(item => item.id === current?.id || answerOf(item) !== null)
+    readonly property bool canMoveOn: answerable && current !== null && answerOf(current) !== null
+
+    function moveOn() {
+        advance.stop();
+        if (questionIndex < asked.length - 1)
+            questionIndex += 1;
+        else if (answers() === null)
+            questionIndex = firstUnanswered();  // one was skipped
+        else
+            submit();
+    }
 
     function moveTo(index) {
         advance.stop();
@@ -632,6 +641,8 @@ Item {
                                 Accessible.name: qsTr("Or type your own answer")
                                 text: requests.typed[questionItem.modelData.id] ?? ""
                                 onTextEdited: requests.type(questionItem.modelData, text)
+                                // Enter does what the answer button does.
+                                onAccepted: if (requests.canMoveOn) requests.moveOn()
                             }
 
                             ShellButton {
@@ -712,9 +723,9 @@ Item {
                         objectName: "questionSubmit"
                         implicitHeight: 28
                         primary: true
-                        text: qsTr("Answer")
-                        enabled: requests.answerable && requests.answers() !== null
-                        onClicked: requests.submit()
+                        text: requests.question?.responding ? qsTr("Submitting…") : !requests.lastAnswer ? qsTr("Next question") : requests.asked.length > 1 ? qsTr("Submit answers") : qsTr("Submit answer")
+                        enabled: requests.canMoveOn
+                        onClicked: requests.moveOn()
                     }
                 }
             }

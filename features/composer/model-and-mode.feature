@@ -687,6 +687,18 @@ Feature: Choosing the model, effort, permissions and workspace for a turn
     When the user sets the thread's permissions to Full access from the effort menu
     Then the composer names "Full access" beside the model
 
+  # The composer showed the permissions picked before the app last quit, over what the thread
+  # was given since on another device: a pick waits only for the MC to take it.
+  @desktop @priority-high
+  Scenario: Permissions picked as the app quit give way to what the thread runs in
+    Given the open thread runs in Full access
+    And the MC holds its answers
+    When the user sets the thread's permissions to Supervised from the effort menu
+    And the app quits before the MC answers and starts again on the thread
+    And another device gives the thread Full access
+    Then the model control's permissions read "Full access"
+    And the composer does not name the permissions
+
   # The phone's system back steps out of the model control's permissions menu
   # before it leaves the control (MobileShell.stepBack). The steps are in
   # apps/mobile-qt/tests/features/ComposerPermissionsSteps.cpp, not yet run.

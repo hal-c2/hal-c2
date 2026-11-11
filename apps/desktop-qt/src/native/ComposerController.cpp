@@ -964,7 +964,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   // Only a mode the user changed is set; a thread the MC has no mode for
   // keeps the MC's default. A saved mode the provider no longer offers is
   // set to the mode the composer shows instead, so the turn runs as read.
-  QString runtimeMode = m_drafts.value(target).runtimeMode;
+  QString runtimeMode = pickedRuntimeMode(target);
   if (!runtimeMode.isEmpty()) {
     runtimeMode = composer::shownRuntimeMode(instanceOf(modelSelection), runtimeMode);
   } else if (!thread->runtimeMode.isEmpty()) {
@@ -4331,8 +4331,13 @@ bool ComposerController::planModeOn(const composer::Instance* instance) const {
   return instance && instance->showInteractionModeToggle && setting(QStringLiteral("planModeEnabled")).toBool();
 }
 
+QString ComposerController::pickedRuntimeMode(const QString& target) const {
+  if (m_store->thread(target) && !m_settingMode.contains(target)) return {};
+  return m_drafts.value(target).runtimeMode;
+}
+
 QString ComposerController::runtimeModeOf(const QString& target) const {
-  if (const QString mode = m_drafts.value(target).runtimeMode; !mode.isEmpty()) return mode;
+  if (const QString mode = pickedRuntimeMode(target); !mode.isEmpty()) return mode;
   if (const auto thread = m_store->thread(target); thread && !thread->runtimeMode.isEmpty()) return thread->runtimeMode;
   // A new thread, or a page's ask: its project's default permissions, else
   // the default for new threads (Settings → Project defaults).
