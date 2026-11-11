@@ -203,7 +203,7 @@ impl World {
                 assert!(self.socket.is_none(), "a second socket while one is open");
                 let query: Vec<_> = url.query_pairs().map(|(k, _)| k.into_owned()).collect();
                 assert!(
-                    query == ["token"] || query == ["wsTicket"],
+                    query == ["token", "protocol"] || query == ["wsTicket", "protocol"],
                     "socket query {query:?}"
                 );
                 self.opening = Some(attempt);
