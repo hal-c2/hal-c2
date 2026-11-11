@@ -861,6 +861,24 @@ defmodule HalC2.TokenEconomizerToolPruneHistoryTest do
     assert state.unresolved == %{}
   end
 
+  test "turns that ran while the plugin was down are read back past the last page, not only it",
+       %{thread: thread, project: p} do
+    project = {p, "claudeAgent"}
+    # r1 used CronList, and 51 turns end after it, all before the plugin starts:
+    # r1 is older than the 50 runs one history read returns.
+    ended(thread, "r1", 1, [%{"type" => "dynamic_tool_call", "providerToolName" => "CronList"}])
+    for n <- 2..52, do: ended(thread, "r#{n}", n, [])
+
+    {:ok, state} = TokenEconomizer.init(%{"toolPrune" => "propose"})
+    state = observe(state, started(thread, "r53", p, %{}))
+
+    assert state.seeded[{thread, project}] == :read
+    prune = state.prunes[project]
+    assert "CronList" in prune["used"]
+    assert prune["prompts"] == 52
+    assert Prune.seeded_run(prune, thread) == %{"run" => "r52", "ordinal" => 52}
+  end
+
   test "a subagent's use heard with no project is its thread's project's at once, though the thread never runs again",
        %{thread: thread, project: p} do
     {:ok, _} = HalC2.Streams.commit("other", :thread, [{"thread", "other", %{"s" => %{}}}])

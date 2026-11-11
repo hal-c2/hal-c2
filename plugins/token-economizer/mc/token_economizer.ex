@@ -1546,6 +1546,12 @@ defmodule HalC2Plugins.TokenEconomizer do
   # heard since, and until it succeeds no fold moves the watermark (`fold_conv/3`):
   # the runs it could not read are still to fold, and those heard live already did. A
   # segment heard in part that folds unread is read so too, up to the turn after it.
+  #
+  # The read pages back to the watermark, or to the thread's first run with none (a
+  # watermark kept as an id alone has no ordinal to stop at): one page alone would
+  # fold only its runs and move the watermark past them (`fold_history/5`), so the
+  # turns before the page, and what they used, would never be read back. Past
+  # `@history_pages` pages the read fails as unread, as `history_back/3`'s does.
   defp seed_history(state, thread_id, run_id, project, unit) do
     key = {thread_id, project}
 
@@ -1555,8 +1561,15 @@ defmodule HalC2Plugins.TokenEconomizer do
 
       seeded ->
         before = with {:unread, first} <- seeded, do: first, else: (_ -> run_id)
+        {prune, state} = prune(state, project, unit)
 
-        case history(thread_id, before) do
+        oldest =
+          case Prune.seeded_run(prune, thread_id) do
+            %{"ordinal" => ordinal} when is_integer(ordinal) -> ordinal
+            _ -> 0
+          end
+
+        case page_back(thread_id, before, oldest, [], @history_pages) do
           {:ok, history} ->
             fold_history(put_in(state.seeded[key], :read), history, key, before, unit)
 

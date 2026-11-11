@@ -497,10 +497,16 @@ defmodule HalC2.TokenEconomizerToolPrunePluginPropTest do
     end
   end
 
-  def precondition(s, {:call, _, :start, [thread | _]}),
+  # `first?` and the ordinal are as generated, also while shrinking: a start
+  # shrunk to a thread's first with `first?` false would run on a stream the
+  # harness never created the thread's rows on, whose history then reads as a
+  # deleted thread's, which no real turn can do.
+  def precondition(s, {:call, _, :start, [thread, _run, ordinal, _new?, first?]}),
     do:
       not Map.has_key?(s.open, thread) and s.runs < @max_runs and
-        thread not in (s.gone ++ s.away)
+        thread not in (s.gone ++ s.away) and
+        first? == not Map.has_key?(s.threads, thread) and
+        ordinal == next_ordinal(s, thread)
 
   def precondition(s, {:call, m, :late, [thread, run, ordinal, new?, first?, _]}),
     do: precondition(s, {:call, m, :start, [thread, run, ordinal, new?, first?]})
