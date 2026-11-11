@@ -2430,23 +2430,42 @@ defmodule HalC2.Acp do
   the agent's default (`publish_staged/3`); defaults a session merely reports do not.
   """
   def put_option(id, option, value, agent \\ :any) do
-    # Recorded apart too, for a probe that publishes after a `forget/1` emptied the config.
+    # Recorded apart too, for a probe that publishes after a `forget/1` emptied the
+    # config; and in one lock with the config, so a probe's publish is not undone.
     if driver(id) == "acpRegistry" and
-         locked(id, fn -> runs?(id, agent) and session_set(id, %{option => value}) end) == :ok do
-      {__MODULE__, id, :config}
-      |> :persistent_term.get([])
-      |> Enum.map(&if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1))
-      |> then(&put_config(id, &1, agent))
-    end
+         locked(id, fn ->
+           if runs?(id, agent) do
+             session_set(id, %{option => value})
+             key = {__MODULE__, id, :config}
+             old = :persistent_term.get(key, [])
+
+             new =
+               Enum.map(
+                 old,
+                 &if(&1["id"] == option, do: Map.put(&1, "currentValue", value), else: &1)
+               )
+
+             new != old and :persistent_term.put(key, new) == :ok
+           end
+         end),
+       do: HalC2.Settings.notify_providers()
 
     :ok
+  end
+
+  @doc """
+  The registry agent an instance names (`config.agentId`), the one its launch runs;
+  Settings drops the instance when it changes.
+  """
+  def agent_id(id) do
+    with {_driver, entry} <- instance(id), do: get_in(entry, ["config", "agentId"])
   end
 
   # Whether a runtime launched on `agent` still runs the instance's agent; Settings
   # drops the instance when its agent changes (`drop/1`), and an old runtime's later
   # writes must not come back.
   defp runs?(_id, :any), do: true
-  defp runs?(id, agent), do: setting(id, "agentId") == agent
+  defp runs?(id, agent), do: agent_id(id) == agent
 
   # The option values a session set, which a probe's options keep (`publish_staged/3`).
   # `forget/1` keeps them, as the session keeps running; `drop/1` erases them.

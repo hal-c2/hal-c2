@@ -1457,7 +1457,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> migrate()
 
   defp agent_id(nil), do: nil
-  defp agent_id(instance), do: HalC2.Acp.setting(instance, "agentId")
+  defp agent_id(instance), do: HalC2.Acp.agent_id(instance)
 
   # --- session -------------------------------------------------------------------
 
