@@ -403,6 +403,12 @@ Feature: OpenCode
     When a turn runs on a model that offers no "max" variant, with no variant chosen
     Then the turn runs and OpenCode is not asked for the "max" variant
 
+  # Each model has its own variant, the one OpenCode reports when the session first lands on it.
+  Scenario: A variant taken off the thread goes back to the turn's model's own on a model the session did not open on
+    Given an OpenCode session that opened on "anthropic/claude-sonnet-4" at the "max" variant
+    When a turn runs on another model at the "high" variant and the next on it with none
+    Then the next turn sets the variant back to "medium", that model's own
+
   Scenario: An OpenCode turn can be steered while it runs
     Given an OpenCode turn is running
     When the user sends a follow-up message

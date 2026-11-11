@@ -1899,12 +1899,23 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     # What the session opened on is what a pick taken off the thread goes back to. Only
     # the open sets it: a mid-session update reports the current state, picks included.
-    state = Map.put(state, :opened_config, state.config)
+    state =
+      state
+      |> Map.put(:opened_config, state.config)
+      |> Map.put(:variants, %{})
+      |> landed()
 
     if grok?(state),
       do: Map.put(state, :opened_reasoning, session_reasoning(result)),
       else: state
   end
+
+  # OpenCode's variants belong to a model: the one it reports when the session first
+  # lands on a model is that model's own, what a turn picking none goes back to.
+  defp landed(%{agent: "opencode", model: model} = state) when is_binary(model),
+    do: Map.update(state, :variants, %{}, &Map.put_new(&1, model, state.config["effort"]))
+
+  defp landed(state), do: state
 
   defp record_model_switch(state, turn, switches?) do
     commit(state, fn stream ->
@@ -1977,6 +1988,14 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     HalC2.Acp.put_config(state.agent, options)
 
+    # What each option offers (`configId` -> its choices' values).
+    state =
+      Map.put(
+        state,
+        :choices,
+        Map.new(options, &{&1["id"], Enum.map(flat_choices(&1), fn c -> c["value"] end)})
+      )
+
     %{
       state
       | legacy_modes: if(Enum.any?(options, &(&1["setBy"] == "session/set_mode")), do: modes),
@@ -2004,12 +2023,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       end
     end
 
-    # An agent or variant taken off the thread goes back to the one the session opened
-    # on (build, when it opened in plan), as OpenCode keeps what was set last. Variants
-    # belong to a model, so the opened one goes back only on the model it opened with;
-    # on another model OpenCode's own variant for it is left alone.
+    # An agent taken off the thread goes back to the one the session opened on (build,
+    # when it opened in plan), and a variant to the turn's model's own while it still
+    # offers it, as OpenCode keeps what was set last.
     opened = Map.get(state, :opened_config, %{})
-    opened_variant = if state.model == opened["model"], do: opened["effort"]
+    default = Map.get(state, :variants, %{})[state.model]
+    default = if default in (Map.get(state, :choices, %{})["effort"] || []), do: default
 
     agent =
       value.("agent") ||
@@ -2022,7 +2041,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state
     |> set_config("mode", agent)
-    |> set_config("effort", value.("variant") || opened_variant)
+    |> set_config("effort", value.("variant") || default)
   end
 
   # Any other agent with a mode of its own for planning (a mode option offering `plan`
@@ -2166,12 +2185,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp redacted(reason), do: reason |> inspect() |> HalC2.Acp.Stderr.redact()
 
   # The choice of a select option (flat or grouped) that plans, if it has one.
-  defp plan_choice(option) do
-    option["options"]
-    |> List.wrap()
-    |> Enum.flat_map(&(&1["options"] || [&1]))
-    |> Enum.find_value(&(&1["value"] in ["plan", "architect"] && &1["value"]))
-  end
+  defp plan_choice(option),
+    do:
+      Enum.find_value(
+        flat_choices(option),
+        &(&1["value"] in ["plan", "architect"] && &1["value"])
+      )
+
+  # An option's choices, those of its groups included.
+  defp flat_choices(option),
+    do: option["options"] |> List.wrap() |> Enum.flat_map(&(&1["options"] || [&1]))
 
   # An agent with older ACP modes says when it changes mode itself, leaving plan mode
   # for one, in or between turns. The "mode" option follows, so picking the mode it
@@ -2253,7 +2276,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            "value" => model
          }) do
       {:ok, result} ->
-        {:ok, remember_config(%{state | model: model}, result || %{})}
+        {:ok, landed(remember_config(%{state | model: model}, result || %{}))}
 
       {:error, reason} ->
         {:error,

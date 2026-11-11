@@ -4216,6 +4216,53 @@ defmodule HalC2.Steps.Providers.Opencode do
     context
   end
 
+  step "a turn runs on another model at the {string} variant and the next on it with none",
+       %{args: [variant]} = context do
+    selection = fn options ->
+      %{
+        "modelSelection" => %{
+          "instanceId" => "opencode",
+          "model" => context.other_model,
+          "options" => options
+        }
+      }
+    end
+
+    picked = [%{"id" => "variant", "value" => variant}]
+    context = FakeAcp.send_message(context, "hello", nil, selection.(picked))
+    FakeAcp.await_run(context, "completed")
+    context = FakeAcp.send_message(context, "again", nil, selection.([]))
+    Map.put(context, :run, FakeAcp.await_runs(context, 2))
+  end
+
+  step "the next turn sets the variant back to {string}, that model's own",
+       %{args: [variant]} = context do
+    assert [%{"status" => "completed"}, %{"status" => "completed"}] =
+             HalC2.StreamState.list(context.run, "run")
+
+    efforts =
+      context
+      |> FakeAcp.log()
+      |> Enum.flat_map(fn
+        %{"recv" => %{"method" => "session/prompt"}} ->
+          [:prompt]
+
+        %{
+          "recv" => %{
+            "method" => "session/set_config_option",
+            "params" => %{"configId" => "effort", "value" => value}
+          }
+        } ->
+          [value]
+
+        _ ->
+          []
+      end)
+
+    assert [_picked, :prompt, ^variant, :prompt] = efforts
+    context
+  end
+
   # --- steering keeps the turn's agent and variant ---------------------------------------------------------
 
   step "an OpenCode turn is running with the agent {string} and the {string} variant in plan mode",
